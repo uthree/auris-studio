@@ -9,7 +9,7 @@ use auris_core::time::Ticks;
 
 use crate::rhythm::{Grid, Pattern};
 use crate::rng::{Key as RngKey, Rng};
-use crate::spec::{Mood, SectionSpec, SongSpec};
+use crate::spec::{Mood, SongSpec};
 use crate::theory::chart::{ChartOrigin, HarmonicEvent};
 use crate::theory::chord::Quality;
 use crate::theory::key::Key;

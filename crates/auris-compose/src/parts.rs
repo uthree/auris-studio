@@ -10,7 +10,6 @@ use crate::frame::{Frame, SectionPlan};
 use crate::rhythm::{Accent, DrumVoice, Grid, Pattern, swing_offset};
 use crate::rng::{Key as RngKey, Rng};
 use crate::spec::{PartSpec, Role, SongSpec};
-use crate::theory::chart::HarmonicEvent;
 use crate::theory::pitch::{OCTAVE, PitchClass, fold_into};
 
 /// A note as the composer writes it, before it becomes a clip.
@@ -367,7 +366,7 @@ fn bass(
     let kick = crate::frame::groove_pattern(spec, DrumVoice::Kick);
     let mut notes = Vec::new();
 
-    for (event_index, event) in section.events.iter().enumerate() {
+    for event in &section.events {
         let root = event.chord.bass_class().midi(part.octave);
         let root = fold_into(root, low, high);
         let fifth = fold_into(root + 7, low, high);
@@ -388,8 +387,7 @@ fn bass(
                 .get(position + 1)
                 .map(|next| grid.tick_of(*next))
                 .unwrap_or(event.length);
-            let length =
-                (grid.tick_of(*offset + 0) + (next - grid.tick_of(*offset))).max(grid.step_ticks());
+            let length = (next - grid.tick_of(*offset)).max(grid.step_ticks());
             // Root on the strong hits, fifth on the weak ones: the oldest bass line there is.
             let pitch = if position == 0 || grid.weight(grid.step_of(at)) >= 2 {
                 root
@@ -404,7 +402,6 @@ fn bass(
                 length: length.min(event.end() - at).max(grid.step_ticks()),
             });
         }
-        let _ = event_index;
     }
     notes
 }
