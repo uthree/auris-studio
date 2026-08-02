@@ -56,15 +56,10 @@ strings! {
     TrackKindInstrument { en: "Instrument", ja: "ソフト音源" }
     TrackKindAudio { en: "Audio", ja: "オーディオ" }
 
-    // ------------------------------------------------------------------ piano roll
-    PianoRollHint {
-        en: "alt-click: add note · drag: move · right edge: resize · right-click: menu",
-        ja: "alt+クリック: ノート追加 · ドラッグ: 移動 · 右端: 長さ変更 · 右クリック: メニュー"
-    }
-    PianoRollEmpty {
-        en: "Select a MIDI clip to edit its notes (alt-click an empty lane to make one)",
-        ja: "MIDI クリップを選ぶとノートを編集できます（空のレーンを alt+クリックで新規作成）"
-    }
+    // The piano roll's own hints name the gesture that is actually bound, so they are in
+    // `messages` and take it as an argument. Fixed strings naming a modifier used to live here
+    // and were wrong twice over: the gesture became configurable, and ⌥ is not what a Windows
+    // keyboard calls that key.
 
     // ------------------------------------------------------------------ mixer
     Mute { en: "Mute", ja: "ミュート" }
