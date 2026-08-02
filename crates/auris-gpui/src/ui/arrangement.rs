@@ -3,17 +3,23 @@
 use auris_session::prelude::*;
 
 use gpui::{
-    Axis, Bounds, IntoElement, MouseButton, MouseDownEvent, Pixels, Window, canvas, div, point,
-    prelude::*, px, size,
+    Axis, Bounds, Corners, IntoElement, MouseButton, MouseDownEvent, Pixels, Window, canvas, div,
+    point, prelude::*, px, size,
 };
 
 use crate::app::{AurisApp, Drag};
 use crate::theme::{Metrics, Theme};
+use crate::ui::icons::Icon;
 use crate::ui::paint;
-use crate::ui::widgets::{ButtonStyle, button, db_to_meter_position, level_meter};
+use crate::ui::widgets::{
+    ButtonStyle, button, db_to_meter_position, icon_label, level_meter, splitter,
+};
 
 /// Width of the grab zone on a clip's right edge, in pixels.
 const RESIZE_HANDLE: f32 = 7.0;
+
+/// Height of a clip's name bar.
+const TITLE_HEIGHT: Pixels = px(14.0);
 
 impl AurisApp {
     /// Renders the arrangement panel.
@@ -23,14 +29,28 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
+        let headers = self.render_track_headers(cx);
+        let timeline = self.render_timeline(cx);
         div()
             .flex()
             .flex_1()
-            .min_h(px(120.0))
+            .min_h(crate::app::PanelLayout::MIN_ARRANGEMENT)
             .overflow_hidden()
             .bg(theme.surface)
-            .child(self.render_track_headers(cx))
-            .child(self.render_timeline(cx))
+            .child(headers)
+            .child(splitter(
+                "split-headers",
+                Axis::Vertical,
+                &theme,
+                cx.listener(|this, event: &MouseDownEvent, _, _| {
+                    let start_width = this.panels.header_width;
+                    this.begin_drag(Drag::ResizeHeaders {
+                        start_x: event.position.x,
+                        start_width,
+                    });
+                }),
+            ))
+            .child(timeline)
     }
 
     /// The left column: one header per track, plus the add-track buttons.
@@ -56,13 +76,19 @@ impl AurisApp {
                 let name = track.name.clone();
                 let kind = track.kind.label();
 
+                let is_selected = selected == Some(id);
+
                 div()
                     .id(("track-header", index))
                     .flex()
                     .h(px(track.height))
+                    .pl(px(6.0))
+                    .py(px(3.0))
+                    .pr(px(4.0))
+                    .gap(px(6.0))
                     .border_b_1()
                     .border_color(theme.border_subtle)
-                    .bg(if selected == Some(id) {
+                    .bg(if is_selected {
                         theme.surface_raised
                     } else {
                         theme.surface
@@ -76,30 +102,48 @@ impl AurisApp {
                         }),
                     )
                     // A colour stripe is the fastest way to match a header to its clips.
-                    .child(div().w(px(4.0)).h_full().bg(color))
+                    .child(
+                        div()
+                            .w(px(4.0))
+                            .h_full()
+                            .rounded(Metrics::RADIUS_XS)
+                            .bg(color),
+                    )
                     .child(
                         div()
                             .flex()
                             .flex_col()
                             .flex_1()
                             .min_w_0()
-                            .px_2()
-                            .py_1()
                             .gap_1()
                             .child(
                                 div()
                                     .flex()
                                     .items_center()
-                                    .justify_between()
+                                    .gap_1p5()
+                                    // A track number, as every DAW shows — it is what people
+                                    // actually say out loud when pointing at a track.
                                     .child(
                                         div()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .w(px(16.0))
+                                            .text_xs()
+                                            .text_color(theme.text_faint)
+                                            .child(format!("{}", index + 1)),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
                                             .text_xs()
                                             .text_color(theme.text)
                                             .truncate()
                                             .child(name),
                                     )
                                     .child(
-                                        div().text_xs().text_color(theme.text_muted).child(kind),
+                                        div().text_xs().text_color(theme.text_faint).child(kind),
                                     ),
                             )
                             .child(
@@ -107,7 +151,7 @@ impl AurisApp {
                                     .flex()
                                     .items_center()
                                     .gap_1()
-                                    .child(div().w(px(26.0)).child(button(
+                                    .child(div().w(px(24.0)).child(button(
                                         ("mute", index),
                                         "M",
                                         ButtonStyle::Normal,
@@ -119,7 +163,7 @@ impl AurisApp {
                                             cx.notify();
                                         }),
                                     )))
-                                    .child(div().w(px(26.0)).child(button(
+                                    .child(div().w(px(24.0)).child(button(
                                         ("solo", index),
                                         "S",
                                         ButtonStyle::Normal,
@@ -136,19 +180,17 @@ impl AurisApp {
                                             .flex_1()
                                             .min_w_0()
                                             .child(self.gain_control(id, gain_db, cx)),
-                                    )
-                                    .child(div().w(px(8.0)).h(Metrics::CONTROL_HEIGHT).child(
-                                        level_meter(
-                                            db_to_meter_position(level_db),
-                                            db_to_meter_position(level_db),
-                                            Axis::Vertical,
-                                            theme.meter_color(level_db),
-                                            &theme,
-                                        ),
-                                    )),
+                                    ),
                             )
                             .child(self.pan_control(id, pan, cx)),
                     )
+                    .child(div().w(px(7.0)).h_full().py(px(1.0)).child(level_meter(
+                        db_to_meter_position(level_db),
+                        db_to_meter_position(level_db),
+                        Axis::Vertical,
+                        theme.meter_color(level_db),
+                        &theme,
+                    )))
                     .into_any_element()
             })
             .collect();
@@ -156,10 +198,8 @@ impl AurisApp {
         div()
             .flex()
             .flex_col()
-            .w(Metrics::TRACK_HEADER_WIDTH)
+            .w(self.panels.header_width)
             .flex_shrink_0()
-            .border_r_1()
-            .border_color(theme.border)
             .child(
                 div()
                     .flex()
@@ -170,24 +210,20 @@ impl AurisApp {
                     .bg(theme.surface_raised)
                     .border_b_1()
                     .border_color(theme.border)
-                    .child(div().flex_1().child(button(
+                    .child(div().flex_1().child(icon_label(
                         "add-instrument",
-                        "+ Inst",
-                        ButtonStyle::Normal,
-                        false,
-                        theme.accent,
+                        Icon::Plus,
+                        "Inst",
                         &theme,
                         cx.listener(|this, _, _, cx| {
                             this.add_instrument_track();
                             cx.notify();
                         }),
                     )))
-                    .child(div().flex_1().child(button(
+                    .child(div().flex_1().child(icon_label(
                         "add-audio",
-                        "+ Audio",
-                        ButtonStyle::Normal,
-                        false,
-                        theme.accent,
+                        Icon::Plus,
+                        "Audio",
                         &theme,
                         cx.listener(|this, _, _, cx| {
                             this.add_audio_track();
@@ -559,26 +595,43 @@ fn paint_lane(
         let body = if clip.muted {
             Theme::translucent(lane.color, 0.16)
         } else {
-            Theme::translucent(lane.color, 0.34)
+            Theme::translucent(lane.color, 0.30)
         };
-        paint::rounded_rect(window, clip_bounds, px(3.0), body);
-        // A brighter top strip carries the clip name and doubles as the grab area.
-        paint::rect(
+        let radius = Metrics::RADIUS_MD;
+        paint::rounded_rect(window, clip_bounds, radius, body);
+        // A brighter top strip carries the clip name and doubles as the grab area. Only its
+        // top corners are rounded, so it sits inside the clip's outline instead of cutting a
+        // square notch out of it.
+        paint::rect_with_corners(
             window,
             Bounds {
                 origin: clip_bounds.origin,
-                size: size(clip_bounds.size.width, px(13.0)),
+                size: size(clip_bounds.size.width, TITLE_HEIGHT),
+            },
+            Corners {
+                top_left: radius,
+                top_right: radius,
+                bottom_right: px(0.0),
+                bottom_left: px(0.0),
             },
             if selected {
                 theme.selection
             } else {
-                Theme::translucent(lane.color, 0.8)
+                Theme::translucent(lane.color, 0.85)
             },
         );
+        // A selected clip gets an outline as well as a lit title bar, so the selection reads
+        // at a glance on a lane packed with clips.
+        if selected {
+            paint::rounded_outline(window, clip_bounds, radius, px(1.5), theme.selection);
+        }
 
         let content_bounds = Bounds {
-            origin: point(clip_bounds.origin.x, clip_bounds.origin.y + px(13.0)),
-            size: size(clip_bounds.size.width, clip_bounds.size.height - px(13.0)),
+            origin: point(clip_bounds.origin.x, clip_bounds.origin.y + TITLE_HEIGHT),
+            size: size(
+                clip_bounds.size.width,
+                clip_bounds.size.height - TITLE_HEIGHT,
+            ),
         };
         match &clip.content {
             ClipContent::Notes(notes) => {
@@ -618,8 +671,8 @@ fn paint_lane(
                 window,
                 cx,
                 point(
-                    clip_bounds.origin.x + px(4.0),
-                    clip_bounds.origin.y + px(1.0),
+                    clip_bounds.origin.x + px(5.0),
+                    clip_bounds.origin.y + px(1.5),
                 ),
                 clip.name.clone(),
                 px(9.0),

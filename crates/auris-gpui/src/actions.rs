@@ -48,6 +48,10 @@ actions!(
         ZoomIn,
         /// Zoom the timeline out.
         ZoomOut,
+        /// Show or hide the right-hand inspector.
+        ToggleInspector,
+        /// Show or hide the bottom editor panel.
+        ToggleEditor,
     ]
 );
 
@@ -75,5 +79,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-=", ZoomIn, None),
         KeyBinding::new("cmd-+", ZoomIn, None),
         KeyBinding::new("cmd--", ZoomOut, None),
+        // Bare letters, as Logic binds them: there is no text field to steal them.
+        KeyBinding::new("i", ToggleInspector, None),
+        KeyBinding::new("p", ToggleEditor, None),
     ]);
 }

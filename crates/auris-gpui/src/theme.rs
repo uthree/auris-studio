@@ -26,6 +26,8 @@ pub struct Theme {
     pub text: Hsla,
     /// Secondary text and inactive labels.
     pub text_muted: Hsla,
+    /// Captions above a readout, and other text that should recede entirely.
+    pub text_faint: Hsla,
     /// Text on an accent-filled surface.
     pub text_on_accent: Hsla,
     /// Interactive accent.
@@ -83,6 +85,7 @@ impl Theme {
             border_subtle: rgb(0x252932).into(),
             text: rgb(0xe6e9f0).into(),
             text_muted: rgb(0x8b93a7).into(),
+            text_faint: rgb(0x666e80).into(),
             text_on_accent: rgb(0x0b0d11).into(),
             accent: rgb(0x4f9dde).into(),
             accent_soft: rgb(0x2b4d6b).into(),
@@ -158,6 +161,18 @@ impl Metrics {
     pub const STATUS_HEIGHT: Pixels = px(22.0);
     /// Height of a control row inside the inspector.
     pub const CONTROL_HEIGHT: Pixels = px(22.0);
+
+    /// Corner radius for small controls: buttons, sliders, meters.
+    pub const RADIUS_SM: Pixels = px(4.0);
+    /// Corner radius for panels, clips and readouts.
+    pub const RADIUS_MD: Pixels = px(6.0);
+    /// Corner radius for floating surfaces such as the export sheet.
+    pub const RADIUS_LG: Pixels = px(10.0);
+    /// Corner radius for notes and other very small marks.
+    pub const RADIUS_XS: Pixels = px(2.5);
+
+    /// Thickness of a draggable panel divider — the grab zone, not the drawn line.
+    pub const SPLITTER: Pixels = px(6.0);
 }
 
 #[cfg(test)]

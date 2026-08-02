@@ -8,11 +8,12 @@ use gpui::{AnyElement, IntoElement, MouseDownEvent, Window, div, prelude::*, px}
 
 use crate::app::{AurisApp, Drag, InspectorTab};
 use crate::theme::Metrics;
+use crate::ui::icons::Icon;
 use crate::ui::plugin_editor::{
     ParamControl, button_row, control_for, next_discrete_value, plugin_header, slider_row,
     value_after_drag, value_after_scroll,
 };
-use crate::ui::widgets::{ButtonStyle, button, divider};
+use crate::ui::widgets::{ButtonStyle, button, chain_button, divider};
 
 impl AurisApp {
     /// Renders the inspector panel.
@@ -29,14 +30,13 @@ impl AurisApp {
             InspectorTab::Browser => self.render_browser(cx),
         };
 
+        // The width comes from the parent, which owns the resizable panel geometry, and the
+        // divider line is drawn by the splitter beside it.
         div()
             .flex()
             .flex_col()
-            .w(Metrics::INSPECTOR_WIDTH)
-            .flex_shrink_0()
+            .size_full()
             .bg(theme.surface)
-            .border_l_1()
-            .border_color(theme.border)
             .child(
                 div()
                     .flex()
@@ -168,18 +168,16 @@ impl AurisApp {
                         .text_color(theme.text_muted)
                         .child("Effects"),
                 )
-                .child(div().w(px(58.0)).child(button(
+                .child(crate::ui::widgets::icon_label(
                     "add-effect",
-                    "+ Add",
-                    ButtonStyle::Normal,
-                    false,
-                    theme.accent,
+                    Icon::Plus,
+                    "Add",
                     &theme,
                     cx.listener(|this, _, _, cx| {
                         this.inspector = InspectorTab::Browser;
                         cx.notify();
                     }),
-                )))
+                ))
                 .into_any_element(),
         );
 
@@ -218,7 +216,7 @@ impl AurisApp {
                     .gap_1()
                     .p_1p5()
                     .mb_2()
-                    .rounded_md()
+                    .rounded(Metrics::RADIUS_MD)
                     .bg(theme.surface_raised)
                     .border_1()
                     .border_color(theme.border_subtle)
@@ -233,35 +231,41 @@ impl AurisApp {
                         }),
                     ))
                     .children(controls)
+                    // Reordering and removal are icons rather than words: this row repeats once
+                    // per effect, and three text buttons each time drowns out the parameters.
                     .child(
                         div()
                             .flex()
+                            .justify_end()
                             .gap_1()
                             .pt_1()
-                            .child(div().flex_1().child(button(
+                            .child(chain_button(
                                 ("fx-up", slot_index),
-                                "Move up",
-                                ButtonStyle::Ghost,
-                                false,
-                                theme.accent,
+                                Icon::ChevronUp,
                                 &theme,
                                 cx.listener(move |this, _, _, cx| {
                                     this.move_effect(Some(track_id), slot_id, -1);
                                     cx.notify();
                                 }),
-                            )))
-                            .child(div().flex_1().child(button(
+                            ))
+                            .child(chain_button(
+                                ("fx-down", slot_index),
+                                Icon::ChevronDown,
+                                &theme,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.move_effect(Some(track_id), slot_id, 1);
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(chain_button(
                                 ("fx-remove", slot_index),
-                                "Remove",
-                                ButtonStyle::Ghost,
-                                false,
-                                theme.accent,
+                                Icon::Cross,
                                 &theme,
                                 cx.listener(move |this, _, _, cx| {
                                     this.remove_effect(slot_id);
                                     cx.notify();
                                 }),
-                            ))),
+                            )),
                     )
                     .into_any_element(),
             );
@@ -371,7 +375,7 @@ impl AurisApp {
             .flex()
             .flex_col()
             .p_1p5()
-            .rounded_sm()
+            .rounded(Metrics::RADIUS_SM)
             .cursor_pointer()
             .hover(|this| this.bg(theme.surface_hover))
             .child(
@@ -489,6 +493,7 @@ impl AurisApp {
             descriptor.format(value),
             descriptor.normalize(value),
             theme.accent,
+            crate::ui::plugin_editor::slider_fill_for(&descriptor),
             &theme,
             cx.listener(move |this, event: &MouseDownEvent, _, _| {
                 this.begin_drag(Drag::Param {

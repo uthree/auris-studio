@@ -6,6 +6,7 @@
 
 pub mod arrangement;
 pub mod commands;
+pub mod icons;
 pub mod inspector;
 pub mod mixer;
 pub mod paint;

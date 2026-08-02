@@ -99,6 +99,27 @@ pub enum Drag {
         /// Pointer x when the drag began.
         start_x: Pixels,
     },
+    /// Dragging the divider between the arrangement and the inspector.
+    ResizeInspector {
+        /// Pointer x when the drag began.
+        start_x: Pixels,
+        /// Panel width when the drag began.
+        start_width: Pixels,
+    },
+    /// Dragging the divider between the arrangement and the bottom editor.
+    ResizeEditor {
+        /// Pointer y when the drag began.
+        start_y: Pixels,
+        /// Panel height when the drag began.
+        start_height: Pixels,
+    },
+    /// Dragging the divider between the track headers and the timeline.
+    ResizeHeaders {
+        /// Pointer x when the drag began.
+        start_x: Pixels,
+        /// Column width when the drag began.
+        start_width: Pixels,
+    },
 }
 
 impl Drag {
@@ -113,7 +134,146 @@ impl Drag {
             Drag::NoteResize { .. } => Some("Resize note"),
             Drag::Param { .. } => Some("Adjust parameter"),
             Drag::Tempo { .. } => Some("Change tempo"),
+            // Panel geometry is a property of the window, not the document: resizing a panel
+            // is not an edit and must never land on the undo stack.
+            Drag::ResizeInspector { .. }
+            | Drag::ResizeEditor { .. }
+            | Drag::ResizeHeaders { .. } => None,
         }
+    }
+}
+
+/// How wide or tall the resizable panels are, and whether they are showing.
+///
+/// Kept together so the layout, the hit tests and the splitters all read one source rather
+/// than each deriving the geometry from constants and drifting apart.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PanelLayout {
+    /// Whether the right-hand inspector is visible.
+    pub inspector_visible: bool,
+    /// Width of the inspector.
+    pub inspector_width: Pixels,
+    /// Whether the bottom editor is visible.
+    pub editor_visible: bool,
+    /// Height of the bottom editor.
+    pub editor_height: Pixels,
+    /// Width of the track header column.
+    pub header_width: Pixels,
+}
+
+impl Default for PanelLayout {
+    fn default() -> Self {
+        Self {
+            inspector_visible: true,
+            inspector_width: Metrics::INSPECTOR_WIDTH,
+            editor_visible: true,
+            editor_height: Metrics::EDITOR_HEIGHT,
+            header_width: Metrics::TRACK_HEADER_WIDTH,
+        }
+    }
+}
+
+impl PanelLayout {
+    /// Narrowest the inspector may be dragged.
+    pub const MIN_INSPECTOR: Pixels = px(200.0);
+    /// Widest the inspector may be dragged.
+    pub const MAX_INSPECTOR: Pixels = px(520.0);
+    /// Shortest the bottom editor may be dragged.
+    pub const MIN_EDITOR: Pixels = px(120.0);
+    /// Narrowest the track header column may be dragged.
+    pub const MIN_HEADERS: Pixels = px(140.0);
+    /// Widest the track header column may be dragged.
+    pub const MAX_HEADERS: Pixels = px(360.0);
+
+    /// Height the arrangement must keep, so a dragged editor cannot swallow it.
+    pub const MIN_ARRANGEMENT: Pixels = px(140.0);
+
+    /// Inspector width after dragging its divider by `delta`.
+    ///
+    /// The divider sits on the panel's *left* edge, so dragging left widens it — hence the
+    /// subtraction. Getting that sign wrong makes the panel run away from the pointer.
+    pub fn resized_inspector(start_width: Pixels, delta: Pixels) -> Pixels {
+        (start_width - delta)
+            .max(Self::MIN_INSPECTOR)
+            .min(Self::MAX_INSPECTOR)
+    }
+
+    /// Bottom-editor height after dragging its divider by `delta`.
+    ///
+    /// `available` is what is left of the window once the transport, the status bar and the
+    /// arrangement's own minimum are accounted for. It is clamped up to the minimum height as
+    /// well, so a window too short for both panels still yields a usable editor rather than a
+    /// negative one.
+    pub fn resized_editor(start_height: Pixels, delta: Pixels, available: Pixels) -> Pixels {
+        (start_height - delta)
+            .max(Self::MIN_EDITOR)
+            .min(available.max(Self::MIN_EDITOR))
+    }
+
+    /// Track-header column width after dragging its divider by `delta`.
+    pub fn resized_headers(start_width: Pixels, delta: Pixels) -> Pixels {
+        (start_width + delta)
+            .max(Self::MIN_HEADERS)
+            .min(Self::MAX_HEADERS)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_inspector_follows_the_pointer_and_stops_at_its_limits() {
+        let start = px(300.0);
+        // Dragging the divider left widens the panel it sits in front of.
+        assert_eq!(PanelLayout::resized_inspector(start, px(-40.0)), px(340.0));
+        assert_eq!(PanelLayout::resized_inspector(start, px(40.0)), px(260.0));
+        assert_eq!(
+            PanelLayout::resized_inspector(start, px(9_000.0)),
+            PanelLayout::MIN_INSPECTOR
+        );
+        assert_eq!(
+            PanelLayout::resized_inspector(start, px(-9_000.0)),
+            PanelLayout::MAX_INSPECTOR
+        );
+    }
+
+    #[test]
+    fn the_editor_never_swallows_the_arrangement() {
+        let available = px(400.0);
+        assert_eq!(
+            PanelLayout::resized_editor(px(280.0), px(-60.0), available),
+            px(340.0)
+        );
+        assert_eq!(
+            PanelLayout::resized_editor(px(280.0), px(-9_000.0), available),
+            available
+        );
+        assert_eq!(
+            PanelLayout::resized_editor(px(280.0), px(9_000.0), available),
+            PanelLayout::MIN_EDITOR
+        );
+    }
+
+    #[test]
+    fn a_window_too_short_for_both_panels_still_gives_a_usable_editor() {
+        // `available` goes negative once the window cannot hold the arrangement's minimum.
+        let squeezed = PanelLayout::resized_editor(px(280.0), px(0.0), px(-50.0));
+        assert_eq!(squeezed, PanelLayout::MIN_EDITOR);
+    }
+
+    #[test]
+    fn the_header_column_stops_at_its_limits() {
+        let start = px(200.0);
+        assert_eq!(PanelLayout::resized_headers(start, px(30.0)), px(230.0));
+        assert_eq!(
+            PanelLayout::resized_headers(start, px(-9_000.0)),
+            PanelLayout::MIN_HEADERS
+        );
+        assert_eq!(
+            PanelLayout::resized_headers(start, px(9_000.0)),
+            PanelLayout::MAX_HEADERS
+        );
     }
 }
 
@@ -175,6 +335,8 @@ pub struct AurisApp {
     pub(crate) drag: Option<Drag>,
     pub(crate) editor: EditorTab,
     pub(crate) inspector: InspectorTab,
+    /// Which panels are showing and how large they are.
+    pub(crate) panels: PanelLayout,
     pub(crate) status: String,
     pub(crate) export: Option<ExportState>,
     /// Note currently sounding because the user is holding a key or dragging one.
@@ -247,7 +409,7 @@ impl AurisApp {
                 .map(|clip| clip.id)
         });
 
-        Self {
+        let mut app = Self {
             session,
             theme: Theme::dark(),
             timeline: TimelineView::default(),
@@ -258,6 +420,7 @@ impl AurisApp {
             drag: None,
             editor: EditorTab::PianoRoll,
             inspector: InspectorTab::Track,
+            panels: PanelLayout::default(),
             status,
             export: None,
             auditioning: None,
@@ -266,7 +429,11 @@ impl AurisApp {
             arrangement_width: px(900.0),
             canvas: CanvasBounds::default(),
             _repaint: repaint,
-        }
+        };
+        // The default pitch view sits two octaves above the demo material, so without this the
+        // roll opens on an empty grid and the clip looks like it has no notes.
+        app.center_roll_on_selection();
+        app
     }
 
     /// The document.
@@ -399,6 +566,37 @@ impl AurisApp {
         }
     }
 
+    // ---------------------------------------------------------------- panels
+
+    /// Shows or hides the right-hand inspector.
+    pub(crate) fn toggle_inspector(&mut self) {
+        self.panels.inspector_visible = !self.panels.inspector_visible;
+    }
+
+    /// Shows or hides the bottom editor.
+    pub(crate) fn toggle_editor(&mut self) {
+        self.panels.editor_visible = !self.panels.editor_visible;
+    }
+
+    /// Applies an inspector resize drag.
+    pub(crate) fn resize_inspector(&mut self, start_width: Pixels, delta: Pixels) {
+        self.panels.inspector_width = PanelLayout::resized_inspector(start_width, delta);
+    }
+
+    /// Applies a bottom-editor resize drag.
+    pub(crate) fn resize_editor(&mut self, start_height: Pixels, delta: Pixels) {
+        let available = self.viewport_height
+            - Metrics::TRANSPORT_HEIGHT
+            - Metrics::STATUS_HEIGHT
+            - PanelLayout::MIN_ARRANGEMENT;
+        self.panels.editor_height = PanelLayout::resized_editor(start_height, delta, available);
+    }
+
+    /// Applies a track-header column resize drag.
+    pub(crate) fn resize_headers(&mut self, start_width: Pixels, delta: Pixels) {
+        self.panels.header_width = PanelLayout::resized_headers(start_width, delta);
+    }
+
     // ---------------------------------------------------------------- geometry
 
     /// Origin of the arrangement's clip lanes, taken from where they were last painted.
@@ -406,7 +604,7 @@ impl AurisApp {
         self.canvas.lanes.get().map_or_else(
             || {
                 point(
-                    Metrics::TRACK_HEADER_WIDTH,
+                    self.panels.header_width,
                     Metrics::TRANSPORT_HEIGHT + Metrics::RULER_HEIGHT,
                 )
             },
@@ -417,7 +615,7 @@ impl AurisApp {
     /// Origin of the bar ruler, taken from where it was last painted.
     pub(crate) fn timeline_origin(&self) -> Point<Pixels> {
         self.canvas.ruler.get().map_or_else(
-            || point(Metrics::TRACK_HEADER_WIDTH, Metrics::TRANSPORT_HEIGHT),
+            || point(self.panels.header_width, Metrics::TRANSPORT_HEIGHT),
             |bounds| bounds.origin,
         )
     }

@@ -6,7 +6,10 @@ use gpui::{Axis, IntoElement, Window, div, prelude::*, px};
 
 use crate::app::{AurisApp, Drag, EditorTab};
 use crate::theme::Metrics;
-use crate::ui::widgets::{ButtonStyle, button, db_to_meter_position, glyph_button, level_meter};
+use crate::ui::icons::Icon;
+use crate::ui::widgets::{
+    ButtonStyle, button, db_to_meter_position, icon_button, level_meter, readout,
+};
 
 /// Grid divisions offered in the transport bar, as a fraction of a quarter note.
 const GRID_CHOICES: [(&str, i64); 6] = [
@@ -39,11 +42,16 @@ impl AurisApp {
         let master_db = gain_to_db(self.master_level());
         let master_gain_db = self.project().master.gain_db;
         let editor = self.editor;
+        let editor_open = self.panels.editor_visible;
+        let inspector_open = self.panels.inspector_visible;
 
+        // Three columns of equal weight, so the middle one lands on the window's centre line
+        // however wide the sides grow. Every hardware transport and every DAW puts the
+        // controls and the position readout there; anchoring them left makes the eye hunt for
+        // the playhead position on a wide window.
         div()
             .flex()
             .items_center()
-            .gap_3()
             .h(Metrics::TRANSPORT_HEIGHT)
             .px_3()
             .bg(theme.surface_raised)
@@ -52,153 +60,10 @@ impl AurisApp {
             .child(
                 div()
                     .flex()
-                    .gap_1()
-                    .child(glyph_button(
-                        "rtz",
-                        "\u{23ee}",
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.seek(Ticks::ZERO);
-                            cx.notify();
-                        }),
-                    ))
-                    .child(glyph_button(
-                        "play",
-                        if playing { "\u{23f8}" } else { "\u{25b6}" },
-                        playing,
-                        theme.playing,
-                        &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.toggle_play();
-                            cx.notify();
-                        }),
-                    ))
-                    .child(glyph_button(
-                        "stop",
-                        "\u{23f9}",
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.session.stop();
-                            this.seek(Ticks::ZERO);
-                            cx.notify();
-                        }),
-                    ))
-                    .child(glyph_button(
-                        "loop",
-                        "\u{1f501}",
-                        looping,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.toggle_loop();
-                            cx.notify();
-                        }),
-                    )),
-            )
-            // Musical position and wall-clock position, the two readouts every DAW shows.
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .justify_center()
-                    .w(px(112.0))
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .bg(theme.surface_sunken)
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.text)
-                            .child(format!("{bar:>3}.{beat}.{:03}", tick / 10)),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .child(seconds.format_clock()),
-                    ),
-            )
-            .child(self.render_tempo_control(bpm, cx))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .child(div().text_xs().text_color(theme.text_muted).child("Grid"))
-                    .child(button(
-                        "grid",
-                        grid_label,
-                        ButtonStyle::Normal,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.cycle_grid();
-                            cx.notify();
-                        }),
-                    )),
-            )
-            .child(div().flex_1())
-            .child(
-                div()
-                    .flex()
-                    .gap_1()
-                    .child(button(
-                        "tab-roll",
-                        "Piano Roll",
-                        ButtonStyle::Normal,
-                        editor == EditorTab::PianoRoll,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.editor = EditorTab::PianoRoll;
-                            cx.notify();
-                        }),
-                    ))
-                    .child(button(
-                        "tab-mixer",
-                        "Mixer",
-                        ButtonStyle::Normal,
-                        editor == EditorTab::Mixer,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.editor = EditorTab::Mixer;
-                            cx.notify();
-                        }),
-                    )),
-            )
-            // Master fader and meter, always visible so clipping is never a surprise.
-            .child(
-                div()
-                    .flex()
+                    .flex_1()
+                    .min_w_0()
                     .items_center()
                     .gap_2()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .justify_center()
-                            .w(px(120.0))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.text_muted)
-                                    .child(format!("Master {master_gain_db:+.1} dB")),
-                            )
-                            .child(div().h(px(8.0)).mt_1().child(level_meter(
-                                db_to_meter_position(master_db),
-                                db_to_meter_position(master_db),
-                                Axis::Horizontal,
-                                theme.meter_color(master_db),
-                                &theme,
-                            ))),
-                    )
                     .child(button(
                         "export",
                         "Export WAV",
@@ -207,7 +72,171 @@ impl AurisApp {
                         theme.accent,
                         &theme,
                         cx.listener(|this, _, window, cx| this.start_export(window, cx)),
-                    )),
+                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(div().text_xs().text_color(theme.text_faint).child("Grid"))
+                            .child(button(
+                                "grid",
+                                grid_label,
+                                ButtonStyle::Normal,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.cycle_grid();
+                                    cx.notify();
+                                }),
+                            )),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .flex_shrink_0()
+                    .child(
+                        div()
+                            .flex()
+                            .gap_1()
+                            .child(icon_button(
+                                "rtz",
+                                Icon::ToStart,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.seek(Ticks::ZERO);
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(icon_button(
+                                "stop",
+                                Icon::Stop,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.session.stop();
+                                    this.seek(Ticks::ZERO);
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(icon_button(
+                                "play",
+                                if playing { Icon::Pause } else { Icon::Play },
+                                playing,
+                                theme.playing,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.toggle_play();
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(icon_button(
+                                "loop",
+                                Icon::Loop,
+                                looping,
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.toggle_loop();
+                                    cx.notify();
+                                }),
+                            )),
+                    )
+                    // Musical position and wall-clock position, the two readouts every DAW shows.
+                    .child(readout(
+                        "Position",
+                        format!("{bar}.{beat}.{:03}", tick / 10),
+                        Some(seconds.format_clock().into()),
+                        px(118.0),
+                        &theme,
+                    ))
+                    .child(self.render_tempo_control(bpm, cx)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .items_center()
+                    .justify_end()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .gap_1()
+                            // Clicking the tab you are already on hides the panel, which is
+                            // how every editor's sidebar toggles behave.
+                            .child(button(
+                                "tab-roll",
+                                "Piano Roll",
+                                ButtonStyle::Normal,
+                                editor_open && editor == EditorTab::PianoRoll,
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.show_editor_tab(EditorTab::PianoRoll);
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(button(
+                                "tab-mixer",
+                                "Mixer",
+                                ButtonStyle::Normal,
+                                editor_open && editor == EditorTab::Mixer,
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.show_editor_tab(EditorTab::Mixer);
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(button(
+                                "tab-inspector",
+                                "Inspector",
+                                ButtonStyle::Normal,
+                                inspector_open,
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.toggle_inspector();
+                                    cx.notify();
+                                }),
+                            )),
+                    )
+                    // Master level, always visible so clipping is never a surprise.
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .justify_center()
+                            .w(px(124.0))
+                            .child(
+                                div()
+                                    .flex()
+                                    .justify_between()
+                                    .text_xs()
+                                    .child(div().text_color(theme.text_faint).child("Master"))
+                                    .child(
+                                        div()
+                                            .text_color(theme.text_muted)
+                                            .child(format!("{master_gain_db:+.1} dB")),
+                                    ),
+                            )
+                            .child(div().h(px(7.0)).mt_1().child(level_meter(
+                                db_to_meter_position(master_db),
+                                db_to_meter_position(master_db),
+                                Axis::Horizontal,
+                                theme.meter_color(master_db),
+                                &theme,
+                            ))),
+                    ),
             )
     }
 
@@ -223,13 +252,16 @@ impl AurisApp {
             .flex()
             .flex_col()
             .justify_center()
-            .w(px(78.0))
+            .w(px(84.0))
             .px_2()
             .py_1()
-            .rounded_md()
+            .rounded(Metrics::RADIUS_MD)
             .bg(theme.surface_sunken)
+            .border_1()
+            .border_color(theme.border_subtle)
             .cursor_pointer()
-            .child(div().text_xs().text_color(theme.text_muted).child("Tempo"))
+            .hover(|this| this.border_color(theme.border))
+            .child(div().text_xs().text_color(theme.text_faint).child("Tempo"))
             .child(
                 div()
                     .text_sm()
@@ -252,6 +284,16 @@ impl AurisApp {
                 this.session.set_bpm(bpm);
                 cx.notify();
             }))
+    }
+
+    /// Shows `tab` in the bottom editor, or hides the panel when that tab is already showing.
+    pub(crate) fn show_editor_tab(&mut self, tab: EditorTab) {
+        if self.panels.editor_visible && self.editor == tab {
+            self.panels.editor_visible = false;
+        } else {
+            self.editor = tab;
+            self.panels.editor_visible = true;
+        }
     }
 
     /// Turns looping on or off.

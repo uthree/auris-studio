@@ -436,14 +436,21 @@ fn paint_notes(
             l: (base.l * (0.55 + 0.45 * note.velocity.clamp(0.0, 1.0))).clamp(0.0, 1.0),
             ..base
         };
-        paint::rounded_rect(
-            window,
-            Bounds {
-                origin: point(x, y + px(1.0)),
-                size: size(width, px((pitch_view.row_height - 2.0).max(2.0))),
-            },
-            px(2.0),
-            color,
-        );
+        let note_bounds = Bounds {
+            origin: point(x, y + px(1.0)),
+            size: size(width, px((pitch_view.row_height - 2.0).max(2.0))),
+        };
+        paint::rounded_rect(window, note_bounds, Metrics::RADIUS_XS, color);
+        // A selected note gets an outline too: at low velocity the fill alone is dim enough
+        // that brightness cannot also carry the selection.
+        if is_selected {
+            paint::rounded_outline(
+                window,
+                note_bounds,
+                Metrics::RADIUS_XS,
+                px(1.0),
+                theme.selection,
+            );
+        }
     }
 }

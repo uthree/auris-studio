@@ -5,11 +5,12 @@
 //! leaving all state in the view that owns it.
 
 use gpui::{
-    App, Axis, ClickEvent, ElementId, Hsla, IntoElement, MouseDownEvent, ScrollWheelEvent,
+    App, Axis, ClickEvent, ElementId, Hsla, IntoElement, MouseDownEvent, Pixels, ScrollWheelEvent,
     SharedString, Window, div, prelude::*, px, relative,
 };
 
 use crate::theme::{Metrics, Theme};
+use crate::ui::icons::{Icon, icon};
 
 /// A horizontal separator.
 pub fn divider(theme: &Theme) -> impl IntoElement + use<> {
@@ -63,7 +64,7 @@ where
         .justify_center()
         .h(Metrics::CONTROL_HEIGHT)
         .px_2()
-        .rounded_sm()
+        .rounded(Metrics::RADIUS_SM)
         .border_1()
         .border_color(border)
         .bg(background)
@@ -76,18 +77,20 @@ where
         .on_click(on_click)
 }
 
-/// A square button sized for a single glyph, used in the transport bar.
-pub fn glyph_button<I, G, F>(
+/// A square button holding one drawn icon, used in the transport bar.
+///
+/// The icon is painted rather than typed so a row of them shares one weight and colour; see
+/// [`crate::ui::icons`].
+pub fn icon_button<I, F>(
     id: I,
-    glyph: G,
+    glyph: Icon,
     active: bool,
     active_color: Hsla,
     theme: &Theme,
     on_click: F,
-) -> impl IntoElement + use<I, G, F>
+) -> impl IntoElement + use<I, F>
 where
     I: Into<ElementId>,
-    G: Into<SharedString>,
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
     let background = if active {
@@ -95,7 +98,7 @@ where
     } else {
         theme.surface_raised
     };
-    let text_color = if active {
+    let foreground = if active {
         theme.text_on_accent
     } else {
         theme.text
@@ -106,17 +109,170 @@ where
         .flex()
         .items_center()
         .justify_center()
-        .size(px(30.0))
-        .rounded_md()
+        .size(px(32.0))
+        .rounded(Metrics::RADIUS_MD)
         .border_1()
-        .border_color(theme.border)
+        .border_color(if active { active_color } else { theme.border })
         .bg(background)
-        .text_color(text_color)
         .cursor_pointer()
         .hover(|this| this.bg(Theme::lighten(background, 0.14)))
         .active(|this| this.opacity(0.75))
-        .child(glyph.into())
+        .child(icon(glyph, px(15.0), foreground))
         .on_click(on_click)
+}
+
+/// A button showing an icon next to a word, for actions where the icon alone is ambiguous.
+pub fn icon_label<I, L, F>(
+    id: I,
+    glyph: Icon,
+    label: L,
+    theme: &Theme,
+    on_click: F,
+) -> impl IntoElement + use<I, L, F>
+where
+    I: Into<ElementId>,
+    L: Into<SharedString>,
+    F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+{
+    div()
+        .id(id.into())
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap_1()
+        .h(Metrics::CONTROL_HEIGHT)
+        .px_1p5()
+        .rounded(Metrics::RADIUS_SM)
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.surface_raised)
+        .text_xs()
+        .text_color(theme.text)
+        .cursor_pointer()
+        .hover(|this| this.bg(theme.surface_hover))
+        .active(|this| this.opacity(0.75))
+        .child(icon(glyph, px(10.0), theme.text_muted))
+        .child(label.into())
+        .on_click(on_click)
+}
+
+/// A small square icon button for repeated row actions, such as reordering an effect chain.
+pub fn chain_button<I, F>(
+    id: I,
+    glyph: Icon,
+    theme: &Theme,
+    on_click: F,
+) -> impl IntoElement + use<I, F>
+where
+    I: Into<ElementId>,
+    F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+{
+    div()
+        .id(id.into())
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(20.0))
+        .rounded(Metrics::RADIUS_SM)
+        .bg(theme.surface)
+        .border_1()
+        .border_color(theme.border_subtle)
+        .cursor_pointer()
+        .hover(|this| this.bg(theme.surface_hover).border_color(theme.border))
+        .active(|this| this.opacity(0.75))
+        .child(icon(glyph, px(11.0), theme.text_muted))
+        .on_click(on_click)
+}
+
+/// A draggable divider between two panels.
+///
+/// The whole strip is the grab zone and the line inside it is what you see. gpui hit-tests
+/// against an element's own bounds, so a one-pixel divider would be a one-pixel target — the
+/// strip is deliberately several pixels wide and the panels sit either side of it.
+pub fn splitter<I, F>(
+    id: I,
+    axis: Axis,
+    theme: &Theme,
+    on_drag_start: F,
+) -> impl IntoElement + use<I, F>
+where
+    I: Into<ElementId>,
+    F: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+{
+    let line = div().flex_shrink_0().bg(theme.border);
+    let base = div()
+        .id(id.into())
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .justify_center()
+        .cursor(match axis {
+            Axis::Vertical => gpui::CursorStyle::ResizeLeftRight,
+            Axis::Horizontal => gpui::CursorStyle::ResizeUpDown,
+        })
+        // The line brightens on hover, so it is obvious the strip is draggable before the
+        // pointer has to be tried on it.
+        .hover(|this| this.bg(Theme::translucent(theme.accent, 0.35)));
+
+    match axis {
+        Axis::Vertical => base
+            .w(Metrics::SPLITTER)
+            .h_full()
+            .child(line.w(px(1.0)).h_full()),
+        Axis::Horizontal => base
+            .h(Metrics::SPLITTER)
+            .w_full()
+            .child(line.h(px(1.0)).w_full()),
+    }
+    .on_mouse_down(gpui::MouseButton::Left, on_drag_start)
+}
+
+/// A readout with a caption above it, as a hardware transport displays one.
+pub fn readout<C: Into<SharedString>, V: Into<SharedString>>(
+    caption: C,
+    value: V,
+    sub: Option<SharedString>,
+    width: Pixels,
+    theme: &Theme,
+) -> impl IntoElement + use<C, V> {
+    div()
+        .flex()
+        .flex_col()
+        .justify_center()
+        .w(width)
+        .px_2()
+        .py_1()
+        .rounded(Metrics::RADIUS_MD)
+        .bg(theme.surface_sunken)
+        .border_1()
+        .border_color(theme.border_subtle)
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.text_faint)
+                .child(caption.into()),
+        )
+        .child(
+            div()
+                .flex()
+                .items_baseline()
+                .gap_1()
+                .child(div().text_sm().text_color(theme.text).child(value.into()))
+                .children(sub.map(|sub| div().text_xs().text_color(theme.text_muted).child(sub))),
+        )
+}
+
+/// Where a slider's fill grows from.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SliderFill {
+    /// Fill grows from the left edge, for a value with a natural floor such as a level.
+    FromStart,
+    /// Fill grows outward from the centre, for a value centred on zero such as pan or detune.
+    ///
+    /// A left-anchored bar shows a centred pan as half full, which reads as "half of
+    /// something" rather than "no offset"; growing from the middle shows nothing at all,
+    /// which is what centred means.
+    FromCentre,
 }
 
 /// A horizontal drag-to-edit control: label on the left, filled bar, value on the right.
@@ -133,6 +289,7 @@ pub fn value_slider<I, L, V, D, S>(
     value_text: V,
     fraction: f32,
     fill: Hsla,
+    origin: SliderFill,
     theme: &Theme,
     on_drag_start: D,
     on_scroll: S,
@@ -145,42 +302,100 @@ where
     S: Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
 {
     let fraction = fraction.clamp(0.0, 1.0);
+    let (fill_start, fill_width) = match origin {
+        SliderFill::FromStart => (0.0, fraction),
+        SliderFill::FromCentre => (fraction.min(0.5), (fraction - 0.5).abs()),
+    };
 
+    // The name lives outside the bar. When it sat inside, the fill boundary and the thumb cut
+    // straight through the words — "Unison Spread" read as "Unison|Spread" — and the label was
+    // the hardest thing on the control to read at exactly the moment it mattered.
     div()
         .id(id.into())
-        .relative()
         .flex()
         .items_center()
+        .gap_1p5()
         .h(Metrics::CONTROL_HEIGHT)
         .w_full()
-        .rounded_sm()
-        .overflow_hidden()
-        .bg(theme.surface_sunken)
-        .border_1()
-        .border_color(theme.border_subtle)
         .cursor_pointer()
-        .hover(|this| this.border_color(theme.border))
-        // The fill sits behind the labels so the text stays readable at every position.
         .child(
             div()
-                .absolute()
-                .left_0()
-                .top_0()
-                .bottom_0()
-                .w(relative(fraction))
-                .bg(Theme::translucent(fill, 0.45)),
+                .flex_1()
+                .min_w_0()
+                .text_xs()
+                .text_color(theme.text_muted)
+                .truncate()
+                .child(label.into()),
         )
         .child(
             div()
                 .relative()
                 .flex()
+                .flex_1()
+                .min_w_0()
                 .items_center()
-                .justify_between()
-                .size_full()
-                .px_1p5()
-                .text_xs()
-                .child(div().text_color(theme.text_muted).child(label.into()))
-                .child(div().text_color(theme.text).child(value_text.into())),
+                .h_full()
+                .rounded(Metrics::RADIUS_SM)
+                .overflow_hidden()
+                .bg(theme.surface_sunken)
+                .border_1()
+                .border_color(theme.border_subtle)
+                .hover(|this| this.border_color(theme.border))
+                .child(
+                    div()
+                        .absolute()
+                        .left(relative(fill_start))
+                        .top_0()
+                        .bottom_0()
+                        .w(relative(fill_width))
+                        .bg(Theme::translucent(fill, 0.28)),
+                )
+                // A hairline at the centre, so "how far from zero" is readable at a glance.
+                .when(origin == SliderFill::FromCentre, |this| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .left(relative(0.5))
+                            .w(px(1.0))
+                            .bg(theme.border),
+                    )
+                })
+                // Two ticks rather than a full-height line: the value sits in the middle of
+                // this bar, and a line through it turned "-6.0 dB" into "-6.0|dB". Marking
+                // only the top and bottom edges reads just as precisely and never crosses text.
+                .when(fraction > 0.004, |this| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .h(px(5.0))
+                            .left(relative(fraction))
+                            .w(px(2.0))
+                            .bg(fill),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .bottom_0()
+                            .h(px(5.0))
+                            .left(relative(fraction))
+                            .w(px(2.0))
+                            .bg(fill),
+                    )
+                })
+                .child(
+                    div()
+                        .relative()
+                        .flex()
+                        .justify_end()
+                        .w_full()
+                        .px_1p5()
+                        .text_xs()
+                        .text_color(theme.text)
+                        .child(value_text.into()),
+                ),
         )
         .on_mouse_down(gpui::MouseButton::Left, on_drag_start)
         .on_scroll_wheel(on_scroll)
@@ -239,8 +454,10 @@ pub fn level_meter(
         .relative()
         .size_full()
         .overflow_hidden()
-        .rounded_sm()
+        .rounded(Metrics::RADIUS_XS)
         .bg(theme.surface_sunken)
+        .border_1()
+        .border_color(theme.border_subtle)
         .child(fill)
         .when(peak > 0.001, |this| this.child(peak_marker))
 }

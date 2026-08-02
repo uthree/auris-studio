@@ -8,7 +8,9 @@
 
 use auris_session::prelude::*;
 
-use gpui::{App, Bounds, ContentMask, Hsla, Pixels, Point, Window, fill, point, px, size};
+use gpui::{
+    App, Bounds, ContentMask, Corners, Edges, Hsla, Pixels, Point, Window, fill, point, px, size,
+};
 
 use crate::theme::Theme;
 use crate::ui::timeline::{PitchView, TimelineView};
@@ -31,11 +33,53 @@ pub fn rect(window: &mut Window, bounds: Bounds<Pixels>, color: Hsla) {
 }
 
 /// Fills a rectangle with rounded corners.
+///
+/// The radius is clamped to half the shorter side so a small rectangle turns into a lozenge
+/// rather than having its corners overlap and invert.
 pub fn rounded_rect(window: &mut Window, bounds: Bounds<Pixels>, radius: Pixels, color: Hsla) {
+    rect_with_corners(window, bounds, Corners::all(radius), color);
+}
+
+/// Fills a rectangle, rounding each corner independently.
+pub fn rect_with_corners(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    radii: Corners<Pixels>,
+    color: Hsla,
+) {
     if bounds.size.width <= px(0.0) || bounds.size.height <= px(0.0) {
         return;
     }
-    window.paint_quad(fill(bounds, color).corner_radii(radius));
+    let limit = bounds.size.width.min(bounds.size.height) / 2.0;
+    let clamp = |value: Pixels| if value > limit { limit } else { value };
+    window.paint_quad(fill(bounds, color).corner_radii(Corners {
+        top_left: clamp(radii.top_left),
+        top_right: clamp(radii.top_right),
+        bottom_right: clamp(radii.bottom_right),
+        bottom_left: clamp(radii.bottom_left),
+    }));
+}
+
+/// Draws a rounded outline with no fill.
+pub fn rounded_outline(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    radius: Pixels,
+    width: Pixels,
+    color: Hsla,
+) {
+    if bounds.size.width <= px(0.0) || bounds.size.height <= px(0.0) {
+        return;
+    }
+    let limit = bounds.size.width.min(bounds.size.height) / 2.0;
+    window.paint_quad(gpui::quad(
+        bounds,
+        Corners::all(if radius > limit { limit } else { radius }),
+        gpui::transparent_black(),
+        Edges::all(width),
+        color,
+        gpui::BorderStyle::Solid,
+    ));
 }
 
 /// Draws a one-pixel vertical line at `x` spanning the full height of `bounds`.
@@ -217,14 +261,17 @@ pub fn playhead(window: &mut Window, bounds: Bounds<Pixels>, x: Pixels, theme: &
         return;
     }
     vline(window, bounds, x, px(1.5), theme.playhead);
-    rect(
-        window,
-        Bounds {
-            origin: point(x - px(4.0), bounds.origin.y),
-            size: size(px(9.0), px(5.0)),
-        },
-        theme.playhead,
-    );
+    // A downward flag rather than a block, so the point marks the exact position the line
+    // runs through — the same shape every DAW puts at the top of its playhead.
+    let top = bounds.origin.y;
+    let mut builder = gpui::PathBuilder::fill();
+    builder.move_to(point(x - px(5.0), top));
+    builder.line_to(point(x + px(5.0), top));
+    builder.line_to(point(x, top + px(7.0)));
+    builder.close();
+    if let Ok(path) = builder.build() {
+        window.paint_path(path, theme.playhead);
+    }
 }
 
 /// Draws a miniature note preview inside a clip rectangle.
@@ -372,7 +419,10 @@ pub fn keyboard(
         let pitch = pitch as u8;
         let y = bounds.origin.y + px(row as f32 * pitch_view.row_height);
         let black = super::timeline::is_black_key(pitch);
-        rect(
+        // Only the inner end of a key is rounded: the outer end butts against the panel edge
+        // exactly as the keys of a real keyboard butt against the cheek block.
+        let radius = px((pitch_view.row_height * 0.25).min(3.0));
+        rect_with_corners(
             window,
             Bounds {
                 origin: point(bounds.origin.x, y),
@@ -385,6 +435,12 @@ pub fn keyboard(
                     },
                     px(pitch_view.row_height - 1.0),
                 ),
+            },
+            Corners {
+                top_left: px(0.0),
+                bottom_left: px(0.0),
+                top_right: radius,
+                bottom_right: radius,
             },
             if black {
                 theme.key_black

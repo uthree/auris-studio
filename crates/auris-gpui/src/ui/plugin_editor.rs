@@ -11,7 +11,7 @@ use gpui::{
 };
 
 use crate::theme::{Metrics, Theme};
-use crate::ui::widgets::{ButtonStyle, button, value_slider};
+use crate::ui::widgets::{ButtonStyle, SliderFill, button, value_slider};
 
 /// Which control shape suits a parameter.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -64,10 +64,27 @@ where
         descriptor.format(value),
         descriptor.normalize(value),
         fill,
+        slider_fill_for(descriptor),
         theme,
         on_drag_start,
         on_scroll,
     )
+}
+
+/// Which way a parameter's bar should fill.
+///
+/// A range *symmetric* about zero is an offset from a neutral centre — pan, detune, an EQ
+/// band's gain — so its bar grows outward from the middle. Merely straddling zero is not
+/// enough: a fader runs -60 to +6 dB and is still a fader, and drawing it from the middle
+/// would put unity gain two thirds along a bar that reads as half empty.
+pub fn slider_fill_for(descriptor: &ParamDescriptor) -> SliderFill {
+    let span = descriptor.max - descriptor.min;
+    let symmetric = (descriptor.min + descriptor.max).abs() <= span * 0.2;
+    if descriptor.min < 0.0 && descriptor.max > 0.0 && symmetric {
+        SliderFill::FromCentre
+    } else {
+        SliderFill::FromStart
+    }
 }
 
 /// A button row for a toggle or choice parameter.
@@ -203,6 +220,26 @@ mod tests {
         let descriptor = frequency();
         assert_eq!(value_after_drag(&descriptor, 1_000.0, 10_000.0), 20_000.0);
         assert_eq!(value_after_drag(&descriptor, 1_000.0, -10_000.0), 20.0);
+    }
+
+    #[test]
+    fn only_symmetric_ranges_fill_from_the_centre() {
+        // Offsets from a neutral centre.
+        let pan = ParamDescriptor::new(0u32, "pan", "Pan", -1.0, 1.0, 0.0);
+        let octave = ParamDescriptor::new(0u32, "oct", "Octave", -3.0, 3.0, 0.0);
+        let eq_gain = ParamDescriptor::decibels(0u32, "gain", "Gain", -24.0, 24.0, 0.0);
+        for descriptor in [&pan, &octave, &eq_gain] {
+            assert_eq!(slider_fill_for(descriptor), SliderFill::FromCentre);
+        }
+
+        // Faders straddle zero too, but they are not centred on it.
+        let fader = ParamDescriptor::decibels(0u32, "level", "Level", -60.0, 6.0, 0.0);
+        let track = ParamDescriptor::decibels(0u32, "vol", "Volume", -60.0, 12.0, 0.0);
+        // And plenty of parameters never go negative at all.
+        let percent = ParamDescriptor::percent(0u32, "mix", "Mix", 0.5);
+        for descriptor in [&fader, &track, &percent] {
+            assert_eq!(slider_fill_for(descriptor), SliderFill::FromStart);
+        }
     }
 
     #[test]

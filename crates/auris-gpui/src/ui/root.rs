@@ -3,22 +3,27 @@
 use auris_session::prelude::*;
 
 use gpui::{
-    Context, IntoElement, MouseMoveEvent, MouseUpEvent, Render, Window, div, prelude::*, px,
+    Axis, Context, IntoElement, MouseMoveEvent, MouseUpEvent, Render, Window, div, prelude::*, px,
     relative,
 };
 
 use crate::actions;
 use crate::app::{AurisApp, Drag, EditorTab};
 use crate::theme::Theme;
+use crate::ui::widgets::splitter;
 
 impl Render for AurisApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Pointer coordinates arrive in window space, and several hit tests need to know how
-        // tall the window is to locate the bottom panel; record it once per frame.
+        // Pointer coordinates arrive in window space, and the resize handlers need to know how
+        // tall the window is to bound the bottom panel; record it once per frame.
         self.viewport_height = window.viewport_size().height;
-        self.arrangement_width = window.viewport_size().width
-            - crate::theme::Metrics::TRACK_HEADER_WIDTH
-            - crate::theme::Metrics::INSPECTOR_WIDTH;
+        // Sourced from where the lanes were actually painted, so it stays right through a
+        // panel resize instead of being re-derived from constants that no longer hold.
+        self.arrangement_width = self
+            .canvas
+            .lanes
+            .get()
+            .map_or(window.viewport_size().width, |bounds| bounds.size.width);
 
         // Keep the playhead on screen while the transport rolls, but never fight the user's
         // own scrolling when it is stopped.
@@ -29,13 +34,44 @@ impl Render for AurisApp {
         }
 
         let theme = self.theme.clone();
+        let panels = self.panels.clone();
         let transport = self.render_transport(window, cx);
         let arrangement = self.render_arrangement(window, cx);
-        let editor = match self.editor {
+        let editor = panels.editor_visible.then(|| match self.editor {
             EditorTab::PianoRoll => self.render_piano_roll(window, cx),
             EditorTab::Mixer => self.render_mixer(window, cx).into_any_element(),
-        };
-        let inspector = self.render_inspector(window, cx);
+        });
+        let inspector = panels
+            .inspector_visible
+            .then(|| self.render_inspector(window, cx));
+        let editor_splitter = panels.editor_visible.then(|| {
+            splitter(
+                "split-editor",
+                Axis::Horizontal,
+                &theme,
+                cx.listener(|this, event: &gpui::MouseDownEvent, _, _| {
+                    let start_height = this.panels.editor_height;
+                    this.begin_drag(Drag::ResizeEditor {
+                        start_y: event.position.y,
+                        start_height,
+                    });
+                }),
+            )
+        });
+        let inspector_splitter = panels.inspector_visible.then(|| {
+            splitter(
+                "split-inspector",
+                Axis::Vertical,
+                &theme,
+                cx.listener(|this, event: &gpui::MouseDownEvent, _, _| {
+                    let start_width = this.panels.inspector_width;
+                    this.begin_drag(Drag::ResizeInspector {
+                        start_x: event.position.x,
+                        start_width,
+                    });
+                }),
+            )
+        });
         let status = self.render_status_bar();
         let export_overlay = self.render_export_overlay(cx);
 
@@ -70,6 +106,8 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_panic_stop))
             .on_action(cx.listener(Self::on_zoom_in))
             .on_action(cx.listener(Self::on_zoom_out))
+            .on_action(cx.listener(Self::on_toggle_inspector))
+            .on_action(cx.listener(Self::on_toggle_editor))
             // Drags are tracked on the root so they keep working after the pointer leaves the
             // control that started them, which is what makes a fader usable.
             .on_mouse_move(cx.listener(Self::on_mouse_move))
@@ -87,17 +125,23 @@ impl Render for AurisApp {
                             .flex_1()
                             .min_w_0()
                             .child(arrangement)
-                            .child(
+                            .children(editor_splitter)
+                            .children(editor.map(|editor| {
                                 div()
-                                    .h(crate::theme::Metrics::EDITOR_HEIGHT)
+                                    .h(panels.editor_height)
                                     .flex_shrink_0()
-                                    .border_t_1()
-                                    .border_color(theme.border)
                                     .flex()
-                                    .child(editor),
-                            ),
+                                    .child(editor)
+                            })),
                     )
-                    .child(inspector),
+                    .children(inspector_splitter)
+                    .children(inspector.map(|inspector| {
+                        div()
+                            .w(panels.inspector_width)
+                            .flex_shrink_0()
+                            .flex()
+                            .child(inspector)
+                    })),
             )
             .child(status)
             .children(export_overlay)
@@ -156,7 +200,7 @@ impl AurisApp {
                         .gap_2()
                         .w(px(420.0))
                         .p_4()
-                        .rounded_lg()
+                        .rounded(crate::theme::Metrics::RADIUS_LG)
                         .bg(theme.surface_raised)
                         .border_1()
                         .border_color(theme.border)
@@ -166,7 +210,7 @@ impl AurisApp {
                             div()
                                 .h(px(6.0))
                                 .w_full()
-                                .rounded_sm()
+                                .rounded(crate::theme::Metrics::RADIUS_SM)
                                 .overflow_hidden()
                                 .bg(theme.surface_sunken)
                                 .child(
@@ -271,6 +315,18 @@ impl AurisApp {
                 let delta = f64::from(f32::from(event.position.x - start_x)) * 0.25;
                 self.session.set_bpm(start_bpm + delta);
             }
+            Drag::ResizeInspector {
+                start_x,
+                start_width,
+            } => self.resize_inspector(start_width, event.position.x - start_x),
+            Drag::ResizeEditor {
+                start_y,
+                start_height,
+            } => self.resize_editor(start_height, event.position.y - start_y),
+            Drag::ResizeHeaders {
+                start_x,
+                start_width,
+            } => self.resize_headers(start_width, event.position.x - start_x),
         }
         cx.notify();
     }
@@ -441,6 +497,26 @@ impl AurisApp {
 
     fn on_zoom_out(&mut self, _: &actions::ZoomOut, _window: &mut Window, cx: &mut Context<Self>) {
         self.timeline.zoom_by(1.0 / 1.3, px(0.0));
+        cx.notify();
+    }
+
+    fn on_toggle_inspector(
+        &mut self,
+        _: &actions::ToggleInspector,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_inspector();
+        cx.notify();
+    }
+
+    fn on_toggle_editor(
+        &mut self,
+        _: &actions::ToggleEditor,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_editor();
         cx.notify();
     }
 }

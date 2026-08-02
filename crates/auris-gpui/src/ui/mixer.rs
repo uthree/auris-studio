@@ -5,7 +5,9 @@ use auris_session::prelude::*;
 use gpui::{AnyElement, Axis, IntoElement, Window, div, prelude::*, px};
 
 use crate::app::{AurisApp, InspectorTab};
-use crate::ui::widgets::{ButtonStyle, button, db_to_meter_position, level_meter};
+use crate::theme::Metrics;
+use crate::ui::icons::Icon;
+use crate::ui::widgets::{ButtonStyle, button, db_to_meter_position, icon_label, level_meter};
 
 /// Width of one channel strip.
 const STRIP_WIDTH: f32 = 128.0;
@@ -116,7 +118,7 @@ impl AurisApp {
             .w(px(STRIP_WIDTH))
             .flex_shrink_0()
             .p_1p5()
-            .rounded_md()
+            .rounded(Metrics::RADIUS_MD)
             .bg(theme.surface)
             .border_1()
             .border_color(if selected {
@@ -262,19 +264,17 @@ impl AurisApp {
             .w(px(STRIP_WIDTH))
             .flex_shrink_0()
             .p_1p5()
-            .rounded_md()
+            .rounded(Metrics::RADIUS_MD)
             .bg(theme.surface_raised)
             .border_1()
             .border_color(theme.border)
             .child(div().text_xs().text_color(theme.text).child("Master"))
             .child(self.fader("master-gain", "Vol", ParamTarget::MasterGain, gain_db, cx))
             .child(self.fader("master-pan", "Pan", ParamTarget::MasterPan, pan, cx))
-            .child(button(
+            .child(icon_label(
                 "master-add-fx",
-                "+ Effect",
-                ButtonStyle::Normal,
-                false,
-                theme.accent,
+                Icon::Plus,
+                "Effect",
                 &theme,
                 cx.listener(|this, _, _, cx| {
                     // The browser adds to the selected track, so clear the selection first to
