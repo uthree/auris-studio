@@ -678,7 +678,11 @@ impl AurisApp {
         );
         match opened {
             Ok(handle) => self.settings_window = Some(handle),
-            Err(error) => self.set_status(format!("Could not open settings: {error}")),
+            Err(error) => {
+                let text =
+                    messages::failed(self.language, self.t(Key::Settings), &error.to_string());
+                self.set_status(text);
+            }
         }
     }
 
