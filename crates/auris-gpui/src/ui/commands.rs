@@ -7,6 +7,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use std::collections::BTreeSet;
+
 use auris_i18n::{Key, messages};
 use auris_session::prelude::*;
 use gpui::{Context, Window};
@@ -33,6 +35,20 @@ impl AurisApp {
         self.select_clip(first);
         if self.selected_clip.is_some() {
             self.center_roll_on_selection();
+        }
+    }
+
+    /// Selects the track a press landed on, keeping a selection that already includes what was
+    /// pressed.
+    ///
+    /// [`Self::select_track`] narrows the clip selection to that track's first clip, which is
+    /// right for a press on a header and wrong for a press on a clip that spans tracks with
+    /// others — grabbing one of several selected clips must not drop the rest.
+    pub(crate) fn select_track_for_press(&mut self, track: TrackId, clip: Option<ClipId>) {
+        if press_keeps_selection(&self.selected_clips, clip) {
+            self.selected_track = Some(track);
+        } else {
+            self.select_track(track);
         }
     }
 
@@ -394,5 +410,36 @@ impl AurisApp {
     /// Length of an audio clip on the musical timeline.
     pub(crate) fn audio_clip_length_ticks(&self, clip: &AudioClip) -> Ticks {
         self.session.audio_clip_length_ticks(clip)
+    }
+}
+
+/// Whether a press on `clip` should leave the clip selection as it is.
+///
+/// Pulled out of the view so the rule can be tested: pressing a clip that is already part of a
+/// selection spanning several tracks used to narrow the selection down to that track's first
+/// clip, so dragging one of several selected clips moved only that one.
+fn press_keeps_selection(selected: &BTreeSet<ClipId>, clip: Option<ClipId>) -> bool {
+    clip.is_some_and(|id| selected.contains(&id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pressing_a_clip_that_is_already_selected_keeps_the_rest() {
+        let selected = BTreeSet::from([ClipId(1), ClipId(2)]);
+        assert!(press_keeps_selection(&selected, Some(ClipId(2))));
+    }
+
+    #[test]
+    fn pressing_anywhere_else_starts_a_new_selection() {
+        let selected = BTreeSet::from([ClipId(1), ClipId(2)]);
+        assert!(!press_keeps_selection(&selected, Some(ClipId(3))));
+        assert!(
+            !press_keeps_selection(&selected, None),
+            "a press on empty lane space is not a press on a selected clip"
+        );
+        assert!(!press_keeps_selection(&BTreeSet::new(), Some(ClipId(1))));
     }
 }

@@ -506,9 +506,8 @@ impl AurisApp {
             cx.notify();
             return;
         };
-        self.select_track(track_id);
-
         let under_pointer = self.clip_at(track_id, tick);
+        self.select_track_for_press(track_id, under_pointer.map(|(id, _, _)| id));
         if let Some((clip_id, _, _)) = under_pointer
             && self.pointer.delete.matches(event)
         {
@@ -566,8 +565,9 @@ impl AurisApp {
 
         let menu = match self.track_at_y(local.y) {
             Some((track_id, _)) => {
-                self.select_track(track_id);
-                match self.clip_at(track_id, tick) {
+                let under_pointer = self.clip_at(track_id, tick);
+                self.select_track_for_press(track_id, under_pointer.map(|(id, _, _)| id));
+                match under_pointer {
                     Some((clip_id, _, _)) => {
                         // A right-click on a clip selects it, so Split at Playhead and the
                         // inspector are talking about the clip the menu is titled after — but a
