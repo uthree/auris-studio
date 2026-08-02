@@ -31,6 +31,10 @@ pub enum SessionError {
     #[error("no clip with id {0}")]
     UnknownClip(u64),
 
+    /// The clip cannot be divided at the requested position.
+    #[error("clip {0} cannot be split there")]
+    CannotSplit(u64),
+
     /// The operation only applies to one kind of track.
     #[error("track {id} is {actual}, but this needs {expected}")]
     WrongTrackKind {

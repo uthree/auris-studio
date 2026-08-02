@@ -654,6 +654,18 @@ impl Session {
         Ok(())
     }
 
+    /// Copies a track, its clips and its whole effect chain, below the original.
+    pub fn duplicate_track(&mut self, id: TrackId) -> Result<TrackId, SessionError> {
+        self.require_track(id)?;
+        self.record("Duplicate track");
+        let copy = self
+            .project
+            .duplicate_track(id)
+            .ok_or(SessionError::UnknownTrack(id.0))?;
+        self.invalidate_graph();
+        Ok(copy)
+    }
+
     /// Sets a track's lane height, for frontends that draw one.
     pub fn set_track_height(&mut self, id: TrackId, height: f32) -> Result<(), SessionError> {
         self.require_track(id)?;
@@ -707,6 +719,74 @@ impl Session {
         Ok(())
     }
 
+    /// Copies a clip onto its own track, immediately after the original.
+    pub fn duplicate_clip(&mut self, clip: ClipId) -> Result<ClipId, SessionError> {
+        self.require_clip(clip)?;
+        self.record("Duplicate clip");
+        let copy = self
+            .project
+            .duplicate_clip(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))?;
+        self.invalidate_graph();
+        Ok(copy)
+    }
+
+    /// Divides a clip in two at a timeline position, returning the right-hand piece.
+    pub fn split_clip(&mut self, clip: ClipId, at: Ticks) -> Result<ClipId, SessionError> {
+        self.require_clip(clip)?;
+        // The split is attempted before any history is recorded. A position outside the clip
+        // leaves the document untouched, and an undo step that undoes nothing visible is worse
+        // than no step at all.
+        let before = self.project.clone();
+        let Some(right) = self.project.split_clip(clip, at) else {
+            return Err(SessionError::CannotSplit(clip.0));
+        };
+        if self.transaction.is_none() {
+            self.history.push("Split clip", &before);
+        }
+        self.dirty = true;
+        self.invalidate_graph();
+        Ok(right)
+    }
+
+    /// Renames a clip of either kind.
+    pub fn rename_clip(
+        &mut self,
+        clip: ClipId,
+        name: impl Into<String>,
+    ) -> Result<(), SessionError> {
+        self.require_clip(clip)?;
+        self.record("Rename clip");
+        let name = name.into();
+        if let Some(midi) = self.project.midi_clip_mut(clip) {
+            midi.name = name;
+        } else if let Some(audio) = self.project.audio_clip_mut(clip) {
+            audio.name = name;
+        }
+        Ok(())
+    }
+
+    /// Silences or unsilences a single clip.
+    pub fn set_clip_muted(&mut self, clip: ClipId, muted: bool) -> Result<(), SessionError> {
+        self.require_clip(clip)?;
+        self.record("Mute clip");
+        if let Some(midi) = self.project.midi_clip_mut(clip) {
+            midi.muted = muted;
+        } else if let Some(audio) = self.project.audio_clip_mut(clip) {
+            audio.muted = muted;
+        }
+        self.invalidate_graph();
+        Ok(())
+    }
+
+    fn require_clip(&self, clip: ClipId) -> Result<(), SessionError> {
+        if self.project.midi_clip(clip).is_some() || self.audio_clip_exists(clip) {
+            Ok(())
+        } else {
+            Err(SessionError::UnknownClip(clip.0))
+        }
+    }
+
     /// Moves a clip of either kind to a new start position.
     pub fn move_clip(&mut self, clip: ClipId, start: Ticks) -> Result<(), SessionError> {
         self.record("Move clip");
@@ -757,13 +837,7 @@ impl Session {
 
     /// Length of an audio clip on the musical timeline.
     pub fn audio_clip_length_ticks(&self, clip: &auris_core::AudioClip) -> Ticks {
-        let rate = self.project.sample_rate.max(1.0);
-        let start_seconds = self.project.tempo_map.ticks_to_seconds(clip.start).0;
-        let end_seconds = start_seconds + clip.length_frames as f64 / rate;
-        self.project
-            .tempo_map
-            .seconds_to_ticks(Seconds(end_seconds))
-            - clip.start
+        self.project.audio_clip_length_ticks(clip)
     }
 
     // ---------------------------------------------------------------- notes
@@ -805,6 +879,91 @@ impl Session {
                 if index < target.notes.len() {
                     target.notes.remove(index);
                 }
+            }
+        }
+        self.invalidate_graph();
+        Ok(())
+    }
+
+    /// Copies notes, offset by the length of the selection, and returns the copies' indices.
+    ///
+    /// Offsetting by the whole selection rather than by one note's length is what makes
+    /// repeated duplication chain a figure end to end instead of piling copies on top of it.
+    pub fn duplicate_notes(
+        &mut self,
+        clip: ClipId,
+        indices: &[usize],
+    ) -> Result<Vec<usize>, SessionError> {
+        let Some(target) = self.project.midi_clip(clip).map(|(_, clip)| clip) else {
+            return Err(SessionError::UnknownClip(clip.0));
+        };
+        let chosen: Vec<Note> = indices
+            .iter()
+            .filter_map(|index| target.notes.get(*index).copied())
+            .collect();
+        if chosen.is_empty() {
+            return Ok(Vec::new());
+        }
+        let first = chosen
+            .iter()
+            .map(|note| note.start)
+            .min()
+            .unwrap_or_default();
+        let last = chosen.iter().map(Note::end).max().unwrap_or_default();
+        let offset = last - first;
+
+        self.record("Duplicate notes");
+        let grid = self.project.grid;
+        let Some(target) = self.project.midi_clip_mut(clip) else {
+            return Err(SessionError::UnknownClip(clip.0));
+        };
+        let base = target.notes.len();
+        for note in chosen {
+            target.notes.push(Note {
+                start: note.start + offset,
+                ..note
+            });
+        }
+        target.fit_length_to_notes(grid);
+        let copies = (base..target.notes.len()).collect();
+        self.invalidate_graph();
+        Ok(copies)
+    }
+
+    /// Shifts notes in pitch, keeping the intervals between them.
+    ///
+    /// The whole selection moves by the same amount or not at all: clamping each note to the
+    /// MIDI range separately would silently flatten a chord into a cluster.
+    pub fn transpose_notes(
+        &mut self,
+        clip: ClipId,
+        indices: &[usize],
+        semitones: i32,
+    ) -> Result<(), SessionError> {
+        let Some(target) = self.project.midi_clip(clip).map(|(_, clip)| clip) else {
+            return Err(SessionError::UnknownClip(clip.0));
+        };
+        let pitches: Vec<u8> = indices
+            .iter()
+            .filter_map(|index| target.notes.get(*index).map(|note| note.pitch))
+            .collect();
+        let (Some(lowest), Some(highest)) =
+            (pitches.iter().min().copied(), pitches.iter().max().copied())
+        else {
+            return Ok(());
+        };
+        let shift = semitones.max(-(lowest as i32)).min(127 - highest as i32);
+        if shift == 0 {
+            return Ok(());
+        }
+
+        self.record("Transpose notes");
+        let Some(target) = self.project.midi_clip_mut(clip) else {
+            return Err(SessionError::UnknownClip(clip.0));
+        };
+        for index in indices {
+            if let Some(note) = target.notes.get_mut(*index) {
+                note.pitch = (note.pitch as i32 + shift).clamp(0, 127) as u8;
             }
         }
         self.invalidate_graph();
@@ -1526,6 +1685,117 @@ mod tests {
         assert!(!session.can_undo());
         assert!(session.path().is_none());
         assert_eq!(session.project().tracks.len(), 1);
+    }
+
+    /// A session with one instrument track holding a one-bar clip of two notes.
+    fn session_with_clip() -> (Session, TrackId, ClipId) {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::from_beats(4.0))
+            .unwrap();
+        session
+            .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        session
+            .add_note(clip, Note::new(64, Ticks::QUARTER, Ticks::QUARTER))
+            .unwrap();
+        (session, track, clip)
+    }
+
+    #[test]
+    fn duplicating_a_track_is_one_undo_step() {
+        let (mut session, track, _) = session_with_clip();
+        let copy = session.duplicate_track(track).unwrap();
+        assert_eq!(session.project().tracks.len(), 2);
+        assert_ne!(copy, track);
+
+        session.undo().unwrap();
+        assert_eq!(session.project().tracks.len(), 1);
+    }
+
+    #[test]
+    fn a_duplicated_clip_can_be_edited_without_touching_the_original() {
+        let (mut session, _, clip) = session_with_clip();
+        let copy = session.duplicate_clip(clip).unwrap();
+
+        session
+            .move_clip(copy, Ticks::from_beats(16.0))
+            .expect("the copy is addressable in its own right");
+
+        assert_eq!(session.midi_clip(clip).unwrap().start, Ticks::ZERO);
+        assert_eq!(
+            session.midi_clip(copy).unwrap().start,
+            Ticks::from_beats(16.0)
+        );
+    }
+
+    #[test]
+    fn splitting_outside_a_clip_records_no_undo_step() {
+        let (mut session, _, clip) = session_with_clip();
+        session.forget_history();
+
+        let error = session.split_clip(clip, Ticks::from_beats(99.0));
+        assert!(matches!(error, Err(SessionError::CannotSplit(_))));
+        assert!(
+            !session.can_undo(),
+            "a split that did nothing must not leave an undo step behind"
+        );
+
+        let right = session.split_clip(clip, Ticks::from_beats(1.0)).unwrap();
+        assert_eq!(session.midi_clip(clip).unwrap().length, Ticks::QUARTER);
+        assert_eq!(session.midi_clip(right).unwrap().start, Ticks::QUARTER);
+        assert!(session.can_undo());
+    }
+
+    #[test]
+    fn duplicated_notes_chain_after_the_selection() {
+        let (mut session, _, clip) = session_with_clip();
+        let copies = session.duplicate_notes(clip, &[0, 1]).unwrap();
+        assert_eq!(copies, vec![2, 3]);
+
+        let notes = &session.midi_clip(clip).unwrap().notes;
+        // The selection spans two quarters, so the copies start one half-note along.
+        assert_eq!(notes[2].start, Ticks::from_beats(2.0));
+        assert_eq!(notes[2].pitch, 60);
+        assert_eq!(notes[3].start, Ticks::from_beats(3.0));
+        assert_eq!(notes[3].pitch, 64);
+    }
+
+    #[test]
+    fn transposing_keeps_the_intervals_when_it_would_run_off_the_end() {
+        let (mut session, _, clip) = session_with_clip();
+        session
+            .add_note(clip, Note::new(120, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+
+        // +12 would push 120 past 127, so the whole selection moves by 7 instead.
+        session.transpose_notes(clip, &[0, 1, 2], 12).unwrap();
+        let notes = &session.midi_clip(clip).unwrap().notes;
+        assert_eq!(notes[0].pitch, 67);
+        assert_eq!(notes[1].pitch, 71);
+        assert_eq!(notes[2].pitch, 127);
+        assert_eq!(
+            notes[1].pitch - notes[0].pitch,
+            4,
+            "a clamped transposition must not flatten the interval"
+        );
+    }
+
+    #[test]
+    fn a_muted_clip_is_silent_but_still_present() {
+        let (mut session, _, clip) = session_with_clip();
+        session.set_clip_muted(clip, true).unwrap();
+        assert!(session.midi_clip(clip).unwrap().muted);
+
+        let rendered = session
+            .render_job()
+            .render(&auris_engine::OfflineOptions::whole_project(), &mut |_| {})
+            .unwrap();
+        assert!(rendered.peak() < 1e-6, "a muted clip must not sound");
+
+        session.undo().unwrap();
+        assert!(!session.midi_clip(clip).unwrap().muted);
     }
 
     #[test]

@@ -604,6 +604,171 @@ impl Project {
         id
     }
 
+    /// Copies a track, inserting the copy directly below the original.
+    ///
+    /// Every nested id is reissued. A shallow clone would leave two clips answering to one
+    /// [`ClipId`], and every lookup here returns the *first* match — so an edit aimed at the
+    /// copy would silently land on the original.
+    pub fn duplicate_track(&mut self, id: TrackId) -> Option<TrackId> {
+        let index = self.track_index(id)?;
+        // Cloned out first so the id allocator is free to borrow `self` again.
+        let mut copy = self.tracks[index].clone();
+
+        copy.id = TrackId(self.allocate_id());
+        copy.name = format!("{} copy", copy.name);
+        for slot in &mut copy.mixer.effects {
+            slot.id = EffectSlotId(self.allocate_id());
+        }
+        match &mut copy.kind {
+            TrackKind::Instrument(inner) => {
+                for clip in &mut inner.clips {
+                    clip.id = ClipId(self.allocate_id());
+                }
+            }
+            TrackKind::Audio(inner) => {
+                for clip in &mut inner.clips {
+                    clip.id = ClipId(self.allocate_id());
+                }
+            }
+        }
+
+        let new_id = copy.id;
+        self.tracks.insert(index + 1, copy);
+        Some(new_id)
+    }
+
+    /// Copies a clip onto its own track, placed immediately after the original.
+    ///
+    /// Butting the copy up against the original is what makes repeated duplication lay out a
+    /// loop, which is the reason the command exists.
+    pub fn duplicate_clip(&mut self, id: ClipId) -> Option<ClipId> {
+        let new_id = ClipId(self.allocate_id());
+        for track in &mut self.tracks {
+            match &mut track.kind {
+                TrackKind::Instrument(inner) => {
+                    if let Some(source) = inner.clips.iter().find(|clip| clip.id == id) {
+                        let mut copy = source.clone();
+                        copy.id = new_id;
+                        copy.start = source.end();
+                        inner.clips.push(copy);
+                        return Some(new_id);
+                    }
+                }
+                TrackKind::Audio(inner) => {
+                    if let Some(index) = inner.clips.iter().position(|clip| clip.id == id) {
+                        // The length of an audio clip in ticks depends on the tempo map, which
+                        // this loop is holding a mutable borrow across — so measure it up front.
+                        let source = inner.clips[index].clone();
+                        let start = source.start;
+                        let length = audio_length_ticks(
+                            &self.tempo_map,
+                            self.sample_rate,
+                            start,
+                            source.length_frames,
+                        );
+                        let mut copy = source;
+                        copy.id = new_id;
+                        copy.start = start + length;
+                        inner.clips.push(copy);
+                        return Some(new_id);
+                    }
+                }
+            }
+        }
+        // Nothing was inserted, so the reserved id is simply never used; ids are only required
+        // to be unique, not contiguous.
+        None
+    }
+
+    /// Splits a clip in two at a timeline position, returning the new right-hand piece.
+    ///
+    /// Returns `None` when `at` is not strictly inside the clip: a split at either edge would
+    /// produce an empty piece, which is a worse outcome than doing nothing.
+    pub fn split_clip(&mut self, id: ClipId, at: Ticks) -> Option<ClipId> {
+        // Both branches take an owned copy before touching the id allocator: holding a borrow
+        // of the original clip across `allocate_id` would borrow `self` twice.
+        if let Some((track_id, clip)) = self
+            .midi_clip(id)
+            .map(|(track, clip)| (track, clip.clone()))
+        {
+            if at <= clip.start || at >= clip.end() {
+                return None;
+            }
+            let offset = at - clip.start;
+            let mut right = clip.clone();
+            right.id = ClipId(self.allocate_id());
+            right.start = at;
+            right.length = clip.end() - at;
+            right.notes = split_notes_right(&clip.notes, offset);
+
+            let new_id = right.id;
+            let left = self.midi_clip_mut(id)?;
+            left.notes = split_notes_left(&clip.notes, offset);
+            left.length = offset;
+            self.track_mut(track_id)?
+                .kind
+                .as_instrument_mut()?
+                .clips
+                .push(right);
+            return Some(new_id);
+        }
+
+        let (track_id, clip) = self.tracks.iter().find_map(|track| {
+            track
+                .kind
+                .as_audio()?
+                .clips
+                .iter()
+                .find(|clip| clip.id == id)
+                .map(|clip| (track.id, clip.clone()))
+        })?;
+        let end = clip.start + self.audio_clip_length_ticks(&clip);
+        if at <= clip.start || at >= end || clip.length_frames < 2 {
+            return None;
+        }
+        // Trimming is expressed in source frames, so the split point goes back through the
+        // tempo map rather than being stored as a tick.
+        let seconds =
+            self.tempo_map.ticks_to_seconds(at).0 - self.tempo_map.ticks_to_seconds(clip.start).0;
+        let frames = ((seconds * self.sample_rate) as u64).clamp(1, clip.length_frames - 1);
+
+        let mut right = clip.clone();
+        right.id = ClipId(self.allocate_id());
+        right.start = at;
+        right.offset_frames = clip.offset_frames + frames;
+        right.length_frames = clip.length_frames - frames;
+        // Each fade belongs to the edge it was drawn on: the left piece keeps the fade-in, the
+        // right piece keeps the fade-out, and neither inherits a fade at the cut — a fade there
+        // would be an artefact the user never asked for.
+        right.fade_in_frames = 0;
+        right.fade_out_frames = clip.fade_out_frames.min(right.length_frames);
+
+        let new_id = right.id;
+        let left = self.audio_clip_mut(id)?;
+        left.length_frames = frames;
+        left.fade_out_frames = 0;
+        left.fade_in_frames = left.fade_in_frames.min(frames);
+        self.track_mut(track_id)?
+            .kind
+            .as_audio_mut()?
+            .clips
+            .push(right);
+        Some(new_id)
+    }
+
+    /// Length of an audio clip on the musical timeline.
+    ///
+    /// A clip's trim is in source frames, so its length in ticks depends on where it sits: the
+    /// same number of frames spans fewer ticks in a faster passage.
+    pub fn audio_clip_length_ticks(&self, clip: &AudioClip) -> Ticks {
+        audio_length_ticks(
+            &self.tempo_map,
+            self.sample_rate,
+            clip.start,
+            clip.length_frames,
+        )
+    }
+
     /// Removes a track, returning `true` when it existed.
     pub fn remove_track(&mut self, id: TrackId) -> bool {
         let before = self.tracks.len();
@@ -852,6 +1017,50 @@ impl Project {
     }
 }
 
+/// Length of `length_frames` source frames, placed at `start`, measured in ticks.
+fn audio_length_ticks(
+    tempo_map: &TempoMap,
+    sample_rate: f64,
+    start: Ticks,
+    length_frames: u64,
+) -> Ticks {
+    let rate = sample_rate.max(1.0);
+    let start_seconds = tempo_map.ticks_to_seconds(start).0;
+    let end_seconds = start_seconds + length_frames as f64 / rate;
+    tempo_map.seconds_to_ticks(crate::time::Seconds(end_seconds)) - start
+}
+
+/// The notes left of a split at `offset`, clip-relative.
+///
+/// A note straddling the cut is truncated rather than dropped: the split is a timeline edit,
+/// and losing the sounding half of a held note is not what anyone means by it.
+fn split_notes_left(notes: &[Note], offset: Ticks) -> Vec<Note> {
+    notes
+        .iter()
+        .filter(|note| note.start < offset)
+        .map(|note| Note {
+            length: (offset - note.start).min(note.length),
+            ..*note
+        })
+        .collect()
+}
+
+/// The notes right of a split at `offset`, rebased so they are relative to the new clip.
+fn split_notes_right(notes: &[Note], offset: Ticks) -> Vec<Note> {
+    notes
+        .iter()
+        .filter(|note| note.end() > offset)
+        .map(|note| {
+            let start = note.start.max(offset);
+            Note {
+                start: start - offset,
+                length: note.end() - start,
+                ..*note
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -942,6 +1151,124 @@ mod tests {
         assert!((clip.fade_gain_at(50) - 0.5).abs() < 1e-6);
         assert_eq!(clip.fade_gain_at(500), 1.0);
         assert!(clip.fade_gain_at(999) < 0.02);
+    }
+
+    #[test]
+    fn a_duplicated_track_shares_no_ids_with_its_original() {
+        let mut project = demo_project();
+        let original = project.tracks[0].id;
+        project.add_effect(Some(original), "auris.fx.gain").unwrap();
+
+        let copy = project.duplicate_track(original).unwrap();
+        assert_eq!(project.track_index(copy), Some(1), "the copy sits below");
+        assert_ne!(copy, original);
+
+        let before = project.track(original).unwrap();
+        let after = project.track(copy).unwrap();
+        assert_eq!(after.name, format!("{} copy", before.name));
+
+        let ids = |track: &Track| -> Vec<u64> {
+            let mut ids: Vec<u64> = track.mixer.effects.iter().map(|slot| slot.id.0).collect();
+            if let Some(inner) = track.kind.as_instrument() {
+                ids.extend(inner.clips.iter().map(|clip| clip.id.0));
+            }
+            ids
+        };
+        let original_ids = ids(before);
+        assert!(!original_ids.is_empty(), "the fixture has ids to reissue");
+        for id in ids(after) {
+            assert!(
+                !original_ids.contains(&id),
+                "id {id} is shared with the original, so edits would hit the wrong object"
+            );
+        }
+    }
+
+    #[test]
+    fn a_duplicated_clip_lands_immediately_after_the_original() {
+        let mut project = demo_project();
+        let original = project.tracks[0].kind.as_instrument().unwrap().clips[0].clone();
+
+        let copy = project.duplicate_clip(original.id).unwrap();
+        let (_, copy) = project.midi_clip(copy).unwrap();
+        assert_eq!(copy.start, original.end());
+        assert_eq!(copy.length, original.length);
+        assert_eq!(copy.notes, original.notes);
+        assert_ne!(copy.id, original.id);
+    }
+
+    #[test]
+    fn splitting_a_midi_clip_divides_its_notes_and_truncates_the_straddler() {
+        let mut project = Project::new("Demo", 48_000.0);
+        let track = project.add_instrument_track("Lead", "x");
+        let clip = project
+            .add_midi_clip(track, "Riff", Ticks::QUARTER, Ticks::from_beats(4.0))
+            .unwrap();
+        let notes = &mut project.midi_clip_mut(clip).unwrap().notes;
+        notes.push(Note::new(60, Ticks::ZERO, Ticks::QUARTER)); // wholly left
+        notes.push(Note::new(62, Ticks::QUARTER, Ticks::from_beats(2.0))); // straddles
+        notes.push(Note::new(64, Ticks::from_beats(3.0), Ticks::QUARTER)); // wholly right
+
+        // Two beats into a clip that starts one beat in.
+        let right = project
+            .split_clip(clip, Ticks::QUARTER + Ticks::from_beats(2.0))
+            .unwrap();
+
+        let (_, left) = project.midi_clip(clip).unwrap();
+        assert_eq!(left.start, Ticks::QUARTER);
+        assert_eq!(left.length, Ticks::from_beats(2.0));
+        assert_eq!(left.notes.len(), 2);
+        assert_eq!(left.notes[1].pitch, 62);
+        assert_eq!(
+            left.notes[1].end(),
+            Ticks::from_beats(2.0),
+            "the straddling note is cut at the split, not left hanging past the clip"
+        );
+
+        let (_, right) = project.midi_clip(right).unwrap();
+        assert_eq!(right.start, Ticks::QUARTER + Ticks::from_beats(2.0));
+        assert_eq!(right.length, Ticks::from_beats(2.0));
+        assert_eq!(right.notes.len(), 2);
+        assert_eq!(right.notes[0].pitch, 62);
+        assert_eq!(right.notes[0].start, Ticks::ZERO, "notes are rebased");
+        assert_eq!(right.notes[0].length, Ticks::QUARTER);
+        assert_eq!(right.notes[1].start, Ticks::QUARTER);
+    }
+
+    #[test]
+    fn a_split_outside_the_clip_changes_nothing() {
+        let mut project = demo_project();
+        let clip = project.tracks[0].kind.as_instrument().unwrap().clips[0].id;
+        let before = project.clone();
+
+        assert!(project.split_clip(clip, Ticks::ZERO).is_none());
+        assert!(project.split_clip(clip, Ticks::from_beats(4.0)).is_none());
+        assert!(project.split_clip(clip, Ticks::from_beats(99.0)).is_none());
+        assert_eq!(project.tracks, before.tracks);
+    }
+
+    #[test]
+    fn splitting_an_audio_clip_divides_its_frames_without_losing_any() {
+        let mut project = Project::new("Demo", 48_000.0);
+        let track = project.add_audio_track("Audio");
+        let source = project.add_audio_source("s", PathBuf::new(), 96_000, 48_000.0, 2);
+        let clip = project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
+        project.audio_clip_mut(clip).unwrap().fade_in_frames = 480;
+        project.audio_clip_mut(clip).unwrap().fade_out_frames = 480;
+
+        // 96 000 frames at 48 kHz is two seconds; at 120 BPM that is one bar.
+        let right = project.split_clip(clip, Ticks::from_beats(2.0)).unwrap();
+
+        let left = project.audio_clip_mut(clip).unwrap().clone();
+        let right = project.audio_clip_mut(right).unwrap().clone();
+        assert_eq!(left.offset_frames, 0);
+        assert_eq!(left.length_frames + right.length_frames, 96_000);
+        assert_eq!(right.offset_frames, left.length_frames, "no frames skipped");
+        assert_eq!(right.start, Ticks::from_beats(2.0));
+        assert_eq!(left.fade_in_frames, 480, "the fade-in stays on the left");
+        assert_eq!(left.fade_out_frames, 0, "no fade is invented at the cut");
+        assert_eq!(right.fade_in_frames, 0);
+        assert_eq!(right.fade_out_frames, 480);
     }
 
     #[test]
