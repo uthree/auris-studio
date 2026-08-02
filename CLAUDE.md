@@ -14,6 +14,27 @@ Keep the feature even on a machine where Xcode *is* selected. It costs a one-off
 compile at start-up and in exchange the project builds with nothing but the Command Line
 Tools, which is worth far more than those milliseconds.
 
+## Platforms
+
+macOS and Windows both run the desktop application, and CI builds the whole workspace on both.
+Development happens on macOS, so the Windows-only paths are the ones that rot; the rules that
+keep them alive:
+
+* **Never name a platform key.** gpui's `Modifiers::platform` is ⌘ on macOS and the *Windows
+  key* on Windows, which the shell claims first. Read `Modifiers::secondary()`, and write
+  `secondary-` in a keystroke, never `cmd-`.
+* **Decide with `cfg!`, not `#[cfg]`,** wherever it is a choice rather than an API that only
+  exists on one platform. Both arms then compile and their tests run everywhere, which is the
+  only reason the Windows menu bar can be checked from a Mac.
+* **The keystroke a user sees is not the keystroke that is stored.** `secondary-s` is stored;
+  `actions::normalise_keystroke` turns it into what the keyboard reports, for comparing, and
+  `actions::menu_keystroke` into ⌘S or Ctrl+S, for reading.
+* **Windows sets no locale variables.** `Language::from_system_locale` is what makes a Japanese
+  Windows install come up in Japanese.
+
+wgpu's `dx12` backend is off because it does not compile at these versions — `gpu-allocator`
+resolves `windows` to 0.61 while `wgpu-hal` uses 0.62. Windows runs `auris-gpu` on Vulkan.
+
 ## Layout
 
 ```

@@ -49,6 +49,45 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+  # The whole workspace again, on the other platform the desktop application ships for.
+  #
+  # This job is the only thing standing between Windows and quiet rot, because nobody here
+  # develops on it. It has already caught the things that compile everywhere and work nowhere:
+  # gpui's `platform` modifier is ⌘ on macOS and the Windows key on Windows, and half the
+  # behaviour that follows from that is decided by `cfg!` rather than by types.
+  #
+  # No system libraries: cpal talks to WASAPI through the `windows` crate, wgpu loads its
+  # backends at run time, and gpui's DirectX renderer needs nothing beyond the Windows SDK the
+  # runner already has.
+  windows:
+    name: Test on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy
+
+      - name: Cache the build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: windows-cargo-
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --locked
+
+      # No audio device and no GPU on the runner; every test that needs either checks first and
+      # skips. What this does exercise is every `cfg!(target_os = ...)` arm the other two jobs
+      # never take — the key bindings, the pointer gestures, the menu bar and the locale.
+      - name: Test
+        run: cargo test --workspace --locked
+
   # Everything except the gpui frontend, on a platform with no Apple frameworks at all.
   #
   # This is the layering rule from CLAUDE.md turned into a job: nothing at or below
