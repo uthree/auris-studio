@@ -48,11 +48,16 @@ pub fn render_block(
     }
 }
 
-/// Length of the next segment: bounded by what is left, by the prepared block size, and by the
-/// distance to the loop end.
+/// Length of the next segment: bounded by what is left, by the prepared block size, and — while
+/// the transport is rolling — by the distance to the loop end.
+///
+/// A stopped transport is excluded because [`Transport::advance`] leaves it where it is: it can
+/// never reach the loop end, so splitting there would only re-run the whole graph on a one-frame
+/// segment for every remaining frame of the callback, and turn every gain ramp into a step.
 fn segment_frames(graph: &RenderGraph, transport: &Transport, remaining: usize) -> usize {
     let mut frames = remaining.min(graph.max_block());
-    if let Some(to_loop_end) = transport.frames_to_loop_end()
+    if transport.playing
+        && let Some(to_loop_end) = transport.frames_to_loop_end()
         && to_loop_end < frames as u64
     {
         frames = to_loop_end as usize;
@@ -284,6 +289,7 @@ mod tests {
     use super::*;
     use crate::graph::RENDER_CHANNELS;
     use crate::testkit::{self, TONE_AMPLITUDE};
+    use auris_core::ParamId;
     use auris_core::param::db_to_gain;
     use auris_core::project::{AudioSourceBank, Note, Project};
     use auris_core::time::Ticks;
@@ -576,6 +582,68 @@ mod tests {
         assert_eq!(transport.position_frames, 512);
     }
 
+    /// A transport stopped one frame short of the loop end — what pressing Stop while looping
+    /// leaves behind.
+    fn stopped_at_the_loop_end() -> Transport {
+        Transport {
+            playing: false,
+            position_frames: 4_999,
+            loop_enabled: true,
+            loop_start_frames: 1_000,
+            loop_end_frames: 5_000,
+        }
+    }
+
+    #[test]
+    fn a_stopped_transport_at_the_loop_end_renders_one_segment_per_callback() {
+        let mut project = one_note_project(Ticks::ZERO, Ticks::from_beats(4.0));
+        project.add_effect(None, testkit::COUNTER_ID);
+        let mut graph = build(&project, 512);
+        let mut transport = stopped_at_the_loop_end();
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+
+        testkit::take_process_calls();
+        render_block(&mut graph, &mut transport, &mut out, false);
+        assert_eq!(
+            testkit::take_process_calls(),
+            1,
+            "a stopped playhead cannot reach the loop end, so the block must not be split"
+        );
+        assert_eq!(transport.position_frames, 4_999);
+    }
+
+    #[test]
+    fn a_stopped_transport_renders_the_same_whether_or_not_a_loop_is_enabled() {
+        // A tail effect keeps the bus ringing after the stop, and a fader move on top makes the
+        // per-segment gain ramp observable: splitting would settle the ramp on the first frame.
+        let mut project = one_note_project(Ticks::ZERO, Ticks::from_beats(4.0));
+        project.add_effect(None, testkit::TAIL_ID);
+
+        let render = |loop_enabled: bool| {
+            let mut graph = build(&project, 512);
+            let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+            // One rolling block first, so the tail has something to ring with.
+            render_block(&mut graph, &mut Transport::playing_from(0), &mut out, false);
+
+            let mut transport = stopped_at_the_loop_end();
+            transport.loop_enabled = loop_enabled;
+            graph.set_master_gain_db(-60.0);
+            render_block(&mut graph, &mut transport, &mut out, false);
+            out
+        };
+
+        let looping = render(true);
+        let plain = render(false);
+        // The fader move must still be mid-ramp halfway through the block; a split settles it on
+        // the first frame, which is the click this whole segment rule exists to avoid.
+        let middle = looping.channel(0)[256].abs();
+        assert!(
+            middle > 0.1,
+            "the fader move stepped instead of ramping: {middle}"
+        );
+        assert_eq!(looping.channel(0), plain.channel(0));
+    }
+
     #[test]
     fn a_stopped_transport_still_plays_auditioned_notes() {
         let project = one_note_project(Ticks::from_beats(100.0), Ticks::QUARTER);
@@ -826,6 +894,28 @@ mod tests {
         for sample in out.channel(0) {
             assert!((sample - TONE_AMPLITUDE).abs() < 1e-5, "got {sample}");
         }
+    }
+
+    #[test]
+    fn a_missing_effect_does_not_misaddress_the_gains_after_it() {
+        // Master chain: an id the registry has never heard of, then two gains. Both gain
+        // commands must land on the gains, so the tone comes out multiplied by 2 * 3.
+        let mut project = one_note_project(Ticks::ZERO, Ticks::from_beats(4.0));
+        project.add_effect(None, "vendor.gone");
+        project.add_effect(None, testkit::GAIN_ID);
+        project.add_effect(None, testkit::GAIN_ID);
+
+        let mut graph = build(&project, 512);
+        graph.set_effect_param(None, 1, ParamId(0), 2.0);
+        graph.set_effect_param(None, 2, ParamId(0), 3.0);
+
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+        render_block(&mut graph, &mut Transport::playing_from(0), &mut out, false);
+        assert!(
+            (out.channel(0)[100] - 6.0 * TONE_AMPLITUDE).abs() < 1e-5,
+            "got {}",
+            out.channel(0)[100]
+        );
     }
 
     #[test]

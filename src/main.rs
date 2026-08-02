@@ -16,7 +16,9 @@ use gpui::{
 use app::AurisApp;
 
 fn main() {
-    env_logger::init();
+    // Warnings matter here — a missing audio file or a plugin the registry does not know is
+    // logged rather than shown — so surface them by default instead of requiring RUST_LOG.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     Application::new().run(|cx: &mut App| {
         actions::bind_keys(cx);

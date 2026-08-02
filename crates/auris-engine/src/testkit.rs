@@ -22,6 +22,8 @@ thread_local! {
     static WATCHING: Cell<bool> = const { Cell::new(false) };
     /// Allocations this thread has made since the count started.
     static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+    /// Blocks [`BlockCounter`] has processed on this thread.
+    static PROCESS_CALLS: Cell<usize> = const { Cell::new(0) };
 }
 
 /// Counts heap allocations made by `body` **on the calling thread**.
@@ -74,6 +76,8 @@ pub(crate) const TONE_ID: &str = "test.tone";
 pub(crate) const GAIN_ID: &str = "test.gain";
 /// Registry id of [`RingingTail`].
 pub(crate) const TAIL_ID: &str = "test.tail";
+/// Registry id of [`BlockCounter`].
+pub(crate) const COUNTER_ID: &str = "test.counter";
 
 /// Level [`ConstantTone`] emits per held note.
 pub(crate) const TONE_AMPLITUDE: f32 = 0.5;
@@ -87,6 +91,7 @@ pub(crate) fn registry() -> PluginRegistry {
     registry.register_instrument(|| Box::new(ConstantTone::new()));
     registry.register_effect(|| Box::new(LinearGain::new()));
     registry.register_effect(|| Box::new(RingingTail::new()));
+    registry.register_effect(|| Box::new(BlockCounter));
     registry
 }
 
@@ -227,6 +232,51 @@ impl Effect for LinearGain {
 
     fn process(&mut self, buffer: &mut AudioBuffer, _ctx: &ProcessContext) {
         buffer.apply_gain(self.gain);
+    }
+}
+
+/// Blocks [`BlockCounter`] has processed on this thread, resetting the count to zero.
+///
+/// Per-thread for the same reason as [`count_allocations`]: `cargo test` runs cases in parallel,
+/// and a graph is only ever rendered by the thread that owns it.
+pub(crate) fn take_process_calls() -> usize {
+    PROCESS_CALLS.with(|slot| slot.replace(0))
+}
+
+/// Passes audio through untouched and counts the blocks it is handed.
+///
+/// One call per [`render_block`](crate::render_block) is the contract; every extra call is a
+/// whole additional pass over the graph, which is a cost the tests can assert on.
+pub(crate) struct BlockCounter;
+
+impl Parameterized for BlockCounter {
+    fn parameters(&self) -> &[ParamDescriptor] {
+        &[]
+    }
+
+    fn param(&self, _id: ParamId) -> f32 {
+        0.0
+    }
+
+    fn set_param(&mut self, _id: ParamId, _value: f32) {}
+}
+
+impl Effect for BlockCounter {
+    fn descriptor(&self) -> PluginDescriptor {
+        PluginDescriptor::effect(
+            COUNTER_ID,
+            "Block Counter",
+            "Counts the blocks it is asked to process",
+            PluginCategory::Utility,
+        )
+    }
+
+    fn prepare(&mut self, _ctx: &PrepareContext) {}
+
+    fn reset(&mut self) {}
+
+    fn process(&mut self, _buffer: &mut AudioBuffer, _ctx: &ProcessContext) {
+        PROCESS_CALLS.with(|slot| slot.set(slot.get() + 1));
     }
 }
 

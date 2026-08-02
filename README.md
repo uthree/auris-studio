@@ -71,9 +71,13 @@ cargo run --release
 ### macOS without a full Xcode install
 
 gpui normally compiles its Metal shaders at build time by shelling out to `xcrun metal`, which
-ships only with Xcode. This project enables gpui's `runtime_shaders` feature instead, which
-compiles them through the Metal framework at start-up — so the Command Line Tools are enough.
-Nothing to configure; it is already set in `Cargo.toml`.
+lives inside Xcode and is unreachable while `xcode-select -p` points at the Command Line
+Tools. This project enables gpui's `runtime_shaders` feature instead, which compiles them
+through the Metal framework at start-up — so the Command Line Tools are enough.
+
+Nothing to configure; it is already set in `Cargo.toml`, and it is worth keeping even with
+Xcode installed. The cost is one shader compile at launch; the benefit is that the project
+builds on a machine without a 15 GB download.
 
 ## Layout
 

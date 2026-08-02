@@ -32,6 +32,17 @@ const MAX_BEND_SEMITONES: f32 = 24.0;
 /// modulator running; the decay is what shapes the timbre.
 const MOD_RELEASE_SECONDS: f32 = 0.005;
 
+/// Attack time of the modulator envelope.
+///
+/// It has to be non-zero. A stolen voice keeps its carrier phase — resetting it would click —
+/// but its modulator envelope has usually already run down to Idle, and a zero attack makes the
+/// envelope jump straight to full level on the first sample of the new note. That would move the
+/// carrier's read phase by up to `index / TAU` cycles between two adjacent samples, which is the
+/// same discontinuity the phase reset is skipped to avoid, arriving through the modulation path
+/// instead. Ramping the depth over 2 ms spreads it out; that is well inside the bright transient
+/// the modulator decay shapes, so the timbre is unchanged.
+const MOD_ATTACK_SECONDS: f32 = 0.002;
+
 /// Carrier and modulator for one note.
 #[derive(Clone, Debug)]
 struct Fm2Voice {
@@ -128,7 +139,7 @@ impl Fm2 {
             voice.envelope.set_adsr(attack, decay, sustain, release);
             voice
                 .mod_envelope
-                .set_adsr(0.0, mod_decay, 0.0, MOD_RELEASE_SECONDS);
+                .set_adsr(MOD_ATTACK_SECONDS, mod_decay, 0.0, MOD_RELEASE_SECONDS);
         }
     }
 
@@ -327,7 +338,7 @@ impl Instrument for Fm2 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{Rig, goertzel, peak, peak_db, zero_crossing_hz};
+    use crate::test_support::{Rig, goertzel, max_step, peak, peak_db, zero_crossing_hz};
 
     const SAMPLE_RATE: f64 = 48_000.0;
 
@@ -493,6 +504,77 @@ mod tests {
         assert!(rendered.iter().all(|s| s.is_finite()));
         assert!(peak(&rendered) < 16.0, "peak {}", peak(&rendered));
         assert!(rig.instrument.active_voices() <= VOICE_COUNT);
+    }
+
+    #[test]
+    fn stealing_a_voice_does_not_step_the_modulation_depth() {
+        let mut rig = rig();
+        // The threshold below is calibrated against how steep a fully modulated carrier legally
+        // is, which scales with the index, so the index is pinned rather than inherited from the
+        // parameter default — moving that default must not silently retune this test.
+        rig.set_param("index", 5.0);
+        // Fill the pool so the next note on has to take a voice that is sounding at full level.
+        let held: Vec<NoteEvent> = (0..VOICE_COUNT)
+            .map(|slot| note_on(0, 48 + slot as u8 * 2))
+            .collect();
+        rig.render(512, &held);
+        // Run every modulator envelope down to Idle, which is the state a steal re-triggers
+        // from and the state in which a stepped depth is at its most violent.
+        rig.render(48_000, &[]);
+
+        let quiescent = rig.render(512, &[]);
+        // A low note keeps the honest slope of a fully modulated voice — which rises with the
+        // modulator frequency — near that of the quiescent block, so a discontinuity is the only
+        // thing that can make the steal block measurably steeper.
+        let stolen = rig.render(512, &[note_on(0, 24)]);
+
+        // The steal takes effect on the first sample of the second block, so the step to look
+        // for straddles the block boundary and the boundary has to be measured too.
+        let mut across = Vec::with_capacity(stolen.len() + 1);
+        across.push(*quiescent.last().expect("block is not empty"));
+        across.extend_from_slice(&stolen);
+
+        let before = max_step(&quiescent);
+        let after = max_step(&across);
+        assert!(
+            after <= before * 2.0,
+            "the steal stepped by {after} against a quiescent worst of {before}"
+        );
+    }
+
+    #[test]
+    fn a_stolen_voice_is_still_modulated() {
+        // Silencing the modulator on a steal would remove the click too, so this pins the other
+        // half of the contract: a stolen note has to sound like an FM note, not a bare sine.
+        fn steal_onto_a_silent_pool(index: f32) -> (Vec<f32>, Vec<f32>) {
+            let mut rig = rig();
+            rig.set_param("index", index);
+            // Velocity zero fills the pool without contributing anything to the output, so what
+            // comes back after the steal is the stolen voice alone and can be measured directly.
+            let held: Vec<NoteEvent> = (0..VOICE_COUNT)
+                .map(|slot| NoteEvent::NoteOn {
+                    frame: 0,
+                    pitch: 48 + slot as u8 * 2,
+                    velocity: 0.0,
+                })
+                .collect();
+            rig.render(512, &held);
+            // Long enough for every modulator envelope to reach Idle, which is the state a steal
+            // restarts from and the one in which a skipped trigger leaves the note unmodulated.
+            let quiet = rig.render(24_000, &[]);
+            (quiet, rig.render(2_048, &[note_on(0, 24)]))
+        }
+
+        let (quiet, modulated) = steal_onto_a_silent_pool(5.0);
+        assert_eq!(peak(&quiet), 0.0, "the placeholder voices are not silent");
+        let (_, bare) = steal_onto_a_silent_pool(0.0);
+        // A modulated carrier swings its instantaneous frequency well above the note's own, so
+        // it is far steeper sample to sample than the sine that note would be without it.
+        let (modulated_step, bare_step) = (max_step(&modulated), max_step(&bare));
+        assert!(
+            modulated_step > bare_step * 4.0,
+            "the stolen note is barely modulated: {modulated_step} against {bare_step} unmodulated"
+        );
     }
 
     #[test]

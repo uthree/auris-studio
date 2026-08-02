@@ -240,11 +240,14 @@ impl AurisApp {
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, event: &gpui::MouseDownEvent, _, _| {
-                    this.edit("Change tempo");
-                    this.drag = Some(Drag::Tempo {
-                        start_bpm: this.project.bpm(),
-                        start_x: event.position.x,
-                    });
+                    let start_bpm = this.project.bpm();
+                    this.begin_drag(
+                        "Change tempo",
+                        Drag::Tempo {
+                            start_bpm,
+                            start_x: event.position.x,
+                        },
+                    );
                 }),
             )
             .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
@@ -263,6 +266,9 @@ impl AurisApp {
     pub(crate) fn set_bpm(&mut self, bpm: f64) {
         self.project.set_bpm(bpm);
         self.dirty = true;
+        // The loop is held by the engine in frames, so a tempo change moves where it lands.
+        // Pushing here rather than beside the rebuild keeps the loop right *during* a drag too.
+        self.push_loop_to_engine();
     }
 
     /// Turns looping on or off, seeding a default region when there is none.

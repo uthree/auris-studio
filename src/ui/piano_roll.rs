@@ -126,8 +126,9 @@ impl AurisApp {
                                 let theme = theme.clone();
                                 let view = view.clone();
                                 let pitch_view = pitch_view.clone();
+                                let recorded = self.canvas.roll.clone();
                                 canvas(
-                                    |_, _, _| (),
+                                    move |bounds, _, _| recorded.set(Some(bounds)),
                                     move |bounds, _, window, _| {
                                         paint::clipped(window, bounds, |window| {
                                             paint::rect(window, bounds, theme.surface_sunken);
@@ -207,7 +208,10 @@ impl AurisApp {
         let window_height = self.viewport_height;
         let origin = self.roll_origin(window_height);
         let tick = self.timeline.x_to_tick(event.position.x - origin.x);
-        let pitch = self.pitch.y_to_pitch(event.position.y - origin.y);
+        // Below MIDI 0 the grid is unpainted, so a click there must not act on pitch 0.
+        let Some(pitch) = self.pitch.pitch_at(event.position.y - origin.y) else {
+            return;
+        };
         let Some(clip_start) = self.project.midi_clip(clip_id).map(|(_, c)| c.start) else {
             return;
         };
@@ -233,20 +237,24 @@ impl AurisApp {
                 let Some(note) = note else { return };
                 let end_x = self.timeline.tick_to_x(clip_start + note.end());
                 if f32::from(end_x - (event.position.x - origin.x)).abs() <= RESIZE_HANDLE {
-                    self.edit("Resize note");
-                    self.drag = Some(Drag::NoteResize {
-                        clip: clip_id,
-                        index,
-                    });
+                    self.begin_drag(
+                        "Resize note",
+                        Drag::NoteResize {
+                            clip: clip_id,
+                            index,
+                        },
+                    );
                 } else {
-                    self.edit("Move note");
                     let origins = self.selected_note_origins(clip_id);
-                    self.drag = Some(Drag::NoteMove {
-                        clip: clip_id,
-                        origin_tick: local_tick,
-                        origin_pitch: pitch,
-                        origins,
-                    });
+                    self.begin_drag(
+                        "Move note",
+                        Drag::NoteMove {
+                            clip: clip_id,
+                            origin_tick: local_tick,
+                            origin_pitch: pitch,
+                            origins,
+                        },
+                    );
                     self.audition_selected_track(pitch);
                 }
             }
@@ -314,12 +322,10 @@ impl AurisApp {
         let Some(clip_id) = self.selected_clip else {
             return;
         };
-        let (tick, pitch) = {
-            let origin = self.roll_origin(self.viewport_height);
-            (
-                self.timeline.x_to_tick(event.position.x - origin.x),
-                self.pitch.y_to_pitch(event.position.y - origin.y),
-            )
+        let origin = self.roll_origin(self.viewport_height);
+        let tick = self.timeline.x_to_tick(event.position.x - origin.x);
+        let Some(pitch) = self.pitch.pitch_at(event.position.y - origin.y) else {
+            return;
         };
         let Some(clip_start) = self.project.midi_clip(clip_id).map(|(_, c)| c.start) else {
             return;
@@ -381,7 +387,9 @@ impl AurisApp {
     /// Plays the key the pointer landed on, so the keyboard strip is playable.
     fn audition_from_keyboard(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
         let origin = self.roll_origin(self.viewport_height);
-        let pitch = self.pitch.y_to_pitch(event.position.y - origin.y);
+        let Some(pitch) = self.pitch.pitch_at(event.position.y - origin.y) else {
+            return;
+        };
         self.audition_selected_track(pitch);
         cx.notify();
     }

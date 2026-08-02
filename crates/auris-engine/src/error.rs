@@ -34,6 +34,15 @@ pub enum EngineError {
     #[error("invalid sample rate {0}")]
     InvalidSampleRate(f64),
 
+    /// An offline render covered more frames than the engine is willing to attempt.
+    #[error("render span of {frames} frames exceeds the {limit} frame limit")]
+    RenderTooLong {
+        /// Frames the requested render would have covered.
+        frames: u64,
+        /// Largest span the engine will attempt.
+        limit: u64,
+    },
+
     /// The command queue was full; the caller should retry on the next UI frame.
     #[error("the engine command queue is full")]
     CommandQueueFull,

@@ -4,10 +4,15 @@ A digital audio workstation written in Rust, with a [gpui](https://crates.io/cra
 
 ## Build environment
 
-This machine has only the macOS Command Line Tools, not a full Xcode install, so `xcrun metal`
-does not exist. gpui is therefore depended on with its **`runtime_shaders`** feature, which
-compiles the Metal shaders through the Metal framework at start-up instead of at build time.
-Do not remove that feature — without it, every build fails in gpui's build script.
+gpui is depended on with its **`runtime_shaders`** feature, which compiles the Metal shaders
+through the Metal framework at start-up instead of at build time. The build-time path shells
+out to `xcrun metal`, which lives inside Xcode
+(`Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metal`) and is
+therefore unreachable when `xcode-select -p` points at `/Library/Developer/CommandLineTools`.
+
+Keep the feature even on a machine where Xcode *is* selected. It costs a one-off shader
+compile at start-up and in exchange the project builds with nothing but the Command Line
+Tools, which is worth far more than those milliseconds.
 
 ## Layout
 

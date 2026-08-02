@@ -4,8 +4,8 @@ use auris_core::param::gain_to_db;
 use auris_core::time::Ticks;
 use auris_core::{ClipId, TrackId, TrackKind};
 use gpui::{
-    Axis, Bounds, IntoElement, MouseButton, MouseDownEvent, Pixels, Point, Window, canvas, div,
-    point, prelude::*, px, size,
+    Axis, Bounds, IntoElement, MouseButton, MouseDownEvent, Pixels, Window, canvas, div, point,
+    prelude::*, px, size,
 };
 
 use crate::app::{AurisApp, Drag, ParamTarget};
@@ -236,8 +236,9 @@ impl AurisApp {
                     .child({
                         let theme = theme.clone();
                         let view = view.clone();
+                        let recorded = self.canvas.ruler.clone();
                         canvas(
-                            |_, _, _| (),
+                            move |bounds, _, _| recorded.set(Some(bounds)),
                             move |bounds, _, window, cx| {
                                 paint::clipped(window, bounds, |window| {
                                     paint::ruler(window, cx, bounds, &view, signature, &theme);
@@ -271,8 +272,9 @@ impl AurisApp {
                     .child({
                         let theme = theme.clone();
                         let view = view.clone();
+                        let recorded = self.canvas.lanes.clone();
                         canvas(
-                            |_, _, _| (),
+                            move |bounds, _, _| recorded.set(Some(bounds)),
                             move |bounds, _, window, cx| {
                                 paint::clipped(window, bounds, |window| {
                                     paint::rect(window, bounds, theme.surface_sunken);
@@ -392,10 +394,13 @@ impl AurisApp {
             self.edit("Set loop region");
             self.project.loop_region = Some((tick, tick));
             self.project.loop_enabled = true;
+            // A degenerate region disables the engine loop, which is what an alt-click that
+            // never becomes a drag should do.
+            self.push_loop_to_engine();
             self.drag = Some(Drag::LoopRegion { anchor: tick });
         } else {
             self.seek(tick);
-            self.drag = Some(Drag::Playhead);
+            self.begin_drag_without_edit(Drag::Playhead);
         }
         cx.notify();
     }
@@ -419,14 +424,15 @@ impl AurisApp {
                 self.selected_notes.clear();
                 let clip_end_x = self.timeline.tick_to_x(clip_start + clip_length);
                 if f32::from(clip_end_x - local.x).abs() <= RESIZE_HANDLE {
-                    self.edit("Resize clip");
-                    self.drag = Some(Drag::ClipResize { clip: clip_id });
+                    self.begin_drag("Resize clip", Drag::ClipResize { clip: clip_id });
                 } else {
-                    self.edit("Move clip");
-                    self.drag = Some(Drag::ClipMove {
-                        clip: clip_id,
-                        grab_offset: tick - clip_start,
-                    });
+                    self.begin_drag(
+                        "Move clip",
+                        Drag::ClipMove {
+                            clip: clip_id,
+                            grab_offset: tick - clip_start,
+                        },
+                    );
                 }
             }
             None => {
@@ -454,17 +460,6 @@ impl AurisApp {
             self.timeline.scroll_by(-delta.x - delta.y);
         }
         cx.notify();
-    }
-
-    /// Screen origin of the timeline body, used to convert pointer positions.
-    pub(crate) fn timeline_origin(&self) -> Point<Pixels> {
-        point(Metrics::TRACK_HEADER_WIDTH, Metrics::TRANSPORT_HEIGHT)
-    }
-
-    /// Screen origin of the clip lanes.
-    pub(crate) fn lanes_origin(&self) -> Point<Pixels> {
-        let origin = self.timeline_origin();
-        point(origin.x, origin.y + Metrics::RULER_HEIGHT)
     }
 
     /// Track whose lane contains `y`, with the lane's top offset.

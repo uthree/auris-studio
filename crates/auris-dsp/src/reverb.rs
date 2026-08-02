@@ -167,6 +167,38 @@ fn scaled(tuning: usize, sample_rate: f64, offset: usize) -> usize {
     (length + offset).max(1)
 }
 
+/// Cutoff of the comb damping filter, in Hz, for a 0..1 damping setting.
+///
+/// Jezar's original mapping was `damping * SCALE_DAMP` used directly as the filter's pole, which
+/// pins the corner to a fixed *fraction* of the sample rate. Reading that pole back as a
+/// frequency at the rate the reverb was tuned at recovers the frequency it was always meant to
+/// be: `fc = -ln(damping * SCALE_DAMP) * TUNING_SAMPLE_RATE / TAU`, i.e. 6432 Hz at damping 1.0
+/// and rising past Nyquist as the control opens. Keeping this curve rather than inventing a new
+/// range means a project authored at 44.1 kHz still renders exactly as it did.
+///
+/// Only defined for `damping > 0`; at zero the original mapping means "no filtering at all",
+/// which no finite cutoff expresses.
+fn damping_cutoff_hz(damping: f32) -> f32 {
+    -(damping * SCALE_DAMP).ln() * TUNING_SAMPLE_RATE as f32 / std::f32::consts::TAU
+}
+
+/// Retention coefficient of the comb damping filter at `sample_rate`.
+///
+/// The filter is `y = x * (1 - a) + y * a`, so `a` is the pole itself and the impulse-invariant
+/// mapping is `exp(-TAU * fc / fs)` with no `1 -` — the mirror image of [`crate::delay`]'s
+/// `damping_alpha`, which smooths towards its input instead of retaining its state. Deriving
+/// `a` from a frequency is what keeps the tail's brightness the same whether the graph was built
+/// at the device rate for preview or at the project rate for export.
+fn damping_coefficient(damping: f32, sample_rate: f32) -> f32 {
+    if damping <= 0.0 || !sample_rate.is_finite() || sample_rate <= 0.0 {
+        return 0.0;
+    }
+    let cutoff = damping_cutoff_hz(damping);
+    (-std::f32::consts::TAU * cutoff / sample_rate)
+        .exp()
+        .clamp(0.0, 1.0)
+}
+
 /// A Freeverb-style reverberator.
 pub struct Reverb {
     params: ParamBank,
@@ -282,7 +314,7 @@ impl Effect for Reverb {
         }
 
         let feedback = self.feedback();
-        let damp = self.params.at(P_DAMPING) * SCALE_DAMP;
+        let damp = damping_coefficient(self.params.at(P_DAMPING), self.sample_rate);
         let width = self.params.at(P_WIDTH);
         let mix = self.params.at(P_MIX);
         let dry = 1.0 - mix;
@@ -460,6 +492,115 @@ mod tests {
         let after = buffer.slice(4_800, 4_800).peak();
         assert_eq!(before, 0.0);
         assert!(after > 1e-5, "nothing arrived after the pre-delay: {after}");
+    }
+
+    /// Decay of the reverb tail at `frequency`, in dB per second, rendered at `sample_rate`.
+    ///
+    /// The excitation is a raised-cosine-enveloped tone burst, so the render stays in a narrow
+    /// band around `frequency` and a plain RMS of the tail measures that band directly. Both
+    /// measurement windows sit well after the burst, where the tail has settled onto its
+    /// slowest mode and the reading is a decay rate rather than a transient.
+    fn tail_decay_db_per_second(sample_rate: f64, frequency: f32) -> f32 {
+        const EARLY_SECONDS: f64 = 0.5;
+        const LATE_SECONDS: f64 = 1.3;
+        const WINDOW_SECONDS: f64 = 0.2;
+        const BURST_SECONDS: f64 = 0.2;
+
+        let mut plugin = Reverb::new();
+        plugin.set_param_by_key("room_size", 0.9);
+        plugin.set_param_by_key("damping", 1.0);
+        plugin.set_param_by_key("mix", 1.0);
+        plugin.prepare(&PrepareContext::new(sample_rate, 4_096, 2));
+
+        let at = |t: f64| (t * sample_rate).round() as usize;
+        let frames = at(LATE_SECONDS + WINDOW_SECONDS);
+        let burst = at(BURST_SECONDS);
+        let mut buffer = AudioBuffer::stereo(frames, sample_rate);
+        let step = std::f32::consts::TAU * frequency / sample_rate as f32;
+        for channel in buffer.channels_mut() {
+            for (n, sample) in channel.iter_mut().enumerate().take(burst) {
+                let envelope = 0.5 - 0.5 * (std::f32::consts::TAU * n as f32 / burst as f32).cos();
+                *sample = (step * n as f32).sin() * envelope;
+            }
+        }
+        plugin.process(
+            &mut buffer,
+            &ProcessContext::realtime(sample_rate, frames, 0, 120.0, true),
+        );
+
+        let window = at(WINDOW_SECONDS);
+        let early = buffer.slice(at(EARLY_SECONDS), window).channel_rms(0);
+        let late = buffer.slice(at(LATE_SECONDS), window).channel_rms(0);
+        assert!(
+            early > 1.0e-6 && late > 0.0,
+            "{sample_rate} Hz: no {frequency} Hz tail to measure ({early} -> {late})"
+        );
+        20.0 * (late / early).log10() / (LATE_SECONDS - EARLY_SECONDS) as f32
+    }
+
+    #[test]
+    fn the_damped_tail_decays_at_the_same_rate_at_every_sample_rate() {
+        // The damping filter's corner has to be a frequency, not a fraction of fs. When its
+        // coefficient is used as a bare z-plane pole the corner moves with the sample rate, so
+        // a 6 kHz tail that dies away in a second at 44.1 kHz still rings at 96 kHz — which is
+        // exactly the mismatch a user hears between a device-rate preview and a project-rate
+        // export.
+        let at_44k = tail_decay_db_per_second(44_100.0, 6_000.0);
+        let at_96k = tail_decay_db_per_second(96_000.0, 6_000.0);
+        assert!(
+            (at_44k - at_96k).abs() < 3.0,
+            "6 kHz tail decayed at {at_44k} dB/s at 44.1 kHz but {at_96k} dB/s at 96 kHz"
+        );
+
+        // A control well below the damping corner, where the comb tuning alone sets the decay.
+        // It already agreed across rates, so a regression here means the comb bank moved.
+        let low_at_44k = tail_decay_db_per_second(44_100.0, 400.0);
+        let low_at_96k = tail_decay_db_per_second(96_000.0, 400.0);
+        assert!(
+            (low_at_44k - low_at_96k).abs() < 3.0,
+            "400 Hz tail decayed at {low_at_44k} dB/s at 44.1 kHz but {low_at_96k} dB/s at 96 kHz"
+        );
+
+        // Both assertions above would also hold if the coefficient never reached the comb bank
+        // at all, so pin the fact that damping is engaged: at full damping the band above the
+        // corner has to die away far faster than the band below it, at either rate. Measured
+        // separation is around 68 dB/s; the threshold only has to rule out "no filtering".
+        for (rate, high, low) in [
+            (44_100.0, at_44k, low_at_44k),
+            (96_000.0, at_96k, low_at_96k),
+        ] {
+            assert!(
+                low - high > 30.0,
+                "{rate} Hz: damping barely engaged, 6 kHz decayed at {high} dB/s \
+                 against {low} dB/s at 400 Hz"
+            );
+        }
+    }
+
+    #[test]
+    fn the_damping_pole_is_unchanged_at_the_tuning_rate() {
+        // Existing projects at 44.1 kHz must render exactly as they did, so the cutoff mapping
+        // has to reproduce Jezar's `damping * SCALE_DAMP` pole at TUNING_SAMPLE_RATE.
+        for damping in [0.1f32, 0.25, 0.5, 0.75, 1.0] {
+            let coefficient = damping_coefficient(damping, TUNING_SAMPLE_RATE as f32);
+            let legacy = damping * SCALE_DAMP;
+            assert!(
+                (coefficient - legacy).abs() < 1.0e-6,
+                "damping {damping}: {coefficient} != {legacy}"
+            );
+        }
+        // Damping 0 means "no filtering at all", which no finite cutoff can express.
+        assert_eq!(damping_coefficient(0.0, 44_100.0), 0.0);
+        assert_eq!(damping_coefficient(1.0, 0.0), 0.0);
+        // The pole must fall as the rate rises, holding the corner at a fixed frequency.
+        let corner = damping_cutoff_hz(1.0);
+        assert!((corner - 6_431.6).abs() < 1.0, "corner was {corner} Hz");
+        let at_96k = damping_coefficient(1.0, 96_000.0);
+        let expected = (-std::f32::consts::TAU * corner / 96_000.0).exp();
+        assert!(
+            (at_96k - expected).abs() < 1.0e-6,
+            "96 kHz pole was {at_96k}"
+        );
     }
 
     #[test]

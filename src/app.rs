@@ -6,8 +6,10 @@
 //! every callback. Instead the panels are `impl AurisApp` blocks in the [`crate::ui`] modules,
 //! which keeps one owner of the truth while still keeping each panel's code in its own file.
 
+use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -25,7 +27,7 @@ use auris_engine::{
 };
 use auris_gpu::{GpuContext, WaveformPeaks};
 use auris_synth::SynthPack;
-use gpui::{App, Context, FocusHandle, Focusable, Pixels, Task, Window, px};
+use gpui::{App, Bounds, Context, FocusHandle, Focusable, Pixels, Point, Task, Window, point, px};
 
 use crate::history::History;
 use crate::theme::Theme;
@@ -161,6 +163,26 @@ impl ExportState {
     }
 }
 
+/// Where each canvas was actually drawn last frame.
+///
+/// Hit tests used to re-derive these rectangles from the window size and the `Metrics`
+/// constants, which is only correct while the flex tree lays out exactly as assumed — a short
+/// window, or a one-pixel border nobody accounted for, silently moved every click. Recording
+/// what was painted removes the whole class: the pointer is compared against the same geometry
+/// the user saw.
+///
+/// `Rc<Cell<_>>` because the paint closures are `'static` and run on the UI thread, so they
+/// cannot borrow the view.
+#[derive(Clone, Default)]
+pub struct CanvasBounds {
+    /// The bar ruler above the arrangement.
+    pub ruler: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The arrangement's clip lanes.
+    pub lanes: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The piano roll's note grid.
+    pub roll: Rc<Cell<Option<Bounds<Pixels>>>>,
+}
+
 /// The whole application.
 pub struct AurisApp {
     pub(crate) project: Project,
@@ -172,7 +194,7 @@ pub struct AurisApp {
     pub(crate) registry: Arc<PluginRegistry>,
     pub(crate) engine: EngineHandle,
     pub(crate) gpu: Option<Arc<GpuContext>>,
-    _device: Option<AudioDevice>,
+    device: Option<AudioDevice>,
 
     /// Parameter descriptors by plugin id, built once per plugin by instantiating it.
     pub(crate) param_cache: HashMap<String, Arc<Vec<ParamDescriptor>>>,
@@ -186,6 +208,14 @@ pub struct AurisApp {
     pub(crate) selected_clip: Option<ClipId>,
     pub(crate) selected_notes: BTreeSet<usize>,
     pub(crate) drag: Option<Drag>,
+    /// Undo label for a drag that has not changed anything yet.
+    ///
+    /// Snapshotting at mouse-down turned every selection click into an undo step, which quietly
+    /// pushed real history off the end of the stack. The label waits here until a handler
+    /// actually mutates the document.
+    pub(crate) pending_edit: Option<&'static str>,
+    /// Whether the gesture in progress has mutated the document.
+    pub(crate) drag_changed: bool,
     pub(crate) editor: EditorTab,
     pub(crate) inspector: InspectorTab,
     pub(crate) status: String,
@@ -199,6 +229,8 @@ pub struct AurisApp {
     pub(crate) viewport_height: Pixels,
     /// Width of the arrangement body as of the last frame.
     pub(crate) arrangement_width: Pixels,
+    /// Rectangles the canvases were painted into last frame.
+    pub(crate) canvas: CanvasBounds,
 
     _repaint: Task<()>,
 }
@@ -264,6 +296,13 @@ impl AurisApp {
                 if this
                     .update(cx, |this, cx| {
                         this.engine.collect_garbage();
+                        // With no output device nothing consumes the command queue, so every
+                        // graph the UI builds would sit in it holding plugins and samples.
+                        if let Some(device) = &this.device
+                            && !device.is_running()
+                        {
+                            device.discard_pending();
+                        }
                         cx.notify();
                     })
                     .is_err()
@@ -291,7 +330,7 @@ impl AurisApp {
             registry,
             engine,
             gpu,
-            _device: device,
+            device,
             param_cache: HashMap::new(),
             waveforms: HashMap::new(),
             theme: Theme::dark(),
@@ -301,6 +340,8 @@ impl AurisApp {
             selected_clip,
             selected_notes: BTreeSet::new(),
             drag: None,
+            pending_edit: None,
+            drag_changed: false,
             editor: EditorTab::PianoRoll,
             inspector: InspectorTab::Track,
             status,
@@ -309,6 +350,7 @@ impl AurisApp {
             focus: cx.focus_handle(),
             viewport_height: px(900.0),
             arrangement_width: px(900.0),
+            canvas: CanvasBounds::default(),
             _repaint: repaint,
         };
         app.rebuild_graph();
@@ -337,6 +379,29 @@ impl AurisApp {
     pub(crate) fn edit(&mut self, label: &str) {
         self.history.push(label, &self.project);
         self.dirty = true;
+        self.drag_changed = true;
+    }
+
+    /// Begins a gesture, remembering the undo label without spending it yet.
+    pub(crate) fn begin_drag(&mut self, label: &'static str, drag: Drag) {
+        self.drag = Some(drag);
+        self.pending_edit = Some(label);
+        self.drag_changed = false;
+    }
+
+    /// Begins a gesture that records no undo step of its own, such as a playhead scrub.
+    pub(crate) fn begin_drag_without_edit(&mut self, drag: Drag) {
+        self.drag = Some(drag);
+        self.pending_edit = None;
+        self.drag_changed = false;
+    }
+
+    /// Spends the pending undo label. Call this immediately before the first mutation a drag
+    /// makes, so a gesture that only selected something leaves no history entry behind.
+    pub(crate) fn commit_pending_edit(&mut self) {
+        if let Some(label) = self.pending_edit.take() {
+            self.edit(label);
+        }
     }
 
     /// Replaces the whole document, for undo, redo and loading.
@@ -351,7 +416,11 @@ impl AurisApp {
             .filter(|id| self.project.midi_clip(*id).is_some());
         self.selected_notes.clear();
         self.drag = None;
+        self.pending_edit = None;
         self.rebuild_graph();
+        // The loop lives in the audio thread's transport and only SetLoop moves it, so a
+        // document swap that does not republish leaves playback wrapping the old range.
+        self.push_loop_to_engine();
     }
 
     /// Parameter descriptors for a plugin, instantiating it once to read them.
@@ -435,9 +504,7 @@ impl AurisApp {
             }
             ParamTarget::MasterPan => {
                 self.project.master.pan = value;
-                // The master pan has no dedicated command; it is rare enough that rebuilding
-                // the graph is cheaper than another command variant.
-                self.rebuild_graph();
+                self.send(EngineCommand::SetMasterPan(value));
             }
             ParamTarget::Instrument { track, param } => {
                 let Some(index) = self.project.track_index(track) else {
@@ -616,10 +683,52 @@ impl AurisApp {
 
     /// Ends any drag in progress.
     pub(crate) fn end_drag(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
-        if self.drag.take().is_some() {
-            // A clip or note may have moved, so the scheduled events must be rebuilt.
+        let drag = self.drag.take();
+        self.pending_edit = None;
+        let changed = std::mem::take(&mut self.drag_changed);
+
+        // Only clip, note and tempo drags move the scheduled events; a fader or a playhead
+        // scrub does not. Rebuilding regardless re-instantiated every plugin, which discarded
+        // reverb tails and re-attacked held notes on the release of an unrelated gesture.
+        let structural = matches!(
+            drag,
+            Some(
+                Drag::ClipMove { .. }
+                    | Drag::ClipResize { .. }
+                    | Drag::NoteMove { .. }
+                    | Drag::NoteResize { .. }
+                    | Drag::Tempo { .. }
+            )
+        );
+        if changed && structural {
             self.rebuild_graph();
         }
+    }
+
+    /// Origin of the arrangement's clip lanes, taken from where they were last painted.
+    pub(crate) fn lanes_origin(&self) -> Point<Pixels> {
+        self.canvas.lanes.get().map_or_else(
+            || {
+                point(
+                    crate::theme::Metrics::TRACK_HEADER_WIDTH,
+                    crate::theme::Metrics::TRANSPORT_HEIGHT + crate::theme::Metrics::RULER_HEIGHT,
+                )
+            },
+            |bounds| bounds.origin,
+        )
+    }
+
+    /// Origin of the bar ruler, taken from where it was last painted.
+    pub(crate) fn timeline_origin(&self) -> Point<Pixels> {
+        self.canvas.ruler.get().map_or_else(
+            || {
+                point(
+                    crate::theme::Metrics::TRACK_HEADER_WIDTH,
+                    crate::theme::Metrics::TRANSPORT_HEIGHT,
+                )
+            },
+            |bounds| bounds.origin,
+        )
     }
 }
 

@@ -57,6 +57,17 @@ pub enum EnvelopeStage {
 pub struct Adsr {
     stage: EnvelopeStage,
     level: f32,
+    /// Distance the decay still has to cover, `level - sustain`.
+    ///
+    /// The decay steps this rather than the level itself. Iterating
+    /// `level += (sustain - level) * coeff` in `f32` stalls: once the remaining gap is small
+    /// next to the level, `level + gap * coeff` rounds back to `level` and the envelope freezes
+    /// above the sustain level, so the arrival test never fires and a note reports `Decay`
+    /// forever. At 48 kHz that starts at a decay of 0.7 s, which is inside the range every
+    /// instrument exposes. Decaying the gap in its own variable keeps each step inside the gap's
+    /// own exponent range, so it converges geometrically however long the decay is. This is the
+    /// same trick, for the same reason, as `SmoothedValue` in `auris-dsp`.
+    gap: f32,
     sample_rate: f32,
     attack_seconds: f32,
     decay_seconds: f32,
@@ -80,6 +91,7 @@ impl Adsr {
         let mut envelope = Self {
             stage: EnvelopeStage::Idle,
             level: 0.0,
+            gap: 0.0,
             sample_rate: 48_000.0,
             attack_seconds: 0.005,
             decay_seconds: 0.1,
@@ -137,6 +149,7 @@ impl Adsr {
     /// still sounding — the usual case when a voice gets stolen — stays continuous.
     pub fn trigger(&mut self) {
         self.stage = EnvelopeStage::Attack;
+        self.gap = self.level - self.sustain;
     }
 
     /// Moves to the release stage. Envelopes that are already idle or being killed are left
@@ -172,12 +185,15 @@ impl Adsr {
                 self.level += self.attack_step;
                 if self.level >= 1.0 {
                     self.level = 1.0;
+                    self.gap = self.level - self.sustain;
                     self.stage = EnvelopeStage::Decay;
                 }
             }
             EnvelopeStage::Decay => {
-                self.level += (self.sustain - self.level) * self.decay_coeff;
-                if (self.level - self.sustain).abs() <= SILENCE_LEVEL {
+                self.gap *= 1.0 - self.decay_coeff;
+                self.level = self.sustain + self.gap;
+                if self.gap.abs() <= SILENCE_LEVEL {
+                    self.gap = 0.0;
                     // A sustain of zero means the note is percussive: it is over here, and the
                     // voice is free without waiting for a note off.
                     if self.sustain <= SILENCE_LEVEL {
@@ -234,6 +250,9 @@ impl Adsr {
     }
 
     fn refresh(&mut self) {
+        // Moving the sustain level under a decay that is already running changes how far it has
+        // left to travel, so the tracked gap has to be restated against the new target.
+        self.gap = self.level - self.sustain;
         self.attack_step = 1.0 / stage_samples(self.attack_seconds, self.sample_rate);
         self.decay_coeff = exponential_coeff(self.decay_seconds, self.sample_rate);
         self.release_coeff = exponential_coeff(self.release_seconds, self.sample_rate);
@@ -313,6 +332,55 @@ mod tests {
             env.process();
         }
         assert!((env.level() - 0.5).abs() < 1e-3);
+
+        // A long decay has to arrive too. Its per-sample step is tiny next to the level it is
+        // subtracted from, so stepping the level itself rounds to a no-op and strands the
+        // envelope in Decay for the life of the note. Both rates are checked because a higher
+        // rate makes the step smaller still.
+        for sample_rate in [48_000.0f32, 96_000.0] {
+            let mut env = Adsr::new();
+            env.set_sample_rate(sample_rate);
+            env.set_adsr(0.0, 4.0, 0.5, 0.1);
+            env.trigger();
+            let steps = (4.0 * sample_rate) as usize + 1;
+            for _ in 0..steps {
+                env.process();
+            }
+            assert_eq!(
+                env.stage(),
+                EnvelopeStage::Sustain,
+                "stuck at {} at {sample_rate} Hz",
+                env.level()
+            );
+            assert_eq!(env.level(), 0.5);
+        }
+    }
+
+    #[test]
+    fn moving_the_sustain_level_mid_decay_keeps_the_output_continuous() {
+        // The decay tracks its remaining distance separately from the level, so a sustain level
+        // that moves under a running decay has to restate that distance. Leaving it stale would
+        // shift the whole envelope by however far the sustain moved, in one sample — a click,
+        // and one a user can trigger just by dragging the sustain slider on a held note.
+        let mut env = envelope(0.0, 0.5, 0.8, 0.1);
+        env.trigger();
+        for _ in 0..2_000 {
+            env.process();
+        }
+        let before = env.level();
+        assert!(before > 0.85, "the decay is supposed to still be running");
+        env.set_adsr(0.0, 0.5, 0.2, 0.1);
+        let after = env.process();
+        assert!(
+            (after - before).abs() < 1e-3,
+            "level jumped from {before} to {after}"
+        );
+        // And the decay still lands on the level it was moved to.
+        for _ in 0..30_000 {
+            env.process();
+        }
+        assert_eq!(env.stage(), EnvelopeStage::Sustain);
+        assert!((env.level() - 0.2).abs() < 1e-6, "level {}", env.level());
     }
 
     #[test]

@@ -17,8 +17,11 @@
 
 use std::sync::Arc;
 
-use auris_core::param::{db_to_gain, pan_gains};
-use auris_core::plugin::{Effect, Instrument, NoteEvent, PrepareContext};
+use auris_core::param::{ParamDescriptor, db_to_gain, pan_gains};
+use auris_core::plugin::{
+    Effect, Instrument, NoteEvent, Parameterized, PluginCategory, PluginDescriptor, PrepareContext,
+    ProcessContext,
+};
 use auris_core::project::{
     AudioClip, AudioSourceBank, MidiClip, MixerStrip, Project, TrackId, TrackKind,
 };
@@ -181,6 +184,48 @@ fn sane_gain(gain: f32) -> f32 {
     if gain.is_finite() { gain } else { 0.0 }
 }
 
+/// Registry id reported by the stand-in for an effect that could not be created.
+pub(crate) const MISSING_EFFECT_ID: &str = "auris.engine.missing";
+
+/// Placeholder for an effect whose plugin id the registry does not know.
+///
+/// The runtime chain has to stay index-parallel with the project's
+/// [`MixerStrip::effects`](auris_core::project::MixerStrip::effects), because
+/// [`EngineCommand::SetEffectParam`](crate::EngineCommand::SetEffectParam) addresses effects by
+/// their position *there*. Dropping the entry would silently re-aim every later command one slot
+/// low and push the last one off the end, so the slot is kept and left bypassed instead — the
+/// same contract the instrument path keeps with [`RenderSource::Silence`].
+struct MissingEffect;
+
+impl Parameterized for MissingEffect {
+    fn parameters(&self) -> &[ParamDescriptor] {
+        &[]
+    }
+
+    fn param(&self, _id: ParamId) -> f32 {
+        0.0
+    }
+
+    fn set_param(&mut self, _id: ParamId, _value: f32) {}
+}
+
+impl Effect for MissingEffect {
+    fn descriptor(&self) -> PluginDescriptor {
+        PluginDescriptor::effect(
+            MISSING_EFFECT_ID,
+            "Missing Effect",
+            "Placeholder keeping the slot of an effect the registry does not know",
+            PluginCategory::Utility,
+        )
+    }
+
+    fn prepare(&mut self, _ctx: &PrepareContext) {}
+
+    fn reset(&mut self) {}
+
+    fn process(&mut self, _buffer: &mut AudioBuffer, _ctx: &ProcessContext) {}
+}
+
 /// Volume, pan and effects for a track or the master bus.
 pub struct RenderStrip {
     pub(crate) gain: SmoothedGain,
@@ -212,6 +257,9 @@ impl RenderStrip {
     ///
     /// `audible` carries the project-wide solo resolution; the strip's own mute stays separate
     /// so that toggling it later needs a command rather than a rebuild.
+    ///
+    /// The resulting chain is always as long as `mixer.effects`: an id the registry does not know
+    /// becomes a bypassed placeholder rather than a hole, so slot indices keep their meaning.
     pub fn from_mixer(
         mixer: &MixerStrip,
         audible: bool,
@@ -230,8 +278,15 @@ impl RenderStrip {
                     strip.enabled.push(slot.enabled);
                 }
                 Err(error) => {
-                    // A missing plugin must not stop a project from opening.
-                    log::warn!("skipping effect `{}`: {error}", slot.effect_id);
+                    // A missing plugin must not stop a project from opening, and it must not
+                    // shift the slots after it either: command indices are positions in the
+                    // project's chain, so the slot is kept and bypassed.
+                    log::warn!(
+                        "effect `{}` keeps its slot but stays bypassed: {error}",
+                        slot.effect_id
+                    );
+                    strip.effects.push(Box::new(MissingEffect));
+                    strip.enabled.push(false);
                 }
             }
         }
@@ -273,12 +328,17 @@ impl RenderStrip {
         self.audible = audible;
     }
 
-    /// Number of effects in the chain.
+    /// Number of slots in the chain, which always matches the project's chain length: a plugin
+    /// the registry could not create keeps a bypassed placeholder so slot indices stay stable.
     pub fn effect_count(&self) -> usize {
         self.effects.len()
     }
 
-    /// Longest tail declared by any effect in the chain.
+    /// Longest tail declared by any *enabled* effect in the chain.
+    ///
+    /// A bypassed slot never has `process` called on it, so it cannot ring out and must not
+    /// lengthen an export. That is also what makes the placeholder for a missing plugin free:
+    /// it is always bypassed, so it can never claim a tail it could not produce.
     pub fn tail_frames(&self) -> usize {
         self.effects
             .iter()
@@ -472,8 +532,9 @@ pub struct RenderGraph {
 impl RenderGraph {
     /// Builds a render graph for `project` at the project's own sample rate.
     ///
-    /// Never fails: a plugin id the registry does not know is logged and skipped, so a project
-    /// still opens (silently, for that track) when a plugin has been removed.
+    /// Never fails: a plugin id the registry does not know is logged and replaced by a silent
+    /// stand-in, so a project still opens when a plugin has been removed — and every track and
+    /// effect slot keeps its position, which is what command indices are addressed by.
     pub fn build(
         project: &Project,
         bank: &AudioSourceBank,
@@ -1000,14 +1061,44 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_effect_is_skipped_without_panicking() {
+    fn an_unknown_effect_keeps_its_slot_bypassed() {
         let mut project = Project::new("Graph", 48_000.0);
         let track = project.add_instrument_track("Lead", testkit::TONE_ID);
         project.add_effect(Some(track), "does.not.exist");
         project.add_effect(Some(track), testkit::GAIN_ID);
         let graph =
             RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
-        assert_eq!(graph.tracks()[0].strip().effect_count(), 1);
+        let strip = graph.tracks()[0].strip();
+        assert_eq!(strip.effect_count(), 2);
+        assert_eq!(strip.effects[0].descriptor().id, MISSING_EFFECT_ID);
+        assert!(!strip.enabled[0], "a placeholder must never process audio");
+        assert!(strip.enabled[1]);
+        // The placeholder declares no tail, so it cannot lengthen an export either.
+        assert_eq!(strip.tail_frames(), 0);
+    }
+
+    #[test]
+    fn a_missing_effect_does_not_shift_the_slots_after_it() {
+        // The UI addresses effects by their position in the *project's* chain, so slot 2 must
+        // still be the second real effect even though slot 0 could not be instantiated.
+        let mut project = Project::new("Graph", 48_000.0);
+        let track = project.add_instrument_track("Lead", testkit::TONE_ID);
+        project.add_effect(Some(track), "does.not.exist");
+        project.add_effect(Some(track), testkit::GAIN_ID);
+        project.add_effect(Some(track), testkit::GAIN_ID);
+
+        let mut graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        graph.set_effect_param(Some(0), 1, ParamId(0), 2.0);
+        graph.set_effect_param(Some(0), 2, ParamId(0), 3.0);
+
+        let strip = graph.tracks()[0].strip();
+        assert_eq!(strip.effects[1].param(ParamId(0)), 2.0);
+        assert_eq!(
+            strip.effects[2].param(ParamId(0)),
+            3.0,
+            "the last slot must not fall off the end of the runtime chain"
+        );
     }
 
     #[test]
@@ -1093,22 +1184,38 @@ mod tests {
         assert!(graph.tracks()[1].strip().is_active());
     }
 
-    #[test]
-    fn the_event_scratch_is_sized_for_the_densest_block() {
+    /// A track whose notes all start at tick 0 and last `length`.
+    fn stacked_note_project(pitches: std::ops::Range<u8>, length: Ticks) -> Project {
         let mut project = Project::new("Graph", 48_000.0);
         let track = project.add_instrument_track("Chords", testkit::TONE_ID);
         let clip = project
             .add_midi_clip(track, "Stack", Ticks::ZERO, Ticks::from_beats(4.0))
             .unwrap();
         let midi = project.midi_clip_mut(clip).unwrap();
-        for pitch in 60..66u8 {
-            midi.notes
-                .push(Note::new(pitch, Ticks::ZERO, Ticks::QUARTER));
+        for pitch in pitches {
+            midi.notes.push(Note::new(pitch, Ticks::ZERO, length));
         }
-        let graph =
-            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
-        // Six simultaneous note-ons, plus the headroom reserved for UI auditioning.
-        assert!(graph.tracks()[0].block_events.capacity() >= 6 + AUDITION_HEADROOM);
+        project
+    }
+
+    #[test]
+    fn the_event_scratch_is_sized_for_the_densest_block() {
+        // Six note-ons on frame 0; their releases are a quarter note away, so no 512-frame
+        // window ever holds more than six events.
+        let sparse = stacked_note_project(60..66, Ticks::QUARTER);
+        let graph = RenderGraph::build(&sparse, &AudioSourceBank::new(), &testkit::registry(), 512);
+        assert_eq!(
+            graph.tracks()[0].block_events.capacity(),
+            6 + AUDITION_HEADROOM + CHASE_HEADROOM
+        );
+
+        // Every pitch struck and released inside one block: 256 events in a single window, well
+        // past the 145 frames of fixed headroom, so the density term is what sizes the buffer.
+        let dense = stacked_note_project(0..128, Ticks(1));
+        let graph = RenderGraph::build(&dense, &AudioSourceBank::new(), &testkit::registry(), 512);
+        let expected = 256 + AUDITION_HEADROOM + CHASE_HEADROOM;
+        assert!(expected > AUDITION_HEADROOM + CHASE_HEADROOM);
+        assert_eq!(graph.tracks()[0].block_events.capacity(), expected);
     }
 
     #[test]

@@ -13,6 +13,13 @@ use crate::graph::{RENDER_CHANNELS, RenderGraph};
 use crate::renderer::render_block;
 use crate::transport::Transport;
 
+/// Longest span an offline render will attempt, in frames: twenty-four hours at 192 kHz.
+///
+/// This is a sanity bound, not a quota. Nothing a user can arrange comes anywhere near it, so
+/// anything that does is a corrupt figure — and turning that into an error is what keeps the
+/// export path from panicking in the allocator on a number it was handed rather than chose.
+const MAX_RENDER_FRAMES: u64 = 24 * 60 * 60 * 192_000;
+
 /// How much of a project to render, and how.
 #[derive(Clone, Debug, PartialEq)]
 pub struct OfflineOptions {
@@ -114,7 +121,20 @@ pub fn render_project_with_progress(
     } else {
         0
     };
-    let total = (end_frames - options.start_frames) as usize + tail;
+    // A corrupt tempo map or a bad `end_frames` can make this span astronomically large, and the
+    // buffer that follows would then panic inside the allocator rather than returning an error.
+    let span = end_frames - options.start_frames;
+    let too_long = || EngineError::RenderTooLong {
+        frames: span,
+        limit: MAX_RENDER_FRAMES,
+    };
+    if span > MAX_RENDER_FRAMES {
+        return Err(too_long());
+    }
+    let total = usize::try_from(span)
+        .ok()
+        .and_then(|span| span.checked_add(tail))
+        .ok_or_else(too_long)?;
 
     let mut out = AudioBuffer::new(RENDER_CHANNELS, total, sample_rate);
     progress(0.0);
@@ -207,6 +227,25 @@ mod tests {
         )
         .expect("render");
         assert_eq!(without.frame_count(), 96_000);
+    }
+
+    #[test]
+    fn a_bypassed_effect_does_not_lengthen_the_export() {
+        // A bypassed slot is never handed a block, so it cannot ring out; counting its declared
+        // tail would pad every export with silence. This is also what makes the placeholder for
+        // a missing plugin harmless, since that one is bypassed by construction.
+        let mut project = four_beat_project();
+        project.add_effect(None, testkit::TAIL_ID);
+        project.master.effects[0].enabled = false;
+
+        let rendered = render_project(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &OfflineOptions::default(),
+        )
+        .expect("render");
+        assert_eq!(rendered.frame_count(), 96_000);
     }
 
     #[test]
@@ -429,6 +468,44 @@ mod tests {
                 end: 1_000
             }
         ));
+    }
+
+    #[test]
+    fn an_absurd_frame_count_is_an_error_rather_than_an_allocator_panic() {
+        let project = four_beat_project();
+        let error = render_project(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &OfflineOptions::default().with_range(0, u64::MAX),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                EngineError::RenderTooLong {
+                    frames: u64::MAX,
+                    limit: MAX_RENDER_FRAMES
+                }
+            ),
+            "got {error}"
+        );
+    }
+
+    #[test]
+    fn a_long_but_plausible_range_is_still_accepted() {
+        // A minute at 48 kHz: well inside the bound, and cheap enough to actually render.
+        let project = four_beat_project();
+        let rendered = render_project(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &OfflineOptions::default()
+                .with_range(0, 2_880_000)
+                .with_block_frames(65_536),
+        )
+        .expect("render");
+        assert_eq!(rendered.frame_count(), 2_880_000);
     }
 
     #[test]

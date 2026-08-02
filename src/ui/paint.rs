@@ -193,16 +193,18 @@ pub fn loop_region(
     if end <= start {
         return;
     }
-    let x0 = bounds.origin.x + view.tick_to_x(start);
-    let x1 = bounds.origin.x + view.tick_to_x(end);
+    // Clamp both edges before sizing. Clamping only the left one and then taking the unclamped
+    // width paints past the right edge, and paints at all for a region scrolled off-screen.
+    let left = (bounds.origin.x + view.tick_to_x(start)).max(bounds.origin.x);
+    let right = (bounds.origin.x + view.tick_to_x(end)).min(bounds.origin.x + bounds.size.width);
+    if right <= left {
+        return;
+    }
     rect(
         window,
         Bounds {
-            origin: point(x0.max(bounds.origin.x), bounds.origin.y),
-            size: size(
-                (x1 - x0).min(bounds.size.width).max(px(0.0)),
-                bounds.size.height,
-            ),
+            origin: point(left, bounds.origin.y),
+            size: size(right - left, bounds.size.height),
         },
         Theme::translucent(theme.loop_region, 0.18),
     );

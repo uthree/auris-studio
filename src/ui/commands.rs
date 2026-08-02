@@ -16,21 +16,22 @@ use gpui::{Context, Window};
 use crate::app::{AurisApp, ExportState};
 
 impl AurisApp {
-    /// Selects a track and, when it holds clips, the first clip on it.
+    /// Selects a track and points the piano roll at a clip that belongs to it.
     pub(crate) fn select_track(&mut self, track: TrackId) {
         if self.selected_track == Some(track) {
             return;
         }
         self.selected_track = Some(track);
         self.selected_notes.clear();
-        // Keep the piano roll pointed at something editable rather than going blank.
-        if let Some(first) = self
+        // The clip selection must always be recomputed, never left behind: keeping the previous
+        // track's clip meant note edits and Delete acted on a track that was no longer selected.
+        self.selected_clip = self
             .project
             .track(track)
             .and_then(|t| t.kind.as_instrument())
             .and_then(|inner| inner.clips.first())
-        {
-            self.selected_clip = Some(first.id);
+            .map(|clip| clip.id);
+        if self.selected_clip.is_some() {
             self.center_roll_on_selection();
         }
     }
@@ -87,6 +88,9 @@ impl AurisApp {
             .project
             .add_instrument_track(format!("Track {count}"), instrument);
         self.selected_track = Some(id);
+        // A brand-new track has no clips, so nothing should stay selected from the old one.
+        self.selected_clip = None;
+        self.selected_notes.clear();
         self.rebuild_graph();
     }
 
@@ -96,6 +100,8 @@ impl AurisApp {
         let count = self.project.tracks.len() + 1;
         let id = self.project.add_audio_track(format!("Audio {count}"));
         self.selected_track = Some(id);
+        self.selected_clip = None;
+        self.selected_notes.clear();
         self.rebuild_graph();
     }
 
@@ -183,6 +189,10 @@ impl AurisApp {
         self.history.clear();
         self.project_path = None;
         self.dirty = false;
+        // History is cleared above, so nothing can bring the old document's audio back; holding
+        // its decoded buffers would keep them resident for the rest of the session.
+        self.bank = auris_core::AudioSourceBank::new();
+        self.waveforms.clear();
         self.set_project(project);
         self.set_status("New project");
     }
@@ -249,8 +259,21 @@ impl AurisApp {
                         this.project_path = Some(path.clone());
                         this.dirty = false;
                         this.set_project(project);
-                        this.reload_audio_sources();
-                        this.set_status(format!("Opened {}", path.display()));
+                        let missing = this.reload_audio_sources();
+                        // Fold the failures into the one status line rather than setting a
+                        // message that the "Opened ..." below would immediately overwrite.
+                        this.set_status(match missing.len() {
+                            0 => format!("Opened {}", path.display()),
+                            1 => format!(
+                                "Opened {} — missing audio file {}",
+                                path.display(),
+                                missing[0].display()
+                            ),
+                            n => format!(
+                                "Opened {} — {n} audio files could not be found",
+                                path.display()
+                            ),
+                        });
                     }
                     Err(error) => this.set_status(format!("Could not open: {error}")),
                 }
@@ -261,7 +284,10 @@ impl AurisApp {
     }
 
     /// Re-decodes every audio source a freshly loaded project references.
-    fn reload_audio_sources(&mut self) {
+    ///
+    /// Returns the paths that could not be read, so the caller can report them in the single
+    /// status line it sets rather than losing them behind it.
+    fn reload_audio_sources(&mut self) -> Vec<PathBuf> {
         let sources: Vec<(auris_core::SourceId, PathBuf)> = self
             .project
             .audio_sources
@@ -269,16 +295,18 @@ impl AurisApp {
             .map(|source| (source.id, source.path.clone()))
             .collect();
         let rate = self.project.sample_rate;
+        let mut missing = Vec::new();
         for (id, path) in sources {
             match import_audio_file(&path, rate) {
                 Ok(buffer) => self.install_audio_source(id, Arc::new(buffer)),
                 Err(error) => {
                     log::warn!("could not reload {}: {error}", path.display());
-                    self.set_status(format!("Missing audio file: {}", path.display()));
+                    missing.push(path);
                 }
             }
         }
         self.rebuild_graph();
+        missing
     }
 
     /// Prompts for an audio file and drops it onto a new audio track.

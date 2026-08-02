@@ -224,12 +224,14 @@ impl AurisApp {
                 self.push_loop_to_engine();
             }
             Drag::ClipMove { clip, grab_offset } => {
+                self.commit_pending_edit();
                 let x = event.position.x - self.lanes_origin().x;
                 let tick = self.timeline.x_to_tick(x);
                 let start = self.snap(tick - grab_offset).max_zero();
                 self.move_clip(clip, start);
             }
             Drag::ClipResize { clip } => {
+                self.commit_pending_edit();
                 let x = event.position.x - self.lanes_origin().x;
                 let tick = self.snap(self.timeline.x_to_tick(x));
                 self.resize_clip(clip, tick);
@@ -240,6 +242,7 @@ impl AurisApp {
                 origin_pitch,
                 ref origins,
             } => {
+                self.commit_pending_edit();
                 let origin = self.roll_origin(self.viewport_height);
                 let tick = self.timeline.x_to_tick(event.position.x - origin.x);
                 let pitch = self.pitch.y_to_pitch(event.position.y - origin.y);
@@ -251,6 +254,7 @@ impl AurisApp {
                 self.move_notes(clip, origins, delta_ticks, delta_pitch);
             }
             Drag::NoteResize { clip, index } => {
+                self.commit_pending_edit();
                 let origin = self.roll_origin(self.viewport_height);
                 let tick = self.timeline.x_to_tick(event.position.x - origin.x);
                 let Some(clip_start) = self.project.midi_clip(clip).map(|(_, c)| c.start) else {
@@ -268,6 +272,7 @@ impl AurisApp {
                 self.drag_param(target, start_value, delta);
             }
             Drag::Tempo { start_bpm, start_x } => {
+                self.commit_pending_edit();
                 // Half a beat per pixel would be unusable; 0.25 BPM/px lets a short drag cover
                 // the musically interesting range while still landing on exact values.
                 let delta = f64::from(f32::from(event.position.x - start_x)) * 0.25;

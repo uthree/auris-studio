@@ -427,8 +427,9 @@ impl AurisApp {
                         theme.accent,
                         &theme,
                         cx.listener(move |this, event: &MouseDownEvent, _, _| {
-                            this.dirty = true;
-                            this.drag = Some(Drag::Param {
+                            // `set_param_value` marks the document dirty once the drag actually
+                            // moves something; a click that only grabs the control is not an edit.
+                            this.begin_drag_without_edit(Drag::Param {
                                 target,
                                 start_value: value,
                                 start_x: event.position.x,
@@ -489,7 +490,7 @@ impl AurisApp {
             theme.accent,
             &theme,
             cx.listener(move |this, event: &MouseDownEvent, _, _| {
-                this.drag = Some(Drag::Param {
+                this.begin_drag_without_edit(Drag::Param {
                     target,
                     start_value: value,
                     start_x: event.position.x,

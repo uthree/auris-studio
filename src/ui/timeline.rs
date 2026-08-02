@@ -182,6 +182,22 @@ impl PitchView {
         self.top_pitch = (anchor_pitch as i32 + rows_above).clamp(0, Self::MAX_PITCH as i32) as u8;
     }
 
+    /// Pitch whose row contains screen y, or `None` when y falls outside the painted range.
+    ///
+    /// Use this for hit tests. [`Self::y_to_pitch`] clamps instead, which is what a drag wants
+    /// once it has already grabbed a note, but for a fresh click it would turn the blank strip
+    /// past either end of the keyboard into a hit on pitch 0 or 127.
+    pub fn pitch_at(&self, y: Pixels) -> Option<u8> {
+        if self.row_height <= 0.0 {
+            return None;
+        }
+        let rows = (f32::from(y) / self.row_height).floor() as i32;
+        let pitch = self.top_pitch as i32 - rows;
+        (0..=Self::MAX_PITCH as i32)
+            .contains(&pitch)
+            .then_some(pitch as u8)
+    }
+
     /// Scrolls the pitch axis by a pixel delta.
     pub fn scroll_by(&mut self, delta_y: Pixels) {
         if self.row_height <= 0.0 {
@@ -297,6 +313,24 @@ mod tests {
         assert_eq!(view.y_to_pitch(px(0.0)), 84);
         assert_eq!(view.y_to_pitch(px(13.0)), 83);
         assert_eq!(view.y_to_pitch(px(100_000.0)), 0);
+    }
+
+    #[test]
+    fn pitch_at_rejects_positions_outside_the_keyboard() {
+        let view = PitchView {
+            row_height: 10.0,
+            top_pitch: 2,
+        };
+        assert_eq!(view.pitch_at(px(0.0)), Some(2));
+        assert_eq!(view.pitch_at(px(25.0)), Some(0));
+        // One row below MIDI 0 is unpainted, so it is not a hit at all — unlike `y_to_pitch`,
+        // which clamps there because a drag already holding a note wants to keep it.
+        assert_eq!(view.pitch_at(px(35.0)), None);
+        assert_eq!(view.y_to_pitch(px(35.0)), 0);
+        // Above the top of the view is still a real pitch, just scrolled out of sight.
+        assert_eq!(view.pitch_at(px(-5.0)), Some(3));
+        // Far enough above and it leaves the MIDI range too.
+        assert_eq!(view.pitch_at(px(-1_400.0)), None);
     }
 
     #[test]

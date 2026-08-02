@@ -243,9 +243,37 @@ pub struct TempoPoint {
 ///
 /// Invariants, upheld by every constructor and mutator: at least one point, sorted by tick,
 /// the first point sits at tick 0, and every BPM is finite and positive.
+///
+/// Deserialization is routed through [`TryFrom`] rather than a plain derive: a hand-edited or
+/// corrupted project file would otherwise construct a map that violates those invariants, and
+/// the readers all index `points[0]` or divide by a BPM without re-checking.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "TempoMapRepr")]
 pub struct TempoMap {
     points: Vec<TempoPoint>,
+}
+
+/// On-disk shape of a [`TempoMap`]. It mirrors what `Serialize` emits, so files written by
+/// older builds keep loading; only the validation on the way in is new.
+#[derive(Deserialize)]
+struct TempoMapRepr {
+    points: Vec<TempoPoint>,
+}
+
+impl TryFrom<TempoMapRepr> for TempoMap {
+    type Error = CoreError;
+
+    fn try_from(repr: TempoMapRepr) -> Result<Self> {
+        Self::from_points(repr.points)
+    }
+}
+
+impl TryFrom<Vec<TempoPoint>> for TempoMap {
+    type Error = CoreError;
+
+    fn try_from(points: Vec<TempoPoint>) -> Result<Self> {
+        Self::from_points(points)
+    }
 }
 
 impl Default for TempoMap {
@@ -286,10 +314,16 @@ impl TempoMap {
                 )));
             }
         }
-        points.sort_by_key(|p| p.tick);
+        // Clamp positions *before* ordering. A point before tick 0 has no meaning on the
+        // timeline, and clamping it later would not help: the sort would keep it in front, the
+        // anchor below would overwrite only the first entry, and the rest of the list would
+        // stay out of order. `segment_index` binary-searches and `ticks_to_seconds` walks
+        // forwards, so an unordered list misreads silently instead of failing.
         for point in &mut points {
             point.bpm = Self::clamp_bpm(point.bpm);
+            point.tick = point.tick.max_zero();
         }
+        points.sort_by_key(|p| p.tick);
         // The first segment must start at zero or positions before it are undefined.
         points[0].tick = Ticks::ZERO;
         points.dedup_by_key(|p| p.tick);
@@ -496,6 +530,143 @@ mod tests {
             map.bar_beat_at(Ticks::from_beats(5.5), signature),
             (2, 2, TICKS_PER_QUARTER / 2)
         );
+    }
+
+    #[test]
+    fn deserializing_an_empty_point_list_is_an_error() {
+        // `initial_bpm` and `ticks_to_seconds` index `points[0]`, so an empty map panics on use.
+        let result = serde_json::from_str::<TempoMap>(r#"{"points":[]}"#);
+        assert!(result.is_err(), "empty tempo map must not deserialize");
+    }
+
+    #[test]
+    fn deserializing_a_non_positive_bpm_is_an_error() {
+        for bad in ["0.0", "-120.0"] {
+            let json = format!(r#"{{"points":[{{"tick":0,"bpm":{bad}}}]}}"#);
+            let result = serde_json::from_str::<TempoMap>(&json);
+            assert!(result.is_err(), "bpm {bad} must not deserialize");
+        }
+    }
+
+    #[test]
+    fn deserialized_tempo_stays_inside_the_supported_range() {
+        // A surviving out-of-range BPM makes `ticks_to_seconds` non-finite, and
+        // `Seconds::as_samples` then saturates to `u64::MAX` frames.
+        let map: TempoMap =
+            serde_json::from_str(r#"{"points":[{"tick":0,"bpm":0.0000001}]}"#).unwrap();
+        assert_eq!(map.initial_bpm(), TempoMap::MIN_BPM);
+        let seconds = map.ticks_to_seconds(Ticks::QUARTER);
+        assert!(seconds.0.is_finite());
+        assert!(seconds.as_samples(48_000.0).raw() < u64::MAX);
+
+        let map: TempoMap = serde_json::from_str(r#"{"points":[{"tick":0,"bpm":1e9}]}"#).unwrap();
+        assert_eq!(map.initial_bpm(), TempoMap::MAX_BPM);
+    }
+
+    #[test]
+    fn deserializing_normalises_order_and_anchor() {
+        let map: TempoMap = serde_json::from_str(
+            r#"{"points":[{"tick":5000,"bpm":90.0},{"tick":100,"bpm":150.0}]}"#,
+        )
+        .unwrap();
+        assert_eq!(map.points().len(), 2);
+        assert_eq!(map.points()[0].tick, Ticks::ZERO);
+        assert_eq!(map.points()[0].bpm, 150.0);
+        assert_eq!(map.points()[1].tick, Ticks(5000));
+        assert_eq!(map.points()[1].bpm, 90.0);
+    }
+
+    #[test]
+    fn from_points_always_upholds_the_invariant() {
+        // `from_points` is the only gate in front of deserialization, so every accepted input
+        // has to come out satisfying what the readers assume. Cover the awkward mixes of
+        // negative, duplicate and out-of-order positions in one sweep.
+        let candidates = [-5000i64, -960, -1, 0, 1, 960, 5000];
+        for a in candidates {
+            for b in candidates {
+                for c in candidates {
+                    let map = TempoMap::from_points(
+                        [(a, 120.0), (b, 90.0), (c, 60.0)]
+                            .into_iter()
+                            .map(|(tick, bpm)| TempoPoint {
+                                tick: Ticks(tick),
+                                bpm,
+                            })
+                            .collect(),
+                    )
+                    .unwrap();
+                    let points = map.points();
+                    assert_eq!(points[0].tick, Ticks::ZERO, "{a} {b} {c} -> {points:?}");
+                    assert!(
+                        points.windows(2).all(|pair| pair[0].tick < pair[1].tick),
+                        "{a} {b} {c} -> {points:?}"
+                    );
+                    assert!(
+                        map.ticks_to_seconds(Ticks(4000)).0 > 0.0,
+                        "{a} {b} {c} -> {points:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn deserializing_folds_positions_before_the_anchor() {
+        // Rejecting bad BPM is not enough: a corrupted file can also hold points before tick 0,
+        // and those leave the list unordered once the tick-0 anchor is forced. Readers trust the
+        // ordering, so the map has to come back sorted rather than merely non-empty.
+        let map: TempoMap = serde_json::from_str(
+            r#"{"points":[{"tick":-100,"bpm":90.0},{"tick":-50,"bpm":100.0},{"tick":960,"bpm":120.0}]}"#,
+        )
+        .unwrap();
+        assert!(
+            map.points().iter().all(|p| p.tick >= Ticks::ZERO),
+            "positions must be clamped onto the timeline: {:?}",
+            map.points()
+        );
+        assert!(
+            map.points()
+                .windows(2)
+                .all(|pair| pair[0].tick < pair[1].tick),
+            "points must stay strictly ordered: {:?}",
+            map.points()
+        );
+        assert_eq!(map.points()[0].tick, Ticks::ZERO);
+        // With the list out of order the first segment ran backwards, so `ticks_to_seconds`
+        // broke out immediately and reported 0 s for every position on the timeline.
+        assert!((map.ticks_to_seconds(Ticks::QUARTER).0 - 60.0 / 90.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn tempo_map_json_round_trips_unchanged() {
+        let map = TempoMap::from_points(vec![
+            TempoPoint {
+                tick: Ticks::ZERO,
+                bpm: 120.0,
+            },
+            TempoPoint {
+                tick: Ticks(5000),
+                bpm: 90.0,
+            },
+        ])
+        .unwrap();
+        let json = serde_json::to_string(&map).unwrap();
+        // The wire shape must not drift, or projects saved by older builds stop loading.
+        assert_eq!(
+            json,
+            r#"{"points":[{"tick":0,"bpm":120.0},{"tick":5000,"bpm":90.0}]}"#
+        );
+        assert_eq!(serde_json::from_str::<TempoMap>(&json).unwrap(), map);
+    }
+
+    #[test]
+    fn project_round_trips_with_its_tempo_map() {
+        let mut project = crate::project::Project::new("Round trip", 48_000.0);
+        project.tempo_map.set_point(Ticks(5000), 90.0);
+        let json = serde_json::to_string(&project).unwrap();
+        let loaded: crate::project::Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded, project);
+        assert_eq!(loaded.bpm(), 120.0);
     }
 
     #[test]
