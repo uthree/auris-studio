@@ -561,6 +561,9 @@ impl SettingsWindow {
             }
 
             let keystroke = self.keymap.display(command);
+            // Shown prettified but matched raw: `⌘S` is what belongs on the button, and
+            // `conflicts` compares against what gpui can parse.
+            let shown = crate::actions::menu_keystroke(&keystroke);
             let is_capturing = capturing == Some(command.id);
             let overridden = self.keymap.is_overridden(command);
             let conflicts = self.keymap.conflicts(&keystroke, command);
@@ -594,7 +597,7 @@ impl SettingsWindow {
                         if is_capturing {
                             self.t(Key::PressAKey).to_string()
                         } else {
-                            keystroke
+                            shown
                         },
                         ButtonStyle::Normal,
                         is_capturing,

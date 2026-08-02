@@ -36,6 +36,7 @@ impl Render for AurisApp {
 
         let theme = self.theme.clone();
         let panels = self.panels.clone();
+        let menu_bar = self.render_menu_bar(window, cx);
         let transport = self.render_transport(window, cx);
         let arrangement = self.render_arrangement(window, cx);
         let editor = panels.editor_visible.then(|| match self.editor {
@@ -120,11 +121,21 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_toggle_inspector))
             .on_action(cx.listener(Self::on_toggle_editor))
             .on_action(cx.listener(Self::on_open_settings))
+            // A click anywhere else dismisses an open menu-bar menu, the way a native menu bar
+            // behaves. Capture phase, so it is seen even where a panel stops the event before
+            // it reaches the root — and before the title's own handler, which then toggles from
+            // the state the frame was drawn with rather than from this.
+            .capture_any_mouse_down(cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
+                if this.close_menu_bar() {
+                    cx.notify();
+                }
+            }))
             // Drags are tracked on the root so they keep working after the pointer leaves the
             // control that started them, which is what makes a fader usable.
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(gpui::MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_key_down(cx.listener(Self::on_key_down))
+            .children(menu_bar)
             .child(transport)
             .child(
                 div()
@@ -542,7 +553,7 @@ impl AurisApp {
     ) {
         // Escape closes what is open before it does anything drastic. Panicking the engine
         // while a menu is up would be a surprising answer to "never mind".
-        if self.close_menu() {
+        if self.close_menu() | self.close_menu_bar() {
             cx.notify();
             return;
         }

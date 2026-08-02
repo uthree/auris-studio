@@ -9,6 +9,7 @@ pub mod commands;
 pub mod context_menu;
 pub mod icons;
 pub mod inspector;
+pub mod menu_bar;
 pub mod mixer;
 pub mod paint;
 pub mod piano_roll;

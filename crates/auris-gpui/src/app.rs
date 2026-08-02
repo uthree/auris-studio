@@ -389,6 +389,8 @@ pub struct AurisApp {
     pub(crate) canvas: CanvasBounds,
     /// The open right-click menu, if any.
     pub(crate) menu: Option<ContextMenu>,
+    /// Which menu-bar menu is open, on the platforms that draw their own bar.
+    pub(crate) menu_bar: Option<usize>,
     /// The open rename sheet, if any.
     pub(crate) prompt: Option<Prompt>,
 
@@ -480,6 +482,7 @@ impl AurisApp {
             arrangement_width: px(900.0),
             canvas: CanvasBounds::default(),
             menu: None,
+            menu_bar: None,
             prompt: None,
             settings,
             language,
@@ -691,9 +694,10 @@ impl AurisApp {
         if let Err(error) = self.settings.save() {
             log::warn!("could not save settings: {error}");
         }
-        // The menu bar belongs to the platform, not to a view, so it is rebuilt rather than
-        // re-rendered — nothing would redraw it otherwise.
-        cx.set_menus(crate::menus(self.language));
+        // The system menu bar belongs to the platform, not to a view, so it is rebuilt rather
+        // than re-rendered — nothing would redraw it otherwise. The in-window bar is a view and
+        // needs none of this; it reads `self.language` on the next frame.
+        cx.set_menus(crate::menu::menus(self.language));
         let name = self.language.endonym();
         self.set_status(messages::language_changed(self.language, name));
     }

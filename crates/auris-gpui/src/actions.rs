@@ -162,6 +162,95 @@ pub fn normalise_keystroke(keystroke: &str) -> String {
         .join(" ")
 }
 
+/// `keystroke` as a menu would print it.
+///
+/// `ctrl-shift-s` is the form gpui parses; it is not a form anyone would put in a menu. macOS
+/// stacks glyphs in a fixed order and leaves out the separators, and Windows spells the
+/// modifiers out and joins them with plus signs, so each platform gets its own.
+pub fn menu_keystroke(keystroke: &str) -> String {
+    normalise_keystroke(keystroke)
+        .split_whitespace()
+        .map(pretty_chunk)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// One keystroke of a possibly multi-stroke binding, prettified.
+fn pretty_chunk(chunk: &str) -> String {
+    let Ok(parsed) = gpui::Keystroke::parse(chunk) else {
+        return chunk.to_string();
+    };
+    let modifiers = parsed.modifiers;
+    let key = pretty_key(&parsed.key);
+
+    if cfg!(target_os = "macos") {
+        // ⌃⌥⇧⌘ then the key, which is the order Apple prints them in and the order people
+        // read them in without thinking about it.
+        let mut out = String::new();
+        for (held, glyph) in [
+            (modifiers.control, '⌃'),
+            (modifiers.alt, '⌥'),
+            (modifiers.shift, '⇧'),
+            (modifiers.platform, '⌘'),
+        ] {
+            if held {
+                out.push(glyph);
+            }
+        }
+        out.push_str(&key);
+        return out;
+    }
+
+    let mut parts: Vec<&str> = Vec::new();
+    for (held, name) in [
+        (modifiers.control, "Ctrl"),
+        (modifiers.alt, "Alt"),
+        (modifiers.shift, "Shift"),
+        // Never produced by a default, but a user can bind it and an empty gap would be worse.
+        (modifiers.platform, "Win"),
+    ] {
+        if held {
+            parts.push(name);
+        }
+    }
+    parts.push(&key);
+    parts.join("+")
+}
+
+/// A key's name as a menu prints it.
+fn pretty_key(key: &str) -> String {
+    let mac = cfg!(target_os = "macos");
+    let named = match key {
+        "backspace" if mac => "⌫",
+        "backspace" => "Backspace",
+        "delete" if mac => "⌦",
+        "delete" => "Del",
+        "enter" if mac => "⏎",
+        "enter" => "Enter",
+        "escape" if mac => "⎋",
+        "escape" => "Esc",
+        "tab" if mac => "⇥",
+        "tab" => "Tab",
+        "space" => "Space",
+        "left" => "←",
+        "right" => "→",
+        "up" => "↑",
+        "down" => "↓",
+        _ => "",
+    };
+    if !named.is_empty() {
+        return named.to_string();
+    }
+    // A letter is shown in upper case — `⌘S`, never `⌘s` — and punctuation is left alone, so
+    // `=` does not become something unrecognisable. Anything longer keeps its shape with a
+    // capital, which is what turns `f1` into `F1`.
+    let mut chars = key.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
 /// Whether `keystroke` is something the user could actually press.
 ///
 /// Checked before anything is bound, because [`KeyBinding::new`] panics on a malformed
@@ -259,6 +348,45 @@ mod tests {
             assert!(
                 is_valid_keystroke(&once),
                 "`{}` normalises to an unbindable `{once}`",
+                entry.id
+            );
+        }
+    }
+
+    #[test]
+    fn a_menu_prints_keystrokes_the_way_the_platform_does() {
+        if cfg!(target_os = "macos") {
+            assert_eq!(menu_keystroke("secondary-s"), "⌘S");
+            assert_eq!(menu_keystroke("secondary-shift-s"), "⇧⌘S");
+            assert_eq!(menu_keystroke("secondary-backspace"), "⌘⌫");
+            assert_eq!(menu_keystroke("escape"), "⎋");
+        } else {
+            assert_eq!(menu_keystroke("secondary-s"), "Ctrl+S");
+            assert_eq!(menu_keystroke("secondary-shift-s"), "Ctrl+Shift+S");
+            assert_eq!(menu_keystroke("secondary-backspace"), "Ctrl+Backspace");
+            assert_eq!(menu_keystroke("escape"), "Esc");
+        }
+        assert_eq!(menu_keystroke("space"), "Space");
+        assert_eq!(menu_keystroke("g g"), "G G");
+    }
+
+    #[test]
+    fn every_default_prints_as_something_a_person_can_read() {
+        for entry in BINDABLE {
+            let printed = menu_keystroke(entry.default);
+            assert!(
+                !printed.is_empty(),
+                "`{}` prints as nothing at all",
+                entry.id
+            );
+            assert!(
+                !printed.contains('-') || printed.contains("Ctrl+-") || printed.ends_with('-'),
+                "`{}` still prints in gpui's own syntax: `{printed}`",
+                entry.id
+            );
+            assert!(
+                !printed.contains("secondary"),
+                "`{}` leaks the portable spelling into the menu: `{printed}`",
                 entry.id
             );
         }
