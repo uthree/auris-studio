@@ -7,14 +7,22 @@ use gpui::{Font, FontFallbacks, Hsla, Pixels, px, rgb};
 
 /// The font every panel draws in, with fallbacks for scripts the base family has no glyphs for.
 ///
-/// Helvetica covers Latin and nothing else, so a Japanese track name or a Japanese menu would
-/// come out as empty boxes without this. The fallbacks are named per platform because a family
-/// that is not installed is simply skipped, which makes an unused entry free.
+/// The base family is each platform's own interface font, named rather than left to a
+/// substitution table: asking Windows for Helvetica gets you Arial through a mapping written in
+/// the nineties, which is close enough to look like nothing went wrong and far enough to look
+/// unlike every other window on the screen.
 ///
-/// That goes for the Latin text too: Helvetica is the base family and Windows has never
-/// shipped it, so Segoe UI leads the fallbacks there rather than leaving the whole interface to
-/// whatever DirectWrite decides to substitute.
+/// None of the three covers Japanese, so a Japanese track name or menu would come out as empty
+/// boxes without the fallbacks. They are listed for every platform at once because a family that
+/// is not installed is simply skipped, which makes an unused entry free.
 pub fn ui_font() -> Font {
+    let base = if cfg!(target_os = "macos") {
+        "Helvetica"
+    } else if cfg!(target_os = "windows") {
+        "Segoe UI"
+    } else {
+        "DejaVu Sans"
+    };
     Font {
         fallbacks: Some(FontFallbacks::from_fonts(vec![
             // macOS
@@ -28,7 +36,7 @@ pub fn ui_font() -> Font {
             "Noto Sans CJK JP".into(),
             "DejaVu Sans".into(),
         ])),
-        ..gpui::font("Helvetica")
+        ..gpui::font(base)
     }
 }
 
@@ -215,5 +223,26 @@ mod tests {
         assert_eq!(theme.meter_color(-20.0), theme.meter_low);
         assert_eq!(theme.meter_color(-6.0), theme.meter_mid);
         assert_eq!(theme.meter_color(-1.0), theme.meter_high);
+    }
+
+    #[test]
+    fn the_base_family_is_one_this_platform_ships() {
+        // Asking for a family the system does not have lands the whole interface on whatever
+        // the substitution table picks, which is a thing you only notice in a screenshot.
+        let font = ui_font();
+        let expected = if cfg!(target_os = "macos") {
+            "Helvetica"
+        } else if cfg!(target_os = "windows") {
+            "Segoe UI"
+        } else {
+            "DejaVu Sans"
+        };
+        assert_eq!(font.family.as_ref(), expected);
+        assert!(
+            font.fallbacks
+                .as_ref()
+                .is_some_and(|fallbacks| fallbacks.fallback_list().len() >= 5),
+            "the Japanese fallbacks are what keep track names from being empty boxes"
+        );
     }
 }
