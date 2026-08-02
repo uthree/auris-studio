@@ -129,11 +129,22 @@ impl Keymap {
     }
 
     /// The keystroke bound to `command`, whether default or overridden.
+    ///
+    /// As stored, which for an untouched command is the `secondary-` spelling. Use
+    /// [`Keymap::display`] for anything a person reads.
     pub fn keystroke(&self, command: &Bindable) -> &str {
         self.overrides
             .get(command.id)
             .map(String::as_str)
             .unwrap_or(command.default)
+    }
+
+    /// The keystroke bound to `command`, written the way this platform writes it.
+    ///
+    /// `secondary-s` is how the default is stored and is not how anyone would say it out loud;
+    /// the settings window shows `cmd-s` or `ctrl-s` depending on the keyboard in front of it.
+    pub fn display(&self, command: &Bindable) -> String {
+        actions::normalise_keystroke(self.keystroke(command))
     }
 
     /// `true` when the user has changed this command's binding.
@@ -144,11 +155,16 @@ impl Keymap {
     /// Binds `command` to `keystroke`, or clears the override when it matches the default.
     ///
     /// Returns `false` for a keystroke gpui cannot parse, leaving the binding untouched.
+    ///
+    /// "Matches the default" is decided after normalising, because the keyboard reports `cmd-s`
+    /// where the table says `secondary-s`. Comparing them raw would write an override every
+    /// time someone pressed a default back in, freezing today's defaults into their file.
     pub fn set(&mut self, command: &Bindable, keystroke: &str) -> bool {
         if !actions::is_valid_keystroke(keystroke) {
             return false;
         }
-        if keystroke == command.default {
+        if actions::normalise_keystroke(keystroke) == actions::normalise_keystroke(command.default)
+        {
             self.overrides.remove(command.id);
         } else {
             self.overrides
@@ -171,10 +187,14 @@ impl Keymap {
     ///
     /// A conflict is shown rather than refused: two commands on one keystroke is a mistake
     /// worth pointing at, but the user may be in the middle of swapping a pair over.
+    ///
+    /// Compared after normalising, so a ⌘L the user just pressed is recognised as clashing with
+    /// a default stored as `secondary-l`.
     pub fn conflicts(&self, keystroke: &str, except: &Bindable) -> Vec<&'static Bindable> {
+        let wanted = actions::normalise_keystroke(keystroke);
         BINDABLE
             .iter()
-            .filter(|other| other.id != except.id && self.keystroke(other) == keystroke)
+            .filter(|other| other.id != except.id && self.display(other) == wanted)
             .collect()
     }
 
@@ -217,6 +237,51 @@ mod tests {
         assert!(
             !keymap.is_overridden(play),
             "an override equal to the default would freeze today's default into the file"
+        );
+    }
+
+    #[test]
+    fn pressing_a_default_back_in_is_recognised_through_its_platform_spelling() {
+        // The table stores `secondary-s`; the keyboard reports `cmd-s` or `ctrl-s`. Comparing
+        // them raw would store an override identical to the default, which is exactly what the
+        // "only overrides are written" rule exists to prevent.
+        let mut keymap = Keymap::default();
+        let save = command("file.save");
+        assert!(keymap.set(save, "shift-f7"));
+        assert!(keymap.is_overridden(save));
+
+        assert!(keymap.set(save, &actions::normalise_keystroke(save.default)));
+        assert!(
+            !keymap.is_overridden(save),
+            "a default pressed on the keyboard was stored as an override"
+        );
+    }
+
+    #[test]
+    fn a_conflict_is_found_through_its_platform_spelling() {
+        let keymap = Keymap::default();
+        let save = command("file.save");
+        let undo = command("edit.undo");
+        // `file.save` is bound to the default `secondary-s`; asking about it in the form the
+        // keyboard produces must still find it.
+        let clash = keymap.conflicts(&actions::normalise_keystroke(save.default), undo);
+        assert_eq!(clash.len(), 1);
+        assert_eq!(clash[0].id, save.id);
+    }
+
+    #[test]
+    fn what_is_displayed_is_what_the_platform_calls_it() {
+        let keymap = Keymap::default();
+        let expected = if cfg!(target_os = "macos") {
+            "cmd-s"
+        } else {
+            "ctrl-s"
+        };
+        assert_eq!(keymap.display(command("file.save")), expected);
+        assert_eq!(
+            keymap.keystroke(command("file.save")),
+            "secondary-s",
+            "the stored form stays portable; only the display is localised to the keyboard"
         );
     }
 

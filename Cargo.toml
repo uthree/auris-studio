@@ -38,7 +38,21 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 symphonia = { version = "0.6", features = ["all"] }
 thiserror = "2.0"
-wgpu = "30.0"
+
+# Every backend except Direct3D 12, which does not compile at these versions: `gpu-allocator`
+# asks for `windows = ">=0.53, <=0.62"`, gpui pins `windows ^0.61`, so the range resolves to
+# 0.61 while `wgpu-hal` itself uses 0.62 — two incompatible copies of `ID3D12Device`. Windows
+# runs on Vulkan until that is fixed upstream, and `auris-gpu` is optional analysis that already
+# steps aside when no backend is present, so nothing breaks if a machine has neither.
+wgpu = { version = "30.0", default-features = false, features = [
+    "std",
+    "parking_lot",
+    "metal",
+    "gles",
+    "vulkan",
+    "wgsl",
+    "webgpu",
+] }
 
 [profile.dev]
 opt-level = 1

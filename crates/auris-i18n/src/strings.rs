@@ -134,8 +134,12 @@ strings! {
     PointerHeading { en: "Pointer", ja: "ポインタ操作" }
     PointerCreate { en: "Create a note or clip", ja: "ノート・クリップを作成" }
     PointerDelete { en: "Delete what is under the pointer", ja: "ポインタ位置のものを削除" }
+    // Two names for each modifier gesture: the frontend picks by platform, because the glyphs
+    // are Apple's and a Windows keyboard has neither of them printed on it.
     GestureCommandClick { en: "⌘-click", ja: "⌘＋クリック" }
     GestureOptionClick { en: "⌥-click", ja: "⌥＋クリック" }
+    GestureControlClick { en: "Ctrl-click", ja: "Ctrl＋クリック" }
+    GestureAltClick { en: "Alt-click", ja: "Alt＋クリック" }
     GestureDoubleClick { en: "Double-click", ja: "ダブルクリック" }
     PointerNote {
         en: "The two cannot share a gesture; picking one that is taken swaps them.",

@@ -3,6 +3,11 @@
 //! Creating and deleting are the two gestures every DAW binds differently — Logic creates on
 //! ⌘-click and deletes on a double-click, others use ⌥ or a dedicated tool — so they are
 //! configurable rather than baked in, the same way a keystroke is.
+//!
+//! The names are Logic's, and so is the vocabulary a DAW user arrives with, but the *keys* are
+//! whatever the platform calls them: ⌘ on macOS is Ctrl on Windows and Linux. Everything here
+//! goes through [`gpui::Modifiers::secondary`] rather than naming a key directly, because
+//! gpui's `platform` modifier is the Windows key off a Mac and no application gets to use it.
 
 use auris_i18n::Key;
 use gpui::MouseDownEvent;
@@ -10,18 +15,19 @@ use serde::{Deserialize, Serialize};
 
 /// A click that means more than "select this".
 ///
-/// Deliberately a short closed list rather than a free choice of modifier. ⌃-click is not here
-/// because macOS turns it into a right-click before it ever reaches the window, and ⇧-click is
-/// not here because it extends a selection.
+/// Deliberately a short closed list rather than a free choice of modifier. ⇧-click is not here
+/// because it extends a selection, and the raw ⌃ key is not here because macOS turns ⌃-click
+/// into a right-click before it ever reaches the window — the one place a modifier means
+/// something different enough that offering it would be a trap.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 // The shared `Click` suffix is the point: these are all clicks, and dropping it would leave a
 // variant called `Option`, which in Rust reads as something else entirely.
 #[allow(clippy::enum_variant_names)]
 pub enum PointerGesture {
-    /// Hold the command key and click.
+    /// Hold the platform's command modifier — ⌘ on macOS, Ctrl elsewhere — and click.
     CommandClick,
-    /// Hold the option key and click.
+    /// Hold the option key — ⌥ on macOS, Alt elsewhere — and click.
     OptionClick,
     /// Click twice in quick succession.
     DoubleClick,
@@ -41,21 +47,26 @@ impl PointerGesture {
     /// ⌘-clicks, and refusing the second one would look like a dropped input.
     pub fn matches(self, event: &MouseDownEvent) -> bool {
         match self {
-            PointerGesture::CommandClick => event.modifiers.platform,
+            PointerGesture::CommandClick => event.modifiers.secondary(),
             PointerGesture::OptionClick => event.modifiers.alt,
             // A modified double-click belongs to whichever modifier gesture claims it, so that a
             // ⌘-double-click on empty space creates once rather than also deleting.
             PointerGesture::DoubleClick => {
-                event.click_count >= 2 && !event.modifiers.platform && !event.modifiers.alt
+                event.click_count >= 2 && !event.modifiers.secondary() && !event.modifiers.alt
             }
         }
     }
 
     /// How the gesture is written in the settings window.
+    ///
+    /// ⌘ and ⌥ are Apple's glyphs and appear on Apple's keyboards. Naming them at a Windows or
+    /// Linux user would be asking them to press a key they cannot find.
     pub fn label(self) -> Key {
         match self {
-            PointerGesture::CommandClick => Key::GestureCommandClick,
-            PointerGesture::OptionClick => Key::GestureOptionClick,
+            PointerGesture::CommandClick if cfg!(target_os = "macos") => Key::GestureCommandClick,
+            PointerGesture::CommandClick => Key::GestureControlClick,
+            PointerGesture::OptionClick if cfg!(target_os = "macos") => Key::GestureOptionClick,
+            PointerGesture::OptionClick => Key::GestureAltClick,
             PointerGesture::DoubleClick => Key::GestureDoubleClick,
         }
     }
@@ -106,6 +117,7 @@ impl PointerGestures {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use auris_i18n::Language;
     use gpui::{Modifiers, MouseButton, point, px};
 
     fn click(modifiers: Modifiers, count: usize) -> MouseDownEvent {
@@ -121,7 +133,7 @@ mod tests {
     #[test]
     fn each_gesture_recognises_only_itself() {
         let plain = click(Modifiers::none(), 1);
-        let command = click(Modifiers::command(), 1);
+        let command = click(Modifiers::secondary_key(), 1);
         let option = click(Modifiers::alt(), 1);
         let double = click(Modifiers::none(), 2);
 
@@ -150,12 +162,38 @@ mod tests {
 
     #[test]
     fn a_modified_double_click_belongs_to_the_modifier() {
-        let command_twice = click(Modifiers::command(), 2);
+        let command_twice = click(Modifiers::secondary_key(), 2);
         assert!(PointerGesture::CommandClick.matches(&command_twice));
         assert!(
             !PointerGesture::DoubleClick.matches(&command_twice),
             "one press must not be both gestures at once"
         );
+    }
+
+    #[test]
+    fn the_create_gesture_uses_a_key_this_platform_actually_has() {
+        // gpui's `platform` modifier is ⌘ on macOS but the *Windows key* on Windows, which the
+        // shell claims before an application sees it. Reading it directly would leave note
+        // editing dead off a Mac, with nothing in the log to say why.
+        assert!(PointerGesture::CommandClick.matches(&click(Modifiers::secondary_key(), 1)));
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert!(PointerGesture::CommandClick.matches(&click(Modifiers::control(), 1)));
+            assert!(!PointerGesture::CommandClick.matches(&click(Modifiers::windows(), 1)));
+        }
+        #[cfg(target_os = "macos")]
+        assert!(PointerGesture::CommandClick.matches(&click(Modifiers::command(), 1)));
+    }
+
+    #[test]
+    fn the_labels_name_keys_this_platform_has() {
+        let create = PointerGesture::CommandClick.label().get(Language::English);
+        let option = PointerGesture::OptionClick.label().get(Language::English);
+        if cfg!(target_os = "macos") {
+            assert_eq!((create, option), ("⌘-click", "⌥-click"));
+        } else {
+            assert_eq!((create, option), ("Ctrl-click", "Alt-click"));
+        }
     }
 
     #[test]

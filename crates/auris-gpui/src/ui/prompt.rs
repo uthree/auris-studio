@@ -104,7 +104,9 @@ impl AurisApp {
     /// everything else arrives through the input handler, which is what keeps an IME working.
     pub(crate) fn prompt_key(&mut self, event: &gpui::KeyDownEvent) -> bool {
         let shift = event.keystroke.modifiers.shift;
-        let command = event.keystroke.modifiers.platform;
+        // ⌘ on macOS, Ctrl elsewhere. Reading `platform` directly would put select-all on the
+        // Windows key, which opens the shell's own menu long before the application sees it.
+        let command = event.keystroke.modifiers.secondary();
         let Some(prompt) = self.prompt.as_mut() else {
             return false;
         };

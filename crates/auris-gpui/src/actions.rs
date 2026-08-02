@@ -102,38 +102,64 @@ macro_rules! bindable {
     };
 }
 
+// `secondary` rather than `cmd`: gpui resolves it to ⌘ on macOS and to Ctrl everywhere else,
+// which is what each platform's users already have in their fingers. Writing `cmd` would bind
+// the Windows key off a Mac, and the shell takes most of those combinations first.
 bindable! {
     "transport.play",       GroupTransport, CmdPlayStop,           "space"       => TogglePlay;
     "transport.return",     GroupTransport, CmdReturnToZero,       "enter"       => ReturnToZero;
-    "transport.loop",       GroupTransport, CmdToggleCycle,        "cmd-l"       => ToggleLoop;
+    "transport.loop",       GroupTransport, CmdToggleCycle,        "secondary-l" => ToggleLoop;
     "transport.panic",      GroupTransport, CmdPanic,              "escape"      => PanicStop;
 
-    "file.new",             GroupFile,      CmdNewProject,         "cmd-n"       => NewProject;
-    "file.open",            GroupFile,      CmdOpenProject,        "cmd-o"       => OpenProject;
-    "file.save",            GroupFile,      CmdSave,               "cmd-s"       => SaveProject;
-    "file.save_as",         GroupFile,      CmdSaveAs,             "cmd-shift-s" => SaveProjectAs;
-    "file.import",          GroupFile,      CmdImportAudio,        "cmd-i"       => ImportAudio;
-    "file.export",          GroupFile,      CmdExportWav,          "cmd-e"       => ExportAudio;
-    "file.quit",            GroupFile,      CmdQuit,               "cmd-q"       => Quit;
+    "file.new",             GroupFile,      CmdNewProject,         "secondary-n" => NewProject;
+    "file.open",            GroupFile,      CmdOpenProject,        "secondary-o" => OpenProject;
+    "file.save",            GroupFile,      CmdSave,               "secondary-s" => SaveProject;
+    "file.save_as",         GroupFile,      CmdSaveAs,             "secondary-shift-s" => SaveProjectAs;
+    "file.import",          GroupFile,      CmdImportAudio,        "secondary-i" => ImportAudio;
+    "file.export",          GroupFile,      CmdExportWav,          "secondary-e" => ExportAudio;
+    "file.quit",            GroupFile,      CmdQuit,               "secondary-q" => Quit;
 
-    "edit.undo",            GroupEdit,      CmdUndo,               "cmd-z"       => Undo;
-    "edit.redo",            GroupEdit,      CmdRedo,               "cmd-shift-z" => Redo;
+    "edit.undo",            GroupEdit,      CmdUndo,               "secondary-z" => Undo;
+    "edit.redo",            GroupEdit,      CmdRedo,               "secondary-shift-z" => Redo;
     "edit.delete",          GroupEdit,      CmdDeleteSelection,    "backspace"   => DeleteSelection;
 
-    "track.add_instrument", GroupTrack,     CmdAddInstrumentTrack, "cmd-t"       => AddInstrumentTrack;
-    "track.add_audio",      GroupTrack,     CmdAddAudioTrack,      "cmd-shift-t" => AddAudioTrack;
-    "track.delete",         GroupTrack,     CmdDeleteTrack,        "cmd-backspace" => DeleteTrack;
+    "track.add_instrument", GroupTrack,     CmdAddInstrumentTrack, "secondary-t" => AddInstrumentTrack;
+    "track.add_audio",      GroupTrack,     CmdAddAudioTrack,      "secondary-shift-t" => AddAudioTrack;
+    "track.delete",         GroupTrack,     CmdDeleteTrack,        "secondary-backspace" => DeleteTrack;
 
     "view.inspector",       GroupView,      CmdShowInspector,      "i"           => ToggleInspector;
     "view.editor",          GroupView,      CmdShowEditor,         "p"           => ToggleEditor;
-    "view.zoom_in",         GroupView,      CmdZoomIn,             "cmd-="       => ZoomIn;
-    "view.zoom_out",        GroupView,      CmdZoomOut,            "cmd--"       => ZoomOut;
-    "view.settings",        GroupView,      CmdSettings,           "cmd-,"       => OpenSettings;
+    "view.zoom_in",         GroupView,      CmdZoomIn,             "secondary-=" => ZoomIn;
+    "view.zoom_out",        GroupView,      CmdZoomOut,            "secondary--" => ZoomOut;
+    "view.settings",        GroupView,      CmdSettings,           "secondary-," => OpenSettings;
 }
 
 /// The bindable command with this id.
 pub fn bindable(id: &str) -> Option<&'static Bindable> {
     BINDABLE.iter().find(|entry| entry.id == id)
+}
+
+/// `keystroke` written the way this platform writes it.
+///
+/// The defaults above say `secondary-`, which gpui resolves to ⌘ on macOS and to Ctrl
+/// everywhere else; a keystroke captured from the keyboard arrives already resolved. The two
+/// forms name the same key and compare unequal as text, so a ⌘L the user pressed would neither
+/// count as "back to the default" nor be reported as clashing with one. Everything that
+/// compares or displays a keystroke goes through here first.
+///
+/// A chunk gpui cannot parse is passed through untouched rather than dropped: this is used on
+/// the display path, and showing the user what is actually in their settings file beats showing
+/// them nothing.
+pub fn normalise_keystroke(keystroke: &str) -> String {
+    keystroke
+        .split_whitespace()
+        .map(|chunk| {
+            gpui::Keystroke::parse(chunk)
+                .map(|parsed| parsed.unparse())
+                .unwrap_or_else(|_| chunk.to_string())
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Whether `keystroke` is something the user could actually press.
@@ -181,13 +207,59 @@ mod tests {
 
     #[test]
     fn no_two_commands_share_a_default_keystroke() {
-        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        // Compared as this platform writes them: two defaults spelled differently could still
+        // resolve to the same physical keys.
+        let mut seen: BTreeSet<String> = BTreeSet::new();
         for entry in BINDABLE {
             assert!(
-                seen.insert(entry.default),
+                seen.insert(normalise_keystroke(entry.default)),
                 "`{}` collides with another default on `{}`",
                 entry.id,
                 entry.default
+            );
+        }
+    }
+
+    #[test]
+    fn no_default_names_a_key_this_platform_lacks() {
+        // `cmd` is gpui's *platform* modifier, which off a Mac is the Windows or Super key —
+        // reserved by the shell, so the binding would simply never fire.
+        for entry in BINDABLE {
+            assert!(
+                !entry.default.contains("cmd-")
+                    && !entry.default.contains("super-")
+                    && !entry.default.contains("win-"),
+                "`{}` binds a platform key directly; use `secondary-`",
+                entry.id
+            );
+        }
+    }
+
+    #[test]
+    fn normalising_makes_the_two_spellings_of_a_default_agree() {
+        // What the table says and what the keyboard reports must land on the same string, or
+        // conflict detection and "is this the default?" both quietly stop working.
+        let native = if cfg!(target_os = "macos") {
+            "cmd-l"
+        } else {
+            "ctrl-l"
+        };
+        assert_eq!(normalise_keystroke("secondary-l"), native);
+        assert_eq!(normalise_keystroke(native), native);
+        assert_eq!(normalise_keystroke("g g"), "g g");
+        // Every default survives the round trip, punctuation and all.
+        for entry in BINDABLE {
+            let once = normalise_keystroke(entry.default);
+            assert_eq!(
+                normalise_keystroke(&once),
+                once,
+                "`{}` does not normalise to a fixed point",
+                entry.id
+            );
+            assert!(
+                is_valid_keystroke(&once),
+                "`{}` normalises to an unbindable `{once}`",
+                entry.id
             );
         }
     }

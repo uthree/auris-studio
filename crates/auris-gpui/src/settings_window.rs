@@ -560,7 +560,7 @@ impl SettingsWindow {
                 rows.push(section_title(self.t(command.group), &theme));
             }
 
-            let keystroke = self.keymap.keystroke(command).to_string();
+            let keystroke = self.keymap.display(command);
             let is_capturing = capturing == Some(command.id);
             let overridden = self.keymap.is_overridden(command);
             let conflicts = self.keymap.conflicts(&keystroke, command);
