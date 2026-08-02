@@ -4,6 +4,7 @@
 //! built where the component knows what was clicked, placed and drawn somewhere else entirely,
 //! and checked by a test without a window.
 
+use auris_i18n::{Key, messages};
 use auris_session::prelude::*;
 
 use gpui::{
@@ -442,9 +443,9 @@ impl AurisApp {
             MenuCommand::DuplicateTrack(track) => match self.session.duplicate_track(track) {
                 Ok(copy) => {
                     self.select_track(copy);
-                    self.set_status("Duplicated track");
+                    self.set_status(self.t(Key::DuplicatedTrack));
                 }
-                Err(error) => self.set_status(format!("Could not duplicate: {error}")),
+                Err(error) => self.set_status(self.failure(Key::MenuDuplicate, &error)),
             },
             MenuCommand::RenameTrack(track) => {
                 let name = self
@@ -452,11 +453,8 @@ impl AurisApp {
                     .track(track)
                     .map(|track| track.name.clone())
                     .unwrap_or_default();
-                self.open_prompt(Prompt::new(
-                    "Rename track",
-                    PromptTarget::Track(track),
-                    name,
-                ));
+                let title = self.t(Key::RenameTrackTitle);
+                self.open_prompt(Prompt::new(title, PromptTarget::Track(track), name));
             }
             MenuCommand::DeleteTrack(track) => {
                 self.select_track(track);
@@ -471,16 +469,17 @@ impl AurisApp {
                 Ok(copy) => {
                     self.selected_clip = Some(copy);
                     self.selected_notes.clear();
-                    self.set_status("Duplicated clip");
+                    self.set_status(self.t(Key::DuplicatedClip));
                 }
-                Err(error) => self.set_status(format!("Could not duplicate: {error}")),
+                Err(error) => self.set_status(self.failure(Key::MenuDuplicate, &error)),
             },
             MenuCommand::RenameClip(clip) => {
                 let name = self
                     .clip_name(clip)
                     .map(|name| name.to_string())
                     .unwrap_or_default();
-                self.open_prompt(Prompt::new("Rename clip", PromptTarget::Clip(clip), name));
+                let title = self.t(Key::RenameClipTitle);
+                self.open_prompt(Prompt::new(title, PromptTarget::Clip(clip), name));
             }
             MenuCommand::DeleteClip(clip) => {
                 if self.session.remove_clip(clip).is_ok() {
@@ -500,9 +499,9 @@ impl AurisApp {
                     Ok(right) => {
                         self.selected_clip = Some(right);
                         self.selected_notes.clear();
-                        self.set_status("Split clip");
+                        self.set_status(self.t(Key::SplitClipStatus));
                     }
-                    Err(error) => self.set_status(format!("Could not split: {error}")),
+                    Err(error) => self.set_status(self.failure(Key::MenuSplitAtPlayhead, &error)),
                 }
             }
             MenuCommand::LoopOverClip(clip) => {
@@ -600,32 +599,41 @@ impl AurisApp {
             return self.arrangement_menu(anchor);
         };
         ContextMenu::new(anchor, entry.name.clone())
-            .item("Duplicate Track", MenuCommand::DuplicateTrack(track))
-            .item("Rename…", MenuCommand::RenameTrack(track))
-            .item("Delete Track", MenuCommand::DeleteTrack(track))
+            .item(
+                self.t(Key::MenuDuplicateTrack),
+                MenuCommand::DuplicateTrack(track),
+            )
+            .item(self.t(Key::MenuRename), MenuCommand::RenameTrack(track))
+            .item(self.t(Key::CmdDeleteTrack), MenuCommand::DeleteTrack(track))
             .separator()
             .toggle(
-                "Mute",
+                self.t(Key::Mute),
                 MenuCommand::ToggleTrackMute(track),
                 entry.mixer.mute,
             )
             .toggle(
-                "Solo",
+                self.t(Key::Solo),
                 MenuCommand::ToggleTrackSolo(track),
                 entry.mixer.solo,
             )
             .item(
-                "Add Effect…",
+                self.t(Key::MenuAddEffect),
                 MenuCommand::BrowsePlugins { track: Some(track) },
             )
             .separator()
-            .item("New Instrument Track", MenuCommand::NewInstrumentTrack)
-            .item("New Audio Track", MenuCommand::NewAudioTrack)
+            .item(
+                self.t(Key::MenuNewInstrumentTrack),
+                MenuCommand::NewInstrumentTrack,
+            )
+            .item(self.t(Key::MenuNewAudioTrack), MenuCommand::NewAudioTrack)
     }
 
     /// The menu for a clip in the arrangement.
     pub(crate) fn clip_menu(&self, anchor: Point<Pixels>, clip: ClipId) -> ContextMenu {
-        let name = self.clip_name(clip).unwrap_or("Clip").to_string();
+        let name = self
+            .clip_name(clip)
+            .unwrap_or_else(|| self.t(Key::MenuDuplicate))
+            .to_string();
         let playhead = self.playhead_ticks();
         let splittable = self
             .clip_extent(clip)
@@ -633,23 +641,30 @@ impl AurisApp {
         let is_midi = self.session.midi_clip(clip).is_some();
 
         ContextMenu::new(anchor, name)
-            .item("Duplicate", MenuCommand::DuplicateClip(clip))
-            .item("Rename…", MenuCommand::RenameClip(clip))
-            .item("Delete", MenuCommand::DeleteClip(clip))
+            .item(self.t(Key::MenuDuplicate), MenuCommand::DuplicateClip(clip))
+            .item(self.t(Key::MenuRename), MenuCommand::RenameClip(clip))
+            .item(self.t(Key::MenuDelete), MenuCommand::DeleteClip(clip))
             .separator()
             .item_if(
                 splittable,
-                "Split at Playhead",
+                self.t(Key::MenuSplitAtPlayhead),
                 MenuCommand::SplitClipAtPlayhead(clip),
             )
             .toggle(
-                "Mute Clip",
+                self.t(Key::MenuMuteClip),
                 MenuCommand::ToggleClipMute(clip),
                 self.clip_is_muted(clip),
             )
-            .item("Cycle over Clip", MenuCommand::LoopOverClip(clip))
+            .item(
+                self.t(Key::MenuCycleOverClip),
+                MenuCommand::LoopOverClip(clip),
+            )
             .separator()
-            .item_if(is_midi, "Edit in Piano Roll", MenuCommand::EditClip(clip))
+            .item_if(
+                is_midi,
+                self.t(Key::MenuEditInPianoRoll),
+                MenuCommand::EditClip(clip),
+            )
     }
 
     /// The menu for an empty spot in a track's lane.
@@ -666,39 +681,54 @@ impl AurisApp {
         ContextMenu::new(anchor, entry.name.clone())
             .item_if(
                 is_instrument,
-                "New Clip Here",
+                self.t(Key::MenuNewClipHere),
                 MenuCommand::NewClip { track, start },
             )
             .separator()
-            .item("Duplicate Track", MenuCommand::DuplicateTrack(track))
-            .item("Rename Track…", MenuCommand::RenameTrack(track))
-            .item("Delete Track", MenuCommand::DeleteTrack(track))
+            .item(
+                self.t(Key::MenuDuplicateTrack),
+                MenuCommand::DuplicateTrack(track),
+            )
+            .item(
+                self.t(Key::MenuRenameTrack),
+                MenuCommand::RenameTrack(track),
+            )
+            .item(self.t(Key::CmdDeleteTrack), MenuCommand::DeleteTrack(track))
             .separator()
-            .item("New Instrument Track", MenuCommand::NewInstrumentTrack)
-            .item("New Audio Track", MenuCommand::NewAudioTrack)
+            .item(
+                self.t(Key::MenuNewInstrumentTrack),
+                MenuCommand::NewInstrumentTrack,
+            )
+            .item(self.t(Key::MenuNewAudioTrack), MenuCommand::NewAudioTrack)
     }
 
     /// The menu for the arrangement below the last track.
     pub(crate) fn arrangement_menu(&self, anchor: Point<Pixels>) -> ContextMenu {
-        ContextMenu::new(anchor, "Arrangement")
-            .item("New Instrument Track", MenuCommand::NewInstrumentTrack)
-            .item("New Audio Track", MenuCommand::NewAudioTrack)
+        ContextMenu::new(anchor, self.t(Key::MenuArrangement))
+            .item(
+                self.t(Key::MenuNewInstrumentTrack),
+                MenuCommand::NewInstrumentTrack,
+            )
+            .item(self.t(Key::MenuNewAudioTrack), MenuCommand::NewAudioTrack)
     }
 
     /// The menu for the bar ruler.
     pub(crate) fn ruler_menu(&self, anchor: Point<Pixels>, tick: Ticks) -> ContextMenu {
-        ContextMenu::new(anchor, "Cycle")
-            .item("Cycle Start Here", MenuCommand::SetLoopStart(tick))
-            .item("Cycle End Here", MenuCommand::SetLoopEnd(tick))
+        ContextMenu::new(anchor, self.t(Key::MenuCycleTitle))
+            .item(
+                self.t(Key::MenuCycleStartHere),
+                MenuCommand::SetLoopStart(tick),
+            )
+            .item(self.t(Key::MenuCycleEndHere), MenuCommand::SetLoopEnd(tick))
             .separator()
             .toggle(
-                "Cycle",
+                self.t(Key::MenuCycleTitle),
                 MenuCommand::ToggleLoop,
                 self.project().loop_enabled,
             )
             .item_if(
                 self.project().loop_region.is_some(),
-                "Clear Cycle Region",
+                self.t(Key::MenuClearCycle),
                 MenuCommand::ClearLoop,
             )
     }
@@ -712,41 +742,60 @@ impl AurisApp {
         start: Ticks,
     ) -> ContextMenu {
         let Some(clip) = self.selected_clip else {
-            return ContextMenu::new(anchor, "Piano Roll");
+            return ContextMenu::new(anchor, self.t(Key::PianoRoll));
         };
         let selected = self.selected_notes.len();
         let title = match (under_pointer, selected) {
-            (Some(_), 0 | 1) => "Note".to_string(),
-            (_, count) if count > 1 => format!("{count} notes"),
-            _ => self.clip_name(clip).unwrap_or("Piano Roll").to_string(),
+            (Some(_), 0 | 1) => self.t(Key::MenuNote).to_string(),
+            (_, count) if count > 1 => messages::note_count(self.language(), count),
+            _ => self
+                .clip_name(clip)
+                .unwrap_or_else(|| self.t(Key::PianoRoll))
+                .to_string(),
         };
         let has_selection = selected > 0;
 
         ContextMenu::new(anchor, title)
-            .item_if(has_selection, "Duplicate", MenuCommand::DuplicateNotes)
-            .item_if(has_selection, "Delete", MenuCommand::DeleteNotes)
-            .separator()
-            .item_if(has_selection, "Octave Up", MenuCommand::TransposeNotes(12))
             .item_if(
                 has_selection,
-                "Octave Down",
+                self.t(Key::MenuDuplicate),
+                MenuCommand::DuplicateNotes,
+            )
+            .item_if(
+                has_selection,
+                self.t(Key::MenuDelete),
+                MenuCommand::DeleteNotes,
+            )
+            .separator()
+            .item_if(
+                has_selection,
+                self.t(Key::MenuOctaveUp),
+                MenuCommand::TransposeNotes(12),
+            )
+            .item_if(
+                has_selection,
+                self.t(Key::MenuOctaveDown),
                 MenuCommand::TransposeNotes(-12),
             )
-            .item_if(has_selection, "Semitone Up", MenuCommand::TransposeNotes(1))
             .item_if(
                 has_selection,
-                "Semitone Down",
+                self.t(Key::MenuSemitoneUp),
+                MenuCommand::TransposeNotes(1),
+            )
+            .item_if(
+                has_selection,
+                self.t(Key::MenuSemitoneDown),
                 MenuCommand::TransposeNotes(-1),
             )
             .separator()
             .item_if(
                 under_pointer.is_none(),
-                "Add Note Here",
+                self.t(Key::MenuAddNoteHere),
                 MenuCommand::NewNote { pitch, start },
             )
-            .item("Select All Notes", MenuCommand::SelectAllNotes)
+            .item(self.t(Key::MenuSelectAllNotes), MenuCommand::SelectAllNotes)
             .separator()
-            .item("Rename Clip…", MenuCommand::RenameClip(clip))
+            .item(self.t(Key::MenuRenameClip), MenuCommand::RenameClip(clip))
     }
 
     /// The menu for one effect in a chain.
@@ -760,13 +809,13 @@ impl AurisApp {
         let enabled = self.session.effect_enabled(track, slot).unwrap_or(true);
         ContextMenu::new(anchor, name)
             .toggle(
-                "Enabled",
+                self.t(Key::MenuEnabled),
                 MenuCommand::ToggleEffect { track, slot },
                 enabled,
             )
             .separator()
             .item(
-                "Move Up",
+                self.t(Key::MenuMoveUp),
                 MenuCommand::MoveEffect {
                     track,
                     slot,
@@ -774,16 +823,19 @@ impl AurisApp {
                 },
             )
             .item(
-                "Move Down",
+                self.t(Key::MenuMoveDown),
                 MenuCommand::MoveEffect {
                     track,
                     slot,
                     delta: 1,
                 },
             )
-            .item("Remove", MenuCommand::RemoveEffect(slot))
+            .item(self.t(Key::MenuRemove), MenuCommand::RemoveEffect(slot))
             .separator()
-            .item("Add Effect…", MenuCommand::BrowsePlugins { track })
+            .item(
+                self.t(Key::MenuAddEffect),
+                MenuCommand::BrowsePlugins { track },
+            )
     }
 
     /// The name of a clip of either kind.

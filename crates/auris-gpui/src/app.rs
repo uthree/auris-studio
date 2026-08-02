@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
+use auris_i18n::{Key, Language, messages};
 use auris_session::prelude::*;
 use auris_session::{Session, SessionOptions};
 use gpui::{
@@ -130,17 +131,17 @@ pub enum Drag {
 }
 
 impl Drag {
-    /// Undo label for the gesture, or `None` when it changes no document state.
-    fn label(&self) -> Option<&'static str> {
+    /// The edit this gesture records, or `None` when it changes no document state.
+    fn edit(&self) -> Option<Edit> {
         match self {
             Drag::Playhead => None,
-            Drag::LoopRegion { .. } => Some("Set loop region"),
-            Drag::ClipMove { .. } => Some("Move clip"),
-            Drag::ClipResize { .. } => Some("Resize clip"),
-            Drag::NoteMove { .. } => Some("Move notes"),
-            Drag::NoteResize { .. } => Some("Resize note"),
-            Drag::Param { .. } => Some("Adjust parameter"),
-            Drag::Tempo { .. } => Some("Change tempo"),
+            Drag::LoopRegion { .. } => Some(Edit::SetLoopRegion),
+            Drag::ClipMove { .. } => Some(Edit::MoveClip),
+            Drag::ClipResize { .. } => Some(Edit::ResizeClip),
+            Drag::NoteMove { .. } => Some(Edit::MoveNotes),
+            Drag::NoteResize { .. } => Some(Edit::ResizeNote),
+            Drag::Param { .. } => Some(Edit::AdjustParameter),
+            Drag::Tempo { .. } => Some(Edit::ChangeTempo),
             // Panel geometry is a property of the window, not the document: resizing a panel
             // is not an edit and must never land on the undo stack.
             Drag::ResizeInspector { .. }
@@ -363,6 +364,8 @@ pub struct AurisApp {
 
     /// Preferences that outlive the session.
     pub(crate) settings: Settings,
+    /// Language every string in the window is looked up in.
+    pub(crate) language: Language,
     /// The user's key bindings.
     pub(crate) keymap: Keymap,
     /// The settings window, while it is open.
@@ -381,6 +384,7 @@ impl AurisApp {
     /// Builds the application, starting audio and creating a small demo project.
     pub fn new(cx: &mut Context<Self>) -> Self {
         let settings = Settings::load();
+        let language = settings.language();
         let keymap = Keymap::load();
         keymap.apply(cx);
 
@@ -391,19 +395,7 @@ impl AurisApp {
         .expect("a session opens even without audio");
         seed_demo_project(&mut session);
 
-        let audio = session.audio_status();
-        let status = if audio.running {
-            format!(
-                "Audio: {} · {:.0} Hz · {} ch",
-                audio.device, audio.sample_rate, audio.channels
-            )
-        } else {
-            "No audio output — editing and export still work".to_string()
-        };
-        let status = match &audio.gpu {
-            Some(gpu) => format!("{status} · GPU: {gpu}"),
-            None => format!("{status} · GPU: unavailable, using CPU"),
-        };
+        let status = audio_line(&session.audio_status(), language);
         log::info!("{status}");
 
         // Repaint on a timer rather than per audio block: the playhead and meters live in
@@ -456,6 +448,7 @@ impl AurisApp {
             menu: None,
             prompt: None,
             settings,
+            language,
             keymap,
             settings_window: None,
             _repaint: repaint,
@@ -493,8 +486,8 @@ impl AurisApp {
 
     /// Begins a gesture. Every edit it makes becomes one undo step and one graph rebuild.
     pub(crate) fn begin_drag(&mut self, drag: Drag) {
-        if let Some(label) = drag.label() {
-            self.session.begin_transaction(label);
+        if let Some(edit) = drag.edit() {
+            self.session.begin_transaction(edit);
         }
         self.drag = Some(drag);
     }
@@ -502,7 +495,7 @@ impl AurisApp {
     /// Ends any gesture in progress.
     pub(crate) fn end_drag(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
         if let Some(drag) = self.drag.take()
-            && drag.label().is_some()
+            && drag.edit().is_some()
         {
             // A gesture that changed nothing records no undo step and triggers no rebuild.
             self.session.end_transaction();
@@ -614,17 +607,27 @@ impl AurisApp {
             log::warn!("could not save settings: {error}");
         }
 
-        let status = self.session.audio_status();
-        let line = if status.running {
-            format!(
-                "Audio: {} · {:.0} Hz · {} ch",
-                status.device, status.sample_rate, status.channels
-            )
-        } else {
-            "No audio output — editing and export still work".to_string()
-        };
+        let line = audio_line(&self.session.audio_status(), self.language);
         self.set_status(line.clone());
         Ok(line)
+    }
+
+    /// Switches the interface language and remembers the choice.
+    ///
+    /// `preference` of `None` means "follow the system", which is what a fresh install does.
+    /// Saving is best-effort: a preferences file that cannot be written must not undo a change
+    /// the user can already see.
+    pub(crate) fn apply_language(&mut self, preference: Option<Language>, cx: &mut App) {
+        self.settings.language = preference;
+        self.language = self.settings.language();
+        if let Err(error) = self.settings.save() {
+            log::warn!("could not save settings: {error}");
+        }
+        // The menu bar belongs to the platform, not to a view, so it is rebuilt rather than
+        // re-rendered — nothing would redraw it otherwise.
+        cx.set_menus(crate::menus(self.language));
+        let name = self.language.endonym();
+        self.set_status(messages::language_changed(self.language, name));
     }
 
     /// Installs an edited keymap and remembers it.
@@ -654,6 +657,7 @@ impl AurisApp {
         let audio = self.session.audio_preferences().clone();
         let live = self.session.audio_status();
         let keymap = self.keymap.clone();
+        let language = self.settings.language;
 
         let bounds = Bounds::centered(None, size(px(560.), px(620.)), cx);
         let opened = cx.open_window(
@@ -666,7 +670,11 @@ impl AurisApp {
                 focus: true,
                 ..Default::default()
             },
-            |_, cx| cx.new(|cx| SettingsWindow::new(app, theme, devices, audio, live, keymap, cx)),
+            |_, cx| {
+                cx.new(|cx| {
+                    SettingsWindow::new(app, theme, devices, audio, live, keymap, language, cx)
+                })
+            },
         );
         match opened {
             Ok(handle) => self.settings_window = Some(handle),
@@ -727,6 +735,25 @@ impl AurisApp {
             |bounds| bounds.origin,
         )
     }
+}
+
+/// The status line describing what the audio backend ended up doing.
+fn audio_line(status: &auris_session::AudioStatus, language: Language) -> String {
+    let engine = if status.running {
+        messages::audio_status(
+            language,
+            &status.device,
+            status.sample_rate,
+            status.channels,
+        )
+    } else {
+        Key::NoAudioOutput.get(language).to_string()
+    };
+    let gpu = match &status.gpu {
+        Some(adapter) => messages::gpu_in_use(language, adapter),
+        None => messages::gpu_unavailable(language),
+    };
+    format!("{engine} · {gpu}")
 }
 
 /// Fills a fresh session with something audible, so the app is not an empty grid on launch.

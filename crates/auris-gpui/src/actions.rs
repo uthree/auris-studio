@@ -3,6 +3,7 @@
 //! Actions are gpui's routed commands: the menu bar, the keymap and the buttons in the UI all
 //! dispatch the same action type, so a feature is bound once and reachable three ways.
 
+use auris_i18n::Key;
 use gpui::{App, KeyBinding, actions};
 
 actions!(
@@ -65,9 +66,9 @@ pub struct Bindable {
     /// Stable identifier written to the settings file. Never change a released one.
     pub id: &'static str,
     /// Section heading in the settings window.
-    pub group: &'static str,
+    pub group: Key,
     /// Name shown to the user.
-    pub label: &'static str,
+    pub label: Key,
     /// Keystroke used when the user has not chosen one.
     pub default: &'static str,
     bind: fn(&str) -> KeyBinding,
@@ -87,13 +88,13 @@ impl Bindable {
 pub const KEY_CONTEXT: &str = "Auris";
 
 macro_rules! bindable {
-    ($($id:literal, $group:literal, $label:literal, $default:literal => $action:ident;)*) => {
+    ($($id:literal, $group:ident, $label:ident, $default:literal => $action:ident;)*) => {
         /// Every command the settings window offers to rebind, in display order.
         pub const BINDABLE: &[Bindable] = &[
             $(Bindable {
                 id: $id,
-                group: $group,
-                label: $label,
+                group: Key::$group,
+                label: Key::$label,
                 default: $default,
                 bind: |keys| KeyBinding::new(keys, $action, Some(KEY_CONTEXT)),
             },)*
@@ -102,32 +103,32 @@ macro_rules! bindable {
 }
 
 bindable! {
-    "transport.play",       "Transport", "Play / Stop",           "space"       => TogglePlay;
-    "transport.return",     "Transport", "Return to Zero",        "enter"       => ReturnToZero;
-    "transport.loop",       "Transport", "Toggle Cycle",          "cmd-l"       => ToggleLoop;
-    "transport.panic",      "Transport", "Panic",                 "escape"      => PanicStop;
+    "transport.play",       GroupTransport, CmdPlayStop,           "space"       => TogglePlay;
+    "transport.return",     GroupTransport, CmdReturnToZero,       "enter"       => ReturnToZero;
+    "transport.loop",       GroupTransport, CmdToggleCycle,        "cmd-l"       => ToggleLoop;
+    "transport.panic",      GroupTransport, CmdPanic,              "escape"      => PanicStop;
 
-    "file.new",             "File",      "New Project",           "cmd-n"       => NewProject;
-    "file.open",            "File",      "Open Project",          "cmd-o"       => OpenProject;
-    "file.save",            "File",      "Save",                  "cmd-s"       => SaveProject;
-    "file.save_as",         "File",      "Save As",               "cmd-shift-s" => SaveProjectAs;
-    "file.import",          "File",      "Import Audio",          "cmd-i"       => ImportAudio;
-    "file.export",          "File",      "Export WAV",            "cmd-e"       => ExportAudio;
-    "file.quit",            "File",      "Quit",                  "cmd-q"       => Quit;
+    "file.new",             GroupFile,      CmdNewProject,         "cmd-n"       => NewProject;
+    "file.open",            GroupFile,      CmdOpenProject,        "cmd-o"       => OpenProject;
+    "file.save",            GroupFile,      CmdSave,               "cmd-s"       => SaveProject;
+    "file.save_as",         GroupFile,      CmdSaveAs,             "cmd-shift-s" => SaveProjectAs;
+    "file.import",          GroupFile,      CmdImportAudio,        "cmd-i"       => ImportAudio;
+    "file.export",          GroupFile,      CmdExportWav,          "cmd-e"       => ExportAudio;
+    "file.quit",            GroupFile,      CmdQuit,               "cmd-q"       => Quit;
 
-    "edit.undo",            "Edit",      "Undo",                  "cmd-z"       => Undo;
-    "edit.redo",            "Edit",      "Redo",                  "cmd-shift-z" => Redo;
-    "edit.delete",          "Edit",      "Delete Selection",      "backspace"   => DeleteSelection;
+    "edit.undo",            GroupEdit,      CmdUndo,               "cmd-z"       => Undo;
+    "edit.redo",            GroupEdit,      CmdRedo,               "cmd-shift-z" => Redo;
+    "edit.delete",          GroupEdit,      CmdDeleteSelection,    "backspace"   => DeleteSelection;
 
-    "track.add_instrument", "Track",     "Add Instrument Track",  "cmd-t"       => AddInstrumentTrack;
-    "track.add_audio",      "Track",     "Add Audio Track",       "cmd-shift-t" => AddAudioTrack;
-    "track.delete",         "Track",     "Delete Track",          "cmd-backspace" => DeleteTrack;
+    "track.add_instrument", GroupTrack,     CmdAddInstrumentTrack, "cmd-t"       => AddInstrumentTrack;
+    "track.add_audio",      GroupTrack,     CmdAddAudioTrack,      "cmd-shift-t" => AddAudioTrack;
+    "track.delete",         GroupTrack,     CmdDeleteTrack,        "cmd-backspace" => DeleteTrack;
 
-    "view.inspector",       "View",      "Show Inspector",        "i"           => ToggleInspector;
-    "view.editor",          "View",      "Show Editor Panel",     "p"           => ToggleEditor;
-    "view.zoom_in",         "View",      "Zoom In",               "cmd-="       => ZoomIn;
-    "view.zoom_out",        "View",      "Zoom Out",              "cmd--"       => ZoomOut;
-    "view.settings",        "View",      "Settings",              "cmd-,"       => OpenSettings;
+    "view.inspector",       GroupView,      CmdShowInspector,      "i"           => ToggleInspector;
+    "view.editor",          GroupView,      CmdShowEditor,         "p"           => ToggleEditor;
+    "view.zoom_in",         GroupView,      CmdZoomIn,             "cmd-="       => ZoomIn;
+    "view.zoom_out",        GroupView,      CmdZoomOut,            "cmd--"       => ZoomOut;
+    "view.settings",        GroupView,      CmdSettings,           "cmd-,"       => OpenSettings;
 }
 
 /// The bindable command with this id.

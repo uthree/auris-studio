@@ -1,5 +1,6 @@
 //! The window's root layout, global pointer handling and action dispatch.
 
+use auris_i18n::{Key, messages};
 use auris_session::prelude::*;
 
 use gpui::{
@@ -95,7 +96,7 @@ impl Render for AurisApp {
             .size_full()
             .bg(theme.background)
             .text_color(theme.text)
-            .font_family("Helvetica")
+            .font(crate::theme::ui_font())
             .text_sm()
             .on_action(cx.listener(Self::on_toggle_play))
             .on_action(cx.listener(Self::on_stop))
@@ -170,7 +171,7 @@ impl AurisApp {
         let engine = if audio.running {
             format!("{:.0} Hz · {} ch", audio.sample_rate, audio.channels)
         } else {
-            "silent".to_string()
+            self.t(Key::EngineSilent).to_string()
         };
         div()
             .flex()
@@ -197,7 +198,7 @@ impl AurisApp {
         let message = match &export.result {
             Some(Ok(summary)) => summary.clone(),
             Some(Err(error)) => error.clone(),
-            None => format!("Rendering {}…", export.path.display()),
+            None => messages::rendering(self.language(), &export.path.display().to_string()),
         };
 
         Some(
@@ -219,7 +220,12 @@ impl AurisApp {
                         .bg(theme.surface_raised)
                         .border_1()
                         .border_color(theme.border)
-                        .child(div().text_sm().text_color(theme.text).child("Export"))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme.text)
+                                .child(self.t(Key::Export)),
+                        )
                         .child(div().text_xs().text_color(theme.text_muted).child(message))
                         .child(
                             div()
@@ -238,7 +244,7 @@ impl AurisApp {
                         .when(finished, |this| {
                             this.child(crate::ui::widgets::button(
                                 "export-close",
-                                "Close",
+                                self.t(Key::Close),
                                 crate::ui::widgets::ButtonStyle::Primary,
                                 false,
                                 theme.accent,
@@ -523,7 +529,7 @@ impl AurisApp {
         }
         self.session.panic();
         self.drag = None;
-        self.set_status("Panic — all voices stopped");
+        self.set_status(self.t(Key::PanicStopped));
         cx.notify();
     }
 

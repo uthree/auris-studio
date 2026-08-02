@@ -1,5 +1,6 @@
 //! The transport bar across the top of the window.
 
+use auris_i18n::Key;
 use auris_session::prelude::*;
 
 use gpui::{Axis, IntoElement, Window, div, prelude::*, px};
@@ -38,7 +39,7 @@ impl AurisApp {
             .bar_beat_at(playhead, self.project().time_signature);
         let seconds = self.project().tempo_map.ticks_to_seconds(playhead);
         let bpm = self.project().bpm();
-        let grid_label = grid_label(self.project().grid);
+        let grid_label = self.grid_label();
         let master_db = gain_to_db(self.master_level());
         let master_gain_db = self.project().master.gain_db;
         let editor = self.editor;
@@ -66,7 +67,7 @@ impl AurisApp {
                     .gap_2()
                     .child(button(
                         "export",
-                        "Export WAV",
+                        self.t(Key::ExportWav),
                         ButtonStyle::Primary,
                         false,
                         theme.accent,
@@ -78,7 +79,12 @@ impl AurisApp {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(div().text_xs().text_color(theme.text_faint).child("Grid"))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.text_faint)
+                                    .child(self.t(Key::Grid)),
+                            )
                             .child(button(
                                 "grid",
                                 grid_label,
@@ -151,7 +157,7 @@ impl AurisApp {
                     )
                     // Musical position and wall-clock position, the two readouts every DAW shows.
                     .child(readout(
-                        "Position",
+                        self.t(Key::Position),
                         format!("{bar}.{beat}.{:03}", tick / 10),
                         Some(seconds.format_clock().into()),
                         px(118.0),
@@ -175,7 +181,7 @@ impl AurisApp {
                             // how every editor's sidebar toggles behave.
                             .child(button(
                                 "tab-roll",
-                                "Piano Roll",
+                                self.t(Key::PianoRoll),
                                 ButtonStyle::Normal,
                                 editor_open && editor == EditorTab::PianoRoll,
                                 theme.accent,
@@ -187,7 +193,7 @@ impl AurisApp {
                             ))
                             .child(button(
                                 "tab-mixer",
-                                "Mixer",
+                                self.t(Key::Mixer),
                                 ButtonStyle::Normal,
                                 editor_open && editor == EditorTab::Mixer,
                                 theme.accent,
@@ -199,7 +205,7 @@ impl AurisApp {
                             ))
                             .child(button(
                                 "tab-inspector",
-                                "Inspector",
+                                self.t(Key::Inspector),
                                 ButtonStyle::Normal,
                                 inspector_open,
                                 theme.accent,
@@ -222,7 +228,11 @@ impl AurisApp {
                                     .flex()
                                     .justify_between()
                                     .text_xs()
-                                    .child(div().text_color(theme.text_faint).child("Master"))
+                                    .child(
+                                        div()
+                                            .text_color(theme.text_faint)
+                                            .child(self.t(Key::Master)),
+                                    )
                                     .child(
                                         div()
                                             .text_color(theme.text_muted)
@@ -261,7 +271,12 @@ impl AurisApp {
             .border_color(theme.border_subtle)
             .cursor_pointer()
             .hover(|this| this.border_color(theme.border))
-            .child(div().text_xs().text_color(theme.text_faint).child("Tempo"))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_faint)
+                    .child(self.t(Key::Tempo)),
+            )
             .child(
                 div()
                     .text_sm()
@@ -314,12 +329,17 @@ impl AurisApp {
     }
 }
 
-fn grid_label(grid: Ticks) -> &'static str {
-    GRID_CHOICES
-        .iter()
-        .find(|(_, ticks)| *ticks == grid.raw())
-        .map(|(label, _)| *label)
-        .unwrap_or("free")
+impl AurisApp {
+    /// The grid division as it appears on the button.
+    ///
+    /// The fractions are notation rather than words, so only the fallback needs translating.
+    fn grid_label(&self) -> &'static str {
+        GRID_CHOICES
+            .iter()
+            .find(|(_, ticks)| *ticks == self.project().grid.raw())
+            .map(|(label, _)| *label)
+            .unwrap_or_else(|| self.t(Key::GridFree))
+    }
 }
 
 #[cfg(test)]
@@ -327,14 +347,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_grid_choice_has_a_label() {
+    fn every_grid_choice_is_a_distinct_division() {
+        let mut seen: Vec<i64> = Vec::new();
         for (label, ticks) in GRID_CHOICES {
-            assert_eq!(grid_label(Ticks(ticks)), label);
+            assert!(label.starts_with("1/"), "`{label}` is not a division");
+            assert!(!seen.contains(&ticks), "`{label}` repeats a division");
+            seen.push(ticks);
         }
-    }
-
-    #[test]
-    fn an_unknown_grid_reads_as_free() {
-        assert_eq!(grid_label(Ticks(7)), "free");
+        // Coarsest first, so cycling through them halves the division each time.
+        assert!(seen.windows(2).all(|pair| pair[0] > pair[1]));
     }
 }

@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 
+use auris_i18n::Language;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SessionError;
@@ -63,9 +64,19 @@ impl AudioPreferences {
 pub struct Settings {
     /// Audio backend preferences.
     pub audio: AudioPreferences,
+    /// Interface language. `None` follows the system.
+    ///
+    /// Kept here rather than in a frontend so the desktop application and the command line tool
+    /// answer in the same language without being told twice.
+    pub language: Option<Language>,
 }
 
 impl Settings {
+    /// The language to use, resolving "follow the system" against the environment.
+    pub fn language(&self) -> Language {
+        Language::resolve(self.language)
+    }
+
     /// Where the settings file lives.
     pub fn path() -> PathBuf {
         config_dir().join("settings.json")

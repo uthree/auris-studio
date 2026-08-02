@@ -12,6 +12,7 @@ name = "auris"
 path = "src/main.rs"
 
 [dependencies]
+auris-i18n.workspace = true
 auris-session.workspace = true
 env_logger.workspace = true
 log.workspace = true

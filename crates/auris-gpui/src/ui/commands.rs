@@ -7,10 +7,12 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use auris_i18n::{Key, messages};
 use auris_session::prelude::*;
 use gpui::{Context, Window};
 
 use crate::app::{AurisApp, ExportState};
+use crate::i18n::{edit_key, error_text};
 
 impl AurisApp {
     /// Selects a track and points the piano roll at a clip that belongs to it.
@@ -61,24 +63,23 @@ impl AurisApp {
     /// Appends an instrument track using the first registered instrument.
     pub(crate) fn add_instrument_track(&mut self) {
         let count = self.project().tracks.len() + 1;
-        match self
-            .session
-            .add_default_instrument_track(format!("Track {count}"))
-        {
+        let name = messages::new_track_name(self.language(), count);
+        match self.session.add_default_instrument_track(name) {
             Ok(id) => {
                 self.selected_track = Some(id);
                 // A brand-new track has no clips, so nothing should stay selected from the old one.
                 self.selected_clip = None;
                 self.selected_notes.clear();
             }
-            Err(error) => self.set_status(format!("Could not add a track: {error}")),
+            Err(error) => self.set_status(self.failure(Key::CmdAddInstrumentTrack, &error)),
         }
     }
 
     /// Appends an empty audio track.
     pub(crate) fn add_audio_track(&mut self) {
         let count = self.project().tracks.len() + 1;
-        let id = self.session.add_audio_track(format!("Audio {count}"));
+        let name = messages::new_audio_track_name(self.language(), count);
+        let id = self.session.add_audio_track(name);
         self.selected_track = Some(id);
         self.selected_clip = None;
         self.selected_notes.clear();
@@ -100,16 +101,14 @@ impl AurisApp {
     pub(crate) fn create_clip_at(&mut self, track: TrackId, start: Ticks) {
         let length = self.project().time_signature.ticks_per_bar();
         let count = self.project().tracks.len();
-        match self
-            .session
-            .add_midi_clip(track, format!("Clip {count}"), start, length)
-        {
+        let name = messages::new_clip_name(self.language(), count);
+        match self.session.add_midi_clip(track, name, start, length) {
             Ok(id) => {
                 self.selected_clip = Some(id);
                 self.selected_notes.clear();
             }
             Err(_) => {
-                self.set_status("Audio clips come from Import Audio, not from an empty lane");
+                self.set_status(self.t(Key::AudioClipsComeFromImport));
             }
         }
     }
@@ -134,22 +133,24 @@ impl AurisApp {
     /// Steps back one edit.
     pub(crate) fn undo(&mut self) {
         match self.session.undo() {
-            Some(label) => {
+            Some(edit) => {
                 self.resync_selection();
-                self.set_status(format!("Undid {label}"));
+                let what = self.t(edit_key(edit));
+                self.set_status(messages::undid(self.language(), what));
             }
-            None => self.set_status("Nothing to undo"),
+            None => self.set_status(self.t(Key::NothingToUndo)),
         }
     }
 
     /// Steps forward one edit.
     pub(crate) fn redo(&mut self) {
         match self.session.redo() {
-            Some(label) => {
+            Some(edit) => {
                 self.resync_selection();
-                self.set_status(format!("Redid {label}"));
+                let what = self.t(edit_key(edit));
+                self.set_status(messages::redid(self.language(), what));
             }
-            None => self.set_status("Nothing to redo"),
+            None => self.set_status(self.t(Key::NothingToRedo)),
         }
     }
 
@@ -157,7 +158,7 @@ impl AurisApp {
     pub(crate) fn new_project(&mut self) {
         self.session.new_project();
         self.resync_selection();
-        self.set_status("New project");
+        self.set_status(self.t(Key::NewProjectStatus));
     }
 
     /// Saves to the current path, prompting when there is not one yet.
@@ -169,9 +170,9 @@ impl AurisApp {
         match self.session.save_in_place() {
             Ok(()) => {
                 let path = self.session.path().map(|p| p.display().to_string());
-                self.set_status(format!("Saved {}", path.unwrap_or_default()));
+                self.set_status(messages::saved(self.language(), &path.unwrap_or_default()));
             }
-            Err(error) => self.set_status(format!("Could not save: {error}")),
+            Err(error) => self.set_status(self.failure(Key::CmdSave, &error)),
         }
     }
 
@@ -189,8 +190,11 @@ impl AurisApp {
             let path = handle.path().to_path_buf();
             let _ = this.update(cx, |this, cx| {
                 match this.session.save(&path) {
-                    Ok(()) => this.set_status(format!("Saved {}", path.display())),
-                    Err(error) => this.set_status(format!("Could not save: {error}")),
+                    Ok(()) => {
+                        let text = messages::saved(this.language(), &path.display().to_string());
+                        this.set_status(text);
+                    }
+                    Err(error) => this.set_status(this.failure(Key::CmdSave, &error)),
                 }
                 cx.notify();
             });
@@ -214,20 +218,19 @@ impl AurisApp {
                         this.resync_selection();
                         // Fold the failures into the one status line rather than setting a
                         // message that "Opened ..." would immediately overwrite.
+                        let language = this.language();
+                        let shown = path.display().to_string();
                         this.set_status(match missing.len() {
-                            0 => format!("Opened {}", path.display()),
-                            1 => format!(
-                                "Opened {} — missing audio file {}",
-                                path.display(),
-                                missing[0].display()
+                            0 => messages::opened(language, &shown),
+                            1 => messages::opened_missing_one(
+                                language,
+                                &shown,
+                                &missing[0].display().to_string(),
                             ),
-                            n => format!(
-                                "Opened {} — {n} audio files could not be found",
-                                path.display()
-                            ),
+                            n => messages::opened_missing_many(language, &shown, n),
                         });
                     }
-                    Err(error) => this.set_status(format!("Could not open: {error}")),
+                    Err(error) => this.set_status(this.failure(Key::CmdOpenProject, &error)),
                 }
                 cx.notify();
             });
@@ -252,7 +255,8 @@ impl AurisApp {
             let path = handle.path().to_path_buf();
 
             let _ = this.update(cx, |this, cx| {
-                this.set_status(format!("Importing {}…", path.display()));
+                let text = messages::importing(this.language(), &path.display().to_string());
+                this.set_status(text);
                 cx.notify();
             });
 
@@ -268,9 +272,10 @@ impl AurisApp {
                     Ok(_) => {
                         this.selected_track = this.project().tracks.last().map(|t| t.id);
                         this.selected_clip = None;
-                        this.set_status(format!("Imported {}", path.display()));
+                        let text = messages::imported(this.language(), &path.display().to_string());
+                        this.set_status(text);
                     }
-                    Err(error) => this.set_status(format!("Could not import: {error}")),
+                    Err(error) => this.set_status(this.failure(Key::CmdImportAudio, &error)),
                 }
                 cx.notify();
             });
@@ -281,7 +286,7 @@ impl AurisApp {
     /// Prompts for a destination and renders the project to a WAV file.
     pub(crate) fn start_export(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if self.export.as_ref().is_some_and(|e| e.result.is_none()) {
-            self.set_status("An export is already running");
+            self.set_status(self.t(Key::ExportAlreadyRunning));
             return;
         }
         let name = self.project().name.clone();
@@ -323,19 +328,21 @@ impl AurisApp {
                 .await;
 
             let _ = this.update(cx, |this, cx| {
+                let language = this.language();
                 let message = match rendered {
                     Ok(summary) => {
-                        let text = format!(
-                            "Exported {} · {} · peak {:.1} dBFS",
-                            path.display(),
-                            Seconds(summary.seconds).format_clock(),
-                            summary.peak_db
+                        let text = messages::exported(
+                            language,
+                            &path.display().to_string(),
+                            &Seconds(summary.seconds).format_clock(),
+                            summary.peak_db,
                         );
                         this.set_status(text.clone());
                         Ok(text)
                     }
                     Err(error) => {
-                        let text = format!("Export failed: {error}");
+                        let text =
+                            messages::failed(language, Key::CmdExportWav.get(language), &error);
                         this.set_status(text.clone());
                         Err(text)
                     }
@@ -364,6 +371,15 @@ impl AurisApp {
         let body_height =
             crate::theme::Metrics::EDITOR_HEIGHT - crate::theme::Metrics::EDITOR_HEADER_HEIGHT;
         self.pitch.center_on(middle, body_height);
+    }
+
+    /// "Could not <action>: <reason>", with both halves translated.
+    pub(crate) fn failure(&self, action: Key, error: &SessionError) -> String {
+        messages::failed(
+            self.language(),
+            self.t(action),
+            &error_text(error, self.language()),
+        )
     }
 
     /// Length of an audio clip on the musical timeline.

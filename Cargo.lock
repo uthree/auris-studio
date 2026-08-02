@@ -549,6 +549,7 @@ dependencies = [
 name = "auris-cli"
 version = "0.1.0"
 dependencies = [
+ "auris-i18n",
  "auris-session",
  "env_logger",
  "log",
@@ -597,11 +598,20 @@ dependencies = [
 name = "auris-gpui"
 version = "0.1.0"
 dependencies = [
+ "auris-i18n",
  "auris-session",
  "env_logger",
  "gpui",
  "log",
  "rfd",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "auris-i18n"
+version = "0.1.0"
+dependencies = [
  "serde",
  "serde_json",
 ]
@@ -628,6 +638,7 @@ dependencies = [
  "auris-dsp",
  "auris-engine",
  "auris-gpu",
+ "auris-i18n",
  "auris-io",
  "auris-synth",
  "log",

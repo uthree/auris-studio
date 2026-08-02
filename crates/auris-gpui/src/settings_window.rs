@@ -4,6 +4,7 @@
 //! project and should not compete with it for space. It holds a weak handle to the main view
 //! and applies every change through that, so there is still exactly one owner of the session.
 
+use auris_i18n::{Key, Language, messages};
 use auris_session::prelude::*;
 use auris_session::session::AudioStatus;
 use gpui::{
@@ -21,6 +22,8 @@ use crate::ui::widgets::{ButtonStyle, button, chain_button, divider};
 /// Which page the settings window is showing.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SettingsTab {
+    /// Interface language and anything else that is not audio or keys.
+    General,
     /// Output device, sample rate and buffer size.
     Audio,
     /// Key bindings.
@@ -36,6 +39,10 @@ pub struct SettingsWindow {
     devices: Vec<OutputDeviceInfo>,
     audio: AudioPreferences,
     keymap: Keymap,
+    /// Stored language preference; `None` follows the system.
+    language_preference: Option<Language>,
+    /// Language this window is drawn in, which is the resolved preference.
+    language: Language,
     /// What the audio backend is actually doing.
     ///
     /// Cached rather than read during render: the window is opened from inside the main
@@ -66,20 +73,40 @@ impl SettingsWindow {
         audio: AudioPreferences,
         live: AudioStatus,
         keymap: Keymap,
+        language_preference: Option<Language>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
             app,
             theme,
-            tab: SettingsTab::Audio,
+            tab: SettingsTab::General,
             devices,
             audio,
             live: Some(live),
             keymap,
+            language_preference,
+            language: Language::resolve(language_preference),
             capturing: None,
             status: String::new(),
             focus: cx.focus_handle(),
         }
+    }
+
+    /// A fixed string in the language this window is drawn in.
+    fn t(&self, key: Key) -> &'static str {
+        key.get(self.language)
+    }
+
+    /// Hands a language choice to the application, which installs and saves it.
+    fn apply_language(&mut self, preference: Option<Language>, cx: &mut Context<Self>) {
+        self.language_preference = preference;
+        self.language = Language::resolve(preference);
+        let _ = self.app.update(cx, |app, cx| {
+            let cx: &mut App = cx;
+            app.apply_language(preference, cx);
+        });
+        self.status = messages::language_changed(self.language, self.language.endonym());
+        cx.notify();
     }
 
     /// Hands new audio preferences to the session and reports what happened.
@@ -122,8 +149,21 @@ impl SettingsWindow {
             .border_b_1()
             .border_color(theme.border)
             .child(button(
+                "tab-general",
+                self.t(Key::TabGeneral),
+                ButtonStyle::Normal,
+                tab == SettingsTab::General,
+                theme.accent,
+                &theme,
+                cx.listener(|this, _, _, cx| {
+                    this.tab = SettingsTab::General;
+                    this.capturing = None;
+                    cx.notify();
+                }),
+            ))
+            .child(button(
                 "tab-audio",
-                "Audio",
+                self.t(Key::TabAudio),
                 ButtonStyle::Normal,
                 tab == SettingsTab::Audio,
                 theme.accent,
@@ -136,7 +176,7 @@ impl SettingsWindow {
             ))
             .child(button(
                 "tab-keys",
-                "Key Bindings",
+                self.t(Key::TabKeys),
                 ButtonStyle::Normal,
                 tab == SettingsTab::Keys,
                 theme.accent,
@@ -148,6 +188,55 @@ impl SettingsWindow {
             ))
     }
 
+    /// The General page: for now, the interface language.
+    fn render_general(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = self.theme.clone();
+        let current = self.language_preference;
+
+        // "System" first, then each language in its own name — a picker written in a language
+        // you cannot read is no use to the person who needs it.
+        let mut choices: Vec<(Option<Language>, &'static str)> =
+            vec![(None, self.t(Key::LanguageFollowSystem))];
+        choices.extend(Language::ALL.map(|language| (Some(language), language.endonym())));
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(section_title(self.t(Key::LanguageHeading), &theme))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .children(
+                        choices
+                            .into_iter()
+                            .enumerate()
+                            .map(|(index, (choice, label))| {
+                                button(
+                                    ("language", index),
+                                    label,
+                                    ButtonStyle::Normal,
+                                    current == choice,
+                                    theme.accent,
+                                    &theme,
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.apply_language(choice, cx)
+                                    }),
+                                )
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(self.t(Key::LanguageNote)),
+            )
+            .into_any_element()
+    }
+
     fn render_audio(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
         let audio = self.audio.clone();
@@ -155,17 +244,17 @@ impl SettingsWindow {
 
         let mut rows: Vec<AnyElement> = Vec::new();
 
-        rows.push(section_title("Output Device", &theme));
+        rows.push(section_title(self.t(Key::OutputDevice), &theme));
         rows.push(self.device_row(
             "device-default",
-            "System Default",
-            "Follows whatever macOS is set to",
+            self.t(Key::SystemDefaultDevice),
+            self.t(Key::SystemDefaultDeviceDetail),
             audio.device.is_none(),
             None,
             cx,
         ));
         for (index, device) in self.devices.clone().into_iter().enumerate() {
-            let detail = describe(&device);
+            let detail = describe(&device, self.language);
             let selected = audio.device.as_deref() == Some(device.name.as_str());
             rows.push(self.device_row(
                 ("device", index),
@@ -178,13 +267,13 @@ impl SettingsWindow {
         }
 
         rows.push(divider(&theme).into_any_element());
-        rows.push(section_title("Sample Rate", &theme));
+        rows.push(section_title(self.t(Key::SampleRate), &theme));
         rows.push(
             div()
                 .flex()
                 .flex_wrap()
                 .gap_1()
-                .child(self.rate_button("rate-auto", "Device Default", None, cx))
+                .child(self.rate_button("rate-auto", self.t(Key::DeviceDefaultRate), None, cx))
                 .children(
                     self.rate_choices()
                         .into_iter()
@@ -192,7 +281,7 @@ impl SettingsWindow {
                         .map(|(index, rate)| {
                             self.rate_button(
                                 ("rate", index),
-                                format!("{:.1} kHz", rate as f64 / 1000.0),
+                                messages::rate_single(self.language, rate as f64 / 1000.0),
                                 Some(rate),
                                 cx,
                             )
@@ -202,7 +291,7 @@ impl SettingsWindow {
         );
 
         rows.push(divider(&theme).into_any_element());
-        rows.push(section_title("Buffer Size", &theme));
+        rows.push(section_title(self.t(Key::BufferSize), &theme));
         rows.push(
             div()
                 .flex()
@@ -213,9 +302,10 @@ impl SettingsWindow {
                         let selected = audio.block_frames == frames;
                         let rate = live.as_ref().map_or(48_000.0, |status| status.sample_rate);
                         let latency = frames as f64 / rate.max(1.0) * 1000.0;
+                        let label = messages::buffer_choice(self.language, frames, latency);
                         button(
                             ("block", index),
-                            format!("{frames} · {latency:.1} ms"),
+                            label,
                             ButtonStyle::Normal,
                             selected,
                             theme.accent,
@@ -243,14 +333,25 @@ impl SettingsWindow {
                     .pt_1()
                     .text_xs()
                     .text_color(theme.text_muted)
-                    .child(format!(
-                        "Running: {} · {:.0} Hz · {} ch{}",
-                        status.device,
-                        status.sample_rate,
-                        status.channels,
-                        if status.running { "" } else { " (silent)" }
-                    ))
-                    .children(status.gpu.map(|gpu| div().child(format!("GPU: {gpu}"))))
+                    .child({
+                        let suffix = if status.running {
+                            String::new()
+                        } else {
+                            messages::silent_suffix(self.language)
+                        };
+                        messages::running_device(
+                            self.language,
+                            &status.device,
+                            status.sample_rate,
+                            status.channels,
+                            &suffix,
+                        )
+                    })
+                    .children(
+                        status
+                            .gpu
+                            .map(|gpu| div().child(messages::gpu_in_use(self.language, &gpu))),
+                    )
                     .into_any_element(),
             );
         }
@@ -371,11 +472,11 @@ impl SettingsWindow {
         let capturing = self.capturing.map(|command| command.id);
 
         let mut rows: Vec<AnyElement> = Vec::new();
-        let mut group = "";
+        let mut group: Option<Key> = None;
         for (index, command) in BINDABLE.iter().enumerate() {
-            if command.group != group {
-                group = command.group;
-                rows.push(section_title(group, &theme));
+            if group != Some(command.group) {
+                group = Some(command.group);
+                rows.push(section_title(self.t(command.group), &theme));
             }
 
             let keystroke = self.keymap.keystroke(command).to_string();
@@ -396,18 +497,21 @@ impl SettingsWindow {
                             .text_xs()
                             .text_color(theme.text)
                             .truncate()
-                            .child(command.label),
+                            .child(self.t(command.label)),
                     )
                     .children((!conflicts.is_empty() && !is_capturing).then(|| {
                         div()
                             .text_xs()
                             .text_color(theme.mute)
-                            .child(format!("also {}", conflicts[0].label))
+                            .child(messages::also_bound_to(
+                                self.language,
+                                self.t(conflicts[0].label),
+                            ))
                     }))
                     .child(div().w(px(128.0)).child(button(
                         ("bind", index),
                         if is_capturing {
-                            "Press a key…".to_string()
+                            self.t(Key::PressAKey).to_string()
                         } else {
                             keystroke
                         },
@@ -447,7 +551,7 @@ impl SettingsWindow {
             .children(rows)
             .child(div().flex().justify_end().pt_3().child(button(
                 "reset-all",
-                "Restore Defaults",
+                self.t(Key::RestoreDefaults),
                 ButtonStyle::Normal,
                 false,
                 theme.accent,
@@ -455,7 +559,7 @@ impl SettingsWindow {
                 cx.listener(|this, _, _, cx| {
                     this.keymap.reset();
                     this.capturing = None;
-                    this.status = "Key bindings restored to defaults".to_string();
+                    this.status = this.t(Key::BindingsRestored).to_string();
                     this.apply_keymap(cx);
                 }),
             )))
@@ -471,7 +575,7 @@ impl SettingsWindow {
         // to back out once a row is armed.
         if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified() {
             self.capturing = None;
-            self.status = "Cancelled".to_string();
+            self.status = self.t(Key::CaptureCancelled).to_string();
             cx.notify();
             return;
         }
@@ -480,16 +584,19 @@ impl SettingsWindow {
         self.capturing = None;
         if self.keymap.set(command, &keystroke) {
             let clash = self.keymap.conflicts(&keystroke, command);
+            let name = self.t(command.label);
             self.status = match clash.first() {
-                Some(other) => format!(
-                    "{} is now {keystroke} — also bound to {}",
-                    command.label, other.label
+                Some(other) => messages::binding_set_with_clash(
+                    self.language,
+                    name,
+                    &keystroke,
+                    self.t(other.label),
                 ),
-                None => format!("{} is now {keystroke}", command.label),
+                None => messages::binding_set(self.language, name, &keystroke),
             };
             self.apply_keymap(cx);
         } else {
-            self.status = format!("{keystroke} cannot be used as a binding");
+            self.status = messages::binding_rejected(self.language, &keystroke);
             cx.notify();
         }
     }
@@ -500,6 +607,7 @@ impl Render for SettingsWindow {
         let theme = self.theme.clone();
         let tabs = self.render_tabs(cx);
         let body = match self.tab {
+            SettingsTab::General => self.render_general(cx),
             SettingsTab::Audio => self.render_audio(cx),
             SettingsTab::Keys => self.render_keys(cx),
         };
@@ -515,7 +623,7 @@ impl Render for SettingsWindow {
             .size_full()
             .bg(theme.background)
             .text_color(theme.text)
-            .font_family("Helvetica")
+            .font(crate::theme::ui_font())
             .text_sm()
             // While a row is armed, swallow the key so it configures the binding instead of
             // firing whatever is currently bound to it.
@@ -561,18 +669,18 @@ fn section_title(title: &str, theme: &Theme) -> AnyElement {
 }
 
 /// One line describing what a device can do.
-fn describe(device: &OutputDeviceInfo) -> String {
+fn describe(device: &OutputDeviceInfo, language: Language) -> String {
     let rates = match (device.sample_rates.first(), device.sample_rates.last()) {
         (Some(low), Some(high)) if low != high => {
-            format!(
-                "{:.1}–{:.1} kHz",
-                *low as f64 / 1000.0,
-                *high as f64 / 1000.0
-            )
+            messages::rate_range(language, *low as f64 / 1000.0, *high as f64 / 1000.0)
         }
-        (Some(rate), _) => format!("{:.1} kHz", *rate as f64 / 1000.0),
-        _ => "rate unknown".to_string(),
+        (Some(rate), _) => messages::rate_single(language, *rate as f64 / 1000.0),
+        _ => Key::RateUnknown.get(language).to_string(),
     };
-    let default = if device.is_default { " · default" } else { "" };
-    format!("{} ch · {rates}{default}", device.max_channels)
+    let detail = messages::device_detail(language, device.max_channels, &rates);
+    if device.is_default {
+        format!("{detail} · {}", Key::DeviceIsDefault.get(language))
+    } else {
+        detail
+    }
 }

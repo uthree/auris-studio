@@ -15,6 +15,7 @@ path = "src/main.rs"
 # If this list ever needs `auris-engine` or `auris-dsp` directly, something that belongs in the
 # session layer has leaked into the UI.
 [dependencies]
+auris-i18n.workspace = true
 auris-session.workspace = true
 env_logger.workspace = true
 log.workspace = true

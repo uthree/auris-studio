@@ -13,6 +13,7 @@ auris-core.workspace = true
 auris-dsp.workspace = true
 auris-engine.workspace = true
 auris-gpu.workspace = true
+auris-i18n.workspace = true
 auris-io.workspace = true
 auris-synth.workspace = true
 log.workspace = true

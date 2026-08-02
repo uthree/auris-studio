@@ -1,6 +1,7 @@
 //! The right-hand inspector: the selected track's instrument, its effect chain, and a browser
 //! for everything the plugin registry knows about.
 
+use auris_i18n::Key;
 use auris_session::Session;
 use auris_session::prelude::*;
 
@@ -47,7 +48,7 @@ impl AurisApp {
                     .border_color(theme.border)
                     .child(div().flex_1().child(button(
                         "tab-track",
-                        "Track",
+                        self.t(Key::Track),
                         ButtonStyle::Normal,
                         tab == InspectorTab::Track,
                         theme.accent,
@@ -59,7 +60,7 @@ impl AurisApp {
                     )))
                     .child(div().flex_1().child(button(
                         "tab-browser",
-                        "Plugins",
+                        self.t(Key::Plugins),
                         ButtonStyle::Normal,
                         tab == InspectorTab::Browser,
                         theme.accent,
@@ -87,7 +88,7 @@ impl AurisApp {
             return div()
                 .text_xs()
                 .text_color(theme.text_muted)
-                .child("No track selected")
+                .child(self.t(Key::NoTrackSelected))
                 .into_any_element();
         };
         let Some(track) = self.project().track(track_id) else {
@@ -116,11 +117,7 @@ impl AurisApp {
         );
 
         if let Some(instrument_id) = instrument_id {
-            let name = self
-                .registry()
-                .descriptor(&instrument_id)
-                .map(|d| d.name.to_string())
-                .unwrap_or_else(|| instrument_id.clone());
+            let name = self.plugin_label(&instrument_id);
             sections.push(
                 div()
                     .flex()
@@ -131,7 +128,7 @@ impl AurisApp {
                         div()
                             .text_xs()
                             .text_color(theme.text_muted)
-                            .child("Instrument"),
+                            .child(self.t(Key::Instrument)),
                     )
                     .child(div().text_xs().text_color(theme.text).child(name))
                     .into_any_element(),
@@ -166,12 +163,12 @@ impl AurisApp {
                     div()
                         .text_xs()
                         .text_color(theme.text_muted)
-                        .child("Effects"),
+                        .child(self.t(Key::Effects)),
                 )
                 .child(crate::ui::widgets::icon_label(
                     "add-effect",
                     Icon::Plus,
-                    "Add",
+                    self.t(Key::Add),
                     &theme,
                     cx.listener(|this, _, _, cx| {
                         this.inspector = InspectorTab::Browser;
@@ -186,17 +183,13 @@ impl AurisApp {
                 div()
                     .text_xs()
                     .text_color(theme.text_muted)
-                    .child("No effects — add one from the Plugins tab")
+                    .child(self.t(Key::NoEffects))
                     .into_any_element(),
             );
         }
 
         for (slot_index, (slot_id, effect_id, enabled)) in effect_slots.into_iter().enumerate() {
-            let name = self
-                .registry()
-                .descriptor(&effect_id)
-                .map(|d| d.name.to_string())
-                .unwrap_or_else(|| effect_id.clone());
+            let name = self.plugin_label(&effect_id);
             let descriptors = self.session.param_descriptors(&effect_id);
             let controls = self.param_controls(
                 &descriptors,
@@ -238,6 +231,7 @@ impl AurisApp {
                         ("fx-bypass", slot_index),
                         name,
                         enabled,
+                        self.t(if enabled { Key::ValueOn } else { Key::ValueOff }),
                         &theme,
                         cx.listener(move |this, _, _, cx| {
                             this.toggle_effect(Some(track_id), slot_id);
@@ -315,7 +309,7 @@ impl AurisApp {
                     d.id.to_string(),
                     d.name.to_string(),
                     d.description.to_string(),
-                    d.category.label().to_string(),
+                    self.category_label(d.category),
                 )
             })
             .collect();
@@ -326,10 +320,12 @@ impl AurisApp {
                 .text_xs()
                 .text_color(theme.text_muted)
                 .pb_1()
-                .child("Instruments — click to set on the selected track")
+                .child(self.t(Key::BrowserInstruments))
                 .into_any_element(),
         );
         for (index, (id, name, description)) in instruments.into_iter().enumerate() {
+            let name = audio_name(self, &name);
+            let description = self.plugin_description(&description);
             rows.push(
                 self.browser_row(("browser-inst", index), &name, &description, "", {
                     let id = id.clone();
@@ -347,10 +343,12 @@ impl AurisApp {
                 .text_xs()
                 .text_color(theme.text_muted)
                 .py_1()
-                .child("Effects — click to add to the selected track")
+                .child(self.t(Key::BrowserEffects))
                 .into_any_element(),
         );
         for (index, (id, name, description, category)) in effects.into_iter().enumerate() {
+            let name = audio_name(self, &name);
+            let description = self.plugin_description(&description);
             rows.push(
                 self.browser_row(("browser-fx", index), &name, &description, &category, {
                     let id = id.clone();
@@ -437,10 +435,14 @@ impl AurisApp {
                 let value = self.session.param_value(target, descriptor);
                 let element_id = (id_prefix, target_element_key(target, descriptor.id));
 
+                let label = self.param_label(&descriptor.name);
+                let value_text = self.format_param(descriptor, value);
                 match control_for(descriptor) {
                     ParamControl::Slider => slider_row(
                         element_id,
                         descriptor,
+                        label,
+                        value_text,
                         value,
                         theme.accent,
                         &theme,
@@ -470,6 +472,8 @@ impl AurisApp {
                         button_row(
                             element_id,
                             descriptor,
+                            label,
+                            value_text,
                             value,
                             &theme,
                             cx.listener(move |this, _, _, cx| {
@@ -500,11 +504,11 @@ impl AurisApp {
     ) -> AnyElement {
         let theme = self.theme.clone();
         let descriptor = Session::mixer_descriptor(target)
-            .unwrap_or_else(|| ParamDescriptor::new(0u32, "value", label, 0.0, 1.0, 0.0));
+            .unwrap_or_else(|| ParamDescriptor::new(0u32, "value", "value", 0.0, 1.0, 0.0));
         crate::ui::widgets::value_slider(
             id,
             label,
-            descriptor.format(value),
+            self.format_param(&descriptor, value),
             descriptor.normalize(value),
             theme.accent,
             crate::ui::plugin_editor::slider_fill_for(&descriptor),
@@ -543,7 +547,7 @@ impl AurisApp {
     pub(crate) fn add_effect_to_selection(&mut self, effect_id: &str) {
         match self.session.add_effect(self.selected_track, effect_id) {
             Ok(_) => self.inspector = InspectorTab::Track,
-            Err(error) => self.set_status(format!("Could not add the effect: {error}")),
+            Err(error) => self.set_status(self.failure(Key::MenuAddEffect, &error)),
         }
     }
 
@@ -554,7 +558,7 @@ impl AurisApp {
         };
         match self.session.set_track_instrument(track, instrument_id) {
             Ok(()) => self.inspector = InspectorTab::Track,
-            Err(error) => self.set_status(format!("Could not change the instrument: {error}")),
+            Err(error) => self.set_status(self.failure(Key::EditChangeInstrument, &error)),
         }
     }
 
@@ -573,6 +577,11 @@ impl AurisApp {
     pub(crate) fn remove_effect(&mut self, slot: EffectSlotId) {
         self.session.remove_effect(slot);
     }
+}
+
+/// A plugin's display name, translated where the term is known.
+fn audio_name(app: &AurisApp, english: &str) -> String {
+    auris_i18n::audio::plugin_name(english, app.language()).to_string()
 }
 
 /// A stable per-target element key, so gpui can track hover state across frames.

@@ -1,5 +1,6 @@
 //! The piano roll: note editing for the selected MIDI clip.
 
+use auris_i18n::{Key, messages};
 use auris_session::prelude::*;
 
 use gpui::{
@@ -42,7 +43,7 @@ impl AurisApp {
                 .bg(theme.surface_sunken)
                 .text_color(theme.text_muted)
                 .text_xs()
-                .child("Select a MIDI clip to edit its notes (alt-click an empty lane to make one)")
+                .child(self.t(Key::PianoRollEmpty))
                 .into_any_element();
         };
 
@@ -70,11 +71,9 @@ impl AurisApp {
                     .border_color(theme.border)
                     .text_xs()
                     .text_color(theme.text_muted)
-                    .child(format!("Piano Roll — {clip_name}"))
+                    .child(messages::piano_roll_title(self.language(), &clip_name))
                     .child(div().flex_1())
-                    .child(
-                        "alt-click: add note · drag: move · right edge: resize · right-click: menu",
-                    ),
+                    .child(self.t(Key::PianoRollHint)),
             )
             .child(
                 div()

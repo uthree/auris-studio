@@ -4,11 +4,14 @@
 
 mod actions;
 mod app;
+mod i18n;
 mod keymap;
 mod settings_window;
 mod theme;
 mod ui;
 
+use auris_i18n::{Key, Language};
+use auris_session::Settings;
 use gpui::{
     App, AppContext, Application, Bounds, Focusable, Menu, MenuItem, SystemMenuType,
     TitlebarOptions, WindowBounds, WindowOptions, px, size,
@@ -23,7 +26,10 @@ fn main() {
 
     Application::new().run(|cx: &mut App| {
         cx.on_action(|_: &actions::Quit, cx: &mut App| cx.quit());
-        cx.set_menus(menus());
+        // The menu bar is built before the window, so the language comes from the settings file
+        // rather than from the view that has not been created yet. `AurisApp` loads the same
+        // file a moment later, and rebuilds these menus whenever the choice changes.
+        cx.set_menus(menus(Settings::load().language()));
 
         let bounds = Bounds::centered(None, size(px(1500.), px(940.)), cx);
         let window = cx
@@ -60,57 +66,63 @@ fn main() {
     });
 }
 
-fn menus() -> Vec<Menu> {
+/// The platform menu bar, in `language`.
+///
+/// Rebuilt rather than re-rendered when the language changes: the menu bar belongs to the
+/// operating system, so nothing about a redraw would touch it.
+pub fn menus(language: Language) -> Vec<Menu> {
+    let t = |key: Key| key.get(language);
     vec![
         Menu {
+            // The application's own name is not translated — it is what the bundle is called.
             name: "Auris Studio".into(),
             items: vec![
-                MenuItem::action("Settings…", actions::OpenSettings),
+                MenuItem::action(t(Key::MenuSettingsItem), actions::OpenSettings),
                 MenuItem::separator(),
-                MenuItem::os_submenu("Services", SystemMenuType::Services),
+                MenuItem::os_submenu(t(Key::MenuServices), SystemMenuType::Services),
                 MenuItem::separator(),
-                MenuItem::action("Quit Auris Studio", actions::Quit),
+                MenuItem::action(t(Key::MenuQuitApp), actions::Quit),
             ],
         },
         Menu {
-            name: "File".into(),
+            name: t(Key::GroupFile).into(),
             items: vec![
-                MenuItem::action("New Project", actions::NewProject),
-                MenuItem::action("Open Project…", actions::OpenProject),
+                MenuItem::action(t(Key::CmdNewProject), actions::NewProject),
+                MenuItem::action(t(Key::MenuOpenProjectItem), actions::OpenProject),
                 MenuItem::separator(),
-                MenuItem::action("Save", actions::SaveProject),
-                MenuItem::action("Save As…", actions::SaveProjectAs),
+                MenuItem::action(t(Key::CmdSave), actions::SaveProject),
+                MenuItem::action(t(Key::MenuSaveAsItem), actions::SaveProjectAs),
                 MenuItem::separator(),
-                MenuItem::action("Import Audio…", actions::ImportAudio),
-                MenuItem::action("Export WAV…", actions::ExportAudio),
+                MenuItem::action(t(Key::MenuImportAudioItem), actions::ImportAudio),
+                MenuItem::action(t(Key::MenuExportWavItem), actions::ExportAudio),
             ],
         },
         Menu {
-            name: "Edit".into(),
+            name: t(Key::GroupEdit).into(),
             items: vec![
-                MenuItem::action("Undo", actions::Undo),
-                MenuItem::action("Redo", actions::Redo),
+                MenuItem::action(t(Key::CmdUndo), actions::Undo),
+                MenuItem::action(t(Key::CmdRedo), actions::Redo),
                 MenuItem::separator(),
-                MenuItem::action("Delete", actions::DeleteSelection),
+                MenuItem::action(t(Key::MenuDelete), actions::DeleteSelection),
             ],
         },
         Menu {
-            name: "Track".into(),
+            name: t(Key::GroupTrack).into(),
             items: vec![
-                MenuItem::action("Add Instrument Track", actions::AddInstrumentTrack),
-                MenuItem::action("Add Audio Track", actions::AddAudioTrack),
+                MenuItem::action(t(Key::CmdAddInstrumentTrack), actions::AddInstrumentTrack),
+                MenuItem::action(t(Key::CmdAddAudioTrack), actions::AddAudioTrack),
                 MenuItem::separator(),
-                MenuItem::action("Delete Track", actions::DeleteTrack),
+                MenuItem::action(t(Key::CmdDeleteTrack), actions::DeleteTrack),
             ],
         },
         Menu {
-            name: "Transport".into(),
+            name: t(Key::GroupTransport).into(),
             items: vec![
-                MenuItem::action("Play / Stop", actions::TogglePlay),
-                MenuItem::action("Return to Zero", actions::ReturnToZero),
-                MenuItem::action("Toggle Loop", actions::ToggleLoop),
+                MenuItem::action(t(Key::CmdPlayStop), actions::TogglePlay),
+                MenuItem::action(t(Key::CmdReturnToZero), actions::ReturnToZero),
+                MenuItem::action(t(Key::CmdToggleCycle), actions::ToggleLoop),
                 MenuItem::separator(),
-                MenuItem::action("Panic", actions::PanicStop),
+                MenuItem::action(t(Key::CmdPanic), actions::PanicStop),
             ],
         },
     ]

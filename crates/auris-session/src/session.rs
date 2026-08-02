@@ -19,7 +19,7 @@ use auris_gpu::{GpuContext, WaveformPeaks, compute_peaks};
 use auris_io::{import_audio_file, load_project, save_project};
 
 use crate::error::SessionError;
-use crate::history::History;
+use crate::history::{Edit, History};
 use crate::param::ParamTarget;
 use crate::registry::default_registry;
 use crate::render::RenderJob;
@@ -118,7 +118,7 @@ pub struct Session {
 }
 
 struct Transaction {
-    label: String,
+    edit: Edit,
     before: Project,
 }
 
@@ -316,9 +316,9 @@ impl Session {
     ///
     /// Nesting is not supported; a second call replaces the first, which is what a frontend
     /// wants when a gesture is interrupted.
-    pub fn begin_transaction(&mut self, label: impl Into<String>) {
+    pub fn begin_transaction(&mut self, edit: Edit) {
         self.transaction = Some(Transaction {
-            label: label.into(),
+            edit,
             before: self.project.clone(),
         });
     }
@@ -335,7 +335,7 @@ impl Session {
             self.needs_rebuild = false;
             return false;
         }
-        self.history.push(transaction.label, &transaction.before);
+        self.history.push(transaction.edit, &transaction.before);
         self.dirty = true;
         if std::mem::take(&mut self.needs_rebuild) {
             self.rebuild_graph();
@@ -351,22 +351,22 @@ impl Session {
         }
     }
 
-    /// Steps back one edit, returning its label.
-    pub fn undo(&mut self) -> Option<String> {
-        let label = self.history.undo_label()?.to_string();
+    /// Steps back one edit, returning what it reversed.
+    pub fn undo(&mut self) -> Option<Edit> {
+        let edit = self.history.undo_edit()?;
         let project = self.history.undo(&self.project)?;
         self.replace_project(project);
         self.dirty = true;
-        Some(label)
+        Some(edit)
     }
 
-    /// Steps forward one edit, returning its label.
-    pub fn redo(&mut self) -> Option<String> {
-        let label = self.history.redo_label()?.to_string();
+    /// Steps forward one edit, returning what it reapplied.
+    pub fn redo(&mut self) -> Option<Edit> {
+        let edit = self.history.redo_edit()?;
         let project = self.history.redo(&self.project)?;
         self.replace_project(project);
         self.dirty = true;
-        Some(label)
+        Some(edit)
     }
 
     /// `true` when there is something to undo.
@@ -393,9 +393,9 @@ impl Session {
     ///
     /// Inside a transaction this does nothing: the snapshot was taken when the transaction
     /// opened, and one gesture is one step.
-    fn record(&mut self, label: &str) {
+    fn record(&mut self, edit: Edit) {
         if self.transaction.is_none() {
-            self.history.push(label, &self.project);
+            self.history.push(edit, &self.project);
         }
         self.dirty = true;
     }
@@ -492,7 +492,7 @@ impl Session {
 
     /// Turns looping on or off, seeding a two-bar region when there is none.
     pub fn set_loop_enabled(&mut self, enabled: bool) {
-        self.record("Toggle loop");
+        self.record(Edit::ToggleLoop);
         self.project.loop_enabled = enabled;
         if enabled && self.project.loop_region.is_none() {
             let bars = self.project.time_signature.ticks_per_bar() * 2;
@@ -503,7 +503,7 @@ impl Session {
 
     /// Sets the loop region. A region that is not positive disables the loop.
     pub fn set_loop_region(&mut self, start: Ticks, end: Ticks) {
-        self.record("Set loop region");
+        self.record(Edit::SetLoopRegion);
         let (start, end) = if end < start {
             (end, start)
         } else {
@@ -532,7 +532,7 @@ impl Session {
 
     /// Sets the project tempo.
     pub fn set_bpm(&mut self, bpm: f64) {
-        self.record("Change tempo");
+        self.record(Edit::ChangeTempo);
         self.project.set_bpm(bpm);
         // Notes are scheduled in frames, so the graph has to be re-flattened, and the loop's
         // frame positions move with it.
@@ -556,7 +556,7 @@ impl Session {
         if !self.registry.has_instrument(instrument_id) {
             return Err(SessionError::UnknownPlugin(instrument_id.to_string()));
         }
-        self.record("Add instrument track");
+        self.record(Edit::AddInstrumentTrack);
         let id = self.project.add_instrument_track(name, instrument_id);
         self.invalidate_graph();
         Ok(id)
@@ -577,7 +577,7 @@ impl Session {
 
     /// Appends an audio track.
     pub fn add_audio_track(&mut self, name: impl Into<String>) -> TrackId {
-        self.record("Add audio track");
+        self.record(Edit::AddAudioTrack);
         let id = self.project.add_audio_track(name);
         self.invalidate_graph();
         id
@@ -586,7 +586,7 @@ impl Session {
     /// Removes a track.
     pub fn remove_track(&mut self, id: TrackId) -> Result<(), SessionError> {
         self.require_track(id)?;
-        self.record("Delete track");
+        self.record(Edit::DeleteTrack);
         self.project.remove_track(id);
         self.invalidate_graph();
         Ok(())
@@ -599,7 +599,7 @@ impl Session {
         name: impl Into<String>,
     ) -> Result<(), SessionError> {
         self.require_track(id)?;
-        self.record("Rename track");
+        self.record(Edit::RenameTrack);
         if let Some(track) = self.project.track_mut(id) {
             track.name = name.into();
         }
@@ -609,7 +609,7 @@ impl Session {
     /// Silences or unsilences a track.
     pub fn set_track_mute(&mut self, id: TrackId, mute: bool) -> Result<(), SessionError> {
         let index = self.require_track(id)?;
-        self.record("Mute track");
+        self.record(Edit::MuteTrack);
         self.project.tracks[index].mixer.mute = mute;
         self.send(EngineCommand::SetTrackMute { index, mute });
         Ok(())
@@ -621,7 +621,7 @@ impl Session {
     /// one per-track command and the graph is rebuilt instead.
     pub fn set_track_solo(&mut self, id: TrackId, solo: bool) -> Result<(), SessionError> {
         self.require_track(id)?;
-        self.record("Solo track");
+        self.record(Edit::SoloTrack);
         if let Some(track) = self.project.track_mut(id) {
             track.mixer.solo = solo;
         }
@@ -639,7 +639,7 @@ impl Session {
             return Err(SessionError::UnknownPlugin(instrument_id.to_string()));
         }
         self.require_track(id)?;
-        self.record("Change instrument");
+        self.record(Edit::ChangeInstrument);
         if let Some(inner) = self
             .project
             .track_mut(id)
@@ -657,7 +657,7 @@ impl Session {
     /// Copies a track, its clips and its whole effect chain, below the original.
     pub fn duplicate_track(&mut self, id: TrackId) -> Result<TrackId, SessionError> {
         self.require_track(id)?;
-        self.record("Duplicate track");
+        self.record(Edit::DuplicateTrack);
         let copy = self
             .project
             .duplicate_track(id)
@@ -699,7 +699,7 @@ impl Session {
                 expected: "an instrument track",
             });
         }
-        self.record("Add clip");
+        self.record(Edit::AddClip);
         let id = self
             .project
             .add_midi_clip(track, name, start.max_zero(), Ticks(length.raw().max(1)))
@@ -713,7 +713,7 @@ impl Session {
         if self.project.midi_clip(clip).is_none() && !self.audio_clip_exists(clip) {
             return Err(SessionError::UnknownClip(clip.0));
         }
-        self.record("Delete clip");
+        self.record(Edit::DeleteClip);
         self.project.remove_clip(clip);
         self.invalidate_graph();
         Ok(())
@@ -722,7 +722,7 @@ impl Session {
     /// Copies a clip onto its own track, immediately after the original.
     pub fn duplicate_clip(&mut self, clip: ClipId) -> Result<ClipId, SessionError> {
         self.require_clip(clip)?;
-        self.record("Duplicate clip");
+        self.record(Edit::DuplicateClip);
         let copy = self
             .project
             .duplicate_clip(clip)
@@ -742,7 +742,7 @@ impl Session {
             return Err(SessionError::CannotSplit(clip.0));
         };
         if self.transaction.is_none() {
-            self.history.push("Split clip", &before);
+            self.history.push(Edit::SplitClip, &before);
         }
         self.dirty = true;
         self.invalidate_graph();
@@ -756,7 +756,7 @@ impl Session {
         name: impl Into<String>,
     ) -> Result<(), SessionError> {
         self.require_clip(clip)?;
-        self.record("Rename clip");
+        self.record(Edit::RenameClip);
         let name = name.into();
         if let Some(midi) = self.project.midi_clip_mut(clip) {
             midi.name = name;
@@ -769,7 +769,7 @@ impl Session {
     /// Silences or unsilences a single clip.
     pub fn set_clip_muted(&mut self, clip: ClipId, muted: bool) -> Result<(), SessionError> {
         self.require_clip(clip)?;
-        self.record("Mute clip");
+        self.record(Edit::MuteClip);
         if let Some(midi) = self.project.midi_clip_mut(clip) {
             midi.muted = muted;
         } else if let Some(audio) = self.project.audio_clip_mut(clip) {
@@ -789,7 +789,7 @@ impl Session {
 
     /// Moves a clip of either kind to a new start position.
     pub fn move_clip(&mut self, clip: ClipId, start: Ticks) -> Result<(), SessionError> {
-        self.record("Move clip");
+        self.record(Edit::MoveClip);
         let start = start.max_zero();
         if let Some(midi) = self.project.midi_clip_mut(clip) {
             midi.start = start;
@@ -804,7 +804,7 @@ impl Session {
 
     /// Drags a clip's end to `end`.
     pub fn resize_clip(&mut self, clip: ClipId, end: Ticks) -> Result<(), SessionError> {
-        self.record("Resize clip");
+        self.record(Edit::ResizeClip);
         let grid = self.project.grid;
         if let Some(midi) = self.project.midi_clip_mut(clip) {
             midi.length = (end - midi.start).max(grid);
@@ -844,7 +844,7 @@ impl Session {
 
     /// Adds a note to a MIDI clip, returning its index.
     pub fn add_note(&mut self, clip: ClipId, note: Note) -> Result<usize, SessionError> {
-        self.record("Add note");
+        self.record(Edit::AddNote);
         let grid = self.project.grid;
         let Some(target) = self.project.midi_clip_mut(clip) else {
             return Err(SessionError::UnknownClip(clip.0));
@@ -869,7 +869,7 @@ impl Session {
         if indices.is_empty() {
             return Ok(());
         }
-        self.record("Delete notes");
+        self.record(Edit::DeleteNotes);
         let mut doomed: Vec<usize> = indices.to_vec();
         doomed.sort_unstable();
         doomed.dedup();
@@ -912,7 +912,7 @@ impl Session {
         let last = chosen.iter().map(Note::end).max().unwrap_or_default();
         let offset = last - first;
 
-        self.record("Duplicate notes");
+        self.record(Edit::DuplicateNotes);
         let grid = self.project.grid;
         let Some(target) = self.project.midi_clip_mut(clip) else {
             return Err(SessionError::UnknownClip(clip.0));
@@ -957,7 +957,7 @@ impl Session {
             return Ok(());
         }
 
-        self.record("Transpose notes");
+        self.record(Edit::TransposeNotes);
         let Some(target) = self.project.midi_clip_mut(clip) else {
             return Err(SessionError::UnknownClip(clip.0));
         };
@@ -978,7 +978,7 @@ impl Session {
         delta_ticks: Ticks,
         delta_pitch: i32,
     ) -> Result<(), SessionError> {
-        self.record("Move notes");
+        self.record(Edit::MoveNotes);
         let grid = self.project.grid;
         let Some(target) = self.project.midi_clip_mut(clip) else {
             return Err(SessionError::UnknownClip(clip.0));
@@ -1001,7 +1001,7 @@ impl Session {
         index: usize,
         end: Ticks,
     ) -> Result<(), SessionError> {
-        self.record("Resize note");
+        self.record(Edit::ResizeNote);
         let grid = Ticks(self.project.grid.raw().max(1));
         let Some(target) = self.project.midi_clip_mut(clip) else {
             return Err(SessionError::UnknownClip(clip.0));
@@ -1033,7 +1033,7 @@ impl Session {
         if let Some(id) = track {
             self.require_track(id)?;
         }
-        self.record("Add effect");
+        self.record(Edit::AddEffect);
         let slot = self
             .project
             .add_effect(track, effect_id)
@@ -1044,7 +1044,7 @@ impl Session {
 
     /// Removes an effect from wherever it is.
     pub fn remove_effect(&mut self, slot: EffectSlotId) {
-        self.record("Remove effect");
+        self.record(Edit::RemoveEffect);
         self.project.remove_effect(slot);
         self.invalidate_graph();
     }
@@ -1065,7 +1065,7 @@ impl Session {
         slot: EffectSlotId,
         enabled: bool,
     ) {
-        self.record("Bypass effect");
+        self.record(Edit::BypassEffect);
         if let Some(strip) = self.strip_mut(track)
             && let Some(effect) = strip.effects.iter_mut().find(|s| s.id == slot)
         {
@@ -1076,7 +1076,7 @@ impl Session {
 
     /// Moves an effect along its chain by `delta` positions.
     pub fn move_effect(&mut self, track: Option<TrackId>, slot: EffectSlotId, delta: isize) {
-        self.record("Reorder effects");
+        self.record(Edit::ReorderEffects);
         if let Some(strip) = self.strip_mut(track)
             && let Some(index) = strip.effects.iter().position(|s| s.id == slot)
         {
@@ -1381,7 +1381,7 @@ impl Session {
     /// Imports an audio file, adds a track for it and places a clip at `start`.
     pub fn import_audio(&mut self, path: &Path, start: Ticks) -> Result<ClipId, SessionError> {
         let buffer = import_audio_file(path, self.project.sample_rate)?;
-        self.record("Import audio");
+        self.record(Edit::ImportAudio);
         let name = path
             .file_stem()
             .map(|stem| stem.to_string_lossy().to_string())
@@ -1445,7 +1445,7 @@ mod tests {
         session.add_default_instrument_track("Lead").unwrap();
         let steps_before = session.can_undo();
 
-        session.begin_transaction("Move clip");
+        session.begin_transaction(Edit::MoveClip);
         let changed = session.end_transaction();
 
         assert!(!changed);
@@ -1462,7 +1462,7 @@ mod tests {
             .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::from_beats(4.0))
             .unwrap();
 
-        session.begin_transaction("Move clip");
+        session.begin_transaction(Edit::MoveClip);
         for beat in 1..=8 {
             session
                 .move_clip(clip, Ticks::from_beats(beat as f64))
@@ -1486,9 +1486,9 @@ mod tests {
         session.add_default_instrument_track("Two").unwrap();
         assert_eq!(session.project().tracks.len(), 2);
 
-        assert_eq!(session.undo().as_deref(), Some("Add instrument track"));
+        assert_eq!(session.undo(), Some(Edit::AddInstrumentTrack));
         assert_eq!(session.project().tracks.len(), 1);
-        assert_eq!(session.redo().as_deref(), Some("Add instrument track"));
+        assert_eq!(session.redo(), Some(Edit::AddInstrumentTrack));
         assert_eq!(session.project().tracks.len(), 2);
     }
 

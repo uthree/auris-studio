@@ -19,11 +19,11 @@
 //! move, so a gesture wraps itself in a transaction:
 //!
 //! ```no_run
-//! # use auris_session::{Session, SessionOptions};
+//! # use auris_session::{Edit, Session, SessionOptions};
 //! # use auris_core::time::Ticks;
 //! # let mut session = Session::new(SessionOptions::headless())?;
 //! # let clip = session.project().tracks.first().unwrap().id;
-//! session.begin_transaction("Move clip");
+//! session.begin_transaction(Edit::MoveClip);
 //! // ... many mutator calls as the pointer moves ...
 //! let changed = session.end_transaction();
 //! # Ok::<(), auris_session::SessionError>(())
@@ -45,7 +45,7 @@ pub mod session;
 pub mod settings;
 
 pub use error::SessionError;
-pub use history::History;
+pub use history::{Edit, History};
 pub use param::ParamTarget;
 pub use registry::default_registry;
 pub use render::{ExportSummary, RenderJob};
@@ -77,7 +77,7 @@ pub mod prelude {
     pub use auris_io::{WavBitDepth, WavExportSettings};
 
     pub use crate::{
-        AudioPreferences, ExportSummary, ParamTarget, RenderJob, Session, SessionError,
+        AudioPreferences, Edit, ExportSummary, ParamTarget, RenderJob, Session, SessionError,
         SessionOptions, Settings,
     };
 }

@@ -1,5 +1,6 @@
 //! The arrangement: track headers on the left, a clip timeline on the right.
 
+use auris_i18n::Key;
 use auris_session::prelude::*;
 
 use gpui::{
@@ -8,6 +9,7 @@ use gpui::{
 };
 
 use crate::app::{AurisApp, Drag};
+use crate::i18n::track_kind_key;
 use crate::theme::{Metrics, Theme};
 use crate::ui::icons::Icon;
 use crate::ui::paint;
@@ -74,7 +76,7 @@ impl AurisApp {
                 let muted = track.mixer.mute;
                 let soloed = track.mixer.solo;
                 let name = track.name.clone();
-                let kind = track.kind.label();
+                let kind = self.t(track_kind_key(&track.kind));
 
                 let is_selected = selected == Some(id);
 
@@ -164,7 +166,7 @@ impl AurisApp {
                                     .gap_1()
                                     .child(div().w(px(24.0)).child(button(
                                         ("mute", index),
-                                        "M",
+                                        self.t(Key::MuteInitial),
                                         ButtonStyle::Normal,
                                         muted,
                                         theme.mute,
@@ -176,7 +178,7 @@ impl AurisApp {
                                     )))
                                     .child(div().w(px(24.0)).child(button(
                                         ("solo", index),
-                                        "S",
+                                        self.t(Key::SoloInitial),
                                         ButtonStyle::Normal,
                                         soloed,
                                         theme.solo,
@@ -224,7 +226,7 @@ impl AurisApp {
                     .child(div().flex_1().child(icon_label(
                         "add-instrument",
                         Icon::Plus,
-                        "Inst",
+                        self.t(Key::AddInstrumentShort),
                         &theme,
                         cx.listener(|this, _, _, cx| {
                             this.add_instrument_track();
@@ -234,7 +236,7 @@ impl AurisApp {
                     .child(div().flex_1().child(icon_label(
                         "add-audio",
                         Icon::Plus,
-                        "Audio",
+                        self.t(Key::AddAudioShort),
                         &theme,
                         cx.listener(|this, _, _, cx| {
                             this.add_audio_track();
@@ -572,7 +574,7 @@ impl AurisApp {
     ) -> impl IntoElement + use<> {
         self.fader(
             ("gain", track.0 as usize),
-            "Vol",
+            self.t(Key::Volume),
             ParamTarget::TrackGain(track),
             gain_db,
             cx,
@@ -587,7 +589,7 @@ impl AurisApp {
     ) -> impl IntoElement + use<> {
         self.fader(
             ("pan", track.0 as usize),
-            "Pan",
+            self.t(Key::Pan),
             ParamTarget::TrackPan(track),
             pan,
             cx,

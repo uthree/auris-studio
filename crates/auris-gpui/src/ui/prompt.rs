@@ -7,6 +7,7 @@
 
 use std::ops::Range;
 
+use auris_i18n::Key;
 use auris_session::prelude::*;
 
 use gpui::{
@@ -79,7 +80,7 @@ impl AurisApp {
         if name.is_empty() {
             // An empty name would leave an unlabelled row the user cannot tell apart from its
             // neighbours, and nothing here needs a nameless object.
-            self.set_status("Name cannot be empty");
+            self.set_status(self.t(Key::NameCannotBeEmpty));
             return;
         }
         let outcome = match prompt.target {
@@ -87,7 +88,7 @@ impl AurisApp {
             PromptTarget::Clip(clip) => self.session.rename_clip(clip, name),
         };
         if let Err(error) = outcome {
-            self.set_status(format!("Could not rename: {error}"));
+            self.set_status(self.failure(Key::Rename, &error));
         }
     }
 
@@ -221,7 +222,7 @@ impl AurisApp {
                                 .gap_2()
                                 .child(button(
                                     "prompt-cancel",
-                                    "Cancel",
+                                    self.t(Key::Cancel),
                                     ButtonStyle::Normal,
                                     false,
                                     theme.accent,
@@ -233,7 +234,7 @@ impl AurisApp {
                                 ))
                                 .child(button(
                                     "prompt-ok",
-                                    "Rename",
+                                    self.t(Key::Rename),
                                     ButtonStyle::Primary,
                                     false,
                                     theme.accent,

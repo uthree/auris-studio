@@ -1,0 +1,16 @@
+[package]
+name = "auris-i18n"
+description = "Interface text for Auris Studio in every language it speaks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# Deliberately at the very bottom of the graph: this is a table of strings, so anything that
+# shows text to a person can depend on it without dragging the engine along.
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+serde_json.workspace = true

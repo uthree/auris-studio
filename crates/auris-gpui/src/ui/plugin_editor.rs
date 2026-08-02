@@ -43,10 +43,15 @@ pub const DRAG_RANGE_PIXELS: f32 = 220.0;
 pub const SCROLL_STEP: f32 = 0.02;
 
 /// A drag-to-edit row for a continuous parameter.
+///
+/// `label` and `value_text` arrive already translated: this module knows how a control behaves,
+/// not what language it speaks.
 #[allow(clippy::too_many_arguments)]
 pub fn slider_row<I, D, S>(
     id: I,
     descriptor: &ParamDescriptor,
+    label: String,
+    value_text: String,
     value: f32,
     fill: Hsla,
     theme: &Theme,
@@ -60,8 +65,8 @@ where
 {
     value_slider(
         id,
-        descriptor.name.to_string(),
-        descriptor.format(value),
+        label,
+        value_text,
         descriptor.normalize(value),
         fill,
         slider_fill_for(descriptor),
@@ -88,9 +93,12 @@ pub fn slider_fill_for(descriptor: &ParamDescriptor) -> SliderFill {
 }
 
 /// A button row for a toggle or choice parameter.
+#[allow(clippy::too_many_arguments)]
 pub fn button_row<I, F>(
     id: I,
     descriptor: &ParamDescriptor,
+    label: String,
+    value_text: String,
     value: f32,
     theme: &Theme,
     on_click: F,
@@ -110,11 +118,11 @@ where
                 .flex_1()
                 .text_xs()
                 .text_color(theme.text_muted)
-                .child(descriptor.name.to_string()),
+                .child(label),
         )
         .child(div().w(px(104.0)).child(button(
             id,
-            descriptor.format(value),
+            value_text,
             ButtonStyle::Normal,
             engaged,
             theme.accent,
@@ -155,16 +163,19 @@ pub fn value_after_scroll(descriptor: &ParamDescriptor, current: f32, notches: f
 }
 
 /// A compact heading for a plugin in the inspector, with a bypass button.
-pub fn plugin_header<I, N, F>(
+#[allow(clippy::too_many_arguments)]
+pub fn plugin_header<I, N, L, F>(
     id: I,
     name: N,
     enabled: bool,
+    state_label: L,
     theme: &Theme,
     on_toggle: F,
-) -> impl IntoElement + use<I, N, F>
+) -> impl IntoElement + use<I, N, L, F>
 where
     I: Into<ElementId>,
     N: Into<SharedString>,
+    L: Into<SharedString>,
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
     div()
@@ -184,7 +195,7 @@ where
         )
         .child(div().w(px(46.0)).child(button(
             id,
-            if enabled { "On" } else { "Byp" },
+            state_label,
             ButtonStyle::Normal,
             enabled,
             theme.accent,

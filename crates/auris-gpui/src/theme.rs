@@ -3,7 +3,28 @@
 //! Everything visual reads from one [`Theme`] value so the palette can be retuned — or a light
 //! variant added — without hunting hex literals through the view code.
 
-use gpui::{Hsla, Pixels, px, rgb};
+use gpui::{Font, FontFallbacks, Hsla, Pixels, px, rgb};
+
+/// The font every panel draws in, with fallbacks for scripts the base family has no glyphs for.
+///
+/// Helvetica covers Latin and nothing else, so a Japanese track name or a Japanese menu would
+/// come out as empty boxes without this. The fallbacks are named per platform because a family
+/// that is not installed is simply skipped, which makes an unused entry free.
+pub fn ui_font() -> Font {
+    Font {
+        fallbacks: Some(FontFallbacks::from_fonts(vec![
+            // macOS
+            "Hiragino Sans".into(),
+            "Apple SD Gothic Neo".into(),
+            // Windows
+            "Yu Gothic UI".into(),
+            "Meiryo".into(),
+            // Linux
+            "Noto Sans CJK JP".into(),
+        ])),
+        ..gpui::font("Helvetica")
+    }
+}
 
 /// The application colour palette.
 #[derive(Clone, Debug)]

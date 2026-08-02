@@ -1,0 +1,337 @@
+//! Strings that interpolate values.
+//!
+//! These cannot be [`Key`](crate::Key)s: a translation is not just different words but a
+//! different word *order*, so the placeholders have to travel with the sentence. Each message is
+//! a function whose body is one `format!` per language, which keeps every format string a
+//! literal — the compiler then checks that each translation uses the arguments it was given.
+
+use crate::Language;
+
+macro_rules! messages {
+    ($(
+        $(#[$doc:meta])*
+        fn $name:ident($($arg:ident: $ty:ty),* $(,)?) { en: $en:literal, ja: $ja:literal }
+    )*) => {
+        $(
+            $(#[$doc])*
+            pub fn $name(language: Language, $($arg: $ty),*) -> String {
+                // `format!` captures the arguments by name from this scope, so a placeholder
+                // that does not match a parameter fails to compile in whichever language it
+                // appears in.
+                match language {
+                    Language::English => format!($en),
+                    Language::Japanese => format!($ja),
+                }
+            }
+        )*
+
+        #[cfg(test)]
+        /// Names of every message, so a test can report on the set as a whole.
+        pub(crate) const NAMES: &[&str] = &[$(stringify!($name),)*];
+    };
+}
+
+messages! {
+    /// The engine's line in the status bar.
+    fn audio_status(device: &str, rate: f64, channels: usize) {
+        en: "Audio: {device} · {rate:.0} Hz · {channels} ch",
+        ja: "オーディオ: {device} · {rate:.0} Hz · {channels} ch"
+    }
+
+    /// The GPU's tail on the status line.
+    fn gpu_in_use(adapter: &str) {
+        en: "GPU: {adapter}",
+        ja: "GPU: {adapter}"
+    }
+
+    /// When no GPU could be opened at all.
+    fn gpu_unavailable() {
+        en: "GPU: unavailable, using CPU",
+        ja: "GPU: 利用不可、CPU を使用"
+    }
+
+    /// Heading over the note grid.
+    fn piano_roll_title(clip: &str) {
+        en: "Piano Roll — {clip}",
+        ja: "ピアノロール — {clip}"
+    }
+
+    /// Title of a menu acting on more than one note.
+    fn note_count(count: usize) {
+        en: "{count} notes",
+        ja: "ノート {count} 個"
+    }
+
+    /// Name given to a track the user just created.
+    fn new_track_name(number: usize) {
+        en: "Track {number}",
+        ja: "トラック {number}"
+    }
+
+    /// Name given to an audio track the user just created.
+    fn new_audio_track_name(number: usize) {
+        en: "Audio {number}",
+        ja: "オーディオ {number}"
+    }
+
+    /// Name given to a clip the user just created.
+    fn new_clip_name(number: usize) {
+        en: "Clip {number}",
+        ja: "クリップ {number}"
+    }
+
+    /// Confirmation that a project was written.
+    fn saved(path: &str) {
+        en: "Saved {path}",
+        ja: "{path} を保存しました"
+    }
+
+    /// Confirmation that a project was read.
+    fn opened(path: &str) {
+        en: "Opened {path}",
+        ja: "{path} を開きました"
+    }
+
+    /// A project opened, but one of its audio files was not where it said.
+    fn opened_missing_one(path: &str, missing: &str) {
+        en: "Opened {path} — missing audio file {missing}",
+        ja: "{path} を開きました — オーディオファイル {missing} が見つかりません"
+    }
+
+    /// A project opened, but several of its audio files were missing.
+    fn opened_missing_many(path: &str, count: usize) {
+        en: "Opened {path} — {count} audio files could not be found",
+        ja: "{path} を開きました — オーディオファイル {count} 件が見つかりません"
+    }
+
+    /// While a file is being decoded.
+    fn importing(path: &str) {
+        en: "Importing {path}…",
+        ja: "{path} を読み込み中…"
+    }
+
+    /// Confirmation that a file was decoded onto a track.
+    fn imported(path: &str) {
+        en: "Imported {path}",
+        ja: "{path} を読み込みました"
+    }
+
+    /// Progress line while a render runs.
+    fn rendering(path: &str) {
+        en: "Rendering {path}…",
+        ja: "{path} を書き出し中…"
+    }
+
+    /// Confirmation that a render finished, with what it produced.
+    fn exported(path: &str, duration: &str, peak_db: f32) {
+        en: "Exported {path} · {duration} · peak {peak_db:.1} dBFS",
+        ja: "{path} を書き出しました · {duration} · ピーク {peak_db:.1} dBFS"
+    }
+
+    /// A step was undone.
+    fn undid(edit: &str) {
+        en: "Undid {edit}",
+        ja: "{edit}を取り消しました"
+    }
+
+    /// A step was redone.
+    fn redid(edit: &str) {
+        en: "Redid {edit}",
+        ja: "{edit}をやり直しました"
+    }
+
+    /// Something the user asked for did not work.
+    fn failed(action: &str, reason: &str) {
+        en: "Could not {action}: {reason}",
+        ja: "{action}できませんでした: {reason}"
+    }
+
+    /// A device's capabilities, under its name in the settings window.
+    fn device_detail(channels: u16, rates: &str) {
+        en: "{channels} ch · {rates}",
+        ja: "{channels} ch · {rates}"
+    }
+
+    /// The span of sample rates a device accepts.
+    fn rate_range(low: f64, high: f64) {
+        en: "{low:.1}–{high:.1} kHz",
+        ja: "{low:.1}–{high:.1} kHz"
+    }
+
+    /// A single sample rate.
+    fn rate_single(rate: f64) {
+        en: "{rate:.1} kHz",
+        ja: "{rate:.1} kHz"
+    }
+
+    /// A buffer size, with what it costs in latency.
+    fn buffer_choice(frames: u32, latency_ms: f64) {
+        en: "{frames} · {latency_ms:.1} ms",
+        ja: "{frames} · {latency_ms:.1} ms"
+    }
+
+    /// What the audio backend is doing right now.
+    fn running_device(device: &str, rate: f64, channels: usize, suffix: &str) {
+        en: "Running: {device} · {rate:.0} Hz · {channels} ch{suffix}",
+        ja: "動作中: {device} · {rate:.0} Hz · {channels} ch{suffix}"
+    }
+
+    /// Appended to the line above when no stream is actually open.
+    fn silent_suffix() {
+        en: " (silent)",
+        ja: "（無音）"
+    }
+
+    /// Warning that a keystroke is already spoken for.
+    fn also_bound_to(command: &str) {
+        en: "also {command}",
+        ja: "{command}にも割り当て済み"
+    }
+
+    /// Confirmation that a command was rebound.
+    fn binding_set(command: &str, keystroke: &str) {
+        en: "{command} is now {keystroke}",
+        ja: "{command} を {keystroke} に割り当てました"
+    }
+
+    /// Confirmation that a command was rebound onto a keystroke already in use.
+    fn binding_set_with_clash(command: &str, keystroke: &str, other: &str) {
+        en: "{command} is now {keystroke} — also bound to {other}",
+        ja: "{command} を {keystroke} に割り当てました — {other} にも割り当て済みです"
+    }
+
+    /// A keystroke that cannot be bound at all.
+    fn binding_rejected(keystroke: &str) {
+        en: "{keystroke} cannot be used as a binding",
+        ja: "{keystroke} は割り当てに使えません"
+    }
+
+    /// An error with a prefix naming the layer it came from.
+    fn detailed(prefix: &str, detail: &str) {
+        en: "{prefix}: {detail}",
+        ja: "{prefix}: {detail}"
+    }
+
+    /// A plugin id the registry does not know.
+    fn unknown_plugin(id: &str) {
+        en: "no plugin is registered as `{id}`",
+        ja: "`{id}` というプラグインは登録されていません"
+    }
+
+    /// A project referenced audio files that are not where it said.
+    fn missing_audio_files(count: usize) {
+        en: "{count} audio file(s) could not be loaded",
+        ja: "オーディオファイル {count} 件を読み込めませんでした"
+    }
+
+    /// Reopening the audio device did not work.
+    fn audio_restart_failed(reason: &str) {
+        en: "could not switch audio device: {reason}",
+        ja: "オーディオデバイスを切り替えられませんでした: {reason}"
+    }
+
+    /// The settings file could not be written.
+    fn settings_write_failed(path: &str, reason: &str) {
+        en: "could not write {path}: {reason}",
+        ja: "{path} を書き込めませんでした: {reason}"
+    }
+
+    /// Confirmation that the interface language changed.
+    fn language_changed(language_name: &str) {
+        en: "Interface language: {language_name}",
+        ja: "表示言語: {language_name}"
+    }
+
+    /// A command line argument that is not one of ours.
+    fn unknown_command(name: &str) {
+        en: "unknown command `{name}`; try `auris help`",
+        ja: "`{name}` というコマンドはありません。`auris help` を試してください"
+    }
+
+    /// A command line option that is not one of ours.
+    fn unknown_option(name: &str) {
+        en: "unknown option `{name}`",
+        ja: "`{name}` というオプションはありません"
+    }
+
+    /// An option that needs a value it was not given.
+    fn option_needs_value(name: &str, kind: &str) {
+        en: "{name} needs {kind}",
+        ja: "{name} には{kind}が必要です"
+    }
+
+    /// A bit depth the exporter does not offer.
+    fn bad_bit_depth(given: &str) {
+        en: "--bit-depth wants 16, 24 or 32, not `{given}`",
+        ja: "--bit-depth は 16, 24, 32 のいずれかです。`{given}` は使えません"
+    }
+
+    /// The progress line a render prints to the terminal.
+    fn render_progress(percent: i32) {
+        en: "rendering {percent:>3}%",
+        ja: "書き出し中 {percent:>3}%"
+    }
+
+    /// Confirmation that the command line renderer wrote a file.
+    fn wrote_file(path: &str, duration: &str, channels: usize, bits: u16, peak_db: f32) {
+        en: "wrote {path} · {duration} · {channels} ch · {bits}-bit · peak {peak_db:.1} dBFS",
+        ja: "{path} を書き出しました · {duration} · {channels} ch · {bits} bit · ピーク {peak_db:.1} dBFS"
+    }
+
+    /// Confirmation that the command line tool created a project.
+    fn created_project(path: &str, bpm: f64, rate: f64) {
+        en: "created {path} · {bpm:.2} BPM · {rate:.0} Hz",
+        ja: "{path} を作成しました · {bpm:.2} BPM · {rate:.0} Hz"
+    }
+
+    /// A file a project refers to that is not there.
+    fn warning_missing_audio(path: &str) {
+        en: "warning: missing audio file {path}",
+        ja: "警告: オーディオファイル {path} が見つかりません"
+    }
+
+    /// The name a duplicated object takes.
+    fn copy_of(name: &str) {
+        en: "{name} copy",
+        ja: "{name} のコピー"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_message_interpolates_its_arguments_in_both_languages() {
+        for language in Language::ALL {
+            assert!(saved(language, "song.auris").contains("song.auris"));
+            assert!(imported(language, "drums.wav").contains("drums.wav"));
+            assert!(note_count(language, 7).contains('7'));
+            assert!(exported(language, "a.wav", "00:12.000", -1.25).contains("-1.2"));
+            assert!(failed(language, "save", "disk full").contains("disk full"));
+            assert!(
+                opened_missing_many(language, "song.auris", 3).contains('3'),
+                "the count is what the sentence is about"
+            );
+        }
+    }
+
+    #[test]
+    fn a_message_reads_differently_in_each_language() {
+        // Not every message can differ — some are only numbers and units — but the ones that
+        // carry a sentence must, or they were never translated.
+        assert_ne!(
+            saved(Language::English, "x"),
+            saved(Language::Japanese, "x")
+        );
+        assert_ne!(
+            undid(Language::English, "x"),
+            undid(Language::Japanese, "x")
+        );
+    }
+
+    #[test]
+    fn the_table_is_not_accidentally_empty() {
+        assert!(NAMES.len() > 20, "{} messages", NAMES.len());
+    }
+}

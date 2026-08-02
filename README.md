@@ -28,6 +28,16 @@ delete and transposition of the selected notes; effect slots offer bypass, reord
 Renaming goes through the platform's input handler, so an IME composes into the field the way
 it does anywhere else.
 
+### Languages
+
+The interface is available in English and Japanese, chosen under Settings → General or followed
+from the system locale. Both frontends read the same preference, so the desktop application and
+the command line tool answer in the same language.
+
+Plugin names and parameters are translated where the term is known and left in the plugin
+author's own wording where it is not, so a third-party plugin degrades to English rather than to
+a missing-string marker.
+
 ### Built-in instruments
 
 Deliberately simple chiptune voices, enough to hear the engine working:
@@ -122,6 +132,7 @@ BACKEND — no UI dependency of any kind
   crates/auris-engine   render graph, transport, cpal output, offline renderer
   crates/auris-io       audio file import/export, project save/load
   crates/auris-gpu      wgpu compute for offline analysis
+  crates/auris-i18n     interface text in every language, and nothing else
   crates/auris-session  the document, the engine and every command a frontend needs
 
 FRONTEND

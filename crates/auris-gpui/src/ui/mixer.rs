@@ -1,5 +1,6 @@
 //! The mixer: one channel strip per track, plus the master bus.
 
+use auris_i18n::Key;
 use auris_session::prelude::*;
 
 use gpui::{AnyElement, Axis, IntoElement, Window, div, prelude::*, px};
@@ -45,7 +46,7 @@ impl AurisApp {
                     .border_color(theme.border)
                     .text_xs()
                     .text_color(theme.text_muted)
-                    .child("Mixer"),
+                    .child(self.t(Key::Mixer)),
             )
             .child(
                 div()
@@ -98,11 +99,7 @@ impl AurisApp {
             .into_iter()
             .enumerate()
             .map(|(slot_index, (slot_id, effect_id, enabled))| {
-                let label = self
-                    .registry()
-                    .descriptor(&effect_id)
-                    .map(|d| d.name.to_string())
-                    .unwrap_or(effect_id);
+                let label = self.plugin_label(&effect_id);
                 self.effect_row(
                     ("mixer-fx", index * 64 + slot_index),
                     label,
@@ -168,7 +165,7 @@ impl AurisApp {
                     .gap_1()
                     .child(div().flex_1().child(button(
                         ("mixer-mute", index),
-                        "Mute",
+                        self.t(Key::Mute),
                         ButtonStyle::Normal,
                         muted,
                         theme.mute,
@@ -180,7 +177,7 @@ impl AurisApp {
                     )))
                     .child(div().flex_1().child(button(
                         ("mixer-solo", index),
-                        "Solo",
+                        self.t(Key::Solo),
                         ButtonStyle::Normal,
                         soloed,
                         theme.solo,
@@ -193,14 +190,14 @@ impl AurisApp {
             )
             .child(self.fader(
                 ("mixer-gain", index),
-                "Vol",
+                self.t(Key::Volume),
                 ParamTarget::TrackGain(track_id),
                 gain_db,
                 cx,
             ))
             .child(self.fader(
                 ("mixer-pan", index),
-                "Pan",
+                self.t(Key::Pan),
                 ParamTarget::TrackPan(track_id),
                 pan,
                 cx,
@@ -288,11 +285,7 @@ impl AurisApp {
             .into_iter()
             .enumerate()
             .map(|(slot_index, (slot_id, effect_id, enabled))| {
-                let label = self
-                    .registry()
-                    .descriptor(&effect_id)
-                    .map(|d| d.name.to_string())
-                    .unwrap_or(effect_id);
+                let label = self.plugin_label(&effect_id);
                 self.effect_row(("master-fx", slot_index), label, None, slot_id, enabled, cx)
             })
             .collect();
@@ -309,13 +302,30 @@ impl AurisApp {
             .bg(theme.surface_raised)
             .border_1()
             .border_color(theme.border)
-            .child(div().text_xs().text_color(theme.text).child("Master"))
-            .child(self.fader("master-gain", "Vol", ParamTarget::MasterGain, gain_db, cx))
-            .child(self.fader("master-pan", "Pan", ParamTarget::MasterPan, pan, cx))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text)
+                    .child(self.t(Key::Master)),
+            )
+            .child(self.fader(
+                "master-gain",
+                self.t(Key::Volume),
+                ParamTarget::MasterGain,
+                gain_db,
+                cx,
+            ))
+            .child(self.fader(
+                "master-pan",
+                self.t(Key::Pan),
+                ParamTarget::MasterPan,
+                pan,
+                cx,
+            ))
             .child(icon_label(
                 "master-add-fx",
                 Icon::Plus,
-                "Effect",
+                self.t(Key::Effect),
                 &theme,
                 cx.listener(|this, _, _, cx| {
                     // The browser adds to the selected track, so clear the selection first to

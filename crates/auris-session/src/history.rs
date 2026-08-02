@@ -7,6 +7,77 @@
 
 use auris_core::Project;
 
+/// What one undo step reverses.
+///
+/// An enum rather than a display string: the session must not decide what words a frontend
+/// shows, and a localised frontend cannot translate a `String` that arrived from here. Adding a
+/// variant makes every frontend's `match` fail to compile, which is the reminder we want.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Edit {
+    /// Cycle playback was turned on or off.
+    ToggleLoop,
+    /// The cycle region was moved.
+    SetLoopRegion,
+    /// The project tempo changed.
+    ChangeTempo,
+    /// An instrument track was added.
+    AddInstrumentTrack,
+    /// An audio track was added.
+    AddAudioTrack,
+    /// A track was deleted.
+    DeleteTrack,
+    /// A track was copied.
+    DuplicateTrack,
+    /// A track was renamed.
+    RenameTrack,
+    /// A track was muted or unmuted.
+    MuteTrack,
+    /// A track was soloed or unsoloed.
+    SoloTrack,
+    /// A track's instrument was replaced.
+    ChangeInstrument,
+    /// A clip was created.
+    AddClip,
+    /// A clip was deleted.
+    DeleteClip,
+    /// A clip was copied.
+    DuplicateClip,
+    /// A clip was divided in two.
+    SplitClip,
+    /// A clip was renamed.
+    RenameClip,
+    /// A clip was muted or unmuted.
+    MuteClip,
+    /// A clip was moved along the timeline.
+    MoveClip,
+    /// A clip's length changed.
+    ResizeClip,
+    /// A note was added.
+    AddNote,
+    /// Notes were deleted.
+    DeleteNotes,
+    /// Notes were copied.
+    DuplicateNotes,
+    /// Notes were shifted in pitch.
+    TransposeNotes,
+    /// Notes were moved.
+    MoveNotes,
+    /// A note's length changed.
+    ResizeNote,
+    /// An effect was added to a chain.
+    AddEffect,
+    /// An effect was removed from a chain.
+    RemoveEffect,
+    /// An effect was bypassed or re-enabled.
+    BypassEffect,
+    /// A chain was reordered.
+    ReorderEffects,
+    /// A parameter value changed.
+    AdjustParameter,
+    /// An audio file was imported onto a track.
+    ImportAudio,
+}
+
 /// A bounded undo/redo stack of project snapshots.
 pub struct History {
     past: Vec<Snapshot>,
@@ -15,7 +86,7 @@ pub struct History {
 }
 
 struct Snapshot {
-    label: String,
+    edit: Edit,
     project: Project,
 }
 
@@ -35,14 +106,14 @@ impl History {
         }
     }
 
-    /// Records the state *before* an edit described by `label`.
+    /// Records the state *before* `edit`.
     ///
     /// Call this immediately before mutating the project. Recording a new edit discards the
     /// redo stack, which is what every editor does after diverging from an undone branch.
-    pub fn push(&mut self, label: impl Into<String>, project: &Project) {
+    pub fn push(&mut self, edit: Edit, project: &Project) {
         self.future.clear();
         self.past.push(Snapshot {
-            label: label.into(),
+            edit,
             project: project.clone(),
         });
         if self.past.len() > self.limit {
@@ -56,7 +127,7 @@ impl History {
     pub fn undo(&mut self, current: &Project) -> Option<Project> {
         let snapshot = self.past.pop()?;
         self.future.push(Snapshot {
-            label: snapshot.label.clone(),
+            edit: snapshot.edit,
             project: current.clone(),
         });
         Some(snapshot.project)
@@ -66,20 +137,20 @@ impl History {
     pub fn redo(&mut self, current: &Project) -> Option<Project> {
         let snapshot = self.future.pop()?;
         self.past.push(Snapshot {
-            label: snapshot.label.clone(),
+            edit: snapshot.edit,
             project: current.clone(),
         });
         Some(snapshot.project)
     }
 
-    /// Label of the edit that [`Self::undo`] would reverse.
-    pub fn undo_label(&self) -> Option<&str> {
-        self.past.last().map(|s| s.label.as_str())
+    /// The edit that [`Self::undo`] would reverse.
+    pub fn undo_edit(&self) -> Option<Edit> {
+        self.past.last().map(|s| s.edit)
     }
 
-    /// Label of the edit that [`Self::redo`] would reapply.
-    pub fn redo_label(&self) -> Option<&str> {
-        self.future.last().map(|s| s.label.as_str())
+    /// The edit that [`Self::redo`] would reapply.
+    pub fn redo_edit(&self) -> Option<Edit> {
+        self.future.last().map(|s| s.edit)
     }
 
     /// `true` when there is something to undo.
@@ -111,7 +182,7 @@ mod tests {
     fn undo_and_redo_walk_the_stack() {
         let mut history = History::default();
         let first = project_named("first");
-        history.push("rename", &first);
+        history.push(Edit::RenameTrack, &first);
         let second = project_named("second");
 
         let restored = history.undo(&second).unwrap();
@@ -127,11 +198,11 @@ mod tests {
     #[test]
     fn a_new_edit_discards_the_redo_branch() {
         let mut history = History::default();
-        history.push("a", &project_named("a"));
+        history.push(Edit::AddClip, &project_named("a"));
         let _ = history.undo(&project_named("b"));
         assert!(history.can_redo());
 
-        history.push("c", &project_named("c"));
+        history.push(Edit::AddNote, &project_named("c"));
         assert!(!history.can_redo());
     }
 
@@ -139,11 +210,17 @@ mod tests {
     fn the_stack_is_bounded() {
         let mut history = History::new(3);
         for index in 0..10 {
-            history.push(format!("edit {index}"), &project_named(&index.to_string()));
+            let edit = if index == 9 {
+                Edit::MoveNotes
+            } else {
+                Edit::MoveClip
+            };
+            history.push(edit, &project_named(&index.to_string()));
         }
         assert_eq!(history.past.len(), 3);
         // The oldest snapshots are dropped, so the remaining ones are the most recent.
-        assert_eq!(history.undo_label(), Some("edit 9"));
+        assert_eq!(history.undo_edit(), Some(Edit::MoveNotes));
+        assert_eq!(history.undo(&project_named("x")).unwrap().name, "9");
     }
 
     #[test]
