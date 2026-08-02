@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 # No UI dependency of any kind. This crate is what a GUI, a CLI and an MCP server all sit on.
 [dependencies]
+auris-compose.workspace = true
 auris-core.workspace = true
 auris-dsp.workspace = true
 auris-engine.workspace = true

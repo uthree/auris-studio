@@ -308,6 +308,24 @@ messages! {
         ja: "警告: オーディオファイル {path} が見つかりません"
     }
 
+    /// Confirmation that a piece was composed and written.
+    fn composed(path: &str, tracks: usize, notes: usize, seed: u64) {
+        en: "composed {path} · {tracks} tracks · {notes} notes · seed {seed}",
+        ja: "{path} を作曲しました · {tracks} トラック · {notes} ノート · シード {seed}"
+    }
+
+    /// A part asked for an instrument this build does not have.
+    fn instrument_substituted(id: &str) {
+        en: "warning: no instrument `{id}`; using the default instead",
+        ja: "警告: `{id}` という音源がないため既定の音源を使います"
+    }
+
+    /// A song specification would not parse.
+    fn spec_rejected(path: &str) {
+        en: "{path} could not be read as a song specification",
+        ja: "{path} を曲の仕様として読めませんでした"
+    }
+
     /// The name a duplicated object takes.
     fn copy_of(name: &str) {
         en: "{name} copy",

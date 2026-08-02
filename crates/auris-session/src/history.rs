@@ -76,6 +76,8 @@ pub enum Edit {
     AdjustParameter,
     /// An audio file was imported onto a track.
     ImportAudio,
+    /// The document was replaced by a composed piece.
+    Compose,
 }
 
 /// A bounded undo/redo stack of project snapshots.

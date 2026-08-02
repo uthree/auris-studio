@@ -120,6 +120,23 @@ impl Role {
         }
     }
 
+    /// The level a part of this role sits at, in decibels.
+    ///
+    /// Six parts all at unity sum well past full scale. These are the rough balances a mix
+    /// engineer would reach for first: the tune on top, the pad and the hat well under it.
+    pub fn default_gain_db(self) -> f32 {
+        match self {
+            Role::Melody => -7.0,
+            Role::Chords => -14.0,
+            Role::Pad => -16.0,
+            Role::Arp => -12.0,
+            Role::Bass => -10.0,
+            Role::Kick => -10.0,
+            Role::Snare => -12.0,
+            Role::Hat => -20.0,
+        }
+    }
+
     /// The MIDI range a part of this role should stay inside.
     pub fn range(self) -> (i32, i32) {
         match self {
@@ -294,7 +311,7 @@ impl PartSpec {
             octave: role.default_octave(),
             density: None,
             rhythm: None,
-            gain_db: 0.0,
+            gain_db: role.default_gain_db(),
             pan: 0.0,
         }
     }
@@ -641,9 +658,7 @@ impl SongSpec {
             if let Some(rhythm) = &part.rhythm {
                 out.push_str(&format!("rhythm:     {}\n", rhythm.to_text()));
             }
-            if part.gain_db != 0.0 {
-                out.push_str(&format!("gain:       {:.1}\n", part.gain_db));
-            }
+            out.push_str(&format!("gain:       {:.1}\n", part.gain_db));
             if part.pan != 0.0 {
                 out.push_str(&format!("pan:        {:.2}\n", part.pan));
             }
@@ -681,7 +696,7 @@ fn strip_comment(line: &str) -> &str {
 /// Which block the parser is inside.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Block {
-    /// The header, before any block.
+    /// The header, before any block. `[song]` returns to it.
     Song,
     /// `[harmony]`, whose fields are named charts.
     Harmony,
@@ -696,6 +711,11 @@ impl Block {
         let header = header.trim();
         if header.eq_ignore_ascii_case("harmony") {
             return Some(Block::Harmony);
+        }
+        // `[song]` goes back to the header fields, which is what lets an override be appended
+        // to a document that ends inside a block.
+        if header.eq_ignore_ascii_case("song") {
+            return Some(Block::Song);
         }
         let (kind, name) = header.split_once(char::is_whitespace)?;
         let name = name.trim().to_string();
@@ -882,6 +902,9 @@ fn apply_part_field(part: &mut PartSpec, field: &str, value: &str) -> Result<(),
             if part.octave == part.role.default_octave() {
                 part.octave = role.default_octave();
             }
+            if part.gain_db == part.role.default_gain_db() {
+                part.gain_db = role.default_gain_db();
+            }
             part.role = role;
         }
         "instrument" => part.instrument = value.to_string(),
@@ -966,6 +989,41 @@ mod tests {
         .unwrap();
         assert_eq!(spec.key.to_text(), "D minor");
         assert_eq!(spec.tempo, 100.0);
+    }
+
+    #[test]
+    fn a_song_block_returns_to_the_header() {
+        // Without this an override appended to a document would land in whichever block the
+        // document happened to end in.
+        let spec = SongSpec::parse(
+            "
+            tempo: 100
+
+            [section verse]
+            bars: 16
+
+            [song]
+            tempo: 140
+            seed: 7
+            ",
+        )
+        .unwrap();
+        assert_eq!(spec.tempo, 140.0, "the later value wins");
+        assert_eq!(spec.seed, 7);
+        assert_eq!(spec.sections["verse"].bars, 16);
+    }
+
+    #[test]
+    fn a_default_roster_is_mixed_rather_than_stacked() {
+        // Six parts at unity sum past full scale; the defaults have to leave headroom.
+        let spec = SongSpec::default();
+        assert!(spec.parts.iter().all(|part| part.gain_db < 0.0));
+        let lead = spec.parts.iter().find(|p| p.role == Role::Melody).unwrap();
+        let hat = spec.parts.iter().find(|p| p.role == Role::Hat).unwrap();
+        assert!(
+            hat.gain_db < lead.gain_db,
+            "the hat should sit under the tune"
+        );
     }
 
     #[test]

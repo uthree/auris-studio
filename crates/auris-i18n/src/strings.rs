@@ -271,6 +271,7 @@ strings! {
     EditReorderEffects { en: "reordering the effects", ja: "エフェクトの並べ替え" }
     EditAdjustParameter { en: "the parameter change", ja: "パラメーターの変更" }
     EditImportAudio { en: "importing audio", ja: "オーディオの読み込み" }
+    EditCompose { en: "composing a piece", ja: "自動作曲" }
 
     // ------------------------------------------------------------------ errors
     ErrorUnknownTrack { en: "that track no longer exists", ja: "そのトラックは存在しません" }
@@ -300,11 +301,22 @@ USAGE
     auris <command> [options]
 
 COMMANDS
+    compose <song.asong> [opts]   Write a piece from a specification
+    progressions                  List every chord progression known by name
     plugins                       List every registered instrument and effect
     info <project.auris>          Print a project's tracks, clips and duration
     render <project.auris> [opts] Render a project to a WAV file
     new <project.auris> [opts]    Create a project with one instrument track
     help                          Show this message
+
+COMPOSE OPTIONS
+    -o, --output <file.auris>     Where to write (default: alongside the specification)
+        --seed <n>                Override the seed, so the same spec writes a different piece
+        --key <key>               Override the key, as in `C minor`
+        --tempo <bpm>             Override the tempo
+        --mood <word>             Override the mood
+        --set \"<field>: <value>\"  Override any field at all
+        --print                   Print the resolved specification instead of writing
 
 RENDER OPTIONS
     -o, --output <file.wav>       Where to write (default: alongside the project)
@@ -322,11 +334,22 @@ auris — コマンドラインから使う Auris Studio
     auris <コマンド> [オプション]
 
 コマンド
+    compose <song.asong> [opts]   仕様ファイルから曲を書き出す
+    progressions                  名前の付いたコード進行を一覧表示
     plugins                       登録済みの音源とエフェクトを一覧表示
     info <project.auris>          プロジェクトのトラック・クリップ・長さを表示
     render <project.auris> [opts] プロジェクトを WAV に書き出す
     new <project.auris> [opts]    ソフト音源トラック 1 本のプロジェクトを作成
     help                          このメッセージを表示
+
+compose のオプション
+    -o, --output <file.auris>     出力先（既定: 仕様ファイルと同じ場所）
+        --seed <n>                シードを上書き。同じ仕様から別の曲になります
+        --key <key>               調を上書き（例: `C minor`）
+        --tempo <bpm>             テンポを上書き
+        --mood <word>             曲調を上書き
+        --set \"<field>: <value>\"  任意の項目を上書き
+        --print                   書き出さずに解決後の仕様を表示
 
 render のオプション
     -o, --output <file.wav>       出力先（既定: プロジェクトと同じ場所）
@@ -357,6 +380,11 @@ new のオプション
     CliKindInstrument { en: "instrument", ja: "音源" }
     CliKindAudio { en: "audio", ja: "オーディオ" }
     CliClipCount { en: "clip(s)", ja: "クリップ" }
+    CliProgressions { en: "PROGRESSIONS", ja: "コード進行" }
+    CliExpectedSpecPath {
+        en: "expected a path to a song specification",
+        ja: "曲の仕様ファイルのパスを指定してください"
+    }
 
     // ------------------------------------------------------------------ parameter values
     ValueOn { en: "On", ja: "オン" }

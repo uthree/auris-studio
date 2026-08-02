@@ -643,6 +643,7 @@ dependencies = [
 name = "auris-session"
 version = "0.1.0"
 dependencies = [
+ "auris-compose",
  "auris-core",
  "auris-dsp",
  "auris-engine",

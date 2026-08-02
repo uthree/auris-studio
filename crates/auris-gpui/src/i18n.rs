@@ -107,6 +107,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::ReorderEffects => Key::EditReorderEffects,
         Edit::AdjustParameter => Key::EditAdjustParameter,
         Edit::ImportAudio => Key::EditImportAudio,
+        Edit::Compose => Key::EditCompose,
     }
 }
 

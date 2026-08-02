@@ -33,6 +33,8 @@ fn main() -> ExitCode {
 
     let result = match command {
         "plugins" => list_plugins(language),
+        "progressions" => list_progressions(language),
+        "compose" => compose(&args, language),
         "info" => with_path(&args, language, info),
         "render" => render(&args, language),
         "new" => new_project(&args, language),
@@ -101,6 +103,111 @@ fn with_path(
 /// A session with no audio device and no GPU, which is all a batch tool needs.
 fn headless() -> Result<Session, String> {
     Session::new(SessionOptions::headless()).map_err(|error| error.to_string())
+}
+
+/// Lists the chord progressions the composer knows by name.
+fn list_progressions(language: Language) -> Result<(), String> {
+    println!("{}", Key::CliProgressions.get(language));
+    for entry in auris_session::prelude::progression_catalog() {
+        println!("  @{:<14} {}", entry.name, entry.description);
+        println!("  {:<15} {}", "", entry.chart);
+    }
+    Ok(())
+}
+
+/// Writes a piece from a specification and saves it as a project.
+fn compose(args: &[String], language: Language) -> Result<(), String> {
+    let source = args
+        .get(1)
+        .filter(|arg| !arg.starts_with('-'))
+        .ok_or_else(|| Key::CliExpectedSpecPath.get(language).to_string())?;
+    let source = PathBuf::from(source);
+
+    let mut output = source.with_extension(auris_session::PROJECT_EXTENSION);
+    let mut overrides: Vec<String> = Vec::new();
+    let mut print_only = false;
+
+    let mut index = 2;
+    while index < args.len() {
+        match args[index].as_str() {
+            "-o" | "--output" => {
+                index += 1;
+                output = PathBuf::from(args.get(index).ok_or_else(|| {
+                    messages::option_needs_value(
+                        language,
+                        "--output",
+                        Key::CliNeedsPath.get(language),
+                    )
+                })?);
+            }
+            // Every override is just another line of the format, appended after the document —
+            // so the command line needs no vocabulary of its own and can never drift from it.
+            "--set" => {
+                index += 1;
+                overrides.push(
+                    args.get(index)
+                        .ok_or_else(|| {
+                            messages::option_needs_value(language, "--set", "field: value")
+                        })?
+                        .clone(),
+                );
+            }
+            "--seed" | "--key" | "--tempo" | "--mood" | "--groove" | "--scale" | "--swing" => {
+                let field = args[index].trim_start_matches('-').to_string();
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| messages::option_needs_value(language, &field, "a value"))?;
+                overrides.push(format!("{field}: {value}"));
+            }
+            "--print" => print_only = true,
+            other => return Err(messages::unknown_option(language, other)),
+        }
+        index += 1;
+    }
+
+    let text = std::fs::read_to_string(&source)
+        .map_err(|error| format!("{}: {error}", source.display()))?;
+    // `[song]` first, so an override lands on a header field even when the document ends inside
+    // a section or a part block.
+    let combined = if overrides.is_empty() {
+        text
+    } else {
+        format!("{text}\n[song]\n{}", overrides.join("\n"))
+    };
+    let spec = auris_session::prelude::SongSpec::parse(&combined).map_err(|errors| {
+        let mut message = messages::spec_rejected(language, &source.display().to_string());
+        for error in errors {
+            message.push_str(&format!("\n  {error}"));
+        }
+        message
+    })?;
+
+    if print_only {
+        print!("{}", spec.to_text());
+        return Ok(());
+    }
+
+    let piece = auris_session::prelude::compose(&spec);
+    let mut session = headless()?;
+    let report = session.compose(&piece).map_err(|error| error.to_string())?;
+    for missing in &report.substituted {
+        eprintln!("{}", messages::instrument_substituted(language, missing));
+    }
+    session.save(&output).map_err(|error| error.to_string())?;
+
+    println!(
+        "{}",
+        messages::composed(
+            language,
+            &output.display().to_string(),
+            report.tracks,
+            report.notes,
+            piece.seed,
+        )
+    );
+    print!("{}", piece.summary());
+    Ok(())
 }
 
 fn list_plugins(language: Language) -> Result<(), String> {

@@ -24,6 +24,8 @@ crates/auris-synth       built-in chiptune instruments
 crates/auris-engine      render graph, transport, cpal output, offline renderer
 crates/auris-io          audio file import/export, project save/load
 crates/auris-gpu         optional wgpu compute for offline analysis
+crates/auris-compose     score-based automatic composition; depends on auris-core only
+crates/auris-i18n        interface text in every language; no local dependencies
 crates/auris-session     headless session: the document, the engine, every command
 crates/auris-gpui        desktop frontend (binary `auris-studio`)
 crates/auris-cli         command line frontend (binary `auris`)

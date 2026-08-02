@@ -117,6 +117,21 @@ pub struct Session {
     waveforms: HashMap<SourceId, Arc<WaveformPeaks>>,
 }
 
+/// What composing produced.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ComposeReport {
+    /// How many tracks were created.
+    pub tracks: usize,
+    /// How many clips.
+    pub clips: usize,
+    /// How many notes.
+    pub notes: usize,
+    /// How long the piece is.
+    pub length: Ticks,
+    /// Instruments a part asked for that this build does not have.
+    pub substituted: Vec<String>,
+}
+
 struct Transaction {
     edit: Edit,
     before: Project,
@@ -682,6 +697,77 @@ impl Session {
     }
 
     // ---------------------------------------------------------------- clips
+
+    /// Replaces the document with a composed piece.
+    ///
+    /// One edit, not several hundred: building the project directly and swapping it in means the
+    /// whole piece is a single undo step, and the render graph is rebuilt once rather than once
+    /// per note.
+    ///
+    /// A part naming an instrument the registry does not have falls back to the first registered
+    /// one and is reported, because a missing plugin should cost a timbre, not a whole piece.
+    pub fn compose(
+        &mut self,
+        composition: &auris_compose::Composition,
+    ) -> Result<ComposeReport, SessionError> {
+        let fallback = self
+            .registry
+            .first_instrument_id()
+            .ok_or_else(|| SessionError::UnknownPlugin("<any instrument>".into()))?
+            .to_string();
+
+        let mut project = Project::new(&composition.title, self.project.sample_rate);
+        project.set_bpm(composition.tempo);
+        project.time_signature = composition.meter;
+
+        let mut report = ComposeReport {
+            tracks: 0,
+            clips: 0,
+            notes: 0,
+            length: composition.length,
+            substituted: Vec::new(),
+        };
+
+        for track in &composition.tracks {
+            let instrument = if self.registry.has_instrument(&track.instrument) {
+                track.instrument.clone()
+            } else {
+                report.substituted.push(track.instrument.clone());
+                fallback.clone()
+            };
+            let track_id = project.add_instrument_track(&track.name, instrument);
+            if let Some(entry) = project.track_mut(track_id) {
+                entry.mixer.gain_db = track.gain_db;
+                entry.mixer.pan = track.pan;
+            }
+            report.tracks += 1;
+
+            for clip in &track.clips {
+                let Some(clip_id) = project.add_midi_clip(
+                    track_id,
+                    &clip.name,
+                    clip.start,
+                    Ticks(clip.length.raw().max(1)),
+                ) else {
+                    continue;
+                };
+                if let Some(target) = project.midi_clip_mut(clip_id) {
+                    target.notes = clip.notes.clone();
+                    report.notes += clip.notes.len();
+                }
+                report.clips += 1;
+            }
+        }
+
+        // Loop over the whole piece, so pressing play and leaving it running plays the song.
+        project.loop_region = Some((Ticks::ZERO, composition.length));
+        project.loop_enabled = false;
+
+        self.record(Edit::Compose);
+        self.replace_project(project);
+        self.dirty = true;
+        Ok(report)
+    }
 
     /// Adds an empty MIDI clip to an instrument track.
     pub fn add_midi_clip(
@@ -1876,6 +1962,62 @@ mod tests {
 
         session.undo().unwrap();
         assert!(!session.midi_clip(clip).unwrap().muted);
+    }
+
+    #[test]
+    fn composing_replaces_the_document_in_one_undo_step() {
+        let mut session = session();
+        session.add_default_instrument_track("Old").unwrap();
+        session.forget_history();
+
+        let spec = auris_compose::SongSpec::parse(
+            "title: Composed\nform: verse\nchords: @axis\n[section verse]\nbars: 4",
+        )
+        .unwrap();
+        let report = session.compose(&auris_compose::compose(&spec)).unwrap();
+
+        assert!(report.tracks > 0);
+        assert!(report.notes > 0);
+        assert_eq!(session.project().name, "Composed");
+        assert_eq!(session.project().tracks.len(), report.tracks);
+
+        // One step takes the whole piece back, not one note.
+        assert_eq!(session.undo(), Some(Edit::Compose));
+        assert_eq!(session.project().tracks.len(), 1);
+        assert_eq!(session.project().tracks[0].name, "Old");
+    }
+
+    #[test]
+    fn a_composed_piece_renders_to_audible_audio() {
+        let mut session = session();
+        let spec = auris_compose::SongSpec::parse(
+            "form: verse\nchords: @marusa\n[section verse]\nbars: 4",
+        )
+        .unwrap();
+        session.compose(&auris_compose::compose(&spec)).unwrap();
+
+        let rendered = session
+            .render_job()
+            .render(&auris_engine::OfflineOptions::whole_project(), &mut |_| {})
+            .unwrap();
+        assert!(
+            rendered.peak() > 0.01,
+            "a composed piece rendered silence, peak {}",
+            rendered.peak()
+        );
+    }
+
+    #[test]
+    fn an_unknown_instrument_costs_a_timbre_rather_than_the_piece() {
+        let mut session = session();
+        let spec = auris_compose::SongSpec::parse(
+            "form: verse\n[section verse]\nbars: 2\n[part lead]\ninstrument: nope.not.here",
+        )
+        .unwrap();
+        let report = session.compose(&auris_compose::compose(&spec)).unwrap();
+        assert_eq!(report.substituted, ["nope.not.here"]);
+        assert_eq!(report.tracks, 1, "the track was still created");
+        assert!(report.notes > 0);
     }
 
     #[test]

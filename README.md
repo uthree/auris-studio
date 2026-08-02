@@ -44,6 +44,35 @@ Plugin names and parameters are translated where the term is known and left in t
 author's own wording where it is not, so a third-party plugin degrades to English rather than to
 a missing-string marker.
 
+### Automatic composition
+
+`auris compose song.asong` writes a piece from a text specification: key, scale, tempo, mood,
+chord progression, form and parts, in a line-oriented document that an agent can write and a
+person can edit one line of.
+
+```
+title:  Neon Drive
+key:    C minor
+tempo:  128
+mood:   driving
+chords: @marusa
+form:   intro verse chorus verse chorus outro
+
+[section chorus]
+bars: 8
+intensity: 0.95
+```
+
+Progressions can be quoted from a catalogue by name — `@marusa` (丸サ進行), `@royal-road`
+(王道進行), `@koakuma`, `@komuro`, `@canon`, `@junjo`, `@blues`, `@andalusian` and the rest — or
+written out in roman numerals (`| IVmaj7 | III7 | vi7 | I7 |`) in any key. A quoted progression is
+never recoloured, because the whole point of naming one is that it comes out sounding like
+itself.
+
+Everything is a pure function of the specification and its seed, so the same document always
+writes the same piece and `--seed 7` writes a different one. `auris progressions` lists the
+catalogue; `--set "field: value"` overrides any field from the command line.
+
 ### Built-in instruments
 
 Deliberately simple chiptune voices, enough to hear the engine working:
@@ -102,6 +131,8 @@ identical session with no window and no audio device, so anything that leaks int
 compiling here.
 
 ```bash
+auris compose song.asong -o song.auris         # write a piece from a specification
+auris progressions                             # every chord progression known by name
 auris plugins                                  # every registered instrument and effect
 auris new song.auris --bpm 128
 auris info song.auris                          # tracks, clips, duration
@@ -138,6 +169,7 @@ BACKEND — no UI dependency of any kind
   crates/auris-engine   render graph, transport, cpal output, offline renderer
   crates/auris-io       audio file import/export, project save/load
   crates/auris-gpu      wgpu compute for offline analysis
+  crates/auris-compose  score-based automatic composition: a text spec in, notes out
   crates/auris-i18n     interface text in every language, and nothing else
   crates/auris-session  the document, the engine and every command a frontend needs
 

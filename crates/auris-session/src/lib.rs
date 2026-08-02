@@ -49,7 +49,7 @@ pub use history::{Edit, History};
 pub use param::ParamTarget;
 pub use registry::default_registry;
 pub use render::{ExportSummary, RenderJob};
-pub use session::{AudioStatus, Session, SessionOptions};
+pub use session::{AudioStatus, ComposeReport, Session, SessionOptions};
 pub use settings::{AudioPreferences, Settings, config_dir};
 
 /// File extension of a saved project.
@@ -63,6 +63,8 @@ pub fn supported_audio_extensions() -> &'static [&'static str] {
 /// Re-exports of the backend types that appear in [`Session`]'s signatures, so a frontend can
 /// depend on this crate alone.
 pub mod prelude {
+    pub use auris_compose::theory::chart::{CatalogEntry, Chart};
+    pub use auris_compose::{Composition, SongSpec, SpecError, compose};
     pub use auris_core::param::{
         ParamDescriptor, ParamId, ParamUnit, ParamValueCurve, db_to_gain, gain_to_db,
     };
@@ -72,12 +74,17 @@ pub mod prelude {
         AudioBuffer, AudioClip, AudioSource, ClipId, EffectSlotId, MidiClip, MixerStrip, Note,
         PluginRegistry, Project, SourceId, Track, TrackId, TrackKind,
     };
+
+    /// Every chord progression the composer knows by name.
+    pub fn progression_catalog() -> &'static [CatalogEntry] {
+        auris_compose::theory::chart::CATALOG
+    }
     pub use auris_engine::{OfflineOptions, OutputDeviceInfo};
     pub use auris_gpu::WaveformPeaks;
     pub use auris_io::{WavBitDepth, WavExportSettings};
 
     pub use crate::{
-        AudioPreferences, Edit, ExportSummary, ParamTarget, RenderJob, Session, SessionError,
-        SessionOptions, Settings,
+        AudioPreferences, ComposeReport, Edit, ExportSummary, ParamTarget, RenderJob, Session,
+        SessionError, SessionOptions, Settings,
     };
 }
