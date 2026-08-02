@@ -1,10 +1,10 @@
 //! The mixer: one channel strip per track, plus the master bus.
 
-use auris_core::param::gain_to_db;
-use auris_core::{EffectSlotId, TrackId};
+use auris_session::prelude::*;
+
 use gpui::{AnyElement, Axis, IntoElement, Window, div, prelude::*, px};
 
-use crate::app::{AurisApp, InspectorTab, ParamTarget};
+use crate::app::{AurisApp, InspectorTab};
 use crate::ui::widgets::{ButtonStyle, button, db_to_meter_position, level_meter};
 
 /// Width of one channel strip.
@@ -18,7 +18,7 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
-        let track_ids: Vec<TrackId> = self.project.tracks.iter().map(|track| track.id).collect();
+        let track_ids: Vec<TrackId> = self.project().tracks.iter().map(|track| track.id).collect();
 
         let mut strips: Vec<AnyElement> = Vec::new();
         for (index, track_id) in track_ids.into_iter().enumerate() {
@@ -65,7 +65,7 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let theme = self.theme.clone();
-        let Some(track) = self.project.track(track_id) else {
+        let Some(track) = self.project().track(track_id) else {
             return div().into_any_element();
         };
         let name = track.name.clone();
@@ -88,7 +88,7 @@ impl AurisApp {
             .enumerate()
             .map(|(slot_index, (slot_id, effect_id, enabled))| {
                 let label = self
-                    .registry
+                    .registry()
                     .descriptor(&effect_id)
                     .map(|d| d.name.to_string())
                     .unwrap_or(effect_id);
@@ -218,11 +218,11 @@ impl AurisApp {
 
     fn render_master_strip(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
-        let gain_db = self.project.master.gain_db;
-        let pan = self.project.master.pan;
+        let gain_db = self.project().master.gain_db;
+        let pan = self.project().master.pan;
         let level_db = gain_to_db(self.master_level());
         let effects: Vec<(EffectSlotId, String, bool)> = self
-            .project
+            .project()
             .master
             .effects
             .iter()
@@ -234,7 +234,7 @@ impl AurisApp {
             .enumerate()
             .map(|(slot_index, (slot_id, effect_id, enabled))| {
                 let label = self
-                    .registry
+                    .registry()
                     .descriptor(&effect_id)
                     .map(|d| d.name.to_string())
                     .unwrap_or(effect_id);

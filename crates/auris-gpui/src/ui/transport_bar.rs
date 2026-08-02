@@ -1,8 +1,7 @@
 //! The transport bar across the top of the window.
 
-use auris_core::param::gain_to_db;
-use auris_core::time::Ticks;
-use auris_engine::EngineCommand;
+use auris_session::prelude::*;
+
 use gpui::{Axis, IntoElement, Window, div, prelude::*, px};
 
 use crate::app::{AurisApp, Drag, EditorTab};
@@ -11,12 +10,12 @@ use crate::ui::widgets::{ButtonStyle, button, db_to_meter_position, glyph_button
 
 /// Grid divisions offered in the transport bar, as a fraction of a quarter note.
 const GRID_CHOICES: [(&str, i64); 6] = [
-    ("1/1", auris_core::time::TICKS_PER_QUARTER * 4),
-    ("1/2", auris_core::time::TICKS_PER_QUARTER * 2),
-    ("1/4", auris_core::time::TICKS_PER_QUARTER),
-    ("1/8", auris_core::time::TICKS_PER_QUARTER / 2),
-    ("1/16", auris_core::time::TICKS_PER_QUARTER / 4),
-    ("1/32", auris_core::time::TICKS_PER_QUARTER / 8),
+    ("1/1", TICKS_PER_QUARTER * 4),
+    ("1/2", TICKS_PER_QUARTER * 2),
+    ("1/4", TICKS_PER_QUARTER),
+    ("1/8", TICKS_PER_QUARTER / 2),
+    ("1/16", TICKS_PER_QUARTER / 4),
+    ("1/32", TICKS_PER_QUARTER / 8),
 ];
 
 impl AurisApp {
@@ -28,17 +27,17 @@ impl AurisApp {
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
         let playing = self.is_playing();
-        let looping = self.project.loop_enabled;
+        let looping = self.project().loop_enabled;
         let playhead = self.playhead_ticks();
         let (bar, beat, tick) = self
-            .project
+            .project()
             .tempo_map
-            .bar_beat_at(playhead, self.project.time_signature);
-        let seconds = self.project.tempo_map.ticks_to_seconds(playhead);
-        let bpm = self.project.bpm();
-        let grid_label = grid_label(self.project.grid);
+            .bar_beat_at(playhead, self.project().time_signature);
+        let seconds = self.project().tempo_map.ticks_to_seconds(playhead);
+        let bpm = self.project().bpm();
+        let grid_label = grid_label(self.project().grid);
         let master_db = gain_to_db(self.master_level());
-        let master_gain_db = self.project.master.gain_db;
+        let master_gain_db = self.project().master.gain_db;
         let editor = self.editor;
 
         div()
@@ -83,7 +82,7 @@ impl AurisApp {
                         theme.accent,
                         &theme,
                         cx.listener(|this, _, _, cx| {
-                            this.send(EngineCommand::Stop);
+                            this.session.stop();
                             this.seek(Ticks::ZERO);
                             cx.notify();
                         }),
@@ -240,71 +239,36 @@ impl AurisApp {
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, event: &gpui::MouseDownEvent, _, _| {
-                    let start_bpm = this.project.bpm();
-                    this.begin_drag(
-                        "Change tempo",
-                        Drag::Tempo {
-                            start_bpm,
-                            start_x: event.position.x,
-                        },
-                    );
+                    let start_bpm = this.project().bpm();
+                    this.begin_drag(Drag::Tempo {
+                        start_bpm,
+                        start_x: event.position.x,
+                    });
                 }),
             )
             .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
                 let notches = f32::from(event.delta.pixel_delta(px(16.0)).y) / 16.0;
-                this.set_bpm(this.project.bpm() + f64::from(notches));
-                this.rebuild_graph();
+                let bpm = this.project().bpm() + f64::from(notches);
+                this.session.set_bpm(bpm);
                 cx.notify();
             }))
     }
 
-    /// Sets the project tempo.
-    ///
-    /// Deliberately does not republish the graph: a tempo drag calls this on every pointer
-    /// move, and rebuilding would re-instantiate every plugin sixty times a second. The
-    /// rebuild happens once when the drag ends.
-    pub(crate) fn set_bpm(&mut self, bpm: f64) {
-        self.project.set_bpm(bpm);
-        self.dirty = true;
-        // The loop is held by the engine in frames, so a tempo change moves where it lands.
-        // Pushing here rather than beside the rebuild keeps the loop right *during* a drag too.
-        self.push_loop_to_engine();
-    }
-
-    /// Turns looping on or off, seeding a default region when there is none.
+    /// Turns looping on or off.
     pub(crate) fn toggle_loop(&mut self) {
-        self.project.loop_enabled = !self.project.loop_enabled;
-        if self.project.loop_region.is_none() {
-            let bars = self.project.time_signature.ticks_per_bar() * 2;
-            self.project.loop_region = Some((Ticks::ZERO, bars));
-        }
-        self.push_loop_to_engine();
-        self.dirty = true;
-    }
-
-    /// Forwards the loop region to the audio thread.
-    pub(crate) fn push_loop_to_engine(&self) {
-        let (start, end) = self
-            .project
-            .loop_region
-            .unwrap_or((Ticks::ZERO, Ticks::ZERO));
-        let rate = self.engine.sample_rate();
-        self.send(EngineCommand::SetLoop {
-            enabled: self.project.loop_enabled && end > start,
-            start: self.project.tempo_map.ticks_to_samples(start, rate).raw(),
-            end: self.project.tempo_map.ticks_to_samples(end, rate).raw(),
-        });
+        let enabled = self.project().loop_enabled;
+        self.session.set_loop_enabled(!enabled);
     }
 
     /// Steps the editing grid to the next finer division, wrapping at the end.
     pub(crate) fn cycle_grid(&mut self) {
-        let current = self.project.grid.raw();
+        let current = self.project().grid.raw();
         let index = GRID_CHOICES
             .iter()
             .position(|(_, ticks)| *ticks == current)
             .unwrap_or(2);
         let (_, ticks) = GRID_CHOICES[(index + 1) % GRID_CHOICES.len()];
-        self.project.grid = Ticks(ticks);
+        self.session.set_grid(Ticks(ticks));
     }
 }
 

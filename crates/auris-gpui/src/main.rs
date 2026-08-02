@@ -4,7 +4,6 @@
 
 mod actions;
 mod app;
-mod history;
 mod theme;
 mod ui;
 

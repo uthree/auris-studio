@@ -1,14 +1,13 @@
 //! The arrangement: track headers on the left, a clip timeline on the right.
 
-use auris_core::param::gain_to_db;
-use auris_core::time::Ticks;
-use auris_core::{ClipId, TrackId, TrackKind};
+use auris_session::prelude::*;
+
 use gpui::{
     Axis, Bounds, IntoElement, MouseButton, MouseDownEvent, Pixels, Window, canvas, div, point,
     prelude::*, px, size,
 };
 
-use crate::app::{AurisApp, Drag, ParamTarget};
+use crate::app::{AurisApp, Drag};
 use crate::theme::{Metrics, Theme};
 use crate::ui::paint;
 use crate::ui::widgets::{ButtonStyle, button, db_to_meter_position, level_meter};
@@ -38,10 +37,10 @@ impl AurisApp {
     fn render_track_headers(&mut self, cx: &mut gpui::Context<Self>) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
         let selected = self.selected_track;
-        let has_solo = self.project.has_solo();
+        let has_solo = self.project().has_solo();
 
         let headers: Vec<gpui::AnyElement> = self
-            .project
+            .project()
             .tracks
             .iter()
             .enumerate()
@@ -211,16 +210,16 @@ impl AurisApp {
     fn render_timeline(&mut self, cx: &mut gpui::Context<Self>) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
         let view = self.timeline.clone();
-        let signature = self.project.time_signature;
+        let signature = self.project().time_signature;
         let playhead = self.playhead_ticks();
         let loop_region = self
-            .project
+            .project()
             .loop_region
-            .filter(|_| self.project.loop_enabled);
+            .filter(|_| self.project().loop_enabled);
 
         // Everything the paint closure needs, copied out so it does not borrow `self`.
         let lanes: Vec<LanePaint> = self.lane_paint_data();
-        let peaks = self.waveforms.clone();
+        let peaks = self.waveform_map();
 
         div()
             .flex()
@@ -327,7 +326,7 @@ impl AurisApp {
 
     /// Snapshot of what each lane draws, taken while `self` is still borrowable.
     fn lane_paint_data(&self) -> Vec<LanePaint> {
-        self.project
+        self.project()
             .tracks
             .iter()
             .map(|track| {
@@ -375,32 +374,19 @@ impl AurisApp {
             .collect()
     }
 
-    /// Length of an audio clip on the musical timeline.
-    pub(crate) fn audio_clip_length_ticks(&self, clip: &auris_core::AudioClip) -> Ticks {
-        let rate = self.project.sample_rate.max(1.0);
-        let start_seconds = self.project.tempo_map.ticks_to_seconds(clip.start).0;
-        let end_seconds = start_seconds + clip.length_frames as f64 / rate;
-        self.project
-            .tempo_map
-            .seconds_to_ticks(auris_core::time::Seconds(end_seconds))
-            - clip.start
-    }
-
     /// Starts a drag on the ruler: plain drag scrubs, alt-drag sets the loop region.
     fn begin_ruler_drag(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
         let x = event.position.x - self.timeline_origin().x;
         let tick = self.snap(self.timeline.x_to_tick(x));
         if event.modifiers.alt {
-            self.edit("Set loop region");
-            self.project.loop_region = Some((tick, tick));
-            self.project.loop_enabled = true;
             // A degenerate region disables the engine loop, which is what an alt-click that
             // never becomes a drag should do.
-            self.push_loop_to_engine();
-            self.drag = Some(Drag::LoopRegion { anchor: tick });
+            self.begin_drag(Drag::LoopRegion { anchor: tick });
+            self.session.set_loop_enabled(true);
+            self.session.set_loop_region(tick, tick);
         } else {
             self.seek(tick);
-            self.begin_drag_without_edit(Drag::Playhead);
+            self.begin_drag(Drag::Playhead);
         }
         cx.notify();
     }
@@ -424,15 +410,12 @@ impl AurisApp {
                 self.selected_notes.clear();
                 let clip_end_x = self.timeline.tick_to_x(clip_start + clip_length);
                 if f32::from(clip_end_x - local.x).abs() <= RESIZE_HANDLE {
-                    self.begin_drag("Resize clip", Drag::ClipResize { clip: clip_id });
+                    self.begin_drag(Drag::ClipResize { clip: clip_id });
                 } else {
-                    self.begin_drag(
-                        "Move clip",
-                        Drag::ClipMove {
-                            clip: clip_id,
-                            grab_offset: tick - clip_start,
-                        },
-                    );
+                    self.begin_drag(Drag::ClipMove {
+                        clip: clip_id,
+                        grab_offset: tick - clip_start,
+                    });
                 }
             }
             None => {
@@ -465,7 +448,7 @@ impl AurisApp {
     /// Track whose lane contains `y`, with the lane's top offset.
     pub(crate) fn track_at_y(&self, y: Pixels) -> Option<(TrackId, Pixels)> {
         let mut top = px(0.0);
-        for track in &self.project.tracks {
+        for track in &self.project().tracks {
             let bottom = top + px(track.height);
             if y >= top && y < bottom {
                 return Some((track.id, top));
@@ -477,7 +460,7 @@ impl AurisApp {
 
     /// Clip on `track` covering `tick`, with its start and length.
     fn clip_at(&self, track: TrackId, tick: Ticks) -> Option<(ClipId, Ticks, Ticks)> {
-        let track = self.project.track(track)?;
+        let track = self.project().track(track)?;
         match &track.kind {
             TrackKind::Instrument(inner) => inner
                 .clips
@@ -532,8 +515,7 @@ struct LanePaint {
 }
 
 /// Waveform peaks keyed by audio source, shared by every lane in a frame.
-type PeakMap =
-    std::collections::HashMap<auris_core::SourceId, std::sync::Arc<auris_gpu::WaveformPeaks>>;
+type PeakMap = crate::app::WaveformMap;
 
 struct ClipPaint {
     id: ClipId,
@@ -545,9 +527,9 @@ struct ClipPaint {
 }
 
 enum ClipContent {
-    Notes(Vec<auris_core::Note>),
+    Notes(Vec<Note>),
     Waveform {
-        source: auris_core::SourceId,
+        source: SourceId,
         offset_frames: u64,
         length_frames: u64,
     },

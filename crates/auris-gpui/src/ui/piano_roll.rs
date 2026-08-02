@@ -1,7 +1,7 @@
 //! The piano roll: note editing for the selected MIDI clip.
 
-use auris_core::time::Ticks;
-use auris_core::{ClipId, Note};
+use auris_session::prelude::*;
+
 use gpui::{
     Bounds, IntoElement, MouseButton, MouseDownEvent, Pixels, Point, Window, canvas, div, point,
     prelude::*, px, size,
@@ -30,10 +30,10 @@ impl AurisApp {
         let theme = self.theme.clone();
         let pitch_view = self.pitch.clone();
         let view = self.timeline.clone();
-        let signature = self.project.time_signature;
+        let signature = self.project().time_signature;
         let playhead = self.playhead_ticks();
 
-        let Some((_, clip)) = self.selected_midi_clip() else {
+        let Some(clip) = self.selected_midi_clip() else {
             return div()
                 .flex()
                 .flex_1()
@@ -212,7 +212,7 @@ impl AurisApp {
         let Some(pitch) = self.pitch.pitch_at(event.position.y - origin.y) else {
             return;
         };
-        let Some(clip_start) = self.project.midi_clip(clip_id).map(|(_, c)| c.start) else {
+        let Some(clip_start) = self.session.midi_clip(clip_id).map(|c| c.start) else {
             return;
         };
         let local_tick = tick - clip_start;
@@ -231,55 +231,51 @@ impl AurisApp {
                 self.selected_notes.insert(index);
 
                 let note = self
-                    .project
+                    .project()
                     .midi_clip(clip_id)
                     .and_then(|(_, c)| c.notes.get(index).copied());
                 let Some(note) = note else { return };
                 let end_x = self.timeline.tick_to_x(clip_start + note.end());
                 if f32::from(end_x - (event.position.x - origin.x)).abs() <= RESIZE_HANDLE {
-                    self.begin_drag(
-                        "Resize note",
-                        Drag::NoteResize {
-                            clip: clip_id,
-                            index,
-                        },
-                    );
+                    self.begin_drag(Drag::NoteResize {
+                        clip: clip_id,
+                        index,
+                    });
                 } else {
                     let origins = self.selected_note_origins(clip_id);
-                    self.begin_drag(
-                        "Move note",
-                        Drag::NoteMove {
-                            clip: clip_id,
-                            origin_tick: local_tick,
-                            origin_pitch: pitch,
-                            origins,
-                        },
-                    );
-                    self.audition_selected_track(pitch);
+                    self.begin_drag(Drag::NoteMove {
+                        clip: clip_id,
+                        origin_tick: local_tick,
+                        origin_pitch: pitch,
+                        origins,
+                    });
+                    self.audition(pitch);
                 }
             }
             None => {
                 if event.modifiers.alt {
-                    self.edit("Add note");
                     let start = self.snap(local_tick).max_zero();
-                    let length = default_note_length(self.project.grid);
-                    let grid = self.project.grid;
-                    let index = {
-                        let Some(clip) = self.project.midi_clip_mut(clip_id) else {
-                            return;
-                        };
-                        clip.notes.push(Note::new(pitch, start, length));
-                        clip.fit_length_to_notes(grid);
-                        clip.notes.len() - 1
+                    let length = default_note_length(self.project().grid);
+                    // The new note and the resize that follows it are one gesture, so the
+                    // transaction opens first and the note lands inside it.
+                    self.begin_drag(Drag::NoteResize {
+                        clip: clip_id,
+                        index: 0,
+                    });
+                    let Ok(index) = self
+                        .session
+                        .add_note(clip_id, Note::new(pitch, start, length))
+                    else {
+                        self.drag = None;
+                        return;
                     };
-                    self.selected_notes.clear();
-                    self.selected_notes.insert(index);
-                    self.audition_selected_track(pitch);
                     self.drag = Some(Drag::NoteResize {
                         clip: clip_id,
                         index,
                     });
-                    self.rebuild_graph();
+                    self.selected_notes.clear();
+                    self.selected_notes.insert(index);
+                    self.audition(pitch);
                 } else {
                     self.selected_notes.clear();
                     self.seek(self.snap(tick));
@@ -291,7 +287,7 @@ impl AurisApp {
 
     /// Positions of every selected note, captured at the start of a move.
     fn selected_note_origins(&self, clip: ClipId) -> Vec<(usize, Ticks, u8)> {
-        let Some((_, clip)) = self.project.midi_clip(clip) else {
+        let Some(clip) = self.session.midi_clip(clip) else {
             return Vec::new();
         };
         self.selected_notes
@@ -306,7 +302,7 @@ impl AurisApp {
 
     /// Index of the note at a clip-relative position.
     fn note_at(&self, clip: ClipId, tick: Ticks, pitch: u8) -> Option<usize> {
-        let (_, clip) = self.project.midi_clip(clip)?;
+        let clip = self.session.midi_clip(clip)?;
         // Search backwards so the most recently added note wins when notes overlap, which is
         // what the user just drew and therefore what they expect to grab.
         clip.notes
@@ -327,40 +323,14 @@ impl AurisApp {
         let Some(pitch) = self.pitch.pitch_at(event.position.y - origin.y) else {
             return;
         };
-        let Some(clip_start) = self.project.midi_clip(clip_id).map(|(_, c)| c.start) else {
+        let Some(clip_start) = self.session.midi_clip(clip_id).map(|c| c.start) else {
             return;
         };
         if let Some(index) = self.note_at(clip_id, tick - clip_start, pitch) {
-            self.edit("Delete note");
-            if let Some(clip) = self.project.midi_clip_mut(clip_id) {
-                clip.notes.remove(index);
-            }
+            let _ = self.session.remove_notes(clip_id, &[index]);
             self.selected_notes.clear();
-            self.rebuild_graph();
             cx.notify();
         }
-    }
-
-    /// Deletes every selected note.
-    pub(crate) fn delete_selected_notes(&mut self) {
-        let Some(clip_id) = self.selected_clip else {
-            return;
-        };
-        if self.selected_notes.is_empty() {
-            return;
-        }
-        self.edit("Delete notes");
-        let doomed: Vec<usize> = self.selected_notes.iter().copied().collect();
-        if let Some(clip) = self.project.midi_clip_mut(clip_id) {
-            // Remove from the back so earlier indices stay valid.
-            for index in doomed.into_iter().rev() {
-                if index < clip.notes.len() {
-                    clip.notes.remove(index);
-                }
-            }
-        }
-        self.selected_notes.clear();
-        self.rebuild_graph();
     }
 
     /// Wheel handling: plain scrolls pitch, shift scrolls time, alt zooms time,
@@ -390,24 +360,8 @@ impl AurisApp {
         let Some(pitch) = self.pitch.pitch_at(event.position.y - origin.y) else {
             return;
         };
-        self.audition_selected_track(pitch);
+        self.audition(pitch);
         cx.notify();
-    }
-
-    /// Sounds one note on the selected track.
-    fn audition_selected_track(&mut self, pitch: u8) {
-        if let Some(track) = self.selected_track {
-            self.stop_audition();
-            self.audition_note_on(track, pitch, 0.8);
-            self.auditioning = Some((track, pitch));
-        }
-    }
-
-    /// Releases the auditioned note, if any.
-    pub(crate) fn stop_audition(&mut self) {
-        if let Some((track, pitch)) = self.auditioning.take() {
-            self.audition_note_off(track, pitch);
-        }
     }
 }
 

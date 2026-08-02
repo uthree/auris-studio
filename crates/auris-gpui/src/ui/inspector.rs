@@ -1,12 +1,12 @@
 //! The right-hand inspector: the selected track's instrument, its effect chain, and a browser
 //! for everything the plugin registry knows about.
 
-use auris_core::param::{ParamDescriptor, ParamId};
-use auris_core::plugin::PluginKind;
-use auris_core::{EffectSlotId, TrackId};
+use auris_session::Session;
+use auris_session::prelude::*;
+
 use gpui::{AnyElement, IntoElement, MouseDownEvent, Window, div, prelude::*, px};
 
-use crate::app::{AurisApp, Drag, InspectorTab, ParamTarget};
+use crate::app::{AurisApp, Drag, InspectorTab};
 use crate::theme::Metrics;
 use crate::ui::plugin_editor::{
     ParamControl, button_row, control_for, next_discrete_value, plugin_header, slider_row,
@@ -90,7 +90,7 @@ impl AurisApp {
                 .child("No track selected")
                 .into_any_element();
         };
-        let Some(track) = self.project.track(track_id) else {
+        let Some(track) = self.project().track(track_id) else {
             return div().into_any_element();
         };
         let track_name = track.name.clone();
@@ -117,7 +117,7 @@ impl AurisApp {
 
         if let Some(instrument_id) = instrument_id {
             let name = self
-                .registry
+                .registry()
                 .descriptor(&instrument_id)
                 .map(|d| d.name.to_string())
                 .unwrap_or_else(|| instrument_id.clone());
@@ -136,7 +136,7 @@ impl AurisApp {
                     .child(div().text_xs().text_color(theme.text).child(name))
                     .into_any_element(),
             );
-            let descriptors = self.param_descriptors(&instrument_id);
+            let descriptors = self.session.param_descriptors(&instrument_id);
             sections.push(
                 div()
                     .flex()
@@ -195,11 +195,11 @@ impl AurisApp {
 
         for (slot_index, (slot_id, effect_id, enabled)) in effect_slots.into_iter().enumerate() {
             let name = self
-                .registry
+                .registry()
                 .descriptor(&effect_id)
                 .map(|d| d.name.to_string())
                 .unwrap_or_else(|| effect_id.clone());
-            let descriptors = self.param_descriptors(&effect_id);
+            let descriptors = self.session.param_descriptors(&effect_id);
             let controls = self.param_controls(
                 &descriptors,
                 move |param| ParamTarget::Effect {
@@ -279,7 +279,7 @@ impl AurisApp {
     fn render_browser(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
         let instruments: Vec<(String, String, String)> = self
-            .registry
+            .registry()
             .instruments()
             .map(|d| {
                 (
@@ -290,7 +290,7 @@ impl AurisApp {
             })
             .collect();
         let effects: Vec<(String, String, String, String)> = self
-            .registry
+            .registry()
             .effects()
             .map(|d| {
                 (
@@ -416,7 +416,7 @@ impl AurisApp {
             .iter()
             .map(|descriptor| {
                 let target = target_for(descriptor.id);
-                let value = self.param_value(target, descriptor);
+                let value = self.session.param_value(target, descriptor);
                 let element_id = (id_prefix, target_element_key(target, descriptor.id));
 
                 match control_for(descriptor) {
@@ -429,7 +429,7 @@ impl AurisApp {
                         cx.listener(move |this, event: &MouseDownEvent, _, _| {
                             // `set_param_value` marks the document dirty once the drag actually
                             // moves something; a click that only grabs the control is not an edit.
-                            this.begin_drag_without_edit(Drag::Param {
+                            this.begin_drag(Drag::Param {
                                 target,
                                 start_value: value,
                                 start_x: event.position.x,
@@ -439,9 +439,9 @@ impl AurisApp {
                             let descriptor = descriptor.clone();
                             cx.listener(move |this, event: &gpui::ScrollWheelEvent, _, cx| {
                                 let notches = f32::from(event.delta.pixel_delta(px(16.0)).y) / 16.0;
-                                let current = this.param_value(target, &descriptor);
+                                let current = this.session.param_value(target, &descriptor);
                                 let next = value_after_scroll(&descriptor, current, notches);
-                                this.set_param_value(target, next);
+                                this.session.set_param(target, next);
                                 cx.notify();
                             })
                         },
@@ -455,9 +455,9 @@ impl AurisApp {
                             value,
                             &theme,
                             cx.listener(move |this, _, _, cx| {
-                                let current = this.param_value(target, &owned);
+                                let current = this.session.param_value(target, &owned);
                                 let next = next_discrete_value(&owned, current);
-                                this.set_param_value(target, next);
+                                this.session.set_param(target, next);
                                 cx.notify();
                             }),
                         )
@@ -481,7 +481,8 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let theme = self.theme.clone();
-        let descriptor = fader_descriptor(target);
+        let descriptor = Session::mixer_descriptor(target)
+            .unwrap_or_else(|| ParamDescriptor::new(0u32, "value", label, 0.0, 1.0, 0.0));
         crate::ui::widgets::value_slider(
             id,
             label,
@@ -490,7 +491,7 @@ impl AurisApp {
             theme.accent,
             &theme,
             cx.listener(move |this, event: &MouseDownEvent, _, _| {
-                this.begin_drag_without_edit(Drag::Param {
+                this.begin_drag(Drag::Param {
                     target,
                     start_value: value,
                     start_x: event.position.x,
@@ -498,9 +499,12 @@ impl AurisApp {
             }),
             cx.listener(move |this, event: &gpui::ScrollWheelEvent, _, cx| {
                 let notches = f32::from(event.delta.pixel_delta(px(16.0)).y) / 16.0;
-                let descriptor = fader_descriptor(target);
-                let current = this.param_value(target, &descriptor);
-                this.set_param_value(target, value_after_scroll(&descriptor, current, notches));
+                let Some(descriptor) = Session::mixer_descriptor(target) else {
+                    return;
+                };
+                let current = this.session.param_value(target, &descriptor);
+                this.session
+                    .set_param(target, value_after_scroll(&descriptor, current, notches));
                 cx.notify();
             }),
         )
@@ -509,117 +513,46 @@ impl AurisApp {
 
     /// Applies a parameter drag.
     pub(crate) fn drag_param(&mut self, target: ParamTarget, start_value: f32, delta: f32) {
-        let descriptor = match target {
-            ParamTarget::TrackGain(_)
-            | ParamTarget::TrackPan(_)
-            | ParamTarget::MasterGain
-            | ParamTarget::MasterPan => fader_descriptor(target),
-            ParamTarget::Instrument { track, param } => {
-                let Some(plugin_id) = self
-                    .project
-                    .track(track)
-                    .and_then(|t| t.kind.as_instrument())
-                    .map(|inner| inner.instrument_id.clone())
-                else {
-                    return;
-                };
-                let descriptors = self.param_descriptors(&plugin_id);
-                let Some(descriptor) = descriptors.get(param.index()).cloned() else {
-                    return;
-                };
-                descriptor
-            }
-            ParamTarget::Effect { track, slot, param } => {
-                let strip = match track {
-                    Some(id) => self.project.track(id).map(|t| &t.mixer),
-                    None => Some(&self.project.master),
-                };
-                let Some(plugin_id) = strip
-                    .and_then(|strip| strip.effects.iter().find(|s| s.id == slot))
-                    .map(|s| s.effect_id.clone())
-                else {
-                    return;
-                };
-                let descriptors = self.param_descriptors(&plugin_id);
-                let Some(descriptor) = descriptors.get(param.index()).cloned() else {
-                    return;
-                };
-                descriptor
-            }
+        let Some(descriptor) = self.session.descriptor_for(target) else {
+            return;
         };
         let value = value_after_drag(&descriptor, start_value, delta);
-        self.set_param_value(target, value);
+        self.session.set_param(target, value);
     }
 
     /// Adds an effect to the selected track, or to the master bus when nothing is selected.
     pub(crate) fn add_effect_to_selection(&mut self, effect_id: &str) {
-        if !self.registry.has_effect(effect_id) {
-            return;
+        match self.session.add_effect(self.selected_track, effect_id) {
+            Ok(_) => self.inspector = InspectorTab::Track,
+            Err(error) => self.set_status(format!("Could not add the effect: {error}")),
         }
-        self.edit("Add effect");
-        self.project.add_effect(self.selected_track, effect_id);
-        self.inspector = InspectorTab::Track;
-        self.rebuild_graph();
     }
 
     /// Replaces the selected track's instrument.
     pub(crate) fn set_track_instrument(&mut self, instrument_id: &str) {
-        let Some(track_id) = self.selected_track else {
+        let Some(track) = self.selected_track else {
             return;
         };
-        if self.registry.descriptor(instrument_id).map(|d| d.kind) != Some(PluginKind::Instrument) {
-            return;
+        match self.session.set_track_instrument(track, instrument_id) {
+            Ok(()) => self.inspector = InspectorTab::Track,
+            Err(error) => self.set_status(format!("Could not change the instrument: {error}")),
         }
-        self.edit("Change instrument");
-        if let Some(track) = self.project.track_mut(track_id)
-            && let Some(inner) = track.kind.as_instrument_mut()
-        {
-            inner.instrument_id = instrument_id.to_string();
-            // Parameter values belong to the old plugin; keeping them would apply another
-            // plugin's numbers to unrelated controls.
-            inner.instrument_state = Default::default();
-        }
-        self.inspector = InspectorTab::Track;
-        self.rebuild_graph();
     }
 
     /// Bypasses or re-enables an effect.
     pub(crate) fn toggle_effect(&mut self, track: Option<TrackId>, slot: EffectSlotId) {
-        self.edit("Bypass effect");
-        let strip = match track {
-            Some(id) => self.project.track_mut(id).map(|t| &mut t.mixer),
-            None => Some(&mut self.project.master),
-        };
-        if let Some(strip) = strip
-            && let Some(effect) = strip.effects.iter_mut().find(|s| s.id == slot)
-        {
-            effect.enabled = !effect.enabled;
-        }
-        self.rebuild_graph();
+        let enabled = self.session.effect_enabled(track, slot).unwrap_or(true);
+        self.session.set_effect_enabled(track, slot, !enabled);
     }
 
     /// Moves an effect up or down its chain.
     pub(crate) fn move_effect(&mut self, track: Option<TrackId>, slot: EffectSlotId, delta: isize) {
-        self.edit("Reorder effects");
-        let strip = match track {
-            Some(id) => self.project.track_mut(id).map(|t| &mut t.mixer),
-            None => Some(&mut self.project.master),
-        };
-        if let Some(strip) = strip
-            && let Some(index) = strip.effects.iter().position(|s| s.id == slot)
-        {
-            let target = (index as isize + delta).clamp(0, strip.effects.len() as isize - 1);
-            let effect = strip.effects.remove(index);
-            strip.effects.insert(target as usize, effect);
-        }
-        self.rebuild_graph();
+        self.session.move_effect(track, slot, delta);
     }
 
     /// Removes an effect from wherever it is.
     pub(crate) fn remove_effect(&mut self, slot: EffectSlotId) {
-        self.edit("Remove effect");
-        self.project.remove_effect(slot);
-        self.rebuild_graph();
+        self.session.remove_effect(slot);
     }
 }
 
@@ -636,21 +569,9 @@ fn target_element_key(target: ParamTarget, param: ParamId) -> usize {
     base + param.index()
 }
 
-/// The pseudo-descriptor behind a built-in fader, so mixer controls reuse the plugin machinery.
-fn fader_descriptor(target: ParamTarget) -> ParamDescriptor {
-    match target {
-        ParamTarget::TrackPan(_) | ParamTarget::MasterPan => {
-            ParamDescriptor::new(0u32, "pan", "Pan", -1.0, 1.0, 0.0)
-                .with_unit(auris_core::param::ParamUnit::Pan)
-        }
-        _ => ParamDescriptor::decibels(0u32, "gain", "Volume", -60.0, 12.0, 0.0),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use auris_core::TrackId;
 
     #[test]
     fn element_keys_differ_between_targets() {
@@ -659,16 +580,5 @@ mod tests {
         let c = target_element_key(ParamTarget::TrackGain(TrackId(2)), ParamId(0));
         assert_ne!(a, b);
         assert_ne!(a, c);
-    }
-
-    #[test]
-    fn fader_descriptors_match_their_targets() {
-        let pan = fader_descriptor(ParamTarget::MasterPan);
-        assert_eq!(pan.min, -1.0);
-        assert_eq!(pan.format(0.0), "C");
-
-        let gain = fader_descriptor(ParamTarget::MasterGain);
-        assert_eq!(gain.max, 12.0);
-        assert_eq!(gain.format(0.0), "+0.0 dB");
     }
 }

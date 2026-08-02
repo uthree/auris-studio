@@ -237,7 +237,14 @@ fn start_with_device(
 }
 
 /// Builds a handle backed by no hardware at all.
-fn start_silent(settings: &AudioSettings) -> (AudioDevice, EngineHandle) {
+/// Opens an engine with no output device.
+///
+/// [`start_audio`] falls back to this when the hardware is unusable, but a headless host —
+/// a command line tool, a test, an automation server — should call it directly rather than
+/// opening the default device only to ignore it. The returned handle accepts every command and
+/// reports `is_running() == false`; nothing drains its queue, so such a host should call
+/// [`AudioDevice::discard_pending`] periodically.
+pub fn start_silent(settings: &AudioSettings) -> (AudioDevice, EngineHandle) {
     let capacity = settings.command_capacity.max(MIN_COMMAND_CAPACITY);
     let (command_tx, command_rx) = crossbeam_channel::bounded(capacity);
     let (_graph_tx, graph_rx) = crossbeam_channel::bounded(capacity);

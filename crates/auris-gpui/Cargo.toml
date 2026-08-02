@@ -1,0 +1,26 @@
+[package]
+name = "auris-gpui"
+description = "The gpui desktop frontend for Auris Studio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "auris-studio"
+path = "src/main.rs"
+
+# The frontend talks to `auris-session` and to gpui, and to nothing else in the workspace.
+# If this list ever needs `auris-engine` or `auris-dsp` directly, something that belongs in the
+# session layer has leaked into the UI.
+[dependencies]
+auris-session.workspace = true
+env_logger.workspace = true
+log.workspace = true
+
+# `runtime_shaders` makes gpui compile its Metal shaders through the Metal framework at startup.
+# The build-time path shells out to `xcrun metal`, which lives inside Xcode and is unreachable
+# while `xcode-select -p` points at the Command Line Tools.
+gpui = { version = "0.2.2", features = ["runtime_shaders"] }
+rfd = "0.17"

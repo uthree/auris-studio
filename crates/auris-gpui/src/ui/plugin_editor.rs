@@ -4,7 +4,7 @@
 //! any discrete steps — the UI can build an editor for a plugin it has never seen. Adding a new
 //! synth or effect therefore costs zero UI code: register it and its controls appear.
 
-use auris_core::param::{ParamDescriptor, ParamUnit};
+use auris_session::prelude::*;
 use gpui::{
     App, ClickEvent, ElementId, Hsla, IntoElement, MouseDownEvent, ScrollWheelEvent, SharedString,
     Window, div, prelude::*, px,
@@ -179,7 +179,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use auris_core::param::ParamValueCurve;
+    use auris_session::prelude::ParamValueCurve;
 
     fn frequency() -> ParamDescriptor {
         ParamDescriptor::hertz(0u32, "freq", "Frequency", 20.0, 20_000.0, 1_000.0)

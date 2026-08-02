@@ -1,0 +1,17 @@
+[package]
+name = "auris-cli"
+description = "Command line frontend for Auris Studio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "auris"
+path = "src/main.rs"
+
+[dependencies]
+auris-session.workspace = true
+env_logger.workspace = true
+log.workspace = true

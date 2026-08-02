@@ -1,0 +1,19 @@
+[package]
+name = "auris-session"
+description = "Headless editing session for Auris Studio: the document, the engine and every command a frontend needs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# No UI dependency of any kind. This crate is what a GUI, a CLI and an MCP server all sit on.
+[dependencies]
+auris-core.workspace = true
+auris-dsp.workspace = true
+auris-engine.workspace = true
+auris-gpu.workspace = true
+auris-io.workspace = true
+auris-synth.workspace = true
+log.workspace = true
+thiserror.workspace = true

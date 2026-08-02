@@ -6,7 +6,8 @@
 //! plain data and a `Window`, which keeps the painting testable in isolation from view state
 //! and reusable between panels.
 
-use auris_core::time::{Ticks, TimeSignature};
+use auris_session::prelude::*;
+
 use gpui::{App, Bounds, ContentMask, Hsla, Pixels, Point, Window, fill, point, px, size};
 
 use crate::theme::Theme;
@@ -233,7 +234,7 @@ pub fn playhead(window: &mut Window, bounds: Bounds<Pixels>, x: Pixels, theme: &
 pub fn clip_notes(
     window: &mut Window,
     bounds: Bounds<Pixels>,
-    notes: &[auris_core::Note],
+    notes: &[Note],
     clip_length: Ticks,
     color: Hsla,
 ) {

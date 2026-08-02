@@ -3,7 +3,7 @@
 //! The arrangement ruler, the clip lanes and the piano roll all have to agree pixel-for-pixel
 //! about where a tick lands, so that conversion lives here once instead of in each view.
 
-use auris_core::time::{TICKS_PER_QUARTER, Ticks, TimeSignature};
+use auris_session::prelude::*;
 use gpui::{Pixels, px};
 
 /// Horizontal scroll and zoom of a timeline view.

@@ -1,6 +1,7 @@
 //! The window's root layout, global pointer handling and action dispatch.
 
-use auris_core::time::Ticks;
+use auris_session::prelude::*;
+
 use gpui::{
     Context, IntoElement, MouseMoveEvent, MouseUpEvent, Render, Window, div, prelude::*, px,
     relative,
@@ -106,13 +107,9 @@ impl Render for AurisApp {
 impl AurisApp {
     fn render_status_bar(&self) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
-        let engine = if self.engine.is_running() {
-            format!(
-                "{:.0} Hz · {} ch · {} frames",
-                self.engine.sample_rate(),
-                self.engine.channel_count(),
-                self.engine.max_block()
-            )
+        let audio = self.session.audio_status();
+        let engine = if audio.running {
+            format!("{:.0} Hz · {} ch", audio.sample_rate, audio.channels)
         } else {
             "silent".to_string()
         };
@@ -220,21 +217,18 @@ impl AurisApp {
                 } else {
                     (anchor, tick)
                 };
-                self.project.loop_region = Some((start, end));
-                self.push_loop_to_engine();
+                self.session.set_loop_region(start, end);
             }
             Drag::ClipMove { clip, grab_offset } => {
-                self.commit_pending_edit();
                 let x = event.position.x - self.lanes_origin().x;
                 let tick = self.timeline.x_to_tick(x);
                 let start = self.snap(tick - grab_offset).max_zero();
-                self.move_clip(clip, start);
+                let _ = self.session.move_clip(clip, start);
             }
             Drag::ClipResize { clip } => {
-                self.commit_pending_edit();
                 let x = event.position.x - self.lanes_origin().x;
                 let tick = self.snap(self.timeline.x_to_tick(x));
-                self.resize_clip(clip, tick);
+                let _ = self.session.resize_clip(clip, tick);
             }
             Drag::NoteMove {
                 clip,
@@ -242,26 +236,26 @@ impl AurisApp {
                 origin_pitch,
                 ref origins,
             } => {
-                self.commit_pending_edit();
                 let origin = self.roll_origin(self.viewport_height);
                 let tick = self.timeline.x_to_tick(event.position.x - origin.x);
                 let pitch = self.pitch.y_to_pitch(event.position.y - origin.y);
-                let Some(clip_start) = self.project.midi_clip(clip).map(|(_, c)| c.start) else {
+                let Some(clip_start) = self.session.midi_clip(clip).map(|c| c.start) else {
                     return;
                 };
                 let delta_ticks = self.snap(tick - clip_start) - self.snap(origin_tick);
                 let delta_pitch = pitch as i32 - origin_pitch as i32;
-                self.move_notes(clip, origins, delta_ticks, delta_pitch);
+                let _ = self
+                    .session
+                    .move_notes(clip, origins, delta_ticks, delta_pitch);
             }
             Drag::NoteResize { clip, index } => {
-                self.commit_pending_edit();
                 let origin = self.roll_origin(self.viewport_height);
                 let tick = self.timeline.x_to_tick(event.position.x - origin.x);
-                let Some(clip_start) = self.project.midi_clip(clip).map(|(_, c)| c.start) else {
+                let Some(clip_start) = self.session.midi_clip(clip).map(|c| c.start) else {
                     return;
                 };
                 let end = self.snap(tick - clip_start);
-                self.resize_note(clip, index, end);
+                let _ = self.session.resize_note(clip, index, end);
             }
             Drag::Param {
                 target,
@@ -272,11 +266,10 @@ impl AurisApp {
                 self.drag_param(target, start_value, delta);
             }
             Drag::Tempo { start_bpm, start_x } => {
-                self.commit_pending_edit();
                 // Half a beat per pixel would be unusable; 0.25 BPM/px lets a short drag cover
                 // the musically interesting range while still landing on exact values.
                 let delta = f64::from(f32::from(event.position.x - start_x)) * 0.25;
-                self.set_bpm(start_bpm + delta);
+                self.session.set_bpm(start_bpm + delta);
             }
         }
         cx.notify();
@@ -299,7 +292,7 @@ impl AurisApp {
     }
 
     fn on_stop(&mut self, _: &actions::StopPlayback, _window: &mut Window, cx: &mut Context<Self>) {
-        self.send(auris_engine::EngineCommand::Stop);
+        self.session.stop();
         cx.notify();
     }
 
@@ -435,7 +428,7 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.send(auris_engine::EngineCommand::Panic);
+        self.session.panic();
         self.drag = None;
         self.set_status("Panic — all voices stopped");
         cx.notify();
@@ -449,69 +442,5 @@ impl AurisApp {
     fn on_zoom_out(&mut self, _: &actions::ZoomOut, _window: &mut Window, cx: &mut Context<Self>) {
         self.timeline.zoom_by(1.0 / 1.3, px(0.0));
         cx.notify();
-    }
-
-    /// Moves a clip of either kind to a new start position.
-    fn move_clip(&mut self, clip: auris_core::ClipId, start: Ticks) {
-        if let Some(midi) = self.project.midi_clip_mut(clip) {
-            midi.start = start;
-        } else if let Some(audio) = self.project.audio_clip_mut(clip) {
-            audio.start = start;
-        }
-        self.dirty = true;
-    }
-
-    /// Drags a clip's right edge to `end`.
-    fn resize_clip(&mut self, clip: auris_core::ClipId, end: Ticks) {
-        let grid = self.project.grid;
-        if let Some(midi) = self.project.midi_clip_mut(clip) {
-            midi.length = (end - midi.start).max(grid);
-            self.dirty = true;
-            return;
-        }
-        // An audio clip's length lives in source frames, so convert the dragged tick back
-        // through the tempo map rather than storing ticks.
-        let sample_rate = self.project.sample_rate;
-        let tempo = self.project.tempo_map.clone();
-        if let Some(audio) = self.project.audio_clip_mut(clip) {
-            let start_seconds = tempo.ticks_to_seconds(audio.start).0;
-            let end_seconds = tempo.ticks_to_seconds(end).0;
-            let frames = ((end_seconds - start_seconds).max(0.0) * sample_rate) as u64;
-            audio.length_frames = frames.max(1);
-        }
-        self.dirty = true;
-    }
-
-    /// Moves every note captured at the start of a drag.
-    fn move_notes(
-        &mut self,
-        clip: auris_core::ClipId,
-        origins: &[(usize, Ticks, u8)],
-        delta_ticks: Ticks,
-        delta_pitch: i32,
-    ) {
-        let grid = self.project.grid;
-        if let Some(clip) = self.project.midi_clip_mut(clip) {
-            for (index, start, pitch) in origins {
-                if let Some(note) = clip.notes.get_mut(*index) {
-                    note.start = (*start + delta_ticks).max_zero();
-                    note.pitch = (*pitch as i32 + delta_pitch).clamp(0, 127) as u8;
-                }
-            }
-            clip.fit_length_to_notes(grid);
-        }
-        self.dirty = true;
-    }
-
-    /// Drags a note's right edge to `end`, clip-relative.
-    fn resize_note(&mut self, clip: auris_core::ClipId, index: usize, end: Ticks) {
-        let grid = self.project.grid;
-        if let Some(clip) = self.project.midi_clip_mut(clip) {
-            if let Some(note) = clip.notes.get_mut(index) {
-                note.length = (end - note.start).max(Ticks(grid.raw().max(1)));
-            }
-            clip.fit_length_to_notes(grid);
-        }
-        self.dirty = true;
     }
 }

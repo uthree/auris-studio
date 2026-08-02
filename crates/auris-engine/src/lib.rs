@@ -75,7 +75,7 @@ pub mod transport;
 mod testkit;
 
 pub use command::EngineCommand;
-pub use device::{AudioDevice, AudioSettings, start_audio};
+pub use device::{AudioDevice, AudioSettings, start_audio, start_silent};
 pub use error::EngineError;
 pub use graph::{
     RENDER_CHANNELS, RenderAudioClip, RenderGraph, RenderSource, RenderStrip, RenderTrack,

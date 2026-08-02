@@ -17,18 +17,29 @@ Tools, which is worth far more than those milliseconds.
 ## Layout
 
 ```
-Cargo.toml            workspace root; also the `auris-studio` binary (the gpui app)
-src/                  UI code for the binary
-crates/auris-core     types, plugin traits, project model — no backend dependencies
-crates/auris-dsp      effects and DSP primitives
-crates/auris-synth    built-in chiptune instruments
-crates/auris-engine   render graph, transport, cpal output, offline renderer
-crates/auris-io       audio file import/export, project save/load
-crates/auris-gpu      optional wgpu compute for offline analysis
+Cargo.toml               virtual manifest; `default-members` points at the desktop app
+crates/auris-core        types, plugin traits, project model — no local dependencies
+crates/auris-dsp         effects and DSP primitives
+crates/auris-synth       built-in chiptune instruments
+crates/auris-engine      render graph, transport, cpal output, offline renderer
+crates/auris-io          audio file import/export, project save/load
+crates/auris-gpu         optional wgpu compute for offline analysis
+crates/auris-session     headless session: the document, the engine, every command
+crates/auris-gpui        desktop frontend (binary `auris-studio`)
+crates/auris-cli         command line frontend (binary `auris`)
 ```
 
-Dependency direction is strictly downhill: `core` depends on nothing local, everything else
-depends on `core`, and only the binary depends on all of them.
+Dependency direction is strictly downhill and the frontend boundary matters:
+
+* Nothing at or below `auris-session` may name a UI toolkit.
+* `auris-engine` may not name `auris-dsp` or `auris-synth`; it drives plugins through the
+  `auris-core` traits only.
+* `auris-gpui` and `auris-cli` depend on `auris-session` and their own toolkit, nothing else in
+  the workspace. A frontend reaching for `auris-engine` means logic that belongs in the session
+  layer has leaked upward — move it down instead of adding the dependency.
+
+New work that is a *command* (anything a user could ask for) goes in `auris-session` so every
+frontend gets it. New work that is *presentation* stays in the frontend.
 
 ## Conventions
 
@@ -49,7 +60,8 @@ thread returns replaced graphs down a second channel so they are dropped off the
 ## Commands
 
 ```bash
-cargo run                                   # launch the DAW
+cargo run                                   # launch the DAW (default-members)
+cargo run -p auris-cli -- help              # the command line frontend
 cargo test --workspace                      # all tests
 cargo clippy --workspace --all-targets      # lints
 ```

@@ -62,6 +62,31 @@ GPU present.
 Realtime per-block DSP deliberately stays on the CPU — a round trip to the GPU costs more
 latency than an entire audio block is allowed to take.
 
+## Frontends
+
+The backend is a set of crates that know nothing about any UI, and each frontend is a thin
+layer on top of the same [`Session`](crates/auris-session) — one document, one engine, one
+method per user command.
+
+```bash
+cargo run --release                 # the desktop application
+cargo run --release -p auris-cli -- help
+```
+
+The command line tool exists as much to keep the split honest as to be useful: it drives the
+identical session with no window and no audio device, so anything that leaks into the UI stops
+compiling here.
+
+```bash
+auris plugins                                  # every registered instrument and effect
+auris new song.auris --bpm 128
+auris info song.auris                          # tracks, clips, duration
+auris render song.auris -o song.wav --bit-depth 24
+```
+
+An MCP server is the next frontend and needs no new backend work — it is the same `Session`
+API with a different transport in front of it.
+
 ## Building
 
 ```bash
@@ -82,19 +107,38 @@ builds on a machine without a 15 GB download.
 ## Layout
 
 ```
-crates/auris-core     types, plugin traits, project model — no backend dependencies
-crates/auris-dsp      effects and DSP primitives
-crates/auris-synth    built-in instruments
-crates/auris-engine   render graph, transport, cpal output, offline renderer
-crates/auris-io       audio file import/export, project save/load
-crates/auris-gpu      wgpu compute for offline analysis
-src/                  the gpui application
+BACKEND — no UI dependency of any kind
+  crates/auris-core     types, plugin traits, project model — no local dependencies at all
+  crates/auris-dsp      effects and DSP primitives
+  crates/auris-synth    built-in instruments
+  crates/auris-engine   render graph, transport, cpal output, offline renderer
+  crates/auris-io       audio file import/export, project save/load
+  crates/auris-gpu      wgpu compute for offline analysis
+  crates/auris-session  the document, the engine and every command a frontend needs
+
+FRONTEND
+  crates/auris-gpui     the desktop application  (binary: auris-studio)
+  crates/auris-cli      the command line tool    (binary: auris)
 ```
 
-Dependencies run strictly downhill: `auris-core` depends on nothing local, every other crate
-depends on it, and only the binary depends on all of them. Notably `auris-engine` does *not*
-depend on `auris-dsp` or `auris-synth` — it drives plugins purely through the `auris-core`
-traits, which is what keeps the plugin system honest.
+Dependencies run strictly downhill and the boundary is enforced by what each crate is allowed
+to name. `auris-core` depends on nothing local. `auris-engine` does *not* depend on
+`auris-dsp` or `auris-synth` — it drives plugins purely through the `auris-core` traits, which
+is what keeps the plugin system honest. And `auris-gpui` depends on `auris-session` and gpui
+and nothing else in the workspace: if it ever needs `auris-engine` directly, something that
+belongs in the session layer has leaked into the UI.
+
+### What lives where
+
+Keeping the *rendering* backend UI-free is the easy part. The piece that usually leaks is the
+orchestration around it — building the registry, rebuilding the render graph after an edit,
+deciding which changes need a whole new graph and which fit in a command, tracking undo,
+resolving a parameter to the plugin that owns it. All of that is in `auris-session`, so a
+second frontend reuses it instead of reimplementing it slightly differently.
+
+Gestures are handled with transactions: a pointer drag opens one, makes as many edits as it
+likes, and closes it. The result is one undo step and one graph rebuild — and none of either
+when the drag changed nothing.
 
 ## Adding a sound source
 

@@ -546,6 +546,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "auris-cli"
+version = "0.1.0"
+dependencies = [
+ "auris-session",
+ "env_logger",
+ "log",
+]
+
+[[package]]
 name = "auris-core"
 version = "0.1.0"
 dependencies = [
@@ -585,6 +594,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "auris-gpui"
+version = "0.1.0"
+dependencies = [
+ "auris-session",
+ "env_logger",
+ "gpui",
+ "log",
+ "rfd",
+]
+
+[[package]]
 name = "auris-io"
 version = "0.1.0"
 dependencies = [
@@ -599,22 +619,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "auris-studio"
+name = "auris-session"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "auris-core",
  "auris-dsp",
  "auris-engine",
  "auris-gpu",
  "auris-io",
  "auris-synth",
- "env_logger",
- "gpui",
  "log",
- "rfd",
- "serde",
- "serde_json",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
