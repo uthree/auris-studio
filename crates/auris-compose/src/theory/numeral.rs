@@ -23,8 +23,15 @@ pub struct Numeral {
     /// `None` means "whatever the key makes it", which is what keeps a catalogue entry usable in
     /// major and minor alike.
     pub quality: Option<Quality>,
-    /// The degree this chord is the dominant of, from a `/V` suffix.
-    pub secondary_of: Option<u8>,
+    /// A bare arabic extension, as in the `7` of `V7`.
+    ///
+    /// Held separately from `quality` because it only says *add a seventh*: which seventh, and
+    /// what triad it sits on, is the key's business. Collapsing it at parse time turned `vii7`
+    /// into a minor seventh and quietly threw away the diminished fifth.
+    pub extension: Option<u8>,
+    /// The degree this chord is the dominant of, and that degree's accidental, from a `/V`
+    /// suffix.
+    pub secondary_of: Option<(u8, i32)>,
     /// A bass degree from a `/3`-style suffix, one-based.
     pub bass_degree: Option<u8>,
 }
@@ -37,6 +44,7 @@ impl Numeral {
             accidental: 0,
             minor_case,
             quality: None,
+            extension: None,
             secondary_of: None,
             bass_degree: None,
         }
@@ -47,7 +55,7 @@ impl Numeral {
     /// A chord the user spelled out is never rewritten; that is what keeps a quoted progression
     /// sounding like the song it came from.
     pub fn is_colourable(self) -> bool {
-        self.quality.is_none() && self.secondary_of.is_none()
+        self.quality.is_none() && self.extension.is_none() && self.secondary_of.is_none()
     }
 
     /// The same numeral with `quality` written on it.
@@ -75,10 +83,20 @@ impl Numeral {
             Some(tail) if tail.chars().all(|c| c.is_ascii_digit()) => {
                 (None, Some(tail.parse::<u8>().ok()?))
             }
-            Some(tail) => (
-                Some(roman_degree(tail.trim_start_matches(['b', '#']))?),
-                None,
-            ),
+            Some(tail) => {
+                // The target of a secondary dominant may itself be altered, as in `V/bVI`.
+                let mut target = tail.trim();
+                let mut alteration = 0;
+                while let Some(rest) = target.strip_prefix('b') {
+                    alteration -= 1;
+                    target = rest;
+                }
+                while let Some(rest) = target.strip_prefix('#') {
+                    alteration += 1;
+                    target = rest;
+                }
+                (Some((roman_degree(target)?, alteration)), None)
+            }
         };
 
         let mut rest = head;
@@ -99,15 +117,12 @@ impl Numeral {
         let (numeral, quality_text) = rest.split_at(split);
         let degree = roman_degree(numeral)?;
         let minor_case = numeral.chars().all(|c| c.is_lowercase());
-        // A bare arabic number takes its third from the numeral's case, which is the convention
-        // every chart uses: `V7` is a dominant seventh and `vi7` is a minor one. A major seventh
-        // has to be written out as `Imaj7`, because `I7` means the dominant.
-        let quality = match (quality_text, minor_case) {
-            ("", _) => None,
-            ("7", true) => Some(Quality::Minor7),
-            ("9", true) => Some(Quality::Minor9),
-            ("6", true) => Some(Quality::Minor6),
-            (text, _) => Some(Quality::parse(text)?),
+        // A bare arabic number is an *extension*, resolved against the key later. Everything
+        // else is a quality the user spelled out, and is taken at face value.
+        let (quality, extension) = match quality_text {
+            "" => (None, None),
+            "6" | "7" | "9" => (None, Some(quality_text.parse::<u8>().ok()?)),
+            text => (Some(Quality::parse(text)?), None),
         };
 
         Some(Self {
@@ -115,6 +130,7 @@ impl Numeral {
             accidental,
             minor_case,
             quality,
+            extension,
             secondary_of,
             bass_degree,
         })
@@ -122,14 +138,14 @@ impl Numeral {
 
     /// The chord this numeral means in `key`.
     pub fn chord_in(self, key: Key) -> Chord {
-        if let Some(target) = self.secondary_of {
+        if let Some((target, alteration)) = self.secondary_of {
             // The dominant of a degree: a major-minor seventh a fifth above that degree's root.
-            let target_root = degree_class(key, target, 0);
+            let target_root = degree_class(key, target, alteration);
             return Chord::new(target_root.transposed(7), Quality::Dominant7);
         }
 
         let root = degree_class(key, self.degree, self.accidental);
-        let quality = self.quality.unwrap_or_else(|| {
+        let triad = self.quality.unwrap_or_else(|| {
             let diatonic = diatonic_quality(key, self.degree);
             // Case only speaks when it disagrees with the key: writing `IV` in a minor key is how
             // a borrowed major subdominant is asked for.
@@ -143,6 +159,38 @@ impl Numeral {
                 diatonic
             }
         });
+        let quality = match self.extension {
+            None => triad,
+            // An upper-case numeral with a bare seven is a dominant — `V7`, `I7`, `IV7` — which
+            // is what makes the last chord of 丸サ進行 a secondary dominant rather than a tonic.
+            // Everything else takes the seventh its own triad implies, so `vii7` keeps its
+            // diminished fifth and comes out half-diminished.
+            Some(6) => {
+                if triad.is_minor() {
+                    Quality::Minor6
+                } else {
+                    Quality::Major6
+                }
+            }
+            Some(extension) => {
+                // An upper-case numeral on a major triad takes a *dominant* seventh, which is
+                // the convention. Everything else takes the seventh the key itself stacks, so
+                // the leading tone of a harmonic minor comes out fully diminished rather than
+                // half — a distinction `with_seventh` cannot make from the triad alone.
+                let seventh = if !self.minor_case && triad == Quality::Major {
+                    Quality::Dominant7
+                } else if self.quality.is_none() && self.accidental == 0 {
+                    diatonic_seventh(key, self.degree).unwrap_or_else(|| triad.with_seventh())
+                } else {
+                    triad.with_seventh()
+                };
+                if extension >= 9 {
+                    seventh.with_ninth()
+                } else {
+                    seventh
+                }
+            }
+        };
 
         let chord = Chord::new(root, quality);
         match self.bass_degree {
@@ -163,19 +211,17 @@ impl fmt::Display for Numeral {
         } else {
             f.write_str(roman)?;
         }
-        // Write the bare number back when the quality is the one the case already implies, so
-        // `vi7` does not come back as `vim7`.
-        if let Some(quality) = self.quality {
-            let bare = match (quality, self.minor_case) {
-                (Quality::Minor7, true) | (Quality::Dominant7, false) => Some("7"),
-                (Quality::Minor9, true) | (Quality::Dominant9, false) => Some("9"),
-                (Quality::Minor6, true) | (Quality::Major6, false) => Some("6"),
-                _ => None,
-            };
-            f.write_str(bare.unwrap_or_else(|| quality.suffix()))?;
+        if let Some(extension) = self.extension {
+            write!(f, "{extension}")?;
+        } else if let Some(quality) = self.quality {
+            f.write_str(quality.suffix())?;
         }
-        if let Some(target) = self.secondary_of {
-            write!(f, "/{}", ROMAN[(target.clamp(1, 7) - 1) as usize])?;
+        if let Some((target, alteration)) = self.secondary_of {
+            f.write_str("/")?;
+            for _ in 0..alteration.abs() {
+                f.write_str(if alteration < 0 { "b" } else { "#" })?;
+            }
+            f.write_str(ROMAN[(target.clamp(1, 7) - 1) as usize])?;
         }
         if let Some(bass) = self.bass_degree {
             write!(f, "/{bass}")?;
@@ -201,12 +247,30 @@ fn roman_degree(text: &str) -> Option<u8> {
     })
 }
 
+/// The seven-note scale a numeral should be read against.
+///
+/// A pentatonic, blues or whole-tone key has no third and fifth to stack, so degree 5 would land
+/// somewhere arbitrary and every chord in the piece would be wrong. Numerals are therefore read
+/// against the parent scale of the same colour, which is the scale the harmony of such a piece is
+/// drawn from anyway — the melody stays pentatonic, the chords do not have to be.
+fn harmonic_key(key: Key) -> Key {
+    use super::scale::ScaleId;
+    let scale = match key.scale {
+        ScaleId::MajorPentatonic => ScaleId::Major,
+        ScaleId::MinorPentatonic | ScaleId::Blues => ScaleId::Minor,
+        ScaleId::WholeTone => ScaleId::Lydian,
+        other => other,
+    };
+    Key::new(key.tonic, scale)
+}
+
 /// The pitch class of a one-based degree in `key`, altered by `accidental` semitones.
 ///
 /// An altered degree is measured from the **major** scale, which is the convention roman numeral
 /// analysis uses: `bVI` means the same note in C major and in C minor, and in a minor key — where
 /// the sixth is already flat — it must not be flattened twice.
 fn degree_class(key: Key, degree: u8, accidental: i32) -> PitchClass {
+    let key = harmonic_key(key);
     let index = i32::from(degree.clamp(1, 7)) - 1;
     if accidental == 0 {
         key.class(index)
@@ -216,11 +280,31 @@ fn degree_class(key: Key, degree: u8, accidental: i32) -> PitchClass {
     }
 }
 
+/// The seventh chord the key itself builds on `degree`, by stacking four scale thirds.
+///
+/// Returns `None` when the stack is not a chord this crate can name, which a mode with an
+/// unusual interval can produce.
+pub fn diatonic_seventh(key: Key, degree: u8) -> Option<Quality> {
+    let key = harmonic_key(key);
+    let base = i32::from(degree.clamp(1, 7)) - 1;
+    let root = key.semitone(base);
+    let intervals = [
+        0,
+        key.semitone(base + 2) - root,
+        key.semitone(base + 4) - root,
+        key.semitone(base + 6) - root,
+    ];
+    Quality::ALL
+        .into_iter()
+        .find(|quality| quality.intervals() == intervals)
+}
+
 /// The triad the key itself builds on `degree`, by stacking scale thirds.
 ///
 /// Derived rather than tabulated so that harmonic minor gets its major dominant and its
 /// diminished seventh degree without a special case, and so a mode gets whatever it gets.
 pub fn diatonic_quality(key: Key, degree: u8) -> Quality {
+    let key = harmonic_key(key);
     let base = i32::from(degree.clamp(1, 7)) - 1;
     let root = key.semitone(base);
     let third = key.semitone(base + 2) - root;
@@ -375,6 +459,45 @@ mod tests {
         assert_eq!(chord_of("vi9", "C major"), "Am9");
         assert_eq!(chord_of("I6", "C major"), "C6");
         assert_eq!(chord_of("vi6", "C major"), "Am6");
+    }
+
+    #[test]
+    fn a_bare_seven_keeps_the_fifth_the_key_gives_it() {
+        // The bug this pins: `vii7` used to become a plain minor seventh, which threw away the
+        // diminished fifth and imported an F# into C major.
+        assert_eq!(chord_of("vii7", "C major"), "Bm7b5");
+        assert_eq!(chord_of("ii7", "A minor"), "Bm7b5");
+        assert_eq!(chord_of("vii7", "A harmonic-minor"), "G#dim7");
+        // And the ordinary cases still read the way a chart writes them.
+        assert_eq!(chord_of("V7", "C major"), "G7");
+        assert_eq!(chord_of("I7", "C major"), "C7");
+        assert_eq!(chord_of("vi7", "C major"), "Am7");
+        assert_eq!(chord_of("IV7", "C major"), "F7");
+    }
+
+    #[test]
+    fn a_numeral_in_a_pentatonic_key_still_spells_a_chord() {
+        // A five-note scale has no degree five to stack thirds on, so numerals are read against
+        // the parent seven-note scale rather than landing somewhere arbitrary.
+        assert_eq!(chord_of("I", "C major-pentatonic"), "C");
+        assert_eq!(chord_of("V", "C major-pentatonic"), "G");
+        assert_eq!(chord_of("vi", "C major-pentatonic"), "Am");
+        assert_eq!(chord_of("i", "A minor-pentatonic"), "Am");
+        assert_eq!(chord_of("v", "A minor-pentatonic"), "Em");
+        assert_eq!(
+            chord_of("V", "A minor-pentatonic"),
+            "E",
+            "upper case asks for the major"
+        );
+        assert_eq!(chord_of("i", "A blues"), "Am");
+    }
+
+    #[test]
+    fn a_secondary_dominant_target_may_be_altered() {
+        // V/bVI is the dominant of the flat sixth, not of the sixth.
+        assert_eq!(chord_of("V/bVI", "C major"), "D#7");
+        assert_eq!(chord_of("V/VI", "C major"), "E7");
+        assert_eq!(Numeral::parse("V/bVI").unwrap().to_string(), "V/bVI");
     }
 
     #[test]

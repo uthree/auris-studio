@@ -401,10 +401,12 @@ pub struct SongSpec {
 impl Default for SongSpec {
     fn default() -> Self {
         let mut charts = BTreeMap::new();
-        charts.insert(
-            "main".to_string(),
-            Chart::parse("@axis").unwrap_or_else(|| Chart::new(Vec::new(), ChartOrigin::Given)),
-        );
+        // Marked generated, not quoted: a progression the user did not ask for is the composer's
+        // own, so the mood is free to colour it. A chart anyone typed or named is left alone.
+        let default_chart = Chart::parse("@axis")
+            .map(|chart| Chart::new(chart.bars, ChartOrigin::Generated))
+            .unwrap_or_else(|| Chart::new(Vec::new(), ChartOrigin::Generated));
+        charts.insert("main".to_string(), default_chart);
         let mut sections = BTreeMap::new();
         for name in ["intro", "verse", "chorus", "outro"] {
             sections.insert(name.to_string(), SectionSpec::named(name));
@@ -502,6 +504,8 @@ impl SongSpec {
         let mut declared_form: Option<Vec<String>> = None;
 
         let mut block = Block::Song;
+        // A byte-order mark is invisible in an editor and would make the first field unparseable.
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         for (index, raw) in text.lines().enumerate() {
             let line_number = index + 1;
             let line = strip_comment(raw).trim();
@@ -512,6 +516,15 @@ impl SongSpec {
             if let Some(header) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
                 match Block::parse(header) {
                     Some(Block::Part(name)) => {
+                        if declared_parts.iter().any(|part| part.name == name) {
+                            errors.push(SpecError {
+                                line: line_number,
+                                message: format!(
+                                    "`{name}` is already a part; two blocks of the same name \
+                                     would silently merge"
+                                ),
+                            });
+                        }
                         declared_parts.push(PartSpec::of_role(&name, infer_role(&name)));
                         block = Block::Part(name);
                     }
@@ -558,7 +571,13 @@ impl SongSpec {
                     apply_section_field(section, field, value)
                 }
                 Block::Part(name) => {
-                    match declared_parts.iter_mut().find(|part| &part.name == name) {
+                    // The *last* block of that name, so the duplicate reported above still gets
+                    // its own fields rather than writing into its namesake.
+                    match declared_parts
+                        .iter_mut()
+                        .rev()
+                        .find(|part| &part.name == name)
+                    {
                         Some(part) => apply_part_field(part, field, value),
                         None => Err(format!("no part named `{name}`")),
                     }
@@ -578,8 +597,10 @@ impl SongSpec {
         if !declared_sections.is_empty() {
             spec.sections = declared_sections;
         }
-        if !declared_charts.is_empty() {
-            spec.charts = declared_charts;
+        // Merged rather than replaced: a document with both a header `chords:` and a `[harmony]`
+        // block used to lose whichever came first.
+        for (name, chart) in declared_charts {
+            spec.charts.insert(name, chart);
         }
         if let Some(form) = declared_form {
             spec.form = form;
@@ -599,6 +620,38 @@ impl SongSpec {
             });
         }
 
+        // A name that does not resolve would otherwise be answered by a silent substitution: a
+        // section would play a progression nobody asked for, or fall silent for want of a part.
+        let part_names: Vec<&str> = spec.parts.iter().map(|part| part.name.as_str()).collect();
+        for (name, section) in &spec.sections {
+            if !spec.charts.contains_key(&section.chords) {
+                errors.push(SpecError {
+                    line: 0,
+                    message: format!(
+                        "section `{name}` plays `{}`, which is not a chart; there is {}",
+                        section.chords,
+                        spec.charts
+                            .keys()
+                            .map(String::as_str)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                });
+            }
+            for part in &section.parts {
+                if !part_names.contains(&part.as_str()) {
+                    errors.push(SpecError {
+                        line: 0,
+                        message: format!(
+                            "section `{name}` names the part `{part}`, which does not exist; \
+                             there is {}",
+                            part_names.join(", ")
+                        ),
+                    });
+                }
+            }
+        }
+
         if errors.is_empty() {
             Ok(spec)
         } else {
@@ -614,7 +667,7 @@ impl SongSpec {
         let mut out = String::new();
         out.push_str(&format!("title:    {}\n", self.title));
         out.push_str(&format!("key:      {}\n", self.key.to_text()));
-        out.push_str(&format!("tempo:    {:.0}\n", self.tempo));
+        out.push_str(&format!("tempo:    {}\n", self.tempo));
         out.push_str(&format!(
             "meter:    {}/{}\n",
             self.meter.numerator, self.meter.denominator
@@ -776,8 +829,10 @@ fn apply_song_field(
                 .trim()
                 .parse()
                 .map_err(|_| format!("`{bottom}` is not a beat value"))?;
-            if numerator == 0 || !matches!(denominator, 1 | 2 | 4 | 8 | 16) {
-                return Err(format!("`{value}` is not a meter this can count"));
+            if !(1..=32).contains(&numerator) || !matches!(denominator, 1 | 2 | 4 | 8 | 16) {
+                return Err(format!(
+                    "`{value}` is not a meter this can count; the beat count runs from 1 to 32"
+                ));
             }
             spec.meter = TimeSignature::new(numerator, denominator);
         }
@@ -989,6 +1044,86 @@ mod tests {
         .unwrap();
         assert_eq!(spec.key.to_text(), "D minor");
         assert_eq!(spec.tempo, 100.0);
+    }
+
+    #[test]
+    fn a_harmony_block_adds_to_the_header_progression() {
+        // These used to overwrite one another, so a document with both lost one of them.
+        let spec = SongSpec::parse(
+            "
+            chords: @marusa
+
+            [harmony]
+            bridge: | ii7 | V7 | Imaj7 | Imaj7 |
+            ",
+        )
+        .unwrap();
+        assert_eq!(spec.charts.len(), 2);
+        assert!(spec.charts.contains_key("main"));
+        assert!(spec.charts.contains_key("bridge"));
+    }
+
+    #[test]
+    fn two_blocks_of_the_same_name_are_a_mistake() {
+        let errors = SongSpec::parse("[part lead]\n[part lead]").unwrap_err();
+        assert!(
+            errors[0].message.contains("already a part"),
+            "{:?}",
+            errors[0]
+        );
+    }
+
+    #[test]
+    fn a_name_that_does_not_resolve_is_reported_rather_than_substituted() {
+        let errors = SongSpec::parse("form: verse\n[section verse]\nchords: nope").unwrap_err();
+        assert!(errors[0].message.contains("not a chart"), "{:?}", errors[0]);
+
+        let errors = SongSpec::parse("form: verse\n[section verse]\nparts: nope").unwrap_err();
+        assert!(
+            errors[0].message.contains("does not exist"),
+            "{:?}",
+            errors[0]
+        );
+    }
+
+    #[test]
+    fn a_meter_or_a_repeat_count_that_would_exhaust_memory_is_refused() {
+        assert!(SongSpec::parse("meter: 4000000/4").is_err());
+        assert!(SongSpec::parse("meter: 0/4").is_err());
+        assert!(SongSpec::parse("chords: @axis x99999999").is_err());
+        assert!(SongSpec::parse("chords: @axis x4").is_ok());
+    }
+
+    #[test]
+    fn a_byte_order_mark_does_not_hide_the_first_field() {
+        let spec = SongSpec::parse("\u{feff}tempo: 96").unwrap();
+        assert_eq!(spec.tempo, 96.0);
+    }
+
+    #[test]
+    fn a_groove_name_is_matched_the_way_every_other_word_is() {
+        assert!(SongSpec::parse("groove: Basic-Rock").is_ok());
+        assert!(SongSpec::parse("groove: SHUFFLE").is_ok());
+    }
+
+    #[test]
+    fn a_fractional_tempo_survives_the_round_trip() {
+        let spec = SongSpec::parse("tempo: 128.5").unwrap();
+        assert_eq!(SongSpec::parse(&spec.to_text()).unwrap().tempo, 128.5);
+    }
+
+    #[test]
+    fn the_default_progression_is_the_composers_own_to_colour() {
+        // A chart nobody asked for may be coloured by the mood; a quoted one may not.
+        use crate::theory::chart::ChartOrigin;
+        assert_eq!(
+            SongSpec::default().charts["main"].origin,
+            ChartOrigin::Generated
+        );
+        assert_eq!(
+            SongSpec::parse("chords: @marusa").unwrap().charts["main"].origin,
+            ChartOrigin::Given
+        );
     }
 
     #[test]

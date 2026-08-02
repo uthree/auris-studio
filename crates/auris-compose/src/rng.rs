@@ -6,13 +6,11 @@
 //! stream's numbers depend only on the seed and that name. Adding a part, or a pass, or a roll
 //! inside one pass, leaves every other stream untouched.
 
-use std::hash::{Hash, Hasher};
-
 /// One component of a stream name.
 ///
 /// Streams are named with a slice of these rather than a formatted string so that a name cannot
 /// be built by accidental concatenation: `["a", "bc"]` and `["ab", "c"]` are different streams.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Key<'a> {
     /// A fixed word naming a pass, a part or a phase.
     Word(&'a str),
@@ -55,19 +53,47 @@ pub struct Rng {
 
 impl Rng {
     /// The stream named `path` within `seed`.
+    ///
+    /// FNV-1a written out here rather than `DefaultHasher`, whose values std explicitly does not
+    /// promise to keep stable across releases — a seed has to mean the same piece next year.
     pub fn stream(seed: u64, path: &[Key<'_>]) -> Self {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        seed.hash(&mut hasher);
+        const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+        const PRIME: u64 = 0x0000_0100_0000_01b3;
+        let mut hash = OFFSET;
+        let mut eat = |byte: u8| {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(PRIME);
+        };
+        for byte in seed.to_le_bytes() {
+            eat(byte);
+        }
         // The length goes in first so that a shorter path can never hash to the same value as a
         // longer one that happens to start the same way.
-        path.len().hash(&mut hasher);
+        for byte in (path.len() as u64).to_le_bytes() {
+            eat(byte);
+        }
         for key in path {
-            key.hash(&mut hasher);
+            match key {
+                Key::Word(word) => {
+                    eat(0);
+                    for byte in (word.len() as u64).to_le_bytes() {
+                        eat(byte);
+                    }
+                    for byte in word.as_bytes() {
+                        eat(*byte);
+                    }
+                }
+                Key::Index(index) => {
+                    eat(1);
+                    for byte in index.to_le_bytes() {
+                        eat(byte);
+                    }
+                }
+            }
         }
         Self {
-            // A zero state would make SplitMix64 return a fixed sequence, and a hasher is free
-            // to produce one.
-            state: hasher.finish() | 1,
+            // A zero state would make SplitMix64 return a fixed sequence.
+            state: hash | 1,
         }
     }
 
@@ -169,6 +195,14 @@ mod tests {
         let short = Rng::stream(1, &[Key::Word("lead")]).next_u64();
         let long = Rng::stream(1, &[Key::Word("lead"), Key::Word("")]).next_u64();
         assert_ne!(short, long);
+    }
+
+    #[test]
+    fn a_stream_is_pinned_to_an_exact_value() {
+        // The whole point of a seed is that it means the same piece next year, so the hash has
+        // to be one this crate owns rather than one the standard library may change.
+        let mut rng = Rng::stream(42, &[Key::Word("part"), Key::Word("lead"), Key::Index(3)]);
+        assert_eq!(rng.next_u64(), 11_621_116_030_062_456_483);
     }
 
     #[test]

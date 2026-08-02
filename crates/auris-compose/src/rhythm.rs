@@ -347,9 +347,10 @@ pub const GROOVES: &[Groove] = &[
     },
 ];
 
-/// The groove with this name.
+/// The groove with this name, matched the way every other vocabulary in the format is.
 pub fn groove(name: &str) -> Option<&'static Groove> {
-    GROOVES.iter().find(|groove| groove.name == name.trim())
+    let name = name.trim().to_ascii_lowercase();
+    GROOVES.iter().find(|groove| groove.name == name)
 }
 
 /// How far a note on `step` is delayed by swinging at `percent`.

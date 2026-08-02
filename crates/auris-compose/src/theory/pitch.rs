@@ -113,12 +113,14 @@ pub fn fold_into(midi: i32, low: i32, high: i32) -> i32 {
     while folded > high {
         folded -= OCTAVE;
     }
-    // One octave down may have overshot the bottom of a window narrower than an octave.
-    if folded < low {
-        if high - midi.rem_euclid(OCTAVE) >= low {
-            return folded + OCTAVE;
-        }
-        return low;
+    // A window narrower than an octave may contain no octave of this pitch at all, in which case
+    // the loops above have stepped past it in both directions. Answer with the nearer edge.
+    if folded < low || folded > high {
+        return if (low - folded).abs() <= (folded - high).abs() {
+            low
+        } else {
+            high
+        };
     }
     folded
 }

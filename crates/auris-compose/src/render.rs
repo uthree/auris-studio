@@ -112,9 +112,13 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
                 .iter()
                 .filter(|note| note.section == index)
                 .filter_map(|note| {
-                    // Rebase onto the clip, and drop anything humanisation pushed outside it.
-                    let start = note.start - section.start;
-                    if start < Ticks::ZERO || start >= section.length {
+                    // Rebase onto the clip. A note humanisation nudged a few ticks over a
+                    // section boundary is clamped back rather than deleted — dropping it took
+                    // the downbeat out of every section at the default humanisation.
+                    let start = (note.start - section.start)
+                        .max_zero()
+                        .min(section.length - Ticks(1));
+                    if note.start - section.start >= section.length {
                         return None;
                     }
                     // Truncate rather than let a note overhang: the scheduler would drop it
@@ -265,6 +269,54 @@ mod tests {
                 assert_eq!(keys, sorted, "`{}` is out of order", clip.name);
             }
         }
+    }
+
+    #[test]
+    fn humanising_never_loses_a_sections_downbeat() {
+        // Deleting a note nudged a few ticks before its section took the downbeat out of every
+        // section but the first; it is clamped back into the clip instead.
+        let straight = compose_text(BASE);
+        let loose = compose_text(&BASE.replace("humanize: 0", "humanize: 1.0"));
+        for (a, b) in straight.tracks.iter().zip(&loose.tracks) {
+            for (before, after) in a.clips.iter().zip(&b.clips) {
+                assert_eq!(
+                    before.notes.len(),
+                    after.notes.len(),
+                    "`{}` lost {} notes to humanisation",
+                    after.name,
+                    before.notes.len() as i64 - after.notes.len() as i64
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_extended_chord_is_voiced_upward_rather_than_folded_flat() {
+        // A ninth folded into the triad sounds as a second against the root.
+        let piece = compose_text(
+            "
+            key: C major
+            form: verse
+            chords: | Imaj9 | Imaj9 | Imaj9 | Imaj9 |
+            humanize: 0
+            [section verse]
+            bars: 4
+            [part chords]
+            ",
+        );
+        let clip = &piece.tracks[0].clips[0];
+        let first: Vec<u8> = clip
+            .notes
+            .iter()
+            .filter(|note| note.start == Ticks::ZERO)
+            .map(|note| note.pitch)
+            .collect();
+        assert!(first.len() >= 4, "only {} notes in the chord", first.len());
+        let span = first.iter().max().unwrap() - first.iter().min().unwrap();
+        assert!(
+            span > 12,
+            "a ninth chord spanning {span} semitones has been folded into one octave"
+        );
     }
 
     #[test]

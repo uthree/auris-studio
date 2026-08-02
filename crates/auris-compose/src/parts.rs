@@ -244,23 +244,38 @@ fn comp(
     let mut previous: Vec<i32> = Vec::new();
 
     for event in &section.events {
-        // Voiced as close to the last chord as possible, which is what voice leading is: the
-        // notes that can stay, stay.
-        let mut voicing: Vec<i32> = event
-            .chord
-            .classes()
-            .iter()
-            .map(|class| {
-                let target = previous
-                    .iter()
-                    .copied()
-                    .min_by_key(|pitch| (pitch - class.midi(4)).abs())
-                    .unwrap_or((low + high) / 2);
-                let mut pitch = class.midi(target.div_euclid(OCTAVE) - 1);
-                pitch = fold_into(pitch, low, high);
-                pitch
-            })
-            .collect();
+        // Voiced upward from a floor, so a ninth sounds an octave and a tone above the root
+        // rather than being folded into the triad as a second. The floor is whichever octave
+        // leaves the chord nearest to where the last one sat — as much voice leading as a part
+        // that plays whole chords can honestly claim.
+        let centre = if previous.is_empty() {
+            (low + high) / 2
+        } else {
+            previous.iter().sum::<i32>() / previous.len() as i32
+        };
+        let mut voicing: Vec<i32> = Vec::new();
+        let mut best_distance = i32::MAX;
+        for octave in -1..=2 {
+            let candidate = event.chord.voiced_from(low + octave * OCTAVE);
+            if candidate.iter().any(|pitch| *pitch < low || *pitch > high) {
+                continue;
+            }
+            let middle = candidate.iter().sum::<i32>() / candidate.len().max(1) as i32;
+            if (middle - centre).abs() < best_distance {
+                best_distance = (middle - centre).abs();
+                voicing = candidate;
+            }
+        }
+        // Nothing fits the window — an extended chord in a narrow range — so fold each note into
+        // it and accept that the spacing suffers.
+        if voicing.is_empty() {
+            voicing = event
+                .chord
+                .classes()
+                .iter()
+                .map(|class| fold_into(class.midi(4), low, high))
+                .collect();
+        }
         voicing.sort_unstable();
         voicing.dedup();
         previous.clone_from(&voicing);
@@ -319,6 +334,7 @@ fn arp(
             RngKey::Word("part"),
             RngKey::Word(&part.name),
             RngKey::Word("arp"),
+            RngKey::Word(&section.name),
             RngKey::Index(section.instance as u64),
         ],
     );
@@ -367,15 +383,26 @@ fn bass(
     let mut notes = Vec::new();
 
     for event in &section.events {
-        let root = event.chord.bass_class().midi(part.octave);
-        let root = fold_into(root, low, high);
-        let fifth = fold_into(root + 7, low, high);
+        let root = fold_into(event.chord.bass_class().midi(part.octave), low, high);
+        // The chord's own fifth, read off the chord rather than assumed perfect and measured
+        // from the chord's root rather than from a slash bass. A blind `root + 7` played F# over
+        // a B diminished and a C over a G/F — notes in neither the chord nor the key.
+        let fifth_class = event
+            .chord
+            .classes()
+            .get(2)
+            .copied()
+            .unwrap_or(event.chord.root);
+        let fifth = fold_into(fifth_class.midi(part.octave), low, high);
 
-        let first = grid.step_of(event.start);
         let steps = grid.step_of(event.length).max(1);
+        // The groove is written as one bar, so it is read modulo the bar rather than modulo its
+        // own length — otherwise a meter that is not sixteen steps drifts against the drums.
+        let per_bar = grid.steps_per_bar().max(1);
+        let first = grid.step_of(event.start) % per_bar;
         // Follow the kick inside this chord, and always sound its start so a change is heard.
         let mut onsets: Vec<usize> = (0..steps)
-            .filter(|offset| kick.at(first + offset).is_some())
+            .filter(|offset| kick.at((first + offset) % per_bar).is_some())
             .collect();
         if !onsets.contains(&0) {
             onsets.insert(0, 0);
@@ -419,6 +446,9 @@ fn drums(
         Role::Snare => DrumVoice::Snare,
         _ => DrumVoice::ClosedHat,
     };
+    // A rhythm the user wrote is played as written. Only the groove's own pattern is thinned,
+    // because that is the composer's suggestion rather than an instruction.
+    let written = part.rhythm.is_some();
     let pattern = part
         .rhythm
         .clone()
@@ -433,6 +463,7 @@ fn drums(
                 RngKey::Word("part"),
                 RngKey::Word(&part.name),
                 RngKey::Word("drums"),
+                RngKey::Word(&section.name),
                 RngKey::Index(section.instance as u64),
                 RngKey::Index(bar as u64),
             ],
@@ -445,7 +476,7 @@ fn drums(
             let weight = grid.weight(step);
             // A quiet section thins the pattern out rather than playing it softly, which is what
             // a drummer does. The downbeat is never thinned, or the bar loses its footing.
-            if weight < 4 {
+            if !written && weight < 4 {
                 let survives =
                     (0.45 + 0.14 * f32::from(weight)) * (0.45 + 0.55 * section.intensity);
                 if !rng.chance(survives.clamp(0.0, 1.0)) {
@@ -472,14 +503,6 @@ fn drums(
 /// assert on an exact tick rather than on a tolerance.
 fn humanise(spec: &SongSpec, frame: &Frame, part: &PartSpec, notes: &mut [Draft]) {
     let grid = frame.grid;
-    let mut rng = Rng::stream(
-        frame.seed,
-        &[
-            RngKey::Word("part"),
-            RngKey::Word(&part.name),
-            RngKey::Word("humanize"),
-        ],
-    );
     // Where a player sits against the beat: a hat pushes, a bass drags.
     let push = match part.role {
         Role::Hat => -8.0,
@@ -494,6 +517,18 @@ fn humanise(spec: &SongSpec, frame: &Frame, part: &PartSpec, notes: &mut [Draft]
         let step = grid.step_of(Ticks(bar_position));
         let mut start = note.start + swing_offset(grid, step, spec.swing);
         if spec.humanize > 0.0 {
+            // Named by *where the note is* rather than by how many notes came before it, so
+            // adding a note to bar one does not re-time the whole song.
+            let mut rng = Rng::stream(
+                frame.seed,
+                &[
+                    RngKey::Word("part"),
+                    RngKey::Word(&part.name),
+                    RngKey::Word("humanize"),
+                    RngKey::Index(note.start.raw().max(0) as u64),
+                    RngKey::Index(u64::from(note.pitch)),
+                ],
+            );
             let jitter = rng.jitter(6.0 + 19.0 * spec.humanize) + push;
             start += Ticks(jitter.round() as i64);
             let scale = 1.0 + rng.jitter(0.06 * spec.humanize);
@@ -675,6 +710,28 @@ mod tests {
     }
 
     #[test]
+    fn a_written_rhythm_survives_a_quiet_section() {
+        // Thinning is a suggestion about the groove, not licence to ignore an instruction.
+        let (_, frame, parts) = draft(
+            "
+            form: verse
+            humanize: 0
+            [section verse]
+            bars: 1
+            intensity: 0.05
+            [part kick]
+            rhythm: x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~
+            ",
+        );
+        let steps: Vec<usize> = part(&parts, "kick")
+            .notes
+            .iter()
+            .map(|note| frame.grid.step_of(note.start))
+            .collect();
+        assert_eq!(steps, vec![0, 2, 4, 6, 8, 10, 12, 14]);
+    }
+
+    #[test]
     fn a_written_rhythm_is_played_as_written() {
         let (_, frame, parts) = draft(
             "
@@ -742,6 +799,101 @@ mod tests {
             .find(|note| note.start == section.start + event.start)
             .expect("a note at the change");
         assert_eq!(PitchClass::new(i32::from(note.pitch)), expected);
+    }
+
+    #[test]
+    fn no_part_plays_a_note_outside_the_scale_or_the_chord() {
+        // The fixture deliberately contains a diminished triad and a slash chord, which is where
+        // a bass line that assumed a perfect fifth above the sounding bass went wrong.
+        for chart in [
+            "| I | vii | I | V |",
+            "@koakuma",
+            "@marusa",
+            "@junjo",
+            "@blues",
+        ] {
+            let text = format!(
+                "key: C major\nform: verse\nchords: {chart}\nhumanize: 0\n\
+                 [section verse]\nbars: 4"
+            );
+            let (spec, frame, parts) = draft(&text);
+            let section = &frame.sections[0];
+            for (part_draft, declared) in parts.iter().zip(&spec.parts) {
+                if declared.role.is_drum() {
+                    continue;
+                }
+                for note in &part_draft.notes {
+                    let class = PitchClass::new(i32::from(note.pitch));
+                    let chord = section.chord_at(note.start - section.start);
+                    let in_chord = chord.is_some_and(|event| event.chord.contains(class));
+                    assert!(
+                        section.key.scale.contains(section.key.tonic, class) || in_chord,
+                        "`{}` played {class} over {} in `{chart}`",
+                        part_draft.name,
+                        chord.map(|e| e.chord.to_string()).unwrap_or_default()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn adding_a_part_leaves_the_other_parts_alone() {
+        // Every part hangs off the same skeleton, so taking that skeleton from whichever melody
+        // part happened to be in the roster meant adding a part rewrote the whole arrangement.
+        let base = "form: verse\nchords: @axis\nhumanize: 0\n[section verse]\nbars: 4\n\
+                    [part bass]\n[part kick]";
+        let before = draft(base).2;
+        let after = draft(&format!("{base}\n[part extra]\nrole: pad")).2;
+        for name in ["bass", "kick"] {
+            assert_eq!(
+                part(&before, name).notes,
+                part(&after, name).notes,
+                "adding a part rewrote `{name}`"
+            );
+        }
+    }
+
+    #[test]
+    fn editing_one_section_leaves_the_others_alone() {
+        // The humanise stream used to be one sequential draw per part, so a note added anywhere
+        // re-timed every note after it.
+        let base = "form: verse chorus\nchords: @axis\nhumanize: 0.6\nseed: 3\n\
+                    [section verse]\nbars: 2\n[section chorus]\nbars: 2\nintensity: {}";
+        let quiet = draft(&base.replace("{}", "0.9")).2;
+        let loud = draft(&base.replace("{}", "0.4")).2;
+        for (a, b) in quiet.iter().zip(&loud) {
+            let verse_a: Vec<&Draft> = a.notes.iter().filter(|n| n.section == 0).collect();
+            let verse_b: Vec<&Draft> = b.notes.iter().filter(|n| n.section == 0).collect();
+            assert_eq!(
+                verse_a, verse_b,
+                "changing the chorus rewrote the verse of `{}`",
+                a.name
+            );
+        }
+    }
+
+    #[test]
+    fn the_bass_follows_the_kick_in_an_odd_meter() {
+        // The groove is a bar long, so it has to be read modulo the bar rather than modulo its
+        // own sixteen steps, or it drifts against the drums in anything but four four.
+        let (_, frame, parts) =
+            draft("form: verse\nmeter: 3/4\nchords: @axis\nhumanize: 0\n[section verse]\nbars: 4");
+        let bass = part(&parts, "bass");
+        let kick = part(&parts, "kick");
+        assert!(!bass.notes.is_empty() && !kick.notes.is_empty());
+        // Every kick that survived thinning should have a bass note with it somewhere in the bar.
+        let bar = frame.grid.bar_ticks();
+        for note in &kick.notes {
+            let bar_index = note.start.raw() / bar.raw();
+            assert!(
+                bass.notes
+                    .iter()
+                    .any(|other| other.start.raw() / bar.raw() == bar_index),
+                "no bass in the bar with a kick at {}",
+                note.start.raw()
+            );
+        }
     }
 
     #[test]

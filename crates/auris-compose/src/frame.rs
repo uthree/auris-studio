@@ -102,7 +102,7 @@ pub fn plan(spec: &SongSpec) -> Frame {
         }
 
         let length = grid.bar_ticks() * section.bars as i64;
-        let skeleton = skeleton(&events, key, spec, spec.seed, name, instance);
+        let skeleton = skeleton(&events, key, spec.seed, name, instance);
 
         sections.push(SectionPlan {
             name: name.clone(),
@@ -175,7 +175,6 @@ fn colour(events: &mut [HarmonicEvent], mood: Mood, seed: u64, section: &str, in
 fn skeleton(
     events: &[HarmonicEvent],
     key: Key,
-    spec: &SongSpec,
     seed: u64,
     section: &str,
     instance: usize,
@@ -183,11 +182,10 @@ fn skeleton(
     if events.is_empty() {
         return Vec::new();
     }
-    let melody = spec
-        .parts
-        .iter()
-        .find(|part| part.role == crate::spec::Role::Melody);
-    let (low, high) = melody.map_or((60, 84), |part| part.range());
+    // The role's own range, not whichever melody part happens to be in the roster: taking it
+    // from a part would mean adding or removing a part silently rewrote every other part, since
+    // they all hang off this skeleton.
+    let (low, high) = crate::spec::Role::Melody.range();
 
     // A gentle arch over the phrase: rising to two thirds of the way through, then falling. Most
     // melodies do this, and a skeleton that does it sounds intentional rather than aimless.

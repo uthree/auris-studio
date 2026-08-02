@@ -58,10 +58,14 @@ impl Chart {
             // Split on whitespace, not on `x`: a name may contain one, and `@axis x2` must not
             // be read as the name `a` repeated `is x2` times.
             let (name, repeats) = match rest.split_once(char::is_whitespace) {
-                Some((name, count)) => (
-                    name.trim(),
-                    count.trim().trim_start_matches('x').parse::<usize>().ok()?,
-                ),
+                Some((name, count)) => {
+                    let repeats: usize = count.trim().trim_start_matches('x').parse().ok()?;
+                    // A repeat count large enough to exhaust memory is a typo, not a request.
+                    if !(1..=64).contains(&repeats) {
+                        return None;
+                    }
+                    (name.trim(), repeats)
+                }
                 None => (rest.trim(), 1),
             };
             let chart = catalog(name)?;
