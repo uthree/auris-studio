@@ -1,0 +1,474 @@
+//! `auris.fx.reverb` — a Freeverb-style Schroeder reverberator.
+
+use auris_core::AudioBuffer;
+use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
+use auris_core::plugin::{
+    Effect, Parameterized, PluginCategory, PluginDescriptor, PrepareContext, ProcessContext,
+};
+
+use crate::MILLISECONDS_PER_SECOND;
+use crate::bank::ParamBank;
+use crate::delay_line::DelayLine;
+
+const P_ROOM_SIZE: u32 = 0;
+const P_DAMPING: u32 = 1;
+const P_WIDTH: u32 = 2;
+const P_MIX: u32 = 3;
+const P_PRE_DELAY_MS: u32 = 4;
+
+/// Comb delay lengths in samples, from Jezar at Dreampoint's public-domain *Freeverb*.
+///
+/// They are mutually prime-ish and spread over roughly 25 to 37 ms, which is what stops the
+/// parallel bank from ringing on a single pitch. Given at the rate they were tuned for.
+const COMB_TUNING: [usize; 8] = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
+
+/// All-pass delay lengths in samples, same source.
+const ALLPASS_TUNING: [usize; 4] = [556, 441, 341, 225];
+
+/// Offset added to every delay on the right channel, which decorrelates the two sides.
+const STEREO_SPREAD: usize = 23;
+
+/// Sample rate the tunings above were chosen at; everything is scaled from here.
+const TUNING_SAMPLE_RATE: f64 = 44_100.0;
+
+/// Input attenuation. The comb bank has a large DC gain, so the dry signal has to be scaled
+/// well down before entering it.
+const FIXED_GAIN: f32 = 0.015;
+
+/// Damping, room size and wet level are all mapped from 0..1 with Jezar's original constants.
+const SCALE_DAMP: f32 = 0.4;
+const SCALE_ROOM: f32 = 0.28;
+const OFFSET_ROOM: f32 = 0.7;
+const SCALE_WET: f32 = 3.0;
+
+/// All-pass feedback, fixed in the original design.
+const ALLPASS_FEEDBACK: f32 = 0.5;
+
+/// Longest pre-delay offered, in milliseconds.
+const MAX_PRE_DELAY_MS: f32 = 200.0;
+
+/// Ceiling on the reported tail so a maximum-size room does not add a minute to every export.
+const MAX_TAIL_SECONDS: f32 = 10.0;
+
+/// State below this magnitude is flushed; see [`crate::biquad`] for the reasoning.
+const DENORMAL_FLOOR: f32 = 1.0e-30;
+
+/// A low-pass damped feedback comb filter.
+struct Comb {
+    buffer: Vec<f32>,
+    index: usize,
+    filter_store: f32,
+}
+
+impl Comb {
+    fn new(length: usize) -> Self {
+        Self {
+            buffer: vec![0.0; length.max(1)],
+            index: 0,
+            filter_store: 0.0,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.buffer.fill(0.0);
+        self.index = 0;
+        self.filter_store = 0.0;
+    }
+
+    /// `damp` is the low-pass coefficient inside the feedback path; `feedback` sets the decay.
+    #[inline]
+    fn process(&mut self, input: f32, feedback: f32, damp: f32) -> f32 {
+        let output = self.buffer[self.index];
+        self.filter_store = output * (1.0 - damp) + self.filter_store * damp;
+        if self.filter_store.abs() < DENORMAL_FLOOR {
+            self.filter_store = 0.0;
+        }
+        self.buffer[self.index] = input + self.filter_store * feedback;
+        self.index += 1;
+        if self.index >= self.buffer.len() {
+            self.index = 0;
+        }
+        output
+    }
+}
+
+/// A Schroeder all-pass section: flat magnitude, dense phase.
+struct Allpass {
+    buffer: Vec<f32>,
+    index: usize,
+}
+
+impl Allpass {
+    fn new(length: usize) -> Self {
+        Self {
+            buffer: vec![0.0; length.max(1)],
+            index: 0,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.buffer.fill(0.0);
+        self.index = 0;
+    }
+
+    #[inline]
+    fn process(&mut self, input: f32) -> f32 {
+        let buffered = self.buffer[self.index];
+        let output = buffered - input;
+        self.buffer[self.index] = input + buffered * ALLPASS_FEEDBACK;
+        self.index += 1;
+        if self.index >= self.buffer.len() {
+            self.index = 0;
+        }
+        output
+    }
+}
+
+/// One channel's network: eight parallel combs feeding four all-passes in series.
+struct ReverbChannel {
+    combs: [Comb; 8],
+    allpasses: [Allpass; 4],
+}
+
+impl ReverbChannel {
+    fn new(sample_rate: f64, offset: usize) -> Self {
+        Self {
+            combs: std::array::from_fn(|i| Comb::new(scaled(COMB_TUNING[i], sample_rate, offset))),
+            allpasses: std::array::from_fn(|i| {
+                Allpass::new(scaled(ALLPASS_TUNING[i], sample_rate, offset))
+            }),
+        }
+    }
+
+    fn reset(&mut self) {
+        for comb in &mut self.combs {
+            comb.reset();
+        }
+        for allpass in &mut self.allpasses {
+            allpass.reset();
+        }
+    }
+
+    #[inline]
+    fn process(&mut self, input: f32, feedback: f32, damp: f32) -> f32 {
+        let mut wet = 0.0;
+        for comb in &mut self.combs {
+            wet += comb.process(input, feedback, damp);
+        }
+        for allpass in &mut self.allpasses {
+            wet = allpass.process(wet);
+        }
+        wet
+    }
+}
+
+fn scaled(tuning: usize, sample_rate: f64, offset: usize) -> usize {
+    let length = (tuning as f64 * sample_rate / TUNING_SAMPLE_RATE).round() as usize;
+    (length + offset).max(1)
+}
+
+/// A Freeverb-style reverberator.
+pub struct Reverb {
+    params: ParamBank,
+    sample_rate: f32,
+    channels: Vec<ReverbChannel>,
+    pre_delay: Vec<DelayLine>,
+    /// Wet signal per channel for the current frame; sized in `prepare` so `process` never
+    /// allocates while it gathers across channels.
+    wet: Vec<f32>,
+}
+
+impl Default for Reverb {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Reverb {
+    /// A new reverb at its default settings.
+    pub fn new() -> Self {
+        let descriptors = vec![
+            ParamDescriptor::percent(P_ROOM_SIZE, "room_size", "Room Size", 0.5),
+            ParamDescriptor::percent(P_DAMPING, "damping", "Damping", 0.5),
+            ParamDescriptor::percent(P_WIDTH, "width", "Width", 1.0),
+            ParamDescriptor::percent(P_MIX, "mix", "Mix", 0.3),
+            ParamDescriptor::new(
+                P_PRE_DELAY_MS,
+                "pre_delay_ms",
+                "Pre-Delay",
+                0.0,
+                MAX_PRE_DELAY_MS,
+                0.0,
+            )
+            .with_unit(ParamUnit::Milliseconds),
+        ];
+        Self {
+            params: ParamBank::new(descriptors),
+            sample_rate: 48_000.0,
+            channels: Vec::new(),
+            pre_delay: Vec::new(),
+            wet: Vec::new(),
+        }
+    }
+
+    /// Comb feedback for the current room size, in `OFFSET_ROOM ..= OFFSET_ROOM + SCALE_ROOM`.
+    fn feedback(&self) -> f32 {
+        self.params.at(P_ROOM_SIZE) * SCALE_ROOM + OFFSET_ROOM
+    }
+}
+
+impl Parameterized for Reverb {
+    fn parameters(&self) -> &[ParamDescriptor] {
+        self.params.descriptors()
+    }
+
+    fn param(&self, id: ParamId) -> f32 {
+        self.params.get(id)
+    }
+
+    fn set_param(&mut self, id: ParamId, value: f32) {
+        self.params.set(id, value);
+    }
+}
+
+impl Effect for Reverb {
+    fn descriptor(&self) -> PluginDescriptor {
+        PluginDescriptor::effect(
+            "auris.fx.reverb",
+            "Reverb",
+            "Schroeder reverb: eight damped combs into four all-passes per channel",
+            PluginCategory::Reverb,
+        )
+    }
+
+    fn prepare(&mut self, ctx: &PrepareContext) {
+        self.sample_rate = ctx.sample_rate as f32;
+        let channel_count = ctx.channel_count.max(1);
+        let spread = scaled(STEREO_SPREAD, ctx.sample_rate, 0);
+        let pre_delay_capacity =
+            (MAX_PRE_DELAY_MS * self.sample_rate / MILLISECONDS_PER_SECOND).ceil() as usize + 2;
+
+        self.channels.clear();
+        self.channels.reserve(channel_count);
+        for channel in 0..channel_count {
+            // Offsetting the right channel's delays is what turns one mono tail into a stereo
+            // one; without it both sides would be identical and the reverb would collapse.
+            self.channels
+                .push(ReverbChannel::new(ctx.sample_rate, channel * spread));
+        }
+
+        self.pre_delay.clear();
+        self.pre_delay
+            .resize_with(channel_count, || DelayLine::new(pre_delay_capacity));
+        self.wet.clear();
+        self.wet.resize(channel_count, 0.0);
+    }
+
+    fn reset(&mut self) {
+        for channel in &mut self.channels {
+            channel.reset();
+        }
+        for line in &mut self.pre_delay {
+            line.reset();
+        }
+        self.wet.fill(0.0);
+    }
+
+    fn process(&mut self, buffer: &mut AudioBuffer, _ctx: &ProcessContext) {
+        let frames = buffer.frame_count();
+        let channel_count = buffer.channel_count().min(self.channels.len());
+        if frames == 0 || channel_count == 0 {
+            return;
+        }
+
+        let feedback = self.feedback();
+        let damp = self.params.at(P_DAMPING) * SCALE_DAMP;
+        let width = self.params.at(P_WIDTH);
+        let mix = self.params.at(P_MIX);
+        let dry = 1.0 - mix;
+        let wet_level = mix * SCALE_WET;
+        // Freeverb's stereo spread: `wet1` keeps a channel's own tail, `wet2` bleeds the other
+        // channel's in, so width 0 collapses the tail to mono and width 1 leaves it wide.
+        let wet1 = wet_level * (width * 0.5 + 0.5);
+        let wet2 = wet_level * ((1.0 - width) * 0.5);
+        let pre_delay_samples =
+            (self.params.at(P_PRE_DELAY_MS) * self.sample_rate / MILLISECONDS_PER_SECOND).max(1.0);
+
+        for frame in 0..frames {
+            let mut input = 0.0;
+            for channel in 0..channel_count {
+                let sample = buffer.channel(channel)[frame];
+                let line = &mut self.pre_delay[channel];
+                input += line.read(pre_delay_samples);
+                line.write(sample);
+            }
+            input *= FIXED_GAIN;
+
+            for (channel, network) in self.channels.iter_mut().take(channel_count).enumerate() {
+                self.wet[channel] = network.process(input, feedback, damp);
+            }
+
+            if channel_count == 2 {
+                let (left, right) = (self.wet[0], self.wet[1]);
+                let dry_left = buffer.channel(0)[frame];
+                let dry_right = buffer.channel(1)[frame];
+                buffer.channel_mut(0)[frame] = left * wet1 + right * wet2 + dry_left * dry;
+                buffer.channel_mut(1)[frame] = right * wet1 + left * wet2 + dry_right * dry;
+            } else {
+                for channel in 0..channel_count {
+                    let wet = self.wet[channel];
+                    let sample = &mut buffer.channel_mut(channel)[frame];
+                    *sample = *sample * dry + wet * wet_level;
+                }
+            }
+        }
+    }
+
+    fn tail_frames(&self) -> usize {
+        let feedback = self.feedback();
+        let longest_tuning = COMB_TUNING.iter().copied().max().unwrap_or(1_617);
+        let longest = scaled(longest_tuning, self.sample_rate as f64, 0) as f32;
+        // Every trip round the longest comb costs -20*log10(feedback) dB; count trips to -60.
+        let per_loop_db = -20.0 * feedback.log10();
+        let loops = if per_loop_db > 1.0e-4 {
+            60.0 / per_loop_db
+        } else {
+            0.0
+        };
+        let pre_delay = self.params.at(P_PRE_DELAY_MS) * self.sample_rate / MILLISECONDS_PER_SECOND;
+        (longest * loops + pre_delay).clamp(0.0, MAX_TAIL_SECONDS * self.sample_rate) as usize
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SR: f64 = 48_000.0;
+
+    fn prepared() -> Reverb {
+        let mut plugin = Reverb::new();
+        plugin.prepare(&PrepareContext::new(SR, 4_096, 2));
+        plugin
+    }
+
+    fn context(frames: usize) -> ProcessContext {
+        ProcessContext::realtime(SR, frames, 0, 120.0, true)
+    }
+
+    fn impulse(frames: usize) -> AudioBuffer {
+        let mut buffer = AudioBuffer::stereo(frames, SR);
+        buffer.channel_mut(0)[0] = 1.0;
+        buffer.channel_mut(1)[0] = 1.0;
+        buffer
+    }
+
+    #[test]
+    fn a_dry_mix_is_a_bit_exact_bypass() {
+        let mut plugin = prepared();
+        plugin.set_param_by_key("mix", 0.0);
+        let input = impulse(1_024);
+        let mut buffer = input.clone();
+        plugin.process(&mut buffer, &context(1_024));
+        assert_eq!(buffer.channel(0), input.channel(0));
+    }
+
+    #[test]
+    fn an_impulse_grows_a_decaying_tail() {
+        let mut plugin = prepared();
+        plugin.set_param_by_key("mix", 1.0);
+        let mut buffer = impulse(48_000);
+        plugin.process(&mut buffer, &context(48_000));
+
+        // Energy must appear well after the impulse, then die away.
+        let early = buffer.slice(2_400, 4_800).channel_rms(0);
+        let late = buffer.slice(38_400, 4_800).channel_rms(0);
+        assert!(early > 1e-4, "no tail at 50 ms: {early}");
+        assert!(late < early, "tail did not decay: {early} -> {late}");
+        assert!(buffer.channel(0).iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn the_two_channels_decorrelate() {
+        let mut plugin = prepared();
+        plugin.set_param_by_key("mix", 1.0);
+        let mut buffer = impulse(24_000);
+        plugin.process(&mut buffer, &context(24_000));
+
+        let tail = buffer.slice(4_800, 12_000);
+        // Compare the *difference* signal against the tail's own level. A bare sum of absolute
+        // differences would pass for two channels that are identical to within rounding, which is
+        // exactly the bug this test exists to catch (a missing stereo spread).
+        let difference_rms = {
+            let sum: f64 = tail
+                .channel(0)
+                .iter()
+                .zip(tail.channel(1))
+                .map(|(l, r)| ((l - r) as f64).powi(2))
+                .sum();
+            (sum / tail.frame_count() as f64).sqrt() as f32
+        };
+        let level = tail.channel_rms(0);
+        assert!(level > 1e-4, "there was no tail to compare: {level}");
+        assert!(
+            difference_rms / level > 0.3,
+            "channels were near-identical: difference {difference_rms} against level {level}"
+        );
+    }
+
+    #[test]
+    fn zero_width_makes_both_channels_identical() {
+        let mut plugin = prepared();
+        plugin.set_param_by_key("mix", 1.0);
+        plugin.set_param_by_key("width", 0.0);
+        let mut buffer = impulse(8_192);
+        plugin.process(&mut buffer, &context(8_192));
+        for (left, right) in buffer.channel(0).iter().zip(buffer.channel(1)) {
+            assert!((left - right).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn the_tail_grows_with_the_room() {
+        let mut plugin = prepared();
+        plugin.set_param_by_key("room_size", 0.0);
+        let small = plugin.tail_frames();
+        plugin.set_param_by_key("room_size", 0.5);
+        let medium = plugin.tail_frames();
+        plugin.set_param_by_key("room_size", 1.0);
+        let large = plugin.tail_frames();
+
+        assert!(small < medium, "{small} !< {medium}");
+        assert!(medium < large, "{medium} !< {large}");
+        // The smallest room still rings for a few hundred milliseconds.
+        assert!(
+            (24_000..48_000).contains(&small),
+            "smallest tail was {small} frames"
+        );
+        assert_eq!(large, (MAX_TAIL_SECONDS * SR as f32) as usize);
+    }
+
+    #[test]
+    fn pre_delay_holds_the_tail_back() {
+        let mut plugin = prepared();
+        plugin.set_param_by_key("mix", 1.0);
+        plugin.set_param_by_key("pre_delay_ms", 100.0);
+        let mut buffer = impulse(24_000);
+        plugin.process(&mut buffer, &context(24_000));
+        // 100 ms is 4 800 frames; nothing may arrive before that.
+        let before = buffer.slice(0, 4_700).peak();
+        let after = buffer.slice(4_800, 4_800).peak();
+        assert_eq!(before, 0.0);
+        assert!(after > 1e-5, "nothing arrived after the pre-delay: {after}");
+    }
+
+    #[test]
+    fn silence_stays_silent() {
+        let mut plugin = prepared();
+        plugin.set_param_by_key("mix", 1.0);
+        plugin.set_param_by_key("room_size", 1.0);
+        let mut buffer = AudioBuffer::stereo(4_096, SR);
+        plugin.process(&mut buffer, &context(4_096));
+        assert_eq!(buffer.peak(), 0.0);
+    }
+}
