@@ -1,0 +1,487 @@
+//! The piano roll: note editing for the selected MIDI clip.
+
+use auris_core::time::Ticks;
+use auris_core::{ClipId, Note};
+use gpui::{
+    Bounds, IntoElement, MouseButton, MouseDownEvent, Pixels, Point, Window, canvas, div, point,
+    prelude::*, px, size,
+};
+
+use crate::app::{AurisApp, Drag};
+use crate::theme::{Metrics, Theme};
+use crate::ui::paint;
+use crate::ui::timeline::{PitchView, TimelineView};
+
+/// Width of the grab zone on a note's right edge, in pixels.
+const RESIZE_HANDLE: f32 = 5.0;
+
+/// Length given to a note drawn with a single click.
+fn default_note_length(grid: Ticks) -> Ticks {
+    Ticks(grid.raw().max(1))
+}
+
+impl AurisApp {
+    /// Renders the piano roll panel.
+    pub(crate) fn render_piano_roll(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::AnyElement {
+        let theme = self.theme.clone();
+        let pitch_view = self.pitch.clone();
+        let view = self.timeline.clone();
+        let signature = self.project.time_signature;
+        let playhead = self.playhead_ticks();
+
+        let Some((_, clip)) = self.selected_midi_clip() else {
+            return div()
+                .flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .bg(theme.surface_sunken)
+                .text_color(theme.text_muted)
+                .text_xs()
+                .child("Select a MIDI clip to edit its notes (alt-click an empty lane to make one)")
+                .into_any_element();
+        };
+
+        let clip_start = clip.start;
+        let clip_length = clip.length;
+        let notes = clip.notes.clone();
+        let selected: Vec<usize> = self.selected_notes.iter().copied().collect();
+        let clip_name = clip.name.clone();
+
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(80.0))
+            .bg(theme.surface_sunken)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .h(Metrics::EDITOR_HEADER_HEIGHT)
+                    .px_2()
+                    .bg(theme.surface_raised)
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(format!("Piano Roll — {clip_name}"))
+                    .child(div().flex_1())
+                    .child("alt-click: add note · drag: move · right edge: resize · ⌫: delete"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        div()
+                            .id("keyboard")
+                            .w(Metrics::KEYBOARD_WIDTH)
+                            .flex_shrink_0()
+                            .h_full()
+                            .child({
+                                let theme = theme.clone();
+                                let pitch_view = pitch_view.clone();
+                                canvas(
+                                    |_, _, _| (),
+                                    move |bounds, _, window, cx| {
+                                        paint::clipped(window, bounds, |window| {
+                                            paint::keyboard(
+                                                window,
+                                                cx,
+                                                bounds,
+                                                &pitch_view,
+                                                &theme,
+                                            );
+                                        });
+                                    },
+                                )
+                                .size_full()
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                                    this.audition_from_keyboard(event, cx);
+                                }),
+                            )
+                            .on_mouse_up(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, _| this.stop_audition()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("roll")
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .overflow_hidden()
+                            .child({
+                                let theme = theme.clone();
+                                let view = view.clone();
+                                let pitch_view = pitch_view.clone();
+                                canvas(
+                                    |_, _, _| (),
+                                    move |bounds, _, window, _| {
+                                        paint::clipped(window, bounds, |window| {
+                                            paint::rect(window, bounds, theme.surface_sunken);
+                                            paint::pitch_rows(window, bounds, &pitch_view, &theme);
+                                            paint::time_grid(
+                                                window, bounds, &view, signature, &theme,
+                                            );
+                                            paint_clip_extent(
+                                                window,
+                                                bounds,
+                                                &view,
+                                                clip_start,
+                                                clip_length,
+                                                &theme,
+                                            );
+                                            paint_notes(
+                                                window,
+                                                bounds,
+                                                &notes,
+                                                &selected,
+                                                clip_start,
+                                                &view,
+                                                &pitch_view,
+                                                &theme,
+                                            );
+                                            paint::playhead(
+                                                window,
+                                                bounds,
+                                                bounds.origin.x + view.tick_to_x(playhead),
+                                                &theme,
+                                            );
+                                        });
+                                    },
+                                )
+                                .size_full()
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                                    this.begin_note_drag(event, cx);
+                                }),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Right,
+                                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                                    this.delete_note_under(event, cx);
+                                }),
+                            )
+                            .on_scroll_wheel(cx.listener(
+                                |this, event: &gpui::ScrollWheelEvent, _, cx| {
+                                    this.scroll_roll(event, cx);
+                                },
+                            )),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// Screen origin of the note grid.
+    ///
+    /// The editor panel is anchored to the bottom of the window, above the status bar, and the
+    /// grid starts below the panel's own header — so the origin is derived from the window
+    /// height rather than measured, because pointer events arrive outside any paint callback.
+    pub(crate) fn roll_origin(&self, window_height: Pixels) -> Point<Pixels> {
+        point(
+            Metrics::KEYBOARD_WIDTH,
+            window_height - Metrics::STATUS_HEIGHT - Metrics::EDITOR_HEIGHT
+                + Metrics::EDITOR_HEADER_HEIGHT,
+        )
+    }
+
+    /// Starts a note drag, creating a note when alt is held on empty space.
+    fn begin_note_drag(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
+        let Some(clip_id) = self.selected_clip else {
+            return;
+        };
+        let window_height = self.viewport_height;
+        let origin = self.roll_origin(window_height);
+        let tick = self.timeline.x_to_tick(event.position.x - origin.x);
+        let pitch = self.pitch.y_to_pitch(event.position.y - origin.y);
+        let Some(clip_start) = self.project.midi_clip(clip_id).map(|(_, c)| c.start) else {
+            return;
+        };
+        let local_tick = tick - clip_start;
+
+        match self.note_at(clip_id, local_tick, pitch) {
+            Some(index) => {
+                if !event.modifiers.shift {
+                    if !self.selected_notes.contains(&index) {
+                        self.selected_notes.clear();
+                    }
+                } else if self.selected_notes.contains(&index) {
+                    self.selected_notes.remove(&index);
+                    cx.notify();
+                    return;
+                }
+                self.selected_notes.insert(index);
+
+                let note = self
+                    .project
+                    .midi_clip(clip_id)
+                    .and_then(|(_, c)| c.notes.get(index).copied());
+                let Some(note) = note else { return };
+                let end_x = self.timeline.tick_to_x(clip_start + note.end());
+                if f32::from(end_x - (event.position.x - origin.x)).abs() <= RESIZE_HANDLE {
+                    self.edit("Resize note");
+                    self.drag = Some(Drag::NoteResize {
+                        clip: clip_id,
+                        index,
+                    });
+                } else {
+                    self.edit("Move note");
+                    let origins = self.selected_note_origins(clip_id);
+                    self.drag = Some(Drag::NoteMove {
+                        clip: clip_id,
+                        origin_tick: local_tick,
+                        origin_pitch: pitch,
+                        origins,
+                    });
+                    self.audition_selected_track(pitch);
+                }
+            }
+            None => {
+                if event.modifiers.alt {
+                    self.edit("Add note");
+                    let start = self.snap(local_tick).max_zero();
+                    let length = default_note_length(self.project.grid);
+                    let grid = self.project.grid;
+                    let index = {
+                        let Some(clip) = self.project.midi_clip_mut(clip_id) else {
+                            return;
+                        };
+                        clip.notes.push(Note::new(pitch, start, length));
+                        clip.fit_length_to_notes(grid);
+                        clip.notes.len() - 1
+                    };
+                    self.selected_notes.clear();
+                    self.selected_notes.insert(index);
+                    self.audition_selected_track(pitch);
+                    self.drag = Some(Drag::NoteResize {
+                        clip: clip_id,
+                        index,
+                    });
+                    self.rebuild_graph();
+                } else {
+                    self.selected_notes.clear();
+                    self.seek(self.snap(tick));
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// Positions of every selected note, captured at the start of a move.
+    fn selected_note_origins(&self, clip: ClipId) -> Vec<(usize, Ticks, u8)> {
+        let Some((_, clip)) = self.project.midi_clip(clip) else {
+            return Vec::new();
+        };
+        self.selected_notes
+            .iter()
+            .filter_map(|index| {
+                clip.notes
+                    .get(*index)
+                    .map(|note| (*index, note.start, note.pitch))
+            })
+            .collect()
+    }
+
+    /// Index of the note at a clip-relative position.
+    fn note_at(&self, clip: ClipId, tick: Ticks, pitch: u8) -> Option<usize> {
+        let (_, clip) = self.project.midi_clip(clip)?;
+        // Search backwards so the most recently added note wins when notes overlap, which is
+        // what the user just drew and therefore what they expect to grab.
+        clip.notes
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, note)| note.pitch == pitch && note.contains(tick))
+            .map(|(index, _)| index)
+    }
+
+    /// Removes the note under the pointer.
+    fn delete_note_under(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
+        let Some(clip_id) = self.selected_clip else {
+            return;
+        };
+        let (tick, pitch) = {
+            let origin = self.roll_origin(self.viewport_height);
+            (
+                self.timeline.x_to_tick(event.position.x - origin.x),
+                self.pitch.y_to_pitch(event.position.y - origin.y),
+            )
+        };
+        let Some(clip_start) = self.project.midi_clip(clip_id).map(|(_, c)| c.start) else {
+            return;
+        };
+        if let Some(index) = self.note_at(clip_id, tick - clip_start, pitch) {
+            self.edit("Delete note");
+            if let Some(clip) = self.project.midi_clip_mut(clip_id) {
+                clip.notes.remove(index);
+            }
+            self.selected_notes.clear();
+            self.rebuild_graph();
+            cx.notify();
+        }
+    }
+
+    /// Deletes every selected note.
+    pub(crate) fn delete_selected_notes(&mut self) {
+        let Some(clip_id) = self.selected_clip else {
+            return;
+        };
+        if self.selected_notes.is_empty() {
+            return;
+        }
+        self.edit("Delete notes");
+        let doomed: Vec<usize> = self.selected_notes.iter().copied().collect();
+        if let Some(clip) = self.project.midi_clip_mut(clip_id) {
+            // Remove from the back so earlier indices stay valid.
+            for index in doomed.into_iter().rev() {
+                if index < clip.notes.len() {
+                    clip.notes.remove(index);
+                }
+            }
+        }
+        self.selected_notes.clear();
+        self.rebuild_graph();
+    }
+
+    /// Wheel handling: plain scrolls pitch, shift scrolls time, alt zooms time,
+    /// control zooms the pitch axis.
+    fn scroll_roll(&mut self, event: &gpui::ScrollWheelEvent, cx: &mut gpui::Context<Self>) {
+        let delta = event.delta.pixel_delta(px(24.0));
+        if event.modifiers.control {
+            let anchor = event.position.y - self.roll_origin(self.viewport_height).y;
+            let factor = if delta.y > px(0.0) { 1.12 } else { 1.0 / 1.12 };
+            self.pitch.zoom_by(factor, anchor);
+        } else if event.modifiers.alt {
+            let anchor = event.position.x - Metrics::KEYBOARD_WIDTH;
+            let factor = if delta.y > px(0.0) { 1.12 } else { 1.0 / 1.12 };
+            self.timeline.zoom_by(factor, anchor);
+        } else if event.modifiers.shift {
+            self.timeline.scroll_by(-delta.y - delta.x);
+        } else {
+            self.pitch.scroll_by(-delta.y);
+            self.timeline.scroll_by(-delta.x);
+        }
+        cx.notify();
+    }
+
+    /// Plays the key the pointer landed on, so the keyboard strip is playable.
+    fn audition_from_keyboard(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
+        let origin = self.roll_origin(self.viewport_height);
+        let pitch = self.pitch.y_to_pitch(event.position.y - origin.y);
+        self.audition_selected_track(pitch);
+        cx.notify();
+    }
+
+    /// Sounds one note on the selected track.
+    fn audition_selected_track(&mut self, pitch: u8) {
+        if let Some(track) = self.selected_track {
+            self.stop_audition();
+            self.audition_note_on(track, pitch, 0.8);
+            self.auditioning = Some((track, pitch));
+        }
+    }
+
+    /// Releases the auditioned note, if any.
+    pub(crate) fn stop_audition(&mut self) {
+        if let Some((track, pitch)) = self.auditioning.take() {
+            self.audition_note_off(track, pitch);
+        }
+    }
+}
+
+fn paint_clip_extent(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    view: &TimelineView,
+    clip_start: Ticks,
+    clip_length: Ticks,
+    theme: &Theme,
+) {
+    // Dim everything outside the clip: notes there exist but are never played.
+    let start_x = bounds.origin.x + view.tick_to_x(clip_start);
+    let end_x = bounds.origin.x + view.tick_to_x(clip_start + clip_length);
+    let shade = Theme::translucent(theme.background, 0.45);
+    if start_x > bounds.origin.x {
+        paint::rect(
+            window,
+            Bounds {
+                origin: bounds.origin,
+                size: size(start_x - bounds.origin.x, bounds.size.height),
+            },
+            shade,
+        );
+    }
+    let right_edge = bounds.origin.x + bounds.size.width;
+    if end_x < right_edge {
+        paint::rect(
+            window,
+            Bounds {
+                origin: point(end_x.max(bounds.origin.x), bounds.origin.y),
+                size: size(right_edge - end_x.max(bounds.origin.x), bounds.size.height),
+            },
+            shade,
+        );
+    }
+    paint::vline(window, bounds, start_x, px(1.0), theme.accent);
+    paint::vline(window, bounds, end_x, px(1.0), theme.accent);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_notes(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    notes: &[Note],
+    selected: &[usize],
+    clip_start: Ticks,
+    view: &TimelineView,
+    pitch_view: &PitchView,
+    theme: &Theme,
+) {
+    for (index, note) in notes.iter().enumerate() {
+        let x = bounds.origin.x + view.tick_to_x(clip_start + note.start);
+        let width = view.duration_to_width(note.length).max(px(2.0));
+        if x + width < bounds.origin.x || x > bounds.origin.x + bounds.size.width {
+            continue;
+        }
+        let y = bounds.origin.y + pitch_view.pitch_to_y(note.pitch);
+        if y + px(pitch_view.row_height) < bounds.origin.y
+            || y > bounds.origin.y + bounds.size.height
+        {
+            continue;
+        }
+        let is_selected = selected.contains(&index);
+        // Velocity drives brightness, so dynamics are visible without a separate lane.
+        let base = if is_selected {
+            theme.selection
+        } else {
+            theme.accent
+        };
+        let color = gpui::Hsla {
+            l: (base.l * (0.55 + 0.45 * note.velocity.clamp(0.0, 1.0))).clamp(0.0, 1.0),
+            ..base
+        };
+        paint::rounded_rect(
+            window,
+            Bounds {
+                origin: point(x, y + px(1.0)),
+                size: size(width, px((pitch_view.row_height - 2.0).max(2.0))),
+            },
+            px(2.0),
+            color,
+        );
+    }
+}
