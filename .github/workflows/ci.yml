@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Warnings are the point of running this at all.
+  RUSTFLAGS: -D warnings
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The whole workspace, on the platform the desktop application actually ships for.
+  #
+  # gpui is built with `runtime_shaders`, so this needs no Xcode beyond the Command Line Tools
+  # that every macOS runner already has — see the note in CLAUDE.md.
+  macos:
+    name: Test on macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+
+      - name: Cache the build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: macos-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: macos-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --locked
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+  # Everything except the gpui frontend, on a platform with no Apple frameworks at all.
+  #
+  # This is the layering rule from CLAUDE.md turned into a job: nothing at or below
+  # `auris-session` may name a UI toolkit, and the fastest way to keep that true is to build the
+  # backend and the command line tool somewhere a UI toolkit could not possibly link.
+  linux:
+    name: Backend without a UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy
+
+      # cpal builds against ALSA on Linux; nothing else here needs system libraries, because
+      # wgpu loads its backends at run time.
+      - name: Install ALSA headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libasound2-dev
+
+      - name: Cache the build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: linux-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: linux-cargo-
+
+      - name: Lint
+        run: cargo clippy --workspace --exclude auris-gpui --all-targets --locked
+
+      # The runner has no audio device and no GPU. Every test that needs either checks first and
+      # skips, so this exercises the DSP, the document model and the whole render path.
+      - name: Test
+        run: cargo test --workspace --exclude auris-gpui --locked
