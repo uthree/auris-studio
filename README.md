@@ -130,6 +130,23 @@ The parameters you declare become UI controls automatically, with the right widg
 unit and scaling — the editor is generated from `ParamDescriptor`, not hand-written per plugin.
 Effects work identically through the `Effect` trait.
 
+## Known limitations
+
+Honest list of what is not there yet, so nobody discovers these the hard way:
+
+* **No plugin delay compensation.** `Effect::latency_frames` is reported but not acted on, so
+  a latency-introducing effect shifts its track against the others. Every built-in effect is
+  zero-latency except the limiter.
+* **Effect tails take the maximum, not the sum.** A delay feeding a reverb exports a shorter
+  tail than it should.
+* **Audio sources are assumed to be at the render rate.** Import resamples to the project rate,
+  but if the output device runs at a different rate the engine does not resample again.
+* **Mute is a hard gate.** Toggling it during playback steps to zero within one sample rather
+  than ramping, which can click.
+* **Seeking into overlapping notes of the same pitch** re-triggers one note, so the first
+  following note-off cuts it short.
+* **No recording.** Audio tracks hold imported material only.
+
 ## Development
 
 ```bash
