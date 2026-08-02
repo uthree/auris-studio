@@ -209,6 +209,7 @@ impl AurisApp {
                 cx,
             );
 
+            let menu_name = name.clone();
             sections.push(
                 div()
                     .flex()
@@ -220,6 +221,19 @@ impl AurisApp {
                     .bg(theme.surface_raised)
                     .border_1()
                     .border_color(theme.border_subtle)
+                    .on_mouse_down(
+                        gpui::MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            let menu = this.effect_menu(
+                                event.position,
+                                Some(track_id),
+                                slot_id,
+                                menu_name.clone(),
+                            );
+                            this.open_menu(menu);
+                            cx.notify();
+                        }),
+                    )
                     .child(plugin_header(
                         ("fx-bypass", slot_index),
                         name,

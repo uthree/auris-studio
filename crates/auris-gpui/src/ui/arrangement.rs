@@ -101,6 +101,17 @@ impl AurisApp {
                             cx.notify();
                         }),
                     )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            // Selecting first means the menu and the panels agree about what is
+                            // being acted on, the way a right-click does everywhere else.
+                            this.select_track(id);
+                            let menu = this.track_menu(event.position, id);
+                            this.open_menu(menu);
+                            cx.notify();
+                        }),
+                    )
                     // A colour stripe is the fastest way to match a header to its clips.
                     .child(
                         div()
@@ -296,6 +307,16 @@ impl AurisApp {
                         cx.listener(|this, event: &MouseDownEvent, _, cx| {
                             this.begin_ruler_drag(event, cx);
                         }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                            let x = event.position.x - this.timeline_origin().x;
+                            let tick = this.snap(this.timeline.x_to_tick(x)).max_zero();
+                            let menu = this.ruler_menu(event.position, tick);
+                            this.open_menu(menu);
+                            cx.notify();
+                        }),
                     ),
             )
             .child(
@@ -352,6 +373,12 @@ impl AurisApp {
                         MouseButton::Left,
                         cx.listener(|this, event: &MouseDownEvent, _, cx| {
                             this.begin_lane_drag(event, cx);
+                        }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                            this.open_lane_menu(event, cx);
                         }),
                     )
                     .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
@@ -465,6 +492,32 @@ impl AurisApp {
                 }
             }
         }
+        cx.notify();
+    }
+
+    /// Opens the menu for whatever is under the pointer in the clip lanes.
+    fn open_lane_menu(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
+        let origin = self.lanes_origin();
+        let local = point(event.position.x - origin.x, event.position.y - origin.y);
+        let tick = self.timeline.x_to_tick(local.x);
+
+        let menu = match self.track_at_y(local.y) {
+            Some((track_id, _)) => {
+                self.select_track(track_id);
+                match self.clip_at(track_id, tick) {
+                    Some((clip_id, _, _)) => {
+                        // A right-click on a clip selects it, so Split at Playhead and the
+                        // inspector are talking about the clip the menu is titled after.
+                        self.selected_clip = Some(clip_id);
+                        self.selected_notes.clear();
+                        self.clip_menu(event.position, clip_id)
+                    }
+                    None => self.lane_menu(event.position, track_id, self.snap(tick).max_zero()),
+                }
+            }
+            None => self.arrangement_menu(event.position),
+        };
+        self.open_menu(menu);
         cx.notify();
     }
 

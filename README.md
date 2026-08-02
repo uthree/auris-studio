@@ -20,6 +20,14 @@ them through a built-in synth, shape them with effects, and render the result to
 * **Instrument tracks** — notes on a timeline, played by a software instrument.
 * **Audio tracks** — imported audio, arranged as clips with trim, gain and fades.
 
+### Editing
+
+Right-clicking any component opens its menu: tracks and clips offer duplicate, rename, delete
+and mute; a clip adds split-at-playhead and cycle-over-clip; the piano roll offers duplicate,
+delete and transposition of the selected notes; effect slots offer bypass, reorder and remove.
+Renaming goes through the platform's input handler, so an IME composes into the field the way
+it does anywhere else.
+
 ### Built-in instruments
 
 Deliberately simple chiptune voices, enough to hear the engine working:

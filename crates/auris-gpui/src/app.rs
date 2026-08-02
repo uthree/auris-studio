@@ -27,6 +27,8 @@ use gpui::{
 use crate::keymap::Keymap;
 use crate::settings_window::SettingsWindow;
 use crate::theme::{Metrics, Theme};
+use crate::ui::context_menu::ContextMenu;
+use crate::ui::prompt::Prompt;
 use crate::ui::timeline::{PitchView, TimelineView};
 
 /// Which editor occupies the bottom panel.
@@ -354,6 +356,10 @@ pub struct AurisApp {
     pub(crate) arrangement_width: Pixels,
     /// Rectangles the canvases were painted into last frame.
     pub(crate) canvas: CanvasBounds,
+    /// The open right-click menu, if any.
+    pub(crate) menu: Option<ContextMenu>,
+    /// The open rename sheet, if any.
+    pub(crate) prompt: Option<Prompt>,
 
     /// Preferences that outlive the session.
     pub(crate) settings: Settings,
@@ -447,6 +453,8 @@ impl AurisApp {
             viewport_height: px(900.0),
             arrangement_width: px(900.0),
             canvas: CanvasBounds::default(),
+            menu: None,
+            prompt: None,
             settings,
             keymap,
             settings_window: None,

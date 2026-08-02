@@ -74,10 +74,20 @@ impl Render for AurisApp {
         });
         let status = self.render_status_bar();
         let export_overlay = self.render_export_overlay(cx);
+        let prompt = self.render_prompt(cx);
+        let menu = self.render_context_menu(window, cx);
 
         div()
             .id("root")
-            .key_context("Auris")
+            // While a rename sheet is open the application's own bindings must not fire: `i`
+            // has to type an `i`, not toggle the inspector. Every binding is scoped to `Auris`,
+            // so switching the context here disables the lot in one move and lets the keystrokes
+            // through to the text input handler.
+            .key_context(if self.prompt.is_some() {
+                "AurisPrompt"
+            } else {
+                actions::KEY_CONTEXT
+            })
             .track_focus(&self.focus)
             .relative()
             .flex()
@@ -113,6 +123,7 @@ impl Render for AurisApp {
             // control that started them, which is what makes a fader usable.
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(gpui::MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_key_down(cx.listener(Self::on_key_down))
             .child(transport)
             .child(
                 div()
@@ -146,6 +157,9 @@ impl Render for AurisApp {
             )
             .child(status)
             .children(export_overlay)
+            // Both overlays come last so they paint — and are hit-tested — above the panels.
+            .children(prompt)
+            .children(menu)
     }
 }
 
@@ -338,6 +352,22 @@ impl AurisApp {
         cx.notify();
     }
 
+    /// Keys the open rename sheet claims before anything else sees them.
+    ///
+    /// Only the ones the platform does not deliver as text: characters reach the field through
+    /// the input handler instead, which is what lets an IME compose into it.
+    fn on_key_down(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.prompt_key(event) {
+            cx.stop_propagation();
+            cx.notify();
+        }
+    }
+
     fn on_toggle_play(
         &mut self,
         _: &actions::TogglePlay,
@@ -485,6 +515,12 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Escape closes what is open before it does anything drastic. Panicking the engine
+        // while a menu is up would be a surprising answer to "never mind".
+        if self.close_menu() {
+            cx.notify();
+            return;
+        }
         self.session.panic();
         self.drag = None;
         self.set_status("Panic — all voices stopped");

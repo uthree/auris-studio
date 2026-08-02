@@ -72,7 +72,9 @@ impl AurisApp {
                     .text_color(theme.text_muted)
                     .child(format!("Piano Roll — {clip_name}"))
                     .child(div().flex_1())
-                    .child("alt-click: add note · drag: move · right edge: resize · ⌫: delete"),
+                    .child(
+                        "alt-click: add note · drag: move · right edge: resize · right-click: menu",
+                    ),
             )
             .child(
                 div()
@@ -174,7 +176,7 @@ impl AurisApp {
                             .on_mouse_down(
                                 MouseButton::Right,
                                 cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                                    this.delete_note_under(event, cx);
+                                    this.open_roll_menu(event, cx);
                                 }),
                             )
                             .on_scroll_wheel(cx.listener(
@@ -313,24 +315,40 @@ impl AurisApp {
             .map(|(index, _)| index)
     }
 
-    /// Removes the note under the pointer.
-    fn delete_note_under(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
-        let Some(clip_id) = self.selected_clip else {
-            return;
-        };
+    /// Opens the menu for whatever is under the pointer in the note grid.
+    fn open_roll_menu(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
         let origin = self.roll_origin(self.viewport_height);
         let tick = self.timeline.x_to_tick(event.position.x - origin.x);
         let Some(pitch) = self.pitch.pitch_at(event.position.y - origin.y) else {
             return;
         };
-        let Some(clip_start) = self.session.midi_clip(clip_id).map(|c| c.start) else {
-            return;
-        };
-        if let Some(index) = self.note_at(clip_id, tick - clip_start, pitch) {
-            let _ = self.session.remove_notes(clip_id, &[index]);
+        let clip_start = self
+            .selected_clip
+            .and_then(|clip| self.session.midi_clip(clip))
+            .map(|clip| clip.start)
+            .unwrap_or(Ticks::ZERO);
+        let local_tick = tick - clip_start;
+
+        let under_pointer = self
+            .selected_clip
+            .and_then(|clip| self.note_at(clip, local_tick, pitch));
+        // Right-clicking a note that is not part of the selection makes it the selection, so
+        // Delete and Transpose act on what was pointed at rather than on something off-screen.
+        if let Some(index) = under_pointer
+            && !self.selected_notes.contains(&index)
+        {
             self.selected_notes.clear();
-            cx.notify();
+            self.selected_notes.insert(index);
         }
+
+        let menu = self.roll_menu(
+            event.position,
+            under_pointer,
+            pitch,
+            self.snap(local_tick).max_zero(),
+        );
+        self.open_menu(menu);
+        cx.notify();
     }
 
     /// Wheel handling: plain scrolls pitch, shift scrolls time, alt zooms time,

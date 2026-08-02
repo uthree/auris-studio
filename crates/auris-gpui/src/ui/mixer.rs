@@ -58,6 +58,15 @@ impl AurisApp {
                     .overflow_x_scroll()
                     .children(strips),
             )
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
+                    // Right-clicking past the last strip is still a request to add a track.
+                    let menu = this.arrangement_menu(event.position);
+                    this.open_menu(menu);
+                    cx.notify();
+                }),
+            )
     }
 
     fn render_strip(
@@ -94,19 +103,14 @@ impl AurisApp {
                     .descriptor(&effect_id)
                     .map(|d| d.name.to_string())
                     .unwrap_or(effect_id);
-                button(
+                self.effect_row(
                     ("mixer-fx", index * 64 + slot_index),
                     label,
-                    ButtonStyle::Ghost,
+                    Some(track_id),
+                    slot_id,
                     enabled,
-                    theme.accent_soft,
-                    &theme,
-                    cx.listener(move |this, _, _, cx| {
-                        this.toggle_effect(Some(track_id), slot_id);
-                        cx.notify();
-                    }),
+                    cx,
                 )
-                .into_any_element()
             })
             .collect();
 
@@ -130,6 +134,15 @@ impl AurisApp {
                 gpui::MouseButton::Left,
                 cx.listener(move |this, _, _, cx| {
                     this.select_track(track_id);
+                    cx.notify();
+                }),
+            )
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                    this.select_track(track_id);
+                    let menu = this.track_menu(event.position, track_id);
+                    this.open_menu(menu);
                     cx.notify();
                 }),
             )
@@ -218,6 +231,46 @@ impl AurisApp {
             .into_any_element()
     }
 
+    /// The button for one effect in a strip: click to bypass, right-click for the full menu.
+    ///
+    /// Wrapped in a plain `div` because [`button`] only carries a click handler, and a strip
+    /// this narrow has no room for reorder arrows next to every effect.
+    fn effect_row(
+        &self,
+        id: impl Into<gpui::ElementId> + Clone,
+        label: String,
+        track: Option<TrackId>,
+        slot: EffectSlotId,
+        enabled: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let theme = &self.theme;
+        let menu_label = label.clone();
+        div()
+            .child(button(
+                id,
+                label,
+                ButtonStyle::Ghost,
+                enabled,
+                theme.accent_soft,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    this.toggle_effect(track, slot);
+                    cx.notify();
+                }),
+            ))
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                    let menu = this.effect_menu(event.position, track, slot, menu_label.clone());
+                    this.open_menu(menu);
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            )
+            .into_any_element()
+    }
+
     fn render_master_strip(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
         let gain_db = self.project().master.gain_db;
@@ -240,19 +293,7 @@ impl AurisApp {
                     .descriptor(&effect_id)
                     .map(|d| d.name.to_string())
                     .unwrap_or(effect_id);
-                button(
-                    ("master-fx", slot_index),
-                    label,
-                    ButtonStyle::Ghost,
-                    enabled,
-                    theme.accent_soft,
-                    &theme,
-                    cx.listener(move |this, _, _, cx| {
-                        this.toggle_effect(None, slot_id);
-                        cx.notify();
-                    }),
-                )
-                .into_any_element()
+                self.effect_row(("master-fx", slot_index), label, None, slot_id, enabled, cx)
             })
             .collect();
 

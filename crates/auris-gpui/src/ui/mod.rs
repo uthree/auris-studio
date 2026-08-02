@@ -6,13 +6,16 @@
 
 pub mod arrangement;
 pub mod commands;
+pub mod context_menu;
 pub mod icons;
 pub mod inspector;
 pub mod mixer;
 pub mod paint;
 pub mod piano_roll;
 pub mod plugin_editor;
+pub mod prompt;
 pub mod root;
+pub mod text_field;
 pub mod timeline;
 pub mod transport_bar;
 pub mod widgets;

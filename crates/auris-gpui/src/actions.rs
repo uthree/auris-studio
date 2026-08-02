@@ -80,6 +80,12 @@ impl Bindable {
     }
 }
 
+/// Key context the bindings are scoped to.
+///
+/// Scoped rather than global so a text field can switch them off wholesale: with `space` bound
+/// everywhere, typing a space into a rename box would start playback instead.
+pub const KEY_CONTEXT: &str = "Auris";
+
 macro_rules! bindable {
     ($($id:literal, $group:literal, $label:literal, $default:literal => $action:ident;)*) => {
         /// Every command the settings window offers to rebind, in display order.
@@ -89,7 +95,7 @@ macro_rules! bindable {
                 group: $group,
                 label: $label,
                 default: $default,
-                bind: |keys| KeyBinding::new(keys, $action, None),
+                bind: |keys| KeyBinding::new(keys, $action, Some(KEY_CONTEXT)),
             },)*
         ];
     };

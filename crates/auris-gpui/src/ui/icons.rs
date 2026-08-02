@@ -31,6 +31,8 @@ pub enum Icon {
     ChevronDown,
     /// Remove something.
     Cross,
+    /// A menu item that is currently on.
+    Check,
 }
 
 /// An element that draws `icon` at `size`, centred in whatever box it is given.
@@ -141,6 +143,24 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
                 at(0.26, 0.38),
                 at(0.74, 0.38),
                 at(0.50, 0.66),
+                color,
+            );
+        }
+        Icon::Check => {
+            // The short stroke is drawn first so the joint at the bottom is covered by the long
+            // one, which keeps the corner sharp instead of showing two overlapping caps.
+            stroke_line(
+                window,
+                at(0.22, 0.52),
+                at(0.42, 0.72),
+                px(side * 0.11),
+                color,
+            );
+            stroke_line(
+                window,
+                at(0.42, 0.72),
+                at(0.78, 0.28),
+                px(side * 0.11),
                 color,
             );
         }
