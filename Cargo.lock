@@ -556,6 +556,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "auris-compose"
+version = "0.1.0"
+dependencies = [
+ "auris-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "auris-core"
 version = "0.1.0"
 dependencies = [

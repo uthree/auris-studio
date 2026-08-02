@@ -14,6 +14,7 @@ rust-version = "1.90"
 
 [workspace.dependencies]
 # Backend, in dependency order. Nothing below `auris-session` knows a UI exists.
+auris-compose = { path = "crates/auris-compose", version = "0.1.0" }
 auris-core = { path = "crates/auris-core", version = "0.1.0" }
 auris-dsp = { path = "crates/auris-dsp", version = "0.1.0" }
 auris-synth = { path = "crates/auris-synth", version = "0.1.0" }
