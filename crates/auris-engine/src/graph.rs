@@ -1,0 +1,1205 @@
+//! The flattened, render-ready form of a [`Project`].
+//!
+//! A [`RenderGraph`] is built on the UI thread — where allocating, instantiating plugins and
+//! walking the tempo map are all free — and then *moved* onto the audio thread. Nothing in it is
+//! shared: the audio thread owns the graph outright while it renders, and the previous graph is
+//! handed back so its destructor runs on the UI thread.
+//!
+//! Building resolves the three indirections the document model deliberately keeps:
+//!
+//! * plugin ids become live [`Instrument`] and [`Effect`] objects from the registry,
+//! * musical tick positions become absolute timeline sample positions through the [`TempoMap`],
+//! * [`SourceId`](auris_core::project::SourceId)s become `Arc<AudioBuffer>` handles from the
+//!   [`AudioSourceBank`].
+//!
+//! Everything a block needs is pre-sized here, including the per-block event scratch, so
+//! rendering never touches the allocator.
+
+use std::sync::Arc;
+
+use auris_core::param::{db_to_gain, pan_gains};
+use auris_core::plugin::{Effect, Instrument, NoteEvent, PrepareContext};
+use auris_core::project::{
+    AudioClip, AudioSourceBank, MidiClip, MixerStrip, Project, TrackId, TrackKind,
+};
+use auris_core::registry::PluginRegistry;
+use auris_core::time::{Samples, TempoMap, Ticks};
+use auris_core::{AudioBuffer, ParamId};
+
+/// Channel count of the internal mix bus.
+///
+/// The graph always renders stereo because the pan law is a stereo law; the renderer maps the
+/// bus onto whatever channel count the output buffer has.
+pub const RENDER_CHANNELS: usize = 2;
+
+/// Rate used when neither the caller nor the project offers a usable one.
+const DEFAULT_SAMPLE_RATE: f64 = 48_000.0;
+
+/// Room left in each track's per-block event buffer for notes played from the UI.
+const AUDITION_HEADROOM: usize = 16;
+
+/// Room left in the same buffer for the note-chase after a seek or a loop wrap: one event per
+/// MIDI pitch, plus the all-notes-off that precedes them.
+pub(crate) const CHASE_HEADROOM: usize = 129;
+
+/// Number of MIDI pitches, and therefore the size of the chase table.
+pub(crate) const PITCH_COUNT: usize = 128;
+
+/// Number of graphs the audio thread can hold before it stops accepting new ones.
+pub(crate) const RETIRED_GRAPH_SLOTS: usize = 8;
+
+/// [`pan_gains`] returns `1/sqrt(2)` on both channels at centre, which would cost 3 dB every
+/// time a signal passes a strip. Scaling by `sqrt(2)` puts a centred strip at exactly unity
+/// while keeping `left^2 + right^2` constant across the sweep, so the law is still constant
+/// power — it is just anchored at the centre instead of at the extremes.
+const PAN_CENTRE_NORMALISE: f32 = std::f32::consts::SQRT_2;
+
+/// A note event pinned to an absolute position on the timeline.
+///
+/// The `frame` inside `event` is meaningless here; the renderer rewrites it to a block-relative
+/// offset with [`NoteEvent::with_frame`] as it hands the event to the instrument.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ScheduledEvent {
+    /// Absolute timeline position, in frames.
+    pub frame: u64,
+    /// What happens at that position.
+    pub event: NoteEvent,
+}
+
+/// One audio clip, resolved against the sample bank and the tempo map.
+#[derive(Clone, Debug)]
+pub struct RenderAudioClip {
+    /// Decoded samples, shared with the bank rather than copied.
+    pub buffer: Arc<AudioBuffer>,
+    /// Where the clip starts on the timeline, in frames.
+    pub start_frame: u64,
+    /// First frame of `buffer` the clip plays.
+    pub source_offset: u64,
+    /// How many frames the clip plays. Always within the source's bounds.
+    pub length: u64,
+    /// Clip trim as a linear multiplier.
+    pub gain: f32,
+    /// Fade-in length in frames.
+    pub fade_in: u64,
+    /// Fade-out length in frames.
+    pub fade_out: u64,
+}
+
+impl RenderAudioClip {
+    /// Fade multiplier `position` frames into the clip.
+    ///
+    /// Mirrors [`AudioClip::fade_gain_at`] so what the arrangement draws is what plays.
+    pub fn fade_gain(&self, position: u64) -> f32 {
+        let mut gain = 1.0f32;
+        if self.fade_in > 0 && position < self.fade_in {
+            gain *= position as f32 / self.fade_in as f32;
+        }
+        if self.fade_out > 0 {
+            let fade_start = self.length.saturating_sub(self.fade_out);
+            if position >= fade_start {
+                let into_fade = position - fade_start;
+                gain *= 1.0 - (into_fade as f32 / self.fade_out as f32).min(1.0);
+            }
+        }
+        gain
+    }
+}
+
+/// Where a track's audio comes from.
+pub enum RenderSource {
+    /// A software instrument driven by a pre-flattened, frame-sorted event list.
+    Instrument {
+        /// The live plugin instance.
+        instrument: Box<dyn Instrument>,
+        /// Every note on the track, in absolute timeline frames, sorted by frame.
+        events: Vec<ScheduledEvent>,
+    },
+    /// Audio clips read straight out of the sample bank.
+    Audio {
+        /// Clips in timeline order.
+        clips: Vec<RenderAudioClip>,
+    },
+    /// Nothing to play.
+    ///
+    /// Used when a track's instrument id is missing from the registry: the track keeps its slot
+    /// so that command indices still line up with the project's track order, but it is silent.
+    Silence,
+}
+
+/// A gain that ramps to its target across one block instead of jumping.
+///
+/// A jump between blocks is audible as a click, so [`Self::advance`] hands the renderer the
+/// start and end of a linear ramp. When nothing has changed the two are equal and the ramp
+/// degenerates into a plain multiply, which is what keeps rendering independent of block size.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct SmoothedGain {
+    current: f32,
+    target: f32,
+}
+
+impl SmoothedGain {
+    /// A gain already settled at `gain`.
+    pub fn new(gain: f32) -> Self {
+        let gain = sane_gain(gain);
+        Self {
+            current: gain,
+            target: gain,
+        }
+    }
+
+    /// The value the next block ramps towards.
+    pub fn target(&self) -> f32 {
+        self.target
+    }
+
+    /// The value the next block ramps from.
+    pub fn current(&self) -> f32 {
+        self.current
+    }
+
+    /// Aims at a new gain, reached by the end of the next block.
+    pub fn set_target(&mut self, gain: f32) {
+        self.target = sane_gain(gain);
+    }
+
+    /// Jumps to `gain` with no ramp at all.
+    pub fn jump_to(&mut self, gain: f32) {
+        let gain = sane_gain(gain);
+        self.current = gain;
+        self.target = gain;
+    }
+
+    /// Consumes one block, returning the `(start, end)` of its ramp.
+    pub(crate) fn advance(&mut self) -> (f32, f32) {
+        let start = self.current;
+        self.current = self.target;
+        (start, self.target)
+    }
+}
+
+fn sane_gain(gain: f32) -> f32 {
+    if gain.is_finite() { gain } else { 0.0 }
+}
+
+/// Volume, pan and effects for a track or the master bus.
+pub struct RenderStrip {
+    pub(crate) gain: SmoothedGain,
+    pub(crate) pan: f32,
+    pan_current: f32,
+    pub(crate) mute: bool,
+    pub(crate) audible: bool,
+    pub(crate) effects: Vec<Box<dyn Effect>>,
+    /// Bypass flags, parallel to `effects`, so toggling a bypass keeps slot indices stable.
+    pub(crate) enabled: Vec<bool>,
+}
+
+impl RenderStrip {
+    /// A strip with no effects.
+    pub fn new(gain_db: f32, pan: f32, mute: bool, audible: bool) -> Self {
+        let pan = pan.clamp(-1.0, 1.0);
+        Self {
+            gain: SmoothedGain::new(db_to_gain(gain_db)),
+            pan,
+            pan_current: pan,
+            mute,
+            audible,
+            effects: Vec::new(),
+            enabled: Vec::new(),
+        }
+    }
+
+    /// Instantiates a mixer strip's effect chain from the registry.
+    ///
+    /// `audible` carries the project-wide solo resolution; the strip's own mute stays separate
+    /// so that toggling it later needs a command rather than a rebuild.
+    pub fn from_mixer(
+        mixer: &MixerStrip,
+        audible: bool,
+        registry: &PluginRegistry,
+        prepare: &PrepareContext,
+    ) -> Self {
+        let mut strip = Self::new(mixer.gain_db, mixer.pan, mixer.mute, audible);
+        strip.effects.reserve(mixer.effects.len());
+        strip.enabled.reserve(mixer.effects.len());
+        for slot in &mixer.effects {
+            match registry.create_effect(&slot.effect_id) {
+                Ok(mut effect) => {
+                    effect.load_state(&slot.state);
+                    effect.prepare(prepare);
+                    strip.effects.push(effect);
+                    strip.enabled.push(slot.enabled);
+                }
+                Err(error) => {
+                    // A missing plugin must not stop a project from opening.
+                    log::warn!("skipping effect `{}`: {error}", slot.effect_id);
+                }
+            }
+        }
+        strip
+    }
+
+    /// `true` when this strip should contribute to the mix.
+    pub fn is_active(&self) -> bool {
+        self.audible && !self.mute
+    }
+
+    /// Current fader position as a linear gain.
+    pub fn gain(&self) -> f32 {
+        self.gain.target()
+    }
+
+    /// Moves the fader; the change is ramped across the next block.
+    pub fn set_gain_db(&mut self, gain_db: f32) {
+        self.gain.set_target(db_to_gain(gain_db));
+    }
+
+    /// Current stereo position.
+    pub fn pan(&self) -> f32 {
+        self.pan
+    }
+
+    /// Moves the pan control; the change is ramped across the next block.
+    pub fn set_pan(&mut self, pan: f32) {
+        self.pan = pan.clamp(-1.0, 1.0);
+    }
+
+    /// Sets the strip's own mute switch.
+    pub fn set_mute(&mut self, mute: bool) {
+        self.mute = mute;
+    }
+
+    /// Sets the solo-resolved audibility flag.
+    pub fn set_audible(&mut self, audible: bool) {
+        self.audible = audible;
+    }
+
+    /// Number of effects in the chain.
+    pub fn effect_count(&self) -> usize {
+        self.effects.len()
+    }
+
+    /// Longest tail declared by any effect in the chain.
+    pub fn tail_frames(&self) -> usize {
+        self.effects
+            .iter()
+            .zip(&self.enabled)
+            .filter(|(_, enabled)| **enabled)
+            .map(|(effect, _)| effect.tail_frames())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Writes a parameter on one effect. Out-of-range slots are ignored.
+    pub fn set_effect_param(&mut self, slot: usize, param: ParamId, value: f32) {
+        if let Some(effect) = self.effects.get_mut(slot) {
+            effect.set_param(param, value);
+        }
+    }
+
+    /// Clears every effect's delay lines and filter memory.
+    pub fn reset(&mut self) {
+        for effect in &mut self.effects {
+            effect.reset();
+        }
+    }
+
+    /// Applies the fader and the pan law to a stereo block, ramping both across it.
+    pub(crate) fn apply_gain_and_pan(&mut self, buffer: &mut AudioBuffer) {
+        let (gain_from, gain_to) = self.gain.advance();
+        let pan_from = self.pan_current;
+        let pan_to = self.pan;
+        self.pan_current = pan_to;
+
+        let (left_from, right_from) = pan_gains(pan_from);
+        let (left_to, right_to) = pan_gains(pan_to);
+        let channels = buffer.channels_mut();
+        match channels {
+            [] => {}
+            [mono] => ramp(mono, gain_from, gain_to),
+            [left, right, rest @ ..] => {
+                ramp(
+                    left,
+                    gain_from * left_from * PAN_CENTRE_NORMALISE,
+                    gain_to * left_to * PAN_CENTRE_NORMALISE,
+                );
+                ramp(
+                    right,
+                    gain_from * right_from * PAN_CENTRE_NORMALISE,
+                    gain_to * right_to * PAN_CENTRE_NORMALISE,
+                );
+                for extra in rest {
+                    ramp(extra, gain_from, gain_to);
+                }
+            }
+        }
+    }
+}
+
+/// Multiplies `samples` by a gain sweeping linearly from `start` to `end`.
+fn ramp(samples: &mut [f32], start: f32, end: f32) {
+    if samples.is_empty() {
+        return;
+    }
+    if (start - end).abs() <= f32::EPSILON {
+        for sample in samples.iter_mut() {
+            *sample *= start;
+        }
+        return;
+    }
+    let step = (end - start) / samples.len() as f32;
+    let mut gain = start;
+    for sample in samples.iter_mut() {
+        *sample *= gain;
+        gain += step;
+    }
+}
+
+/// One track, ready to render.
+pub struct RenderTrack {
+    /// Project id of the track this came from.
+    pub id: TrackId,
+    /// Track name, kept for logging and for the meter tooltips.
+    pub name: String,
+    pub(crate) source: RenderSource,
+    pub(crate) strip: RenderStrip,
+    pub(crate) scratch: AudioBuffer,
+    /// Events handed to the instrument for the current block, block-relative and sorted.
+    pub(crate) block_events: Vec<NoteEvent>,
+    /// Notes triggered from the UI, consumed at the start of the next block.
+    pub(crate) audition: Vec<NoteEvent>,
+    /// Frame the previous rendered block ended on. A mismatch with the next block's start means
+    /// the playhead jumped — a seek, a loop wrap or a fresh start — and the notes that should be
+    /// sounding there have to be chased.
+    pub(crate) continued_from: Option<u64>,
+    /// How many times each pitch is on at the chase position.
+    pub(crate) chase_counts: [u8; PITCH_COUNT],
+    /// Velocity each pitch was last struck with, so a chased note comes back at its own level.
+    pub(crate) chase_velocity: [f32; PITCH_COUNT],
+    /// Post-fader peak of the last block, published to the meters by the engine.
+    pub(crate) peak: f32,
+}
+
+impl RenderTrack {
+    /// The track's mixer strip.
+    pub fn strip(&self) -> &RenderStrip {
+        &self.strip
+    }
+
+    /// The track's mixer strip, mutably.
+    pub fn strip_mut(&mut self) -> &mut RenderStrip {
+        &mut self.strip
+    }
+
+    /// What the track plays.
+    pub fn source(&self) -> &RenderSource {
+        &self.source
+    }
+
+    /// Post-fader peak of the most recently rendered block.
+    pub fn peak(&self) -> f32 {
+        self.peak
+    }
+
+    /// Number of scheduled note events, or 0 for a track with no instrument.
+    pub fn event_count(&self) -> usize {
+        match &self.source {
+            RenderSource::Instrument { events, .. } => events.len(),
+            _ => 0,
+        }
+    }
+
+    /// Queues a note to sound at the start of the next block, for piano-roll auditioning.
+    ///
+    /// Dropped when the queue is full, because growing it would allocate on the audio thread.
+    pub fn note_on(&mut self, pitch: u8, velocity: f32) {
+        self.push_audition(NoteEvent::NoteOn {
+            frame: 0,
+            pitch,
+            velocity: velocity.clamp(0.0, 1.0),
+        });
+    }
+
+    /// Queues a note release for the start of the next block.
+    pub fn note_off(&mut self, pitch: u8) {
+        self.push_audition(NoteEvent::NoteOff { frame: 0, pitch });
+    }
+
+    fn push_audition(&mut self, event: NoteEvent) {
+        if self.audition.len() < self.audition.capacity() {
+            self.audition.push(event);
+        }
+    }
+
+    /// Writes a parameter on the track's instrument.
+    pub fn set_instrument_param(&mut self, param: ParamId, value: f32) {
+        if let RenderSource::Instrument { instrument, .. } = &mut self.source {
+            instrument.set_param(param, value);
+        }
+    }
+
+    /// Silences the instrument and clears the pending audition queue.
+    ///
+    /// Playback continuity is left alone, so nothing is chased back in: this is what a panic
+    /// wants, where the point is that everything shuts up until the next note begins.
+    pub fn silence_voices(&mut self) {
+        self.audition.clear();
+        if let RenderSource::Instrument { instrument, .. } = &mut self.source {
+            instrument.reset();
+        }
+    }
+
+    /// Silences the instrument and marks the next block as a jump.
+    ///
+    /// This is what a stop or a seek wants: any note spanning the new position is chased back in
+    /// rather than staying silent until its successor.
+    pub fn reset_voices(&mut self) {
+        self.silence_voices();
+        self.continued_from = None;
+    }
+}
+
+/// Every track plus the master bus, sized and prepared for one particular block size.
+pub struct RenderGraph {
+    pub(crate) tracks: Vec<RenderTrack>,
+    pub(crate) master: RenderStrip,
+    sample_rate: f64,
+    max_block: usize,
+    tempo_map: TempoMap,
+    pub(crate) master_scratch: AudioBuffer,
+    pub(crate) master_peak: [f32; 2],
+}
+
+impl RenderGraph {
+    /// Builds a render graph for `project` at the project's own sample rate.
+    ///
+    /// Never fails: a plugin id the registry does not know is logged and skipped, so a project
+    /// still opens (silently, for that track) when a plugin has been removed.
+    pub fn build(
+        project: &Project,
+        bank: &AudioSourceBank,
+        registry: &PluginRegistry,
+        max_block: usize,
+    ) -> RenderGraph {
+        Self::build_at(project, bank, registry, max_block, project.sample_rate)
+    }
+
+    /// Builds a render graph at an explicit sample rate.
+    ///
+    /// The audio device decides the rate the engine actually runs at, which is not necessarily
+    /// the rate stored in the project, so the caller passes it in.
+    pub fn build_at(
+        project: &Project,
+        bank: &AudioSourceBank,
+        registry: &PluginRegistry,
+        max_block: usize,
+        sample_rate: f64,
+    ) -> RenderGraph {
+        let max_block = max_block.max(1);
+        // A zero, negative or NaN rate would make every derived position meaningless and would
+        // poison the meters, so fall back to the project's rate and then to a sane default: a
+        // project deserialised from a corrupt file can carry a nonsense rate too.
+        let sample_rate = [sample_rate, project.sample_rate, DEFAULT_SAMPLE_RATE]
+            .into_iter()
+            .find(|rate| rate.is_finite() && *rate > 0.0)
+            .unwrap_or(DEFAULT_SAMPLE_RATE);
+        let prepare = PrepareContext::new(sample_rate, max_block, RENDER_CHANNELS);
+        let has_solo = project.has_solo();
+
+        let mut tracks = Vec::with_capacity(project.tracks.len());
+        for track in &project.tracks {
+            // `audible` carries only the solo resolution; the strip keeps its own mute so a
+            // mute toggle is a command rather than a rebuild.
+            let audible = !has_solo || track.mixer.solo;
+            let strip = RenderStrip::from_mixer(&track.mixer, audible, registry, &prepare);
+            let source = match &track.kind {
+                TrackKind::Instrument(instrument_track) => {
+                    match registry.create_instrument(&instrument_track.instrument_id) {
+                        Ok(mut instrument) => {
+                            instrument.load_state(&instrument_track.instrument_state);
+                            instrument.prepare(&prepare);
+                            let mut events = Vec::new();
+                            for clip in &instrument_track.clips {
+                                schedule_clip(clip, &project.tempo_map, sample_rate, &mut events);
+                            }
+                            sort_events(&mut events);
+                            RenderSource::Instrument { instrument, events }
+                        }
+                        Err(error) => {
+                            log::warn!(
+                                "track `{}` keeps its slot but stays silent: {error}",
+                                track.name
+                            );
+                            RenderSource::Silence
+                        }
+                    }
+                }
+                TrackKind::Audio(audio_track) => {
+                    let mut clips = Vec::with_capacity(audio_track.clips.len());
+                    for clip in &audio_track.clips {
+                        if let Some(resolved) =
+                            resolve_audio_clip(clip, bank, &project.tempo_map, sample_rate)
+                        {
+                            clips.push(resolved);
+                        }
+                    }
+                    clips.sort_by_key(|clip| clip.start_frame);
+                    RenderSource::Audio { clips }
+                }
+            };
+
+            let event_headroom = match &source {
+                RenderSource::Instrument { events, .. } => {
+                    max_events_in_window(events, max_block as u64)
+                }
+                _ => 0,
+            };
+            let mut scratch = AudioBuffer::new(RENDER_CHANNELS, max_block, sample_rate);
+            scratch.reserve_frames(max_block);
+
+            tracks.push(RenderTrack {
+                id: track.id,
+                name: track.name.clone(),
+                source,
+                strip,
+                scratch,
+                block_events: Vec::with_capacity(
+                    event_headroom + AUDITION_HEADROOM + CHASE_HEADROOM,
+                ),
+                audition: Vec::with_capacity(AUDITION_HEADROOM),
+                continued_from: None,
+                chase_counts: [0; PITCH_COUNT],
+                chase_velocity: [0.0; PITCH_COUNT],
+                peak: 0.0,
+            });
+        }
+
+        let master = RenderStrip::from_mixer(&project.master, true, registry, &prepare);
+        let mut master_scratch = AudioBuffer::new(RENDER_CHANNELS, max_block, sample_rate);
+        master_scratch.reserve_frames(max_block);
+
+        RenderGraph {
+            tracks,
+            master,
+            sample_rate,
+            max_block,
+            tempo_map: project.tempo_map.clone(),
+            master_scratch,
+            master_peak: [0.0, 0.0],
+        }
+    }
+
+    /// Rate this graph was prepared for.
+    pub fn sample_rate(&self) -> f64 {
+        self.sample_rate
+    }
+
+    /// Largest block the graph's plugins and scratch buffers are sized for.
+    ///
+    /// The renderer splits anything longer into chunks of at most this many frames.
+    pub fn max_block(&self) -> usize {
+        self.max_block
+    }
+
+    /// Channel count of the internal mix bus.
+    pub fn channel_count(&self) -> usize {
+        RENDER_CHANNELS
+    }
+
+    /// Number of tracks, which always matches the project's track count.
+    pub fn track_count(&self) -> usize {
+        self.tracks.len()
+    }
+
+    /// The tracks, in project order.
+    pub fn tracks(&self) -> &[RenderTrack] {
+        &self.tracks
+    }
+
+    /// The tracks, mutably.
+    pub fn tracks_mut(&mut self) -> &mut [RenderTrack] {
+        &mut self.tracks
+    }
+
+    /// One track by index.
+    pub fn track(&self, index: usize) -> Option<&RenderTrack> {
+        self.tracks.get(index)
+    }
+
+    /// One track by index, mutably.
+    pub fn track_mut(&mut self, index: usize) -> Option<&mut RenderTrack> {
+        self.tracks.get_mut(index)
+    }
+
+    /// The master bus strip.
+    pub fn master(&self) -> &RenderStrip {
+        &self.master
+    }
+
+    /// The master bus strip, mutably.
+    pub fn master_mut(&mut self) -> &mut RenderStrip {
+        &mut self.master
+    }
+
+    /// The tempo map positions were flattened against.
+    pub fn tempo_map(&self) -> &TempoMap {
+        &self.tempo_map
+    }
+
+    /// Tempo in effect at an absolute frame position.
+    pub fn bpm_at_frame(&self, frame: u64) -> f64 {
+        let tick = self
+            .tempo_map
+            .samples_to_ticks(Samples(frame), self.sample_rate);
+        self.tempo_map.bpm_at(tick)
+    }
+
+    /// Post-fader peak of a track's last rendered block.
+    pub fn track_peak(&self, index: usize) -> f32 {
+        self.tracks.get(index).map_or(0.0, |track| track.peak)
+    }
+
+    /// Peak of one master channel over the last rendered block.
+    pub fn master_channel_peak(&self, channel: usize) -> f32 {
+        self.master_peak.get(channel).copied().unwrap_or(0.0)
+    }
+
+    /// Loudest master channel over the last rendered block.
+    pub fn master_peak(&self) -> f32 {
+        self.master_peak[0].max(self.master_peak[1])
+    }
+
+    /// Longest effect tail anywhere in the graph, in frames.
+    ///
+    /// The offline renderer keeps going for this long past the end of the arrangement so that
+    /// reverbs and delays are not chopped off in the exported file.
+    pub fn tail_frames(&self) -> usize {
+        self.tracks
+            .iter()
+            .map(|track| track.strip.tail_frames())
+            .max()
+            .unwrap_or(0)
+            .max(self.master.tail_frames())
+    }
+
+    /// Last frame any scheduled event or audio clip touches.
+    pub fn end_frame(&self) -> u64 {
+        self.tracks
+            .iter()
+            .map(|track| match &track.source {
+                RenderSource::Instrument { events, .. } => {
+                    events.last().map_or(0, |event| event.frame)
+                }
+                RenderSource::Audio { clips } => clips
+                    .iter()
+                    .map(|clip| clip.start_frame + clip.length)
+                    .max()
+                    .unwrap_or(0),
+                RenderSource::Silence => 0,
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Moves a track's fader.
+    pub fn set_track_gain_db(&mut self, index: usize, gain_db: f32) {
+        if let Some(track) = self.tracks.get_mut(index) {
+            track.strip.set_gain_db(gain_db);
+        }
+    }
+
+    /// Moves a track's pan control.
+    pub fn set_track_pan(&mut self, index: usize, pan: f32) {
+        if let Some(track) = self.tracks.get_mut(index) {
+            track.strip.set_pan(pan);
+        }
+    }
+
+    /// Toggles a track's mute.
+    pub fn set_track_mute(&mut self, index: usize, mute: bool) {
+        if let Some(track) = self.tracks.get_mut(index) {
+            track.strip.set_mute(mute);
+        }
+    }
+
+    /// Moves the master fader. `gain_db` is in decibels.
+    pub fn set_master_gain_db(&mut self, gain_db: f32) {
+        self.master.set_gain_db(gain_db);
+    }
+
+    /// Sets the master bus pan.
+    pub fn set_master_pan(&mut self, pan: f32) {
+        self.master.set_pan(pan);
+    }
+
+    /// Writes an effect parameter on a track, or on the master bus when `track` is `None`.
+    pub fn set_effect_param(
+        &mut self,
+        track: Option<usize>,
+        slot: usize,
+        param: ParamId,
+        value: f32,
+    ) {
+        match track {
+            Some(index) => {
+                if let Some(track) = self.tracks.get_mut(index) {
+                    track.strip.set_effect_param(slot, param, value);
+                }
+            }
+            None => self.master.set_effect_param(slot, param, value),
+        }
+    }
+
+    /// Writes a parameter on a track's instrument.
+    pub fn set_instrument_param(&mut self, track: usize, param: ParamId, value: f32) {
+        if let Some(track) = self.tracks.get_mut(track) {
+            track.set_instrument_param(param, value);
+        }
+    }
+
+    /// Queues an audition note on a track.
+    pub fn note_on(&mut self, track: usize, pitch: u8, velocity: f32) {
+        if let Some(track) = self.tracks.get_mut(track) {
+            track.note_on(pitch, velocity);
+        }
+    }
+
+    /// Queues an audition note release on a track.
+    pub fn note_off(&mut self, track: usize, pitch: u8) {
+        if let Some(track) = self.tracks.get_mut(track) {
+            track.note_off(pitch);
+        }
+    }
+
+    /// Drops every sounding voice without touching effect tails.
+    ///
+    /// This is what a stop or a seek does: notes must not hang, but a reverb should keep ringing.
+    pub fn reset_voices(&mut self) {
+        for track in &mut self.tracks {
+            track.reset_voices();
+        }
+    }
+
+    /// Silences everything: voices, delay lines and filter memory.
+    ///
+    /// Notes stay off until the next note-on rather than being chased back, because a panic that
+    /// immediately restored what it had just killed would be useless.
+    pub fn panic(&mut self) {
+        for track in &mut self.tracks {
+            track.silence_voices();
+            track.strip.reset();
+            track.peak = 0.0;
+        }
+        self.master.reset();
+        self.master_peak = [0.0, 0.0];
+    }
+}
+
+/// Flattens one MIDI clip's notes into absolute timeline events.
+///
+/// Notes starting past the clip's end are dropped and notes running past it are cut short, which
+/// is what the arrangement shows: the clip's length is the gate.
+fn schedule_clip(
+    clip: &MidiClip,
+    tempo_map: &TempoMap,
+    sample_rate: f64,
+    out: &mut Vec<ScheduledEvent>,
+) {
+    if clip.muted || clip.length <= Ticks::ZERO {
+        return;
+    }
+    for note in &clip.notes {
+        if note.start < Ticks::ZERO || note.start >= clip.length {
+            continue;
+        }
+        let start_tick = clip.start + note.start;
+        let end_tick = clip.start + note.end().min(clip.length);
+        let start = tempo_map.ticks_to_samples(start_tick, sample_rate).raw();
+        // A note must occupy at least one frame or the instrument would see the release before
+        // it ever produced a sample.
+        let end = tempo_map
+            .ticks_to_samples(end_tick, sample_rate)
+            .raw()
+            .max(start + 1);
+        out.push(ScheduledEvent {
+            frame: start,
+            event: NoteEvent::NoteOn {
+                frame: 0,
+                pitch: note.pitch,
+                velocity: note.velocity.clamp(0.0, 1.0),
+            },
+        });
+        out.push(ScheduledEvent {
+            frame: end,
+            event: NoteEvent::NoteOff {
+                frame: 0,
+                pitch: note.pitch,
+            },
+        });
+    }
+}
+
+/// Rank used to break ties between events landing on the same frame.
+///
+/// Releases go first so that a note repeated at the same pitch retriggers instead of the new
+/// note being cut short by the old note's release.
+fn event_rank(event: &NoteEvent) -> u8 {
+    match event {
+        NoteEvent::NoteOff { .. }
+        | NoteEvent::AllNotesOff { .. }
+        | NoteEvent::AllSoundOff { .. } => 0,
+        NoteEvent::PitchBend { .. } => 1,
+        NoteEvent::NoteOn { .. } => 2,
+    }
+}
+
+fn sort_events(events: &mut [ScheduledEvent]) {
+    events.sort_by_key(|scheduled| (scheduled.frame, event_rank(&scheduled.event)));
+}
+
+/// Resolves a project audio clip against the sample bank.
+fn resolve_audio_clip(
+    clip: &AudioClip,
+    bank: &AudioSourceBank,
+    tempo_map: &TempoMap,
+    sample_rate: f64,
+) -> Option<RenderAudioClip> {
+    if clip.muted {
+        return None;
+    }
+    let Some(buffer) = bank.get(clip.source) else {
+        log::warn!(
+            "clip `{}` references source {} which is not loaded",
+            clip.name,
+            clip.source.0
+        );
+        return None;
+    };
+    let available = buffer.frame_count() as u64;
+    let source_offset = clip.offset_frames.min(available);
+    let length = clip.length_frames.min(available - source_offset);
+    if length == 0 {
+        return None;
+    }
+    Some(RenderAudioClip {
+        buffer: Arc::clone(buffer),
+        start_frame: tempo_map
+            .ticks_to_samples(clip.start.max_zero(), sample_rate)
+            .raw(),
+        source_offset,
+        length,
+        gain: db_to_gain(clip.gain_db),
+        fade_in: clip.fade_in_frames,
+        fade_out: clip.fade_out_frames,
+    })
+}
+
+/// Largest number of events that can fall inside any window of `window` frames.
+///
+/// This is the exact bound the per-block event buffer needs: rendering never sees more than one
+/// window's worth at a time, so sizing to this makes the buffer allocation-free without ever
+/// dropping an event.
+fn max_events_in_window(events: &[ScheduledEvent], window: u64) -> usize {
+    let mut best = 0;
+    let mut low = 0;
+    for (high, event) in events.iter().enumerate() {
+        while event.frame - events[low].frame >= window {
+            low += 1;
+        }
+        best = best.max(high - low + 1);
+    }
+    best
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testkit;
+    use auris_core::project::Note;
+    use auris_core::time::TICKS_PER_QUARTER;
+
+    fn quarter_note_project() -> Project {
+        let mut project = Project::new("Graph", 48_000.0);
+        let track = project.add_instrument_track("Lead", testkit::TONE_ID);
+        let clip = project
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::from_beats(4.0))
+            .unwrap();
+        let midi = project.midi_clip_mut(clip).unwrap();
+        midi.notes
+            .push(Note::new(60, Ticks::QUARTER, Ticks::QUARTER));
+        project
+    }
+
+    #[test]
+    fn notes_land_on_absolute_sample_positions() {
+        let project = quarter_note_project();
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        let RenderSource::Instrument { events, .. } = &graph.tracks()[0].source else {
+            panic!("expected an instrument source");
+        };
+        // 120 BPM at 48 kHz: one quarter note is 0.5 s, so 24 000 frames.
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].frame, 24_000);
+        assert_eq!(events[1].frame, 48_000);
+        assert!(matches!(
+            events[0].event,
+            NoteEvent::NoteOn { pitch: 60, .. }
+        ));
+        assert!(matches!(
+            events[1].event,
+            NoteEvent::NoteOff { pitch: 60, .. }
+        ));
+    }
+
+    #[test]
+    fn notes_are_clipped_to_their_clips_length() {
+        let mut project = Project::new("Graph", 48_000.0);
+        let track = project.add_instrument_track("Lead", testkit::TONE_ID);
+        let clip = project
+            .add_midi_clip(track, "Short", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        let midi = project.midi_clip_mut(clip).unwrap();
+        // Four beats long inside a one-beat clip, plus a note that starts after the clip ends.
+        midi.notes
+            .push(Note::new(60, Ticks::ZERO, Ticks::from_beats(4.0)));
+        midi.notes
+            .push(Note::new(62, Ticks::from_beats(2.0), Ticks::QUARTER));
+
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        let RenderSource::Instrument { events, .. } = &graph.tracks()[0].source else {
+            panic!("expected an instrument source");
+        };
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].frame, 0);
+        assert_eq!(events[1].frame, 24_000);
+    }
+
+    #[test]
+    fn a_muted_clip_schedules_nothing() {
+        let mut project = quarter_note_project();
+        project.tracks[0].kind.as_instrument_mut().unwrap().clips[0].muted = true;
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        assert_eq!(graph.tracks()[0].event_count(), 0);
+    }
+
+    #[test]
+    fn an_unknown_instrument_keeps_the_track_slot() {
+        let mut project = Project::new("Graph", 48_000.0);
+        project.add_instrument_track("Ghost", "does.not.exist");
+        project.add_instrument_track("Real", testkit::TONE_ID);
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        assert_eq!(graph.track_count(), 2);
+        assert!(matches!(graph.tracks()[0].source, RenderSource::Silence));
+        assert!(matches!(
+            graph.tracks()[1].source,
+            RenderSource::Instrument { .. }
+        ));
+    }
+
+    #[test]
+    fn an_unknown_effect_is_skipped_without_panicking() {
+        let mut project = Project::new("Graph", 48_000.0);
+        let track = project.add_instrument_track("Lead", testkit::TONE_ID);
+        project.add_effect(Some(track), "does.not.exist");
+        project.add_effect(Some(track), testkit::GAIN_ID);
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        assert_eq!(graph.tracks()[0].strip().effect_count(), 1);
+    }
+
+    #[test]
+    fn saved_plugin_state_reaches_the_instance() {
+        let mut project = quarter_note_project();
+        let track_id = project.tracks[0].id;
+        project.tracks[0]
+            .kind
+            .as_instrument_mut()
+            .unwrap()
+            .instrument_state
+            .params
+            .insert("amplitude".into(), 0.25);
+        let slot = project
+            .add_effect(Some(track_id), testkit::GAIN_ID)
+            .unwrap();
+        let effect = project.tracks[0]
+            .mixer
+            .effects
+            .iter_mut()
+            .find(|e| e.id == slot)
+            .unwrap();
+        effect.state.params.insert("gain".into(), 3.0);
+
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        let RenderSource::Instrument { instrument, .. } = &graph.tracks()[0].source else {
+            panic!("expected an instrument source");
+        };
+        assert_eq!(instrument.param(ParamId(0)), 0.25);
+        assert_eq!(
+            graph.tracks()[0].strip().effects[0].param(ParamId(0)),
+            3.0,
+            "a saved effect parameter must survive the rebuild"
+        );
+    }
+
+    #[test]
+    fn a_bypassed_effect_is_instantiated_but_keeps_the_next_slot_index_stable() {
+        let mut project = Project::new("Bypass", 48_000.0);
+        let track = project.add_instrument_track("Lead", testkit::TONE_ID);
+        project.add_effect(Some(track), testkit::GAIN_ID);
+        project.add_effect(Some(track), testkit::GAIN_ID);
+        {
+            let strip = &mut project.tracks[0].mixer;
+            strip.effects[0].enabled = false;
+            strip.effects[0].state.params.insert("gain".into(), 4.0);
+        }
+
+        let mut graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        // Both slots exist, so `SetEffectParam { slot: 1 }` still means the second effect.
+        assert_eq!(graph.tracks()[0].strip().effect_count(), 2);
+        graph.set_effect_param(Some(0), 1, ParamId(0), 2.0);
+        assert_eq!(graph.tracks()[0].strip().effects[0].param(ParamId(0)), 4.0);
+        assert_eq!(graph.tracks()[0].strip().effects[1].param(ParamId(0)), 2.0);
+    }
+
+    #[test]
+    fn a_nonsense_sample_rate_falls_back_instead_of_poisoning_the_graph() {
+        let mut project = quarter_note_project();
+        project.sample_rate = 0.0;
+        let graph = RenderGraph::build_at(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            512,
+            f64::NAN,
+        );
+        assert_eq!(graph.sample_rate(), DEFAULT_SAMPLE_RATE);
+        assert!(graph.sample_rate().is_finite());
+    }
+
+    #[test]
+    fn solo_clears_the_audible_flag_on_other_tracks() {
+        let mut project = Project::new("Graph", 48_000.0);
+        project.add_instrument_track("A", testkit::TONE_ID);
+        let b = project.add_instrument_track("B", testkit::TONE_ID);
+        project.track_mut(b).unwrap().mixer.solo = true;
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        assert!(!graph.tracks()[0].strip().is_active());
+        assert!(graph.tracks()[1].strip().is_active());
+    }
+
+    #[test]
+    fn the_event_scratch_is_sized_for_the_densest_block() {
+        let mut project = Project::new("Graph", 48_000.0);
+        let track = project.add_instrument_track("Chords", testkit::TONE_ID);
+        let clip = project
+            .add_midi_clip(track, "Stack", Ticks::ZERO, Ticks::from_beats(4.0))
+            .unwrap();
+        let midi = project.midi_clip_mut(clip).unwrap();
+        for pitch in 60..66u8 {
+            midi.notes
+                .push(Note::new(pitch, Ticks::ZERO, Ticks::QUARTER));
+        }
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        // Six simultaneous note-ons, plus the headroom reserved for UI auditioning.
+        assert!(graph.tracks()[0].block_events.capacity() >= 6 + AUDITION_HEADROOM);
+    }
+
+    #[test]
+    fn a_tempo_change_moves_later_notes() {
+        let mut project = quarter_note_project();
+        project.tempo_map.set_point(Ticks(TICKS_PER_QUARTER), 240.0);
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        let RenderSource::Instrument { events, .. } = &graph.tracks()[0].source else {
+            panic!("expected an instrument source");
+        };
+        // The note still starts one quarter in at 120 BPM (24 000 frames) but now lasts only
+        // 0.25 s because the tempo doubles exactly where it begins.
+        assert_eq!(events[0].frame, 24_000);
+        assert_eq!(events[1].frame, 36_000);
+    }
+
+    #[test]
+    fn window_bound_counts_the_densest_run() {
+        let events: Vec<ScheduledEvent> = [0u64, 10, 20, 30, 500, 505]
+            .into_iter()
+            .map(|frame| ScheduledEvent {
+                frame,
+                event: NoteEvent::AllNotesOff { frame: 0 },
+            })
+            .collect();
+        assert_eq!(max_events_in_window(&events, 100), 4);
+        assert_eq!(max_events_in_window(&events, 11), 2);
+        assert_eq!(max_events_in_window(&[], 512), 0);
+    }
+
+    #[test]
+    fn audio_clips_are_clamped_to_the_source_length() {
+        let mut project = Project::new("Graph", 48_000.0);
+        let track = project.add_audio_track("Drums");
+        let source = project.add_audio_source("loop", "loop.wav".into(), 1_000, 48_000.0, 2);
+        let clip = project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
+        {
+            let clip = project.audio_clip_mut(clip).unwrap();
+            clip.offset_frames = 900;
+            clip.length_frames = 500;
+        }
+        let mut bank = AudioSourceBank::new();
+        bank.insert(source, Arc::new(AudioBuffer::stereo(1_000, 48_000.0)));
+
+        let graph = RenderGraph::build(&project, &bank, &testkit::registry(), 512);
+        let RenderSource::Audio { clips } = &graph.tracks()[0].source else {
+            panic!("expected an audio source");
+        };
+        assert_eq!(clips[0].source_offset, 900);
+        assert_eq!(clips[0].length, 100);
+    }
+
+    #[test]
+    fn a_smoothed_gain_ramps_once_then_settles() {
+        let mut gain = SmoothedGain::new(1.0);
+        assert_eq!(gain.advance(), (1.0, 1.0));
+        gain.set_target(0.5);
+        assert_eq!(gain.advance(), (1.0, 0.5));
+        assert_eq!(gain.advance(), (0.5, 0.5));
+    }
+
+    #[test]
+    fn a_centred_strip_at_unity_passes_audio_untouched() {
+        let mut strip = RenderStrip::new(0.0, 0.0, false, true);
+        let mut buffer = AudioBuffer::from_planar(vec![vec![1.0; 4], vec![1.0; 4]], 48_000.0)
+            .expect("planar buffer");
+        strip.apply_gain_and_pan(&mut buffer);
+        for channel in 0..2 {
+            for sample in buffer.channel(channel) {
+                assert!((sample - 1.0).abs() < 1e-6, "got {sample}");
+            }
+        }
+    }
+
+    #[test]
+    fn hard_panning_moves_all_the_energy_to_one_side() {
+        let mut strip = RenderStrip::new(0.0, 1.0, false, true);
+        strip.pan_current = 1.0;
+        let mut buffer = AudioBuffer::from_planar(vec![vec![1.0; 4], vec![1.0; 4]], 48_000.0)
+            .expect("planar buffer");
+        strip.apply_gain_and_pan(&mut buffer);
+        assert!(buffer.channel_peak(0) < 1e-6);
+        // Constant power anchored at the centre puts the extremes 3 dB up: sqrt(2).
+        assert!((buffer.channel_peak(1) - std::f32::consts::SQRT_2).abs() < 1e-5);
+    }
+
+    #[test]
+    fn the_graph_can_be_moved_to_the_audio_thread() {
+        fn assert_send<T: Send>() {}
+        assert_send::<RenderGraph>();
+        assert_send::<crate::EngineCommand>();
+    }
+}

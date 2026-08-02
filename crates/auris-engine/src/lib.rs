@@ -1,1 +1,88 @@
-// Placeholder; implemented in a later commit.
+#![warn(missing_docs)]
+
+//! Realtime and offline rendering for Auris Studio.
+//!
+//! # How the pieces fit
+//!
+//! The UI owns the [`Project`](auris_core::project::Project) — the editable document. The audio
+//! thread owns a [`RenderGraph`], which is that document flattened into something that can be
+//! rendered without a single allocation: live plugin instances, note events already converted to
+//! absolute sample positions, and every scratch buffer pre-sized.
+//!
+//! ```text
+//!        UI thread                                    audio callback
+//!   ┌──────────────────┐   EngineCommand::SetGraph   ┌────────────────────┐
+//!   │ Project (edited) │ ──────────────────────────► │ RenderGraph        │
+//!   │ RenderGraph::build                             │ Transport          │
+//!   │                  │ ◄────────────────────────── │ render_block()     │
+//!   └──────────────────┘   retired graph (dropped)   └────────────────────┘
+//!         collect_garbage()                                 meters ▲
+//!                                                        playhead ▲
+//! ```
+//!
+//! A structural edit rebuilds the graph off the audio thread and sends it down a bounded queue;
+//! the audio thread swaps it in and pushes the old one back so its destructor — which frees
+//! plugins and sample buffers — runs on the UI thread. Small changes such as a fader move travel
+//! as cheap [`EngineCommand`]s instead.
+//!
+//! # Rendering
+//!
+//! [`render_block`] is the single implementation of "produce N frames". Realtime playback calls
+//! it from the device callback; [`render_project`] calls it in a loop as fast as the CPU allows.
+//! Because there is only one path, an export matches what was heard, sample for sample.
+//!
+//! # Realtime rules
+//!
+//! Everything reachable from [`render_block`] is allocation-free, lock-free and panic-free.
+//! Allocation happens in [`RenderGraph::build`]; levels reach the UI through the lock-free
+//! [`MeterBank`]; the playhead is a single relaxed atomic.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use auris_core::project::{AudioSourceBank, Project};
+//! use auris_core::registry::PluginRegistry;
+//! use auris_engine::{AudioSettings, EngineCommand, RenderGraph, start_audio};
+//!
+//! let project = Project::default();
+//! let bank = AudioSourceBank::new();
+//! let registry = PluginRegistry::new();
+//!
+//! let (_device, engine) = start_audio(&AudioSettings::default())?;
+//! let graph = RenderGraph::build_at(
+//!     &project,
+//!     &bank,
+//!     &registry,
+//!     engine.max_block(),
+//!     engine.sample_rate(),
+//! );
+//! engine.set_graph(graph)?;
+//! engine.send(EngineCommand::Play)?;
+//! # Ok::<(), auris_engine::EngineError>(())
+//! ```
+
+pub mod command;
+pub mod device;
+pub mod error;
+pub mod graph;
+pub mod handle;
+pub mod meter;
+pub mod offline;
+pub mod renderer;
+pub mod transport;
+
+#[cfg(test)]
+mod testkit;
+
+pub use command::EngineCommand;
+pub use device::{AudioDevice, AudioSettings, start_audio};
+pub use error::EngineError;
+pub use graph::{
+    RENDER_CHANNELS, RenderAudioClip, RenderGraph, RenderSource, RenderStrip, RenderTrack,
+    ScheduledEvent, SmoothedGain,
+};
+pub use handle::EngineHandle;
+pub use meter::MeterBank;
+pub use offline::{OfflineOptions, render_project, render_project_with_progress};
+pub use renderer::render_block;
+pub use transport::Transport;
