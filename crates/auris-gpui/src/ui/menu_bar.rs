@@ -28,6 +28,45 @@ const ROW_HEIGHT: Pixels = px(22.0);
 /// languages looks like a bug. Long labels truncate.
 const MENU_WIDTH: Pixels = px(260.0);
 
+/// Which menu-bar menu is open, and how it came to be.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct OpenMenu {
+    /// Index into [`crate::menu::model`].
+    pub index: usize,
+    /// `true` when a click opened it, `false` when the pointer slid onto it with another
+    /// already open.
+    pub clicked: bool,
+}
+
+/// What the bar shows after a click on the title at `index`.
+///
+/// A click closes only the menu a click opened. One the pointer merely slid onto opens
+/// properly instead — otherwise clicking a menu you are already hovering toggles shut the one
+/// the slide had just opened, and the click looks like it was swallowed.
+pub fn after_click(open: Option<OpenMenu>, index: usize) -> Option<OpenMenu> {
+    match open {
+        Some(open) if open.index == index && open.clicked => None,
+        _ => Some(OpenMenu {
+            index,
+            clicked: true,
+        }),
+    }
+}
+
+/// What the bar shows after the pointer moves onto the title at `index`.
+///
+/// Sliding along the bar moves between menus without clicking again. Doing nothing while none
+/// is open is the other half of that rule: a menu must not open because the pointer passed over.
+pub fn after_hover(open: Option<OpenMenu>, index: usize) -> Option<OpenMenu> {
+    match open {
+        Some(open) if open.index != index => Some(OpenMenu {
+            index,
+            clicked: false,
+        }),
+        other => other,
+    }
+}
+
 impl AurisApp {
     /// Whether this platform needs the window to draw its own menu bar.
     ///
@@ -68,7 +107,7 @@ impl AurisApp {
                 .border_b_1()
                 .border_color(theme.border)
                 .children(sections.into_iter().enumerate().map(|(index, section)| {
-                    let is_open = open == Some(index);
+                    let is_open = open.is_some_and(|open| open.index == index);
                     div()
                         // `relative` so the dropdown hangs off this title rather than off the
                         // window, which is what keeps it under the word that opened it.
@@ -92,19 +131,15 @@ impl AurisApp {
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                                // Clicking the open menu's own title closes it, the way every
-                                // other menu bar behaves.
-                                this.menu_bar = (!is_open).then_some(index);
+                                this.menu_bar = after_click(this.menu_bar, index);
                                 cx.stop_propagation();
                                 cx.notify();
                             }),
                         )
-                        // Once a menu is open, sliding along the bar moves between them without
-                        // clicking again. Doing nothing while none is open is the other half of
-                        // that rule: a menu must not open just because the pointer passed over.
                         .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, _, cx| {
-                            if this.menu_bar.is_some() && this.menu_bar != Some(index) {
-                                this.menu_bar = Some(index);
+                            let next = after_hover(this.menu_bar, index);
+                            if next != this.menu_bar {
+                                this.menu_bar = next;
                                 cx.notify();
                             }
                         }))
@@ -233,5 +268,53 @@ mod tests {
         // The dropdown hangs from `HEIGHT`; a bar shorter than the text in it would clip.
         assert!(HEIGHT >= px(20.0));
         assert!(ROW_HEIGHT < HEIGHT);
+    }
+
+    fn clicked(index: usize) -> Option<OpenMenu> {
+        Some(OpenMenu {
+            index,
+            clicked: true,
+        })
+    }
+
+    fn slid(index: usize) -> Option<OpenMenu> {
+        Some(OpenMenu {
+            index,
+            clicked: false,
+        })
+    }
+
+    #[test]
+    fn a_click_opens_a_closed_menu_and_closes_the_one_it_opened() {
+        assert_eq!(after_click(None, 1), clicked(1));
+        assert_eq!(after_click(clicked(1), 1), None);
+    }
+
+    #[test]
+    fn a_click_on_a_menu_the_pointer_slid_onto_opens_it_rather_than_toggling() {
+        // Slide from File onto Transport and Transport opens; the click that follows must keep
+        // it open. Toggling here reads as a click the application ignored, and the user clicks
+        // again to get back exactly where they were.
+        let after_slide = after_hover(clicked(0), 3);
+        assert_eq!(after_slide, slid(3));
+        assert_eq!(after_click(after_slide, 3), clicked(3));
+        // And now that a click put it there, clicking again does close it.
+        assert_eq!(after_click(clicked(3), 3), None);
+    }
+
+    #[test]
+    fn a_click_on_another_title_switches_rather_than_closes() {
+        assert_eq!(after_click(clicked(0), 2), clicked(2));
+    }
+
+    #[test]
+    fn the_pointer_alone_never_opens_a_menu() {
+        // Sliding along a bar with nothing open must stay closed, or the menus would drop down
+        // whenever the pointer crossed the top of the window on its way somewhere else.
+        assert_eq!(after_hover(None, 0), None);
+        assert_eq!(after_hover(None, 3), None);
+        // Nor does the pointer resting on the open menu's own title change how it was opened.
+        assert_eq!(after_hover(clicked(1), 1), clicked(1));
+        assert_eq!(after_hover(slid(1), 1), slid(1));
     }
 }

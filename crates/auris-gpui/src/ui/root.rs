@@ -122,10 +122,13 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_toggle_editor))
             .on_action(cx.listener(Self::on_open_settings))
             // A click anywhere else dismisses an open menu-bar menu, the way a native menu bar
-            // behaves. Capture phase, so it is seen even where a panel stops the event before
-            // it reaches the root — and before the title's own handler, which then toggles from
-            // the state the frame was drawn with rather than from this.
-            .capture_any_mouse_down(cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
+            // behaves. Capture phase, so it is seen even where a panel stops the event before it
+            // reaches the root — but not over the bar itself, which decides for itself whether a
+            // click is opening a menu or toggling one shut and needs the state this would clear.
+            .capture_any_mouse_down(cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
+                if event.position.y <= crate::ui::menu_bar::HEIGHT {
+                    return;
+                }
                 if this.close_menu_bar() {
                     cx.notify();
                 }

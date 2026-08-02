@@ -30,6 +30,7 @@ use crate::keymap::{InputSettings, Keymap};
 use crate::settings_window::SettingsWindow;
 use crate::theme::{Metrics, Theme};
 use crate::ui::context_menu::ContextMenu;
+use crate::ui::menu_bar::OpenMenu;
 use crate::ui::prompt::Prompt;
 use crate::ui::timeline::{PitchView, TimelineView};
 
@@ -390,7 +391,7 @@ pub struct AurisApp {
     /// The open right-click menu, if any.
     pub(crate) menu: Option<ContextMenu>,
     /// Which menu-bar menu is open, on the platforms that draw their own bar.
-    pub(crate) menu_bar: Option<usize>,
+    pub(crate) menu_bar: Option<OpenMenu>,
     /// The open rename sheet, if any.
     pub(crate) prompt: Option<Prompt>,
 
