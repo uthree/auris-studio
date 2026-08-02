@@ -24,3 +24,5 @@ log.workspace = true
 # while `xcode-select -p` points at the Command Line Tools.
 gpui = { version = "0.2.2", features = ["runtime_shaders"] }
 rfd = "0.17"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true

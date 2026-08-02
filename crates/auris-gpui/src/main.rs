@@ -4,6 +4,8 @@
 
 mod actions;
 mod app;
+mod keymap;
+mod settings_window;
 mod theme;
 mod ui;
 
@@ -20,7 +22,6 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     Application::new().run(|cx: &mut App| {
-        actions::bind_keys(cx);
         cx.on_action(|_: &actions::Quit, cx: &mut App| cx.quit());
         cx.set_menus(menus());
 
@@ -64,6 +65,8 @@ fn menus() -> Vec<Menu> {
         Menu {
             name: "Auris Studio".into(),
             items: vec![
+                MenuItem::action("Settings…", actions::OpenSettings),
+                MenuItem::separator(),
                 MenuItem::os_submenu("Services", SystemMenuType::Services),
                 MenuItem::separator(),
                 MenuItem::action("Quit Auris Studio", actions::Quit),

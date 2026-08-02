@@ -108,6 +108,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_zoom_out))
             .on_action(cx.listener(Self::on_toggle_inspector))
             .on_action(cx.listener(Self::on_toggle_editor))
+            .on_action(cx.listener(Self::on_open_settings))
             // Drags are tracked on the root so they keep working after the pointer leaves the
             // control that started them, which is what makes a fader usable.
             .on_mouse_move(cx.listener(Self::on_mouse_move))
@@ -517,6 +518,16 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.toggle_editor();
+        cx.notify();
+    }
+
+    fn on_open_settings(
+        &mut self,
+        _: &actions::OpenSettings,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_settings(cx);
         cx.notify();
     }
 }

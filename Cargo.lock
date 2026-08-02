@@ -602,6 +602,8 @@ dependencies = [
  "gpui",
  "log",
  "rfd",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -629,6 +631,8 @@ dependencies = [
  "auris-io",
  "auris-synth",
  "log",
+ "serde",
+ "serde_json",
  "thiserror 2.0.19",
 ]
 

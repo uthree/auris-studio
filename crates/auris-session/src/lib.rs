@@ -42,6 +42,7 @@ pub mod param;
 pub mod registry;
 pub mod render;
 pub mod session;
+pub mod settings;
 
 pub use error::SessionError;
 pub use history::History;
@@ -49,6 +50,7 @@ pub use param::ParamTarget;
 pub use registry::default_registry;
 pub use render::{ExportSummary, RenderJob};
 pub use session::{AudioStatus, Session, SessionOptions};
+pub use settings::{AudioPreferences, Settings, config_dir};
 
 /// File extension of a saved project.
 pub use auris_io::PROJECT_EXTENSION;
@@ -70,9 +72,12 @@ pub mod prelude {
         AudioBuffer, AudioClip, AudioSource, ClipId, EffectSlotId, MidiClip, MixerStrip, Note,
         PluginRegistry, Project, SourceId, Track, TrackId, TrackKind,
     };
-    pub use auris_engine::OfflineOptions;
+    pub use auris_engine::{OfflineOptions, OutputDeviceInfo};
     pub use auris_gpu::WaveformPeaks;
     pub use auris_io::{WavBitDepth, WavExportSettings};
 
-    pub use crate::{ExportSummary, ParamTarget, RenderJob, Session, SessionError, SessionOptions};
+    pub use crate::{
+        AudioPreferences, ExportSummary, ParamTarget, RenderJob, Session, SessionError,
+        SessionOptions, Settings,
+    };
 }

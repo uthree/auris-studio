@@ -19,8 +19,13 @@ use std::time::Duration;
 
 use auris_session::prelude::*;
 use auris_session::{Session, SessionOptions};
-use gpui::{App, Bounds, Context, FocusHandle, Focusable, Pixels, Point, Task, Window, point, px};
+use gpui::{
+    App, AppContext, Bounds, Context, FocusHandle, Focusable, Pixels, Point, Task, TitlebarOptions,
+    Window, WindowBounds, WindowHandle, WindowOptions, point, px, size,
+};
 
+use crate::keymap::Keymap;
+use crate::settings_window::SettingsWindow;
 use crate::theme::{Metrics, Theme};
 use crate::ui::timeline::{PitchView, TimelineView};
 
@@ -350,6 +355,13 @@ pub struct AurisApp {
     /// Rectangles the canvases were painted into last frame.
     pub(crate) canvas: CanvasBounds,
 
+    /// Preferences that outlive the session.
+    pub(crate) settings: Settings,
+    /// The user's key bindings.
+    pub(crate) keymap: Keymap,
+    /// The settings window, while it is open.
+    pub(crate) settings_window: Option<WindowHandle<SettingsWindow>>,
+
     _repaint: Task<()>,
 }
 
@@ -362,8 +374,15 @@ impl Focusable for AurisApp {
 impl AurisApp {
     /// Builds the application, starting audio and creating a small demo project.
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let mut session =
-            Session::new(SessionOptions::default()).expect("a session opens even without audio");
+        let settings = Settings::load();
+        let keymap = Keymap::load();
+        keymap.apply(cx);
+
+        let mut session = Session::new(SessionOptions {
+            audio_preferences: settings.audio.clone(),
+            ..SessionOptions::default()
+        })
+        .expect("a session opens even without audio");
         seed_demo_project(&mut session);
 
         let audio = session.audio_status();
@@ -428,6 +447,9 @@ impl AurisApp {
             viewport_height: px(900.0),
             arrangement_width: px(900.0),
             canvas: CanvasBounds::default(),
+            settings,
+            keymap,
+            settings_window: None,
             _repaint: repaint,
         };
         // The default pitch view sits two octaves above the demo material, so without this the
@@ -563,6 +585,84 @@ impl AurisApp {
             format!("{name} • Auris Studio")
         } else {
             format!("{name} — Auris Studio")
+        }
+    }
+
+    // ---------------------------------------------------------------- settings
+
+    /// Switches the audio backend and remembers the choice.
+    ///
+    /// Returns the status line to show. Saving is best-effort: failing to write a preferences
+    /// file must not undo a device change that already worked.
+    pub(crate) fn apply_audio_preferences(
+        &mut self,
+        audio: AudioPreferences,
+    ) -> Result<String, String> {
+        self.session
+            .set_audio_preferences(audio.clone())
+            .map_err(|error| error.to_string())?;
+        self.settings.audio = audio;
+        if let Err(error) = self.settings.save() {
+            log::warn!("could not save settings: {error}");
+        }
+
+        let status = self.session.audio_status();
+        let line = if status.running {
+            format!(
+                "Audio: {} · {:.0} Hz · {} ch",
+                status.device, status.sample_rate, status.channels
+            )
+        } else {
+            "No audio output — editing and export still work".to_string()
+        };
+        self.set_status(line.clone());
+        Ok(line)
+    }
+
+    /// Installs an edited keymap and remembers it.
+    pub(crate) fn apply_keymap(&mut self, keymap: Keymap, cx: &mut App) {
+        keymap.apply(cx);
+        if let Err(error) = keymap.save() {
+            log::warn!("could not save key bindings: {error}");
+        }
+        self.keymap = keymap;
+    }
+
+    /// Opens the settings window, or brings the open one forward.
+    pub(crate) fn open_settings(&mut self, cx: &mut Context<Self>) {
+        if let Some(handle) = self.settings_window
+            && handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+        {
+            return;
+        }
+
+        // Gather everything the window needs *before* opening it: the constructor runs inside
+        // this update, and reading `self` back through the entity handle would panic.
+        let app = cx.entity().downgrade();
+        let theme = self.theme.clone();
+        let devices = self.session.output_devices();
+        let audio = self.session.audio_preferences().clone();
+        let live = self.session.audio_status();
+        let keymap = self.keymap.clone();
+
+        let bounds = Bounds::centered(None, size(px(560.), px(620.)), cx);
+        let opened = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Settings".into()),
+                    ..Default::default()
+                }),
+                focus: true,
+                ..Default::default()
+            },
+            |_, cx| cx.new(|cx| SettingsWindow::new(app, theme, devices, audio, live, keymap, cx)),
+        );
+        match opened {
+            Ok(handle) => self.settings_window = Some(handle),
+            Err(error) => self.set_status(format!("Could not open settings: {error}")),
         }
     }
 

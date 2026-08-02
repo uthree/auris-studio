@@ -30,6 +30,11 @@ const MIN_COMMAND_CAPACITY: usize = 16;
 /// What to ask the audio backend for.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AudioSettings {
+    /// Name of the output device to open. `None` uses the system default.
+    ///
+    /// Matched by name because that is the only stable handle cpal offers across runs — a
+    /// device index changes when anything is plugged in or removed.
+    pub device: Option<String>,
     /// Preferred sample rate in Hz. Ignored when the device cannot do it.
     pub sample_rate: Option<u32>,
     /// Preferred callback size in frames. Ignored when the device cannot do it.
@@ -43,12 +48,70 @@ pub struct AudioSettings {
 impl Default for AudioSettings {
     fn default() -> Self {
         Self {
+            device: None,
             sample_rate: None,
             block_frames: None,
             command_capacity: 64,
             meter_tracks: 128,
         }
     }
+}
+
+/// An output device the host could open, and what it can do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OutputDeviceInfo {
+    /// Name, which is also how [`AudioSettings::device`] refers to it.
+    pub name: String,
+    /// Whether this is the system's default output.
+    pub is_default: bool,
+    /// Sample rates the device advertises, ascending and deduplicated.
+    pub sample_rates: Vec<u32>,
+    /// Highest channel count the device advertises.
+    pub max_channels: u16,
+}
+
+/// Every output device the default host can see.
+///
+/// Enumerating devices talks to the OS audio server and can block for tens of milliseconds, so
+/// call it when a settings panel opens rather than on every frame. A device that errors while
+/// being queried is skipped rather than failing the whole list — one broken aggregate device
+/// should not hide the working ones.
+pub fn output_devices() -> Vec<OutputDeviceInfo> {
+    let host = cpal::default_host();
+    // `Display` is what `open_output` already records as the device name and what the status
+    // bar shows, so matching on it keeps every place that names a device in agreement.
+    let default_name = host
+        .default_output_device()
+        .map(|device| device.to_string());
+
+    let Ok(devices) = host.output_devices() else {
+        return Vec::new();
+    };
+
+    devices
+        .map(|device| {
+            let name = device.to_string();
+            let mut sample_rates = Vec::new();
+            let mut max_channels = 0;
+            if let Ok(configs) = device.supported_output_configs() {
+                for config in configs {
+                    max_channels = max_channels.max(config.channels());
+                    for rate in [config.min_sample_rate(), config.max_sample_rate()] {
+                        if !sample_rates.contains(&rate) {
+                            sample_rates.push(rate);
+                        }
+                    }
+                }
+            }
+            sample_rates.sort_unstable();
+            OutputDeviceInfo {
+                is_default: default_name.as_deref() == Some(name.as_str()),
+                name,
+                sample_rates,
+                max_channels,
+            }
+        })
+        .collect()
 }
 
 /// A running (or silently idle) output stream.
@@ -287,8 +350,22 @@ struct DeviceSetup {
 
 fn open_output(settings: &AudioSettings) -> Result<DeviceSetup, EngineError> {
     let host = cpal::default_host();
-    let device = host
-        .default_output_device()
+    // A named device that has since been unplugged falls back to the default rather than
+    // refusing to start: losing the interface should not also lose the session.
+    let device = settings
+        .device
+        .as_deref()
+        .and_then(|wanted| {
+            let found = host
+                .output_devices()
+                .ok()?
+                .find(|device| device.to_string() == wanted);
+            if found.is_none() {
+                log::warn!("output device `{wanted}` is not available; using the default");
+            }
+            found
+        })
+        .or_else(|| host.default_output_device())
         .ok_or(EngineError::NoOutputDevice)?;
     let supported = device.default_output_config()?;
     let sample_format = supported.sample_format();

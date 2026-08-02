@@ -12,7 +12,8 @@ use auris_core::{
     SourceId, TrackId,
 };
 use auris_engine::{
-    AudioDevice, AudioSettings, EngineCommand, EngineHandle, MeterBank, RenderGraph, start_audio,
+    AudioDevice, AudioSettings, EngineCommand, EngineHandle, MeterBank, OutputDeviceInfo,
+    RenderGraph, start_audio,
 };
 use auris_gpu::{GpuContext, WaveformPeaks, compute_peaks};
 use auris_io::{import_audio_file, load_project, save_project};
@@ -22,6 +23,7 @@ use crate::history::History;
 use crate::param::ParamTarget;
 use crate::registry::default_registry;
 use crate::render::RenderJob;
+use crate::settings::AudioPreferences;
 
 /// How many samples one waveform bucket covers.
 ///
@@ -37,8 +39,8 @@ pub struct SessionOptions {
     pub audio: bool,
     /// Try to use the GPU for waveform and loudness analysis.
     pub gpu: bool,
-    /// Frames the engine renders per block.
-    pub block_frames: u32,
+    /// Which device to open and how, loaded from the user's settings.
+    pub audio_preferences: AudioPreferences,
     /// Sample rate for a new project.
     pub sample_rate: f64,
 }
@@ -48,9 +50,7 @@ impl Default for SessionOptions {
         Self {
             audio: true,
             gpu: true,
-            // 512 frames is ~11 ms at 48 kHz: responsive enough to audition notes against,
-            // long enough that per-block overhead stays small.
-            block_frames: 512,
+            audio_preferences: AudioPreferences::default(),
             sample_rate: 48_000.0,
         }
     }
@@ -101,6 +101,10 @@ pub struct Session {
     engine: EngineHandle,
     device: Option<AudioDevice>,
     gpu: Option<Arc<GpuContext>>,
+    /// What the audio backend was asked for, so a settings panel can show it back.
+    audio: AudioPreferences,
+    /// Whether this session must never claim a real device, however it is reconfigured.
+    headless: bool,
 
     history: History,
     transaction: Option<Transaction>,
@@ -128,24 +132,23 @@ impl Session {
     pub fn new(options: SessionOptions) -> Result<Self, SessionError> {
         let registry = default_registry();
         let project = Project::new("Untitled", options.sample_rate);
+        let audio = options.audio_preferences.clone();
 
+        let settings = AudioSettings {
+            device: audio.device.clone(),
+            sample_rate: audio.sample_rate.or_else(|| {
+                // A headless engine has no device to ask, so it needs to be told a rate.
+                (!options.audio).then_some(options.sample_rate.round().max(1.0) as u32)
+            }),
+            block_frames: Some(audio.block_frames.max(16)),
+            ..AudioSettings::default()
+        };
         let (device, engine) = if options.audio {
-            let settings = AudioSettings {
-                block_frames: Some(options.block_frames),
-                ..AudioSettings::default()
-            };
-            let (device, engine) = start_audio(&settings)?;
-            (Some(device), engine)
+            start_audio(&settings)?
         } else {
-            let settings = AudioSettings {
-                sample_rate: Some(options.sample_rate.round().max(1.0) as u32),
-                block_frames: Some(options.block_frames),
-                ..AudioSettings::default()
-            };
             // `start_audio` opens the default device, which a headless tool must not do — it
             // would claim the hardware and spin an audio thread for nothing.
-            let (device, engine) = auris_engine::start_silent(&settings);
-            (Some(device), engine)
+            auris_engine::start_silent(&settings)
         };
 
         let gpu = if options.gpu {
@@ -159,8 +162,10 @@ impl Session {
             bank: AudioSourceBank::new(),
             registry,
             engine,
-            device,
+            device: Some(device),
             gpu,
+            audio,
+            headless: !options.audio,
             history: History::default(),
             transaction: None,
             needs_rebuild: false,
@@ -188,6 +193,57 @@ impl Session {
                 .as_ref()
                 .map(|context| format!("{} ({})", context.adapter_name(), context.backend())),
         }
+    }
+
+    /// Every output device the host can see, and what each can do.
+    ///
+    /// Queried on demand rather than cached: devices come and go while the application runs,
+    /// and this is only called when a settings panel opens.
+    pub fn output_devices(&self) -> Vec<OutputDeviceInfo> {
+        auris_engine::output_devices()
+    }
+
+    /// The audio preferences this session was opened with.
+    pub fn audio_preferences(&self) -> &AudioPreferences {
+        &self.audio
+    }
+
+    /// Reopens the audio output with new preferences.
+    ///
+    /// The old device is dropped first: two streams on the same hardware is at best a glitch
+    /// and at worst a refusal to open. Transport position is deliberately *not* carried over —
+    /// the new device starts from where the playhead was, but stopped, because a device swap
+    /// mid-playback produces a discontinuity nobody wants to hear.
+    pub fn set_audio_preferences(
+        &mut self,
+        preferences: AudioPreferences,
+    ) -> Result<(), SessionError> {
+        // Capture the position in seconds, not frames: the new device may run at a different
+        // rate, and frames counted at the old one would land somewhere else entirely.
+        let playhead = self.engine.playhead_seconds();
+        let settings = AudioSettings {
+            device: preferences.device.clone(),
+            sample_rate: preferences.sample_rate,
+            block_frames: Some(preferences.block_frames.max(16)),
+            ..AudioSettings::default()
+        };
+
+        self.device = None;
+        let (device, engine) = if self.headless {
+            auris_engine::start_silent(&settings)
+        } else {
+            start_audio(&settings).map_err(|error| SessionError::AudioRestart(error.to_string()))?
+        };
+
+        self.device = Some(device);
+        self.engine = engine;
+        self.audio = preferences;
+
+        // The new engine starts with no graph, no loop and a playhead at zero.
+        self.rebuild_graph();
+        self.publish_loop();
+        self.seek(self.project.tempo_map.seconds_to_ticks(Seconds(playhead)));
+        Ok(())
     }
 
     /// Housekeeping a frontend should call periodically — once per rendered frame is plenty.

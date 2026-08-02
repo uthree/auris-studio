@@ -46,6 +46,20 @@ pub enum SessionError {
     #[error("the project has no path yet; save it somewhere first")]
     NoPath,
 
+    /// The application settings file could not be written.
+    #[error("could not write {path}: {source}")]
+    SettingsWrite {
+        /// File that could not be written.
+        path: PathBuf,
+        /// Why it failed.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// Reopening the audio device failed.
+    #[error("could not switch audio device: {0}")]
+    AudioRestart(String),
+
     /// A project referenced audio files that could not be loaded.
     ///
     /// The project itself opened; these clips will be silent until the files come back.
