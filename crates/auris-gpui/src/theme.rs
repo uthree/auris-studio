@@ -10,6 +10,10 @@ use gpui::{Font, FontFallbacks, Hsla, Pixels, px, rgb};
 /// Helvetica covers Latin and nothing else, so a Japanese track name or a Japanese menu would
 /// come out as empty boxes without this. The fallbacks are named per platform because a family
 /// that is not installed is simply skipped, which makes an unused entry free.
+///
+/// That goes for the Latin text too: Helvetica is the base family and Windows has never
+/// shipped it, so Segoe UI leads the fallbacks there rather than leaving the whole interface to
+/// whatever DirectWrite decides to substitute.
 pub fn ui_font() -> Font {
     Font {
         fallbacks: Some(FontFallbacks::from_fonts(vec![
@@ -17,10 +21,12 @@ pub fn ui_font() -> Font {
             "Hiragino Sans".into(),
             "Apple SD Gothic Neo".into(),
             // Windows
+            "Segoe UI".into(),
             "Yu Gothic UI".into(),
             "Meiryo".into(),
             // Linux
             "Noto Sans CJK JP".into(),
+            "DejaVu Sans".into(),
         ])),
         ..gpui::font("Helvetica")
     }

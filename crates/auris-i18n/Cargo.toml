@@ -12,5 +12,11 @@ rust-version.workspace = true
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 
+# Windows sets none of the POSIX locale variables, so the only way to learn what language the
+# machine is in is to ask. `windows-sys` is already in the tree by way of the file dialogs, and
+# this pulls one function out of it.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Globalization"] }
+
 [dev-dependencies]
 serde_json.workspace = true

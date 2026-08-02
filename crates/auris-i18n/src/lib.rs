@@ -87,13 +87,49 @@ impl Language {
     /// What the environment asks for, falling back to English.
     ///
     /// `LC_ALL` outranks `LC_MESSAGES`, which outranks `LANG`, which is the order POSIX gives
-    /// them; macOS sets `LANG` from the system language for terminal programs.
+    /// them; macOS sets `LANG` from the system language for terminal programs. The variables
+    /// come first even where the system can be asked directly, because someone who exports
+    /// `LANG` for one program means it for that program.
+    ///
+    /// [`Language::from_system_locale`] is the fallback, and on Windows it is the only thing
+    /// that ever answers.
     pub fn from_environment() -> Language {
         ["LC_ALL", "LC_MESSAGES", "LANG"]
             .into_iter()
             .filter_map(|name| std::env::var(name).ok())
             .find_map(|value| Language::from_locale(&value))
+            .or_else(Language::from_system_locale)
             .unwrap_or_default()
+    }
+
+    /// The language the operating system itself is set to, where there is a way to ask.
+    ///
+    /// `None` where there is not, which is every platform that answers through the locale
+    /// variables [`Language::from_environment`] has already read.
+    ///
+    /// Windows is why this exists. It sets none of those variables, so a program that reads
+    /// only them shows English to every Japanese user — who then has to find the language
+    /// setting by reading English.
+    pub fn from_system_locale() -> Option<Language> {
+        #[cfg(target_os = "windows")]
+        {
+            use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
+
+            // `LOCALE_NAME_MAX_LENGTH`, fixed at 85 since Vista. Named here rather than pulled
+            // from `Win32_System_SystemServices`, which is an enormous module to import a
+            // number from.
+            let mut name = [0u16; 85];
+            // SAFETY: the pointer is to `name`, which is writable for the length passed as the
+            // second argument. The call writes UTF-16 within that bound and nothing else.
+            let written = unsafe { GetUserDefaultLocaleName(name.as_mut_ptr(), name.len() as i32) };
+            // The returned count includes the terminating null; 0 means the call failed.
+            let end = usize::try_from(written).ok()?.checked_sub(1)?;
+            Language::from_locale(&String::from_utf16_lossy(name.get(..end)?))
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            None
+        }
     }
 
     /// Resolves a stored preference, where `None` means "follow the system".
@@ -133,6 +169,23 @@ mod tests {
             Language::resolve(Some(Language::Japanese)),
             Language::Japanese
         );
+    }
+
+    #[test]
+    fn asking_the_system_for_its_locale_answers_or_declines_but_never_panics() {
+        // The Windows arm reaches into Win32 and back through UTF-16; the rest decline. Either
+        // way `from_environment` has to be able to call it on a machine set to any language.
+        let answer = Language::from_system_locale();
+        assert!(
+            cfg!(target_os = "windows") || answer.is_none(),
+            "only Windows has a system locale to read here"
+        );
+        // And whatever came back has to be a language we can actually render.
+        if let Some(language) = answer {
+            assert!(Language::ALL.contains(&language));
+        }
+        // Never panics, and the environment still resolves to something.
+        let _ = Language::from_environment();
     }
 
     #[test]

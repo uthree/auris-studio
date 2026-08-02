@@ -142,8 +142,20 @@ pub fn config_dir() -> PathBuf {
     }
 }
 
+/// The user's home directory.
+///
+/// `USERPROFILE` before `HOME` on Windows, where nothing sets `HOME` unless a Unix-flavoured
+/// shell has been installed — and where this is only reached at all when `APPDATA` is missing,
+/// which is already a strange enough machine to be worth landing somewhere sensible on.
 fn home() -> PathBuf {
-    std::env::var_os("HOME")
+    #[cfg(target_os = "windows")]
+    let names: [&str; 2] = ["USERPROFILE", "HOME"];
+    #[cfg(not(target_os = "windows"))]
+    let names: [&str; 1] = ["HOME"];
+
+    names
+        .into_iter()
+        .find_map(std::env::var_os)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
 }
