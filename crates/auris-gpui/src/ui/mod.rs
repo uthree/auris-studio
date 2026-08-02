@@ -15,6 +15,7 @@ pub mod piano_roll;
 pub mod plugin_editor;
 pub mod prompt;
 pub mod root;
+pub mod selection;
 pub mod text_field;
 pub mod timeline;
 pub mod transport_bar;

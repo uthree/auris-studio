@@ -284,11 +284,22 @@ impl AurisApp {
                 };
                 self.session.set_loop_region(start, end);
             }
-            Drag::ClipMove { clip, grab_offset } => {
+            Drag::ClipMove {
+                clip,
+                grab_offset,
+                ref origins,
+            } => {
                 let x = event.position.x - self.lanes_origin().x;
                 let tick = self.timeline.x_to_tick(x);
                 let start = self.snap(tick - grab_offset).max_zero();
-                let _ = self.session.move_clip(clip, start);
+                // The delta comes from the clip under the pointer, so that one lands exactly on
+                // the grid and the rest keep their spacing relative to it.
+                let anchor = origins
+                    .iter()
+                    .find(|(id, _)| *id == clip)
+                    .map(|(_, from)| *from)
+                    .unwrap_or(start);
+                self.session.move_clips(origins, start - anchor);
             }
             Drag::ClipResize { clip } => {
                 let x = event.position.x - self.lanes_origin().x;
@@ -301,7 +312,7 @@ impl AurisApp {
                 origin_pitch,
                 ref origins,
             } => {
-                let origin = self.roll_origin(self.viewport_height);
+                let origin = self.roll_origin();
                 let tick = self.timeline.x_to_tick(event.position.x - origin.x);
                 let pitch = self.pitch.y_to_pitch(event.position.y - origin.y);
                 let Some(clip_start) = self.session.midi_clip(clip).map(|c| c.start) else {
@@ -314,7 +325,7 @@ impl AurisApp {
                     .move_notes(clip, origins, delta_ticks, delta_pitch);
             }
             Drag::NoteResize { clip, index } => {
-                let origin = self.roll_origin(self.viewport_height);
+                let origin = self.roll_origin();
                 let tick = self.timeline.x_to_tick(event.position.x - origin.x);
                 let Some(clip_start) = self.session.midi_clip(clip).map(|c| c.start) else {
                     return;
@@ -348,6 +359,14 @@ impl AurisApp {
                 start_x,
                 start_width,
             } => self.resize_headers(start_width, event.position.x - start_x),
+            Drag::RubberBand { .. } => {
+                // The band's far corner follows the pointer, and the selection is recomputed
+                // from scratch each move — sweeping back over something has to unselect it.
+                if let Some(Drag::RubberBand { current, .. }) = &mut self.drag {
+                    *current = event.position;
+                }
+                self.apply_rubber_band();
+            }
         }
         cx.notify();
     }

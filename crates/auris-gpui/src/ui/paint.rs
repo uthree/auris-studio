@@ -136,6 +136,18 @@ pub fn label(
     width
 }
 
+/// Draws the rectangle being swept to select things.
+///
+/// A tinted fill and a solid outline: the fill says what is covered, and the outline keeps the
+/// band visible where it lies over a clip that is already tinted the same accent colour.
+pub fn selection_band(window: &mut Window, band: Bounds<Pixels>, theme: &Theme) {
+    if band.size.width <= px(0.0) && band.size.height <= px(0.0) {
+        return;
+    }
+    rect(window, band, Theme::translucent(theme.selection, 0.18));
+    rounded_outline(window, band, px(0.0), px(1.0), theme.selection);
+}
+
 /// Draws the bar/beat/subdivision grid across `bounds`.
 ///
 /// Lines get progressively brighter from subdivision to beat to bar so the eye can find the

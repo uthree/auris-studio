@@ -465,14 +465,28 @@ impl AurisApp {
             MenuCommand::NewInstrumentTrack => self.add_instrument_track(),
             MenuCommand::NewAudioTrack => self.add_audio_track(),
 
-            MenuCommand::DuplicateClip(clip) => match self.session.duplicate_clip(clip) {
-                Ok(copy) => {
-                    self.selected_clip = Some(copy);
-                    self.selected_notes.clear();
-                    self.set_status(self.t(Key::DuplicatedClip));
+            MenuCommand::DuplicateClip(clip) => {
+                let mut copies = std::collections::BTreeSet::new();
+                let mut failure = None;
+                for source in self.clips_for_command(clip) {
+                    match self.session.duplicate_clip(source) {
+                        Ok(copy) => {
+                            copies.insert(copy);
+                        }
+                        Err(error) => failure = Some(error),
+                    }
                 }
-                Err(error) => self.set_status(self.failure(Key::MenuDuplicate, &error)),
-            },
+                match failure {
+                    Some(error) => self.set_status(self.failure(Key::MenuDuplicate, &error)),
+                    None => {
+                        // The copies become the selection, so dragging straight afterwards moves
+                        // the new material rather than the original.
+                        self.select_clips(copies, None);
+                        self.selected_notes.clear();
+                        self.set_status(self.t(Key::DuplicatedClip));
+                    }
+                }
+            }
             MenuCommand::RenameClip(clip) => {
                 let name = self
                     .clip_name(clip)
@@ -482,10 +496,9 @@ impl AurisApp {
                 self.open_prompt(Prompt::new(title, PromptTarget::Clip(clip), name));
             }
             MenuCommand::DeleteClip(clip) => {
-                if self.session.remove_clip(clip).is_ok() {
-                    if self.selected_clip == Some(clip) {
-                        self.selected_clip = None;
-                    }
+                let doomed = self.clips_for_command(clip);
+                if self.session.remove_clips(&doomed).is_ok() {
+                    self.select_clip(None);
                     self.selected_notes.clear();
                 }
             }
@@ -497,7 +510,7 @@ impl AurisApp {
                 let at = self.playhead_ticks();
                 match self.session.split_clip(clip, at) {
                     Ok(right) => {
-                        self.selected_clip = Some(right);
+                        self.select_clip(Some(right));
                         self.selected_notes.clear();
                         self.set_status(self.t(Key::SplitClipStatus));
                     }
@@ -511,7 +524,7 @@ impl AurisApp {
                 }
             }
             MenuCommand::EditClip(clip) => {
-                self.selected_clip = Some(clip);
+                self.select_clip(Some(clip));
                 self.selected_notes.clear();
                 self.editor = EditorTab::PianoRoll;
                 self.panels.editor_visible = true;
@@ -630,10 +643,15 @@ impl AurisApp {
 
     /// The menu for a clip in the arrangement.
     pub(crate) fn clip_menu(&self, anchor: Point<Pixels>, clip: ClipId) -> ContextMenu {
-        let name = self
-            .clip_name(clip)
-            .unwrap_or_else(|| self.t(Key::MenuDuplicate))
-            .to_string();
+        // With several clips selected the menu acts on all of them, so it says so rather than
+        // naming one and quietly taking the rest with it.
+        let name = if self.selected_clips.len() > 1 && self.selected_clips.contains(&clip) {
+            messages::clip_count(self.language(), self.selected_clips.len())
+        } else {
+            self.clip_name(clip)
+                .unwrap_or_else(|| self.t(Key::PianoRoll))
+                .to_string()
+        };
         let playhead = self.playhead_ticks();
         let splittable = self
             .clip_extent(clip)
@@ -836,6 +854,18 @@ impl AurisApp {
                 self.t(Key::MenuAddEffect),
                 MenuCommand::BrowsePlugins { track },
             )
+    }
+
+    /// The clips a menu command should act on.
+    ///
+    /// A command aimed at a clip inside the selection takes the whole selection with it, which
+    /// is what selecting several of them was for; one aimed elsewhere acts alone.
+    fn clips_for_command(&self, clip: ClipId) -> Vec<ClipId> {
+        if self.selected_clips.contains(&clip) {
+            self.selected_clips.iter().copied().collect()
+        } else {
+            vec![clip]
+        }
     }
 
     /// The name of a clip of either kind.

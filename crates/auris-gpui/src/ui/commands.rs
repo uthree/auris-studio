@@ -24,12 +24,13 @@ impl AurisApp {
         self.selected_notes.clear();
         // The clip selection must always be recomputed, never left behind: keeping the previous
         // track's clip meant note edits and Delete acted on a track that was no longer selected.
-        self.selected_clip = self
+        let first = self
             .project()
             .track(track)
             .and_then(|t| t.kind.as_instrument())
             .and_then(|inner| inner.clips.first())
             .map(|clip| clip.id);
+        self.select_clip(first);
         if self.selected_clip.is_some() {
             self.center_roll_on_selection();
         }
@@ -41,9 +42,16 @@ impl AurisApp {
             .selected_track
             .filter(|id| self.project().track(*id).is_some())
             .or_else(|| self.project().tracks.first().map(|track| track.id));
-        self.selected_clip = self
-            .selected_clip
-            .filter(|id| self.session.midi_clip(*id).is_some());
+        // Anything the new document does not contain drops out of the selection rather than
+        // lingering as an id that resolves to nothing.
+        let surviving = self
+            .selected_clips
+            .iter()
+            .copied()
+            .filter(|id| self.clip_exists(*id))
+            .collect();
+        let primary = self.selected_clip.filter(|id| self.clip_exists(*id));
+        self.select_clips(surviving, primary);
         self.selected_notes.clear();
         self.drag = None;
     }
@@ -68,7 +76,7 @@ impl AurisApp {
             Ok(id) => {
                 self.selected_track = Some(id);
                 // A brand-new track has no clips, so nothing should stay selected from the old one.
-                self.selected_clip = None;
+                self.select_clip(None);
                 self.selected_notes.clear();
             }
             Err(error) => self.set_status(self.failure(Key::CmdAddInstrumentTrack, &error)),
@@ -81,7 +89,7 @@ impl AurisApp {
         let name = messages::new_audio_track_name(self.language(), count);
         let id = self.session.add_audio_track(name);
         self.selected_track = Some(id);
-        self.selected_clip = None;
+        self.select_clip(None);
         self.selected_notes.clear();
     }
 
@@ -92,7 +100,7 @@ impl AurisApp {
         };
         if self.session.remove_track(id).is_ok() {
             self.selected_track = self.project().tracks.first().map(|track| track.id);
-            self.selected_clip = None;
+            self.select_clip(None);
             self.selected_notes.clear();
         }
     }
@@ -104,7 +112,7 @@ impl AurisApp {
         let name = messages::new_clip_name(self.language(), count);
         match self.session.add_midi_clip(track, name, start, length) {
             Ok(id) => {
-                self.selected_clip = Some(id);
+                self.select_clip(Some(id));
                 self.selected_notes.clear();
             }
             Err(_) => {
@@ -123,10 +131,11 @@ impl AurisApp {
             self.selected_notes.clear();
             return;
         }
-        if let Some(clip) = self.selected_clip
-            && self.session.remove_clip(clip).is_ok()
-        {
-            self.selected_clip = None;
+        if !self.selected_clips.is_empty() {
+            let doomed: Vec<ClipId> = self.selected_clips.iter().copied().collect();
+            if self.session.remove_clips(&doomed).is_ok() {
+                self.select_clip(None);
+            }
         }
     }
 
@@ -271,7 +280,7 @@ impl AurisApp {
                 match this.session.import_audio(&path, start) {
                     Ok(_) => {
                         this.selected_track = this.project().tracks.last().map(|t| t.id);
-                        this.selected_clip = None;
+                        this.select_clip(None);
                         let text = messages::imported(this.language(), &path.display().to_string());
                         this.set_status(text);
                     }

@@ -33,6 +33,15 @@ use crate::ui::context_menu::ContextMenu;
 use crate::ui::prompt::Prompt;
 use crate::ui::timeline::{PitchView, TimelineView};
 
+/// A surface a selection rectangle can be swept across.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum BandSurface {
+    /// The piano roll's note grid.
+    Roll,
+    /// The arrangement's clip lanes.
+    Lanes,
+}
+
 /// Which editor occupies the bottom panel.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum EditorTab {
@@ -61,13 +70,15 @@ pub enum Drag {
         /// Tick the drag started at.
         anchor: Ticks,
     },
-    /// Moving a clip along the timeline.
+    /// Moving one or more clips along the timeline.
     ClipMove {
-        /// Clip being moved.
+        /// Clip under the pointer, whose snapped position drives the others.
         clip: ClipId,
-        /// Distance from the clip's start to the point that was grabbed, so the clip does not
-        /// jump under the pointer.
+        /// Distance from that clip's start to the point that was grabbed, so it does not jump
+        /// under the pointer.
         grab_offset: Ticks,
+        /// Starting position of every selected clip, so the whole selection moves together.
+        origins: Vec<(ClipId, Ticks)>,
     },
     /// Dragging a clip's right edge.
     ClipResize {
@@ -108,6 +119,19 @@ pub enum Drag {
         /// Pointer x when the drag began.
         start_x: Pixels,
     },
+    /// Sweeping a rectangle to select what it covers.
+    RubberBand {
+        /// Which surface is being swept.
+        surface: BandSurface,
+        /// Where the sweep began, in window coordinates.
+        anchor: Point<Pixels>,
+        /// Where the pointer is now, in window coordinates.
+        current: Point<Pixels>,
+        /// What was selected before the sweep started, kept so a shift-drag can add to it.
+        base_notes: BTreeSet<usize>,
+        /// Clips selected before the sweep started.
+        base_clips: BTreeSet<ClipId>,
+    },
     /// Dragging the divider between the arrangement and the inspector.
     ResizeInspector {
         /// Pointer x when the drag began.
@@ -143,6 +167,8 @@ impl Drag {
             Drag::NoteResize { .. } => Some(Edit::ResizeNote),
             Drag::Param { .. } => Some(Edit::AdjustParameter),
             Drag::Tempo { .. } => Some(Edit::ChangeTempo),
+            // Selecting is not an edit; it changes what a later edit will act on.
+            Drag::RubberBand { .. } => None,
             // Panel geometry is a property of the window, not the document: resizing a panel
             // is not an edit and must never land on the undo stack.
             Drag::ResizeInspector { .. }
@@ -339,7 +365,10 @@ pub struct AurisApp {
     pub(crate) timeline: TimelineView,
     pub(crate) pitch: PitchView,
     pub(crate) selected_track: Option<TrackId>,
+    /// The clip the editors point at. Always a member of [`Self::selected_clips`].
     pub(crate) selected_clip: Option<ClipId>,
+    /// Every selected clip. Edits act on all of them; the piano roll edits the primary one.
+    pub(crate) selected_clips: BTreeSet<ClipId>,
     pub(crate) selected_notes: BTreeSet<usize>,
     pub(crate) drag: Option<Drag>,
     pub(crate) editor: EditorTab,
@@ -437,6 +466,7 @@ impl AurisApp {
             pitch: PitchView::default(),
             selected_track,
             selected_clip,
+            selected_clips: selected_clip.into_iter().collect(),
             selected_notes: BTreeSet::new(),
             drag: None,
             editor: EditorTab::PianoRoll,
@@ -530,6 +560,39 @@ impl AurisApp {
     }
 
     // ---------------------------------------------------------------- selection
+
+    /// Selects one clip, or nothing, replacing whatever was selected.
+    ///
+    /// Going through here rather than assigning the field is what keeps the primary clip and
+    /// the selection from disagreeing — an editor pointed at a clip that is not selected shows
+    /// notes that Delete would not touch.
+    pub(crate) fn select_clip(&mut self, clip: Option<ClipId>) {
+        self.selected_clip = clip;
+        self.selected_clips = clip.into_iter().collect();
+    }
+
+    /// Selects a set of clips, pointing the editors at `primary`.
+    ///
+    /// `primary` joins the selection if it is not already in it, and is dropped when it is not
+    /// one of them and the set is not empty.
+    pub(crate) fn select_clips(&mut self, clips: BTreeSet<ClipId>, primary: Option<ClipId>) {
+        self.selected_clip = match primary {
+            Some(id) if clips.contains(&id) => Some(id),
+            _ => clips.iter().next().copied(),
+        };
+        self.selected_clips = clips;
+    }
+
+    /// Whether a clip of either kind is still in the document.
+    pub(crate) fn clip_exists(&self, clip: ClipId) -> bool {
+        self.session.midi_clip(clip).is_some()
+            || self.project().tracks.iter().any(|track| {
+                track
+                    .kind
+                    .as_audio()
+                    .is_some_and(|inner| inner.clips.iter().any(|c| c.id == clip))
+            })
+    }
 
     /// The selected MIDI clip, if there is one.
     pub(crate) fn selected_midi_clip(&self) -> Option<&MidiClip> {
@@ -688,7 +751,7 @@ impl AurisApp {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Settings".into()),
+                    title: Some(self.t(Key::Settings).into()),
                     ..Default::default()
                 }),
                 focus: true,

@@ -269,6 +269,7 @@ impl AurisApp {
         // Everything the paint closure needs, copied out so it does not borrow `self`.
         let lanes: Vec<LanePaint> = self.lane_paint_data();
         let peaks = self.waveform_map();
+        let band = self.rubber_band(crate::app::BandSurface::Lanes);
 
         div()
             .flex()
@@ -366,6 +367,9 @@ impl AurisApp {
                                         bounds.origin.x + view.tick_to_x(playhead),
                                         &theme,
                                     );
+                                    if let Some(band) = band {
+                                        paint::selection_band(window, band, &theme);
+                                    }
                                 });
                             },
                         )
@@ -387,6 +391,35 @@ impl AurisApp {
                         this.scroll_timeline(event, cx);
                     })),
             )
+    }
+
+    /// Where every selected clip starts, captured before a move begins.
+    fn selected_clip_origins(&self) -> Vec<(ClipId, Ticks)> {
+        self.selected_clips
+            .iter()
+            .filter_map(|id| self.clip_start(*id).map(|start| (*id, start)))
+            .collect()
+    }
+
+    /// Where a clip of either kind starts.
+    fn clip_start(&self, clip: ClipId) -> Option<Ticks> {
+        if let Some(midi) = self.session.midi_clip(clip) {
+            return Some(midi.start);
+        }
+        self.project().tracks.iter().find_map(|track| {
+            track
+                .kind
+                .as_audio()?
+                .clips
+                .iter()
+                .find(|candidate| candidate.id == clip)
+                .map(|clip| clip.start)
+        })
+    }
+
+    /// The clip ids selected right now, for the paint closures.
+    fn selected_clip_ids(&self) -> std::collections::BTreeSet<ClipId> {
+        self.selected_clips.clone()
     }
 
     /// Snapshot of what each lane draws, taken while `self` is still borrowable.
@@ -433,7 +466,7 @@ impl AurisApp {
                     height: track.height,
                     color,
                     clips,
-                    selected_clip: self.selected_clip,
+                    selected: self.selected_clip_ids(),
                 }
             })
             .collect()
@@ -463,7 +496,13 @@ impl AurisApp {
         let tick = self.timeline.x_to_tick(local.x);
 
         let Some((track_id, _lane_top)) = self.track_at_y(local.y) else {
-            self.selected_clip = None;
+            // Below the last track there is nothing to grab, so the press can only be the start
+            // of a sweep across the lanes above it.
+            self.begin_rubber_band(
+                crate::app::BandSurface::Lanes,
+                event.position,
+                event.modifiers.shift,
+            );
             cx.notify();
             return;
         };
@@ -475,7 +514,7 @@ impl AurisApp {
         {
             let _ = self.session.remove_clip(clip_id);
             if self.selected_clip == Some(clip_id) {
-                self.selected_clip = None;
+                self.select_clip(None);
             }
             self.selected_notes.clear();
             cx.notify();
@@ -484,15 +523,23 @@ impl AurisApp {
 
         match under_pointer {
             Some((clip_id, clip_start, clip_length)) => {
-                self.selected_clip = Some(clip_id);
+                // Grabbing a clip that is already part of a selection keeps the selection, so a
+                // rubber band followed by a drag moves everything it caught.
+                if !self.selected_clips.contains(&clip_id) {
+                    self.select_clip(Some(clip_id));
+                } else {
+                    self.selected_clip = Some(clip_id);
+                }
                 self.selected_notes.clear();
                 let clip_end_x = self.timeline.tick_to_x(clip_start + clip_length);
                 if f32::from(clip_end_x - local.x).abs() <= RESIZE_HANDLE {
                     self.begin_drag(Drag::ClipResize { clip: clip_id });
                 } else {
+                    let origins = self.selected_clip_origins();
                     self.begin_drag(Drag::ClipMove {
                         clip: clip_id,
                         grab_offset: tick - clip_start,
+                        origins,
                     });
                 }
             }
@@ -500,8 +547,11 @@ impl AurisApp {
                 if self.pointer.create.matches(event) {
                     self.create_clip_at(track_id, self.snap(tick));
                 } else {
-                    self.selected_clip = None;
-                    self.seek(self.snap(tick));
+                    self.begin_rubber_band(
+                        crate::app::BandSurface::Lanes,
+                        event.position,
+                        event.modifiers.shift,
+                    );
                 }
             }
         }
@@ -520,8 +570,13 @@ impl AurisApp {
                 match self.clip_at(track_id, tick) {
                     Some((clip_id, _, _)) => {
                         // A right-click on a clip selects it, so Split at Playhead and the
-                        // inspector are talking about the clip the menu is titled after.
-                        self.selected_clip = Some(clip_id);
+                        // inspector are talking about the clip the menu is titled after — but a
+                        // right-click *inside* a selection leaves that selection alone.
+                        if !self.selected_clips.contains(&clip_id) {
+                            self.select_clip(Some(clip_id));
+                        } else {
+                            self.selected_clip = Some(clip_id);
+                        }
                         self.selected_notes.clear();
                         self.clip_menu(event.position, clip_id)
                     }
@@ -558,6 +613,21 @@ impl AurisApp {
             top = bottom;
         }
         None
+    }
+
+    /// Tracks whose lanes intersect the vertical span, in lane-local pixels.
+    pub(crate) fn tracks_in_rows(&self, top: Pixels, bottom: Pixels) -> Vec<TrackId> {
+        let (top, bottom) = (top.min(bottom), top.max(bottom));
+        let mut found = Vec::new();
+        let mut lane_top = px(0.0);
+        for track in &self.project().tracks {
+            let lane_bottom = lane_top + px(track.height);
+            if lane_bottom > top && lane_top < bottom {
+                found.push(track.id);
+            }
+            lane_top = lane_bottom;
+        }
+        found
     }
 
     /// Clip on `track` covering `tick`, with its start and length.
@@ -613,7 +683,8 @@ struct LanePaint {
     height: f32,
     color: gpui::Hsla,
     clips: Vec<ClipPaint>,
-    selected_clip: Option<ClipId>,
+    /// Every selected clip, so a rubber band can light up more than one at a time.
+    selected: std::collections::BTreeSet<ClipId>,
 }
 
 /// Waveform peaks keyed by audio source, shared by every lane in a frame.
@@ -657,7 +728,7 @@ fn paint_lane(
             origin: point(x, bounds.origin.y + px(2.0)),
             size: size(width.max(px(3.0)), bounds.size.height - px(4.0)),
         };
-        let selected = lane.selected_clip == Some(clip.id);
+        let selected = lane.selected.contains(&clip.id);
         let body = if clip.muted {
             Theme::translucent(lane.color, 0.16)
         } else {

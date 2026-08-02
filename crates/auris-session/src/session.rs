@@ -787,6 +787,48 @@ impl Session {
         }
     }
 
+    /// Removes several clips as one edit.
+    ///
+    /// Ids that do not exist are ignored, so a stale selection cannot fail the whole delete.
+    pub fn remove_clips(&mut self, clips: &[ClipId]) -> Result<(), SessionError> {
+        let present: Vec<ClipId> = clips
+            .iter()
+            .copied()
+            .filter(|clip| self.require_clip(*clip).is_ok())
+            .collect();
+        if present.is_empty() {
+            return Ok(());
+        }
+        self.record(Edit::DeleteClip);
+        for clip in present {
+            self.project.remove_clip(clip);
+        }
+        self.invalidate_graph();
+        Ok(())
+    }
+
+    /// Moves several clips by one delta, from positions captured before the gesture began.
+    ///
+    /// The delta is clamped so that the earliest clip lands on zero rather than each clip being
+    /// clamped separately — that would pile the leading clips on top of each other and quietly
+    /// destroy the spacing the user is dragging.
+    pub fn move_clips(&mut self, origins: &[(ClipId, Ticks)], delta: Ticks) {
+        let Some(earliest) = origins.iter().map(|(_, start)| *start).min() else {
+            return;
+        };
+        let delta = delta.max(-earliest);
+        self.record(Edit::MoveClip);
+        for (clip, start) in origins {
+            let start = (*start + delta).max_zero();
+            if let Some(midi) = self.project.midi_clip_mut(*clip) {
+                midi.start = start;
+            } else if let Some(audio) = self.project.audio_clip_mut(*clip) {
+                audio.start = start;
+            }
+        }
+        self.invalidate_graph();
+    }
+
     /// Moves a clip of either kind to a new start position.
     pub fn move_clip(&mut self, clip: ClipId, start: Ticks) -> Result<(), SessionError> {
         self.record(Edit::MoveClip);
@@ -1746,6 +1788,44 @@ mod tests {
         assert_eq!(session.midi_clip(clip).unwrap().length, Ticks::QUARTER);
         assert_eq!(session.midi_clip(right).unwrap().start, Ticks::QUARTER);
         assert!(session.can_undo());
+    }
+
+    #[test]
+    fn moving_several_clips_keeps_the_spacing_between_them() {
+        let (mut session, track, first) = session_with_clip();
+        let second = session
+            .add_midi_clip(track, "B", Ticks::from_beats(8.0), Ticks::from_beats(4.0))
+            .unwrap();
+        let origins = [(first, Ticks::ZERO), (second, Ticks::from_beats(8.0))];
+
+        // Far enough left that the first clip would go negative on its own.
+        session.move_clips(&origins, Ticks::from_beats(-4.0));
+
+        assert_eq!(session.midi_clip(first).unwrap().start, Ticks::ZERO);
+        assert_eq!(
+            session.midi_clip(second).unwrap().start,
+            Ticks::from_beats(8.0),
+            "the whole selection stops when the earliest clip reaches zero"
+        );
+    }
+
+    #[test]
+    fn deleting_several_clips_is_one_undo_step() {
+        let (mut session, track, first) = session_with_clip();
+        let second = session
+            .add_midi_clip(track, "B", Ticks::from_beats(8.0), Ticks::from_beats(4.0))
+            .unwrap();
+        session.forget_history();
+
+        session
+            .remove_clips(&[first, second, ClipId(9999)])
+            .unwrap();
+        assert!(session.midi_clip(first).is_none());
+        assert!(session.midi_clip(second).is_none());
+
+        session.undo().unwrap();
+        assert!(session.midi_clip(first).is_some());
+        assert!(session.midi_clip(second).is_some());
     }
 
     #[test]

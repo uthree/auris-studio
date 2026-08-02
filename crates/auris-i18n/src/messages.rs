@@ -74,6 +74,12 @@ messages! {
         ja: "ノート {count} 個"
     }
 
+    /// Title of a menu acting on more than one clip.
+    fn clip_count(count: usize) {
+        en: "{count} clips",
+        ja: "クリップ {count} 個"
+    }
+
     /// Name given to a track the user just created.
     fn new_track_name(number: usize) {
         en: "Track {number}",

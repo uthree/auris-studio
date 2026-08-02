@@ -28,6 +28,12 @@ delete and transposition of the selected notes; effect slots offer bypass, reord
 Renaming goes through the platform's input handler, so an IME composes into the field the way
 it does anywhere else.
 
+Creating and deleting are pointer gestures, and which gesture does which is a setting. The
+defaults are Logic's — ⌘-click creates a note or a clip, a double-click deletes what is under
+the pointer — with ⌥-click available for either. Dragging across empty space in the piano roll
+or the arrangement sweeps a selection rectangle; ⇧-drag adds to what is already selected, and a
+multiple selection moves, duplicates and deletes as one.
+
 ### Languages
 
 The interface is available in English and Japanese, chosen under Settings → General or followed

@@ -55,6 +55,7 @@ impl AurisApp {
         let notes = clip.notes.clone();
         let selected: Vec<usize> = self.selected_notes.iter().copied().collect();
         let clip_name = clip.name.clone();
+        let band = self.rubber_band(crate::app::BandSurface::Roll);
 
         div()
             .flex()
@@ -168,6 +169,9 @@ impl AurisApp {
                                                 bounds.origin.x + view.tick_to_x(playhead),
                                                 &theme,
                                             );
+                                            if let Some(band) = band {
+                                                paint::selection_band(window, band, &theme);
+                                            }
                                         });
                                     },
                                 )
@@ -195,16 +199,23 @@ impl AurisApp {
             .into_any_element()
     }
 
-    /// Screen origin of the note grid.
+    /// Window origin of the note grid, taken from where it was last painted.
     ///
-    /// The editor panel is anchored to the bottom of the window, above the status bar, and the
-    /// grid starts below the panel's own header — so the origin is derived from the window
-    /// height rather than measured, because pointer events arrive outside any paint callback.
-    pub(crate) fn roll_origin(&self, window_height: Pixels) -> Point<Pixels> {
-        point(
-            Metrics::KEYBOARD_WIDTH,
-            window_height - Metrics::STATUS_HEIGHT - Metrics::EDITOR_HEIGHT
-                + Metrics::EDITOR_HEADER_HEIGHT,
+    /// It used to be derived from the window height and `Metrics::EDITOR_HEIGHT`, which was
+    /// correct until the editor panel became resizable — after that, every note the user
+    /// clicked was off by however far they had dragged the divider. The fallback below is only
+    /// reached before the first paint, and uses the panel's *current* height for the same
+    /// reason.
+    pub(crate) fn roll_origin(&self) -> Point<Pixels> {
+        self.canvas.roll.get().map_or_else(
+            || {
+                point(
+                    Metrics::KEYBOARD_WIDTH,
+                    self.viewport_height - Metrics::STATUS_HEIGHT - self.panels.editor_height
+                        + Metrics::EDITOR_HEADER_HEIGHT,
+                )
+            },
+            |bounds| bounds.origin,
         )
     }
 
@@ -213,8 +224,7 @@ impl AurisApp {
         let Some(clip_id) = self.selected_clip else {
             return;
         };
-        let window_height = self.viewport_height;
-        let origin = self.roll_origin(window_height);
+        let origin = self.roll_origin();
         let tick = self.timeline.x_to_tick(event.position.x - origin.x);
         // Below MIDI 0 the grid is unpainted, so a click there must not act on pitch 0.
         let Some(pitch) = self.pitch.pitch_at(event.position.y - origin.y) else {
@@ -297,8 +307,13 @@ impl AurisApp {
                     self.selected_notes.insert(index);
                     self.audition(pitch);
                 } else {
-                    self.selected_notes.clear();
-                    self.seek(self.snap(tick));
+                    // A drag on empty grid sweeps a selection; a press that never moves ends up
+                    // selecting nothing, which is the deselect it looks like.
+                    self.begin_rubber_band(
+                        crate::app::BandSurface::Roll,
+                        event.position,
+                        event.modifiers.shift,
+                    );
                 }
             }
         }
@@ -335,7 +350,7 @@ impl AurisApp {
 
     /// Opens the menu for whatever is under the pointer in the note grid.
     fn open_roll_menu(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
-        let origin = self.roll_origin(self.viewport_height);
+        let origin = self.roll_origin();
         let tick = self.timeline.x_to_tick(event.position.x - origin.x);
         let Some(pitch) = self.pitch.pitch_at(event.position.y - origin.y) else {
             return;
@@ -374,7 +389,7 @@ impl AurisApp {
     fn scroll_roll(&mut self, event: &gpui::ScrollWheelEvent, cx: &mut gpui::Context<Self>) {
         let delta = event.delta.pixel_delta(px(24.0));
         if event.modifiers.control {
-            let anchor = event.position.y - self.roll_origin(self.viewport_height).y;
+            let anchor = event.position.y - self.roll_origin().y;
             let factor = if delta.y > px(0.0) { 1.12 } else { 1.0 / 1.12 };
             self.pitch.zoom_by(factor, anchor);
         } else if event.modifiers.alt {
@@ -392,7 +407,7 @@ impl AurisApp {
 
     /// Plays the key the pointer landed on, so the keyboard strip is playable.
     fn audition_from_keyboard(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
-        let origin = self.roll_origin(self.viewport_height);
+        let origin = self.roll_origin();
         let Some(pitch) = self.pitch.pitch_at(event.position.y - origin.y) else {
             return;
         };
