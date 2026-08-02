@@ -1,6 +1,6 @@
 //! Where notes fall in time: the grid, the patterns written on it, and the grooves.
 
-use auris_core::time::{TICKS_PER_QUARTER, Ticks, TimeSignature};
+use auris_core::time::{Ticks, TimeSignature};
 
 /// The subdivision everything is placed on.
 ///
@@ -72,18 +72,18 @@ impl Grid {
             return 4;
         }
         let per_beat = self.steps_per_beat as usize;
-        if position % per_beat == 0 {
+        if position.is_multiple_of(per_beat) {
             // A beat, with the halfway point of the bar stronger than the rest.
             let beat = position / per_beat;
             let beats = per_bar / per_beat.max(1);
-            return if beats % 2 == 0 && beat == beats / 2 {
+            return if beats.is_multiple_of(2) && beat == beats / 2 {
                 3
             } else {
                 2
             };
         }
         // Inside a beat: halfway is stronger than the sixteenths either side of it.
-        if per_beat % 2 == 0 && position % (per_beat / 2) == 0 {
+        if per_beat.is_multiple_of(2) && position.is_multiple_of(per_beat / 2) {
             1
         } else {
             0
@@ -352,22 +352,26 @@ pub fn groove(name: &str) -> Option<&'static Groove> {
     GROOVES.iter().find(|groove| groove.name == name.trim())
 }
 
-/// Delays the offbeats of `notes` to swing them.
+/// How far a note on `step` is delayed by swinging at `percent`.
 ///
-/// `percent` is where the offbeat lands inside its pair: 50 is straight, 66.67 is triplet
-/// swing. The unit is two steps, which is what "swing the eighths" means on a sixteenth grid.
+/// Swing is felt at the eighth, not the sixteenth: the *second eighth of each beat* is late, and
+/// the sixteenths inside it move with it. `percent` says where that eighth lands inside its
+/// beat — 50 is straight, 66.7 puts it on the third triplet.
 pub fn swing_offset(grid: Grid, step: usize, percent: u8) -> Ticks {
-    if step % 2 == 0 {
+    // Half a beat, in steps: the unit that gets swung.
+    let unit = (grid.steps_per_beat as usize / 2).max(1);
+    if (step / unit).is_multiple_of(2) {
         return Ticks::ZERO;
     }
-    let unit = grid.step_ticks().raw();
-    let shift = (f64::from(percent) / 100.0 - 0.5) * 2.0 * unit as f64;
+    let unit_ticks = grid.step_ticks().raw() * unit as i64;
+    let shift = (f64::from(percent) / 100.0 - 0.5) * 2.0 * unit_ticks as f64;
     Ticks(shift.round() as i64)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use auris_core::time::TICKS_PER_QUARTER;
 
     fn four_four() -> Grid {
         Grid::default()
@@ -536,21 +540,35 @@ mod tests {
     }
 
     #[test]
-    fn swing_delays_the_offbeat_and_leaves_the_beat_alone() {
+    fn swing_delays_the_offbeat_eighth_and_leaves_the_beat_alone() {
         let grid = four_four();
-        assert_eq!(swing_offset(grid, 0, 66), Ticks::ZERO, "on the beat");
-        assert_eq!(swing_offset(grid, 2, 66), Ticks::ZERO);
+        assert_eq!(swing_offset(grid, 0, 66), Ticks::ZERO, "the downbeat");
         assert_eq!(
-            swing_offset(grid, 1, 50),
+            swing_offset(grid, 1, 66),
+            Ticks::ZERO,
+            "still the first eighth"
+        );
+        assert_eq!(swing_offset(grid, 4, 66), Ticks::ZERO, "beat two");
+        assert_eq!(
+            swing_offset(grid, 2, 50),
             Ticks::ZERO,
             "straight is no swing"
         );
 
-        // At two thirds, the offbeat lands on the third triplet of its pair. One step is 240
-        // ticks, so the shift is 240 * (2/3 - 1/2) * 2 = 80.
-        let shift = swing_offset(grid, 1, 67);
-        assert_eq!(shift, Ticks(82));
-        assert!(shift > Ticks::ZERO, "swing delays rather than rushes");
+        // The offbeat eighth is what gets delayed. An eighth is 480 ticks, so at 66 % the shift
+        // is 480 * (0.66 - 0.5) * 2 = 154, which lands it just shy of the third triplet.
+        assert_eq!(swing_offset(grid, 2, 66), Ticks(154));
+        assert!(
+            swing_offset(grid, 2, 66) > Ticks::ZERO,
+            "swing delays, never rushes"
+        );
+        // The sixteenth inside a swung eighth moves with it.
+        assert_eq!(swing_offset(grid, 3, 66), Ticks(154));
+        assert_eq!(
+            swing_offset(grid, 6, 66),
+            Ticks(154),
+            "every offbeat eighth"
+        );
     }
 
     #[test]
