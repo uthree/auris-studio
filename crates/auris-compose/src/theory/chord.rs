@@ -162,7 +162,7 @@ impl Quality {
     pub fn has_seventh(self) -> bool {
         self.intervals()
             .iter()
-            .any(|interval| matches!(interval, 9 | 10 | 11))
+            .any(|interval| matches!(interval, 9..=11))
     }
 
     /// The same chord with a seventh added, or itself when that means nothing.
