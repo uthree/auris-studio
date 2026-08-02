@@ -163,7 +163,10 @@ pub struct Metrics;
 
 impl Metrics {
     /// Height of the top transport bar.
-    pub const TRANSPORT_HEIGHT: Pixels = px(52.0);
+    ///
+    /// Tall enough for the transport buttons and the readouts stacked under them, which is how
+    /// Logic arranges the same controls.
+    pub const TRANSPORT_HEIGHT: Pixels = px(84.0);
     /// Height of the timeline ruler above the arrangement.
     pub const RULER_HEIGHT: Pixels = px(28.0);
     /// Width of the track header column.

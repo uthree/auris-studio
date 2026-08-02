@@ -100,10 +100,14 @@ impl AurisApp {
                     ),
             )
             .child(
+                // Logic stacks the transport over its readouts rather than running them along
+                // one line, which keeps the buttons and the numbers on the window's centre line
+                // instead of pushing one of them off it.
                 div()
                     .flex()
+                    .flex_col()
                     .items_center()
-                    .gap_3()
+                    .gap(px(4.0))
                     .flex_shrink_0()
                     .child(
                         div()
@@ -155,15 +159,22 @@ impl AurisApp {
                                 }),
                             )),
                     )
-                    // Musical position and wall-clock position, the two readouts every DAW shows.
-                    .child(readout(
-                        self.t(Key::Position),
-                        format!("{bar}.{beat}.{:03}", tick / 10),
-                        Some(seconds.format_clock().into()),
-                        px(118.0),
-                        &theme,
-                    ))
-                    .child(self.render_tempo_control(bpm, cx)),
+                    // Musical position, wall-clock position and tempo: the readouts every DAW
+                    // shows, side by side under the buttons they describe.
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(readout(
+                                self.t(Key::Position),
+                                format!("{bar}.{beat}.{:03}", tick / 10),
+                                Some(seconds.format_clock().into()),
+                                px(118.0),
+                                &theme,
+                            ))
+                            .child(self.render_tempo_control(bpm, cx)),
+                    ),
             )
             .child(
                 div()
