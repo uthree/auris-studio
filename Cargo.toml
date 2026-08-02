@@ -1,0 +1,74 @@
+[workspace]
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/uthree/auris-studio"
+rust-version = "1.90"
+
+[workspace.dependencies]
+auris-core = { path = "crates/auris-core", version = "0.1.0" }
+auris-dsp = { path = "crates/auris-dsp", version = "0.1.0" }
+auris-synth = { path = "crates/auris-synth", version = "0.1.0" }
+auris-gpu = { path = "crates/auris-gpu", version = "0.1.0" }
+auris-io = { path = "crates/auris-io", version = "0.1.0" }
+auris-engine = { path = "crates/auris-engine", version = "0.1.0" }
+
+anyhow = "1.0"
+arc-swap = "1.7"
+bytemuck = { version = "1.16", features = ["derive"] }
+cpal = "0.18"
+crossbeam-channel = "0.5"
+hound = "3.5"
+log = "0.4"
+env_logger = "0.11"
+pollster = "1.0"
+rubato = "4.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+symphonia = { version = "0.6", features = ["all"] }
+thiserror = "2.0"
+wgpu = "30.0"
+
+[package]
+name = "auris-studio"
+description = "A GPU-accelerated digital audio workstation built with Rust and gpui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+auris-core.workspace = true
+auris-dsp.workspace = true
+auris-synth.workspace = true
+auris-gpu.workspace = true
+auris-io.workspace = true
+auris-engine.workspace = true
+
+anyhow.workspace = true
+env_logger.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# `runtime_shaders` makes gpui compile its Metal shaders through the Metal framework at
+# startup instead of at build time. The build-time path shells out to `xcrun metal`, which
+# ships only with a full Xcode install; this feature keeps the Command Line Tools enough.
+gpui = { version = "0.2.2", features = ["runtime_shaders"] }
+rfd = "0.17"
+
+[profile.dev]
+opt-level = 1
+
+# Audio DSP is unusable when compiled without optimisations, so always build dependencies
+# (and our own DSP crates, via the entries below) at full speed even in debug builds.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

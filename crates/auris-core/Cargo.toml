@@ -1,0 +1,13 @@
+[package]
+name = "auris-core"
+description = "Core types, plugin traits and the project model for Auris Studio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

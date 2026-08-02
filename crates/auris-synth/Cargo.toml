@@ -1,0 +1,12 @@
+[package]
+name = "auris-synth"
+description = "Built-in chiptune software instruments for Auris Studio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+auris-core.workspace = true
+serde.workspace = true

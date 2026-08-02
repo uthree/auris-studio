@@ -1,0 +1,12 @@
+[package]
+name = "auris-dsp"
+description = "Audio effects and DSP primitives for Auris Studio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+auris-core.workspace = true
+serde.workspace = true

@@ -1,0 +1,15 @@
+[package]
+name = "auris-gpu"
+description = "Optional wgpu compute acceleration for Auris Studio's offline audio analysis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+auris-core.workspace = true
+bytemuck.workspace = true
+log.workspace = true
+pollster.workspace = true
+wgpu.workspace = true

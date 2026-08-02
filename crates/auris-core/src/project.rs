@@ -1,0 +1,955 @@
+//! The serialisable document model.
+//!
+//! A [`Project`] holds everything the user edits: tempo, tracks, clips, notes and mixer state.
+//! It contains no audio samples and no plugin instances — only ids and parameter values — which
+//! keeps it cheap to clone for undo and trivially serialisable to JSON.
+//!
+//! Two indirections make that work:
+//!
+//! * A track names its instrument by plugin id plus a [`PluginState`]; the engine asks the
+//!   [`PluginRegistry`](crate::registry::PluginRegistry) to build the real object.
+//! * An audio clip names its samples by [`SourceId`]; the decoded audio lives in a separate
+//!   runtime [`AudioSourceBank`], so the project stays small and a file imported once can back
+//!   any number of clips.
+
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use crate::buffer::AudioBuffer;
+use crate::plugin::PluginState;
+use crate::time::{TempoMap, Ticks, TimeSignature};
+
+/// Identifies a track within a project.
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct TrackId(pub u64);
+
+/// Identifies a clip within a project.
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct ClipId(pub u64);
+
+/// Identifies an imported audio file within a project.
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct SourceId(pub u64);
+
+/// Identifies one slot in an effect chain.
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct EffectSlotId(pub u64);
+
+/// An RGB colour used for track and clip tinting.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Color(pub u32);
+
+impl Color {
+    /// The palette new tracks cycle through.
+    pub const PALETTE: [Color; 8] = [
+        Color(0x4f9dde),
+        Color(0x5fc9a3),
+        Color(0xe0b452),
+        Color(0xd97b6c),
+        Color(0xb07cc6),
+        Color(0xe0a458),
+        Color(0x7fb069),
+        Color(0xd16b8a),
+    ];
+
+    /// Picks a palette entry by index, wrapping around.
+    pub fn from_palette(index: usize) -> Color {
+        Self::PALETTE[index % Self::PALETTE.len()]
+    }
+
+    /// Red, green and blue components.
+    pub fn rgb(self) -> (u8, u8, u8) {
+        (
+            ((self.0 >> 16) & 0xff) as u8,
+            ((self.0 >> 8) & 0xff) as u8,
+            (self.0 & 0xff) as u8,
+        )
+    }
+}
+
+/// A single note inside a [`MidiClip`].
+///
+/// `start` is relative to the clip's start, so moving a clip does not touch its notes.
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Note {
+    /// MIDI note number, 0..=127.
+    pub pitch: u8,
+    /// Attack strength, 0.0..=1.0.
+    pub velocity: f32,
+    /// Offset from the clip start.
+    pub start: Ticks,
+    /// How long the note is held.
+    pub length: Ticks,
+}
+
+impl Note {
+    /// A note with a default velocity.
+    pub fn new(pitch: u8, start: Ticks, length: Ticks) -> Self {
+        Self {
+            pitch,
+            velocity: 0.8,
+            start,
+            length,
+        }
+    }
+
+    /// Position just past the end of the note.
+    pub fn end(&self) -> Ticks {
+        self.start + self.length
+    }
+
+    /// `true` when `tick` falls inside the note.
+    pub fn contains(&self, tick: Ticks) -> bool {
+        tick >= self.start && tick < self.end()
+    }
+}
+
+/// A block of notes placed on an instrument track.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MidiClip {
+    /// Unique within the project.
+    pub id: ClipId,
+    /// Label shown on the clip.
+    pub name: String,
+    /// Position on the timeline.
+    pub start: Ticks,
+    /// Length on the timeline. Notes past this point are not played.
+    pub length: Ticks,
+    /// Notes, in no particular order.
+    pub notes: Vec<Note>,
+    /// Whether the clip is skipped during playback.
+    #[serde(default)]
+    pub muted: bool,
+}
+
+impl MidiClip {
+    /// An empty clip.
+    pub fn new(id: ClipId, name: impl Into<String>, start: Ticks, length: Ticks) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            start,
+            length,
+            notes: Vec::new(),
+            muted: false,
+        }
+    }
+
+    /// Position just past the end of the clip.
+    pub fn end(&self) -> Ticks {
+        self.start + self.length
+    }
+
+    /// Grows the clip so that every note fits inside it, rounded up to `grid`.
+    pub fn fit_length_to_notes(&mut self, grid: Ticks) {
+        let needed = self
+            .notes
+            .iter()
+            .map(Note::end)
+            .max()
+            .unwrap_or(Ticks::ZERO);
+        if needed > self.length {
+            // `i64::div_ceil` is still unstable, and `needed` is never negative here.
+            let grid = grid.0.max(1);
+            self.length = Ticks((needed.0 + grid - 1) / grid * grid);
+        }
+    }
+
+    /// Lowest and highest pitch present, for auto-scrolling the piano roll.
+    pub fn pitch_range(&self) -> Option<(u8, u8)> {
+        let mut iter = self.notes.iter();
+        let first = iter.next()?;
+        let mut range = (first.pitch, first.pitch);
+        for note in iter {
+            range.0 = range.0.min(note.pitch);
+            range.1 = range.1.max(note.pitch);
+        }
+        Some(range)
+    }
+}
+
+/// A reference to decoded audio placed on an audio track.
+///
+/// Trimming is expressed in *source frames* rather than ticks because the underlying file has a
+/// fixed sample rate: a tempo change must move the clip, not resample it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AudioClip {
+    /// Unique within the project.
+    pub id: ClipId,
+    /// Label shown on the clip.
+    pub name: String,
+    /// Position on the timeline.
+    pub start: Ticks,
+    /// Which imported file this clip plays.
+    pub source: SourceId,
+    /// First source frame to play.
+    pub offset_frames: u64,
+    /// How many source frames to play.
+    pub length_frames: u64,
+    /// Clip-level trim, in decibels.
+    #[serde(default)]
+    pub gain_db: f32,
+    /// Fade-in length in frames.
+    #[serde(default)]
+    pub fade_in_frames: u64,
+    /// Fade-out length in frames.
+    #[serde(default)]
+    pub fade_out_frames: u64,
+    /// Whether the clip is skipped during playback.
+    #[serde(default)]
+    pub muted: bool,
+}
+
+impl AudioClip {
+    /// A clip playing a whole source from the beginning.
+    pub fn new(id: ClipId, name: impl Into<String>, start: Ticks, source: &AudioSource) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            start,
+            source: source.id,
+            offset_frames: 0,
+            length_frames: source.frame_count,
+            gain_db: 0.0,
+            fade_in_frames: 0,
+            fade_out_frames: 0,
+            muted: false,
+        }
+    }
+
+    /// Gain multiplier for a frame `position` into the clip, including both fades.
+    pub fn fade_gain_at(&self, position: u64) -> f32 {
+        let mut gain = 1.0f32;
+        if self.fade_in_frames > 0 && position < self.fade_in_frames {
+            gain *= position as f32 / self.fade_in_frames as f32;
+        }
+        if self.fade_out_frames > 0 {
+            let fade_start = self.length_frames.saturating_sub(self.fade_out_frames);
+            if position >= fade_start {
+                let into_fade = position - fade_start;
+                gain *= 1.0 - (into_fade as f32 / self.fade_out_frames as f32).min(1.0);
+            }
+        }
+        gain
+    }
+}
+
+/// Metadata about an imported audio file, stored in the project.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AudioSource {
+    /// Unique within the project.
+    pub id: SourceId,
+    /// Display name, usually the file stem.
+    pub name: String,
+    /// Where the file was imported from, so a project can be re-opened later.
+    pub path: PathBuf,
+    /// Length of the decoded audio.
+    pub frame_count: u64,
+    /// Sample rate of the decoded audio; equals the project rate after import resampling.
+    pub sample_rate: f64,
+    /// Channel count of the decoded audio.
+    pub channel_count: usize,
+}
+
+/// Decoded audio for every [`AudioSource`], kept out of the serialised project.
+///
+/// Buffers are shared by `Arc`, so handing the render graph a clip costs a refcount bump rather
+/// than a copy of the samples.
+#[derive(Clone, Debug, Default)]
+pub struct AudioSourceBank {
+    buffers: BTreeMap<SourceId, Arc<AudioBuffer>>,
+}
+
+impl AudioSourceBank {
+    /// An empty bank.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Stores decoded audio for a source.
+    pub fn insert(&mut self, id: SourceId, buffer: Arc<AudioBuffer>) {
+        self.buffers.insert(id, buffer);
+    }
+
+    /// Looks up decoded audio.
+    pub fn get(&self, id: SourceId) -> Option<&Arc<AudioBuffer>> {
+        self.buffers.get(&id)
+    }
+
+    /// Drops decoded audio for a source.
+    pub fn remove(&mut self, id: SourceId) {
+        self.buffers.remove(&id);
+    }
+
+    /// Number of loaded sources.
+    pub fn len(&self) -> usize {
+        self.buffers.len()
+    }
+
+    /// `true` when nothing is loaded.
+    pub fn is_empty(&self) -> bool {
+        self.buffers.is_empty()
+    }
+
+    /// Drops everything not referenced by `keep`.
+    pub fn retain(&mut self, keep: impl Fn(SourceId) -> bool) {
+        self.buffers.retain(|id, _| keep(*id));
+    }
+}
+
+/// One effect in a chain.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EffectSlot {
+    /// Unique within the project.
+    pub id: EffectSlotId,
+    /// Registry id of the effect to instantiate.
+    pub effect_id: String,
+    /// Bypass switch. A bypassed effect is still instantiated so its state survives.
+    pub enabled: bool,
+    /// Saved parameter values.
+    pub state: PluginState,
+}
+
+impl EffectSlot {
+    /// An enabled slot with default parameters.
+    pub fn new(id: EffectSlotId, effect_id: impl Into<String>) -> Self {
+        Self {
+            id,
+            effect_id: effect_id.into(),
+            enabled: true,
+            state: PluginState::empty(),
+        }
+    }
+}
+
+/// Volume, pan, mute/solo and the effect chain for a track or the master bus.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MixerStrip {
+    /// Fader position in decibels.
+    pub gain_db: f32,
+    /// Stereo position, -1.0 (left) to 1.0 (right).
+    pub pan: f32,
+    /// Silences this strip.
+    pub mute: bool,
+    /// Silences every strip that is not soloed.
+    pub solo: bool,
+    /// Effects, applied in order before the fader.
+    pub effects: Vec<EffectSlot>,
+}
+
+impl Default for MixerStrip {
+    fn default() -> Self {
+        Self {
+            gain_db: 0.0,
+            pan: 0.0,
+            mute: false,
+            solo: false,
+            effects: Vec::new(),
+        }
+    }
+}
+
+/// An instrument track: notes rendered by a software instrument.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InstrumentTrack {
+    /// Registry id of the instrument.
+    pub instrument_id: String,
+    /// Saved instrument parameters.
+    pub instrument_state: PluginState,
+    /// Note clips on the timeline.
+    pub clips: Vec<MidiClip>,
+}
+
+/// An audio track: references to imported audio.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct AudioTrack {
+    /// Audio clips on the timeline.
+    pub clips: Vec<AudioClip>,
+}
+
+/// What kind of material a track holds.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TrackKind {
+    /// Notes played by a software instrument.
+    Instrument(InstrumentTrack),
+    /// Recorded or imported audio.
+    Audio(AudioTrack),
+}
+
+impl TrackKind {
+    /// Short label for the UI.
+    pub fn label(&self) -> &'static str {
+        match self {
+            TrackKind::Instrument(_) => "Instrument",
+            TrackKind::Audio(_) => "Audio",
+        }
+    }
+
+    /// The instrument track data, when this is one.
+    pub fn as_instrument(&self) -> Option<&InstrumentTrack> {
+        match self {
+            TrackKind::Instrument(track) => Some(track),
+            TrackKind::Audio(_) => None,
+        }
+    }
+
+    /// The instrument track data mutably, when this is one.
+    pub fn as_instrument_mut(&mut self) -> Option<&mut InstrumentTrack> {
+        match self {
+            TrackKind::Instrument(track) => Some(track),
+            TrackKind::Audio(_) => None,
+        }
+    }
+
+    /// The audio track data, when this is one.
+    pub fn as_audio(&self) -> Option<&AudioTrack> {
+        match self {
+            TrackKind::Audio(track) => Some(track),
+            TrackKind::Instrument(_) => None,
+        }
+    }
+
+    /// The audio track data mutably, when this is one.
+    pub fn as_audio_mut(&mut self) -> Option<&mut AudioTrack> {
+        match self {
+            TrackKind::Audio(track) => Some(track),
+            TrackKind::Instrument(_) => None,
+        }
+    }
+}
+
+/// One track in the arrangement.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Track {
+    /// Unique within the project.
+    pub id: TrackId,
+    /// Name shown in the track header.
+    pub name: String,
+    /// Tint for the header and its clips.
+    pub color: Color,
+    /// Height of the lane in the arrangement, in pixels.
+    #[serde(default = "default_track_height")]
+    pub height: f32,
+    /// Instrument or audio content.
+    pub kind: TrackKind,
+    /// Volume, pan and effects.
+    pub mixer: MixerStrip,
+}
+
+fn default_track_height() -> f32 {
+    72.0
+}
+
+impl Track {
+    /// Position just past the last clip on this track, in ticks.
+    ///
+    /// Audio clip lengths depend on the tempo map, so it is passed in.
+    pub fn end_tick(&self, tempo_map: &TempoMap, sample_rate: f64) -> Ticks {
+        match &self.kind {
+            TrackKind::Instrument(track) => track
+                .clips
+                .iter()
+                .map(MidiClip::end)
+                .max()
+                .unwrap_or(Ticks::ZERO),
+            TrackKind::Audio(track) => track
+                .clips
+                .iter()
+                .map(|clip| {
+                    let seconds = clip.length_frames as f64 / sample_rate;
+                    let start_seconds = tempo_map.ticks_to_seconds(clip.start).0;
+                    tempo_map.seconds_to_ticks(crate::time::Seconds(start_seconds + seconds))
+                })
+                .max()
+                .unwrap_or(Ticks::ZERO),
+        }
+    }
+}
+
+/// The whole document.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Project {
+    /// Format version, bumped when the schema changes incompatibly.
+    #[serde(default = "current_format_version")]
+    pub format_version: u32,
+    /// Document name.
+    pub name: String,
+    /// Rate everything renders at.
+    pub sample_rate: f64,
+    /// Tempo over the timeline.
+    pub tempo_map: TempoMap,
+    /// Bar/beat grid.
+    pub time_signature: TimeSignature,
+    /// Tracks, top to bottom.
+    pub tracks: Vec<Track>,
+    /// Master bus strip.
+    pub master: MixerStrip,
+    /// Imported file metadata by id.
+    pub audio_sources: BTreeMap<SourceId, AudioSource>,
+    /// Loop region, when looping is enabled.
+    #[serde(default)]
+    pub loop_region: Option<(Ticks, Ticks)>,
+    /// Whether playback loops over [`Self::loop_region`].
+    #[serde(default)]
+    pub loop_enabled: bool,
+    /// Editing grid size, in ticks.
+    #[serde(default = "default_grid")]
+    pub grid: Ticks,
+    next_id: u64,
+}
+
+fn current_format_version() -> u32 {
+    Project::FORMAT_VERSION
+}
+
+fn default_grid() -> Ticks {
+    Ticks(crate::time::TICKS_PER_QUARTER / 4)
+}
+
+impl Default for Project {
+    fn default() -> Self {
+        Self::new("Untitled", 48_000.0)
+    }
+}
+
+impl Project {
+    /// Schema version written into saved files.
+    pub const FORMAT_VERSION: u32 = 1;
+
+    /// An empty project.
+    pub fn new(name: impl Into<String>, sample_rate: f64) -> Self {
+        Self {
+            format_version: Self::FORMAT_VERSION,
+            name: name.into(),
+            sample_rate,
+            tempo_map: TempoMap::constant(120.0),
+            time_signature: TimeSignature::default(),
+            tracks: Vec::new(),
+            master: MixerStrip::default(),
+            audio_sources: BTreeMap::new(),
+            loop_region: None,
+            loop_enabled: false,
+            grid: default_grid(),
+            next_id: 1,
+        }
+    }
+
+    fn allocate_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+
+    /// Project tempo at the timeline start.
+    pub fn bpm(&self) -> f64 {
+        self.tempo_map.initial_bpm()
+    }
+
+    /// Sets the project tempo at the timeline start.
+    pub fn set_bpm(&mut self, bpm: f64) {
+        self.tempo_map.set_initial_bpm(bpm);
+    }
+
+    /// Appends an instrument track playing `instrument_id`.
+    pub fn add_instrument_track(
+        &mut self,
+        name: impl Into<String>,
+        instrument_id: impl Into<String>,
+    ) -> TrackId {
+        let id = TrackId(self.allocate_id());
+        let color = Color::from_palette(self.tracks.len());
+        self.tracks.push(Track {
+            id,
+            name: name.into(),
+            color,
+            height: default_track_height(),
+            kind: TrackKind::Instrument(InstrumentTrack {
+                instrument_id: instrument_id.into(),
+                instrument_state: PluginState::empty(),
+                clips: Vec::new(),
+            }),
+            mixer: MixerStrip::default(),
+        });
+        id
+    }
+
+    /// Appends an empty audio track.
+    pub fn add_audio_track(&mut self, name: impl Into<String>) -> TrackId {
+        let id = TrackId(self.allocate_id());
+        let color = Color::from_palette(self.tracks.len());
+        self.tracks.push(Track {
+            id,
+            name: name.into(),
+            color,
+            height: default_track_height(),
+            kind: TrackKind::Audio(AudioTrack::default()),
+            mixer: MixerStrip::default(),
+        });
+        id
+    }
+
+    /// Removes a track, returning `true` when it existed.
+    pub fn remove_track(&mut self, id: TrackId) -> bool {
+        let before = self.tracks.len();
+        self.tracks.retain(|track| track.id != id);
+        self.tracks.len() != before
+    }
+
+    /// Moves a track to a new index, clamping into range.
+    pub fn move_track(&mut self, id: TrackId, to_index: usize) {
+        let Some(from) = self.track_index(id) else {
+            return;
+        };
+        let to = to_index.min(self.tracks.len().saturating_sub(1));
+        let track = self.tracks.remove(from);
+        self.tracks.insert(to, track);
+    }
+
+    /// Index of a track by id.
+    pub fn track_index(&self, id: TrackId) -> Option<usize> {
+        self.tracks.iter().position(|track| track.id == id)
+    }
+
+    /// A track by id.
+    pub fn track(&self, id: TrackId) -> Option<&Track> {
+        self.tracks.iter().find(|track| track.id == id)
+    }
+
+    /// A track by id, mutably.
+    pub fn track_mut(&mut self, id: TrackId) -> Option<&mut Track> {
+        self.tracks.iter_mut().find(|track| track.id == id)
+    }
+
+    /// Adds a MIDI clip to an instrument track.
+    pub fn add_midi_clip(
+        &mut self,
+        track_id: TrackId,
+        name: impl Into<String>,
+        start: Ticks,
+        length: Ticks,
+    ) -> Option<ClipId> {
+        let id = ClipId(self.allocate_id());
+        let name = name.into();
+        let track = self.track_mut(track_id)?;
+        let instrument = track.kind.as_instrument_mut()?;
+        instrument
+            .clips
+            .push(MidiClip::new(id, name, start, length));
+        Some(id)
+    }
+
+    /// Adds an audio clip referencing an already-registered source.
+    pub fn add_audio_clip(
+        &mut self,
+        track_id: TrackId,
+        source_id: SourceId,
+        start: Ticks,
+    ) -> Option<ClipId> {
+        let source = self.audio_sources.get(&source_id)?.clone();
+        let id = ClipId(self.allocate_id());
+        let track = self.track_mut(track_id)?;
+        let audio = track.kind.as_audio_mut()?;
+        audio
+            .clips
+            .push(AudioClip::new(id, source.name.clone(), start, &source));
+        Some(id)
+    }
+
+    /// Registers imported file metadata and returns its new id.
+    pub fn add_audio_source(
+        &mut self,
+        name: impl Into<String>,
+        path: PathBuf,
+        frame_count: u64,
+        sample_rate: f64,
+        channel_count: usize,
+    ) -> SourceId {
+        let id = SourceId(self.allocate_id());
+        self.audio_sources.insert(
+            id,
+            AudioSource {
+                id,
+                name: name.into(),
+                path,
+                frame_count,
+                sample_rate,
+                channel_count,
+            },
+        );
+        id
+    }
+
+    /// Adds an effect to a track's chain, or to the master bus when `track_id` is `None`.
+    pub fn add_effect(
+        &mut self,
+        track_id: Option<TrackId>,
+        effect_id: impl Into<String>,
+    ) -> Option<EffectSlotId> {
+        let slot_id = EffectSlotId(self.allocate_id());
+        let strip = match track_id {
+            Some(id) => &mut self.track_mut(id)?.mixer,
+            None => &mut self.master,
+        };
+        strip.effects.push(EffectSlot::new(slot_id, effect_id));
+        Some(slot_id)
+    }
+
+    /// Removes an effect slot from anywhere in the project.
+    pub fn remove_effect(&mut self, slot_id: EffectSlotId) -> bool {
+        let mut removed = false;
+        for strip in self
+            .tracks
+            .iter_mut()
+            .map(|track| &mut track.mixer)
+            .chain(std::iter::once(&mut self.master))
+        {
+            let before = strip.effects.len();
+            strip.effects.retain(|slot| slot.id != slot_id);
+            removed |= strip.effects.len() != before;
+        }
+        removed
+    }
+
+    /// A MIDI clip anywhere in the project.
+    pub fn midi_clip(&self, clip_id: ClipId) -> Option<(TrackId, &MidiClip)> {
+        self.tracks.iter().find_map(|track| {
+            track
+                .kind
+                .as_instrument()?
+                .clips
+                .iter()
+                .find(|clip| clip.id == clip_id)
+                .map(|clip| (track.id, clip))
+        })
+    }
+
+    /// A MIDI clip anywhere in the project, mutably.
+    pub fn midi_clip_mut(&mut self, clip_id: ClipId) -> Option<&mut MidiClip> {
+        self.tracks.iter_mut().find_map(|track| {
+            track
+                .kind
+                .as_instrument_mut()?
+                .clips
+                .iter_mut()
+                .find(|clip| clip.id == clip_id)
+        })
+    }
+
+    /// An audio clip anywhere in the project, mutably.
+    pub fn audio_clip_mut(&mut self, clip_id: ClipId) -> Option<&mut AudioClip> {
+        self.tracks.iter_mut().find_map(|track| {
+            track
+                .kind
+                .as_audio_mut()?
+                .clips
+                .iter_mut()
+                .find(|clip| clip.id == clip_id)
+        })
+    }
+
+    /// Removes a clip of either kind, returning `true` when it existed.
+    pub fn remove_clip(&mut self, clip_id: ClipId) -> bool {
+        for track in &mut self.tracks {
+            match &mut track.kind {
+                TrackKind::Instrument(inner) => {
+                    let before = inner.clips.len();
+                    inner.clips.retain(|clip| clip.id != clip_id);
+                    if inner.clips.len() != before {
+                        return true;
+                    }
+                }
+                TrackKind::Audio(inner) => {
+                    let before = inner.clips.len();
+                    inner.clips.retain(|clip| clip.id != clip_id);
+                    if inner.clips.len() != before {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// `true` when any track is soloed, meaning non-soloed tracks must be silenced.
+    pub fn has_solo(&self) -> bool {
+        self.tracks.iter().any(|track| track.mixer.solo)
+    }
+
+    /// `true` when this track should be audible given the current mute/solo state.
+    pub fn track_is_audible(&self, track: &Track) -> bool {
+        !track.mixer.mute && (!self.has_solo() || track.mixer.solo)
+    }
+
+    /// Position just past the last clip in the project.
+    pub fn end_tick(&self) -> Ticks {
+        self.tracks
+            .iter()
+            .map(|track| track.end_tick(&self.tempo_map, self.sample_rate))
+            .max()
+            .unwrap_or(Ticks::ZERO)
+    }
+
+    /// Total length in seconds, ignoring effect tails.
+    pub fn duration_seconds(&self) -> f64 {
+        self.tempo_map.ticks_to_seconds(self.end_tick()).0
+    }
+
+    /// Reserves an id from the project's counter, for callers that build objects themselves.
+    pub fn next_clip_id(&mut self) -> ClipId {
+        ClipId(self.allocate_id())
+    }
+
+    /// Reserves an effect slot id.
+    pub fn next_effect_slot_id(&mut self) -> EffectSlotId {
+        EffectSlotId(self.allocate_id())
+    }
+
+    /// Repairs a project loaded from disk: makes sure the id counter is past every id in use,
+    /// so ids handed out later cannot collide with existing ones.
+    pub fn repair_id_counter(&mut self) {
+        let mut highest = 0u64;
+        for track in &self.tracks {
+            highest = highest.max(track.id.0);
+            for slot in &track.mixer.effects {
+                highest = highest.max(slot.id.0);
+            }
+            match &track.kind {
+                TrackKind::Instrument(inner) => {
+                    for clip in &inner.clips {
+                        highest = highest.max(clip.id.0);
+                    }
+                }
+                TrackKind::Audio(inner) => {
+                    for clip in &inner.clips {
+                        highest = highest.max(clip.id.0);
+                    }
+                }
+            }
+        }
+        for slot in &self.master.effects {
+            highest = highest.max(slot.id.0);
+        }
+        for id in self.audio_sources.keys() {
+            highest = highest.max(id.0);
+        }
+        self.next_id = self.next_id.max(highest + 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::time::TICKS_PER_QUARTER;
+
+    fn demo_project() -> Project {
+        let mut project = Project::new("Demo", 48_000.0);
+        let track = project.add_instrument_track("Lead", "auris.synth.pulse");
+        let clip = project
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::from_beats(4.0))
+            .unwrap();
+        let midi = project.midi_clip_mut(clip).unwrap();
+        midi.notes.push(Note::new(60, Ticks::ZERO, Ticks::QUARTER));
+        midi.notes
+            .push(Note::new(64, Ticks::QUARTER, Ticks::QUARTER));
+        project
+    }
+
+    #[test]
+    fn ids_are_unique_across_object_kinds() {
+        let mut project = Project::new("Demo", 48_000.0);
+        let track_a = project.add_instrument_track("A", "x");
+        let track_b = project.add_audio_track("B");
+        let clip = project
+            .add_midi_clip(track_a, "c", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        let effect = project.add_effect(Some(track_b), "auris.fx.gain").unwrap();
+        assert_ne!(track_a.0, track_b.0);
+        assert_ne!(clip.0, effect.0);
+        assert_ne!(track_a.0, clip.0);
+    }
+
+    #[test]
+    fn project_round_trips_through_json() {
+        let project = demo_project();
+        let json = serde_json::to_string(&project).unwrap();
+        let restored: Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(project, restored);
+    }
+
+    #[test]
+    fn repair_id_counter_avoids_collisions_after_load() {
+        let project = demo_project();
+        let json = serde_json::to_string(&project).unwrap();
+        let mut restored: Project = serde_json::from_str(&json).unwrap();
+        restored.repair_id_counter();
+
+        let existing: Vec<u64> = restored.tracks.iter().map(|t| t.id.0).collect();
+        let fresh = restored.add_audio_track("New");
+        assert!(!existing.contains(&fresh.0));
+    }
+
+    #[test]
+    fn solo_overrides_unsoloed_tracks() {
+        let mut project = Project::new("Demo", 48_000.0);
+        let a = project.add_instrument_track("A", "x");
+        let b = project.add_instrument_track("B", "x");
+        assert!(project.track_is_audible(project.track(a).unwrap()));
+
+        project.track_mut(b).unwrap().mixer.solo = true;
+        assert!(!project.track_is_audible(project.track(a).unwrap()));
+        assert!(project.track_is_audible(project.track(b).unwrap()));
+    }
+
+    #[test]
+    fn clip_length_grows_to_fit_notes() {
+        let mut clip = MidiClip::new(ClipId(1), "c", Ticks::ZERO, Ticks::QUARTER);
+        clip.notes
+            .push(Note::new(60, Ticks::ZERO, Ticks::from_beats(3.5)));
+        clip.fit_length_to_notes(Ticks(TICKS_PER_QUARTER));
+        assert_eq!(clip.length, Ticks::from_beats(4.0));
+    }
+
+    #[test]
+    fn audio_clip_fades_reach_zero_at_the_edges() {
+        let source = AudioSource {
+            id: SourceId(1),
+            name: "s".into(),
+            path: PathBuf::new(),
+            frame_count: 1000,
+            sample_rate: 48_000.0,
+            channel_count: 2,
+        };
+        let mut clip = AudioClip::new(ClipId(2), "c", Ticks::ZERO, &source);
+        clip.fade_in_frames = 100;
+        clip.fade_out_frames = 100;
+        assert_eq!(clip.fade_gain_at(0), 0.0);
+        assert!((clip.fade_gain_at(50) - 0.5).abs() < 1e-6);
+        assert_eq!(clip.fade_gain_at(500), 1.0);
+        assert!(clip.fade_gain_at(999) < 0.02);
+    }
+
+    #[test]
+    fn removing_a_track_drops_only_that_track() {
+        let mut project = demo_project();
+        let id = project.tracks[0].id;
+        assert!(project.remove_track(id));
+        assert!(project.tracks.is_empty());
+        assert!(!project.remove_track(id));
+    }
+}

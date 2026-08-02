@@ -1,0 +1,17 @@
+[package]
+name = "auris-engine"
+description = "Realtime and offline audio rendering engine for Auris Studio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+auris-core.workspace = true
+auris-dsp.workspace = true
+auris-synth.workspace = true
+cpal.workspace = true
+crossbeam-channel.workspace = true
+log.workspace = true
+thiserror.workspace = true
