@@ -1,6 +1,6 @@
 //! The piano roll: note editing for the selected MIDI clip.
 
-use auris_i18n::{Key, messages};
+use auris_i18n::messages;
 use auris_session::prelude::*;
 
 use gpui::{
@@ -43,7 +43,10 @@ impl AurisApp {
                 .bg(theme.surface_sunken)
                 .text_color(theme.text_muted)
                 .text_xs()
-                .child(self.t(Key::PianoRollEmpty))
+                .child(messages::piano_roll_empty(
+                    self.language(),
+                    self.t(self.pointer.create.label()),
+                ))
                 .into_any_element();
         };
 
@@ -73,7 +76,11 @@ impl AurisApp {
                     .text_color(theme.text_muted)
                     .child(messages::piano_roll_title(self.language(), &clip_name))
                     .child(div().flex_1())
-                    .child(self.t(Key::PianoRollHint)),
+                    .child(messages::piano_roll_hint(
+                        self.language(),
+                        self.t(self.pointer.create.label()),
+                        self.t(self.pointer.delete.label()),
+                    )),
             )
             .child(
                 div()
@@ -218,7 +225,19 @@ impl AurisApp {
         };
         let local_tick = tick - clip_start;
 
-        match self.note_at(clip_id, local_tick, pitch) {
+        let under_pointer = self.note_at(clip_id, local_tick, pitch);
+        // Delete first: it is the only gesture that acts on what is already there, so letting
+        // anything else claim the press would make it unreachable.
+        if let Some(index) = under_pointer
+            && self.pointer.delete.matches(event)
+        {
+            let _ = self.session.remove_notes(clip_id, &[index]);
+            self.selected_notes.clear();
+            cx.notify();
+            return;
+        }
+
+        match under_pointer {
             Some(index) => {
                 if !event.modifiers.shift {
                     if !self.selected_notes.contains(&index) {
@@ -254,7 +273,7 @@ impl AurisApp {
                 }
             }
             None => {
-                if event.modifiers.alt {
+                if self.pointer.create.matches(event) {
                     let start = self.snap(local_tick).max_zero();
                     let length = default_note_length(self.project().grid);
                     // The new note and the resize that follows it are one gesture, so the

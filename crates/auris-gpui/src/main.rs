@@ -4,6 +4,7 @@
 
 mod actions;
 mod app;
+mod gestures;
 mod i18n;
 mod keymap;
 mod settings_window;

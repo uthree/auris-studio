@@ -130,6 +130,18 @@ strings! {
         ja: "キー割り当てを既定に戻しました"
     }
 
+    // ------------------------------------------------------------------ pointer gestures
+    PointerHeading { en: "Pointer", ja: "ポインタ操作" }
+    PointerCreate { en: "Create a note or clip", ja: "ノート・クリップを作成" }
+    PointerDelete { en: "Delete what is under the pointer", ja: "ポインタ位置のものを削除" }
+    GestureCommandClick { en: "⌘-click", ja: "⌘＋クリック" }
+    GestureOptionClick { en: "⌥-click", ja: "⌥＋クリック" }
+    GestureDoubleClick { en: "Double-click", ja: "ダブルクリック" }
+    PointerNote {
+        en: "The two cannot share a gesture; picking one that is taken swaps them.",
+        ja: "2 つに同じ操作は割り当てられません。使用中のものを選ぶと入れ替わります。"
+    }
+
     // ------------------------------------------------------------------ command groups
     GroupTransport { en: "Transport", ja: "トランスポート" }
     GroupFile { en: "File", ja: "ファイル" }

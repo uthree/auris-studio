@@ -25,7 +25,8 @@ use gpui::{
     Window, WindowBounds, WindowHandle, WindowOptions, point, px, size,
 };
 
-use crate::keymap::Keymap;
+use crate::gestures::PointerGestures;
+use crate::keymap::{InputSettings, Keymap};
 use crate::settings_window::SettingsWindow;
 use crate::theme::{Metrics, Theme};
 use crate::ui::context_menu::ContextMenu;
@@ -368,6 +369,8 @@ pub struct AurisApp {
     pub(crate) language: Language,
     /// The user's key bindings.
     pub(crate) keymap: Keymap,
+    /// What a click creates and what deletes.
+    pub(crate) pointer: PointerGestures,
     /// The settings window, while it is open.
     pub(crate) settings_window: Option<WindowHandle<SettingsWindow>>,
 
@@ -385,7 +388,8 @@ impl AurisApp {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let settings = Settings::load();
         let language = settings.language();
-        let keymap = Keymap::load();
+        let input = InputSettings::load();
+        let keymap = input.keys.clone();
         keymap.apply(cx);
 
         let mut session = Session::new(SessionOptions {
@@ -449,6 +453,7 @@ impl AurisApp {
             prompt: None,
             settings,
             language,
+            pointer: input.pointer,
             keymap,
             settings_window: None,
             _repaint: repaint,
@@ -633,10 +638,28 @@ impl AurisApp {
     /// Installs an edited keymap and remembers it.
     pub(crate) fn apply_keymap(&mut self, keymap: Keymap, cx: &mut App) {
         keymap.apply(cx);
-        if let Err(error) = keymap.save() {
-            log::warn!("could not save key bindings: {error}");
-        }
         self.keymap = keymap;
+        self.save_input();
+    }
+
+    /// Installs edited pointer gestures and remembers them.
+    pub(crate) fn apply_pointer_gestures(&mut self, pointer: PointerGestures) {
+        self.pointer = pointer;
+        self.save_input();
+    }
+
+    /// Writes the input settings file.
+    ///
+    /// Best-effort: a preferences file that cannot be written must not undo a change the user
+    /// can already see working.
+    fn save_input(&self) {
+        let settings = InputSettings {
+            keys: self.keymap.clone(),
+            pointer: self.pointer,
+        };
+        if let Err(error) = settings.save() {
+            log::warn!("could not save input settings: {error}");
+        }
     }
 
     /// Opens the settings window, or brings the open one forward.
@@ -658,6 +681,7 @@ impl AurisApp {
         let live = self.session.audio_status();
         let keymap = self.keymap.clone();
         let language = self.settings.language;
+        let pointer = self.pointer;
 
         let bounds = Bounds::centered(None, size(px(560.), px(620.)), cx);
         let opened = cx.open_window(
@@ -672,7 +696,9 @@ impl AurisApp {
             },
             |_, cx| {
                 cx.new(|cx| {
-                    SettingsWindow::new(app, theme, devices, audio, live, keymap, language, cx)
+                    SettingsWindow::new(
+                        app, theme, devices, audio, live, keymap, language, pointer, cx,
+                    )
                 })
             },
         );

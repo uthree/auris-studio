@@ -56,6 +56,18 @@ messages! {
         ja: "ピアノロール — {clip}"
     }
 
+    /// The line under the piano roll's heading, naming the gestures that are actually bound.
+    fn piano_roll_hint(create: &str, delete: &str) {
+        en: "{create}: add note · drag: move · right edge: resize · {delete}: delete · right-click: menu",
+        ja: "{create}: ノート追加 · ドラッグ: 移動 · 右端: 長さ変更 · {delete}: 削除 · 右クリック: メニュー"
+    }
+
+    /// What the piano roll says when no clip is selected.
+    fn piano_roll_empty(create: &str) {
+        en: "Select a MIDI clip to edit its notes ({create} an empty lane to make one)",
+        ja: "MIDI クリップを選ぶとノートを編集できます（空のレーンを{create}で新規作成）"
+    }
+
     /// Title of a menu acting on more than one note.
     fn note_count(count: usize) {
         en: "{count} notes",

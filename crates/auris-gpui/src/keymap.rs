@@ -1,4 +1,4 @@
-//! The user's key bindings, and how they are stored.
+//! How input maps to commands: the user's key bindings and pointer gestures.
 //!
 //! Only *changes* are written to disk. Storing the full set would freeze today's defaults into
 //! every existing settings file, so a later change to a default would silently not reach anyone
@@ -11,6 +11,97 @@ use gpui::{App, KeyBinding};
 use serde::{Deserialize, Serialize};
 
 use crate::actions::{self, BINDABLE, Bindable};
+use crate::gestures::PointerGestures;
+
+/// Everything in `keymap.json`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct InputSettings {
+    /// Key bindings the user has changed.
+    pub keys: Keymap,
+    /// What a click creates and what deletes.
+    pub pointer: PointerGestures,
+}
+
+/// The file as it may be found on disk.
+///
+/// Before pointer gestures existed the file was a bare map of bindings, and a great many of
+/// those files exist. Reading both shapes costs one enum and keeps a user's bindings when they
+/// update; reading only the new shape would parse the old file as "no overrides" and quietly
+/// throw them away.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredInput {
+    Current(CurrentInput),
+    Legacy(BTreeMap<String, String>),
+}
+
+/// The current shape.
+///
+/// `deny_unknown_fields` is what makes the two shapes distinguishable: without it a bare map of
+/// bindings would match here as "every field defaulted" and the bindings would vanish.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CurrentInput {
+    #[serde(default)]
+    keys: Keymap,
+    #[serde(default)]
+    pointer: PointerGestures,
+}
+
+impl InputSettings {
+    /// Where the file lives.
+    pub fn path() -> PathBuf {
+        auris_session::config_dir().join("keymap.json")
+    }
+
+    /// Loads the file, falling back to the defaults.
+    ///
+    /// A missing file is a first run. A malformed one is logged and then also falls back,
+    /// because refusing to start over a preferences file is a poor trade.
+    pub fn load() -> Self {
+        let path = Self::path();
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return Self::default();
+        };
+        match serde_json::from_str::<StoredInput>(&text) {
+            Ok(stored) => {
+                let mut settings = Self::from(stored);
+                settings.keys.discard_unusable();
+                settings
+            }
+            Err(error) => {
+                log::warn!("ignoring malformed {}: {error}", path.display());
+                Self::default()
+            }
+        }
+    }
+
+    /// Writes the file, creating the configuration directory if needed.
+    pub fn save(&self) -> std::io::Result<()> {
+        let path = Self::path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let text = serde_json::to_string_pretty(self)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        std::fs::write(path, text)
+    }
+}
+
+impl From<StoredInput> for InputSettings {
+    fn from(stored: StoredInput) -> Self {
+        match stored {
+            StoredInput::Current(current) => Self {
+                keys: current.keys,
+                pointer: current.pointer,
+            },
+            StoredInput::Legacy(overrides) => Self {
+                keys: Keymap { overrides },
+                pointer: PointerGestures::default(),
+            },
+        }
+    }
+}
 
 /// Key bindings, as overrides on top of the defaults.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -21,40 +112,6 @@ pub struct Keymap {
 }
 
 impl Keymap {
-    /// Where the keymap file lives.
-    pub fn path() -> PathBuf {
-        auris_session::config_dir().join("keymap.json")
-    }
-
-    /// Loads the keymap, falling back to no overrides at all.
-    pub fn load() -> Self {
-        let path = Self::path();
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            return Self::default();
-        };
-        match serde_json::from_str::<Self>(&text) {
-            Ok(mut keymap) => {
-                keymap.discard_unusable();
-                keymap
-            }
-            Err(error) => {
-                log::warn!("ignoring malformed {}: {error}", path.display());
-                Self::default()
-            }
-        }
-    }
-
-    /// Writes the keymap, creating the configuration directory if needed.
-    pub fn save(&self) -> std::io::Result<()> {
-        let path = Self::path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let text = serde_json::to_string_pretty(self)
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
-        std::fs::write(path, text)
-    }
-
     /// Drops overrides that name a command this build does not have, or a keystroke gpui
     /// cannot parse.
     ///
@@ -206,6 +263,45 @@ mod tests {
         assert_eq!(keymap.keystroke(command("transport.play")), "cmd-p");
         assert!(!keymap.is_overridden(command("edit.undo")));
         assert_eq!(keymap.overrides.len(), 1);
+    }
+
+    #[test]
+    fn a_file_written_before_pointer_gestures_existed_keeps_its_bindings() {
+        // The old shape was a bare map. Parsing it as the new shape must not quietly yield
+        // "no overrides", which is what would happen without the untagged fallback.
+        let legacy = r#"{"transport.play":"cmd-p","view.zoom_in":"cmd-shift-="}"#;
+        let stored: StoredInput = serde_json::from_str(legacy).unwrap();
+        let settings = InputSettings::from(stored);
+
+        assert_eq!(settings.keys.keystroke(command("transport.play")), "cmd-p");
+        assert_eq!(
+            settings.keys.keystroke(command("view.zoom_in")),
+            "cmd-shift-="
+        );
+        assert_eq!(
+            settings.pointer,
+            PointerGestures::default(),
+            "an old file has no gestures, so it gets the defaults"
+        );
+    }
+
+    #[test]
+    fn the_current_shape_round_trips() {
+        let mut settings = InputSettings::default();
+        settings.keys.set(command("transport.play"), "cmd-p");
+        settings
+            .pointer
+            .set_create(crate::gestures::PointerGesture::OptionClick);
+
+        let text = serde_json::to_string(&settings).unwrap();
+        let restored = InputSettings::from(serde_json::from_str::<StoredInput>(&text).unwrap());
+        assert_eq!(restored, settings);
+    }
+
+    #[test]
+    fn an_empty_file_is_the_defaults() {
+        let settings = InputSettings::from(serde_json::from_str::<StoredInput>("{}").unwrap());
+        assert_eq!(settings, InputSettings::default());
     }
 
     #[test]

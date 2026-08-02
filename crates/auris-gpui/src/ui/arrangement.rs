@@ -469,7 +469,20 @@ impl AurisApp {
         };
         self.select_track(track_id);
 
-        match self.clip_at(track_id, tick) {
+        let under_pointer = self.clip_at(track_id, tick);
+        if let Some((clip_id, _, _)) = under_pointer
+            && self.pointer.delete.matches(event)
+        {
+            let _ = self.session.remove_clip(clip_id);
+            if self.selected_clip == Some(clip_id) {
+                self.selected_clip = None;
+            }
+            self.selected_notes.clear();
+            cx.notify();
+            return;
+        }
+
+        match under_pointer {
             Some((clip_id, clip_start, clip_length)) => {
                 self.selected_clip = Some(clip_id);
                 self.selected_notes.clear();
@@ -484,9 +497,7 @@ impl AurisApp {
                 }
             }
             None => {
-                // Double-click semantics without a double-click: alt-click on empty space is the
-                // "make something here" gesture, matching the piano roll's note drawing.
-                if event.modifiers.alt {
+                if self.pointer.create.matches(event) {
                     self.create_clip_at(track_id, self.snap(tick));
                 } else {
                     self.selected_clip = None;

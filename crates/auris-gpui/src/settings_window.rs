@@ -14,6 +14,7 @@ use gpui::{
 
 use crate::actions::{BINDABLE, Bindable};
 use crate::app::AurisApp;
+use crate::gestures::{PointerGesture, PointerGestures};
 use crate::keymap::Keymap;
 use crate::theme::{Metrics, Theme};
 use crate::ui::icons::Icon;
@@ -43,6 +44,8 @@ pub struct SettingsWindow {
     language_preference: Option<Language>,
     /// Language this window is drawn in, which is the resolved preference.
     language: Language,
+    /// What a click creates and what deletes.
+    pointer: PointerGestures,
     /// What the audio backend is actually doing.
     ///
     /// Cached rather than read during render: the window is opened from inside the main
@@ -74,6 +77,7 @@ impl SettingsWindow {
         live: AudioStatus,
         keymap: Keymap,
         language_preference: Option<Language>,
+        pointer: PointerGestures,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
@@ -86,6 +90,7 @@ impl SettingsWindow {
             keymap,
             language_preference,
             language: Language::resolve(language_preference),
+            pointer,
             capturing: None,
             status: String::new(),
             focus: cx.focus_handle(),
@@ -95,6 +100,60 @@ impl SettingsWindow {
     /// A fixed string in the language this window is drawn in.
     fn t(&self, key: Key) -> &'static str {
         key.get(self.language)
+    }
+
+    /// Hands edited pointer gestures to the application, which saves them.
+    fn apply_pointer(&mut self, pointer: PointerGestures, cx: &mut Context<Self>) {
+        self.pointer = pointer;
+        let _ = self
+            .app
+            .update(cx, |app, _| app.apply_pointer_gestures(pointer));
+        cx.notify();
+    }
+
+    /// A row of gesture buttons for one of the two actions.
+    fn gesture_row(
+        &self,
+        id: &'static str,
+        label: Key,
+        current: PointerGesture,
+        assign: fn(&mut PointerGestures, PointerGesture),
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = self.theme.clone();
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .w(px(200.0))
+                    .flex_shrink_0()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(self.t(label)),
+            )
+            .children(
+                PointerGesture::ALL
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, gesture)| {
+                        button(
+                            (id, index),
+                            self.t(gesture.label()),
+                            ButtonStyle::Normal,
+                            current == gesture,
+                            theme.accent,
+                            &theme,
+                            cx.listener(move |this, _, _, cx| {
+                                let mut pointer = this.pointer;
+                                assign(&mut pointer, gesture);
+                                this.apply_pointer(pointer, cx);
+                            }),
+                        )
+                    }),
+            )
+            .into_any_element()
     }
 
     /// Hands a language choice to the application, which installs and saves it.
@@ -233,6 +292,28 @@ impl SettingsWindow {
                     .text_xs()
                     .text_color(theme.text_muted)
                     .child(self.t(Key::LanguageNote)),
+            )
+            .child(divider(&theme))
+            .child(section_title(self.t(Key::PointerHeading), &theme))
+            .child(self.gesture_row(
+                "pointer-create",
+                Key::PointerCreate,
+                self.pointer.create,
+                PointerGestures::set_create,
+                cx,
+            ))
+            .child(self.gesture_row(
+                "pointer-delete",
+                Key::PointerDelete,
+                self.pointer.delete,
+                PointerGestures::set_delete,
+                cx,
+            ))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(self.t(Key::PointerNote)),
             )
             .into_any_element()
     }
