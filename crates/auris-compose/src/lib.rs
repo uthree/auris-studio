@@ -4,4 +4,5 @@
 
 pub mod rhythm;
 pub mod rng;
+pub mod spec;
 pub mod theory;
