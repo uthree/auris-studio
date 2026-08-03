@@ -110,6 +110,11 @@ pub fn model(language: Language) -> Vec<MenuSection> {
             "file.import",
         ),
         command(
+            t(Key::MenuImportSoundFontItem),
+            actions::ImportSoundFont,
+            "file.import_soundfont",
+        ),
+        command(
             t(Key::MenuExportWavItem),
             actions::ExportAudio,
             "file.export",

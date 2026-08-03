@@ -27,6 +27,10 @@ pub enum SessionError {
     #[error("no track with id {0}")]
     UnknownTrack(u64),
 
+    /// The project has no SoundFont with this id.
+    #[error("no soundfont with id {0}")]
+    UnknownSoundFont(u64),
+
     /// The requested clip does not exist.
     #[error("no clip with id {0}")]
     UnknownClip(u64),

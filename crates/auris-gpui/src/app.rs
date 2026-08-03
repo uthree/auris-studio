@@ -503,6 +503,11 @@ pub struct AurisApp {
     pub(crate) prompt: Option<Prompt>,
     /// The open plugin editor, if any.
     pub(crate) plugin_window: Option<crate::ui::plugin_window::PluginWindow>,
+    /// Which SoundFont the library is showing the sounds of.
+    ///
+    /// One at a time: a General MIDI font carries a hundred and twenty-eight presets, and every
+    /// font expanded at once would bury the effects below them.
+    pub(crate) expanded_font: Option<SoundFontId>,
 
     /// Preferences that outlive the session.
     pub(crate) settings: Settings,
@@ -594,6 +599,7 @@ impl AurisApp {
             menu_bar: None,
             prompt: None,
             plugin_window: None,
+            expanded_font: None,
             settings,
             language,
             pointer: input.pointer,

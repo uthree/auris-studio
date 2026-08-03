@@ -96,6 +96,22 @@ Deliberately simple chiptune voices, enough to hear the engine working:
 
 Square and saw are PolyBLEP band-limited, so high notes stay clean instead of aliasing.
 
+### SoundFonts
+
+**File → Import SoundFont…** reads an `.sf2` file and puts its sounds on the shelf. The library
+panel lists every imported font; opening one shows its presets, and clicking a preset points the
+selected track at it — switching that track to the sampler in the same edit, so it is one click
+and one undo step rather than two.
+
+A project stores the font's *path* and names each sound by bank and patch, never by position in
+the list. That is what makes a piece saved last week open playing the same instrument: a position
+moves the moment anyone edits the file. The samples themselves stay out of the document, so a
+project referring to a two-hundred-megabyte orchestral set is still a few kilobytes of JSON, and
+a font whose file has moved costs one track its sound rather than costing you the session.
+
+Playback is `rustysynth`, which both parses the format and renders it. Building the synthesiser
+happens off the audio thread; what runs on it allocates nothing.
+
 ### Built-in effects
 
 | Id | Name | Notes |
@@ -204,6 +220,7 @@ BACKEND — no UI dependency of any kind
   crates/auris-core     types, plugin traits, project model — no local dependencies at all
   crates/auris-dsp      effects and DSP primitives
   crates/auris-synth    built-in instruments
+  crates/auris-sampler  SoundFont playback: the font bank and the sampler instrument
   crates/auris-engine   render graph, transport, cpal output, offline renderer
   crates/auris-io       audio file import/export, project save/load
   crates/auris-gpu      wgpu compute for offline analysis
@@ -218,8 +235,9 @@ FRONTEND
 
 Dependencies run strictly downhill and the boundary is enforced by what each crate is allowed
 to name. `auris-core` depends on nothing local. `auris-engine` does *not* depend on
-`auris-dsp` or `auris-synth` — it drives plugins purely through the `auris-core` traits, which
-is what keeps the plugin system honest. And `auris-gpui` depends on `auris-session` and gpui
+`auris-dsp`, `auris-synth` or `auris-sampler` — it drives plugins purely through the
+`auris-core` traits, which is what keeps the plugin system honest. And `auris-gpui` depends on
+`auris-session` and gpui
 and nothing else in the workspace: if it ever needs `auris-engine` directly, something that
 belongs in the session layer has leaked into the UI.
 
@@ -301,7 +319,7 @@ cargo doc --workspace --no-deps --open    # the API documentation
 Every crate carries `#![warn(missing_docs)]` and CI builds the documentation with warnings denied,
 so a public item without a doc comment and a link that does not resolve are both build failures.
 
-The workspace has no root crate, so the account of how the eleven of them fit together lives in
+The workspace has no root crate, so the account of how the twelve of them fit together lives in
 `auris_session::guide` — it is the only crate that depends on every other, and so the only one
 whose links to them all resolve. It covers the architecture and the layering rules, the realtime
 contract, writing a plugin (with a worked example that is compiled as a test), the composition

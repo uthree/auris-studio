@@ -402,6 +402,9 @@ impl AurisApp {
             );
         }
         rows.push(divider(&theme).into_any_element());
+        rows.extend(self.soundfont_rows(cx));
+
+        rows.push(divider(&theme).into_any_element());
         rows.push(
             div()
                 .text_xs()
@@ -431,6 +434,187 @@ impl AurisApp {
             .gap_1()
             .children(rows)
             .into_any_element()
+    }
+
+    /// The library's SoundFont section: every imported font, and the sounds of the open one.
+    ///
+    /// A font is a shelf rather than a plugin — importing one adds nothing to the arrangement, so
+    /// this is where its contents become reachable. Only the open font lists its presets: a
+    /// General MIDI bank has a hundred and twenty-eight, and two expanded at once would bury the
+    /// effects below them.
+    fn soundfont_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
+        let theme = self.theme.clone();
+        let mut rows: Vec<AnyElement> = Vec::new();
+        rows.push(
+            div()
+                .text_xs()
+                .text_color(theme.text_muted)
+                .py_1()
+                .child(self.t(Key::BrowserSoundFonts))
+                .into_any_element(),
+        );
+
+        let fonts: Vec<(SoundFontId, String)> = self
+            .session
+            .soundfonts()
+            .map(|font| (font.id, font.name.clone()))
+            .collect();
+        if fonts.is_empty() {
+            rows.push(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .p_1p5()
+                    .child(self.t(Key::BrowserNoSoundFonts))
+                    .into_any_element(),
+            );
+            return rows;
+        }
+
+        for (index, (id, name)) in fonts.into_iter().enumerate() {
+            let loaded = self.session.soundfont_is_loaded(id);
+            let expanded = loaded && self.expanded_font == Some(id);
+            // Only the open font pays for its list. Building every font's presets each frame
+            // would sort a few hundred strings to show a number.
+            let detail = if loaded {
+                format!("{}", self.session.soundfont_preset_count(id))
+            } else {
+                self.t(Key::BrowserFontFileMissing).to_string()
+            };
+            rows.push(
+                self.font_row(index, &name, &detail, loaded, expanded, {
+                    cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                        this.expanded_font = (this.expanded_font != Some(id)).then_some(id);
+                        cx.notify();
+                    })
+                })
+                .into_any_element(),
+            );
+            if !expanded {
+                continue;
+            }
+
+            let presets = self.session.soundfont_presets(id);
+            if presets.is_empty() {
+                rows.push(
+                    div()
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .pl_4()
+                        .p_1p5()
+                        .child(self.t(Key::BrowserFontHasNoSounds))
+                        .into_any_element(),
+                );
+                continue;
+            }
+            for (position, preset) in presets.into_iter().enumerate() {
+                let choice = PresetRef {
+                    font: id,
+                    bank: preset.bank,
+                    patch: preset.patch,
+                };
+                rows.push(
+                    div()
+                        .pl_4()
+                        .child(self.preset_row(position, &preset, {
+                            cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                                this.set_track_preset(choice);
+                                cx.notify();
+                            })
+                        }))
+                        .into_any_element(),
+                );
+            }
+        }
+        rows
+    }
+
+    /// One imported font: its name, how many sounds it holds, and whether it is open.
+    fn font_row<F>(
+        &self,
+        index: usize,
+        name: &str,
+        detail: &str,
+        loaded: bool,
+        expanded: bool,
+        on_click: F,
+    ) -> impl IntoElement + use<F>
+    where
+        F: Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
+    {
+        let theme = self.theme.clone();
+        // A font whose file has gone keeps its row — that is how somebody finds out it has gone —
+        // but it is drawn in the muted colour and has nothing to open.
+        let name_color = if loaded { theme.text } else { theme.text_muted };
+        div()
+            .id(("browser-font", index))
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .p_1p5()
+            .rounded(Metrics::RADIUS_SM)
+            .cursor_pointer()
+            .hover(|this| this.bg(theme.surface_hover))
+            .child(crate::ui::icons::icon(
+                if expanded {
+                    Icon::ChevronDown
+                } else {
+                    Icon::ChevronUp
+                },
+                px(8.0),
+                theme.text_muted,
+            ))
+            .child(
+                div()
+                    .flex_1()
+                    .text_xs()
+                    .text_color(name_color)
+                    .child(name.to_string()),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(detail.to_string()),
+            )
+            .on_mouse_down(gpui::MouseButton::Left, on_click)
+    }
+
+    /// One sound of an open font, named as the font names it and numbered as MIDI does.
+    fn preset_row<F>(
+        &self,
+        index: usize,
+        preset: &SoundFontPreset,
+        on_click: F,
+    ) -> impl IntoElement + use<F>
+    where
+        F: Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
+    {
+        let theme = self.theme.clone();
+        div()
+            .id(("browser-preset", index))
+            .flex()
+            .items_center()
+            .justify_between()
+            .p_1p5()
+            .rounded(Metrics::RADIUS_SM)
+            .cursor_pointer()
+            .hover(|this| this.bg(theme.surface_hover))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text)
+                    .child(preset.name.clone()),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    // Bank and patch, which is what the project stores and what identifies this
+                    // sound again after the font is reloaded.
+                    .child(format!("{}:{}", preset.bank, preset.patch)),
+            )
+            .on_mouse_down(gpui::MouseButton::Left, on_click)
     }
 
     fn browser_row<I, F>(
@@ -635,6 +819,19 @@ impl AurisApp {
         };
         if let Err(error) = self.session.set_track_instrument(track, instrument_id) {
             self.set_status(self.failure(Key::EditChangeInstrument, &error));
+        }
+    }
+
+    /// Points the selected track at one of an imported SoundFont's sounds.
+    ///
+    /// The session switches the track to the sampler as part of the same edit, so this is one
+    /// click and one undo step rather than "load the sampler, then choose a sound".
+    pub(crate) fn set_track_preset(&mut self, preset: PresetRef) {
+        let Some(track) = self.selected_track else {
+            return;
+        };
+        if let Err(error) = self.session.set_track_preset(track, preset) {
+            self.set_status(self.failure(Key::EditChoosePreset, &error));
         }
     }
 

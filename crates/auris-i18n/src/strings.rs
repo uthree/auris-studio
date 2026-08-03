@@ -95,6 +95,22 @@ strings! {
         en: "Effects — click to add to the selected track",
         ja: "エフェクト — クリックで選択中のトラックに追加します"
     }
+    BrowserSoundFonts {
+        en: "SoundFonts — click a font to see its sounds",
+        ja: "サウンドフォント — フォントをクリックすると音色が出ます"
+    }
+    BrowserNoSoundFonts {
+        en: "None imported yet",
+        ja: "まだ読み込まれていません"
+    }
+    BrowserFontFileMissing {
+        en: "file not found",
+        ja: "ファイルが見つかりません"
+    }
+    BrowserFontHasNoSounds {
+        en: "no sounds in this font",
+        ja: "この音源に音色がありません"
+    }
 
     // ------------------------------------------------------------------ window chrome
     Export { en: "Export", ja: "書き出し" }
@@ -169,6 +185,7 @@ strings! {
     CmdSave { en: "Save", ja: "保存" }
     CmdSaveAs { en: "Save As", ja: "名前を付けて保存" }
     CmdImportAudio { en: "Import Audio", ja: "オーディオを読み込む" }
+    CmdImportSoundFont { en: "Import SoundFont", ja: "サウンドフォントを読み込む" }
     CmdExportWav { en: "Export WAV", ja: "WAV を書き出す" }
     CmdQuit { en: "Quit", ja: "終了" }
     CmdUndo { en: "Undo", ja: "取り消す" }
@@ -194,6 +211,7 @@ strings! {
     MenuComposeItem { en: "Compose from Specification…", ja: "仕様ファイルから作曲…" }
     MenuSaveAsItem { en: "Save As…", ja: "名前を付けて保存…" }
     MenuImportAudioItem { en: "Import Audio…", ja: "オーディオを読み込む…" }
+    MenuImportSoundFontItem { en: "Import SoundFont…", ja: "サウンドフォントを読み込む…" }
     MenuExportWavItem { en: "Export WAV…", ja: "WAV を書き出す…" }
     MenuDelete { en: "Delete", ja: "削除" }
 
@@ -283,11 +301,17 @@ strings! {
     EditReorderEffects { en: "reordering the effects", ja: "エフェクトの並べ替え" }
     EditAdjustParameter { en: "the parameter change", ja: "パラメーターの変更" }
     EditImportAudio { en: "importing audio", ja: "オーディオの読み込み" }
+    EditImportSoundFont { en: "importing a SoundFont", ja: "サウンドフォントの読み込み" }
+    EditChoosePreset { en: "choosing a sound", ja: "音色の選択" }
     EditCompose { en: "composing a piece", ja: "自動作曲" }
 
     // ------------------------------------------------------------------ errors
     ErrorUnknownTrack { en: "that track no longer exists", ja: "そのトラックは存在しません" }
     ErrorUnknownClip { en: "that clip no longer exists", ja: "そのクリップは存在しません" }
+    ErrorUnknownSoundFont {
+        en: "that SoundFont is not part of this project",
+        ja: "そのサウンドフォントはこのプロジェクトにありません"
+    }
     ErrorCannotSplit {
         en: "a clip can only be split inside itself",
         ja: "クリップの内側でしか分割できません"

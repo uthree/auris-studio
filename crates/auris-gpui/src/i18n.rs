@@ -107,6 +107,8 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::ReorderEffects => Key::EditReorderEffects,
         Edit::AdjustParameter => Key::EditAdjustParameter,
         Edit::ImportAudio => Key::EditImportAudio,
+        Edit::ImportSoundFont => Key::EditImportSoundFont,
+        Edit::ChoosePreset => Key::EditChoosePreset,
         Edit::Compose => Key::EditCompose,
     }
 }
@@ -133,6 +135,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::UnknownPlugin(id) => messages::unknown_plugin(language, id),
         SessionError::UnknownTrack(_) => Key::ErrorUnknownTrack.get(language).to_string(),
         SessionError::UnknownClip(_) => Key::ErrorUnknownClip.get(language).to_string(),
+        SessionError::UnknownSoundFont(_) => Key::ErrorUnknownSoundFont.get(language).to_string(),
         SessionError::CannotSplit(_) => Key::ErrorCannotSplit.get(language).to_string(),
         SessionError::WrongTrackKind { .. } => Key::ErrorWrongTrackKind.get(language).to_string(),
         SessionError::NoPath => Key::ErrorNoPath.get(language).to_string(),
@@ -150,14 +153,14 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
 mod tests {
     use super::*;
     use auris_i18n::audio;
-    use auris_session::default_registry;
+    use auris_session::plugin_catalogue;
 
     #[test]
     fn every_built_in_plugin_is_translated() {
         // The lookup falls back to English for a plugin nobody has translated, which is right
         // for a third-party one and wrong for ours — so ours are checked here rather than being
         // silently left in English.
-        let registry = default_registry();
+        let registry = plugin_catalogue();
         for descriptor in registry.instruments().chain(registry.effects()) {
             assert!(
                 audio::is_known(&descriptor.name),
@@ -174,7 +177,7 @@ mod tests {
 
     #[test]
     fn every_built_in_parameter_is_translated() {
-        let registry = default_registry();
+        let registry = plugin_catalogue();
         let mut checked = 0;
         let mut missing: Vec<String> = Vec::new();
         for descriptor in registry.instruments().chain(registry.effects()) {

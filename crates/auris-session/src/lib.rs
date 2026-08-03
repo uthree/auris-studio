@@ -36,7 +36,7 @@
 //!
 //! # Where everything else is
 //!
-//! The workspace has no root crate, so [`guide`] carries the account of how the eleven of them
+//! The workspace has no root crate, so [`guide`] carries the account of how the twelve of them
 //! fit together — it lives here because this is the only crate that depends on every other, and
 //! so the only one whose links to them all resolve. Start at [`guide::architecture`].
 
@@ -54,7 +54,7 @@ pub mod settings;
 pub use error::SessionError;
 pub use history::{Edit, History};
 pub use param::ParamTarget;
-pub use registry::default_registry;
+pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob};
 pub use session::{AudioStatus, ComposeReport, Session, SessionOptions};
 pub use settings::{AudioPreferences, Settings, config_dir};
@@ -70,6 +70,11 @@ pub fn supported_audio_extensions() -> &'static [&'static str] {
     auris_io::supported_extensions()
 }
 
+/// SoundFont extensions the importer accepts, for a file-picker filter.
+pub fn supported_soundfont_extensions() -> &'static [&'static str] {
+    auris_io::soundfont_extensions()
+}
+
 /// Re-exports of the backend types that appear in [`Session`]'s signatures, so a frontend can
 /// depend on this crate alone.
 pub mod prelude {
@@ -82,7 +87,8 @@ pub mod prelude {
     pub use auris_core::time::{Seconds, TICKS_PER_QUARTER, Ticks, TimeSignature};
     pub use auris_core::{
         AudioBuffer, AudioClip, AudioSource, ClipId, EffectSlotId, MidiClip, MixerStrip, Note,
-        PluginRegistry, Project, SourceId, Track, TrackId, TrackKind,
+        PluginRegistry, PresetRef, Project, SoundFontId, SoundFontRef, SourceId, Track, TrackId,
+        TrackKind,
     };
 
     /// Every chord progression the composer knows by name.
@@ -91,7 +97,8 @@ pub mod prelude {
     }
     pub use auris_engine::{OfflineOptions, OutputDeviceInfo};
     pub use auris_gpu::WaveformPeaks;
-    pub use auris_io::{WavBitDepth, WavExportSettings};
+    pub use auris_io::{SoundFontPreset, WavBitDepth, WavExportSettings};
+    pub use auris_sampler::SAMPLER_ID;
 
     pub use crate::{
         AudioPreferences, ComposeReport, Edit, ExportSummary, ParamTarget, RenderJob, Session,

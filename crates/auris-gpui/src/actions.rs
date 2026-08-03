@@ -23,6 +23,8 @@ actions!(
         SaveProjectAs,
         /// Import an audio file onto a new audio track.
         ImportAudio,
+        /// Import a SoundFont, making its sounds available to every track.
+        ImportSoundFont,
         /// Render the project to a WAV file.
         ExportAudio,
         /// Start or stop playback.
@@ -121,6 +123,7 @@ bindable! {
     "file.save",            GroupFile,      CmdSave,               "secondary-s" => SaveProject;
     "file.save_as",         GroupFile,      CmdSaveAs,             "secondary-shift-s" => SaveProjectAs;
     "file.import",          GroupFile,      CmdImportAudio,        "secondary-i" => ImportAudio;
+    "file.import_soundfont", GroupFile,     CmdImportSoundFont,    "secondary-shift-i" => ImportSoundFont;
     "file.export",          GroupFile,      CmdExportWav,          "secondary-e" => ExportAudio;
     "file.quit",            GroupFile,      CmdQuit,               "secondary-q" => Quit;
 

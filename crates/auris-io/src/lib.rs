@@ -23,7 +23,9 @@ pub use import::{
     DecodedAudio, decode_audio_file, import_audio_file, resample_buffer, supported_extensions,
 };
 pub use project_file::{PROJECT_EXTENSION, load_project, save_project};
-pub use soundfont::{SoundFontPreset, font_name, load_soundfont, presets, soundfont_extensions};
+pub use soundfont::{
+    SoundFontPreset, font_name, load_soundfont, preset_count, presets, soundfont_extensions,
+};
 
 #[cfg(test)]
 mod test_support {

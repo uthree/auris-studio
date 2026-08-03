@@ -1,6 +1,6 @@
 //! How Auris Studio fits together.
 //!
-//! The workspace has no root crate — `cargo doc` on it produces a list of eleven crates and no
+//! The workspace has no root crate — `cargo doc` on it produces a list of twelve crates and no
 //! account of how they relate. This module is that account. It lives here because `auris-session`
 //! is the only crate that depends on every other backend crate, which is what lets the links below
 //! actually resolve; a page anywhere else could name its neighbours but not point at them.
@@ -43,6 +43,7 @@ pub mod architecture {
     //!   auris-core      types, plugin traits, project model — no local dependencies at all
     //!   auris-dsp       effects and DSP primitives
     //!   auris-synth     built-in instruments
+    //!   auris-sampler   SoundFont playback: the font bank and the sampler instrument
     //!   auris-engine    render graph, transport, cpal output, offline renderer
     //!   auris-io        audio file import/export, project save/load
     //!   auris-gpu       optional wgpu compute for offline analysis
@@ -288,6 +289,23 @@ pub mod plugins {
     //! application writes `registry.install::<DspPack>()` rather than one line per plugin.
     //! [`crate::default_registry`] is what the frontends actually call.
     //!
+    //! # A plugin that needs something a factory cannot carry
+    //!
+    //! A factory takes no arguments and a [`PluginState`](auris_core::plugin::PluginState) is a
+    //! map of `f32`, so neither can deliver two hundred megabytes of samples to an instrument.
+    //! [`auris_sampler`] resolves that with a bank: the session owns an
+    //! [`auris_sampler::SoundFontBank`], [`auris_sampler::register_sampler`] captures it in the
+    //! factory's closure, and the document names a sound by font id, bank and patch — three
+    //! numbers small enough to save. Anything that needs to reach a large shared resource from
+    //! inside a plugin can be built the same way; what must not happen is the resource travelling
+    //! through the state.
+    //!
+    //! It is also why [`PluginRegistry::set_default_instrument`](auris_core::registry::PluginRegistry::set_default_instrument)
+    //! exists. A new track takes
+    //! [`default_instrument_id`](auris_core::registry::PluginRegistry::default_instrument_id),
+    //! which without a nomination is simply the first id in alphabetical order — and a sampler
+    //! with no font imported yet would have won that race and handed somebody silence.
+    //!
     //! # State
     //!
     //! [`save_state`](auris_core::plugin::Parameterized::save_state) and
@@ -308,9 +326,10 @@ pub mod plugins {
     //!
     //! # Where a new plugin goes
     //!
-    //! Effects belong in [`auris_dsp`] and instruments in [`auris_synth`]. DSP code in this
-    //! workspace lives behind unit tests that assert on *numbers* — levels, frequencies, lengths —
-    //! rather than on "it runs".
+    //! Effects belong in [`auris_dsp`] and instruments in [`auris_synth`], unless the instrument
+    //! plays recorded material, which is [`auris_sampler`]'s half. DSP code in this workspace
+    //! lives behind unit tests that assert on *numbers* — levels, frequencies, lengths — rather
+    //! than on "it runs".
 }
 
 pub mod composition {

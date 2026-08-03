@@ -42,6 +42,7 @@ Cargo.toml               virtual manifest; `default-members` points at the deskt
 crates/auris-core        types, plugin traits, project model — no local dependencies
 crates/auris-dsp         effects and DSP primitives
 crates/auris-synth       built-in chiptune instruments
+crates/auris-sampler     SoundFont playback: the font bank and the sampler instrument
 crates/auris-engine      render graph, transport, cpal output, offline renderer
 crates/auris-io          audio file import/export, project save/load
 crates/auris-gpu         optional wgpu compute for offline analysis
@@ -55,8 +56,11 @@ crates/auris-cli         command line frontend (binary `auris`)
 Dependency direction is strictly downhill and the frontend boundary matters:
 
 * Nothing at or below `auris-session` may name a UI toolkit.
-* `auris-engine` may not name `auris-dsp` or `auris-synth`; it drives plugins through the
-  `auris-core` traits only.
+* `auris-engine` may not name `auris-dsp`, `auris-synth` or `auris-sampler`; it drives plugins
+  through the `auris-core` traits only.
+* Sample data cannot travel through a `PluginState`, which is a map of `f32`. `auris-sampler`
+  therefore keeps a `SoundFontBank` that the session owns and the registry's factory closure
+  captures; a track names a sound by font id, bank and patch, never by position.
 * `auris-gpui` and `auris-cli` depend on `auris-session` and their own toolkit, nothing else in
   the workspace. A frontend reaching for `auris-engine` means logic that belongs in the session
   layer has leaked upward — move it down instead of adding the dependency.

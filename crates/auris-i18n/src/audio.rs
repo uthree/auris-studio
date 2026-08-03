@@ -83,6 +83,7 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Gain & Pan", "ゲイン & パン"),
     ("Limiter", "リミッター"),
     ("Reverb", "リバーブ"),
+    ("SoundFont", "サウンドフォント"),
 ];
 
 /// Japanese versions of the one-line descriptions shown in the plugin browser.
@@ -126,6 +127,10 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
     (
         "Schroeder reverb: eight damped combs into four all-passes per channel",
         "シュレーダー型リバーブ。1 チャンネルあたり減衰コム 8 基とオールパス 4 基",
+    ),
+    (
+        "Plays an imported SoundFont",
+        "読み込んだサウンドフォントを再生します",
     ),
 ];
 

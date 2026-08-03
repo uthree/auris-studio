@@ -51,6 +51,7 @@ struct EffectEntry {
 pub struct PluginRegistry {
     instruments: BTreeMap<String, InstrumentEntry>,
     effects: BTreeMap<String, EffectEntry>,
+    default_instrument: Option<String>,
 }
 
 impl PluginRegistry {
@@ -165,9 +166,30 @@ impl PluginRegistry {
         self.effects.contains_key(id)
     }
 
-    /// Id of the first registered instrument, used as the default for new tracks.
-    pub fn first_instrument_id(&self) -> Option<&str> {
-        self.instruments.keys().next().map(String::as_str)
+    /// Names the instrument a new track should be given.
+    ///
+    /// Returns `false` and changes nothing when no instrument is registered under `id`, so a
+    /// pack cannot nominate something that is not there.
+    pub fn set_default_instrument(&mut self, id: &str) -> bool {
+        if !self.has_instrument(id) {
+            return false;
+        }
+        self.default_instrument = Some(id.to_string());
+        true
+    }
+
+    /// Id a new track gets when nothing else has chosen one.
+    ///
+    /// Whatever [`Self::set_default_instrument`] named, and failing that the first instrument by
+    /// id. That fallback is alphabetical order — a fact about the map rather than a judgement
+    /// about sound — so anything registering more than one instrument should nominate one. It
+    /// matters: an instrument that needs a file imported before it makes any sound would be a
+    /// poor thing to hand somebody who just pressed "add track".
+    pub fn default_instrument_id(&self) -> Option<&str> {
+        self.default_instrument
+            .as_deref()
+            .filter(|id| self.instruments.contains_key(*id))
+            .or_else(|| self.instruments.keys().next().map(String::as_str))
     }
 
     /// Total number of registered plugins.
@@ -232,7 +254,7 @@ mod tests {
         registry.register_instrument(|| Box::new(Silence));
 
         assert!(registry.has_instrument("test.silence"));
-        assert_eq!(registry.first_instrument_id(), Some("test.silence"));
+        assert_eq!(registry.default_instrument_id(), Some("test.silence"));
         assert!(registry.create_instrument("test.silence").is_ok());
         assert!(registry.create_instrument("nope").is_err());
         assert_eq!(
@@ -247,5 +269,53 @@ mod tests {
         registry.register_instrument(|| Box::new(Silence));
         registry.register_instrument(|| Box::new(Silence));
         assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn a_nominated_default_wins_over_alphabetical_order() {
+        // Which instrument a new track gets should be a decision somebody made, not a
+        // consequence of how a name happens to sort.
+        struct Later;
+        impl Parameterized for Later {
+            fn parameters(&self) -> &[ParamDescriptor] {
+                &[]
+            }
+            fn param(&self, _id: ParamId) -> f32 {
+                0.0
+            }
+            fn set_param(&mut self, _id: ParamId, _value: f32) {}
+        }
+        impl Instrument for Later {
+            fn descriptor(&self) -> PluginDescriptor {
+                PluginDescriptor::instrument(
+                    "test.zzz",
+                    "Later",
+                    "Sorts last",
+                    PluginCategory::Synth,
+                )
+            }
+            fn prepare(&mut self, _ctx: &PrepareContext) {}
+            fn reset(&mut self) {}
+            fn process(
+                &mut self,
+                _events: &[NoteEvent],
+                out: &mut AudioBuffer,
+                _ctx: &ProcessContext,
+            ) {
+                out.clear();
+            }
+        }
+
+        let mut registry = PluginRegistry::new();
+        registry.register_instrument(|| Box::new(Silence));
+        registry.register_instrument(|| Box::new(Later));
+        assert_eq!(registry.default_instrument_id(), Some("test.silence"));
+
+        assert!(registry.set_default_instrument("test.zzz"));
+        assert_eq!(registry.default_instrument_id(), Some("test.zzz"));
+
+        // Nominating something absent leaves the previous choice standing.
+        assert!(!registry.set_default_instrument("test.nothing"));
+        assert_eq!(registry.default_instrument_id(), Some("test.zzz"));
     }
 }

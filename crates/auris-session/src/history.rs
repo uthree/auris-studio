@@ -76,6 +76,10 @@ pub enum Edit {
     AdjustParameter,
     /// An audio file was imported onto a track.
     ImportAudio,
+    /// A SoundFont was imported into the project.
+    ImportSoundFont,
+    /// A track was pointed at one of a SoundFont's sounds.
+    ChoosePreset,
     /// The document was replaced by a composed piece.
     Compose,
 }

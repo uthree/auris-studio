@@ -16,6 +16,7 @@ auris-engine.workspace = true
 auris-gpu.workspace = true
 auris-i18n.workspace = true
 auris-io.workspace = true
+auris-sampler.workspace = true
 auris-synth.workspace = true
 log.workspace = true
 serde = { workspace = true, features = ["derive"] }

@@ -1,6 +1,6 @@
 [package]
-name = "auris-io"
-description = "Audio file import/export and project persistence for Auris Studio"
+name = "auris-sampler"
+description = "SoundFont playback for Auris Studio"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,11 +9,6 @@ rust-version.workspace = true
 
 [dependencies]
 auris-core.workspace = true
-hound.workspace = true
 log.workspace = true
-rubato.workspace = true
 rustysynth.workspace = true
-serde.workspace = true
 serde_json.workspace = true
-symphonia.workspace = true
-thiserror.workspace = true

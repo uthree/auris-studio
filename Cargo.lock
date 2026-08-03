@@ -642,6 +642,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "auris-sampler"
+version = "0.1.0"
+dependencies = [
+ "auris-core",
+ "log",
+ "rustysynth",
+ "serde_json",
+]
+
+[[package]]
 name = "auris-session"
 version = "0.1.0"
 dependencies = [
@@ -652,6 +662,7 @@ dependencies = [
  "auris-gpu",
  "auris-i18n",
  "auris-io",
+ "auris-sampler",
  "auris-synth",
  "log",
  "serde",

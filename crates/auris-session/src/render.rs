@@ -154,7 +154,7 @@ impl std::fmt::Debug for RenderJob {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::default_registry;
+    use crate::registry::plugin_catalogue;
     use auris_core::time::Ticks;
 
     const SOURCE: SourceId = SourceId(1);
@@ -204,7 +204,7 @@ mod tests {
             .add_audio_clip(track, source, Ticks::ZERO)
             .expect("clip");
 
-        let job = RenderJob::new(project, bank_at(source, 48_000.0), default_registry());
+        let job = RenderJob::new(project, bank_at(source, 48_000.0), plugin_catalogue());
         let rendered = job
             .render(
                 &OfflineOptions {

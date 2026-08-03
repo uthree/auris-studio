@@ -8,15 +8,19 @@ use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
 use auris_core::plugin::{PluginKind, PluginState};
 use auris_core::time::{Seconds, Ticks};
 use auris_core::{
-    AudioBuffer, AudioSourceBank, ClipId, EffectSlotId, MidiClip, Note, PluginRegistry, Project,
-    SourceId, TrackId,
+    AudioBuffer, AudioSourceBank, ClipId, EffectSlotId, MidiClip, Note, PluginRegistry, PresetRef,
+    Project, SoundFontId, SoundFontRef, SourceId, TrackId,
 };
 use auris_engine::{
     AudioDevice, AudioSettings, EngineCommand, EngineHandle, MeterBank, OutputDeviceInfo,
     RenderGraph, start_audio,
 };
 use auris_gpu::{GpuContext, WaveformPeaks, compute_peaks};
-use auris_io::{import_audio_file, load_project, save_project};
+use auris_io::{
+    SoundFontPreset, font_name, import_audio_file, load_project, load_soundfont, preset_count,
+    presets, save_project,
+};
+use auris_sampler::{SAMPLER_ID, SharedSoundFonts, SoundFontBank, store_preset, stored_preset};
 
 use crate::error::SessionError;
 use crate::history::{Edit, History};
@@ -113,6 +117,12 @@ pub struct Session {
     render_bank: AudioSourceBank,
     /// Rate [`Self::render_bank`] currently holds.
     render_bank_rate: f64,
+    /// The SoundFonts behind [`Project::soundfonts`], for the same reason [`Self::bank`] exists:
+    /// the document keeps paths, the samples live beside it.
+    ///
+    /// Shared with the registry, whose sampler factory captured it — which is the only way sample
+    /// data reaches an instrument the registry builds.
+    fonts: SharedSoundFonts,
     registry: Arc<PluginRegistry>,
     engine: EngineHandle,
     device: Option<AudioDevice>,
@@ -173,7 +183,8 @@ impl Session {
     /// Never fails for want of audio hardware: the engine falls back to running silently, so a
     /// machine with no output device still edits and exports.
     pub fn new(options: SessionOptions) -> Result<Self, SessionError> {
-        let registry = default_registry();
+        let fonts = SoundFontBank::shared();
+        let registry = default_registry(Arc::clone(&fonts));
         let project = Project::new("Untitled", options.sample_rate);
         let audio = options.audio_preferences.clone();
 
@@ -206,6 +217,7 @@ impl Session {
             bank: AudioSourceBank::new(),
             render_bank: AudioSourceBank::new(),
             render_bank_rate,
+            fonts,
             registry,
             engine,
             device: Some(device),
@@ -673,14 +685,14 @@ impl Session {
         Ok(id)
     }
 
-    /// Appends an instrument track playing the first registered instrument.
+    /// Appends an instrument track playing whatever the registry nominates as its default.
     pub fn add_default_instrument_track(
         &mut self,
         name: impl Into<String>,
     ) -> Result<TrackId, SessionError> {
         let instrument = self
             .registry
-            .first_instrument_id()
+            .default_instrument_id()
             .ok_or_else(|| SessionError::UnknownPlugin("<any instrument>".into()))?
             .to_string();
         self.add_instrument_track(name, &instrument)
@@ -780,6 +792,56 @@ impl Session {
         Ok(())
     }
 
+    /// Points a track at one of an imported SoundFont's sounds.
+    ///
+    /// Choosing a sound implies choosing the instrument that makes it, so a track playing
+    /// anything else is switched to the sampler as part of the same edit — which is what makes
+    /// picking a preset out of a library one gesture rather than two.
+    ///
+    /// A track already on the sampler keeps its level, reverb and chorus: those are how the
+    /// player is set up, not which sound it is playing, and losing them every time somebody
+    /// auditioned a neighbouring preset would be its own small tragedy.
+    pub fn set_track_preset(&mut self, id: TrackId, preset: PresetRef) -> Result<(), SessionError> {
+        self.require_track(id)?;
+        if !self
+            .project
+            .track(id)
+            .is_some_and(|track| track.kind.is_instrument())
+        {
+            return Err(SessionError::WrongTrackKind {
+                id: id.0,
+                actual: "an audio track",
+                expected: "an instrument track",
+            });
+        }
+        if !self.project.soundfonts.contains_key(&preset.font) {
+            return Err(SessionError::UnknownSoundFont(preset.font.0));
+        }
+        self.record(Edit::ChoosePreset);
+        if let Some(inner) = self
+            .project
+            .track_mut(id)
+            .and_then(|track| track.kind.as_instrument_mut())
+        {
+            if inner.instrument_id != SAMPLER_ID {
+                inner.instrument_id = SAMPLER_ID.to_string();
+                inner.instrument_state = PluginState::empty();
+            }
+            store_preset(&mut inner.instrument_state, preset);
+        }
+        self.invalidate_graph();
+        Ok(())
+    }
+
+    /// Which SoundFont sound a track plays, or `None` when it plays something else entirely.
+    pub fn track_preset(&self, id: TrackId) -> Option<PresetRef> {
+        let inner = self.project.track(id)?.kind.as_instrument()?;
+        if inner.instrument_id != SAMPLER_ID {
+            return None;
+        }
+        stored_preset(&inner.instrument_state)
+    }
+
     /// Copies a track, its clips and its whole effect chain, below the original.
     pub fn duplicate_track(&mut self, id: TrackId) -> Result<TrackId, SessionError> {
         self.require_track(id)?;
@@ -823,7 +885,7 @@ impl Session {
     ) -> Result<ComposeReport, SessionError> {
         let fallback = self
             .registry
-            .first_instrument_id()
+            .default_instrument_id()
             .ok_or_else(|| SessionError::UnknownPlugin("<any instrument>".into()))?
             .to_string();
 
@@ -1611,7 +1673,7 @@ impl Session {
     /// Replaces the document with an empty project holding one instrument track.
     pub fn new_project(&mut self) {
         let mut project = Project::new("Untitled", self.project.sample_rate);
-        if let Some(instrument) = self.registry.first_instrument_id() {
+        if let Some(instrument) = self.registry.default_instrument_id() {
             project.add_instrument_track("Track 1", instrument);
         }
         self.history.clear();
@@ -1625,9 +1687,9 @@ impl Session {
 
     /// Opens a project file.
     ///
-    /// Returns the source paths that could not be re-decoded. The project still opens; those
-    /// clips are silent until the files come back, which is far friendlier than refusing to
-    /// open a session because one sample moved.
+    /// Returns the paths that could not be re-read — audio files and SoundFonts alike. The
+    /// project still opens; whatever named them is silent until the files come back, which is
+    /// far friendlier than refusing to open a session because one sample moved.
     pub fn open(&mut self, path: &Path) -> Result<Vec<PathBuf>, SessionError> {
         let project = load_project(path)?;
         self.history.clear();
@@ -1653,6 +1715,7 @@ impl Session {
                 }
             }
         }
+        missing.extend(self.reload_soundfonts());
         self.rebuild_graph();
         Ok(missing)
     }
@@ -1696,6 +1759,74 @@ impl Session {
         Ok(clip)
     }
 
+    /// Imports a SoundFont, making its sounds available to every track in the project.
+    ///
+    /// Importing the same file twice returns the id it already has, so a second attempt costs
+    /// nothing and, more to the point, does not put a second copy of a very large object in
+    /// memory. Nothing is heard until a track is pointed at one of its presets with
+    /// [`Self::set_track_preset`].
+    pub fn import_soundfont(&mut self, path: &Path) -> Result<SoundFontId, SessionError> {
+        let font = load_soundfont(path)?;
+        let name = font_name(&font, path);
+        self.record(Edit::ImportSoundFont);
+        let id = self.project.add_soundfont(name, path.to_path_buf());
+        self.fonts.insert(id, font);
+        // A track already naming this font — one whose file was missing when the project
+        // opened, and which the user has just gone and found — starts sounding again.
+        self.invalidate_graph();
+        Ok(id)
+    }
+
+    /// Every SoundFont the project knows about, whether or not its file is still there.
+    pub fn soundfonts(&self) -> impl Iterator<Item = &SoundFontRef> {
+        self.project.soundfonts.values()
+    }
+
+    /// `true` when a font's samples are actually in memory, so a track naming it will sound.
+    pub fn soundfont_is_loaded(&self, id: SoundFontId) -> bool {
+        self.fonts.contains(id)
+    }
+
+    /// How many sounds an imported font offers, without building the list.
+    pub fn soundfont_preset_count(&self, id: SoundFontId) -> usize {
+        self.fonts
+            .get(id)
+            .map(|font| preset_count(&font))
+            .unwrap_or(0)
+    }
+
+    /// Every sound one imported font offers, in bank and patch order.
+    ///
+    /// Empty for a font whose file could not be read, which is the same thing a font with no
+    /// presets would give — and a library showing nothing under a name is already the message.
+    pub fn soundfont_presets(&self, id: SoundFontId) -> Vec<SoundFontPreset> {
+        self.fonts
+            .get(id)
+            .map(|font| presets(&font))
+            .unwrap_or_default()
+    }
+
+    /// Reads every font the document names, reporting the ones whose files have gone.
+    fn reload_soundfonts(&mut self) -> Vec<PathBuf> {
+        let fonts: Vec<(SoundFontId, PathBuf)> = self
+            .project
+            .soundfonts
+            .values()
+            .map(|font| (font.id, font.path.clone()))
+            .collect();
+        let mut missing = Vec::new();
+        for (id, path) in fonts {
+            match load_soundfont(&path) {
+                Ok(font) => self.fonts.insert(id, font),
+                Err(error) => {
+                    log::warn!("could not reload {}: {error}", path.display());
+                    missing.push(path);
+                }
+            }
+        }
+        missing
+    }
+
     /// Stores decoded audio, the peaks used to draw it, and the copy the graph will render.
     fn install_source(&mut self, id: SourceId, buffer: Arc<AudioBuffer>) {
         let peaks = compute_peaks(self.gpu.as_deref(), &buffer, WAVEFORM_BUCKET);
@@ -1706,11 +1837,12 @@ impl Session {
         self.bank.insert(id, buffer);
     }
 
-    /// Drops every decoded source, from both banks and from the waveform cache.
+    /// Drops everything decoded: both audio banks, the waveform cache and the fonts.
     fn clear_sources(&mut self) {
         self.bank = AudioSourceBank::new();
         self.render_bank = AudioSourceBank::new();
         self.waveforms.clear();
+        self.fonts.clear();
     }
 }
 
@@ -1733,6 +1865,166 @@ mod tests {
         Session::new(SessionOptions::headless()).expect("a headless session always opens")
     }
 
+    /// Registers a font in the document without a file behind it.
+    ///
+    /// Enough to exercise every command that decides what a track *plays*; what it *sounds* like
+    /// needs a real SoundFont, which is somebody's 200 MB file rather than a test fixture.
+    fn named_font(session: &mut Session, name: &str) -> SoundFontId {
+        session
+            .project
+            .add_soundfont(name, PathBuf::from(format!("{name}.sf2")))
+    }
+
+    #[test]
+    fn a_new_track_never_starts_on_the_sampler() {
+        // The sampler sorts first by plugin id, so before there was a nominated default it won
+        // the "first registered instrument" race — and a new track came up silent.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").expect("track");
+        let instrument = session
+            .project
+            .track(track)
+            .and_then(|t| t.kind.as_instrument())
+            .map(|inner| inner.instrument_id.clone())
+            .expect("an instrument track");
+        assert_ne!(instrument, SAMPLER_ID);
+        assert_eq!(instrument, crate::registry::DEFAULT_INSTRUMENT);
+    }
+
+    #[test]
+    fn choosing_a_sound_also_chooses_the_instrument_that_makes_it() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").expect("track");
+        let font = named_font(&mut session, "Orchestra");
+        let preset = PresetRef {
+            font,
+            bank: 0,
+            patch: 40,
+        };
+
+        session.set_track_preset(track, preset).expect("chosen");
+
+        let inner = session
+            .project
+            .track(track)
+            .and_then(|t| t.kind.as_instrument())
+            .expect("an instrument track");
+        assert_eq!(inner.instrument_id, SAMPLER_ID);
+        assert_eq!(session.track_preset(track), Some(preset));
+    }
+
+    #[test]
+    fn auditioning_a_second_preset_keeps_how_the_player_is_set_up() {
+        // Level, reverb and chorus describe the player, not the sound it is playing. Clearing
+        // them every time somebody tried the next preset along would be its own small tragedy.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").expect("track");
+        let font = named_font(&mut session, "Orchestra");
+        session
+            .set_track_preset(
+                track,
+                PresetRef {
+                    font,
+                    bank: 0,
+                    patch: 40,
+                },
+            )
+            .expect("chosen");
+        if let Some(inner) = session
+            .project
+            .track_mut(track)
+            .and_then(|t| t.kind.as_instrument_mut())
+        {
+            inner.instrument_state.params.insert("level".into(), -6.0);
+        }
+
+        let second = PresetRef {
+            font,
+            bank: 0,
+            patch: 41,
+        };
+        session.set_track_preset(track, second).expect("chosen");
+
+        let inner = session
+            .project
+            .track(track)
+            .and_then(|t| t.kind.as_instrument())
+            .expect("an instrument track");
+        assert_eq!(session.track_preset(track), Some(second));
+        assert_eq!(inner.instrument_state.params.get("level"), Some(&-6.0));
+    }
+
+    #[test]
+    fn a_preset_from_a_font_the_project_does_not_have_is_refused() {
+        // The id would end up in the document and resolve to nothing for the rest of its life.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").expect("track");
+        session.forget_history();
+
+        let refused = session.set_track_preset(
+            track,
+            PresetRef {
+                font: SoundFontId(999),
+                bank: 0,
+                patch: 0,
+            },
+        );
+        assert!(matches!(refused, Err(SessionError::UnknownSoundFont(999))));
+        assert!(!session.can_undo(), "a refused edit left a step behind");
+        assert_eq!(session.track_preset(track), None);
+    }
+
+    #[test]
+    fn an_audio_track_has_no_sound_to_choose() {
+        let mut session = session();
+        let audio = session.add_audio_track("Sample");
+        let font = named_font(&mut session, "Orchestra");
+        session.forget_history();
+
+        let refused = session.set_track_preset(
+            audio,
+            PresetRef {
+                font,
+                bank: 0,
+                patch: 0,
+            },
+        );
+        assert!(matches!(refused, Err(SessionError::WrongTrackKind { .. })));
+        assert!(!session.can_undo(), "a refused edit left a step behind");
+    }
+
+    #[test]
+    fn a_track_on_another_instrument_reports_no_preset() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").expect("track");
+        assert_eq!(session.track_preset(track), None);
+    }
+
+    #[test]
+    fn importing_a_soundfont_that_is_not_there_changes_nothing() {
+        // The picker hands over whatever the user chose, and a file can be gone by the time it
+        // is opened. Failing has to leave the document exactly as it was.
+        let mut session = session();
+        session.forget_history();
+
+        let refused = session.import_soundfont(Path::new("no-such-soundfont.sf2"));
+        assert!(refused.is_err());
+        assert_eq!(session.soundfonts().count(), 0);
+        assert!(!session.can_undo(), "a failed import left a step behind");
+        assert!(!session.is_dirty());
+    }
+
+    #[test]
+    fn a_font_the_project_names_but_has_not_loaded_is_reported_as_such() {
+        // What a library panel needs in order to say "this file has moved" rather than showing
+        // an empty list of sounds and leaving the user to guess.
+        let mut session = session();
+        let font = named_font(&mut session, "Orchestra");
+        assert_eq!(session.soundfonts().count(), 1);
+        assert!(!session.soundfont_is_loaded(font));
+        assert!(session.soundfont_presets(font).is_empty());
+    }
+
     #[test]
     fn an_audio_track_has_no_instrument_to_change() {
         // This used to return `Ok` having changed nothing and recorded an undo step anyway, so
@@ -1741,7 +2033,7 @@ mod tests {
         let audio = session.add_audio_track("Sample");
         let instrument = session
             .registry()
-            .first_instrument_id()
+            .default_instrument_id()
             .expect("the default registry has instruments")
             .to_string();
         session.forget_history();

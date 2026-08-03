@@ -134,6 +134,15 @@ messages! {
         ja: "{path} を読み込みました"
     }
 
+    /// Confirmation that a SoundFont was read, and how many sounds it brought with it.
+    ///
+    /// The count rather than the path, because a font goes on a shelf instead of onto a track:
+    /// what a person needs to know next is how much there is to choose from.
+    fn soundfont_imported(name: &str, sounds: usize) {
+        en: "{name} — {sounds} sound(s) to choose from",
+        ja: "{name} — 音色 {sounds} 件から選べます"
+    }
+
     /// Progress line while a render runs.
     fn rendering(path: &str) {
         en: "Rendering {path}…",

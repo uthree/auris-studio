@@ -75,6 +75,15 @@ pub fn presets(font: &SoundFont) -> Vec<SoundFontPreset> {
     presets
 }
 
+/// How many sounds a font offers.
+///
+/// Separate from [`presets`] because a list that is only being *counted* — a library row saying
+/// how much is inside a font it has not opened — should not build and sort several hundred
+/// strings to arrive at a number.
+pub fn preset_count(font: &SoundFont) -> usize {
+    font.get_presets().len()
+}
+
 /// What a font calls itself, or the file's own stem when it says nothing useful.
 ///
 /// Fonts in the wild routinely carry an empty name or a leftover like `Untitled`, and a library

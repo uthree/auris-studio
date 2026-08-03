@@ -476,6 +476,62 @@ impl AurisApp {
         .detach();
     }
 
+    /// Prompts for a SoundFont and adds it to the project's library.
+    ///
+    /// Unlike importing audio this puts nothing on the timeline: a font is a shelf of sounds, and
+    /// which track plays which one is a separate choice made in the library.
+    pub(crate) fn import_soundfont(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let extensions: Vec<String> = auris_session::supported_soundfont_extensions()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        cx.spawn(async move |this, cx| {
+            let extension_refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
+            let handle = rfd::AsyncFileDialog::new()
+                .set_title("Import SoundFont")
+                .add_filter("SoundFont", &extension_refs)
+                .pick_file()
+                .await;
+            let Some(handle) = handle else { return };
+            let path = handle.path().to_path_buf();
+
+            let _ = this.update(cx, |this, cx| {
+                let text = messages::importing(this.language(), &path.display().to_string());
+                this.set_status(text);
+                cx.notify();
+            });
+
+            // A font can be hundreds of megabytes, so the read is far too slow to do without
+            // having painted the status line first.
+            cx.background_executor()
+                .timer(std::time::Duration::ZERO)
+                .await;
+
+            let _ = this.update(cx, |this, cx| {
+                match this.session.import_soundfont(&path) {
+                    Ok(id) => {
+                        let name = this
+                            .session
+                            .soundfonts()
+                            .find(|font| font.id == id)
+                            .map(|font| font.name.clone())
+                            .unwrap_or_default();
+                        let sounds = this.session.soundfont_presets(id).len();
+                        // Show what just arrived. The library is the only place these sounds can
+                        // be chosen from, and importing a font is the act of going to choose one.
+                        this.panels.library_visible = true;
+                        this.expanded_font = Some(id);
+                        let language = this.language();
+                        this.set_status(messages::soundfont_imported(language, &name, sounds));
+                    }
+                    Err(error) => this.set_status(this.failure(Key::CmdImportSoundFont, &error)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Prompts for a destination and renders the project to a WAV file.
     pub(crate) fn start_export(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if self.export.as_ref().is_some_and(|e| e.result.is_none()) {
