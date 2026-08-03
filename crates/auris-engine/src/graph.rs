@@ -799,6 +799,11 @@ pub struct RenderGraph {
     tempo_map: TempoMap,
     pub(crate) master_scratch: AudioBuffer,
     pub(crate) master_peak: [f32; 2],
+    /// Where a spectrum display, if one is open, gets its samples.
+    ///
+    /// Shared with the UI rather than owned by it, because only the render path ever sees a
+    /// strip's signal — the document holds parameter values, not audio.
+    pub(crate) scope: Arc<crate::scope::Scope>,
 }
 
 impl RenderGraph {
@@ -948,7 +953,17 @@ impl RenderGraph {
             tempo_map: project.tempo_map.clone(),
             master_scratch,
             master_peak: [0.0, 0.0],
+            scope: Arc::new(crate::scope::Scope::new()),
         }
+    }
+
+    /// Points this graph at the scope the UI is reading.
+    ///
+    /// Handed in after building rather than created here, so a rebuild — which happens on every
+    /// structural edit — does not leave an open spectrum display reading a scope nothing writes
+    /// to any more.
+    pub fn set_scope(&mut self, scope: Arc<crate::scope::Scope>) {
+        self.scope = scope;
     }
 
     /// Rate this graph was prepared for.

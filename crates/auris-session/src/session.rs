@@ -129,6 +129,18 @@ pub struct Session {
     path: Option<PathBuf>,
     dirty: bool,
 
+    /// Where a spectrum display reads its samples.
+    ///
+    /// Owned by the session and handed to each graph rather than created with one, because a
+    /// rebuild happens on every structural edit and an open display must not be left reading a
+    /// scope that nothing writes to any more.
+    scope: Arc<auris_engine::Scope>,
+    /// Turns the window the engine publishes into a spectrum.
+    ///
+    /// Here rather than in a frontend because a frontend may not name `auris-dsp` — and because
+    /// two of them wanting a spectrum should not each grow their own FFT.
+    analyzer: auris_dsp::SpectrumAnalyzer,
+
     param_cache: HashMap<String, Arc<Vec<ParamDescriptor>>>,
     waveforms: HashMap<SourceId, Arc<WaveformPeaks>>,
 }
@@ -205,6 +217,8 @@ impl Session {
             needs_rebuild: false,
             path: None,
             dirty: false,
+            scope: Arc::new(auris_engine::Scope::new()),
+            analyzer: auris_dsp::SpectrumAnalyzer::new(auris_engine::SCOPE_WINDOW),
             param_cache: HashMap::new(),
             waveforms: HashMap::new(),
         };
@@ -322,6 +336,52 @@ impl Session {
     /// The audio engine's UI-side handle.
     pub fn engine(&self) -> &EngineHandle {
         &self.engine
+    }
+
+    /// Fills `bands` with the spectrum of whatever strip is being watched, in dBFS.
+    ///
+    /// Bands rather than bins, spaced by octave between `low_hz` and `high_hz`, because that is
+    /// what a display can show and what a musician reads. Silence when nothing is being watched
+    /// or the window was written through mid-copy — the next call is one repaint away and will
+    /// find a settled one, which is cheaper than making the audio thread wait.
+    pub fn spectrum(&mut self, low_hz: f64, high_hz: f64, bands: &mut [f32]) {
+        bands.fill(auris_dsp::SILENCE_DB);
+        let mut samples = vec![0.0f32; self.analyzer.size()];
+        if !self.scope.read(&mut samples) {
+            return;
+        }
+        let rate = self.scope.sample_rate();
+        self.analyzer.reset();
+        self.analyzer.push(&samples);
+        let mut bins = vec![0.0f32; self.analyzer.bin_count()];
+        self.analyzer.magnitudes(&mut bins);
+        auris_dsp::bands_from_bins(&bins, rate, low_hz, high_hz, bands);
+    }
+
+    /// Level a band with nothing in it reports, so a display knows where its floor is.
+    pub fn spectrum_silence() -> f32 {
+        auris_dsp::SILENCE_DB
+    }
+
+    /// Which strip the scope should follow, given what a frontend currently has open.
+    ///
+    /// Here rather than in the frontend because it is the mapping from *a plugin's place in the
+    /// document* to *a position in the render graph*, and positions in the graph are this layer's
+    /// business: a frontend that worked it out itself would be reading the track order to do it.
+    pub fn watch_strip(&self, track: Option<TrackId>) {
+        let source = match track {
+            None => auris_engine::ScopeSource::Master,
+            Some(id) => match self.project.track_index(id) {
+                Some(index) => auris_engine::ScopeSource::Track(index),
+                None => auris_engine::ScopeSource::Off,
+            },
+        };
+        self.scope.watch(source);
+    }
+
+    /// Stops the analysis, for when nothing is looking at it.
+    pub fn stop_watching(&self) {
+        self.scope.watch(auris_engine::ScopeSource::Off);
     }
 
     /// Lock-free level meters.
@@ -463,13 +523,14 @@ impl Session {
             self.render_bank = bank_at_rate(&self.bank, rate);
             self.render_bank_rate = rate;
         }
-        let graph = RenderGraph::build_at(
+        let mut graph = RenderGraph::build_at(
             &self.project,
             &self.render_bank,
             &self.registry,
             self.engine.max_block(),
             rate,
         );
+        graph.set_scope(Arc::clone(&self.scope));
         if let Err(error) = self.engine.set_graph(graph) {
             log::warn!("could not update the render graph: {error}");
         }

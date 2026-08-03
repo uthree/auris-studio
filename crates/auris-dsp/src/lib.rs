@@ -37,6 +37,7 @@ pub mod limiter;
 pub mod pack;
 pub mod reverb;
 pub mod smooth;
+pub mod spectrum;
 
 pub use biquad::{Biquad, BiquadCoefficients};
 pub use compressor::Compressor;
@@ -50,3 +51,4 @@ pub use limiter::Limiter;
 pub use pack::DspPack;
 pub use reverb::Reverb;
 pub use smooth::{SmoothedValue, one_pole_coefficient};
+pub use spectrum::{SILENCE_DB, SpectrumAnalyzer, bands_from_bins, fft};

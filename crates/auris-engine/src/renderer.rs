@@ -86,7 +86,12 @@ fn render_segment(
     master_scratch.set_frame_count(frames);
     master_scratch.clear();
 
-    for track in graph.tracks.iter_mut() {
+    // A separate field borrow, the same way `master_scratch` is one, so the scope stays reachable
+    // while the tracks are being walked mutably.
+    let scope = &graph.scope;
+    let watching = scope.watching();
+
+    for (index, track) in graph.tracks.iter_mut().enumerate() {
         // A track muted long enough to have finished fading out contributes nothing, so skip it
         // entirely. One muted a moment ago still has a fade to slide down and must be rendered.
         if track.strip.is_silent() {
@@ -106,6 +111,12 @@ fn render_segment(
         track.strip.apply_gain_and_pan(&mut track.scratch);
         track.strip.apply_mute(&mut track.scratch);
         track.peak = track.peak.max(track.scratch.peak());
+        // A spectrum display, if one is open on this strip, reads what the strip actually sends
+        // to the bus — the chain applied, the fader applied. The check is one relaxed load per
+        // block, hoisted out of the loop, so a graph nobody is looking at pays nothing.
+        if watching == crate::scope::ScopeSource::Track(index) {
+            scope.publish(track.scratch.channel(0), ctx.sample_rate);
+        }
         master_scratch.mix_from(&track.scratch, 1.0);
     }
 
@@ -120,6 +131,11 @@ fn render_segment(
     graph.master.apply_mute(master_scratch);
     // One NaN out of a misbehaving plugin would otherwise reach the output device.
     master_scratch.sanitize();
+    if watching == crate::scope::ScopeSource::Master {
+        graph
+            .scope
+            .publish(master_scratch.channel(0), ctx.sample_rate);
+    }
     graph.master_peak[0] = graph.master_peak[0].max(master_scratch.channel_peak(0));
     graph.master_peak[1] = graph.master_peak[1].max(master_scratch.channel_peak(1));
 

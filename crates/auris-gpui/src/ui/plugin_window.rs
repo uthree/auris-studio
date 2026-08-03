@@ -45,6 +45,14 @@ impl PluginSubject {
         }
     }
 
+    /// The strip this plugin sits on, or `None` for the master bus.
+    pub fn strip(self) -> Option<TrackId> {
+        match self {
+            PluginSubject::Instrument(track) => Some(track),
+            PluginSubject::Insert { track, .. } => track,
+        }
+    }
+
     /// Element-id prefix for the controls inside the window.
     ///
     /// Load-bearing, not decorative. `target_element_key` folds an instrument's *track* id and an
@@ -104,7 +112,82 @@ impl PluginWindow {
     }
 }
 
+/// How many bars the spectrum is drawn as.
+///
+/// Far fewer than the window has bins. A display three hundred pixels wide cannot show five
+/// hundred of them, and a musician reads bands rather than bins — so the bins are gathered into
+/// this many, spaced by octave.
+const SPECTRUM_BANDS: usize = 48;
+
+/// Lowest frequency the display shows, in hertz.
+const SPECTRUM_LOW: f64 = 30.0;
+/// Highest frequency the display shows, in hertz.
+const SPECTRUM_HIGH: f64 = 18_000.0;
+/// Level at the bottom of the display, in dBFS.
+const SPECTRUM_FLOOR: f32 = -72.0;
+
+/// Whether this plugin is one whose editor shows what is passing through it.
+///
+/// A list rather than a method on the `Effect` trait: what a *display* offers is a property of
+/// the editor, not of the processor, and asking every plugin author about a window they have
+/// never seen would put a frontend's concern into the plugin contract. An equalizer is the one
+/// that needs it — its whole job is deciding where to put a curve, and the curve alone does not
+/// say where.
+fn analyses_spectrum(plugin_id: &str) -> bool {
+    plugin_id == "auris.fx.eq"
+}
+
+/// One bar per band, drawn as a strip across the top of the window.
+fn spectrum_display(bands: Vec<f32>, theme: &crate::theme::Theme) -> AnyElement {
+    let bars: Vec<AnyElement> = bands
+        .into_iter()
+        .map(|level| {
+            let height = ((level - SPECTRUM_FLOOR) / -SPECTRUM_FLOOR).clamp(0.0, 1.0);
+            div()
+                .flex_1()
+                .h_full()
+                .flex()
+                .flex_col()
+                .justify_end()
+                .child(
+                    div()
+                        .w_full()
+                        .h(gpui::relative(height))
+                        .bg(crate::theme::Theme::translucent(theme.accent, 0.75)),
+                )
+                .into_any_element()
+        })
+        .collect();
+
+    div()
+        .h(px(64.0))
+        .w_full()
+        .flex_shrink_0()
+        .flex()
+        .items_end()
+        .gap(px(1.0))
+        .px_2()
+        .py_1()
+        .bg(theme.surface_sunken)
+        .border_b_1()
+        .border_color(theme.border)
+        .children(bars)
+        .into_any_element()
+}
+
 impl AurisApp {
+    /// The current spectrum, gathered into bands ready to draw.
+    ///
+    /// A torn read — the audio thread wrote through the copy — returns the floor rather than a
+    /// window with a seam in it. The next repaint is sixteen milliseconds away and will find a
+    /// settled one, which is cheaper than making the audio thread wait for this.
+    fn spectrum_bins(&mut self) -> Vec<f32> {
+        let mut bands = vec![Session::spectrum_silence(); SPECTRUM_BANDS];
+        self.session
+            .spectrum(SPECTRUM_LOW, SPECTRUM_HIGH, &mut bands);
+        bands
+    }
+
     /// Opens the editor for one plugin, replacing whatever was open.
     pub(crate) fn open_plugin_window(&mut self, subject: PluginSubject, anchor: Point<Pixels>) {
         self.plugin_window = Some(PluginWindow { subject, anchor });
@@ -130,6 +213,16 @@ impl AurisApp {
         let subject = window.subject;
         let (plugin_id, enabled) = self.resolve_plugin(subject)?;
         self.plugin_window = Some(window);
+
+        // Point the analysis at whichever strip this plugin sits on. Asked for every frame the
+        // window is open, because a rebuild or a change of selection could otherwise leave it
+        // reading a strip that has moved; it is one relaxed store.
+        if analyses_spectrum(&plugin_id) {
+            self.session.watch_strip(subject.strip());
+        } else {
+            self.session.stop_watching();
+        }
+        let spectrum = analyses_spectrum(&plugin_id).then(|| self.spectrum_bins());
 
         let theme = self.theme.clone();
         let name = self.plugin_label(&plugin_id);
@@ -203,6 +296,7 @@ impl AurisApp {
                             }),
                         )),
                 )
+                .children(spectrum.map(|bins| spectrum_display(bins, &theme)))
                 .child(
                     div()
                         .id("pw-body")

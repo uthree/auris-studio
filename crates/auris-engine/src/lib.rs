@@ -69,6 +69,7 @@ pub mod handle;
 pub mod meter;
 pub mod offline;
 pub mod renderer;
+pub mod scope;
 pub mod transport;
 
 #[cfg(test)]
@@ -87,4 +88,5 @@ pub use handle::EngineHandle;
 pub use meter::MeterBank;
 pub use offline::{OfflineOptions, render_project, render_project_with_progress};
 pub use renderer::render_block;
+pub use scope::{SCOPE_WINDOW, Scope, ScopeSource};
 pub use transport::Transport;
