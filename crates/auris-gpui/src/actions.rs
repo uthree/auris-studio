@@ -15,6 +15,8 @@ actions!(
         NewProject,
         /// Open a project file.
         OpenProject,
+        /// Write a piece from a song specification, replacing the document.
+        ComposeSong,
         /// Save the current project.
         SaveProject,
         /// Save the current project under a new name.
@@ -113,6 +115,7 @@ bindable! {
 
     "file.new",             GroupFile,      CmdNewProject,         "secondary-n" => NewProject;
     "file.open",            GroupFile,      CmdOpenProject,        "secondary-o" => OpenProject;
+    "file.compose",         GroupFile,      CmdComposeSong,        "secondary-shift-c" => ComposeSong;
     "file.save",            GroupFile,      CmdSave,               "secondary-s" => SaveProject;
     "file.save_as",         GroupFile,      CmdSaveAs,             "secondary-shift-s" => SaveProjectAs;
     "file.import",          GroupFile,      CmdImportAudio,        "secondary-i" => ImportAudio;

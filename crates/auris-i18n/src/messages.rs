@@ -314,6 +314,18 @@ messages! {
         ja: "{path} を作曲しました · {tracks} トラック · {notes} ノート · シード {seed}"
     }
 
+    /// Confirmation that a piece was composed into the open document.
+    fn composed_document(tracks: usize, notes: usize, seed: u64) {
+        en: "composed {tracks} tracks · {notes} notes · seed {seed}",
+        ja: "{tracks} トラック · {notes} ノートを作曲しました · シード {seed}"
+    }
+
+    /// The same, with a note that some parts did not get the instrument they asked for.
+    fn composed_document_substituted(tracks: usize, notes: usize, seed: u64, missing: usize) {
+        en: "composed {tracks} tracks · {notes} notes · seed {seed} · {missing} instruments substituted",
+        ja: "{tracks} トラック · {notes} ノートを作曲しました · シード {seed} · {missing} 個の音源を代替しました"
+    }
+
     /// A part asked for an instrument this build does not have.
     fn instrument_substituted(id: &str) {
         en: "warning: no instrument `{id}`; using the default instead",

@@ -155,6 +155,7 @@ strings! {
     CmdPanic { en: "Panic", ja: "パニック" }
     CmdNewProject { en: "New Project", ja: "新規プロジェクト" }
     CmdOpenProject { en: "Open Project", ja: "プロジェクトを開く" }
+    CmdComposeSong { en: "Compose", ja: "自動作曲" }
     CmdSave { en: "Save", ja: "保存" }
     CmdSaveAs { en: "Save As", ja: "名前を付けて保存" }
     CmdImportAudio { en: "Import Audio", ja: "オーディオを読み込む" }
@@ -179,6 +180,7 @@ strings! {
     MenuServices { en: "Services", ja: "サービス" }
     MenuQuitApp { en: "Quit Auris Studio", ja: "Auris Studio を終了" }
     MenuOpenProjectItem { en: "Open Project…", ja: "プロジェクトを開く…" }
+    MenuComposeItem { en: "Compose from Specification…", ja: "仕様ファイルから作曲…" }
     MenuSaveAsItem { en: "Save As…", ja: "名前を付けて保存…" }
     MenuImportAudioItem { en: "Import Audio…", ja: "オーディオを読み込む…" }
     MenuExportWavItem { en: "Export WAV…", ja: "WAV を書き出す…" }

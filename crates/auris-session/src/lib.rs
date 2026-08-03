@@ -55,6 +55,9 @@ pub use settings::{AudioPreferences, Settings, config_dir};
 /// File extension of a saved project.
 pub use auris_io::PROJECT_EXTENSION;
 
+/// File extension of a song specification.
+pub use auris_compose::SPEC_EXTENSION;
+
 /// Audio file extensions the importer accepts, for a file-picker filter.
 pub fn supported_audio_extensions() -> &'static [&'static str] {
     auris_io::supported_extensions()

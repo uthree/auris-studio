@@ -89,6 +89,13 @@ pub fn model(language: Language) -> Vec<MenuSection> {
             actions::OpenProject,
             "file.open",
         ),
+        // With New and Open rather than off on its own: all three replace the document, and
+        // that is what a person needs to know before choosing one.
+        command(
+            t(Key::MenuComposeItem),
+            actions::ComposeSong,
+            "file.compose",
+        ),
         MenuRow::Separator,
         command(t(Key::CmdSave), actions::SaveProject, "file.save"),
         command(
@@ -242,6 +249,26 @@ mod tests {
                 "`{expected}` is in no menu on this platform"
             );
         }
+    }
+
+    #[test]
+    fn composing_is_reachable_without_the_command_line() {
+        // `Session::compose` was written with the composer and the desktop application never
+        // called it, so the whole feature existed only for `auris compose`. A menu row is what
+        // makes it exist for everyone else.
+        let labels: Vec<String> = model(Language::English)
+            .into_iter()
+            .flat_map(|section| section.rows)
+            .filter_map(|row| match row {
+                MenuRow::Command { label, .. } => Some(label.to_string()),
+                _ => None,
+            })
+            .collect();
+        let expected = Key::MenuComposeItem.get(Language::English);
+        assert!(
+            labels.iter().any(|label| label == expected),
+            "`{expected}` is in no menu"
+        );
     }
 
     #[test]

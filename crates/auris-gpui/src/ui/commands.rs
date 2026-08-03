@@ -263,6 +263,91 @@ impl AurisApp {
         .detach();
     }
 
+    /// Prompts for a song specification and replaces the document with what it describes.
+    ///
+    /// The whole piece is one undo step, so a composition that is not what was wanted is one
+    /// press away from the document that was there before it.
+    pub(crate) fn compose_from_spec(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let handle = rfd::AsyncFileDialog::new()
+                .set_title("Compose from specification")
+                .add_filter("Song specification", &[auris_session::SPEC_EXTENSION])
+                .pick_file()
+                .await;
+            let Some(handle) = handle else { return };
+            let path = handle.path().to_path_buf();
+
+            let _ = this.update(cx, |this, cx| {
+                this.compose_file(&path);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Reads, parses and composes one specification file.
+    ///
+    /// Split out of the dialog so the failure paths are reachable without one: a file that will
+    /// not open, will not parse, or asks for nothing this build can play.
+    fn compose_file(&mut self, path: &std::path::Path) {
+        let language = self.language();
+        let shown = path.display().to_string();
+
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) => {
+                self.set_status(messages::failed(
+                    language,
+                    self.t(Key::CmdComposeSong),
+                    &error.to_string(),
+                ));
+                return;
+            }
+        };
+        // The parser reports every complaint it has, not just the first, so a specification with
+        // three typos takes one round trip rather than three.
+        let spec = match SongSpec::parse(&text) {
+            Ok(spec) => spec,
+            Err(errors) => {
+                let mut message = messages::spec_rejected(language, &shown);
+                for error in errors {
+                    message.push_str(&format!("\n  {error}"));
+                }
+                self.set_status(message);
+                return;
+            }
+        };
+
+        let piece = compose(&spec);
+        let seed = piece.seed;
+        match self.session.compose(&piece) {
+            Ok(report) => {
+                self.resync_selection();
+                // Point the editors at the first part rather than leaving them empty. Opening a
+                // project does not need this because its own selection is restored; a freshly
+                // composed document has no selection to restore, and an empty piano roll over a
+                // piece full of notes reads as a failure.
+                let first = self.project().tracks.first().map(|track| track.id);
+                self.selected_track = None;
+                if let Some(track) = first {
+                    self.select_track(track);
+                }
+                self.set_status(if report.substituted.is_empty() {
+                    messages::composed_document(language, report.tracks, report.notes, seed)
+                } else {
+                    messages::composed_document_substituted(
+                        language,
+                        report.tracks,
+                        report.notes,
+                        seed,
+                        report.substituted.len(),
+                    )
+                });
+            }
+            Err(error) => self.set_status(self.failure(Key::CmdComposeSong, &error)),
+        }
+    }
+
     /// Prompts for an audio file and drops it onto a new audio track.
     pub(crate) fn import_audio(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let extensions: Vec<String> = auris_session::supported_audio_extensions()

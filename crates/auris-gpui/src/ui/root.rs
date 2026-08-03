@@ -105,6 +105,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_toggle_loop))
             .on_action(cx.listener(Self::on_new_project))
             .on_action(cx.listener(Self::on_open_project))
+            .on_action(cx.listener(Self::on_compose_song))
             .on_action(cx.listener(Self::on_save_project))
             .on_action(cx.listener(Self::on_save_project_as))
             .on_action(cx.listener(Self::on_import_audio))
@@ -459,6 +460,15 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.open_project(window, cx);
+    }
+
+    fn on_compose_song(
+        &mut self,
+        _: &actions::ComposeSong,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.compose_from_spec(window, cx);
     }
 
     fn on_save_project(

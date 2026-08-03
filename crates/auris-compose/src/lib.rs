@@ -12,3 +12,6 @@ pub mod theory;
 
 pub use render::{ClipDraft, Composition, TrackDraft, compose};
 pub use spec::{Mood, PartSpec, Role, SectionSpec, SongSpec, SpecError};
+
+/// File extension of a song specification, for a file-picker filter.
+pub const SPEC_EXTENSION: &str = "asong";
