@@ -513,7 +513,11 @@ fn comp(
     // which notes of the chord it chooses to sound.
     let mut choose = bar_stream(settings, frame, part, section, "register", 0);
     let register = (choose.below(3) as i32 - 1) * OCTAVE;
-    let voicing_variant = choose.below(3);
+    // How many notes of the chord sound, weighted by how busy the part was asked to be. This is
+    // the whole of what the density dial can reach on a pad, which holds one chord and has no
+    // rhythm to thin or thicken.
+    let busy = density(settings, part, section);
+    let voicing_variant = choose.weighted(&[1.0, 0.2 + (1.0 - busy) * 1.8, 0.2 + busy * 1.8]);
 
     for event in &section.events {
         // Voiced upward from a floor, so a ninth sounds an octave and a tone above the root
@@ -577,15 +581,21 @@ fn comp(
         let figure = if held {
             CompFigure::Held
         } else {
+            // Weighted by how busy the part was asked to be, so the density dial reaches a part
+            // that plays figures rather than counting notes: a sparse setting reaches for the
+            // held chord, a busy one for the offbeats. Every figure keeps some weight, because a
+            // dial that forbids a choice outright makes every bar the same again.
+            let busy = density(settings, part, section);
             let mut rng = bar_stream(settings, frame, part, section, "comp", bar);
-            *rng.pick(&[
-                CompFigure::Beats,
-                CompFigure::Beats,
-                CompFigure::Offbeats,
-                CompFigure::Charleston,
+            const FIGURES: [CompFigure; 4] = [
                 CompFigure::Held,
-            ])
-            .unwrap_or(&CompFigure::Beats)
+                CompFigure::Beats,
+                CompFigure::Charleston,
+                CompFigure::Offbeats,
+            ];
+            FIGURES[rng
+                .weighted(&[0.2 + (1.0 - busy) * 2.0, 1.0, 0.2 + busy, 0.2 + busy * 1.6])
+                .min(FIGURES.len() - 1)]
         };
 
         let onsets: Vec<usize> = if figure == CompFigure::Held {
@@ -657,7 +667,17 @@ fn arp(
 ) -> Vec<Draft> {
     let (low, high) = part.range();
     let grid = frame.grid;
-    let step_length = grid.step_ticks() * 2;
+    // How fast the figure runs. An arpeggio's density is the rate it climbs at, not how many of
+    // its notes are dropped — dropping them would leave a broken chord with holes in it.
+    let busy = density(settings, part, section);
+    let step_length = grid.step_ticks()
+        * if busy > 0.66 {
+            1
+        } else if busy > 0.33 {
+            2
+        } else {
+            4
+        };
     let mut notes = Vec::new();
     let mut rng = Rng::stream(
         frame.seed,
@@ -758,16 +778,19 @@ fn bass(
         // Which line to play over this chord, drawn from the section's own stream so a repeat
         // plays the same line and a different seed plays a different one.
         let bar = grid.step_of(event.start) / grid.steps_per_bar().max(1);
+        let busy = density(settings, part, section);
         let mut choose = bar_stream(settings, frame, part, section, "figure", bar);
-        let figure = *choose
-            .pick(&[
-                BassFigure::Root,
-                BassFigure::Fifth,
-                BassFigure::Fifth,
-                BassFigure::Octave,
-                BassFigure::Approach,
-            ])
-            .unwrap_or(&BassFigure::Fifth);
+        const FIGURES: [BassFigure; 4] = [
+            BassFigure::Root,
+            BassFigure::Fifth,
+            BassFigure::Approach,
+            BassFigure::Octave,
+        ];
+        // The same weighting the chords use: sparse reaches for the root alone, busy for the
+        // octave line that fills every beat.
+        let figure = FIGURES[choose
+            .weighted(&[0.2 + (1.0 - busy) * 2.0, 1.0, 0.2 + busy, 0.2 + busy * 1.6])
+            .min(FIGURES.len() - 1)];
 
         // The figure decides how busy the line is as well as what it plays. Two lines that hit
         // the same beats and differ only on the weak ones are the same line to a listener.
@@ -823,12 +846,27 @@ fn bass(
                         fold_into(root + OCTAVE, low, high)
                     }
                 }
-                // A semitone below whatever comes next, on the last hit before it. A bass player
+                // Stepping into whatever comes next, on the last hit before it. A bass player
                 // reaching for the next chord is the sound of a line going somewhere, and it is
                 // the one figure here that needs to know what the next chord is.
-                BassFigure::Approach if position == last && last > 0 => {
-                    target.map_or(fifth, |next| fold_into(next - 1, low, high))
-                }
+                //
+                // From inside the key, not a semitone below. A chromatic approach is what a jazz
+                // player would reach for, but every other note this crate writes belongs to the
+                // chord or to the key, and one part quietly breaking that would be a wrong note
+                // to anybody reading the piano roll.
+                BassFigure::Approach if position == last && last > 0 => target
+                    .and_then(|next| {
+                        (1..=3)
+                            .map(|step| next - step)
+                            .find(|pitch| {
+                                event
+                                    .key
+                                    .scale
+                                    .contains(event.key.tonic, PitchClass::new(*pitch))
+                            })
+                            .map(|pitch| fold_into(pitch, low, high))
+                    })
+                    .unwrap_or(fifth),
                 BassFigure::Approach => {
                     if strong {
                         root

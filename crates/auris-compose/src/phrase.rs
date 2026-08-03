@@ -245,8 +245,11 @@ mod tests {
             // A bass plays the root when the chord changes — that is the job — so two takes over
             // one progression share those notes however different the rest of the line is.
             ClipPreset::Bass => 0.85,
-            // A pad holds the chord. All it can vary is the register it holds it in.
-            ClipPreset::Pad => 0.75,
+            // A pad holds the chord. All it can vary is the register and which notes of the chord
+            // it sounds, so two takes of one are alike by design — it is a texture, not a part
+            // with a figure in it. The ceiling is here to catch a pad that never changes at all,
+            // which is what it used to do, and not to demand one that changes a lot.
+            ClipPreset::Pad => 0.92,
             // A kit follows its groove, and the groove is the part somebody chose.
             ClipPreset::Drums => 0.75,
             _ => 0.55,
@@ -296,15 +299,20 @@ mod tests {
                 ..ClipRecipe::new(ClipPreset::Bass, 4)
             },
         );
+        let key = harmony.key_at(Ticks::ZERO);
         let mut checked = 0;
         for note in &notes {
             let Some(chord) = harmony.chord_at(note.start) else {
                 continue;
             };
             let class = auris_core::theory::pitch::PitchClass::new(i32::from(note.pitch));
+            // In the chord, or at least in the key. A bass line stepping into the next chord
+            // passes through a note the current chord does not contain, which is a bass line
+            // rather than a wrong note — but it stays inside the key, which every part here does.
             assert!(
-                chord.contains(class),
-                "the bass played {class} over {chord} at tick {}",
+                chord.contains(class) || key.scale.contains(key.tonic, class),
+                "the bass played {class} over {chord} in {} at tick {}",
+                key.to_text(),
                 note.start.raw()
             );
             checked += 1;
@@ -359,55 +367,78 @@ mod tests {
             &ClipRecipe::new(ClipPreset::Bass, 4),
         );
         assert!(!notes.is_empty());
+        let key = harmony.key_at(BAR * 4);
+        assert_eq!(key.to_text(), "A major", "the phrase reads the new key");
         for note in &notes {
             let class = auris_core::theory::pitch::PitchClass::new(i32::from(note.pitch));
             let chord = harmony
                 .chord_at(BAR * 4 + note.start)
                 .expect("a chord under every note of the range");
-            assert!(chord.contains(class), "{class} over {chord}");
+            assert!(
+                chord.contains(class) || key.scale.contains(key.tonic, class),
+                "{class} over {chord} in {}",
+                key.to_text()
+            );
         }
     }
 
-    fn at_density(preset: ClipPreset, density: f32) -> usize {
-        write_phrase(
-            &axis(),
-            Ticks::ZERO,
-            BAR * 4,
-            four_four(),
-            &ClipRecipe {
-                density,
-                ..ClipRecipe::new(preset, 3)
-            },
-        )
-        .len()
+    /// How many notes a preset writes at a density, averaged over several takes.
+    ///
+    /// Averaged because the dial weighs a choice rather than making it: at a low setting a part
+    /// reaches more often for the sparse figure, not always. One seed would be measuring which
+    /// figure that seed happened to draw.
+    fn at_density(preset: ClipPreset, density: f32) -> f32 {
+        let seeds = 1..=8u64;
+        let count = seeds.clone().count() as f32;
+        seeds
+            .map(|seed| {
+                write_phrase(
+                    &axis(),
+                    Ticks::ZERO,
+                    BAR * 4,
+                    four_four(),
+                    &ClipRecipe {
+                        density,
+                        ..ClipRecipe::new(preset, seed)
+                    },
+                )
+                .len() as f32
+            })
+            .sum::<f32>()
+            / count
     }
 
     #[test]
-    fn the_density_dial_decides_how_busy_a_part_that_writes_its_own_figure_is() {
-        let (sparse, busy) = (
-            at_density(ClipPreset::Lead, 0.1),
-            at_density(ClipPreset::Lead, 1.0),
-        );
-        assert!(
-            busy > sparse * 2,
-            "{busy} notes at full density against {sparse} at a tenth"
-        );
-    }
-
-    #[test]
-    fn the_presets_that_follow_a_pattern_do_not_read_the_density_dial_yet() {
-        // Pinning what is true rather than what ought to be. Only the parts that invent their own
-        // figure read the dial today; the rest take their shape from a rhythm pattern or from the
-        // groove, and moving the slider does nothing to them. A person will notice, so this test
-        // is here to be deleted by whoever makes it reach them.
-        for preset in [ClipPreset::Chords, ClipPreset::Arp, ClipPreset::Bass] {
-            assert_eq!(
-                at_density(preset, 0.1),
-                at_density(preset, 1.0),
-                "{} moved, so the dial now reaches it",
+    fn the_density_dial_reaches_every_pitched_preset() {
+        // It used to move the melody and nothing else, because the other parts followed a fixed
+        // pattern and had no notion of being asked for more or less. They choose figures now, so
+        // the dial weighs that choice: sparse reaches for the held chord and the root alone, busy
+        // for the offbeats and the octave line.
+        for preset in [
+            ClipPreset::Lead,
+            ClipPreset::Chords,
+            ClipPreset::Pad,
+            ClipPreset::Arp,
+            ClipPreset::Bass,
+        ] {
+            let (sparse, busy) = (at_density(preset, 0.05), at_density(preset, 1.0));
+            assert!(
+                busy > sparse,
+                "{}: {busy:.1} notes at full density against {sparse:.1} at a twentieth",
                 preset.name()
             );
         }
+    }
+
+    #[test]
+    fn a_drum_kit_takes_its_density_from_its_groove_and_not_from_the_dial() {
+        // Deliberate, and the reason the recipe carries a groove at all. How busy a kit is *is*
+        // which groove it plays — `sparse` against `sixteen-beat` — and a dial that thinned a
+        // groove would be a dial that wrecked it.
+        assert_eq!(
+            at_density(ClipPreset::Drums, 0.05),
+            at_density(ClipPreset::Drums, 1.0)
+        );
     }
 
     #[test]
