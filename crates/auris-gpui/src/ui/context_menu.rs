@@ -206,6 +206,17 @@ pub enum MenuCommand {
         /// Catalogue name, such as `basic-rock` or `shuffle`.
         groove: &'static str,
     },
+
+    /// Put a discrete plugin parameter on one of its named positions.
+    ///
+    /// The value rather than the index: a choice parameter stores its position as the number the
+    /// plugin reads, and the menu is built where the descriptor is in hand.
+    SetParamChoice {
+        /// Which parameter of which plugin.
+        target: ParamTarget,
+        /// The position to take.
+        value: f32,
+    },
 }
 
 /// One row in a menu.
@@ -706,6 +717,7 @@ impl AurisApp {
             MenuCommand::FreezeClip(clip) => self.freeze_clip(clip),
             MenuCommand::SetClipPreset { clip, preset } => self.set_clip_preset(clip, preset),
             MenuCommand::SetClipGroove { clip, groove } => self.set_clip_groove(clip, groove),
+            MenuCommand::SetParamChoice { target, value } => self.session.set_param(target, value),
 
             MenuCommand::SetKeyAt(tick) => {
                 let current = self.project().harmony.key_at(tick).to_text();
@@ -1009,6 +1021,34 @@ impl AurisApp {
                 self.t(preset_key(preset)),
                 MenuCommand::SetClipPreset { clip, preset },
                 current == Some(preset),
+            );
+        }
+        menu
+    }
+
+    /// The named positions of a discrete parameter, aimed at one plugin's copy of it.
+    ///
+    /// A choice used to cycle on click, which is the right control for two positions and the wrong
+    /// one for eight: reaching the pulse wave meant counting, and overshooting meant going round
+    /// again. A menu names them all and ticks the one in force, which is what the preset and groove
+    /// pickers already do with the same kind of question.
+    pub(crate) fn param_choice_menu(
+        &self,
+        anchor: Point<Pixels>,
+        target: ParamTarget,
+        descriptor: &ParamDescriptor,
+    ) -> ContextMenu {
+        let current = self.session.param_value(target, descriptor);
+        let mut menu = ContextMenu::new(anchor, self.param_label(&descriptor.name));
+        for index in 0..descriptor.choices.len() {
+            let value = crate::ui::plugin_editor::discrete_value(descriptor, index);
+            menu = menu.toggle(
+                self.format_param(descriptor, value),
+                MenuCommand::SetParamChoice { target, value },
+                // Compared as positions rather than as floats: a value read back out of a saved
+                // document is whatever survived the round trip, not necessarily the integer that
+                // went in.
+                current.round() as i64 == value.round() as i64,
             );
         }
         menu

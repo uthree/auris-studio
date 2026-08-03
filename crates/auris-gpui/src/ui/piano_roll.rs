@@ -477,30 +477,26 @@ fn paint_notes(
         {
             continue;
         }
-        let is_selected = selected.contains(&index);
-        // Velocity drives brightness, so dynamics are visible without a separate lane.
-        let base = if is_selected {
-            theme.selection
-        } else {
-            theme.accent
-        };
-        let color = gpui::Hsla {
-            l: (base.l * (0.55 + 0.45 * note.velocity.clamp(0.0, 1.0))).clamp(0.0, 1.0),
-            ..base
-        };
+        // The fill says how hard the note was struck and nothing else, so the dynamics of a part
+        // are readable at a glance rather than one note at a time.
         let note_bounds = Bounds {
             origin: point(x, y + px(1.0)),
             size: size(width, px((pitch_view.row_height - 2.0).max(2.0))),
         };
-        paint::rounded_rect(window, note_bounds, Metrics::RADIUS_XS, color);
-        // A selected note gets an outline too: at low velocity the fill alone is dim enough
-        // that brightness cannot also carry the selection.
-        if is_selected {
+        paint::rounded_rect(
+            window,
+            note_bounds,
+            Metrics::RADIUS_XS,
+            theme.velocity_color(note.velocity),
+        );
+        // Which leaves selection to the outline alone. It used to share the fill, and the two
+        // cannot both have it: a selected note and a loud one would be the same rectangle.
+        if selected.contains(&index) {
             paint::rounded_outline(
                 window,
                 note_bounds,
                 Metrics::RADIUS_XS,
-                px(1.0),
+                px(1.5),
                 theme.selection,
             );
         }

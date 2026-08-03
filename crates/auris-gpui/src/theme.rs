@@ -3,7 +3,7 @@
 //! Everything visual reads from one [`Theme`] value so the palette can be retuned — or a light
 //! variant added — without hunting hex literals through the view code.
 
-use gpui::{Font, FontFallbacks, Hsla, Pixels, px, rgb};
+use gpui::{Font, FontFallbacks, Hsla, Pixels, hsla, px, rgb};
 
 /// The font every panel draws in, with fallbacks for scripts the base family has no glyphs for.
 ///
@@ -99,6 +99,10 @@ pub struct Theme {
     pub key_black: Hsla,
     /// Lane background behind a black key's row.
     pub key_row_black: Hsla,
+    /// Colour of the softest note in the piano roll. See [`Theme::velocity_color`].
+    pub velocity_soft: Hsla,
+    /// Colour of the hardest-struck note in the piano roll.
+    pub velocity_loud: Hsla,
 }
 
 impl Default for Theme {
@@ -139,6 +143,34 @@ impl Theme {
             key_white: rgb(0xd8dce6).into(),
             key_black: rgb(0x2a2e38).into(),
             key_row_black: rgb(0x171a20).into(),
+            // Named in HSL rather than as hex, unlike everything above: these two are the ends of
+            // a ramp and what matters is the path between them, which is a statement about hue
+            // and not about a pair of colours.
+            velocity_soft: hsla(0.58, 0.52, 0.55, 1.0),
+            velocity_loud: hsla(0.02, 0.68, 0.58, 1.0),
+        }
+    }
+
+    /// Colour of a note struck at `velocity`, from softest to hardest.
+    ///
+    /// Logic colours a note by how hard it was struck, and the reason is that no amount of
+    /// staring at a grid of identical rectangles says where the dynamics are. Brightness alone
+    /// was tried here first and is not enough: velocity 0.8 and velocity 1.0 differ by a few per
+    /// cent of lightness, which is invisible next to a note an octave away on a different row.
+    ///
+    /// The two ends are walked in a straight line rather than the short way round the colour
+    /// wheel, so a palette chooses which way the ramp runs by which hues it names. Blue above red
+    /// walks *down* through green and yellow, which is the heat map everybody already reads;
+    /// taking the short way would have gone up through purple instead, which reads as nothing.
+    pub fn velocity_color(&self, velocity: f32) -> Hsla {
+        let amount = velocity.clamp(0.0, 1.0);
+        let (soft, loud) = (self.velocity_soft, self.velocity_loud);
+        let between = |from: f32, to: f32| from + (to - from) * amount;
+        Hsla {
+            h: between(soft.h, loud.h),
+            s: between(soft.s, loud.s),
+            l: between(soft.l, loud.l),
+            a: between(soft.a, loud.a),
         }
     }
 
@@ -245,6 +277,38 @@ mod tests {
         assert_eq!(
             Metrics::TIMELINE_HEADER_HEIGHT,
             Metrics::RULER_HEIGHT + Metrics::HARMONY_LANE_HEIGHT
+        );
+    }
+
+    #[test]
+    fn velocity_reads_as_a_heat_map_rather_than_as_two_shades() {
+        let theme = Theme::dark();
+        let same = |left: Hsla, right: Hsla| {
+            (left.h - right.h).abs() < 1e-4
+                && (left.s - right.s).abs() < 1e-4
+                && (left.l - right.l).abs() < 1e-4
+                && (left.a - right.a).abs() < 1e-4
+        };
+        assert!(same(theme.velocity_color(0.0), theme.velocity_soft));
+        assert!(same(theme.velocity_color(1.0), theme.velocity_loud));
+        // Out of range is clamped rather than extrapolated off the end of the ramp.
+        assert!(same(theme.velocity_color(-1.0), theme.velocity_soft));
+        assert!(same(theme.velocity_color(9.0), theme.velocity_loud));
+
+        // The hue has to move, and move steadily: this is the whole difference from the
+        // brightness ramp it replaced, where velocity 0.8 and 1.0 were the same rectangle.
+        let hues: Vec<f32> = (0..=10)
+            .map(|step| theme.velocity_color(step as f32 / 10.0).h)
+            .collect();
+        for pair in hues.windows(2) {
+            assert!(pair[0] > pair[1], "the ramp doubles back: {hues:?}");
+        }
+        // Down through green and yellow, not up through purple. Both connect blue to red; only
+        // one of them says "louder".
+        let middle = theme.velocity_color(0.5).h;
+        assert!(
+            (0.15..0.45).contains(&middle),
+            "half velocity came out at hue {middle}, which is not on the warm side of green"
         );
     }
 

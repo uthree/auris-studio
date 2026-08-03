@@ -738,7 +738,10 @@ impl AurisApp {
                         },
                     )
                     .into_any_element(),
-                    ParamControl::Toggle | ParamControl::Choice => {
+                    // A toggle flips on the press, because two positions are a switch. A choice
+                    // opens the list instead: cycling through eight waveforms to reach the pulse
+                    // means counting them, and overshooting means going round again.
+                    ParamControl::Toggle => {
                         let owned = descriptor.clone();
                         button_row(
                             element_id,
@@ -751,6 +754,23 @@ impl AurisApp {
                                 let current = this.session.param_value(target, &owned);
                                 let next = next_discrete_value(&owned, current);
                                 this.session.set_param(target, next);
+                                cx.notify();
+                            }),
+                        )
+                        .into_any_element()
+                    }
+                    ParamControl::Choice => {
+                        let owned = descriptor.clone();
+                        button_row(
+                            element_id,
+                            descriptor,
+                            label,
+                            value_text,
+                            value,
+                            &theme,
+                            cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                                let menu = this.param_choice_menu(event.position(), target, &owned);
+                                this.open_menu(menu);
                                 cx.notify();
                             }),
                         )

@@ -20,7 +20,7 @@ pub enum ParamControl {
     Slider,
     /// An on/off button.
     Toggle,
-    /// A button that cycles through labelled options.
+    /// A button naming the position in force, which opens a menu of the rest.
     Choice,
 }
 
@@ -131,20 +131,38 @@ where
         )))
 }
 
+/// How many positions a discrete parameter has.
+fn discrete_steps(descriptor: &ParamDescriptor) -> u32 {
+    descriptor.steps.unwrap_or(2).max(2)
+}
+
+/// The value of a discrete parameter's `index`-th position, counting from zero.
+///
+/// A choice stores its position as a number the plugin reads, so a menu naming the positions has
+/// to be able to say what each one is worth. The arithmetic lives here rather than at the menu
+/// because [`next_discrete_value`] does the same sum and the two must not drift.
+pub fn discrete_value(descriptor: &ParamDescriptor, index: usize) -> f32 {
+    let span = descriptor.max - descriptor.min;
+    if span.abs() < f32::EPSILON {
+        return descriptor.min;
+    }
+    let quantum = span / (discrete_steps(descriptor) - 1) as f32;
+    descriptor.clamp(descriptor.min + index as f32 * quantum)
+}
+
 /// The value a choice or toggle parameter takes after one click.
 ///
 /// Wrapping at the end is what makes a two-option choice behave like a toggle and a four-option
 /// one cycle, without the caller needing to know which it has.
 pub fn next_discrete_value(descriptor: &ParamDescriptor, current: f32) -> f32 {
-    let steps = descriptor.steps.unwrap_or(2).max(2);
+    let steps = discrete_steps(descriptor);
     let span = descriptor.max - descriptor.min;
     if span.abs() < f32::EPSILON {
         return descriptor.min;
     }
     let quantum = span / (steps - 1) as f32;
     let index = ((current - descriptor.min) / quantum).round() as i64;
-    let next = (index + 1).rem_euclid(steps as i64);
-    descriptor.clamp(descriptor.min + next as f32 * quantum)
+    discrete_value(descriptor, (index + 1).rem_euclid(steps as i64) as usize)
 }
 
 /// The value after dragging `delta_pixels` horizontally from `start_value`.
@@ -260,19 +278,47 @@ mod tests {
         assert_eq!(next_discrete_value(&descriptor, 1.0), 0.0);
     }
 
+    const MODES: [std::borrow::Cow<'static, str>; 3] = [
+        std::borrow::Cow::Borrowed("A"),
+        std::borrow::Cow::Borrowed("B"),
+        std::borrow::Cow::Borrowed("C"),
+    ];
+
     #[test]
     fn a_choice_cycles_and_wraps() {
-        const MODES: [std::borrow::Cow<'static, str>; 3] = [
-            std::borrow::Cow::Borrowed("A"),
-            std::borrow::Cow::Borrowed("B"),
-            std::borrow::Cow::Borrowed("C"),
-        ];
         let descriptor =
             ParamDescriptor::new(0u32, "mode", "Mode", 0.0, 1.0, 0.0).with_choices(&MODES);
         assert_eq!(next_discrete_value(&descriptor, 0.0), 1.0);
         assert_eq!(next_discrete_value(&descriptor, 1.0), 2.0);
         assert_eq!(next_discrete_value(&descriptor, 2.0), 0.0);
         assert_eq!(control_for(&descriptor), ParamControl::Choice);
+    }
+
+    #[test]
+    fn every_named_position_has_a_value_a_menu_can_set() {
+        // The menu lists the labels and sets a number, so the two have to line up: the nth label
+        // must be the value that cycling n times from the first arrives at, or picking `C` from
+        // the list would select `B`.
+        let descriptor =
+            ParamDescriptor::new(0u32, "mode", "Mode", 0.0, 1.0, 0.0).with_choices(&MODES);
+        let mut walked = descriptor.min;
+        for index in 0..MODES.len() {
+            assert_eq!(
+                discrete_value(&descriptor, index),
+                walked,
+                "position {index}"
+            );
+            walked = next_discrete_value(&descriptor, walked);
+        }
+        assert_eq!(walked, descriptor.min, "and back to the first");
+
+        // A toggle is the same arithmetic with two positions, so its "off" and "on" are reachable
+        // the same way even though nothing offers them as a list.
+        let toggle = ParamDescriptor::toggle(0u32, "on", "On", false);
+        assert_eq!(discrete_value(&toggle, 0), 0.0);
+        assert_eq!(discrete_value(&toggle, 1), 1.0);
+        // Past the end is clamped rather than running off the top of the range.
+        assert_eq!(discrete_value(&toggle, 9), 1.0);
     }
 
     #[test]
