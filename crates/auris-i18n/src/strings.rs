@@ -253,6 +253,17 @@ strings! {
     MenuSetChordHere { en: "Chord Here…", ja: "ここにコードを…" }
     MenuRemoveChordHere { en: "Remove Chord", ja: "コードを削除" }
     MenuWriteProgression { en: "Write a Progression", ja: "コード進行を書き込む" }
+    MenuGenerateClip { en: "Write a Part Here…", ja: "ここにパートを自動生成…" }
+    MenuRerollClip { en: "Another Take", ja: "別のテイク" }
+    MenuRegenerateClip { en: "Write It Again", ja: "書き直す" }
+    MenuFreezeClip { en: "Keep This One", ja: "このテイクで確定" }
+    ClipKept { en: "kept — it will not be written again", ja: "確定しました。以降は書き換えません" }
+    PresetLead { en: "Lead", ja: "リード" }
+    PresetChords { en: "Chords", ja: "コード" }
+    PresetPad { en: "Pad", ja: "パッド" }
+    PresetArp { en: "Arpeggio", ja: "アルペジオ" }
+    PresetBass { en: "Bass", ja: "ベース" }
+    PresetDrums { en: "Drums", ja: "ドラム" }
     MenuClearHarmony { en: "Clear Chords", ja: "コードを消去" }
 
     // ------------------------------------------------------------------ rename sheet

@@ -167,6 +167,31 @@ pub enum MenuCommand {
         /// Where it ends, and the music resumes.
         to: Ticks,
     },
+
+    /// Open the list of presets, aimed at a place on a track.
+    ShowPresetPicker {
+        /// Track the clip would go on.
+        track: TrackId,
+        /// Where it would start.
+        start: Ticks,
+        /// Where to put the menu.
+        anchor: Point<Pixels>,
+    },
+    /// Write a clip from the harmony under it.
+    GenerateClip {
+        /// Track to write it on.
+        track: TrackId,
+        /// Where it starts.
+        start: Ticks,
+        /// What the clip should be.
+        preset: ClipPreset,
+    },
+    /// Write a generated clip's notes again, from the harmony as it now stands.
+    RegenerateClip(ClipId),
+    /// Write another take of a generated clip.
+    RerollClip(ClipId),
+    /// Keep a generated clip's notes and forget how they got there.
+    FreezeClip(ClipId),
 }
 
 /// One row in a menu.
@@ -632,6 +657,46 @@ impl AurisApp {
                     Err(error) => self.set_status(self.failure(Key::MenuHarmony, &error)),
                 }
             }
+            MenuCommand::ShowPresetPicker {
+                track,
+                start,
+                anchor,
+            } => {
+                let menu = self.preset_picker_menu(anchor, track, start);
+                self.open_menu(menu);
+            }
+            MenuCommand::GenerateClip {
+                track,
+                start,
+                preset,
+            } => {
+                let (start, length) = generation_range(
+                    self.project().loop_region,
+                    start,
+                    self.project().time_signature,
+                );
+                let recipe = ClipRecipe::new(preset, self.next_seed());
+                match self.session.generate_clip(track, start, length, recipe) {
+                    Ok(clip) => {
+                        self.select_clip(Some(clip));
+                        self.report_clip(preset, clip);
+                    }
+                    Err(error) => self.set_status(self.failure(Key::MenuGenerateClip, &error)),
+                }
+            }
+            MenuCommand::RegenerateClip(clip) => match self.session.regenerate_clip(clip) {
+                Ok(_) => self.report_clip_preset(clip),
+                Err(error) => self.set_status(self.failure(Key::MenuRegenerateClip, &error)),
+            },
+            MenuCommand::RerollClip(clip) => match self.session.reroll_clip(clip) {
+                Ok(_) => self.report_clip_preset(clip),
+                Err(error) => self.set_status(self.failure(Key::MenuRerollClip, &error)),
+            },
+            MenuCommand::FreezeClip(clip) => match self.session.freeze_clip(clip) {
+                Ok(()) => self.set_status(self.t(Key::ClipKept)),
+                Err(error) => self.set_status(self.failure(Key::MenuFreezeClip, &error)),
+            },
+
             MenuCommand::SetKeyAt(tick) => {
                 let current = self.project().harmony.key_at(tick).to_text();
                 let title = self.t(Key::SetKeyTitle);
@@ -733,7 +798,7 @@ impl AurisApp {
             .is_some_and(|(start, end)| playhead > start && playhead < end);
         let is_midi = self.session.midi_clip(clip).is_some();
 
-        ContextMenu::new(anchor, name)
+        let menu = ContextMenu::new(anchor, name)
             .item(self.t(Key::MenuDuplicate), MenuCommand::DuplicateClip(clip))
             .item(self.t(Key::MenuRename), MenuCommand::RenameClip(clip))
             .item(self.t(Key::MenuDelete), MenuCommand::DeleteClip(clip))
@@ -757,7 +822,8 @@ impl AurisApp {
                 is_midi,
                 self.t(Key::MenuEditInPianoRoll),
                 MenuCommand::EditClip(clip),
-            )
+            );
+        self.generated_clip_rows(menu, clip)
     }
 
     /// The menu for an empty spot in a track's lane.
@@ -776,6 +842,15 @@ impl AurisApp {
                 is_instrument,
                 self.t(Key::MenuNewClipHere),
                 MenuCommand::NewClip { track, start },
+            )
+            .item_if(
+                is_instrument,
+                self.t(Key::MenuGenerateClip),
+                MenuCommand::ShowPresetPicker {
+                    track,
+                    start,
+                    anchor,
+                },
             )
             .separator()
             .item(
@@ -864,6 +939,63 @@ impl AurisApp {
                     to: from + signature.ticks_per_bar() * bars.max(1) as i64,
                 },
             )
+    }
+
+    /// Every preset, aimed at one place on one track.
+    pub(crate) fn preset_picker_menu(
+        &self,
+        anchor: Point<Pixels>,
+        track: TrackId,
+        start: Ticks,
+    ) -> ContextMenu {
+        let mut menu = ContextMenu::new(anchor, self.t(Key::MenuGenerateClip));
+        for preset in ClipPreset::ALL {
+            menu = menu.item(
+                self.t(preset_key(preset)),
+                MenuCommand::GenerateClip {
+                    track,
+                    start,
+                    preset,
+                },
+            );
+        }
+        menu
+    }
+
+    /// The rows a generated clip adds to its own menu.
+    fn generated_clip_rows(&self, menu: ContextMenu, clip: ClipId) -> ContextMenu {
+        generated_clip_rows(
+            menu,
+            clip,
+            self.session.clip_recipe(clip).is_some(),
+            self.t(Key::MenuRerollClip),
+            self.t(Key::MenuRegenerateClip),
+            self.t(Key::MenuFreezeClip),
+        )
+    }
+
+    /// A seed nobody has used yet, for the next clip that needs one.
+    fn next_seed(&self) -> u64 {
+        next_seed(self.project())
+    }
+
+    /// Says what was written, in the words the preset picker used.
+    fn report_clip(&mut self, preset: ClipPreset, clip: ClipId) {
+        let notes = self
+            .session
+            .project()
+            .midi_clip(clip)
+            .map_or(0, |(_, midi)| midi.notes.len());
+        let name = self.t(preset_key(preset)).to_string();
+        self.set_status(messages::clip_written(self.language(), &name, notes));
+    }
+
+    /// The same, for a clip that already knows which preset it is.
+    fn report_clip_preset(&mut self, clip: ClipId) {
+        let Some(preset) = self.session.clip_recipe(clip).map(|recipe| recipe.preset) else {
+            return;
+        };
+        self.report_clip(preset, clip);
     }
 
     /// Every progression the composer knows by name, aimed at one position.
@@ -1069,6 +1201,77 @@ impl AurisApp {
     }
 }
 
+/// The name a preset goes by on screen.
+fn preset_key(preset: ClipPreset) -> Key {
+    match preset {
+        ClipPreset::Lead => Key::PresetLead,
+        ClipPreset::Chords => Key::PresetChords,
+        ClipPreset::Pad => Key::PresetPad,
+        ClipPreset::Arp => Key::PresetArp,
+        ClipPreset::Bass => Key::PresetBass,
+        ClipPreset::Drums => Key::PresetDrums,
+    }
+}
+
+/// Adds the rows that only mean something on a clip the composer wrote.
+///
+/// Nothing is added to a clip somebody played: every one of these commands would refuse it, and a
+/// row that can only say no is worse than no row at all.
+///
+/// A free function taking its own labels, rather than a method reaching into the application, so
+/// that what it decides can be checked without a window — which is the whole reason a menu is
+/// plain data here.
+fn generated_clip_rows(
+    menu: ContextMenu,
+    clip: ClipId,
+    generated: bool,
+    reroll: &str,
+    regenerate: &str,
+    freeze: &str,
+) -> ContextMenu {
+    if !generated {
+        return menu;
+    }
+    menu.separator()
+        .item(reroll.to_string(), MenuCommand::RerollClip(clip))
+        .item(regenerate.to_string(), MenuCommand::RegenerateClip(clip))
+        .item(freeze.to_string(), MenuCommand::FreezeClip(clip))
+}
+
+/// A seed no clip in the project is using, for the next one that needs one.
+///
+/// Counted up from the highest in use rather than drawn at random, so a session writes the same
+/// run of clips twice and a phrase somebody wants back can be reached again.
+fn next_seed(project: &Project) -> u64 {
+    project
+        .tracks
+        .iter()
+        .filter_map(|track| track.kind.as_instrument())
+        .flat_map(|track| &track.clips)
+        .filter_map(|clip| clip.recipe.as_ref())
+        .map(|recipe| recipe.seed)
+        .max()
+        .map_or(1, |highest| highest.wrapping_add(1))
+}
+
+/// Where a generated clip goes, and how long it is.
+///
+/// The cycle region when there is one, for the same reason a progression uses it: setting the
+/// cycle over the part of the song being worked on and then acting on it is how the rest of the
+/// application already behaves. Four bars from the pointer otherwise, which is enough of a phrase
+/// to judge and short enough to throw away.
+fn generation_range(
+    loop_region: Option<(Ticks, Ticks)>,
+    tick: Ticks,
+    signature: TimeSignature,
+) -> (Ticks, Ticks) {
+    let bar = signature.ticks_per_bar();
+    match loop_region {
+        Some((from, to)) if to > from => (from.max_zero(), to - from),
+        _ => (tick.max_zero(), bar * 4),
+    }
+}
+
 /// Where a progression goes, and across how many bars.
 ///
 /// The cycle region when there is one, because "set the cycle over the chorus, then act on it" is
@@ -1094,6 +1297,90 @@ fn progression_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The commands a menu offers, ignoring its labels and its separators.
+    fn commands(menu: &ContextMenu) -> Vec<MenuCommand> {
+        menu.entries
+            .iter()
+            .filter_map(|entry| match entry {
+                MenuEntry::Item(item) => Some(item.command.clone()),
+                MenuEntry::Separator => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn only_a_clip_the_composer_wrote_is_offered_another_take() {
+        let clip = ClipId(7);
+        let base = || ContextMenu::new(point(px(0.0), px(0.0)), "Clip");
+
+        let played = generated_clip_rows(base(), clip, false, "again", "rewrite", "keep");
+        assert!(
+            commands(&played).is_empty(),
+            "a clip somebody played was offered a command that would refuse it"
+        );
+
+        let written = generated_clip_rows(base(), clip, true, "again", "rewrite", "keep");
+        assert_eq!(
+            commands(&written),
+            vec![
+                MenuCommand::RerollClip(clip),
+                MenuCommand::RegenerateClip(clip),
+                MenuCommand::FreezeClip(clip),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_new_clip_takes_a_seed_no_other_clip_is_using() {
+        let mut project = Project::new("Song", 48_000.0);
+        assert_eq!(
+            next_seed(&project),
+            1,
+            "the first clip has to start somewhere"
+        );
+
+        let track = project.add_instrument_track("Keys", "auris.synth.chiptune");
+        let clip = project
+            .add_midi_clip(track, "One", Ticks::ZERO, Ticks(3840))
+            .unwrap();
+        if let Some(midi) = project.midi_clip_mut(clip) {
+            midi.recipe = Some(ClipRecipe::new(ClipPreset::Lead, 41));
+        }
+        assert_eq!(next_seed(&project), 42);
+
+        // A clip somebody played holds no seed and must not be counted as holding zero.
+        let played = project
+            .add_midi_clip(track, "Two", Ticks(3840), Ticks(3840))
+            .unwrap();
+        assert!(project.midi_clip(played).unwrap().1.recipe.is_none());
+        assert_eq!(next_seed(&project), 42);
+    }
+
+    #[test]
+    fn a_generated_clip_goes_where_the_cycle_is_when_there_is_one() {
+        let four_four = TimeSignature::new(4, 4);
+        let bar = four_four.ticks_per_bar();
+
+        // No cycle: four bars from where the pointer was — enough of a phrase to judge, and
+        // short enough to throw away.
+        assert_eq!(
+            generation_range(None, bar * 2, four_four),
+            (bar * 2, bar * 4)
+        );
+
+        // A cycle wins, and the clip is exactly as long as it.
+        assert_eq!(
+            generation_range(Some((bar * 8, bar * 16)), bar, four_four),
+            (bar * 8, bar * 8)
+        );
+
+        // An empty cycle is not a range, so the pointer decides again.
+        assert_eq!(
+            generation_range(Some((bar * 4, bar * 4)), Ticks::ZERO, four_four),
+            (Ticks::ZERO, bar * 4)
+        );
+    }
 
     #[test]
     fn a_progression_goes_where_the_cycle_is_when_there_is_one() {

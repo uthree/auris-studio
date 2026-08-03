@@ -501,6 +501,7 @@ impl AurisApp {
                             start: clip.start,
                             length: clip.length,
                             muted: clip.muted,
+                            generated: clip.is_generated(),
                             content: ClipContent::Notes(clip.notes.clone()),
                         })
                         .collect(),
@@ -515,6 +516,8 @@ impl AurisApp {
                                 start: clip.start,
                                 length,
                                 muted: clip.muted,
+                                // Audio is recorded or imported; nothing writes it.
+                                generated: false,
                                 content: ClipContent::Waveform {
                                     source: clip.source,
                                     offset_frames: clip.offset_frames,
@@ -770,6 +773,8 @@ struct ClipPaint {
     start: Ticks,
     length: Ticks,
     muted: bool,
+    /// Written by the composer rather than played, which the clip says on its own face.
+    generated: bool,
     content: ClipContent,
 }
 
@@ -835,6 +840,24 @@ fn paint_lane(
         // at a glance on a lane packed with clips.
         if selected {
             paint::rounded_outline(window, clip_bounds, radius, px(1.5), theme.selection);
+        }
+
+        // A clip the composer wrote says so on its own face, because what can be done to it
+        // differs: it can be written again, and it will be if somebody asks.
+        if clip.generated {
+            let dot = px(5.0);
+            paint::rounded_rect(
+                window,
+                Bounds {
+                    origin: point(
+                        clip_bounds.origin.x + clip_bounds.size.width - dot - px(4.0),
+                        clip_bounds.origin.y + (TITLE_HEIGHT - dot) / 2.0,
+                    ),
+                    size: size(dot, dot),
+                },
+                dot / 2.0,
+                theme.text_on_accent,
+            );
         }
 
         let content_bounds = Bounds {

@@ -269,6 +269,12 @@ messages! {
         ja: "`{name}` のコード {chords} 個を書き込みました"
     }
 
+    /// A part was written from the harmony under it.
+    fn clip_written(preset: &str, notes: usize) {
+        en: "{preset}: {notes} note(s) written",
+        ja: "{preset}: {notes} 音を書きました"
+    }
+
     /// Title of the harmony lane's menu, naming the bar it was opened over.
     fn harmony_at_bar(bar: u32) {
         en: "Harmony · bar {bar}",
