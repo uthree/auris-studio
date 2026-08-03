@@ -8,6 +8,7 @@ use gpui::{AnyElement, Axis, IntoElement, Window, div, prelude::*, px};
 use crate::app::AurisApp;
 use crate::theme::Metrics;
 use crate::ui::icons::Icon;
+use crate::ui::inspector::insert_element_key;
 use crate::ui::widgets::{ButtonStyle, button, db_to_meter_position, icon_label, level_meter};
 
 /// Width of one channel strip.
@@ -97,11 +98,10 @@ impl AurisApp {
 
         let effect_rows: Vec<AnyElement> = effects
             .into_iter()
-            .enumerate()
-            .map(|(slot_index, (slot_id, effect_id, enabled))| {
+            .map(|(slot_id, effect_id, enabled)| {
                 let label = self.plugin_label(&effect_id);
                 self.effect_row(
-                    ("mixer-fx", index * 64 + slot_index),
+                    ("mixer-fx", insert_element_key(Some(slot_id))),
                     label,
                     Some(track_id),
                     slot_id,
@@ -283,10 +283,16 @@ impl AurisApp {
 
         let effect_rows: Vec<AnyElement> = effects
             .into_iter()
-            .enumerate()
-            .map(|(slot_index, (slot_id, effect_id, enabled))| {
+            .map(|(slot_id, effect_id, enabled)| {
                 let label = self.plugin_label(&effect_id);
-                self.effect_row(("master-fx", slot_index), label, None, slot_id, enabled, cx)
+                self.effect_row(
+                    ("master-fx", insert_element_key(Some(slot_id))),
+                    label,
+                    None,
+                    slot_id,
+                    enabled,
+                    cx,
+                )
             })
             .collect();
 
@@ -327,11 +333,12 @@ impl AurisApp {
                 Icon::Plus,
                 self.t(Key::Effect),
                 &theme,
-                cx.listener(|this, _, _, cx| {
-                    // The library adds to the selected track, so clear the selection first to
-                    // make the next pick land on the master bus.
-                    this.selected_track = None;
-                    this.panels.library_visible = true;
+                cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
+                    // Aimed at the master bus by name. This used to clear `selected_track` so
+                    // that whatever was picked next would land there, which silently deselected
+                    // whatever the user was working on.
+                    let menu = this.effect_picker_menu(event.position(), None);
+                    this.open_menu(menu);
                     cx.notify();
                 }),
             ))

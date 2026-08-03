@@ -114,9 +114,19 @@ pub enum MenuCommand {
     /// Remove an effect.
     RemoveEffect(EffectSlotId),
     /// Show the plugin browser, aimed at a chain.
-    BrowsePlugins {
-        /// Track to add to, or `None` for the master bus.
+    /// Open the list of effects, aimed at one particular strip.
+    ShowEffectPicker {
+        /// Strip to add to, or `None` for the master bus.
         track: Option<TrackId>,
+        /// Where to put the menu.
+        at: Point<Pixels>,
+    },
+    /// Add one effect to one strip.
+    AddEffect {
+        /// Strip to add to, or `None` for the master bus.
+        track: Option<TrackId>,
+        /// Registry id of the effect.
+        effect_id: String,
     },
 
     /// Move the cycle region's start.
@@ -566,11 +576,11 @@ impl AurisApp {
             MenuCommand::ToggleEffect { track, slot } => self.toggle_effect(track, slot),
             MenuCommand::MoveEffect { track, slot, delta } => self.move_effect(track, slot, delta),
             MenuCommand::RemoveEffect(slot) => self.remove_effect(slot),
-            MenuCommand::BrowsePlugins { track } => {
-                // The library adds to whatever is selected, so aim the selection first.
-                self.selected_track = track;
-                self.panels.library_visible = true;
+            MenuCommand::ShowEffectPicker { track, at } => {
+                let menu = self.effect_picker_menu(at, track);
+                self.open_menu(menu);
             }
+            MenuCommand::AddEffect { track, effect_id } => self.add_effect_to(track, &effect_id),
 
             MenuCommand::SetLoopStart(tick) => {
                 let end = self
@@ -624,7 +634,10 @@ impl AurisApp {
             )
             .item(
                 self.t(Key::MenuAddEffect),
-                MenuCommand::BrowsePlugins { track: Some(track) },
+                MenuCommand::ShowEffectPicker {
+                    track: Some(track),
+                    at: anchor,
+                },
             )
             .separator()
             .item(
@@ -845,8 +858,40 @@ impl AurisApp {
             .separator()
             .item(
                 self.t(Key::MenuAddEffect),
-                MenuCommand::BrowsePlugins { track },
+                MenuCommand::ShowEffectPicker { track, at: anchor },
             )
+    }
+
+    /// Every effect the registry knows, aimed at one particular strip.
+    ///
+    /// Aimed, rather than added "to whatever is selected". Two call sites used to reach the
+    /// browser by moving the selection first — a track menu set it so the pick would land on that
+    /// track, and the mixer's master strip *cleared* it so the pick would land on master. The
+    /// second silently deselected whatever the user was working on, and the two pulled in
+    /// opposite directions on the same piece of state. Carrying the target in the command
+    /// removes the question.
+    pub(crate) fn effect_picker_menu(
+        &self,
+        anchor: Point<Pixels>,
+        track: Option<TrackId>,
+    ) -> ContextMenu {
+        let effects: Vec<(String, String)> = self
+            .registry()
+            .effects()
+            .map(|descriptor| (descriptor.id.to_string(), descriptor.name.to_string()))
+            .collect();
+        let mut menu = ContextMenu::new(anchor, self.t(Key::MenuAddEffect));
+        for (id, name) in effects {
+            let label = crate::ui::inspector::audio_name(self, &name);
+            menu = menu.item(
+                label,
+                MenuCommand::AddEffect {
+                    track,
+                    effect_id: id,
+                },
+            );
+        }
+        menu
     }
 
     /// The clips a menu command should act on.

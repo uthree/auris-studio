@@ -87,11 +87,6 @@ strings! {
         en: "Select an instrument track to load one",
         ja: "音源トラックを選択すると読み込めます"
     }
-    Add { en: "Add", ja: "追加" }
-    NoEffects {
-        en: "No effects — add one from the Library",
-        ja: "エフェクトなし — ライブラリから追加できます"
-    }
     BrowserInstruments {
         en: "Instruments — click to set on the selected track",
         ja: "音源 — クリックで選択中のトラックに設定します"

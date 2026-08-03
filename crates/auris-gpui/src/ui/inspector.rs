@@ -17,6 +17,52 @@ use crate::ui::plugin_editor::{
 };
 use crate::ui::widgets::{chain_button, divider};
 
+/// One row of a channel strip's insert list.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Insert {
+    /// A slot holding an effect.
+    Filled {
+        /// Which slot in the strip's chain.
+        slot: EffectSlotId,
+        /// Registry id of the effect in it.
+        effect_id: String,
+        /// Whether it is in the signal path.
+        enabled: bool,
+    },
+    /// The empty slot at the end, which adds one.
+    Empty,
+}
+
+/// A chain's slots, followed by exactly one empty one.
+///
+/// This is both Logic's shape and the only shape the document can express. `Session::add_effect`
+/// appends, `move_effect` clamps within the existing length, and a strip's effects are a plain
+/// `Vec` — so there is no such thing as slot 4 empty while slot 5 is full, and no cap on how many
+/// there may be. The fixed slots stay a view-side idea, because nothing at or below
+/// `auris-session` may be shaped by one.
+pub(crate) fn insert_rows(chain: &[(EffectSlotId, String, bool)]) -> Vec<Insert> {
+    let mut rows: Vec<Insert> = chain
+        .iter()
+        .map(|(slot, effect_id, enabled)| Insert::Filled {
+            slot: *slot,
+            effect_id: effect_id.clone(),
+            enabled: *enabled,
+        })
+        .collect();
+    rows.push(Insert::Empty);
+    rows
+}
+
+/// A stable per-slot element key, so gpui can track hover state across frames.
+///
+/// Keyed by the slot's own id rather than by its position. The mixer used to pack a strip index
+/// and a slot index into `index * 64 + slot_index`, which collided past sixty-four effects on a
+/// strip and moved every key in a chain whenever it was reordered — worth retiring now that a
+/// third surface draws the same chain. Zero is reserved for the empty slot, which has no id.
+pub(crate) fn insert_element_key(slot: Option<EffectSlotId>) -> usize {
+    slot.map_or(0, |id| id.0 as usize + 1)
+}
+
 /// The title strip at the top of a side panel.
 ///
 /// Shared by the library and the inspector so the two line up: they sit either side of the
@@ -181,34 +227,43 @@ impl AurisApp {
                     div()
                         .text_xs()
                         .text_color(theme.text_muted)
-                        .child(self.t(Key::Effects)),
+                        .child(self.t(Key::Inserts)),
                 )
-                .child(crate::ui::widgets::icon_label(
-                    "add-effect",
-                    Icon::Plus,
-                    self.t(Key::Add),
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        // Reveal the library rather than switch a tab: the list it opens is on
-                        // the other side of the window now, and it may be closed.
-                        this.panels.library_visible = true;
-                        cx.notify();
-                    }),
-                ))
                 .into_any_element(),
         );
 
-        if effect_slots.is_empty() {
-            sections.push(
-                div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(self.t(Key::NoEffects))
-                    .into_any_element(),
-            );
-        }
-
-        for (slot_index, (slot_id, effect_id, enabled)) in effect_slots.into_iter().enumerate() {
+        // Logic's shape: the slots that are filled, then one empty one that adds another. The
+        // empty slot replaces both the old "+ Add" button in this heading and the "No effects"
+        // line that used to stand in for an empty chain — one affordance in the place the next
+        // effect will actually appear, rather than two somewhere else.
+        let rows = insert_rows(&effect_slots);
+        for row in rows {
+            let (slot_id, effect_id, enabled) = match row {
+                Insert::Filled {
+                    slot,
+                    effect_id,
+                    enabled,
+                } => (slot, effect_id, enabled),
+                Insert::Empty => {
+                    sections.push(
+                        crate::ui::widgets::icon_label(
+                            ("insert-empty", insert_element_key(None)),
+                            Icon::Plus,
+                            self.t(Key::Effect),
+                            &theme,
+                            cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                                let menu =
+                                    this.effect_picker_menu(event.position(), Some(track_id));
+                                this.open_menu(menu);
+                                cx.notify();
+                            }),
+                        )
+                        .into_any_element(),
+                    );
+                    continue;
+                }
+            };
+            let slot_index = insert_element_key(Some(slot_id));
             let name = self.plugin_label(&effect_id);
             let descriptors = self.session.param_descriptors(&effect_id);
             let controls = self.param_controls(
@@ -570,7 +625,16 @@ impl AurisApp {
     /// called from had covered the strip being edited; a library that never covered it needs no
     /// such correction, and the result is simply visible where it always was.
     pub(crate) fn add_effect_to_selection(&mut self, effect_id: &str) {
-        if let Err(error) = self.session.add_effect(self.selected_track, effect_id) {
+        self.add_effect_to(self.selected_track, effect_id);
+    }
+
+    /// Adds an effect to one named strip, or to the master bus when `track` is `None`.
+    ///
+    /// The explicit target is what an insert slot needs: a slot on the master strip and a slot on
+    /// a track strip can be on screen at once, and neither should have to move the selection to
+    /// say which one it is.
+    pub(crate) fn add_effect_to(&mut self, track: Option<TrackId>, effect_id: &str) {
+        if let Err(error) = self.session.add_effect(track, effect_id) {
             self.set_status(self.failure(Key::MenuAddEffect, &error));
         }
     }
@@ -603,7 +667,7 @@ impl AurisApp {
 }
 
 /// A plugin's display name, translated where the term is known.
-fn audio_name(app: &AurisApp, english: &str) -> String {
+pub(crate) fn audio_name(app: &AurisApp, english: &str) -> String {
     auris_i18n::audio::plugin_name(english, app.language()).to_string()
 }
 
@@ -623,6 +687,59 @@ fn target_element_key(target: ParamTarget, param: ParamId) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chain_always_ends_in_one_empty_insert() {
+        // The whole insert-slot model as numbers: an empty strip is one empty slot, and a chain
+        // is its effects in order with exactly one empty slot after them. Anything else and the
+        // strip either offers no way to add an effect or offers several.
+        assert_eq!(insert_rows(&[]), vec![Insert::Empty]);
+
+        let chain = vec![
+            (EffectSlotId(7), "a".to_string(), true),
+            (EffectSlotId(3), "b".to_string(), false),
+        ];
+        let rows = insert_rows(&chain);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(
+            rows[0],
+            Insert::Filled {
+                slot: EffectSlotId(7),
+                effect_id: "a".to_string(),
+                enabled: true
+            }
+        );
+        assert_eq!(
+            rows[1],
+            Insert::Filled {
+                slot: EffectSlotId(3),
+                effect_id: "b".to_string(),
+                enabled: false
+            }
+        );
+        assert_eq!(rows[2], Insert::Empty);
+    }
+
+    #[test]
+    fn every_insert_row_gets_its_own_element_key() {
+        // Zero belongs to the empty slot, which is why the filled ones are offset by one — slot
+        // id 0 is a real slot and would otherwise share a key with it.
+        assert_eq!(insert_element_key(None), 0);
+        assert_ne!(
+            insert_element_key(None),
+            insert_element_key(Some(EffectSlotId(0)))
+        );
+        assert_ne!(
+            insert_element_key(Some(EffectSlotId(1))),
+            insert_element_key(Some(EffectSlotId(2)))
+        );
+        // The packing this replaces collided here: strip 1 slot 0 and strip 0 slot 64 both came
+        // out as 64. Keyed by the slot's own id, sixty-five effects on one strip stay distinct.
+        assert_ne!(
+            insert_element_key(Some(EffectSlotId(64))),
+            insert_element_key(Some(EffectSlotId(0)))
+        );
+    }
 
     #[test]
     fn element_keys_differ_between_targets() {
