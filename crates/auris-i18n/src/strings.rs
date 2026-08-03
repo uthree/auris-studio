@@ -247,10 +247,19 @@ strings! {
     MenuMoveUp { en: "Move Up", ja: "上へ移動" }
     MenuMoveDown { en: "Move Down", ja: "下へ移動" }
     MenuRemove { en: "Remove", ja: "削除" }
+    MenuHarmony { en: "Harmony", ja: "コード進行" }
+    MenuSetKeyHere { en: "Key Here…", ja: "ここから調を…" }
+    MenuRemoveKeyHere { en: "Remove Key Change", ja: "転調を取り消す" }
+    MenuSetChordHere { en: "Chord Here…", ja: "ここにコードを…" }
+    MenuRemoveChordHere { en: "Remove Chord", ja: "コードを削除" }
+    MenuWriteProgression { en: "Write a Progression", ja: "コード進行を書き込む" }
+    MenuClearHarmony { en: "Clear Chords", ja: "コードを消去" }
 
     // ------------------------------------------------------------------ rename sheet
     RenameTrackTitle { en: "Rename track", ja: "トラック名の変更" }
     RenameClipTitle { en: "Rename clip", ja: "クリップ名の変更" }
+    SetKeyTitle { en: "Key from here", ja: "ここからの調" }
+    SetChordTitle { en: "Chord from here", ja: "ここからのコード" }
     Cancel { en: "Cancel", ja: "キャンセル" }
     Rename { en: "Rename", ja: "変更" }
     NameCannotBeEmpty { en: "Name cannot be empty", ja: "名前を空にはできません" }

@@ -137,6 +137,36 @@ pub enum MenuCommand {
     ToggleLoop,
     /// Remove the cycle region.
     ClearLoop,
+
+    /// Open the list of named progressions, aimed at a position.
+    ShowProgressionPicker {
+        /// Where the first bar of the chosen progression goes.
+        at: Ticks,
+        /// Where to put the menu.
+        anchor: Point<Pixels>,
+    },
+    /// Write a catalogue progression onto the timeline.
+    StampProgression {
+        /// Catalogue name, such as `axis` or `marusa`.
+        name: &'static str,
+        /// Where the first bar of it goes.
+        at: Ticks,
+    },
+    /// Type the key that takes effect at a position.
+    SetKeyAt(Ticks),
+    /// Remove the key change at a position.
+    RemoveKeyAt(Ticks),
+    /// Type the chord that sounds from a position.
+    SetChordAt(Ticks),
+    /// Remove the chord change at a position.
+    RemoveChordAt(Ticks),
+    /// Empty the chords over a range.
+    ClearHarmony {
+        /// Where the cleared stretch begins.
+        from: Ticks,
+        /// Where it ends, and the music resumes.
+        to: Ticks,
+    },
 }
 
 /// One row in a menu.
@@ -582,6 +612,45 @@ impl AurisApp {
             }
             MenuCommand::AddEffect { track, effect_id } => self.add_effect_to(track, &effect_id),
 
+            MenuCommand::ShowProgressionPicker { at, anchor } => {
+                let menu = self.progression_picker_menu(anchor, at);
+                self.open_menu(menu);
+            }
+            MenuCommand::StampProgression { name, at } => {
+                let bars = progression_target(
+                    self.project().loop_region,
+                    at,
+                    self.project().time_signature,
+                )
+                .1;
+                match self.session.stamp_named_progression(name, at, bars) {
+                    Ok(chords) => self.set_status(messages::progression_written(
+                        self.language(),
+                        name,
+                        chords,
+                    )),
+                    Err(error) => self.set_status(self.failure(Key::MenuHarmony, &error)),
+                }
+            }
+            MenuCommand::SetKeyAt(tick) => {
+                let current = self.project().harmony.key_at(tick).to_text();
+                let title = self.t(Key::SetKeyTitle);
+                self.open_prompt(Prompt::new(title, PromptTarget::Key(tick), current));
+            }
+            MenuCommand::RemoveKeyAt(tick) => self.session.remove_key(tick),
+            MenuCommand::SetChordAt(tick) => {
+                let current = self
+                    .project()
+                    .harmony
+                    .numeral_at(tick)
+                    .map(|numeral| numeral.to_string())
+                    .unwrap_or_default();
+                let title = self.t(Key::SetChordTitle);
+                self.open_prompt(Prompt::new(title, PromptTarget::Chord(tick), current));
+            }
+            MenuCommand::RemoveChordAt(tick) => self.session.remove_chord(tick),
+            MenuCommand::ClearHarmony { from, to } => self.session.clear_harmony(from, to),
+
             MenuCommand::SetLoopStart(tick) => {
                 let end = self
                     .project()
@@ -755,6 +824,61 @@ impl AurisApp {
                 self.t(Key::MenuClearCycle),
                 MenuCommand::ClearLoop,
             )
+    }
+
+    /// The menu for the harmony lane, at the bar the pointer is over.
+    ///
+    /// The range a progression is written across is the cycle region when there is one, and the
+    /// chart's own length otherwise. That is the rule everywhere else in the application — set the
+    /// cycle over the chorus, then act on it — and it saves inventing a "how many bars" field
+    /// nothing else would use.
+    pub(crate) fn harmony_menu(&self, anchor: Point<Pixels>, tick: Ticks) -> ContextMenu {
+        let signature = self.project().time_signature;
+        let bar = signature.bar_of(tick);
+        let (from, bars) = progression_target(self.project().loop_region, tick, signature);
+        let harmony = &self.project().harmony;
+
+        ContextMenu::new(anchor, messages::harmony_at_bar(self.language(), bar))
+            .item(self.t(Key::MenuSetChordHere), MenuCommand::SetChordAt(tick))
+            .item_if(
+                harmony.chords.points().iter().any(|at| at.tick == tick),
+                self.t(Key::MenuRemoveChordHere),
+                MenuCommand::RemoveChordAt(tick),
+            )
+            .item(self.t(Key::MenuSetKeyHere), MenuCommand::SetKeyAt(tick))
+            .item_if(
+                tick != Ticks::ZERO && harmony.keys.points().iter().any(|at| at.tick == tick),
+                self.t(Key::MenuRemoveKeyHere),
+                MenuCommand::RemoveKeyAt(tick),
+            )
+            .separator()
+            .item(
+                self.t(Key::MenuWriteProgression),
+                MenuCommand::ShowProgressionPicker { at: from, anchor },
+            )
+            .item_if(
+                !harmony.is_empty(),
+                self.t(Key::MenuClearHarmony),
+                MenuCommand::ClearHarmony {
+                    from,
+                    to: from + signature.ticks_per_bar() * bars.max(1) as i64,
+                },
+            )
+    }
+
+    /// Every progression the composer knows by name, aimed at one position.
+    pub(crate) fn progression_picker_menu(&self, anchor: Point<Pixels>, at: Ticks) -> ContextMenu {
+        let mut menu = ContextMenu::new(anchor, self.t(Key::MenuWriteProgression));
+        for entry in progression_catalog() {
+            menu = menu.item(
+                entry.name,
+                MenuCommand::StampProgression {
+                    name: entry.name,
+                    at,
+                },
+            );
+        }
+        menu
     }
 
     /// The menu for a note, or for empty space in the piano roll.
@@ -945,9 +1069,62 @@ impl AurisApp {
     }
 }
 
+/// Where a progression goes, and across how many bars.
+///
+/// The cycle region when there is one, because "set the cycle over the chorus, then act on it" is
+/// how the rest of the application already works, and it saves inventing a how-many-bars field
+/// that nothing else would use. Otherwise it starts where the pointer was, and zero bars means
+/// the chart's own length — which is what [`Session::stamp_named_progression`] reads it as.
+fn progression_target(
+    loop_region: Option<(Ticks, Ticks)>,
+    tick: Ticks,
+    signature: TimeSignature,
+) -> (Ticks, usize) {
+    match loop_region {
+        Some((start, end)) if end > start => {
+            let bars = (end - start).raw() / signature.ticks_per_bar().raw().max(1);
+            // A cycle shorter than a bar still means one bar: the user asked for *there*, and
+            // writing nothing would look like the command had failed.
+            (start.max_zero(), bars.max(1) as usize)
+        }
+        _ => (tick, 0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_progression_goes_where_the_cycle_is_when_there_is_one() {
+        let four_four = TimeSignature::new(4, 4);
+        let bar = four_four.ticks_per_bar();
+
+        // No cycle: it starts where the pointer was, for the chart's own length.
+        assert_eq!(
+            progression_target(None, bar * 3, four_four),
+            (bar * 3, 0),
+            "zero bars means the chart decides"
+        );
+
+        // A cycle over bars 5..9 wins over wherever the pointer happened to be.
+        assert_eq!(
+            progression_target(Some((bar * 4, bar * 8)), bar * 99, four_four),
+            (bar * 4, 4)
+        );
+
+        // A cycle shorter than a bar still writes something.
+        assert_eq!(
+            progression_target(Some((Ticks::ZERO, Ticks(480))), bar, four_four),
+            (Ticks::ZERO, 1)
+        );
+
+        // An empty or inverted cycle is not a range, so the pointer decides again.
+        assert_eq!(
+            progression_target(Some((bar * 4, bar * 4)), bar, four_four),
+            (bar, 0)
+        );
+    }
 
     fn menu(anchor: Point<Pixels>, items: usize) -> ContextMenu {
         (0..items).fold(ContextMenu::new(anchor, "Track 1"), |menu, index| {

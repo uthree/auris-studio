@@ -238,6 +238,97 @@ pub fn ruler(
     }
 }
 
+/// Draws the chords, and the key changes, across `bounds`.
+///
+/// `events` are song-absolute and already clipped to what is visible. Each one is a block from
+/// where it starts to where it ends, labelled with the numeral and — when the block is wide enough
+/// to hold both — the chord that numeral means where it sits. A cleared stretch has no event and
+/// so draws as bare background, which is the honest picture of it.
+pub fn harmony_lane(
+    window: &mut Window,
+    cx: &mut App,
+    bounds: Bounds<Pixels>,
+    view: &TimelineView,
+    events: &[HarmonicEvent],
+    keys: &[KeyPoint],
+    theme: &Theme,
+) {
+    // A shade below the ruler and above the lanes, so the three read as a descending stack rather
+    // than as a hole cut in the middle of them.
+    rect(window, bounds, theme.surface);
+
+    for event in events {
+        let x = bounds.origin.x + view.tick_to_x(event.start);
+        let width = view.duration_to_width(event.length);
+        if width <= px(1.0) {
+            continue;
+        }
+        let block = Bounds {
+            origin: point(x + px(1.0), bounds.origin.y + px(2.0)),
+            size: size(width - px(2.0), bounds.size.height - px(4.0)),
+        };
+        rounded_rect(
+            window,
+            block,
+            px(3.0),
+            Theme::translucent(theme.accent, 0.22),
+        );
+
+        // The numeral is what is stored and what transposes, so it leads; the sounding chord
+        // follows only when there is room for it, since it is a readout rather than the truth.
+        let text = if width >= px(96.0) {
+            format!("{} · {}", event.numeral, event.name())
+        } else {
+            event.numeral.to_string()
+        };
+        clipped(window, block, |window| {
+            label(
+                window,
+                cx,
+                point(block.origin.x + px(5.0), block.origin.y + px(3.0)),
+                text,
+                px(10.0),
+                theme.text,
+            );
+        });
+    }
+
+    // A key change is a boundary, not a span: it is drawn where it happens and named there. It
+    // goes on top of the chords and carries its own background, because the two occupy the same
+    // strip and a key change usually lands exactly on the chord that begins the new section —
+    // which is precisely where the two labels would otherwise be printed over each other.
+    let (start, end) = view.visible_range(bounds.size.width);
+    for change in keys {
+        if change.tick < start || change.tick > end {
+            continue;
+        }
+        let x = bounds.origin.x + view.tick_to_x(change.tick);
+        let text = change.key.to_text();
+        // The badge has to be drawn before the text sits on it, and `label` only reports its
+        // width after drawing, so the width is estimated. Over- or under-shooting costs a little
+        // padding, which is why the estimate is generous rather than exact.
+        let badge = Bounds {
+            origin: point(x, bounds.origin.y + px(1.0)),
+            size: size(
+                px(text.chars().count() as f32 * 6.0 + 10.0),
+                bounds.size.height - px(2.0),
+            ),
+        };
+        clipped(window, bounds, |window| {
+            rounded_rect(window, badge, px(2.0), theme.surface_raised);
+            vline(window, bounds, x, px(2.0), theme.selection);
+        });
+        label(
+            window,
+            cx,
+            point(x + px(5.0), bounds.origin.y + px(3.0)),
+            text,
+            px(10.0),
+            theme.selection,
+        );
+    }
+}
+
 /// Tints the loop region across `bounds`.
 pub fn loop_region(
     window: &mut Window,

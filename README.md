@@ -44,6 +44,21 @@ Plugin names and parameters are translated where the term is known and left in t
 author's own wording where it is not, so a third-party plugin degrades to English rather than to
 a missing-string marker.
 
+### The harmony lane
+
+A strip under the bar ruler carries the key and the chords, spanning every track because that is
+what harmony is: one thing the whole arrangement obeys at any one moment, belonging to no track.
+Like the tempo map, it changes as the song goes on.
+
+Right-click it to type a chord (`IV`, `vi`, `bVII7`) or a key (`Eb`, `F# minor`), or to write one
+of the named progressions — `axis`, `marusa`, `royal-road`, `canon` and a dozen more, the same
+catalogue `auris progressions` lists and the composer reads as `@marusa`. A progression is written
+across the cycle region when there is one, and across its own length otherwise.
+
+A chord is stored as a roman numeral, not as `Fmaj7`, so changing the key transposes the whole
+progression and a modulation halfway through a section reharmonises the rest of it without a
+single chord being rewritten. What the lane shows is both: `IVmaj7 · Fmaj7`.
+
 ### Automatic composition
 
 **File → Compose from Specification…**, or `auris compose song.asong`, writes a piece from a text

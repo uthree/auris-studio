@@ -7,7 +7,7 @@
 
 use std::ops::Range;
 
-use auris_i18n::Key;
+use auris_i18n::{Key, messages};
 use auris_session::prelude::*;
 
 use gpui::{
@@ -22,13 +22,22 @@ use crate::ui::paint;
 use crate::ui::text_field::TextField;
 use crate::ui::widgets::{ButtonStyle, button};
 
-/// What a prompt is renaming.
+/// What a prompt is editing.
+///
+/// A key and a chord are typed rather than picked from a list because there is no list worth
+/// showing: twelve tonics times thirteen scales is a hundred and fifty-six menu rows, and
+/// [`MusicalKey::parse`] already reads `Bb minor` — the thing a musician would have written down
+/// anyway. [`Numeral::parse`] does the same for `bVII7`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PromptTarget {
     /// A track's name.
     Track(TrackId),
     /// A clip's name.
     Clip(ClipId),
+    /// The key in force from a position on the timeline.
+    Key(Ticks),
+    /// The chord sounding from a position on the timeline.
+    Chord(Ticks),
 }
 
 /// An open rename sheet.
@@ -76,16 +85,38 @@ impl AurisApp {
         let Some(prompt) = self.prompt.take() else {
             return;
         };
-        let name = prompt.field.content().trim().to_string();
-        if name.is_empty() {
+        let text = prompt.field.content().trim().to_string();
+        if text.is_empty() {
             // An empty name would leave an unlabelled row the user cannot tell apart from its
-            // neighbours, and nothing here needs a nameless object.
+            // neighbours, and an empty key or chord is not a key or a chord.
             self.set_status(self.t(Key::NameCannotBeEmpty));
             return;
         }
         let outcome = match prompt.target {
-            PromptTarget::Track(track) => self.session.rename_track(track, name),
-            PromptTarget::Clip(clip) => self.session.rename_clip(clip, name),
+            PromptTarget::Track(track) => self.session.rename_track(track, text),
+            PromptTarget::Clip(clip) => self.session.rename_clip(clip, text),
+            // These two parse rather than rename, and a rejection has to say what was rejected:
+            // `Bbb minor` and `H7` look plausible enough that "invalid input" would not help.
+            PromptTarget::Key(at) => match MusicalKey::parse(&text) {
+                Some(key) => {
+                    self.session.set_key(at, key);
+                    Ok(())
+                }
+                None => {
+                    self.set_status(messages::not_a_key(self.language(), &text));
+                    return;
+                }
+            },
+            PromptTarget::Chord(at) => match Numeral::parse(&text) {
+                Some(chord) => {
+                    self.session.set_chord(at, chord);
+                    Ok(())
+                }
+                None => {
+                    self.set_status(messages::not_a_chord(self.language(), &text));
+                    return;
+                }
+            },
         };
         if let Err(error) = outcome {
             self.set_status(self.failure(Key::Rename, &error));

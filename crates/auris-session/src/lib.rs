@@ -84,6 +84,7 @@ pub fn supported_soundfont_extensions() -> &'static [&'static str] {
 /// know that rule to tell which `Key` a line means, and one of the two would be wrong silently.
 pub mod prelude {
     pub use auris_compose::{Composition, SongSpec, SpecError, compose};
+    pub use auris_core::harmony::{ChordMap, ChordPoint, Harmony, KeyMap, KeyPoint};
     pub use auris_core::param::{
         ParamDescriptor, ParamId, ParamUnit, ParamValueCurve, db_to_gain, gain_to_db,
     };

@@ -456,6 +456,8 @@ impl ExportState {
 pub struct CanvasBounds {
     /// The bar ruler above the arrangement.
     pub ruler: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The chord strip between the ruler and the lanes.
+    pub harmony: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The arrangement's clip lanes.
     pub lanes: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The piano roll's note grid.

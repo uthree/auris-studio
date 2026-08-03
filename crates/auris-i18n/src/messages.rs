@@ -269,6 +269,30 @@ messages! {
         ja: "`{name}` のコード {chords} 個を書き込みました"
     }
 
+    /// Title of the harmony lane's menu, naming the bar it was opened over.
+    fn harmony_at_bar(bar: u32) {
+        en: "Harmony · bar {bar}",
+        ja: "コード進行 · {bar} 小節目"
+    }
+
+    /// One catalogue progression, as a menu row.
+    fn write_progression(description: &str) {
+        en: "Write {description}",
+        ja: "{description} を書き込む"
+    }
+
+    /// The text typed into the key prompt is not a key.
+    fn not_a_key(text: &str) {
+        en: "`{text}` is not a key — try `Eb` or `F# minor`",
+        ja: "`{text}` は調ではありません — `Eb` や `F# minor` のように"
+    }
+
+    /// The text typed into the chord prompt is not a chord.
+    fn not_a_chord(text: &str) {
+        en: "`{text}` is not a chord — try `IV`, `vi` or `bVII7`",
+        ja: "`{text}` はコードではありません — `IV`、`vi`、`bVII7` のように"
+    }
+
     /// A project referenced audio files that are not where it said.
     fn missing_audio_files(count: usize) {
         en: "{count} audio file(s) could not be loaded",

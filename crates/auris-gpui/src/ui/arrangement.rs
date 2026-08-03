@@ -218,7 +218,8 @@ impl AurisApp {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .h(Metrics::RULER_HEIGHT)
+                    // Matches the ruler *and* the harmony lane opposite. See the constant.
+                    .h(Metrics::TIMELINE_HEADER_HEIGHT)
                     .px_1()
                     .bg(theme.surface_raised)
                     .border_b_1()
@@ -252,6 +253,55 @@ impl AurisApp {
                     .flex_1()
                     .overflow_hidden()
                     .children(headers),
+            )
+    }
+
+    /// The strip of chords under the ruler.
+    ///
+    /// It sits above the clip lanes and spans all of them, because that is what harmony is: one
+    /// thing the whole arrangement obeys at any one moment, belonging to no track.
+    fn render_harmony_lane(&mut self, cx: &mut gpui::Context<Self>) -> impl IntoElement + use<> {
+        let theme = self.theme.clone();
+        let view = self.timeline.clone();
+        let signature = self.project().time_signature;
+
+        // Only what is on screen is painted, and it is copied out because a paint closure has to
+        // capture `'static`.
+        let width = self
+            .canvas
+            .harmony
+            .get()
+            .map_or(px(1200.0), |b| b.size.width);
+        let (from, to) = view.visible_range(width);
+        let events = self.project().harmony.events_in(from, to, signature);
+        let keys = self.project().harmony.keys.points().to_vec();
+
+        div()
+            .id("harmony-lane")
+            .h(Metrics::HARMONY_LANE_HEIGHT)
+            .w_full()
+            .cursor_pointer()
+            .child({
+                let recorded = self.canvas.harmony.clone();
+                canvas(
+                    move |bounds, _, _| recorded.set(Some(bounds)),
+                    move |bounds, _, window, cx| {
+                        paint::clipped(window, bounds, |window| {
+                            paint::harmony_lane(window, cx, bounds, &view, &events, &keys, &theme);
+                        });
+                    },
+                )
+                .size_full()
+            })
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                    let x = event.position.x - this.timeline_origin().x;
+                    let tick = this.snap(this.timeline.x_to_tick(x)).max_zero();
+                    let menu = this.harmony_menu(event.position, tick);
+                    this.open_menu(menu);
+                    cx.notify();
+                }),
             )
     }
 
@@ -322,6 +372,7 @@ impl AurisApp {
                         }),
                     ),
             )
+            .child(self.render_harmony_lane(cx))
             .child(
                 div()
                     .id("lanes")
