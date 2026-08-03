@@ -406,6 +406,14 @@ impl TrackKind {
         }
     }
 
+    /// `true` when this track holds notes rather than audio.
+    ///
+    /// The two kinds are the one thing that decides whether a clip may move to a track, so the
+    /// question is asked directly rather than through a pattern match at each call site.
+    pub fn is_instrument(&self) -> bool {
+        matches!(self, TrackKind::Instrument(_))
+    }
+
     /// The instrument track data, when this is one.
     pub fn as_instrument(&self) -> Option<&InstrumentTrack> {
         match self {
@@ -956,6 +964,78 @@ impl Project {
         false
     }
 
+    /// Which track a clip of either kind sits on.
+    pub fn track_of_clip(&self, clip_id: ClipId) -> Option<TrackId> {
+        self.tracks
+            .iter()
+            .find(|track| match &track.kind {
+                TrackKind::Instrument(inner) => inner.clips.iter().any(|clip| clip.id == clip_id),
+                TrackKind::Audio(inner) => inner.clips.iter().any(|clip| clip.id == clip_id),
+            })
+            .map(|track| track.id)
+    }
+
+    /// Moves a clip onto another track, keeping its position and its id.
+    ///
+    /// Only between tracks of the same kind: a block of notes has no meaning on an audio track
+    /// and a reference to a decoded file has none on an instrument track. Returns `false` when
+    /// the clip or the track does not exist, or when the two do not match — the caller is
+    /// expected to have checked, and a silent no-op is better than a half-moved document.
+    ///
+    /// Moving a clip to the track it is already on succeeds and changes nothing, which is what
+    /// lets a pointer drag call this on every move without special-casing the common one.
+    pub fn move_clip_to_track(&mut self, clip_id: ClipId, track_id: TrackId) -> bool {
+        let Some(source) = self.track_of_clip(clip_id) else {
+            return false;
+        };
+        if source == track_id {
+            return self.track(track_id).is_some();
+        }
+        let Some(destination) = self.track_index(track_id) else {
+            return false;
+        };
+        let Some(origin) = self.track_index(source) else {
+            return false;
+        };
+
+        // Taken out only once the destination is known to accept it, so a refused move leaves the
+        // document exactly as it was rather than losing the clip.
+        match (
+            self.tracks[origin].kind.is_instrument(),
+            self.tracks[destination].kind.is_instrument(),
+        ) {
+            (true, true) => {
+                let Some(inner) = self.tracks[origin].kind.as_instrument_mut() else {
+                    return false;
+                };
+                let Some(at) = inner.clips.iter().position(|clip| clip.id == clip_id) else {
+                    return false;
+                };
+                let clip = inner.clips.remove(at);
+                if let Some(inner) = self.tracks[destination].kind.as_instrument_mut() {
+                    inner.clips.push(clip);
+                    inner.clips.sort_by_key(|clip| clip.start);
+                }
+                true
+            }
+            (false, false) => {
+                let Some(inner) = self.tracks[origin].kind.as_audio_mut() else {
+                    return false;
+                };
+                let Some(at) = inner.clips.iter().position(|clip| clip.id == clip_id) else {
+                    return false;
+                };
+                let clip = inner.clips.remove(at);
+                if let Some(inner) = self.tracks[destination].kind.as_audio_mut() {
+                    inner.clips.push(clip);
+                    inner.clips.sort_by_key(|clip| clip.start);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// `true` when any track is soloed, meaning non-soloed tracks must be silenced.
     pub fn has_solo(&self) -> bool {
         self.tracks.iter().any(|track| track.mixer.solo)
@@ -1082,6 +1162,90 @@ mod tests {
         midi.notes
             .push(Note::new(64, Ticks::QUARTER, Ticks::QUARTER));
         project
+    }
+
+    #[test]
+    fn a_clip_moves_to_another_track_of_its_own_kind() {
+        let mut project = demo_project();
+        let clip = project.tracks[0].kind.as_instrument().unwrap().clips[0].id;
+        let source = project.tracks[0].id;
+        let destination = project.add_instrument_track("Second", "auris.synth.pulse");
+
+        assert!(project.move_clip_to_track(clip, destination));
+        assert_eq!(project.track_of_clip(clip), Some(destination));
+        assert!(
+            project
+                .track(source)
+                .unwrap()
+                .kind
+                .as_instrument()
+                .unwrap()
+                .clips
+                .is_empty(),
+            "the clip is still on the track it left"
+        );
+        // Its id, position and contents survive: this is a move, not a copy and a delete.
+        let moved = project.midi_clip(clip).unwrap().1;
+        assert_eq!(moved.start, Ticks::ZERO);
+        assert_eq!(moved.notes.len(), 2);
+    }
+
+    #[test]
+    fn a_clip_cannot_move_to_a_track_of_the_other_kind() {
+        // A block of notes has no meaning on an audio track. Refusing has to leave the document
+        // exactly as it was rather than losing the clip on the way across.
+        let mut project = demo_project();
+        let clip = project.tracks[0].kind.as_instrument().unwrap().clips[0].id;
+        let audio = project.add_audio_track("Sample");
+        let before = project.clone();
+
+        assert!(!project.move_clip_to_track(clip, audio));
+        assert_eq!(project, before, "a refused move changed the document");
+    }
+
+    #[test]
+    fn moving_a_clip_to_the_track_it_is_on_succeeds_and_changes_nothing() {
+        // A pointer drag asks for this on most of its moves, so it must not be an error.
+        let mut project = demo_project();
+        let clip = project.tracks[0].kind.as_instrument().unwrap().clips[0].id;
+        let track = project.tracks[0].id;
+        let before = project.clone();
+
+        assert!(project.move_clip_to_track(clip, track));
+        assert_eq!(project, before);
+    }
+
+    #[test]
+    fn moving_a_clip_that_does_not_exist_is_refused() {
+        let mut project = demo_project();
+        let track = project.tracks[0].id;
+        assert!(!project.move_clip_to_track(ClipId(9_999), track));
+        assert!(!project.move_clip_to_track(ClipId(9_999), TrackId(9_999)));
+    }
+
+    #[test]
+    fn a_moved_clip_lands_in_timeline_order() {
+        // The lanes are drawn from the clip list in order, so an arrival at the end of it would
+        // paint over whatever it overlaps rather than under.
+        let mut project = demo_project();
+        let first = project.tracks[0].kind.as_instrument().unwrap().clips[0].id;
+        let destination = project.add_instrument_track("Second", "auris.synth.pulse");
+        project
+            .add_midi_clip(destination, "Later", Ticks::from_beats(8.0), Ticks::QUARTER)
+            .unwrap();
+
+        assert!(project.move_clip_to_track(first, destination));
+        let starts: Vec<Ticks> = project
+            .track(destination)
+            .unwrap()
+            .kind
+            .as_instrument()
+            .unwrap()
+            .clips
+            .iter()
+            .map(|clip| clip.start)
+            .collect();
+        assert_eq!(starts, vec![Ticks::ZERO, Ticks::from_beats(8.0)]);
     }
 
     #[test]

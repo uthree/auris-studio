@@ -137,6 +137,58 @@ impl AurisApp {
         }
     }
 
+    /// Shifts a dragged selection by however many lanes the pointer has crossed.
+    ///
+    /// The whole selection moves by one delta rather than each clip landing under the pointer,
+    /// so two clips a track apart are still a track apart when they are dropped. A delta that
+    /// would push any of them off either end of the track list, or onto a track of the wrong
+    /// kind, is refused entirely — dropping half a selection somewhere is not what the gesture
+    /// meant, and the timeline move that came with it still stands.
+    pub(crate) fn move_clips_by_lane(
+        &mut self,
+        origin_lanes: &[(ClipId, usize)],
+        grab_lane: usize,
+        under_pointer: TrackId,
+    ) {
+        let Some(target_lane) = self.project().track_index(under_pointer) else {
+            return;
+        };
+        let delta = target_lane as isize - grab_lane as isize;
+        if delta == 0 || origin_lanes.is_empty() {
+            return;
+        }
+
+        let mut moves = Vec::with_capacity(origin_lanes.len());
+        for (clip, lane) in origin_lanes {
+            let Some(destination) = lane
+                .checked_add_signed(delta)
+                .and_then(|lane| self.project().tracks.get(lane))
+                .map(|track| track.id)
+            else {
+                return;
+            };
+            if !self.session.clip_fits_track(*clip, destination) {
+                return;
+            }
+            moves.push((*clip, destination));
+        }
+        if let Err(error) = self.session.move_clips_to_track(&moves) {
+            self.set_status(self.failure(Key::EditMoveClip, &error));
+        }
+    }
+
+    /// Selects a clip and shows it in the editor.
+    ///
+    /// What a double-click on a region does in every editor that has regions, and what the clip
+    /// menu's Edit does. Shared so the two cannot drift into opening it slightly differently.
+    pub(crate) fn open_clip_in_editor(&mut self, clip: ClipId) {
+        self.select_clip(Some(clip));
+        self.selected_notes.clear();
+        self.editor = crate::app::EditorTab::PianoRoll;
+        self.panels.editor_visible = true;
+        self.center_roll_on_selection();
+    }
+
     /// Deletes whatever the current selection covers.
     pub(crate) fn delete_selection(&mut self) {
         if let Some(clip) = self.selected_clip

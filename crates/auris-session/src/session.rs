@@ -840,6 +840,62 @@ impl Session {
         Ok(())
     }
 
+    /// Which track a clip sits on.
+    pub fn track_of_clip(&self, clip: ClipId) -> Option<TrackId> {
+        self.project.track_of_clip(clip)
+    }
+
+    /// `true` when `clip` could be moved onto `track`.
+    ///
+    /// Asked before a move rather than discovered during one, so a pointer drag can refuse a
+    /// lane it cannot land on instead of dropping half a selection onto it.
+    pub fn clip_fits_track(&self, clip: ClipId, track: TrackId) -> bool {
+        let Some(source) = self.project.track_of_clip(clip) else {
+            return false;
+        };
+        let kind_of = |id: TrackId| {
+            self.project
+                .track(id)
+                .map(|track| track.kind.is_instrument())
+        };
+        match (kind_of(source), kind_of(track)) {
+            (Some(from), Some(to)) => from == to,
+            _ => false,
+        }
+    }
+
+    /// Moves clips onto another track, keeping their positions.
+    ///
+    /// Every clip or none: a selection dragged across lanes is one gesture, and landing half of
+    /// it on the new track and leaving the rest behind is not what dropping it meant. The whole
+    /// move is refused when any clip does not belong on its destination.
+    pub fn move_clips_to_track(&mut self, clips: &[(ClipId, TrackId)]) -> Result<(), SessionError> {
+        if clips.is_empty() {
+            return Ok(());
+        }
+        for (clip, track) in clips {
+            self.require_clip(*clip)?;
+            self.require_track(*track)?;
+            if !self.clip_fits_track(*clip, *track) {
+                return Err(SessionError::UnknownTrack(track.0));
+            }
+        }
+        // Nothing to record when every clip is already where it is being sent, which is what a
+        // pointer drag asks for on most of its moves.
+        if clips
+            .iter()
+            .all(|(clip, track)| self.project.track_of_clip(*clip) == Some(*track))
+        {
+            return Ok(());
+        }
+        self.record(Edit::MoveClip);
+        for (clip, track) in clips {
+            self.project.move_clip_to_track(*clip, *track);
+        }
+        self.invalidate_graph();
+        Ok(())
+    }
+
     /// Copies a clip onto its own track, immediately after the original.
     pub fn duplicate_clip(&mut self, clip: ClipId) -> Result<ClipId, SessionError> {
         self.require_clip(clip)?;
@@ -1599,6 +1655,57 @@ mod tests {
 
     fn session() -> Session {
         Session::new(SessionOptions::headless()).expect("a headless session always opens")
+    }
+
+    #[test]
+    fn a_selection_dragged_across_lanes_moves_together_or_not_at_all() {
+        // Dropping half a selection on a new track and leaving the rest behind is not what the
+        // gesture meant, so one clip that cannot land refuses the whole move.
+        let mut session = session();
+        let source = session.add_default_instrument_track("Lead").expect("track");
+        let destination = session
+            .add_default_instrument_track("Second")
+            .expect("track");
+        let audio = session.add_audio_track("Sample");
+        let first = session
+            .add_midi_clip(source, "A", Ticks::ZERO, Ticks::from_beats(4.0))
+            .expect("clip");
+        let second = session
+            .add_midi_clip(source, "B", Ticks::from_beats(4.0), Ticks::from_beats(4.0))
+            .expect("clip");
+
+        // One of the two is sent somewhere it cannot go, so neither moves.
+        let refused = session.move_clips_to_track(&[(first, destination), (second, audio)]);
+        assert!(refused.is_err());
+        assert_eq!(session.track_of_clip(first), Some(source));
+        assert_eq!(session.track_of_clip(second), Some(source));
+
+        // Both to a track that accepts them, and both arrive.
+        session
+            .move_clips_to_track(&[(first, destination), (second, destination)])
+            .expect("both clips belong on an instrument track");
+        assert_eq!(session.track_of_clip(first), Some(destination));
+        assert_eq!(session.track_of_clip(second), Some(destination));
+        assert!(session.can_undo(), "the move left no undo step");
+    }
+
+    #[test]
+    fn moving_clips_nowhere_records_no_undo_step() {
+        // A pointer drag calls this on every move, and most of them are within one track.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").expect("track");
+        let clip = session
+            .add_midi_clip(track, "A", Ticks::ZERO, Ticks::from_beats(4.0))
+            .expect("clip");
+        session.forget_history();
+
+        session
+            .move_clips_to_track(&[(clip, track)])
+            .expect("a clip always fits the track it is on");
+        assert!(
+            !session.can_undo(),
+            "a move that moved nothing pushed a step onto the history"
+        );
     }
 
     #[test]

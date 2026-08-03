@@ -71,7 +71,7 @@ pub enum Drag {
         /// Tick the drag started at.
         anchor: Ticks,
     },
-    /// Moving one or more clips along the timeline.
+    /// Moving one or more clips along the timeline, and between tracks.
     ClipMove {
         /// Clip under the pointer, whose snapped position drives the others.
         clip: ClipId,
@@ -80,6 +80,12 @@ pub enum Drag {
         grab_offset: Ticks,
         /// Starting position of every selected clip, so the whole selection moves together.
         origins: Vec<(ClipId, Ticks)>,
+        /// Lane each selected clip started on, so the selection keeps its shape as it crosses
+        /// tracks: every clip moves by the same number of lanes rather than collapsing onto the
+        /// one under the pointer.
+        origin_lanes: Vec<(ClipId, usize)>,
+        /// Lane the grabbed clip started on, which the pointer's lane is measured against.
+        grab_lane: usize,
     },
     /// Dragging a clip's right edge.
     ClipResize {

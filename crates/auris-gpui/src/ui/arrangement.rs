@@ -401,6 +401,17 @@ impl AurisApp {
             .collect()
     }
 
+    /// The lane each selected clip currently sits on.
+    fn selected_clip_lanes(&self) -> Vec<(ClipId, usize)> {
+        self.selected_clips
+            .iter()
+            .filter_map(|id| {
+                let track = self.session.track_of_clip(*id)?;
+                Some((*id, self.project().track_index(track)?))
+            })
+            .collect()
+    }
+
     /// Where a clip of either kind starts.
     fn clip_start(&self, clip: ClipId) -> Option<Ticks> {
         if let Some(midi) = self.session.midi_clip(clip) {
@@ -519,6 +530,14 @@ impl AurisApp {
             cx.notify();
             return;
         }
+        // Reached only when the user has not bound delete here, which the default no longer does.
+        if let Some((clip_id, _, _)) = under_pointer
+            && event.click_count >= 2
+        {
+            self.open_clip_in_editor(clip_id);
+            cx.notify();
+            return;
+        }
 
         match under_pointer {
             Some((clip_id, clip_start, clip_length)) => {
@@ -535,10 +554,14 @@ impl AurisApp {
                     self.begin_drag(Drag::ClipResize { clip: clip_id });
                 } else {
                     let origins = self.selected_clip_origins();
+                    let origin_lanes = self.selected_clip_lanes();
+                    let grab_lane = self.project().track_index(track_id).unwrap_or(0);
                     self.begin_drag(Drag::ClipMove {
                         clip: clip_id,
                         grab_offset: tick - clip_start,
                         origins,
+                        origin_lanes,
+                        grab_lane,
                     });
                 }
             }

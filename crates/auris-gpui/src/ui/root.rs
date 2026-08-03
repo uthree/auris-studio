@@ -303,9 +303,11 @@ impl AurisApp {
                 clip,
                 grab_offset,
                 ref origins,
+                ref origin_lanes,
+                grab_lane,
             } => {
-                let x = event.position.x - self.lanes_origin().x;
-                let tick = self.timeline.x_to_tick(x);
+                let origin = self.lanes_origin();
+                let tick = self.timeline.x_to_tick(event.position.x - origin.x);
                 let start = self.snap(tick - grab_offset).max_zero();
                 // The delta comes from the clip under the pointer, so that one lands exactly on
                 // the grid and the rest keep their spacing relative to it.
@@ -315,6 +317,13 @@ impl AurisApp {
                     .map(|(_, from)| *from)
                     .unwrap_or(start);
                 self.session.move_clips(origins, start - anchor);
+
+                // The same idea vertically: the lane under the pointer decides how far the whole
+                // selection shifts, so a pair of clips on adjacent tracks stays a pair.
+                let lanes = origin_lanes.clone();
+                if let Some((under, _)) = self.track_at_y(event.position.y - origin.y) {
+                    self.move_clips_by_lane(&lanes, grab_lane, under);
+                }
             }
             Drag::ClipResize { clip } => {
                 let x = event.position.x - self.lanes_origin().x;
@@ -338,6 +347,13 @@ impl AurisApp {
                 let _ = self
                     .session
                     .move_notes(clip, origins, delta_ticks, delta_pitch);
+                // Sound where the note has landed, the way pressing one does. Dragging a note up
+                // a third was otherwise silent, so the pitch had to be counted off the keyboard
+                // at the side of the roll instead of simply heard. Only on a change, or every
+                // pointer move would retrigger the note and turn a drag into a stutter.
+                if self.auditioning.map(|(_, sounding)| sounding) != Some(pitch) {
+                    self.audition(pitch);
+                }
             }
             Drag::NoteResize { clip, index } => {
                 let origin = self.roll_origin();

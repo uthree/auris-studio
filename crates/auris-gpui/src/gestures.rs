@@ -84,10 +84,16 @@ pub struct PointerGestures {
 
 impl Default for PointerGestures {
     /// Logic Pro's arrangement, because it is the one most people arrive with.
+    ///
+    /// Delete is *not* on the double-click. It was, and the result was that the gesture every
+    /// editor with regions uses to open one destroyed it instead — a double-click meant to look
+    /// inside a clip removed it, and the only sign was that it had gone. Deleting is now the
+    /// option-click, which is a deliberate enough gesture to be safe, and the double-click opens
+    /// the clip. Both remain configurable, so anyone who wants the old arrangement can say so.
     fn default() -> Self {
         Self {
             create: PointerGesture::CommandClick,
-            delete: PointerGesture::DoubleClick,
+            delete: PointerGesture::OptionClick,
         }
     }
 }
@@ -200,31 +206,50 @@ mod tests {
     fn the_defaults_are_the_ones_logic_users_expect() {
         let gestures = PointerGestures::default();
         assert_eq!(gestures.create, PointerGesture::CommandClick);
-        assert_eq!(gestures.delete, PointerGesture::DoubleClick);
+        assert_eq!(gestures.delete, PointerGesture::OptionClick);
     }
+
+    #[test]
+    fn nothing_destructive_is_bound_to_a_double_click_by_default() {
+        // A double-click opens a region in every editor that has regions. While delete was the
+        // default there, the gesture people arrive with deleted their work and said nothing.
+        let gestures = PointerGestures::default();
+        assert_ne!(gestures.delete, PointerGesture::DoubleClick);
+    }
+
+    // Both of these are written against whatever the defaults happen to be rather than against
+    // the gestures they name, because the rule is about the swap and not about which two the
+    // application ships with — the first version of them broke when a default changed.
 
     #[test]
     fn assigning_a_gesture_that_is_taken_swaps_the_two() {
         let mut gestures = PointerGestures::default();
-        gestures.set_create(PointerGesture::DoubleClick);
-        assert_eq!(gestures.create, PointerGesture::DoubleClick);
+        let (was_create, was_delete) = (gestures.create, gestures.delete);
+
+        gestures.set_create(was_delete);
+        assert_eq!(gestures.create, was_delete);
         assert_eq!(
-            gestures.delete,
-            PointerGesture::CommandClick,
+            gestures.delete, was_create,
             "delete took the gesture create gave up"
         );
 
-        gestures.set_delete(PointerGesture::DoubleClick);
-        assert_eq!(gestures.delete, PointerGesture::DoubleClick);
-        assert_eq!(gestures.create, PointerGesture::CommandClick);
+        gestures.set_delete(was_delete);
+        assert_eq!(gestures.delete, was_delete);
+        assert_eq!(gestures.create, was_create);
     }
 
     #[test]
     fn assigning_a_gesture_that_is_free_leaves_the_other_alone() {
         let mut gestures = PointerGestures::default();
-        gestures.set_create(PointerGesture::OptionClick);
-        assert_eq!(gestures.create, PointerGesture::OptionClick);
-        assert_eq!(gestures.delete, PointerGesture::DoubleClick);
+        let free = PointerGesture::ALL
+            .into_iter()
+            .find(|gesture| *gesture != gestures.create && *gesture != gestures.delete)
+            .expect("three gestures fill two slots, so one is always spare");
+        let delete = gestures.delete;
+
+        gestures.set_create(free);
+        assert_eq!(gestures.create, free);
+        assert_eq!(gestures.delete, delete);
     }
 
     #[test]

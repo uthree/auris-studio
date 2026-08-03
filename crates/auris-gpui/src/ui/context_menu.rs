@@ -12,7 +12,7 @@ use gpui::{
     Size, Window, div, point, prelude::*, px, size,
 };
 
-use crate::app::{AurisApp, EditorTab, InspectorTab};
+use crate::app::{AurisApp, InspectorTab};
 use crate::theme::Metrics;
 use crate::ui::icons::{Icon, icon};
 use crate::ui::prompt::{Prompt, PromptTarget};
@@ -523,13 +523,7 @@ impl AurisApp {
                     self.session.set_loop_enabled(true);
                 }
             }
-            MenuCommand::EditClip(clip) => {
-                self.select_clip(Some(clip));
-                self.selected_notes.clear();
-                self.editor = EditorTab::PianoRoll;
-                self.panels.editor_visible = true;
-                self.center_roll_on_selection();
-            }
+            MenuCommand::EditClip(clip) => self.open_clip_in_editor(clip),
             MenuCommand::NewClip { track, start } => self.create_clip_at(track, start),
 
             MenuCommand::DuplicateNotes => {

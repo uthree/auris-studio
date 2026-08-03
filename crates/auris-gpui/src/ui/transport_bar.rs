@@ -65,15 +65,9 @@ impl AurisApp {
                     .min_w_0()
                     .items_center()
                     .gap_2()
-                    .child(button(
-                        "export",
-                        self.t(Key::ExportWav),
-                        ButtonStyle::Primary,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, window, cx| this.start_export(window, cx)),
-                    ))
+                    // Export lives in the File menu, with the other commands that write a file.
+                    // A transport bar is for the transport; a button that opens a save dialog was
+                    // the widest thing on it and the least often pressed.
                     .child(
                         div()
                             .flex()
