@@ -107,6 +107,14 @@ strings! {
         en: "file not found",
         ja: "ファイルが見つかりません"
     }
+    BrowserBank {
+        en: "Bank",
+        ja: "バンク"
+    }
+    BrowserPercussionBank {
+        en: "Percussion",
+        ja: "パーカッション"
+    }
     BrowserFontHasNoSounds {
         en: "no sounds in this font",
         ja: "この音源に音色がありません"

@@ -111,12 +111,17 @@ Deliberately simple chiptune voices, enough to hear the engine working:
 
 Square and saw are PolyBLEP band-limited, so high notes stay clean instead of aliasing.
 
+The library panel on the left is a tree: instruments, SoundFonts and effects, each opening into
+groups rather than a flat list — the plugins by category, a font by the banks it declares. Every
+branch remembers whether it was left open. Clicking an instrument sets it on the selected track,
+clicking an effect appends it to that track's chain.
+
 ### SoundFonts
 
 **File → Import SoundFont…** reads an `.sf2` file and puts its sounds on the shelf. The library
-panel lists every imported font; opening one shows its presets, and clicking a preset points the
-selected track at it — switching that track to the sampler in the same edit, so it is one click
-and one undo step rather than two.
+panel lists every imported font; opening one shows the banks it declares and opening a bank shows
+its sounds, and clicking a sound points the selected track at it — switching that track to the
+sampler in the same edit, so it is one click and one undo step rather than two.
 
 A project stores the font's *path* and names each sound by bank and patch, never by position in
 the list. That is what makes a piece saved last week open playing the same instrument: a position

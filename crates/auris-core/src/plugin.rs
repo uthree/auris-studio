@@ -51,6 +51,27 @@ pub enum PluginCategory {
 }
 
 impl PluginCategory {
+    /// Every category, in the order a browser should list them under.
+    ///
+    /// Deliberately not alphabetical, which would put Delay, Distortion and Dynamics together
+    /// for no reason but a shared letter. Instruments first, then effects roughly along a mixing
+    /// chain — tone, then level, then colour, then space — with the two catch-alls last.
+    ///
+    /// A browser groups by this, so a category missing here is a plugin nobody can find.
+    pub const ALL: [PluginCategory; 11] = [
+        PluginCategory::Synth,
+        PluginCategory::Sampler,
+        PluginCategory::Drum,
+        PluginCategory::Equalizer,
+        PluginCategory::Dynamics,
+        PluginCategory::Distortion,
+        PluginCategory::Modulation,
+        PluginCategory::Delay,
+        PluginCategory::Reverb,
+        PluginCategory::Utility,
+        PluginCategory::Other,
+    ];
+
     /// Label shown in the plugin browser.
     pub fn label(self) -> &'static str {
         match self {
@@ -421,6 +442,35 @@ pub trait Effect: Parameterized + Send {
 mod tests {
     use super::*;
     use crate::param::ParamDescriptor;
+
+    #[test]
+    fn every_category_has_a_place_in_the_browser_order() {
+        // The match is exhaustive and has no wildcard, so adding a category without adding it to
+        // `ALL` stops compiling here — which is the point. A browser groups by `ALL`, and a
+        // category left out of it would take its plugins off the list without saying so.
+        for category in PluginCategory::ALL {
+            let listed = match category {
+                PluginCategory::Synth
+                | PluginCategory::Sampler
+                | PluginCategory::Drum
+                | PluginCategory::Equalizer
+                | PluginCategory::Dynamics
+                | PluginCategory::Distortion
+                | PluginCategory::Modulation
+                | PluginCategory::Delay
+                | PluginCategory::Reverb
+                | PluginCategory::Utility
+                | PluginCategory::Other => true,
+            };
+            assert!(listed);
+        }
+
+        let mut seen: Vec<&str> = PluginCategory::ALL.iter().map(|c| c.label()).collect();
+        let listed = seen.len();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(listed, seen.len(), "a category is listed twice");
+    }
 
     struct Dummy {
         params: Vec<ParamDescriptor>,

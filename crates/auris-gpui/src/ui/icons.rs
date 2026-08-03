@@ -29,6 +29,8 @@ pub enum Icon {
     ChevronUp,
     /// Move down in a list.
     ChevronDown,
+    /// A branch of a tree that is shut. Points at what opening it would reveal.
+    ChevronRight,
     /// Remove something.
     Cross,
     /// A menu item that is currently on.
@@ -143,6 +145,15 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
                 at(0.26, 0.38),
                 at(0.74, 0.38),
                 at(0.50, 0.66),
+                color,
+            );
+        }
+        Icon::ChevronRight => {
+            triangle(
+                window,
+                at(0.38, 0.26),
+                at(0.38, 0.74),
+                at(0.66, 0.50),
                 color,
             );
         }

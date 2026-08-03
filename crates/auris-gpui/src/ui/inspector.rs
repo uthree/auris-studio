@@ -1,5 +1,8 @@
-//! The right-hand inspector: the selected track's instrument, its effect chain, and a browser
-//! for everything the plugin registry knows about.
+﻿//! The right-hand inspector: the selected track's instrument and its effect chain.
+//!
+//! The list of everything that *could* go on it is the library, on the other side of the
+//! arrangement â€” see [`crate::ui::library`]. The two panels share [`panel_header`], because they
+//! sit either side of the arrangement at the same height.
 
 use auris_i18n::Key;
 use auris_session::Session;
@@ -38,7 +41,7 @@ pub(crate) enum Insert {
 ///
 /// This is both Logic's shape and the only shape the document can express. `Session::add_effect`
 /// appends, `move_effect` clamps within the existing length, and a strip's effects are a plain
-/// `Vec` — so there is no such thing as slot 4 empty while slot 5 is full, and no cap on how many
+/// `Vec` â€” so there is no such thing as slot 4 empty while slot 5 is full, and no cap on how many
 /// there may be. The fixed slots stay a view-side idea, because nothing at or below
 /// `auris-session` may be shaped by one.
 pub(crate) fn insert_rows(chain: &[(EffectSlotId, String, bool)]) -> Vec<Insert> {
@@ -58,7 +61,7 @@ pub(crate) fn insert_rows(chain: &[(EffectSlotId, String, bool)]) -> Vec<Insert>
 ///
 /// Keyed by the slot's own id rather than by its position. The mixer used to pack a strip index
 /// and a slot index into `index * 64 + slot_index`, which collided past sixty-four effects on a
-/// strip and moved every key in a chain whenever it was reordered — worth retiring now that a
+/// strip and moved every key in a chain whenever it was reordered â€” worth retiring now that a
 /// third surface draws the same chain. Zero is reserved for the empty slot, which has no id.
 pub(crate) fn insert_element_key(slot: Option<EffectSlotId>) -> usize {
     slot.map_or(0, |id| id.0 as usize + 1)
@@ -69,7 +72,7 @@ pub(crate) fn insert_element_key(slot: Option<EffectSlotId>) -> usize {
 /// Shared by the library and the inspector so the two line up: they sit either side of the
 /// arrangement at the same height, and a few pixels of difference between them is the kind of
 /// thing that is invisible in isolation and obvious once both are on screen.
-fn panel_header_of(title: &str, theme: &Theme) -> impl IntoElement + use<> {
+pub(crate) fn panel_header(title: &str, theme: &Theme) -> impl IntoElement + use<> {
     let title: gpui::SharedString = title.to_string().into();
     div()
         .flex()
@@ -101,7 +104,7 @@ impl AurisApp {
         //
         // The header names the panel rather than what is in it. It said "Track" until the selected
         // clip's recipe joined the track's own controls here, and a panel showing two things under
-        // the name of one of them is worse than a panel that says which panel it is — the groups
+        // the name of one of them is worse than a panel that says which panel it is â€” the groups
         // inside carry their own headings.
         //
         // The width comes from the parent, which owns the resizable panel geometry, and the
@@ -111,39 +114,10 @@ impl AurisApp {
             .flex_col()
             .size_full()
             .bg(theme.surface)
-            .child(panel_header_of(self.t(Key::Inspector), &theme))
+            .child(panel_header(self.t(Key::Inspector), &theme))
             .child(
                 div()
                     .id("inspector-body")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .p_2()
-                    .child(body),
-            )
-    }
-
-    /// The left-hand library: everything the plugin registry knows, ready to load.
-    ///
-    /// Logic's arrangement, and the reason for it: choosing an instrument is something you do
-    /// *to* the track you are looking at, so the list and the track's own settings have to be on
-    /// screen together. Sharing one panel meant picking a plugin hid the strip it was going onto.
-    pub(crate) fn render_library(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut gpui::Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let theme = self.theme.clone();
-        let body = self.render_browser(cx);
-        div()
-            .flex()
-            .flex_col()
-            .size_full()
-            .bg(theme.surface)
-            .child(panel_header_of(self.t(Key::Library), &theme))
-            .child(
-                div()
-                    .id("library-body")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
@@ -255,7 +229,7 @@ impl AurisApp {
 
         // Logic's shape: the slots that are filled, then one empty one that adds another. The
         // empty slot replaces both the old "+ Add" button in this heading and the "No effects"
-        // line that used to stand in for an empty chain — one affordance in the place the next
+        // line that used to stand in for an empty chain â€” one affordance in the place the next
         // effect will actually appear, rather than two somewhere else.
         let rows = insert_rows(&effect_slots);
         for row in rows {
@@ -290,7 +264,7 @@ impl AurisApp {
 
             // One row per insert, and its parameters live in the plugin editor rather than
             // underneath it. Expanding every effect in place pushed the rest of the chain down
-            // the panel, so a four-effect strip could not be read without scrolling — and the
+            // the panel, so a four-effect strip could not be read without scrolling â€” and the
             // slot you were about to reach for kept moving.
             //
             // The reorder and remove buttons stay visible here, unlike on the mixer's 128px
@@ -372,319 +346,6 @@ impl AurisApp {
             .gap_1()
             .children(sections)
             .into_any_element()
-    }
-
-    /// The plugin browser, listing everything the registry knows.
-    fn render_browser(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
-        let theme = self.theme.clone();
-        let instruments: Vec<(String, String, String)> = self
-            .registry()
-            .instruments()
-            .map(|d| {
-                (
-                    d.id.to_string(),
-                    d.name.to_string(),
-                    d.description.to_string(),
-                )
-            })
-            .collect();
-        let effects: Vec<(String, String, String, String)> = self
-            .registry()
-            .effects()
-            .map(|d| {
-                (
-                    d.id.to_string(),
-                    d.name.to_string(),
-                    d.description.to_string(),
-                    self.category_label(d.category),
-                )
-            })
-            .collect();
-
-        let mut rows: Vec<AnyElement> = Vec::new();
-        rows.push(
-            div()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .pb_1()
-                .child(self.t(Key::BrowserInstruments))
-                .into_any_element(),
-        );
-        for (index, (id, name, description)) in instruments.into_iter().enumerate() {
-            let name = audio_name(self, &name);
-            let description = self.plugin_description(&description);
-            rows.push(
-                self.browser_row(("browser-inst", index), &name, &description, "", {
-                    let id = id.clone();
-                    cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                        this.set_track_instrument(&id);
-                        cx.notify();
-                    })
-                })
-                .into_any_element(),
-            );
-        }
-        rows.push(divider(&theme).into_any_element());
-        rows.extend(self.soundfont_rows(cx));
-
-        rows.push(divider(&theme).into_any_element());
-        rows.push(
-            div()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .py_1()
-                .child(self.t(Key::BrowserEffects))
-                .into_any_element(),
-        );
-        for (index, (id, name, description, category)) in effects.into_iter().enumerate() {
-            let name = audio_name(self, &name);
-            let description = self.plugin_description(&description);
-            rows.push(
-                self.browser_row(("browser-fx", index), &name, &description, &category, {
-                    let id = id.clone();
-                    cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                        this.add_effect_to_selection(&id);
-                        cx.notify();
-                    })
-                })
-                .into_any_element(),
-            );
-        }
-
-        div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .children(rows)
-            .into_any_element()
-    }
-
-    /// The library's SoundFont section: every imported font, and the sounds of the open one.
-    ///
-    /// A font is a shelf rather than a plugin — importing one adds nothing to the arrangement, so
-    /// this is where its contents become reachable. Only the open font lists its presets: a
-    /// General MIDI bank has a hundred and twenty-eight, and two expanded at once would bury the
-    /// effects below them.
-    fn soundfont_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
-        let theme = self.theme.clone();
-        let mut rows: Vec<AnyElement> = Vec::new();
-        rows.push(
-            div()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .py_1()
-                .child(self.t(Key::BrowserSoundFonts))
-                .into_any_element(),
-        );
-
-        let fonts: Vec<(SoundFontId, String)> = self
-            .session
-            .soundfonts()
-            .map(|font| (font.id, font.name.clone()))
-            .collect();
-        if fonts.is_empty() {
-            rows.push(
-                div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .p_1p5()
-                    .child(self.t(Key::BrowserNoSoundFonts))
-                    .into_any_element(),
-            );
-            return rows;
-        }
-
-        for (index, (id, name)) in fonts.into_iter().enumerate() {
-            let loaded = self.session.soundfont_is_loaded(id);
-            let expanded = loaded && self.expanded_font == Some(id);
-            // Only the open font pays for its list. Building every font's presets each frame
-            // would sort a few hundred strings to show a number.
-            let detail = if loaded {
-                format!("{}", self.session.soundfont_preset_count(id))
-            } else {
-                self.t(Key::BrowserFontFileMissing).to_string()
-            };
-            rows.push(
-                self.font_row(index, &name, &detail, loaded, expanded, {
-                    cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                        this.expanded_font = (this.expanded_font != Some(id)).then_some(id);
-                        cx.notify();
-                    })
-                })
-                .into_any_element(),
-            );
-            if !expanded {
-                continue;
-            }
-
-            let presets = self.session.soundfont_presets(id);
-            if presets.is_empty() {
-                rows.push(
-                    div()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .pl_4()
-                        .p_1p5()
-                        .child(self.t(Key::BrowserFontHasNoSounds))
-                        .into_any_element(),
-                );
-                continue;
-            }
-            for (position, preset) in presets.into_iter().enumerate() {
-                let choice = PresetRef {
-                    font: id,
-                    bank: preset.bank,
-                    patch: preset.patch,
-                };
-                rows.push(
-                    div()
-                        .pl_4()
-                        .child(self.preset_row(position, &preset, {
-                            cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                                this.set_track_preset(choice);
-                                cx.notify();
-                            })
-                        }))
-                        .into_any_element(),
-                );
-            }
-        }
-        rows
-    }
-
-    /// One imported font: its name, how many sounds it holds, and whether it is open.
-    fn font_row<F>(
-        &self,
-        index: usize,
-        name: &str,
-        detail: &str,
-        loaded: bool,
-        expanded: bool,
-        on_click: F,
-    ) -> impl IntoElement + use<F>
-    where
-        F: Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
-    {
-        let theme = self.theme.clone();
-        // A font whose file has gone keeps its row — that is how somebody finds out it has gone —
-        // but it is drawn in the muted colour and has nothing to open.
-        let name_color = if loaded { theme.text } else { theme.text_muted };
-        div()
-            .id(("browser-font", index))
-            .flex()
-            .items_center()
-            .gap_1p5()
-            .p_1p5()
-            .rounded(Metrics::RADIUS_SM)
-            .cursor_pointer()
-            .hover(|this| this.bg(theme.surface_hover))
-            .child(crate::ui::icons::icon(
-                if expanded {
-                    Icon::ChevronDown
-                } else {
-                    Icon::ChevronUp
-                },
-                px(8.0),
-                theme.text_muted,
-            ))
-            .child(
-                div()
-                    .flex_1()
-                    .text_xs()
-                    .text_color(name_color)
-                    .child(name.to_string()),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(detail.to_string()),
-            )
-            .on_mouse_down(gpui::MouseButton::Left, on_click)
-    }
-
-    /// One sound of an open font, named as the font names it and numbered as MIDI does.
-    fn preset_row<F>(
-        &self,
-        index: usize,
-        preset: &SoundFontPreset,
-        on_click: F,
-    ) -> impl IntoElement + use<F>
-    where
-        F: Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
-    {
-        let theme = self.theme.clone();
-        div()
-            .id(("browser-preset", index))
-            .flex()
-            .items_center()
-            .justify_between()
-            .p_1p5()
-            .rounded(Metrics::RADIUS_SM)
-            .cursor_pointer()
-            .hover(|this| this.bg(theme.surface_hover))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.text)
-                    .child(preset.name.clone()),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    // Bank and patch, which is what the project stores and what identifies this
-                    // sound again after the font is reloaded.
-                    .child(format!("{}:{}", preset.bank, preset.patch)),
-            )
-            .on_mouse_down(gpui::MouseButton::Left, on_click)
-    }
-
-    fn browser_row<I, F>(
-        &self,
-        id: I,
-        name: &str,
-        description: &str,
-        category: &str,
-        on_click: F,
-    ) -> impl IntoElement + use<I, F>
-    where
-        I: Into<gpui::ElementId>,
-        F: Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
-    {
-        let theme = self.theme.clone();
-        div()
-            .id(id.into())
-            .flex()
-            .flex_col()
-            .p_1p5()
-            .rounded(Metrics::RADIUS_SM)
-            .cursor_pointer()
-            .hover(|this| this.bg(theme.surface_hover))
-            .child(
-                div()
-                    .flex()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.text)
-                            .child(name.to_string()),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .child(category.to_string()),
-                    ),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(description.to_string()),
-            )
-            .on_mouse_down(gpui::MouseButton::Left, on_click)
     }
 
     /// Builds a control for every parameter of a plugin.
@@ -951,7 +612,7 @@ mod tests {
 
     #[test]
     fn every_insert_row_gets_its_own_element_key() {
-        // Zero belongs to the empty slot, which is why the filled ones are offset by one — slot
+        // Zero belongs to the empty slot, which is why the filled ones are offset by one â€” slot
         // id 0 is a real slot and would otherwise share a key with it.
         assert_eq!(insert_element_key(None), 0);
         assert_ne!(

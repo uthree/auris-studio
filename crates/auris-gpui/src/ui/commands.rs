@@ -536,7 +536,10 @@ impl AurisApp {
                         // Show what just arrived. The library is the only place these sounds can
                         // be chosen from, and importing a font is the act of going to choose one.
                         this.panels.library_visible = true;
-                        this.expanded_font = Some(id);
+                        this.library
+                            .set_open(crate::ui::library::Branch::SoundFonts, true);
+                        this.library
+                            .set_open(crate::ui::library::Branch::Font(id), true);
                         let language = this.language();
                         this.set_status(messages::soundfont_imported(language, &name, sounds));
                     }
