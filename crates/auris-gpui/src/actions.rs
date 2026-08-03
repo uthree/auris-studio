@@ -25,6 +25,8 @@ actions!(
         ImportAudio,
         /// Import a SoundFont, making its sounds available to every track.
         ImportSoundFont,
+        /// Copy every file the project refers to into its folder.
+        CollectAssets,
         /// Render the project to a WAV file.
         ExportAudio,
         /// Start or stop playback.
@@ -124,6 +126,7 @@ bindable! {
     "file.save_as",         GroupFile,      CmdSaveAs,             "secondary-shift-s" => SaveProjectAs;
     "file.import",          GroupFile,      CmdImportAudio,        "secondary-i" => ImportAudio;
     "file.import_soundfont", GroupFile,     CmdImportSoundFont,    "secondary-shift-i" => ImportSoundFont;
+    "file.collect",         GroupFile,      CmdCollectAssets,      "secondary-shift-a" => CollectAssets;
     "file.export",          GroupFile,      CmdExportWav,          "secondary-e" => ExportAudio;
     "file.quit",            GroupFile,      CmdQuit,               "secondary-q" => Quit;
 

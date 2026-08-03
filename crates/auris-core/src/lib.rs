@@ -9,9 +9,11 @@
 //!   application extensible with new sound sources and processors.
 //! * [`registry::PluginRegistry`] — the runtime lookup table those plugins register into.
 //! * [`project`] — the serialisable document model (tracks, clips, notes, mixer state).
+//! * [`asset`] — how that document refers to the files it is too small to contain.
 
 #![warn(missing_docs)]
 
+pub mod asset;
 pub mod buffer;
 pub mod error;
 pub mod param;
@@ -20,6 +22,7 @@ pub mod project;
 pub mod registry;
 pub mod time;
 
+pub use asset::AssetPath;
 pub use buffer::AudioBuffer;
 pub use error::{CoreError, Result};
 pub use param::{ParamDescriptor, ParamId, ParamUnit, ParamValueCurve};

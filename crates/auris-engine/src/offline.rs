@@ -492,7 +492,13 @@ mod tests {
         // the whole export rather than half of it or twice it.
         let mut project = Project::new("Clip", SAMPLE_RATE);
         let track = project.add_audio_track("Sample");
-        let source = project.add_audio_source("s", "s.wav".into(), 48_000, SAMPLE_RATE, 1);
+        let source = project.add_audio_source(
+            "s",
+            auris_core::AssetPath::inside("Audio/s.wav"),
+            48_000,
+            SAMPLE_RATE,
+            1,
+        );
         project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
         let mut bank = AudioSourceBank::new();
         bank.insert(

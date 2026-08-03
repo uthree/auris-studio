@@ -14,9 +14,11 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
+use std::path::Path;
+
+use crate::asset::AssetPath;
 use crate::buffer::AudioBuffer;
 use crate::plugin::PluginState;
 use crate::time::{TempoMap, Ticks, TimeSignature};
@@ -67,8 +69,19 @@ pub struct SoundFontRef {
     pub id: SoundFontId,
     /// Display name, from the font itself where it has a usable one.
     pub name: String,
-    /// Where the file was imported from, so a project can be re-opened later.
-    pub path: PathBuf,
+    /// Where the file is, so a project can be re-opened later.
+    ///
+    /// Normally [`AssetPath::External`]: a font is a library shared by every project that uses
+    /// it, and copying a hundred and fifty megabytes into each one would be a poor trade for a
+    /// shorter path.
+    pub path: AssetPath,
+    /// Size of the file in bytes, or 0 when it was recorded before this field existed.
+    ///
+    /// Not for reading the file — for recognising it. When the stored path stops being true, the
+    /// file name alone is a weak match, and this is what separates the font that moved from a
+    /// different font someone happened to give the same name.
+    #[serde(default)]
+    pub byte_size: u64,
 }
 
 /// Which sound of a font a track plays.
@@ -293,8 +306,11 @@ pub struct AudioSource {
     pub id: SourceId,
     /// Display name, usually the file stem.
     pub name: String,
-    /// Where the file was imported from, so a project can be re-opened later.
-    pub path: PathBuf,
+    /// Where the file is, so a project can be re-opened later.
+    ///
+    /// Normally [`AssetPath::Inside`] once the project has been saved: imported audio belongs to
+    /// one song, so it is copied into the project folder and travels with it.
+    pub path: AssetPath,
     /// Length of the decoded audio.
     pub frame_count: u64,
     /// Sample rate of the decoded audio; equals the project rate after import resampling.
@@ -586,7 +602,11 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files.
-    pub const FORMAT_VERSION: u32 = 1;
+    ///
+    /// 2 since asset references gained the [`AssetPath::Inside`] form. A version 1 document still
+    /// opens — its bare paths are exactly what `External` means — but the reverse cannot work, so
+    /// the version has to move for an older build to refuse the file instead of losing its audio.
+    pub const FORMAT_VERSION: u32 = 2;
 
     /// An empty project.
     pub fn new(name: impl Into<String>, sample_rate: f64) -> Self {
@@ -893,12 +913,30 @@ impl Project {
         Some(id)
     }
 
+    /// The font already referring to `file`, resolved against the folder holding the document.
+    ///
+    /// Resolution rather than string comparison, because the same file can be named two ways:
+    /// `Audio/GM.sf2` inside a collected project and an absolute path to the same bytes. Only
+    /// this can tell that they are one font.
+    pub fn soundfont_at(&self, project_folder: Option<&Path>, file: &Path) -> Option<SoundFontId> {
+        self.soundfonts
+            .values()
+            .find(|font| font.path.resolve(project_folder).as_deref() == Some(file))
+            .map(|font| font.id)
+    }
+
     /// Registers an imported SoundFont and returns its new id.
     ///
-    /// A font already imported from the same path is returned rather than added again: importing
-    /// the same file twice is something a person does by accident, and the cost of not noticing
-    /// is a second copy of a very large object in memory.
-    pub fn add_soundfont(&mut self, name: impl Into<String>, path: PathBuf) -> SoundFontId {
+    /// A font already referred to the same way is returned rather than added again: importing the
+    /// same file twice is something a person does by accident, and the cost of not noticing is a
+    /// second copy of a very large object in memory. That check is on the stored reference, so
+    /// callers that can resolve paths should ask [`Self::soundfont_at`] first.
+    pub fn add_soundfont(
+        &mut self,
+        name: impl Into<String>,
+        path: AssetPath,
+        byte_size: u64,
+    ) -> SoundFontId {
         if let Some(existing) = self
             .soundfonts
             .values()
@@ -914,6 +952,7 @@ impl Project {
                 id,
                 name: name.into(),
                 path,
+                byte_size,
             },
         );
         id
@@ -923,7 +962,7 @@ impl Project {
     pub fn add_audio_source(
         &mut self,
         name: impl Into<String>,
-        path: PathBuf,
+        path: AssetPath,
         frame_count: u64,
         sample_rate: f64,
         channel_count: usize,
@@ -1326,14 +1365,15 @@ mod tests {
         // A font is hundreds of megabytes. Noticing the repeat is the difference between one copy
         // in memory and two, and importing the same file twice is an ordinary slip.
         let mut project = Project::new("Fonts", 48_000.0);
-        let first = project.add_soundfont("Grand", "/fonts/grand.sf2".into());
-        let again = project.add_soundfont("Grand Piano", "/fonts/grand.sf2".into());
+        let first = project.add_soundfont("Grand", AssetPath::external("/fonts/grand.sf2"), 64);
+        let again =
+            project.add_soundfont("Grand Piano", AssetPath::external("/fonts/grand.sf2"), 64);
         assert_eq!(first, again);
         assert_eq!(project.soundfonts.len(), 1);
         // And the first name wins, rather than the entry being rewritten under whoever holds it.
         assert_eq!(project.soundfonts[&first].name, "Grand");
 
-        let other = project.add_soundfont("Strings", "/fonts/strings.sf2".into());
+        let other = project.add_soundfont("Strings", AssetPath::external("/fonts/strings.sf2"), 64);
         assert_ne!(first, other);
         assert_eq!(project.soundfonts.len(), 2);
     }
@@ -1343,7 +1383,7 @@ mod tests {
         // Every id in the document comes from one counter, and `repair_ids` has to sweep the new
         // map too or a project that is reopened will hand out an id that is already taken.
         let mut project = Project::new("Fonts", 48_000.0);
-        let font = project.add_soundfont("Grand", "/fonts/grand.sf2".into());
+        let font = project.add_soundfont("Grand", AssetPath::external("/fonts/grand.sf2"), 64);
         let track = project.add_instrument_track("Lead", "x");
         assert_ne!(font.0, track.0);
 
@@ -1369,6 +1409,66 @@ mod tests {
         }"#;
         let project: Project = serde_json::from_str(json).expect("an older document still parses");
         assert!(project.soundfonts.is_empty());
+    }
+
+    #[test]
+    fn a_version_one_document_reads_its_bare_paths_as_external() {
+        // Version 1 stored an asset as a plain string, which meant "somewhere on this machine".
+        // Reading those as `External` is the whole migration; anything more would be a guess about
+        // files this build has not looked at.
+        let json = r#"{
+            "format_version": 1,
+            "name": "Old",
+            "sample_rate": 48000.0,
+            "tempo_map": {"points": [{"tick": 0, "bpm": 120.0}]},
+            "time_signature": {"numerator": 4, "denominator": 4},
+            "grid": 240,
+            "tracks": [],
+            "master": {"gain_db": 0.0, "pan": 0.0, "mute": false, "solo": false, "effects": []},
+            "audio_sources": {
+                "1": {
+                    "id": 1, "name": "kick", "path": "/music/loops/kick.wav",
+                    "frame_count": 480, "sample_rate": 48000.0, "channel_count": 2
+                }
+            },
+            "soundfonts": {
+                "2": {"id": 2, "name": "GM", "path": "/libraries/GM.sf2"}
+            },
+            "next_id": 3
+        }"#;
+        let project: Project = serde_json::from_str(json).expect("a version 1 document opens");
+        assert_eq!(
+            project.audio_sources[&SourceId(1)].path,
+            AssetPath::external("/music/loops/kick.wav")
+        );
+        assert_eq!(
+            project.soundfonts[&SoundFontId(2)].path,
+            AssetPath::external("/libraries/GM.sf2")
+        );
+        assert_eq!(
+            project.soundfonts[&SoundFontId(2)].byte_size,
+            0,
+            "a size nobody recorded is 0, not a wrong number"
+        );
+    }
+
+    #[test]
+    fn a_font_named_two_ways_is_still_one_font() {
+        // `Audio/GM.sf2` in a collected project and an absolute path to the same bytes are the
+        // same font, and only resolving both can see it.
+        let folder = Path::new("/songs/first");
+        let mut project = Project::new("Fonts", 48_000.0);
+        let collected = project.add_soundfont("GM", AssetPath::inside("Audio/GM.sf2"), 64);
+
+        assert_eq!(
+            project.soundfont_at(Some(folder), Path::new("/songs/first/Audio/GM.sf2")),
+            Some(collected)
+        );
+        assert_eq!(
+            project.soundfont_at(Some(folder), Path::new("/libraries/GM.sf2")),
+            None,
+            "a different file with the same name is a different font"
+        );
     }
 
     #[test]
@@ -1431,7 +1531,7 @@ mod tests {
         let source = AudioSource {
             id: SourceId(1),
             name: "s".into(),
-            path: PathBuf::new(),
+            path: AssetPath::inside("Audio/s.wav"),
             frame_count: 1000,
             sample_rate: 48_000.0,
             channel_count: 2,
@@ -1543,7 +1643,8 @@ mod tests {
     fn splitting_an_audio_clip_divides_its_frames_without_losing_any() {
         let mut project = Project::new("Demo", 48_000.0);
         let track = project.add_audio_track("Audio");
-        let source = project.add_audio_source("s", PathBuf::new(), 96_000, 48_000.0, 2);
+        let source =
+            project.add_audio_source("s", AssetPath::inside("Audio/s.wav"), 96_000, 48_000.0, 2);
         let clip = project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
         project.audio_clip_mut(clip).unwrap().fade_in_frames = 480;
         project.audio_clip_mut(clip).unwrap().fade_out_frames = 480;

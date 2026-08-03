@@ -378,7 +378,13 @@ mod tests {
     fn faded_clip_project() -> (Project, AudioSourceBank) {
         let mut project = Project::new("Clip", SAMPLE_RATE);
         let track = project.add_audio_track("Sample");
-        let source = project.add_audio_source("s", "s.wav".into(), 8_000, SAMPLE_RATE, 2);
+        let source = project.add_audio_source(
+            "s",
+            auris_core::AssetPath::inside("Audio/s.wav"),
+            8_000,
+            SAMPLE_RATE,
+            2,
+        );
         let clip_id = project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
         {
             let clip = project.audio_clip_mut(clip_id).unwrap();
@@ -460,7 +466,13 @@ mod tests {
         // A ramp source makes every timeline position identifiable from its sample value.
         let mut project = Project::new("Loop", SAMPLE_RATE);
         let track = project.add_audio_track("Ramp");
-        let source = project.add_audio_source("ramp", "ramp.wav".into(), 8_000, SAMPLE_RATE, 2);
+        let source = project.add_audio_source(
+            "ramp",
+            auris_core::AssetPath::inside("Audio/ramp.wav"),
+            8_000,
+            SAMPLE_RATE,
+            2,
+        );
         project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
         let ramp: Vec<f32> = (0..8_000).map(|index| index as f32).collect();
         let mut bank = AudioSourceBank::new();
@@ -792,7 +804,13 @@ mod tests {
     fn an_audio_clip_lands_on_its_timeline_position_with_its_fades() {
         let mut project = Project::new("Audio", SAMPLE_RATE);
         let track = project.add_audio_track("Sample");
-        let source = project.add_audio_source("ones", "ones.wav".into(), 1_000, SAMPLE_RATE, 1);
+        let source = project.add_audio_source(
+            "ones",
+            auris_core::AssetPath::inside("Audio/ones.wav"),
+            1_000,
+            SAMPLE_RATE,
+            1,
+        );
         let clip_id = project
             .add_audio_clip(track, source, Ticks::from_beats(1.0))
             .unwrap();

@@ -68,6 +68,29 @@ Dependency direction is strictly downhill and the frontend boundary matters:
 New work that is a *command* (anything a user could ask for) goes in `auris-session` so every
 frontend gets it. New work that is *presentation* stays in the frontend.
 
+## The project folder
+
+A project is a folder holding `MySong.auris` and an `Audio/` directory, and `Session::save_as`
+creates it — choosing `MySong.auris` writes `MySong/MySong.auris`. The invariant that makes the
+whole thing work is **one folder, one project**: two documents in one folder would share its
+`Audio/`, and Save As would leave both pointing at the same files.
+
+* An asset reference is an `AssetPath`, not a path. `Inside` is relative to the folder so the
+  folder can be moved; `External` is absolute because nothing else would find it. `Inside` paths
+  are stored with `/` separators on every platform — `Audio\kick.wav` is a *file called that* on
+  a Mac, and a Windows-saved project would open there with silent tracks.
+* Which one an asset gets is **policy**. Imported audio is copied in; a SoundFont is a library
+  shared by every project and is left where it lies. `Session::collect_assets` is the opt-in that
+  copies the fonts too, for archiving.
+* Never `Path::join` a stored relative path — an absolute one would discard the folder.
+  `AssetPath::resolve` rebuilds it component by component for exactly that reason.
+* A file that has moved is searched for by name and confirmed by size, and what is found is
+  written back into the document. Missing assets are reported, never fatal: the project opens
+  with that one track silent.
+
+`Project::FORMAT_VERSION` is 2. Bump it whenever an older build could misread a newer file, and
+carry the other direction with `serde(default)`.
+
 ## Conventions
 
 * Comments, documentation and the README are written in English.

@@ -1857,7 +1857,13 @@ mod tests {
     fn audio_clips_are_clamped_to_the_source_length() {
         let mut project = Project::new("Graph", 48_000.0);
         let track = project.add_audio_track("Drums");
-        let source = project.add_audio_source("loop", "loop.wav".into(), 1_000, 48_000.0, 2);
+        let source = project.add_audio_source(
+            "loop",
+            auris_core::AssetPath::inside("Audio/loop.wav"),
+            1_000,
+            48_000.0,
+            2,
+        );
         let clip = project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
         {
             let clip = project.audio_clip_mut(clip).unwrap();
@@ -1883,7 +1889,13 @@ mod tests {
         // converted rather than used as they stand.
         let mut project = Project::new("Rate", 48_000.0);
         let track = project.add_audio_track("Sample");
-        let source = project.add_audio_source("s", "s.wav".into(), 48_000, 48_000.0, 2);
+        let source = project.add_audio_source(
+            "s",
+            auris_core::AssetPath::inside("Audio/s.wav"),
+            48_000,
+            48_000.0,
+            2,
+        );
         let clip = project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
         {
             let clip = project.audio_clip_mut(clip).unwrap();
@@ -1910,7 +1922,13 @@ mod tests {
     fn a_matching_rate_leaves_a_clips_frame_counts_alone() {
         let mut project = Project::new("Rate", 48_000.0);
         let track = project.add_audio_track("Sample");
-        let source = project.add_audio_source("s", "s.wav".into(), 1_000, 48_000.0, 2);
+        let source = project.add_audio_source(
+            "s",
+            auris_core::AssetPath::inside("Audio/s.wav"),
+            1_000,
+            48_000.0,
+            2,
+        );
         let clip = project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
         project.audio_clip_mut(clip).unwrap().length_frames = 800;
         let mut bank = AudioSourceBank::new();
@@ -1928,7 +1946,13 @@ mod tests {
         // A corrupt document should not scale every position to zero or to NaN.
         let mut project = Project::new("Rate", 48_000.0);
         let track = project.add_audio_track("Sample");
-        let source = project.add_audio_source("s", "s.wav".into(), 1_000, 0.0, 2);
+        let source = project.add_audio_source(
+            "s",
+            auris_core::AssetPath::inside("Audio/s.wav"),
+            1_000,
+            0.0,
+            2,
+        );
         project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
         let mut bank = AudioSourceBank::new();
         bank.insert(source, Arc::new(AudioBuffer::stereo(1_000, 48_000.0)));

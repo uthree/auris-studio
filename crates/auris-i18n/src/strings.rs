@@ -186,6 +186,7 @@ strings! {
     CmdSaveAs { en: "Save As", ja: "名前を付けて保存" }
     CmdImportAudio { en: "Import Audio", ja: "オーディオを読み込む" }
     CmdImportSoundFont { en: "Import SoundFont", ja: "サウンドフォントを読み込む" }
+    CmdCollectAssets { en: "Collect Assets", ja: "アセットを集める" }
     CmdExportWav { en: "Export WAV", ja: "WAV を書き出す" }
     CmdQuit { en: "Quit", ja: "終了" }
     CmdUndo { en: "Undo", ja: "取り消す" }
@@ -212,6 +213,7 @@ strings! {
     MenuSaveAsItem { en: "Save As…", ja: "名前を付けて保存…" }
     MenuImportAudioItem { en: "Import Audio…", ja: "オーディオを読み込む…" }
     MenuImportSoundFontItem { en: "Import SoundFont…", ja: "サウンドフォントを読み込む…" }
+    MenuCollectAssetsItem { en: "Collect Assets into Project", ja: "アセットをプロジェクトにまとめる" }
     MenuExportWavItem { en: "Export WAV…", ja: "WAV を書き出す…" }
     MenuDelete { en: "Delete", ja: "削除" }
 
@@ -343,6 +345,7 @@ COMMANDS
     info <project.auris>          Print a project's tracks, clips and duration
     render <project.auris> [opts] Render a project to a WAV file
     new <project.auris> [opts]    Create a project with one instrument track
+    collect <project.auris>       Copy everything the project uses into its folder
     help                          Show this message
 
 COMPOSE OPTIONS
@@ -376,6 +379,7 @@ auris — コマンドラインから使う Auris Studio
     info <project.auris>          プロジェクトのトラック・クリップ・長さを表示
     render <project.auris> [opts] プロジェクトを WAV に書き出す
     new <project.auris> [opts]    ソフト音源トラック 1 本のプロジェクトを作成
+    collect <project.auris>       プロジェクトが使うファイルをフォルダ内に集める
     help                          このメッセージを表示
 
 compose のオプション

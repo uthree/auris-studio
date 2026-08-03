@@ -128,6 +128,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_save_project_as))
             .on_action(cx.listener(Self::on_import_audio))
             .on_action(cx.listener(Self::on_import_soundfont))
+            .on_action(cx.listener(Self::on_collect_assets))
             .on_action(cx.listener(Self::on_export_audio))
             .on_action(cx.listener(Self::on_add_instrument_track))
             .on_action(cx.listener(Self::on_add_audio_track))
@@ -578,6 +579,16 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.import_soundfont(window, cx);
+    }
+
+    fn on_collect_assets(
+        &mut self,
+        _: &actions::CollectAssets,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.collect_assets();
+        cx.notify();
     }
 
     fn on_export_audio(

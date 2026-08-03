@@ -8,8 +8,8 @@ use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
 use auris_core::plugin::{PluginKind, PluginState};
 use auris_core::time::{Seconds, Ticks};
 use auris_core::{
-    AudioBuffer, AudioSourceBank, ClipId, EffectSlotId, MidiClip, Note, PluginRegistry, PresetRef,
-    Project, SoundFontId, SoundFontRef, SourceId, TrackId,
+    AssetPath, AudioBuffer, AudioSourceBank, ClipId, EffectSlotId, MidiClip, Note, PluginRegistry,
+    PresetRef, Project, SoundFontId, SoundFontRef, SourceId, TrackId,
 };
 use auris_engine::{
     AudioDevice, AudioSettings, EngineCommand, EngineHandle, MeterBank, OutputDeviceInfo,
@@ -17,8 +17,9 @@ use auris_engine::{
 };
 use auris_gpu::{GpuContext, WaveformPeaks, compute_peaks};
 use auris_io::{
-    SoundFontPreset, font_name, import_audio_file, load_project, load_soundfont, preset_count,
-    presets, save_project,
+    AUDIO_DIR, IoError, SoundFontPreset, byte_size, copy_into, document_in_folder, find_named,
+    font_name, import_audio_file, load_project, load_soundfont, preset_count, presets,
+    save_project,
 };
 use auris_sampler::{SAMPLER_ID, SharedSoundFonts, SoundFontBank, store_preset, stored_preset};
 
@@ -1685,11 +1686,23 @@ impl Session {
         self.replace_project(project);
     }
 
+    /// The folder holding the current document, which relative asset paths resolve against.
+    ///
+    /// `None` for a project that has never been saved — and one of those has collected nothing,
+    /// so every asset it names is still external and resolves without help.
+    pub fn project_folder(&self) -> Option<&Path> {
+        self.path.as_deref().and_then(auris_io::project_folder)
+    }
+
     /// Opens a project file.
     ///
-    /// Returns the paths that could not be re-read — audio files and SoundFonts alike. The
+    /// Returns the references that could not be found — audio files and SoundFonts alike. The
     /// project still opens; whatever named them is silent until the files come back, which is
     /// far friendlier than refusing to open a session because one sample moved.
+    ///
+    /// A file that has moved but can still be found is written back into the document under its
+    /// new reference, which leaves the project dirty. That is the point: the search happens once,
+    /// and saving makes the repair permanent.
     pub fn open(&mut self, path: &Path) -> Result<Vec<PathBuf>, SessionError> {
         let project = load_project(path)?;
         self.history.clear();
@@ -1698,34 +1711,65 @@ impl Session {
         self.dirty = false;
         self.replace_project(project);
 
-        let sources: Vec<(SourceId, PathBuf)> = self
-            .project
-            .audio_sources
-            .values()
-            .map(|source| (source.id, source.path.clone()))
-            .collect();
-        let rate = self.project.sample_rate;
-        let mut missing = Vec::new();
-        for (id, source_path) in sources {
-            match import_audio_file(&source_path, rate) {
-                Ok(buffer) => self.install_source(id, Arc::new(buffer)),
-                Err(error) => {
-                    log::warn!("could not reload {}: {error}", source_path.display());
-                    missing.push(source_path);
-                }
-            }
-        }
-        missing.extend(self.reload_soundfonts());
+        let missing = self.reload_assets();
         self.rebuild_graph();
         Ok(missing)
     }
 
-    /// Saves the project.
+    /// Writes the document at exactly `path`, without moving or collecting anything.
+    ///
+    /// The project folder becomes the directory holding `path`, so a caller choosing a fresh
+    /// location wants [`Self::save_as`] instead — this one would leave the audio behind.
     pub fn save(&mut self, path: &Path) -> Result<(), SessionError> {
         save_project(path, &self.project)?;
         self.path = Some(path.to_path_buf());
         self.dirty = false;
         Ok(())
+    }
+
+    /// Saves to a new location, creating the project folder and collecting the audio into it.
+    ///
+    /// `chosen` is whatever a save dialog returned; the document lands at the path this returns,
+    /// which is `chosen` placed in a folder of its own. The audio the project owns is copied in
+    /// alongside it, so the folder can afterwards be moved, renamed, copied to another machine or
+    /// zipped up and still open.
+    ///
+    /// SoundFonts are left where they are. A font is a library shared by every project that uses
+    /// it, and a copy per project would cost gigabytes to save a path; [`Self::collect_assets`]
+    /// is how someone archiving a project asks for those too.
+    pub fn save_as(&mut self, chosen: &Path) -> Result<PathBuf, SessionError> {
+        let document = document_in_folder(chosen);
+        let folder = auris_io::project_folder(&document)
+            .ok_or(SessionError::NoPath)?
+            .to_path_buf();
+        std::fs::create_dir_all(&folder).map_err(|source| IoError::Filesystem {
+            path: folder.clone(),
+            source,
+        })?;
+
+        // Resolve before the document moves: an `Inside` reference read against the new folder
+        // would point at a file that has not been copied there yet.
+        let audio: Vec<(SourceId, Option<PathBuf>)> = self
+            .project
+            .audio_sources
+            .values()
+            .map(|source| (source.id, source.path.resolve(self.project_folder())))
+            .collect();
+
+        // From here the document belongs to the new folder even if the write below fails: the
+        // files land there, and their references are read against wherever `self.path` says the
+        // document is. Leaving it pointing at the old folder is what would be inconsistent.
+        self.path = Some(document.clone());
+        for (id, from) in audio {
+            let Some(from) = from else { continue };
+            if let Err(error) = self.collect_source(id, &from) {
+                log::warn!("could not collect {}: {error}", from.display());
+            }
+        }
+
+        save_project(&document, &self.project)?;
+        self.dirty = false;
+        Ok(document)
     }
 
     /// Saves to the path the project was last saved to or opened from.
@@ -1734,7 +1778,62 @@ impl Session {
         self.save(&path)
     }
 
+    /// Copies every file the project refers to into its folder, however large.
+    ///
+    /// The command for archiving a project or sending it to someone else: afterwards the folder
+    /// holds everything, and nothing outside it is needed to open the project. Explicit rather
+    /// than automatic because a SoundFont library runs to hundreds of megabytes per font, and
+    /// paying that on every save to shorten a path nobody reads would be a poor trade.
+    ///
+    /// Returns how many files were copied in. Anything already inside is left alone, so running
+    /// this twice costs a directory listing.
+    pub fn collect_assets(&mut self) -> Result<usize, SessionError> {
+        let folder = self
+            .project_folder()
+            .map(Path::to_path_buf)
+            .ok_or(SessionError::NoPath)?;
+
+        let sources: Vec<(SourceId, Option<PathBuf>)> = self
+            .project
+            .audio_sources
+            .values()
+            .filter(|source| !source.path.is_inside())
+            .map(|source| (source.id, source.path.resolve(None)))
+            .collect();
+        let fonts: Vec<(SoundFontId, Option<PathBuf>)> = self
+            .project
+            .soundfonts
+            .values()
+            .filter(|font| !font.path.is_inside())
+            .map(|font| (font.id, font.path.resolve(None)))
+            .collect();
+
+        let mut collected = 0;
+        for (id, from) in sources {
+            let Some(from) = from else { continue };
+            self.collect_source(id, &from)?;
+            collected += 1;
+        }
+        for (id, from) in fonts {
+            let Some(from) = from else { continue };
+            let name = copy_into(&from, &folder.join(AUDIO_DIR))?;
+            if let Some(font) = self.project.soundfonts.get_mut(&id) {
+                font.path = AssetPath::inside(Path::new(AUDIO_DIR).join(name));
+            }
+            collected += 1;
+        }
+
+        if collected > 0 {
+            self.dirty = true;
+        }
+        Ok(collected)
+    }
+
     /// Imports an audio file, adds a track for it and places a clip at `start`.
+    ///
+    /// The file is copied into the project folder, so the song owns its own audio from the
+    /// moment it is imported. A project that has not been saved yet has no folder to copy into
+    /// and refers to the file where it lies; saving picks it up.
     pub fn import_audio(&mut self, path: &Path, start: Ticks) -> Result<ClipId, SessionError> {
         let buffer = import_audio_file(path, self.project.sample_rate)?;
         self.record(Edit::ImportAudio);
@@ -1744,11 +1843,17 @@ impl Session {
             .unwrap_or_else(|| "Audio".to_string());
         let source = self.project.add_audio_source(
             name.clone(),
-            path.to_path_buf(),
+            AssetPath::external(path),
             buffer.frame_count() as u64,
             buffer.sample_rate(),
             buffer.channel_count(),
         );
+        // A failure to copy is not a failure to import: the audio decoded, and referring to it
+        // where it lies is exactly what an unsaved project does anyway.
+        let has_folder = self.project_folder().is_some();
+        if has_folder && let Err(error) = self.collect_source(source, path) {
+            log::warn!("could not collect {}: {error}", path.display());
+        }
         let track = self.project.add_audio_track(name);
         let clip = self
             .project
@@ -1761,6 +1866,10 @@ impl Session {
 
     /// Imports a SoundFont, making its sounds available to every track in the project.
     ///
+    /// The file is referred to where it lies rather than copied in — see [`Self::save_as`] for
+    /// why — so what the document records is enough to recognise it again: the path, and the
+    /// size that tells the font which moved from a different one wearing its name.
+    ///
     /// Importing the same file twice returns the id it already has, so a second attempt costs
     /// nothing and, more to the point, does not put a second copy of a very large object in
     /// memory. Nothing is heard until a track is pointed at one of its presets with
@@ -1769,8 +1878,18 @@ impl Session {
         let font = load_soundfont(path)?;
         let name = font_name(&font, path);
         self.record(Edit::ImportSoundFont);
-        let id = self.project.add_soundfont(name, path.to_path_buf());
+        let id = match self.project.soundfont_at(self.project_folder(), path) {
+            Some(existing) => existing,
+            None => self
+                .project
+                .add_soundfont(name, AssetPath::external(path), byte_size(path)),
+        };
         self.fonts.insert(id, font);
+        // Fonts the document names but could not find may well be siblings of the one that was
+        // just located by hand. Fixing one is then enough to fix the rest.
+        if let Some(directory) = path.parent() {
+            self.recover_fonts_from(directory);
+        }
         // A track already naming this font — one whose file was missing when the project
         // opened, and which the user has just gone and found — starts sounding again.
         self.invalidate_graph();
@@ -1806,25 +1925,163 @@ impl Session {
             .unwrap_or_default()
     }
 
-    /// Reads every font the document names, reporting the ones whose files have gone.
-    fn reload_soundfonts(&mut self) -> Vec<PathBuf> {
-        let fonts: Vec<(SoundFontId, PathBuf)> = self
+    // ------------------------------------------------------------- asset plumbing
+
+    /// Reads every file the document names, reporting the references nothing could be found for.
+    ///
+    /// Two passes, because the second needs what the first learned. Anything whose stored
+    /// reference is still true is read straight away; only then is there a set of directories
+    /// that assets are demonstrably living in, which is where the ones that moved are looked for.
+    fn reload_assets(&mut self) -> Vec<PathBuf> {
+        let rate = self.project.sample_rate;
+        let folder = self.project_folder().map(Path::to_path_buf);
+
+        let sources: Vec<(SourceId, AssetPath)> = self
+            .project
+            .audio_sources
+            .values()
+            .map(|source| (source.id, source.path.clone()))
+            .collect();
+        let fonts: Vec<(SoundFontId, AssetPath, u64)> = self
             .project
             .soundfonts
             .values()
-            .map(|font| (font.id, font.path.clone()))
+            .map(|font| (font.id, font.path.clone(), font.byte_size))
             .collect();
+
+        let mut search = self.search_path();
         let mut missing = Vec::new();
-        for (id, path) in fonts {
-            match load_soundfont(&path) {
-                Ok(font) => self.fonts.insert(id, font),
+
+        for (id, stored) in sources {
+            let Some(found) = locate(&stored, folder.as_deref(), &search, 0) else {
+                log::warn!("no audio file for {stored}");
+                missing.push(stored.as_stored().to_path_buf());
+                continue;
+            };
+            match import_audio_file(&found, rate) {
+                Ok(buffer) => {
+                    self.relocate_source(id, &stored, &found);
+                    remember_directory(&mut search, &found);
+                    self.install_source(id, Arc::new(buffer));
+                }
                 Err(error) => {
-                    log::warn!("could not reload {}: {error}", path.display());
-                    missing.push(path);
+                    log::warn!("could not reload {}: {error}", found.display());
+                    missing.push(stored.as_stored().to_path_buf());
                 }
             }
         }
+
+        for (id, stored, size) in fonts {
+            let Some(found) = locate(&stored, folder.as_deref(), &search, size) else {
+                log::warn!("no SoundFont file for {stored}");
+                missing.push(stored.as_stored().to_path_buf());
+                continue;
+            };
+            match load_soundfont(&found) {
+                Ok(font) => {
+                    self.relocate_font(id, &stored, &found);
+                    remember_directory(&mut search, &found);
+                    self.fonts.insert(id, font);
+                }
+                Err(error) => {
+                    log::warn!("could not reload {}: {error}", found.display());
+                    missing.push(stored.as_stored().to_path_buf());
+                }
+            }
+        }
+
         missing
+    }
+
+    /// Directories to look in for a file whose stored path has stopped being true.
+    ///
+    /// The project folder and its audio directory, which is where a file that travelled with the
+    /// project will be. Callers add the directories that assets actually turn up in as they go,
+    /// so a document naming twenty fonts in one folder finds all twenty once it has found one.
+    fn search_path(&self) -> Vec<PathBuf> {
+        let Some(folder) = self.project_folder() else {
+            return Vec::new();
+        };
+        vec![folder.join(AUDIO_DIR), folder.to_path_buf()]
+    }
+
+    /// Looks again for the fonts the document could not find, now that `directory` is known to
+    /// hold at least one of them.
+    fn recover_fonts_from(&mut self, directory: &Path) {
+        let lost: Vec<(SoundFontId, AssetPath, u64)> = self
+            .project
+            .soundfonts
+            .values()
+            .filter(|font| !self.fonts.contains(font.id))
+            .map(|font| (font.id, font.path.clone(), font.byte_size))
+            .collect();
+
+        let search = [directory.to_path_buf()];
+        for (id, stored, size) in lost {
+            let Some(name) = stored.file_name() else {
+                continue;
+            };
+            let Some(found) = find_named(name, &search, size) else {
+                continue;
+            };
+            match load_soundfont(&found) {
+                Ok(font) => {
+                    log::info!("found {} again at {}", stored, found.display());
+                    self.relocate_font(id, &stored, &found);
+                    self.fonts.insert(id, font);
+                }
+                Err(error) => log::warn!("could not read {}: {error}", found.display()),
+            }
+        }
+    }
+
+    /// Copies one audio file into the project folder and points the document at the copy.
+    fn collect_source(&mut self, id: SourceId, from: &Path) -> Result<(), SessionError> {
+        let folder = self
+            .project_folder()
+            .map(Path::to_path_buf)
+            .ok_or(SessionError::NoPath)?;
+        let name = copy_into(from, &folder.join(AUDIO_DIR))?;
+        if let Some(source) = self.project.audio_sources.get_mut(&id) {
+            source.path = AssetPath::inside(Path::new(AUDIO_DIR).join(name));
+        }
+        Ok(())
+    }
+
+    /// Records that an audio file turned out to be somewhere other than where it was stored.
+    fn relocate_source(&mut self, id: SourceId, stored: &AssetPath, found: &Path) {
+        let Some(reference) = self.moved_reference(stored, found) else {
+            return;
+        };
+        if let Some(source) = self.project.audio_sources.get_mut(&id) {
+            source.path = reference;
+        }
+        self.dirty = true;
+    }
+
+    /// Records that a SoundFont turned out to be somewhere other than where it was stored.
+    fn relocate_font(&mut self, id: SoundFontId, stored: &AssetPath, found: &Path) {
+        let Some(reference) = self.moved_reference(stored, found) else {
+            return;
+        };
+        if let Some(font) = self.project.soundfonts.get_mut(&id) {
+            font.path = reference;
+            font.byte_size = byte_size(found);
+        }
+        self.dirty = true;
+    }
+
+    /// How the document should refer to a file now found at `found`, or `None` when that is
+    /// already what it says and nothing needs writing back.
+    fn moved_reference(&self, stored: &AssetPath, found: &Path) -> Option<AssetPath> {
+        let reference = match self
+            .project_folder()
+            .and_then(|folder| found.strip_prefix(folder).ok())
+        {
+            Some(relative) => AssetPath::inside(relative),
+            None => AssetPath::external(found),
+        };
+        (&reference != stored).then_some(reference)
     }
 
     /// Stores decoded audio, the peaks used to draw it, and the copy the graph will render.
@@ -1843,6 +2100,35 @@ impl Session {
         self.render_bank = AudioSourceBank::new();
         self.waveforms.clear();
         self.fonts.clear();
+    }
+}
+
+/// Where an asset's file actually is.
+///
+/// The stored reference when it is still true, and otherwise the first place a search turns up a
+/// file of the right name — confirmed by `expected_size` where the document recorded one, so a
+/// different file wearing the same name is not quietly adopted.
+fn locate(
+    stored: &AssetPath,
+    folder: Option<&Path>,
+    search: &[PathBuf],
+    expected_size: u64,
+) -> Option<PathBuf> {
+    if let Some(direct) = stored.resolve(folder)
+        && direct.is_file()
+    {
+        return Some(direct);
+    }
+    find_named(stored.file_name()?, search, expected_size)
+}
+
+/// Adds the directory holding `found` to the places later searches will look.
+fn remember_directory(search: &mut Vec<PathBuf>, found: &Path) {
+    let Some(directory) = found.parent() else {
+        return;
+    };
+    if !search.iter().any(|known| known == directory) {
+        search.push(directory.to_path_buf());
     }
 }
 
@@ -1870,9 +2156,11 @@ mod tests {
     /// Enough to exercise every command that decides what a track *plays*; what it *sounds* like
     /// needs a real SoundFont, which is somebody's 200 MB file rather than a test fixture.
     fn named_font(session: &mut Session, name: &str) -> SoundFontId {
-        session
-            .project
-            .add_soundfont(name, PathBuf::from(format!("{name}.sf2")))
+        session.project.add_soundfont(
+            name,
+            AssetPath::external(format!("/fonts/{name}.sf2")),
+            1024,
+        )
     }
 
     #[test]
@@ -2339,6 +2627,253 @@ mod tests {
         assert!(!reopened.can_undo(), "opening must not be undoable");
 
         std::fs::remove_file(&path).ok();
+    }
+
+    // ------------------------------------------------------------- project folders
+
+    /// A directory under the system temp area that deletes itself when the test ends.
+    struct Scratch {
+        path: PathBuf,
+    }
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "auris-session-{}-{unique}-{name}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).expect("a temp directory can be made");
+            Self { path }
+        }
+
+        fn join(&self, name: &str) -> PathBuf {
+            self.path.join(name)
+        }
+
+        /// Writes a short tone so `import_audio` has a real file to decode.
+        fn tone(&self, name: &str) -> PathBuf {
+            let mut buffer = AudioBuffer::new(2, 480, 48_000.0);
+            for channel in 0..2 {
+                for (frame, sample) in buffer.channel_mut(channel).iter_mut().enumerate() {
+                    *sample = (frame as f32 * 0.01).sin() * 0.5;
+                }
+            }
+            let path = self.join(name);
+            auris_io::write_wav(&path, &buffer, &auris_io::WavExportSettings::default())
+                .expect("a WAV file writes");
+            path
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn saving_under_a_new_name_gathers_the_song_into_one_folder() {
+        let scratch = Scratch::new("gather");
+        let loose = scratch.tone("kick.wav");
+
+        let mut session = session();
+        session.import_audio(&loose, Ticks::ZERO).expect("imports");
+        let document = session
+            .save_as(&scratch.join("MySong.auris"))
+            .expect("saves");
+
+        assert_eq!(document, scratch.join("MySong").join("MySong.auris"));
+        assert!(
+            scratch
+                .join("MySong")
+                .join("Audio")
+                .join("kick.wav")
+                .is_file(),
+            "the audio has to travel with the document"
+        );
+        let source = session.project().audio_sources.values().next().unwrap();
+        assert_eq!(
+            source.path,
+            AssetPath::inside(Path::new("Audio").join("kick.wav")),
+            "and the document has to refer to its own copy"
+        );
+    }
+
+    #[test]
+    fn a_project_folder_that_has_been_moved_still_opens() {
+        // The whole reason for relative references. Nothing here touches the document: the folder
+        // is renamed underneath it, which is what a person dragging it somewhere else does.
+        let scratch = Scratch::new("moved");
+        let loose = scratch.tone("kick.wav");
+
+        let mut session = session();
+        session.import_audio(&loose, Ticks::ZERO).expect("imports");
+        assert_eq!(
+            session
+                .save_as(&scratch.join("Before.auris"))
+                .expect("saves"),
+            scratch.join("Before").join("Before.auris")
+        );
+        drop(session);
+        std::fs::remove_file(&loose).expect("the file it was imported from goes away too");
+
+        let moved = scratch.join("After");
+        std::fs::rename(scratch.join("Before"), &moved).expect("the folder moves");
+
+        let mut reopened = self::tests::session();
+        let missing = reopened
+            .open(&moved.join("Before.auris"))
+            .expect("the moved project opens");
+        assert!(missing.is_empty(), "nothing should be missing: {missing:?}");
+        assert_eq!(reopened.project().audio_sources.len(), 1);
+    }
+
+    #[test]
+    fn audio_imported_into_a_saved_project_is_copied_in_at_once() {
+        let scratch = Scratch::new("import-after-save");
+        let mut session = session();
+        session
+            .save_as(&scratch.join("MySong.auris"))
+            .expect("saves");
+
+        let loose = scratch.tone("snare.wav");
+        session.import_audio(&loose, Ticks::ZERO).expect("imports");
+
+        assert!(
+            scratch
+                .join("MySong")
+                .join("Audio")
+                .join("snare.wav")
+                .is_file()
+        );
+        let source = session.project().audio_sources.values().next().unwrap();
+        assert!(source.path.is_inside());
+    }
+
+    #[test]
+    fn a_soundfont_is_referred_to_where_it_lies() {
+        // The policy that pays for itself: a font is a library, and twenty projects using one
+        // must not mean twenty copies of it.
+        let scratch = Scratch::new("font-external");
+        let font = scratch.join("GM.sf2");
+        std::fs::write(&font, b"not a real font").unwrap();
+
+        let mut session = session();
+        // The file is not a SoundFont, so the import fails — but the document must not have
+        // gained a reference to it either way.
+        assert!(session.import_soundfont(&font).is_err());
+
+        session
+            .project
+            .add_soundfont("GM", AssetPath::external(&font), auris_io::byte_size(&font));
+        let stored = session.project().soundfonts.values().next().unwrap();
+        assert!(!stored.path.is_inside());
+        assert_eq!(stored.byte_size, 15);
+    }
+
+    #[test]
+    fn collecting_brings_the_fonts_in_too() {
+        let scratch = Scratch::new("collect");
+        let font = scratch.join("GM.sf2");
+        std::fs::write(&font, b"stand-in for a very large font").unwrap();
+
+        let mut session = session();
+        session
+            .save_as(&scratch.join("MySong.auris"))
+            .expect("saves");
+        session
+            .project
+            .add_soundfont("GM", AssetPath::external(&font), auris_io::byte_size(&font));
+
+        assert_eq!(session.collect_assets().expect("collects"), 1);
+        assert!(
+            scratch
+                .join("MySong")
+                .join("Audio")
+                .join("GM.sf2")
+                .is_file()
+        );
+        assert!(
+            session
+                .project()
+                .soundfonts
+                .values()
+                .next()
+                .unwrap()
+                .path
+                .is_inside()
+        );
+        assert_eq!(
+            session.collect_assets().expect("collects again"),
+            0,
+            "nothing is left outside, so a second run copies nothing"
+        );
+    }
+
+    #[test]
+    fn collecting_needs_somewhere_to_collect_into() {
+        let mut session = session();
+        assert!(matches!(
+            session.collect_assets(),
+            Err(SessionError::NoPath)
+        ));
+    }
+
+    #[test]
+    fn an_audio_file_that_moved_next_to_the_project_is_found_again() {
+        // A version 1 document names its audio absolutely. Copying the project folder to another
+        // machine breaks that path, and the file sitting in `Audio/` is the obvious candidate.
+        let scratch = Scratch::new("relocate");
+        let folder = scratch.join("MySong");
+        std::fs::create_dir_all(folder.join(AUDIO_DIR)).unwrap();
+
+        let mut session = session();
+        session
+            .import_audio(&scratch.tone("kick.wav"), Ticks::ZERO)
+            .unwrap();
+        let source = session.project().audio_sources.values().next().unwrap().id;
+        session.save(&folder.join("MySong.auris")).unwrap();
+        // Put the file where a collected project would have it, and break the stored path.
+        std::fs::rename(
+            scratch.join("kick.wav"),
+            folder.join(AUDIO_DIR).join("kick.wav"),
+        )
+        .unwrap();
+
+        let mut reopened = self::tests::session();
+        let missing = reopened.open(&folder.join("MySong.auris")).unwrap();
+        assert!(missing.is_empty(), "the file is right there: {missing:?}");
+        assert_eq!(
+            reopened.project().audio_sources[&source].path,
+            AssetPath::inside(Path::new(AUDIO_DIR).join("kick.wav")),
+            "and finding it must be written down, so it is found once rather than every time"
+        );
+        assert!(
+            reopened.is_dirty(),
+            "the repair is an unsaved change like any other"
+        );
+    }
+
+    #[test]
+    fn a_file_that_is_really_gone_is_reported_rather_than_guessed_at() {
+        let scratch = Scratch::new("gone");
+        let folder = scratch.join("MySong");
+        std::fs::create_dir_all(&folder).unwrap();
+
+        let mut session = session();
+        session
+            .import_audio(&scratch.tone("kick.wav"), Ticks::ZERO)
+            .unwrap();
+        session.save(&folder.join("MySong.auris")).unwrap();
+        std::fs::remove_file(scratch.join("kick.wav")).unwrap();
+
+        let mut reopened = self::tests::session();
+        let missing = reopened.open(&folder.join("MySong.auris")).unwrap();
+        assert_eq!(missing.len(), 1, "the project opens, and says what is gone");
+        assert_eq!(reopened.project().tracks.len(), 1);
     }
 
     #[test]

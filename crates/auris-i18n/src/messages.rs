@@ -143,6 +143,18 @@ messages! {
         ja: "{name} — 音色 {sounds} 件から選べます"
     }
 
+    /// Confirmation that everything a project refers to now lives in its folder.
+    fn assets_collected(count: usize) {
+        en: "Collected {count} file(s) into the project folder",
+        ja: "ファイル {count} 件をプロジェクトフォルダに集めました"
+    }
+
+    /// Nothing was outside the project folder to begin with.
+    fn assets_already_collected() {
+        en: "Everything this project uses is already in its folder",
+        ja: "このプロジェクトが使うファイルはすべてフォルダ内にあります"
+    }
+
     /// Progress line while a render runs.
     fn rendering(path: &str) {
         en: "Rendering {path}…",

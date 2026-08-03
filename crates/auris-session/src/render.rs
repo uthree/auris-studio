@@ -199,7 +199,13 @@ mod tests {
         // a second, at double speed.
         let mut project = Project::new("Rate", 48_000.0);
         let track = project.add_audio_track("Sample");
-        let source = project.add_audio_source("s", "s.wav".into(), 48_000, 48_000.0, 2);
+        let source = project.add_audio_source(
+            "s",
+            auris_core::AssetPath::inside("Audio/s.wav"),
+            48_000,
+            48_000.0,
+            2,
+        );
         project
             .add_audio_clip(track, source, Ticks::ZERO)
             .expect("clip");

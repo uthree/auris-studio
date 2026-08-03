@@ -109,6 +109,11 @@ moves the moment anyone edits the file. The samples themselves stay out of the d
 project referring to a two-hundred-megabyte orchestral set is still a few kilobytes of JSON, and
 a font whose file has moved costs one track its sound rather than costing you the session.
 
+A font is *not* copied into the project folder, unlike imported audio — see
+[The project folder](#the-project-folder). One font is shared by every project that uses it, and
+paying two hundred megabytes per project to shorten a path would be a poor trade. What the
+document keeps instead is enough to recognise the file again if it moves: its name and its size.
+
 Playback is `rustysynth`, which both parses the format and renders it. Building the synthesiser
 happens off the audio thread; what runs on it allocates nothing.
 
@@ -128,6 +133,35 @@ Effects can be chained on any track and on the master bus. A chain that looks ah
 does — hands its audio back late, so every other track is held back to match it and the parts stay
 in step with each other. An export renders the resulting lead-in and drops it, so the file still
 lines up with the timeline.
+
+### The project folder
+
+A project is a folder, not a lone file. **Save As** creates it: choosing `MySong.auris` writes
+
+```
+MySong/
+  MySong.auris        the document, pretty-printed JSON
+  Audio/
+    kick.wav          every audio file the song uses
+```
+
+Audio is copied in as it is imported, and the document refers to it *relative to the folder*. So
+the folder is the thing you move, rename, copy to another machine, zip up or put in version
+control, and it opens on the other side with nothing missing. That only holds while one folder
+holds one project, which is why Save As creates the folder rather than trusting anyone to: two
+documents sharing a folder would share its `Audio/`, and saving one under a new name would
+silently leave both pointing at the same files. Relative paths are stored with `/` separators
+whatever the platform wrote them, so a project saved on Windows opens on a Mac.
+
+SoundFonts stay where they are, for the reason given above. **File → Collect Assets into Project**
+(or `auris collect`) copies those in too, for archiving a project or handing it to someone else —
+explicit, because the bill is measured in hundreds of megabytes.
+
+When a file has moved anyway, opening the project looks for it: in the project folder, and in the
+directories the project's other files turned out to be living in. A font is confirmed by its
+recorded size, so a different one wearing the same name is not quietly adopted. Anything found is
+written back into the document, so the search happens once rather than on every open. Anything
+genuinely gone is reported, and the project still opens with that one track silent.
 
 ### Export
 
@@ -171,6 +205,7 @@ auris plugins                                  # every registered instrument and
 auris new song.auris --bpm 128
 auris info song.auris                          # tracks, clips, duration
 auris render song.auris -o song.wav --bit-depth 24
+auris collect song.auris                       # gather every file it uses into its folder
 ```
 
 An MCP server is the next frontend and needs no new backend work — it is the same `Session`

@@ -285,6 +285,11 @@ impl AurisApp {
     }
 
     /// Prompts for a path and saves there.
+    ///
+    /// What lands on disk is a project *folder*: choosing `MySong.auris` writes
+    /// `MySong/MySong.auris` with the song's audio beside it, so the whole thing can be moved or
+    /// handed to someone else afterwards. The status line names the document that resulted rather
+    /// than the path that was typed, since they differ.
     pub(crate) fn save_as(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let name = self.project().name.clone();
         cx.spawn(async move |this, cx| {
@@ -297,9 +302,10 @@ impl AurisApp {
             let Some(handle) = handle else { return };
             let path = handle.path().to_path_buf();
             let _ = this.update(cx, |this, cx| {
-                match this.session.save(&path) {
-                    Ok(()) => {
-                        let text = messages::saved(this.language(), &path.display().to_string());
+                match this.session.save_as(&path) {
+                    Ok(document) => {
+                        let text =
+                            messages::saved(this.language(), &document.display().to_string());
                         this.set_status(text);
                     }
                     Err(error) => this.set_status(this.failure(Key::CmdSave, &error)),
@@ -308,6 +314,16 @@ impl AurisApp {
             });
         })
         .detach();
+    }
+
+    /// Copies everything the project refers to into its folder.
+    pub(crate) fn collect_assets(&mut self) {
+        let language = self.language();
+        match self.session.collect_assets() {
+            Ok(0) => self.set_status(messages::assets_already_collected(language)),
+            Ok(count) => self.set_status(messages::assets_collected(language, count)),
+            Err(error) => self.set_status(self.failure(Key::CmdCollectAssets, &error)),
+        }
     }
 
     /// Prompts for a project file and opens it.

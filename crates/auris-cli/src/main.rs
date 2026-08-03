@@ -38,6 +38,7 @@ fn main() -> ExitCode {
         "info" => with_path(&args, language, info),
         "render" => render(&args, language),
         "new" => new_project(&args, language),
+        "collect" => with_path(&args, language, collect),
         "help" | "-h" | "--help" => {
             print_usage(language);
             Ok(())
@@ -241,6 +242,27 @@ fn list_plugins(language: Language) -> Result<(), String> {
     for descriptor in registry.effects() {
         describe(descriptor);
     }
+    Ok(())
+}
+
+/// Copies every file a project refers to into its folder, and saves it.
+///
+/// The command for archiving a project or handing it to someone else, from a script. Audio is
+/// already collected as a matter of course; what this adds is the SoundFonts, which are left in
+/// place on an ordinary save because one font is shared by every project that uses it.
+fn collect(path: &Path, language: Language) -> Result<(), String> {
+    let mut session = headless()?;
+    for missing in session.open(path).map_err(|error| error.to_string())? {
+        eprintln!(
+            "{}",
+            messages::warning_missing_audio(language, &missing.display().to_string())
+        );
+    }
+    let collected = session
+        .collect_assets()
+        .map_err(|error| error.to_string())?;
+    session.save_in_place().map_err(|error| error.to_string())?;
+    println!("{}", messages::assets_collected(language, collected));
     Ok(())
 }
 

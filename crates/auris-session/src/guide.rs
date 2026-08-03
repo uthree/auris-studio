@@ -28,6 +28,7 @@
 //! * [`realtime`] — what may and may not happen on the audio callback thread.
 //! * [`plugins`] — writing an instrument or an effect, with a worked example.
 //! * [`composition`] — the song specification and how a piece is written from it.
+//! * [`documents`] — what a project is on disk, and how it refers to files it does not contain.
 //! * [`platforms`] — where macOS and Windows differ, and the rules that keep both alive.
 
 pub mod architecture {
@@ -439,6 +440,70 @@ pub mod composition {
     //! whole piece, and one graph rebuild rather than one per note. A part naming an instrument
     //! the registry does not have falls back to the first registered one and is reported, because
     //! a missing plugin should cost a timbre rather than a whole piece.
+}
+
+pub mod documents {
+    //! What a project is on disk, and how it refers to files it does not contain.
+    //!
+    //! # A folder, not a file
+    //!
+    //! The document is pretty-printed JSON — [`auris_io::save_project`] writes it, and it holds
+    //! no samples, only ids and parameter values. It lives in a folder of its own, with the audio
+    //! the song owns beside it:
+    //!
+    //! ```text
+    //! MySong/
+    //!   MySong.auris
+    //!   Audio/
+    //!     kick.wav
+    //! ```
+    //!
+    //! [`Session::save_as`](crate::Session::save_as) creates that folder rather than trusting
+    //! anyone to, and [`auris_io::document_in_folder`] is the rule it applies: choosing
+    //! `MySong.auris` gives `MySong/MySong.auris`. The invariant being defended is **one folder,
+    //! one project** — two documents sharing a folder would share its `Audio/`, and saving one
+    //! under a new name would leave both pointing at the same files.
+    //!
+    //! # Why an asset reference is not a path
+    //!
+    //! An absolute path is the weakest reference there is: it breaks when the folder moves, when
+    //! the project is copied to another machine, when a drive is mounted under a different letter.
+    //! [`AssetPath`](auris_core::AssetPath) splits the two cases that want opposite treatment.
+    //!
+    //! * `Inside` — relative to the project folder, so the folder is what moves. Stored with `/`
+    //!   separators on every platform, because `Audio\kick.wav` is a *file called that* on a Unix
+    //!   system, and a project saved on Windows would arrive on a Mac with silent tracks.
+    //! * `External` — absolute, because nothing else would find it.
+    //!
+    //! Which one an asset gets is policy, not a property of the file. Imported audio belongs to
+    //! one song and is copied in by [`Session::import_audio`](crate::Session::import_audio). A
+    //! SoundFont is a library shared by every project that uses it, often hundreds of megabytes,
+    //! and is referred to where it lies;
+    //! [`Session::collect_assets`](crate::Session::collect_assets) is how somebody archiving a
+    //! project asks for those too.
+    //!
+    //! # Finding a file that moved anyway
+    //!
+    //! [`Session::open`](crate::Session::open) resolves in two passes. Everything whose stored
+    //! reference is still true is read first; only then is there a set of directories that assets
+    //! are demonstrably living in, and the ones that moved are looked for there and in the project
+    //! folder. A candidate is confirmed by size where the document recorded one, so a different
+    //! file wearing the same name is not quietly adopted — which is what
+    //! [`SoundFontRef::byte_size`](auris_core::SoundFontRef::byte_size) is for.
+    //!
+    //! Anything found under a new path is written back into the document, so the search happens
+    //! once rather than on every open. That leaves the project dirty, which is the honest
+    //! signal: there is a repair to save. Anything genuinely gone is returned to the caller and
+    //! the project still opens, because refusing to open a session over one moved sample would be
+    //! a poor trade.
+    //!
+    //! # Versions
+    //!
+    //! [`Project::FORMAT_VERSION`](auris_core::Project::FORMAT_VERSION) is checked before the full
+    //! parse, so a file from a newer build produces "update Auris Studio" rather than a confusing
+    //! complaint about an unknown field. Backwards compatibility is carried by `serde(default)` on
+    //! every optional field: version 1 stored assets as bare path strings, which is exactly what
+    //! `External` means, so reading those as `External` is the whole of that migration.
 }
 
 pub mod platforms {
