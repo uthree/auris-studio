@@ -535,7 +535,7 @@ impl AurisApp {
                     self.select_track(copy);
                     self.set_status(self.t(Key::DuplicatedTrack));
                 }
-                Err(error) => self.set_status(self.failure(Key::MenuDuplicate, &error)),
+                Err(error) => self.set_failed_status(self.failure(Key::MenuDuplicate, &error)),
             },
             MenuCommand::RenameTrack(track) => {
                 let name = self
@@ -567,7 +567,7 @@ impl AurisApp {
                     }
                 }
                 match failure {
-                    Some(error) => self.set_status(self.failure(Key::MenuDuplicate, &error)),
+                    Some(error) => self.set_failed_status(self.failure(Key::MenuDuplicate, &error)),
                     None => {
                         // The copies become the selection, so dragging straight afterwards moves
                         // the new material rather than the original.
@@ -604,7 +604,9 @@ impl AurisApp {
                         self.selected_notes.clear();
                         self.set_status(self.t(Key::SplitClipStatus));
                     }
-                    Err(error) => self.set_status(self.failure(Key::MenuSplitAtPlayhead, &error)),
+                    Err(error) => {
+                        self.set_failed_status(self.failure(Key::MenuSplitAtPlayhead, &error))
+                    }
                 }
             }
             MenuCommand::LoopOverClip(clip) => {
@@ -679,7 +681,7 @@ impl AurisApp {
                         name,
                         chords,
                     )),
-                    Err(error) => self.set_status(self.failure(Key::MenuHarmony, &error)),
+                    Err(error) => self.set_failed_status(self.failure(Key::MenuHarmony, &error)),
                 }
             }
             MenuCommand::ShowPresetPicker {
@@ -706,12 +708,14 @@ impl AurisApp {
                         self.select_clip(Some(clip));
                         self.report_clip(preset, clip);
                     }
-                    Err(error) => self.set_status(self.failure(Key::MenuGenerateClip, &error)),
+                    Err(error) => {
+                        self.set_failed_status(self.failure(Key::MenuGenerateClip, &error))
+                    }
                 }
             }
             MenuCommand::RegenerateClip(clip) => match self.session.regenerate_clip(clip) {
                 Ok(_) => self.report_clip_preset(clip),
-                Err(error) => self.set_status(self.failure(Key::MenuRegenerateClip, &error)),
+                Err(error) => self.set_failed_status(self.failure(Key::MenuRegenerateClip, &error)),
             },
             MenuCommand::RerollClip(clip) => self.reroll_clip(clip),
             MenuCommand::FreezeClip(clip) => self.freeze_clip(clip),
@@ -1078,7 +1082,7 @@ impl AurisApp {
     pub(crate) fn reroll_clip(&mut self, clip: ClipId) {
         match self.session.reroll_clip(clip) {
             Ok(_) => self.report_clip_preset(clip),
-            Err(error) => self.set_status(self.failure(Key::MenuRerollClip, &error)),
+            Err(error) => self.set_failed_status(self.failure(Key::MenuRerollClip, &error)),
         }
     }
 
@@ -1086,7 +1090,7 @@ impl AurisApp {
     pub(crate) fn freeze_clip(&mut self, clip: ClipId) {
         match self.session.freeze_clip(clip) {
             Ok(()) => self.set_status(self.t(Key::ClipKept)),
-            Err(error) => self.set_status(self.failure(Key::MenuFreezeClip, &error)),
+            Err(error) => self.set_failed_status(self.failure(Key::MenuFreezeClip, &error)),
         }
     }
 
@@ -1108,7 +1112,7 @@ impl AurisApp {
         };
         match self.session.set_clip_recipe(clip, recipe) {
             Ok(_) => self.report_clip(preset, clip),
-            Err(error) => self.set_status(self.failure(Key::MenuGenerateClip, &error)),
+            Err(error) => self.set_failed_status(self.failure(Key::MenuGenerateClip, &error)),
         }
     }
 
@@ -1123,7 +1127,7 @@ impl AurisApp {
         let recipe = recipe.with_seed(seed);
         match self.session.set_clip_recipe(clip, recipe) {
             Ok(_) => self.report_clip_preset(clip),
-            Err(error) => self.set_status(self.failure(Key::MenuGenerateClip, &error)),
+            Err(error) => self.set_failed_status(self.failure(Key::MenuGenerateClip, &error)),
         }
     }
 
@@ -1141,7 +1145,7 @@ impl AurisApp {
         };
         match self.session.set_clip_recipe(clip, recipe) {
             Ok(_) => self.report_clip_preset(clip),
-            Err(error) => self.set_status(self.failure(Key::MenuGenerateClip, &error)),
+            Err(error) => self.set_failed_status(self.failure(Key::MenuGenerateClip, &error)),
         }
     }
 

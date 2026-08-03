@@ -317,6 +317,8 @@ strings! {
     Discard { en: "Discard", ja: "破棄" }
     ReplaceTitle { en: "Replace project?", ja: "プロジェクトを置き換えますか？" }
     Replace { en: "Replace", ja: "置き換える" }
+    MissingAudioTitle { en: "Audio files not found", ja: "見つからないオーディオファイル" }
+    SpecRejectedTitle { en: "The specification was not accepted", ja: "仕様書を読み取れませんでした" }
 
     // ------------------------------------------------------------------ statuses
     NothingToUndo { en: "Nothing to undo", ja: "取り消せる操作がありません" }

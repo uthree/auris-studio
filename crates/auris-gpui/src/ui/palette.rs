@@ -378,8 +378,10 @@ impl AurisApp {
                 .justify_center()
                 .pt(px(90.0))
                 .bg(Theme::translucent(theme.background, 0.55))
-                // A click outside closes it, the way every palette does, and stops there rather
-                // than falling through onto the timeline behind it.
+                // A dimmed screen that still takes clicks is decoration, not a modal. This makes
+                // it one: nothing behind it is hit by any button, or by the wheel.
+                .occlude()
+                // A click outside closes it, the way every palette does.
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _: &MouseDownEvent, _, cx| {

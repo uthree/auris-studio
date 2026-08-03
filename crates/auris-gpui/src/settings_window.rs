@@ -189,7 +189,12 @@ impl SettingsWindow {
             .unwrap_or_else(|_| Err("the main window has closed".to_string()));
         self.status = match outcome {
             Ok(status) => status,
-            Err(error) => format!("Could not switch: {error}"),
+            // Translated, and phrased once. This used to be an English literal wrapping a driver
+            // message that already said "could not switch audio device" — on the one Settings
+            // page most likely to fail, in an otherwise fully translated window.
+            Err(error) => {
+                crate::i18n::error_text(&SessionError::AudioRestart(error), self.language)
+            }
         };
         // The previous update has finished, so reading back is safe here.
         self.live = self

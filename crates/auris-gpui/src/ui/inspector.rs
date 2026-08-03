@@ -512,7 +512,7 @@ impl AurisApp {
     /// say which one it is.
     pub(crate) fn add_effect_to(&mut self, track: Option<TrackId>, effect_id: &str) {
         if let Err(error) = self.session.add_effect(track, effect_id) {
-            self.set_status(self.failure(Key::MenuAddEffect, &error));
+            self.set_failed_status(self.failure(Key::MenuAddEffect, &error));
         }
     }
 
@@ -522,7 +522,7 @@ impl AurisApp {
             return;
         };
         if let Err(error) = self.session.set_track_instrument(track, instrument_id) {
-            self.set_status(self.failure(Key::EditChangeInstrument, &error));
+            self.set_failed_status(self.failure(Key::EditChangeInstrument, &error));
         }
     }
 
@@ -535,7 +535,7 @@ impl AurisApp {
             return;
         };
         if let Err(error) = self.session.set_track_preset(track, preset) {
-            self.set_status(self.failure(Key::EditChoosePreset, &error));
+            self.set_failed_status(self.failure(Key::EditChoosePreset, &error));
         }
     }
 

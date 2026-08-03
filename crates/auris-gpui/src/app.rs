@@ -626,6 +626,13 @@ pub struct AurisApp {
     pub(crate) library: crate::ui::library::LibraryTree,
     /// The title the operating system was last told, so it is only told again on a change.
     pub(crate) titled: String,
+    /// Whether the export destination dialog is open.
+    ///
+    /// [`Self::export`] is not set until a path comes back, so this is what stops a second
+    /// Export while the picker is still up.
+    pub(crate) choosing_export: bool,
+    /// Whether [`Self::status`] is reporting a failure, so it can be shown as one.
+    pub(crate) status_failed: bool,
     /// How far the arrangement's lanes are scrolled down, in pixels.
     ///
     /// The headers and the clip canvas both read it, so the two columns cannot slide apart —
@@ -729,6 +736,8 @@ impl AurisApp {
             plugin_window: None,
             library: crate::ui::library::LibraryTree::default(),
             titled: String::new(),
+            choosing_export: false,
+            status_failed: false,
             lane_scroll: px(0.0),
             settings,
             language,
@@ -938,6 +947,17 @@ impl AurisApp {
     /// Sets the status line.
     pub(crate) fn set_status(&mut self, status: impl Into<String>) {
         self.status = status.into();
+        self.status_failed = false;
+    }
+
+    /// Reports a failure on the status line, in the colour of one.
+    ///
+    /// Separate from [`Self::set_status`] because the status bar had no error colour at all:
+    /// a command that could not be carried out was reported in the same pale grey as the sample
+    /// rate beside it.
+    pub(crate) fn set_failed_status(&mut self, status: impl Into<String>) {
+        self.status = status.into();
+        self.status_failed = true;
     }
 
     /// Window title, marking unsaved changes the way every editor does.

@@ -143,6 +143,24 @@ messages! {
         ja: "{path} を読み込み中…"
     }
 
+    /// While a project is being read.
+    fn opening(path: &str) {
+        en: "Opening {path}…",
+        ja: "{path} を開いています…"
+    }
+
+    /// While a specification is being turned into a piece.
+    fn composing(path: &str) {
+        en: "Composing from {path}…",
+        ja: "{path} から作曲中…"
+    }
+
+    /// While a project's files are being gathered into its folder.
+    fn collecting() {
+        en: "Collecting the project's files…",
+        ja: "プロジェクトのファイルを収集中…"
+    }
+
     /// Confirmation that a file was decoded onto a track.
     fn imported(path: &str) {
         en: "Imported {path}",

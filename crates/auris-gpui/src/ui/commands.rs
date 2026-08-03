@@ -99,7 +99,7 @@ impl AurisApp {
                 // that did nothing at all.
                 self.reveal_track(id);
             }
-            Err(error) => self.set_status(self.failure(Key::CmdAddInstrumentTrack, &error)),
+            Err(error) => self.set_failed_status(self.failure(Key::CmdAddInstrumentTrack, &error)),
         }
     }
 
@@ -209,7 +209,7 @@ impl AurisApp {
             moves.push((*clip, destination));
         }
         if let Err(error) = self.session.move_clips_to_track(&moves) {
-            self.set_status(self.failure(Key::EditMoveClip, &error));
+            self.set_failed_status(self.failure(Key::EditMoveClip, &error));
         }
     }
 
@@ -284,6 +284,7 @@ impl AurisApp {
     pub(crate) fn new_project(&mut self) {
         self.session.new_project();
         self.resync_selection();
+        self.reset_view();
         self.set_status(self.t(Key::NewProjectStatus));
     }
 
@@ -298,7 +299,7 @@ impl AurisApp {
                 let path = self.session.path().map(|p| p.display().to_string());
                 self.set_status(messages::saved(self.language(), &path.unwrap_or_default()));
             }
-            Err(error) => self.set_status(self.failure(Key::CmdSave, &error)),
+            Err(error) => self.set_failed_status(self.failure(Key::CmdSave, &error)),
         }
     }
 
@@ -371,7 +372,7 @@ impl AurisApp {
                     },
                 ));
             }
-            Err(error) => self.set_status(self.failure(Key::CmdSave, &error)),
+            Err(error) => self.set_failed_status(self.failure(Key::CmdSave, &error)),
         }
     }
 
@@ -389,13 +390,38 @@ impl AurisApp {
     }
 
     /// Copies everything the project refers to into its folder.
-    pub(crate) fn collect_assets(&mut self) {
-        let language = self.language();
-        match self.session.collect_assets() {
-            Ok(0) => self.set_status(messages::assets_already_collected(language)),
-            Ok(count) => self.set_status(messages::assets_collected(language, count)),
-            Err(error) => self.set_status(self.failure(Key::CmdCollectAssets, &error)),
-        }
+    ///
+    /// A SoundFont library runs to hundreds of megabytes, so this says what it is doing and
+    /// gives the window a frame to say it in before starting.
+    pub(crate) fn collect_assets(&mut self, cx: &mut Context<Self>) {
+        self.set_status(messages::collecting(self.language()));
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::ZERO)
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let language = this.language();
+                match this.session.collect_assets() {
+                    Ok(0) => this.set_status(messages::assets_already_collected(language)),
+                    Ok(count) => this.set_status(messages::assets_collected(language, count)),
+                    Err(error) => {
+                        this.set_failed_status(this.failure(Key::CmdCollectAssets, &error))
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Puts the view back to the top left, for a document that is not the one it was showing.
+    ///
+    /// Opening a project while scrolled out to bar 400 showed an empty timeline, and there was
+    /// no command for going back — the scroll is not part of the document, so nothing restored
+    /// it either.
+    pub(crate) fn reset_view(&mut self) {
+        self.timeline.scroll_ticks = Ticks::ZERO;
+        self.lane_scroll = gpui::px(0.0);
     }
 
     /// Prompts for a project file and opens it, asking first if that would lose work.
@@ -419,12 +445,24 @@ impl AurisApp {
                 .await;
             let Some(handle) = handle else { return };
             let path = handle.path().to_path_buf();
+
+            let _ = this.update(cx, |this, cx| {
+                let text = messages::opening(this.language(), &path.display().to_string());
+                this.set_status(text);
+                cx.notify();
+            });
+            // A project decodes every audio file it names, which on a real song is seconds of
+            // work on this thread. Without a painted frame first the window simply freezes.
+            cx.background_executor()
+                .timer(std::time::Duration::ZERO)
+                .await;
+
             let _ = this.update(cx, |this, cx| {
                 match this.session.open(&path) {
                     Ok(missing) => {
                         this.resync_selection();
-                        // Fold the failures into the one status line rather than setting a
-                        // message that "Opened ..." would immediately overwrite.
+                        // A different document, so the view of the old one means nothing.
+                        this.reset_view();
                         let language = this.language();
                         let shown = path.display().to_string();
                         this.set_status(match missing.len() {
@@ -436,8 +474,17 @@ impl AurisApp {
                             ),
                             n => messages::opened_missing_many(language, &shown, n),
                         });
+                        // Which files, not how many. The clips that lost their audio are
+                        // indistinguishable from silence, and a count in a status line that the
+                        // next command overwrites left the log as the only way to find out.
+                        if missing.len() > 1 {
+                            this.open_prompt(crate::ui::prompt::Prompt::notice(
+                                this.t(Key::MissingAudioTitle),
+                                missing.iter().map(|path| path.display().to_string().into()),
+                            ));
+                        }
                     }
-                    Err(error) => this.set_status(this.failure(Key::CmdOpenProject, &error)),
+                    Err(error) => this.set_failed_status(this.failure(Key::CmdOpenProject, &error)),
                 }
                 cx.notify();
             });
@@ -460,6 +507,16 @@ impl AurisApp {
             let path = handle.path().to_path_buf();
 
             let _ = this.update(cx, |this, cx| {
+                let text = messages::composing(this.language(), &path.display().to_string());
+                this.set_status(text);
+                cx.notify();
+            });
+            // Writing a whole piece is the slowest thing here that is not a render.
+            cx.background_executor()
+                .timer(std::time::Duration::ZERO)
+                .await;
+
+            let _ = this.update(cx, |this, cx| {
                 this.compose_file(&path);
                 cx.notify();
             });
@@ -478,7 +535,7 @@ impl AurisApp {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
             Err(error) => {
-                self.set_status(messages::failed(
+                self.set_failed_status(messages::failed(
                     language,
                     self.t(Key::CmdComposeSong),
                     &error.to_string(),
@@ -491,11 +548,14 @@ impl AurisApp {
         let spec = match SongSpec::parse(&text) {
             Ok(spec) => spec,
             Err(errors) => {
-                let mut message = messages::spec_rejected(language, &shown);
-                for error in errors {
-                    message.push_str(&format!("\n  {error}"));
-                }
-                self.set_status(message);
+                // Every complaint, in a sheet. They were joined with newlines into the status
+                // bar, which is one row twenty-two pixels tall: the parser's whole point — say
+                // all of it at once — was thrown away by where the answer was put.
+                self.set_failed_status(messages::spec_rejected(language, &shown));
+                self.open_prompt(crate::ui::prompt::Prompt::notice(
+                    self.t(Key::SpecRejectedTitle),
+                    errors.iter().map(|error| error.to_string().into()),
+                ));
                 return;
             }
         };
@@ -505,6 +565,7 @@ impl AurisApp {
         match self.session.compose(&piece) {
             Ok(report) => {
                 self.resync_selection();
+                self.reset_view();
                 // Point the editors at the first part rather than leaving them empty. Opening a
                 // project does not need this because its own selection is restored; a freshly
                 // composed document has no selection to restore, and an empty piano roll over a
@@ -526,7 +587,7 @@ impl AurisApp {
                     )
                 });
             }
-            Err(error) => self.set_status(self.failure(Key::CmdComposeSong, &error)),
+            Err(error) => self.set_failed_status(self.failure(Key::CmdComposeSong, &error)),
         }
     }
 
@@ -567,7 +628,7 @@ impl AurisApp {
                         let text = messages::imported(this.language(), &path.display().to_string());
                         this.set_status(text);
                     }
-                    Err(error) => this.set_status(this.failure(Key::CmdImportAudio, &error)),
+                    Err(error) => this.set_failed_status(this.failure(Key::CmdImportAudio, &error)),
                 }
                 cx.notify();
             });
@@ -626,7 +687,9 @@ impl AurisApp {
                         let language = this.language();
                         this.set_status(messages::soundfont_imported(language, &name, sounds));
                     }
-                    Err(error) => this.set_status(this.failure(Key::CmdImportSoundFont, &error)),
+                    Err(error) => {
+                        this.set_failed_status(this.failure(Key::CmdImportSoundFont, &error))
+                    }
                 }
                 cx.notify();
             });
@@ -636,10 +699,14 @@ impl AurisApp {
 
     /// Prompts for a destination and renders the project to a WAV file.
     pub(crate) fn start_export(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.export.as_ref().is_some_and(|e| e.result.is_none()) {
+        // `export` is not set until a path comes back, so the running check alone let a second
+        // Export through while the picker was still up — two renders, and the summary of
+        // whichever finished second.
+        if self.choosing_export || self.export.as_ref().is_some_and(|e| e.result.is_none()) {
             self.set_status(self.t(Key::ExportAlreadyRunning));
             return;
         }
+        self.choosing_export = true;
         let name = self.project().name.clone();
         // A snapshot, so the render is unaffected by anything edited while it runs.
         let job = self.session.render_job();
@@ -651,11 +718,15 @@ impl AurisApp {
                 .add_filter("WAV audio", &["wav"])
                 .save_file()
                 .await;
-            let Some(handle) = handle else { return };
+            let Some(handle) = handle else {
+                let _ = this.update(cx, |this, _| this.choosing_export = false);
+                return;
+            };
             let path = handle.path().to_path_buf();
 
             let progress = Arc::new(AtomicU32::new(0));
             let _ = this.update(cx, |this, cx| {
+                this.choosing_export = false;
                 this.export = Some(ExportState {
                     path: path.clone(),
                     progress: Arc::clone(&progress),

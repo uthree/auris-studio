@@ -78,8 +78,12 @@ fn main() {
             })
             .ok();
 
-        cx.on_window_closed(|cx| {
-            if cx.windows().is_empty() {
+        // The project window is the application. Settings is a panel that happens to be a window
+        // of its own, with no document to lose; leaving it up after the project window closed
+        // meant an app that had not quit and a panel whose controls silently did nothing.
+        let main = gpui::AnyWindowHandle::from(window).window_id();
+        cx.on_window_closed(move |cx| {
+            if !cx.windows().iter().any(|open| open.window_id() == main) {
                 cx.quit();
             }
         })

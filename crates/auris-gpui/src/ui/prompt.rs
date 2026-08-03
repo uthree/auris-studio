@@ -104,6 +104,12 @@ pub enum PromptBody {
     },
     /// A question, answered with a button.
     Ask(Question),
+    /// A list of things that went wrong, which the user reads and closes.
+    ///
+    /// For what will not fit on the status line: every audio file a project could not find,
+    /// every complaint a specification's parser has. The status line is one truncated row that
+    /// the next command overwrites, so a list put there is a list nobody sees.
+    Notice(Vec<SharedString>),
 }
 
 /// An open sheet.
@@ -139,11 +145,22 @@ impl Prompt {
         }
     }
 
+    /// A prompt reporting a list of things, with nothing to decide.
+    pub fn notice(
+        title: impl Into<SharedString>,
+        lines: impl IntoIterator<Item = SharedString>,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            body: PromptBody::Notice(lines.into_iter().collect()),
+        }
+    }
+
     /// The text being edited, when this sheet is editing any.
     pub fn field(&self) -> Option<&TextField> {
         match &self.body {
             PromptBody::Text { field, .. } => Some(field),
-            PromptBody::Ask(_) => None,
+            PromptBody::Ask(_) | PromptBody::Notice(_) => None,
         }
     }
 
@@ -151,7 +168,7 @@ impl Prompt {
     pub fn field_mut(&mut self) -> Option<&mut TextField> {
         match &mut self.body {
             PromptBody::Text { field, .. } => Some(field),
-            PromptBody::Ask(_) => None,
+            PromptBody::Ask(_) | PromptBody::Notice(_) => None,
         }
     }
 }
@@ -184,6 +201,9 @@ impl AurisApp {
                 self.answer(question, Answer::Confirm, window, cx);
                 return;
             }
+            // Nothing to apply — it has been read, and taking it off the screen is the whole
+            // action.
+            PromptBody::Notice(_) => return,
         };
         let text = field.content().trim().to_string();
         if text.is_empty() {
@@ -203,7 +223,7 @@ impl AurisApp {
                     Ok(())
                 }
                 None => {
-                    self.set_status(messages::not_a_key(self.language(), &text));
+                    self.set_failed_status(messages::not_a_key(self.language(), &text));
                     return;
                 }
             },
@@ -213,7 +233,7 @@ impl AurisApp {
                     Ok(())
                 }
                 None => {
-                    self.set_status(messages::not_a_chord(self.language(), &text));
+                    self.set_failed_status(messages::not_a_chord(self.language(), &text));
                     return;
                 }
             },
@@ -223,13 +243,13 @@ impl AurisApp {
                     Ok(())
                 }
                 Err(_) => {
-                    self.set_status(messages::not_a_seed(self.language(), &text));
+                    self.set_failed_status(messages::not_a_seed(self.language(), &text));
                     return;
                 }
             },
         };
         if let Err(error) = outcome {
-            self.set_status(self.failure(Key::Rename, &error));
+            self.set_failed_status(self.failure(Key::Rename, &error));
         }
     }
 
@@ -269,7 +289,7 @@ impl AurisApp {
             (Question::Replace { chosen, .. }, _) => {
                 match self.session.save_as_replacing(&chosen) {
                     Ok(report) => self.report_save(&report),
-                    Err(error) => self.set_status(self.failure(Key::CmdSave, &error)),
+                    Err(error) => self.set_failed_status(self.failure(Key::CmdSave, &error)),
                 }
             }
         }
@@ -289,7 +309,7 @@ impl AurisApp {
                 self.set_status(messages::saved(self.language(), &path.unwrap_or_default()));
                 self.run_pending(next, window, cx);
             }
-            Err(error) => self.set_status(self.failure(Key::CmdSave, &error)),
+            Err(error) => self.set_failed_status(self.failure(Key::CmdSave, &error)),
         }
     }
 
@@ -392,6 +412,19 @@ impl AurisApp {
                     self.render_prompt_buttons(deny, confirm, cx),
                 )
             }
+            PromptBody::Notice(lines) => (
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .max_h(px(280.0))
+                    .overflow_hidden()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .children(lines.iter().cloned().map(|line| div().child(line)))
+                    .into_any_element(),
+                self.render_prompt_buttons(None, self.t(Key::Close).into(), cx),
+            ),
         };
 
         Some(
@@ -403,9 +436,11 @@ impl AurisApp {
                 .justify_center()
                 .pt(px(120.0))
                 .bg(Theme::translucent(theme.background, 0.55))
-                // A click outside the sheet cancels, which is what every rename box does. It
-                // stops there rather than falling through: a click meant to dismiss the sheet
-                // must not also move the playhead or reselect a clip behind it.
+                // A sheet asking a question has to be answered, so nothing behind it is hit by
+                // any button or by the wheel. Stopping left-click propagation was not enough: a
+                // right-click went through the dim and opened a menu on top of the sheet.
+                .occlude()
+                // A click outside the sheet cancels, which is what every rename box does.
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _: &MouseDownEvent, _, cx| {

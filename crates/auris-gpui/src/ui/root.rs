@@ -253,7 +253,15 @@ impl AurisApp {
             .border_color(theme.border)
             .text_xs()
             .text_color(theme.text_muted)
-            .child(div().flex_1().truncate().child(self.status.clone()))
+            .child(
+                div()
+                    .flex_1()
+                    .truncate()
+                    // A failure was reported in the same pale grey as the sample rate beside it,
+                    // in a row a user has no reason to be looking at.
+                    .when(self.status_failed, |this| this.text_color(theme.danger))
+                    .child(self.status.clone()),
+            )
             .child(self.window_title())
             .child(engine)
     }
@@ -264,6 +272,7 @@ impl AurisApp {
         let theme = self.theme.clone();
         let fraction = export.fraction();
         let finished = export.result.is_some();
+        let failed = matches!(export.result, Some(Err(_)));
         let message = match &export.result {
             Some(Ok(summary)) => summary.clone(),
             Some(Err(error)) => error.clone(),
@@ -278,6 +287,9 @@ impl AurisApp {
                 .items_center()
                 .justify_center()
                 .bg(Theme::translucent(theme.background, 0.72))
+                // Export is the longest thing this application does, and the screen went dim
+                // while every click still landed on the arrangement underneath it.
+                .occlude()
                 .child(
                     div()
                         .flex()
@@ -295,7 +307,16 @@ impl AurisApp {
                                 .text_color(theme.text)
                                 .child(self.t(Key::Export)),
                         )
-                        .child(div().text_xs().text_color(theme.text_muted).child(message))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(if failed {
+                                    theme.danger
+                                } else {
+                                    theme.text_muted
+                                })
+                                .child(message),
+                        )
                         .child(
                             div()
                                 .h(px(6.0))
@@ -304,10 +325,19 @@ impl AurisApp {
                                 .overflow_hidden()
                                 .bg(theme.surface_sunken)
                                 .child(
+                                    // A render that failed used to fill this bar to the end in
+                                    // the accent colour, which is exactly what a finished one
+                                    // looks like — a completed export with no file at the end
+                                    // of it. It stops where it got to, in the colour of a
+                                    // failure.
                                     div()
                                         .h_full()
-                                        .w(relative(if finished { 1.0 } else { fraction }))
-                                        .bg(theme.accent),
+                                        .w(relative(if finished && !failed {
+                                            1.0
+                                        } else {
+                                            fraction
+                                        }))
+                                        .bg(if failed { theme.danger } else { theme.accent }),
                                 ),
                         )
                         .when(finished, |this| {
@@ -653,7 +683,7 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.collect_assets();
+        self.collect_assets(cx);
         cx.notify();
     }
 
@@ -733,6 +763,17 @@ impl AurisApp {
         // leave the session's transaction open, and every edit after that inaudible.
         if self.abort_drag() {
             self.stop_audition();
+            cx.notify();
+            return;
+        }
+        // A finished export is a sheet with one button on it, and Escape is how a sheet closes.
+        // A running one has no cancel, so Escape leaves it alone rather than pretending.
+        if self
+            .export
+            .as_ref()
+            .is_some_and(|export| export.result.is_some())
+        {
+            self.export = None;
             cx.notify();
             return;
         }
