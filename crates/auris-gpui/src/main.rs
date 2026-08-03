@@ -4,6 +4,7 @@
 
 mod actions;
 mod app;
+mod appearance;
 mod gestures;
 mod i18n;
 mod keymap;

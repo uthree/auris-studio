@@ -47,7 +47,10 @@ where
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
     let (background, text_color, border) = match (style, active) {
-        (_, true) => (active_color, theme.text_on_accent, active_color),
+        // Read against whatever it is latched to — mute is orange, solo is amber, a track's
+        // colour is whatever the user chose — and not against the accent, which is behind none
+        // of them.
+        (_, true) => (active_color, theme.text_on(active_color), active_color),
         (ButtonStyle::Primary, false) => (theme.accent, theme.text_on_accent, theme.accent),
         (ButtonStyle::Normal, false) => (theme.surface_raised, theme.text, theme.border),
         (ButtonStyle::Ghost, false) => (
@@ -56,6 +59,7 @@ where
             gpui::transparent_black(),
         ),
     };
+    let hover = theme.hovered(background, 0.12);
 
     div()
         .id(id.into())
@@ -71,7 +75,7 @@ where
         .text_xs()
         .text_color(text_color)
         .cursor_pointer()
-        .hover(|this| this.bg(Theme::lighten(background, 0.12)))
+        .hover(|this| this.bg(hover))
         .active(|this| this.opacity(0.75))
         .child(label.into())
         .on_click(on_click)
@@ -99,10 +103,11 @@ where
         theme.surface_raised
     };
     let foreground = if active {
-        theme.text_on_accent
+        theme.text_on(active_color)
     } else {
         theme.text
     };
+    let hover = theme.hovered(background, 0.14);
 
     div()
         .id(id.into())
@@ -115,7 +120,7 @@ where
         .border_color(if active { active_color } else { theme.border })
         .bg(background)
         .cursor_pointer()
-        .hover(|this| this.bg(Theme::lighten(background, 0.14)))
+        .hover(|this| this.bg(hover))
         .active(|this| this.opacity(0.75))
         .child(icon(glyph, px(15.0), foreground))
         .on_click(on_click)

@@ -25,6 +25,7 @@ use gpui::{
     Window, WindowBounds, WindowHandle, WindowOptions, point, px, size,
 };
 
+use crate::appearance::Appearance;
 use crate::gestures::PointerGestures;
 use crate::keymap::{InputSettings, Keymap};
 use crate::settings_window::SettingsWindow;
@@ -691,7 +692,7 @@ impl AurisApp {
 
         Self {
             session,
-            theme: Theme::dark(),
+            theme: Appearance::load().theme(),
             timeline: TimelineView::default(),
             pitch: PitchView::default(),
             selected_track,
@@ -962,6 +963,25 @@ impl AurisApp {
         cx.set_menus(crate::menu::menus(self.language));
         let name = self.language.endonym();
         self.set_status(messages::language_changed(self.language, name));
+    }
+
+    /// Repaints the window in another colour scheme, and remembers the choice.
+    ///
+    /// Everything visual reads [`Self::theme`] on the next frame, so there is nothing to
+    /// invalidate. The floating plugin editor and the settings window each hold their own copy;
+    /// the first is re-read every frame, and the second updates itself where it makes the change.
+    pub(crate) fn apply_scheme(&mut self, id: &str) {
+        self.theme = Theme::named(id);
+        let appearance = Appearance {
+            scheme: self.theme.scheme.to_string(),
+        };
+        // Best-effort, like the input settings: a preferences file that cannot be written must
+        // not undo a change the user can already see.
+        if let Err(error) = appearance.save() {
+            log::warn!("could not save the colour scheme: {error}");
+        }
+        let name = crate::theme::scheme_or_default(id).name;
+        self.set_status(messages::scheme_changed(self.language(), name));
     }
 
     /// Installs an edited keymap and remembers it.

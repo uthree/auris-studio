@@ -283,6 +283,9 @@ strings! {
     PartSeed { en: "Seed", ja: "シード" }
     PartStraight { en: "straight", ja: "イーブン" }
 
+    // ------------------------------------------------------------------ appearance
+    AppearanceHeading { en: "Colour scheme", ja: "カラースキーム" }
+
     // ------------------------------------------------------------------ rename sheet
     RenameTrackTitle { en: "Rename track", ja: "トラック名の変更" }
     RenameClipTitle { en: "Rename clip", ja: "クリップ名の変更" }

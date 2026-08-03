@@ -281,6 +281,12 @@ messages! {
         ja: "コード進行 · {bar} 小節目"
     }
 
+    /// The window is being drawn in a different colour scheme.
+    fn scheme_changed(name: &str) {
+        en: "Colour scheme: {name}",
+        ja: "カラースキーム: {name}"
+    }
+
     /// Title of the harmony lane's menu, naming the chord it was opened over.
     ///
     /// Both halves: the numeral is what is stored and what the menu edits, and the chord is what

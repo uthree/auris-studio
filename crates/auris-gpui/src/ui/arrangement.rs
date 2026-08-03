@@ -956,7 +956,7 @@ fn paint_lane(
                     size: size(dot, dot),
                 },
                 dot / 2.0,
-                theme.text_on_accent,
+                theme.text_on(lane.color),
             );
         }
 
@@ -1010,7 +1010,9 @@ fn paint_lane(
                 ),
                 clip.name.clone(),
                 px(9.0),
-                theme.text_on_accent,
+                // Read against the track's own colour rather than against the accent: the user
+                // chooses one and the scheme the other, and only one of them is behind this text.
+                theme.text_on(lane.color),
             );
         }
     }

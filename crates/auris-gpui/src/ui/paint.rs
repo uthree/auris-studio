@@ -662,7 +662,10 @@ pub fn keyboard(
                 ),
                 super::timeline::pitch_name(pitch),
                 px(9.0),
-                theme.surface_sunken,
+                // The colour of the black keys, because it is on a white one. It used to be the
+                // recessed surface, which happens to be dark in a dark scheme and is near-white
+                // in a light one — where the label would vanish into the key it names.
+                theme.key_black,
             );
         }
     }

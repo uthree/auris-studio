@@ -16,7 +16,7 @@ use crate::actions::{BINDABLE, Bindable};
 use crate::app::AurisApp;
 use crate::gestures::{PointerGesture, PointerGestures};
 use crate::keymap::Keymap;
-use crate::theme::{Metrics, Theme};
+use crate::theme::{Metrics, SCHEMES, Theme, scheme_or_default};
 use crate::ui::icons::Icon;
 use crate::ui::widgets::{ButtonStyle, button, chain_button, divider};
 
@@ -168,6 +168,18 @@ impl SettingsWindow {
         cx.notify();
     }
 
+    /// Repaints both windows in another colour scheme.
+    ///
+    /// This window holds its own copy of the palette rather than reading the application's, so it
+    /// has to be told as well — otherwise the change would be visible everywhere except in the
+    /// window where it was made.
+    fn apply_scheme(&mut self, id: &'static str, cx: &mut Context<Self>) {
+        self.theme = Theme::named(id);
+        let _ = self.app.update(cx, |app, _| app.apply_scheme(id));
+        self.status = messages::scheme_changed(self.language, scheme_or_default(id).name);
+        cx.notify();
+    }
+
     /// Hands new audio preferences to the session and reports what happened.
     fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
         self.audio = audio.clone();
@@ -262,6 +274,25 @@ impl SettingsWindow {
             .flex()
             .flex_col()
             .gap_2()
+            .child(section_title(self.t(Key::AppearanceHeading), &theme))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .children(SCHEMES.iter().enumerate().map(|(index, scheme)| {
+                        button(
+                            ("scheme", index),
+                            scheme.name,
+                            ButtonStyle::Normal,
+                            theme.scheme == scheme.id,
+                            theme.accent,
+                            &theme,
+                            cx.listener(move |this, _, _, cx| this.apply_scheme(scheme.id, cx)),
+                        )
+                    })),
+            )
+            .child(divider(&theme))
             .child(section_title(self.t(Key::LanguageHeading), &theme))
             .child(
                 div()
