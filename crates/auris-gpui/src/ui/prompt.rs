@@ -38,6 +38,12 @@ pub enum PromptTarget {
     Key(Ticks),
     /// The chord sounding from a position on the timeline.
     Chord(Ticks),
+    /// The seed a generated clip is written from.
+    ///
+    /// Typed for a different reason than the other three: "another take" is the *next* seed, so
+    /// the way back to a take somebody liked is to type the number it had. Undo reaches the same
+    /// place while the take is still on the stack, and not afterwards.
+    Seed(ClipId),
 }
 
 /// An open rename sheet.
@@ -114,6 +120,16 @@ impl AurisApp {
                 }
                 None => {
                     self.set_status(messages::not_a_chord(self.language(), &text));
+                    return;
+                }
+            },
+            PromptTarget::Seed(clip) => match text.parse::<u64>() {
+                Ok(seed) => {
+                    self.set_clip_seed(clip, seed);
+                    Ok(())
+                }
+                Err(_) => {
+                    self.set_status(messages::not_a_seed(self.language(), &text));
                     return;
                 }
             },

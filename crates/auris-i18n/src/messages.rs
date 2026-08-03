@@ -299,6 +299,12 @@ messages! {
         ja: "`{text}` はコードではありません — `IV`、`vi`、`bVII7` のように"
     }
 
+    /// The text typed into the seed prompt is not a number.
+    fn not_a_seed(text: &str) {
+        en: "`{text}` is not a seed — any whole number will do",
+        ja: "`{text}` はシードではありません — 整数を入力してください"
+    }
+
     /// A project referenced audio files that are not where it said.
     fn missing_audio_files(count: usize) {
         en: "{count} audio file(s) could not be loaded",

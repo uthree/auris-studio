@@ -110,6 +110,21 @@ pub enum Drag {
         /// Pointer x when the drag began.
         start_x: Pixels,
     },
+    /// Turning one of a generated clip's dials.
+    ///
+    /// Separate from [`Drag::Param`] because a recipe is not a plugin parameter: there is no
+    /// descriptor to normalise through, and moving it rewrites the clip's notes rather than
+    /// setting a number the audio thread reads.
+    PartDial {
+        /// Clip being rewritten.
+        clip: ClipId,
+        /// Which dial.
+        dial: crate::ui::part::Dial,
+        /// Where the bar was when the drag began, from 0 to 1.
+        start_fraction: f32,
+        /// Pointer x when the drag began.
+        start_x: Pixels,
+    },
     /// Dragging the time-zoom slider.
     TimeZoom {
         /// Slider position when the drag began, from 0 to 1.
@@ -184,6 +199,10 @@ impl Drag {
             Drag::NoteMove { .. } => Some(Edit::MoveNotes),
             Drag::NoteResize { .. } => Some(Edit::ResizeNote),
             Drag::Param { .. } => Some(Edit::AdjustParameter),
+            // One undo step for the whole sweep, and the same label the right-click menu's
+            // "Write It Again" uses — moving a dial is writing the part again with one thing
+            // changed, and a stack full of "Adjusted parameter" would say nothing about which.
+            Drag::PartDial { .. } => Some(Edit::GenerateClip),
             Drag::Tempo { .. } => Some(Edit::ChangeTempo),
             // Selecting is not an edit; it changes what a later edit will act on.
             Drag::RubberBand { .. } => None,

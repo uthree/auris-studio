@@ -266,11 +266,25 @@ strings! {
     PresetDrums { en: "Drums", ja: "ドラム" }
     MenuClearHarmony { en: "Clear Chords", ja: "コードを消去" }
 
+    // ------------------------------------------------------------------ the part inspector
+    // The dials on a generated clip's recipe. `Groove` is deliberately not translated into
+    // Japanese as 「溝」: the word a drummer uses in either language is the loan word.
+    PartHeading { en: "Part", ja: "パート" }
+    PartPreset { en: "Preset", ja: "プリセット" }
+    PartDensity { en: "Density", ja: "密度" }
+    PartIntensity { en: "Intensity", ja: "強さ" }
+    PartSwing { en: "Swing", ja: "スウィング" }
+    PartHumanize { en: "Humanize", ja: "ゆらぎ" }
+    PartGroove { en: "Groove", ja: "グルーヴ" }
+    PartSeed { en: "Seed", ja: "シード" }
+    PartStraight { en: "straight", ja: "イーブン" }
+
     // ------------------------------------------------------------------ rename sheet
     RenameTrackTitle { en: "Rename track", ja: "トラック名の変更" }
     RenameClipTitle { en: "Rename clip", ja: "クリップ名の変更" }
     SetKeyTitle { en: "Key from here", ja: "ここからの調" }
     SetChordTitle { en: "Chord from here", ja: "ここからのコード" }
+    SetSeedTitle { en: "Seed for this part", ja: "このパートのシード" }
     Cancel { en: "Cancel", ja: "キャンセル" }
     Rename { en: "Rename", ja: "変更" }
     NameCannotBeEmpty { en: "Name cannot be empty", ja: "名前を空にはできません" }

@@ -407,6 +407,15 @@ impl AurisApp {
                 let delta = f32::from(event.position.x - start_x);
                 self.drag_param(target, start_value, delta);
             }
+            Drag::PartDial {
+                clip,
+                dial,
+                start_fraction,
+                start_x,
+            } => {
+                let delta = f32::from(event.position.x - start_x);
+                self.drag_dial(clip, dial, start_fraction, delta);
+            }
             Drag::TimeZoom {
                 start_fraction,
                 start_x,

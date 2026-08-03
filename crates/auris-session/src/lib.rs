@@ -106,6 +106,16 @@ pub mod prelude {
     pub fn progression_catalog() -> &'static [CatalogEntry] {
         auris_core::theory::chart::CATALOG
     }
+
+    pub use auris_compose::rhythm::Groove;
+
+    /// Every drum groove the composer knows by name.
+    ///
+    /// A frontend needs this for the same reason it needs [`progression_catalog`]: a
+    /// [`ClipRecipe`]'s groove is a name, and a picker cannot offer names it has no list of.
+    pub fn groove_catalog() -> &'static [Groove] {
+        auris_compose::rhythm::GROOVES
+    }
     pub use auris_engine::{OfflineOptions, OutputDeviceInfo};
     pub use auris_gpu::WaveformPeaks;
     pub use auris_io::{SoundFontPreset, WavBitDepth, WavExportSettings};

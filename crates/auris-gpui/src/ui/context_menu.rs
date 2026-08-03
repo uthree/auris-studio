@@ -192,6 +192,20 @@ pub enum MenuCommand {
     RerollClip(ClipId),
     /// Keep a generated clip's notes and forget how they got there.
     FreezeClip(ClipId),
+    /// Make a generated clip a different kind of part.
+    SetClipPreset {
+        /// Clip to rewrite.
+        clip: ClipId,
+        /// What it should be instead.
+        preset: ClipPreset,
+    },
+    /// Give a generated drum clip a different groove.
+    SetClipGroove {
+        /// Clip to rewrite.
+        clip: ClipId,
+        /// Catalogue name, such as `basic-rock` or `shuffle`.
+        groove: &'static str,
+    },
 }
 
 /// One row in a menu.
@@ -688,14 +702,10 @@ impl AurisApp {
                 Ok(_) => self.report_clip_preset(clip),
                 Err(error) => self.set_status(self.failure(Key::MenuRegenerateClip, &error)),
             },
-            MenuCommand::RerollClip(clip) => match self.session.reroll_clip(clip) {
-                Ok(_) => self.report_clip_preset(clip),
-                Err(error) => self.set_status(self.failure(Key::MenuRerollClip, &error)),
-            },
-            MenuCommand::FreezeClip(clip) => match self.session.freeze_clip(clip) {
-                Ok(()) => self.set_status(self.t(Key::ClipKept)),
-                Err(error) => self.set_status(self.failure(Key::MenuFreezeClip, &error)),
-            },
+            MenuCommand::RerollClip(clip) => self.reroll_clip(clip),
+            MenuCommand::FreezeClip(clip) => self.freeze_clip(clip),
+            MenuCommand::SetClipPreset { clip, preset } => self.set_clip_preset(clip, preset),
+            MenuCommand::SetClipGroove { clip, groove } => self.set_clip_groove(clip, groove),
 
             MenuCommand::SetKeyAt(tick) => {
                 let current = self.project().harmony.key_at(tick).to_text();
@@ -962,6 +972,114 @@ impl AurisApp {
         menu
     }
 
+    /// Every preset, aimed at a clip that already has one.
+    ///
+    /// Ticks the one it is now: this menu is opened from a button showing that same name, and a
+    /// list of six with nothing marked would leave the reader checking the button behind it.
+    pub(crate) fn clip_preset_menu(&self, anchor: Point<Pixels>, clip: ClipId) -> ContextMenu {
+        let current = self.session.clip_recipe(clip).map(|recipe| recipe.preset);
+        let mut menu = ContextMenu::new(anchor, self.t(Key::PartPreset));
+        for preset in ClipPreset::ALL {
+            menu = menu.toggle(
+                self.t(preset_key(preset)),
+                MenuCommand::SetClipPreset { clip, preset },
+                current == Some(preset),
+            );
+        }
+        menu
+    }
+
+    /// Every groove the composer knows by name, aimed at one drum clip.
+    pub(crate) fn clip_groove_menu(&self, anchor: Point<Pixels>, clip: ClipId) -> ContextMenu {
+        let current = self
+            .session
+            .clip_recipe(clip)
+            .map(|recipe| recipe.groove.clone());
+        let mut menu = ContextMenu::new(anchor, self.t(Key::PartGroove));
+        for groove in groove_catalog() {
+            menu = menu.toggle(
+                groove.name,
+                MenuCommand::SetClipGroove {
+                    clip,
+                    groove: groove.name,
+                },
+                current.as_deref() == Some(groove.name),
+            );
+        }
+        menu
+    }
+
+    /// Writes another take of a generated clip, and says what came out.
+    pub(crate) fn reroll_clip(&mut self, clip: ClipId) {
+        match self.session.reroll_clip(clip) {
+            Ok(_) => self.report_clip_preset(clip),
+            Err(error) => self.set_status(self.failure(Key::MenuRerollClip, &error)),
+        }
+    }
+
+    /// Keeps a generated clip's notes and forgets how they got there.
+    pub(crate) fn freeze_clip(&mut self, clip: ClipId) {
+        match self.session.freeze_clip(clip) {
+            Ok(()) => self.set_status(self.t(Key::ClipKept)),
+            Err(error) => self.set_status(self.failure(Key::MenuFreezeClip, &error)),
+        }
+    }
+
+    /// Makes a generated clip a different kind of part, keeping its seed and its dials.
+    ///
+    /// The seed is deliberately kept. A recipe's dials mean the same thing whichever part reads
+    /// them, so trying the same idea as a bass line and then as an arpeggio is one click either
+    /// way rather than a click and then four dials set again from memory.
+    pub(crate) fn set_clip_preset(&mut self, clip: ClipId, preset: ClipPreset) {
+        let Some(recipe) = self.session.clip_recipe(clip) else {
+            return;
+        };
+        if recipe.preset == preset {
+            return;
+        }
+        let recipe = ClipRecipe {
+            preset,
+            ..recipe.clone()
+        };
+        match self.session.set_clip_recipe(clip, recipe) {
+            Ok(_) => self.report_clip(preset, clip),
+            Err(error) => self.set_status(self.failure(Key::MenuGenerateClip, &error)),
+        }
+    }
+
+    /// Writes a generated clip from a seed somebody typed.
+    pub(crate) fn set_clip_seed(&mut self, clip: ClipId, seed: u64) {
+        let Some(recipe) = self.session.clip_recipe(clip) else {
+            return;
+        };
+        if recipe.seed == seed {
+            return;
+        }
+        let recipe = recipe.with_seed(seed);
+        match self.session.set_clip_recipe(clip, recipe) {
+            Ok(_) => self.report_clip_preset(clip),
+            Err(error) => self.set_status(self.failure(Key::MenuGenerateClip, &error)),
+        }
+    }
+
+    /// Gives a generated clip a different groove.
+    pub(crate) fn set_clip_groove(&mut self, clip: ClipId, groove: &str) {
+        let Some(recipe) = self.session.clip_recipe(clip) else {
+            return;
+        };
+        if recipe.groove == groove {
+            return;
+        }
+        let recipe = ClipRecipe {
+            groove: groove.to_string(),
+            ..recipe.clone()
+        };
+        match self.session.set_clip_recipe(clip, recipe) {
+            Ok(_) => self.report_clip_preset(clip),
+            Err(error) => self.set_status(self.failure(Key::MenuGenerateClip, &error)),
+        }
+    }
+
     /// The rows a generated clip adds to its own menu.
     fn generated_clip_rows(&self, menu: ContextMenu, clip: ClipId) -> ContextMenu {
         generated_clip_rows(
@@ -1202,7 +1320,7 @@ impl AurisApp {
 }
 
 /// The name a preset goes by on screen.
-fn preset_key(preset: ClipPreset) -> Key {
+pub(crate) fn preset_key(preset: ClipPreset) -> Key {
     match preset {
         ClipPreset::Lead => Key::PresetLead,
         ClipPreset::Chords => Key::PresetChords,

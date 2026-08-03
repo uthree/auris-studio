@@ -12,6 +12,7 @@ pub mod inspector;
 pub mod menu_bar;
 pub mod mixer;
 pub mod paint;
+pub mod part;
 pub mod piano_roll;
 pub mod plugin_editor;
 pub mod plugin_window;

@@ -99,6 +99,11 @@ impl AurisApp {
         // library on the left: a picker that hid the thing it was editing had to be dismissed
         // before its own result could be seen.
         //
+        // The header names the panel rather than what is in it. It said "Track" until the selected
+        // clip's recipe joined the track's own controls here, and a panel showing two things under
+        // the name of one of them is worse than a panel that says which panel it is — the groups
+        // inside carry their own headings.
+        //
         // The width comes from the parent, which owns the resizable panel geometry, and the
         // divider line is drawn by the splitter beside it.
         div()
@@ -106,7 +111,7 @@ impl AurisApp {
             .flex_col()
             .size_full()
             .bg(theme.surface)
-            .child(panel_header_of(self.t(Key::Track), &theme))
+            .child(panel_header_of(self.t(Key::Inspector), &theme))
             .child(
                 div()
                     .id("inspector-body")
@@ -149,15 +154,33 @@ impl AurisApp {
 
     fn render_track_inspector(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
+        // The selected clip's recipe, when it has one, above the track that plays it. That order
+        // is the order of the sentence it makes: this part, on this instrument, through these
+        // effects. It is also what was just clicked, and so what the eye is already on.
+        let mut sections: Vec<AnyElement> = self.part_rows(cx);
+
         let Some(track_id) = self.selected_track else {
+            sections.push(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(self.t(Key::NoTrackSelected))
+                    .into_any_element(),
+            );
             return div()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .child(self.t(Key::NoTrackSelected))
+                .flex()
+                .flex_col()
+                .gap_1()
+                .children(sections)
                 .into_any_element();
         };
         let Some(track) = self.project().track(track_id) else {
-            return div().into_any_element();
+            return div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .children(sections)
+                .into_any_element();
         };
         let track_name = track.name.clone();
         let instrument_id = track
@@ -171,7 +194,7 @@ impl AurisApp {
             .map(|slot| (slot.id, slot.effect_id.clone(), slot.enabled))
             .collect();
 
-        let mut sections: Vec<AnyElement> = Vec::new();
+        sections.push(self.group_heading(Key::Track).into_any_element());
         sections.push(
             div()
                 .text_sm()
