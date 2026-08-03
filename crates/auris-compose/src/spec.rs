@@ -386,6 +386,13 @@ pub struct SongSpec {
     pub swing: u8,
     /// How far timing and velocity wander, from 0 for a machine to 1 for a sloppy band.
     pub humanize: f32,
+    /// How much a repeat departs from what the section played the first time.
+    ///
+    /// At 0 a second chorus is note for note the first one, which is what makes it recognisable
+    /// as the same chorus. At 1 every playing is written afresh, which is what the composer used
+    /// to do always — the result had no repetition anywhere in it and so nothing to remember.
+    /// The default leaves most of the material alone and rewrites the occasional bar.
+    pub variation: f32,
     /// The drum groove.
     pub groove: String,
     /// The charts, by name. `main` is the one a section gets when it does not say.
@@ -420,6 +427,7 @@ impl Default for SongSpec {
             seed: 0,
             swing: 50,
             humanize: 0.35,
+            variation: 0.25,
             groove: "basic-rock".to_string(),
             charts,
             sections,
@@ -676,6 +684,7 @@ impl SongSpec {
         out.push_str(&format!("groove:   {}\n", self.groove));
         out.push_str(&format!("swing:    {}\n", self.swing));
         out.push_str(&format!("humanize: {:.2}\n", self.humanize));
+        out.push_str(&format!("variation: {:.2}\n", self.variation));
         out.push_str(&format!("brightness: {:.2}\n", self.mood.brightness));
         out.push_str(&format!("energy:     {:.2}\n", self.mood.energy));
         out.push_str(&format!("tension:    {:.2}\n", self.mood.tension));
@@ -854,6 +863,7 @@ fn apply_song_field(
             spec.swing = swing as u8;
         }
         "humanize" => spec.humanize = fraction(value, "humanize")?,
+        "variation" => spec.variation = fraction(value, "variation")?,
         "groove" => {
             if crate::rhythm::groove(value).is_none() {
                 let names: Vec<&str> = crate::rhythm::GROOVES.iter().map(|g| g.name).collect();
@@ -893,8 +903,8 @@ fn apply_song_field(
         other => {
             return Err(format!(
                 "`{other}` is not a song field; expected one of title, key, scale, tempo, \
-                 meter, seed, swing, humanize, groove, mood, brightness, energy, tension, \
-                 syncopation, form, chords"
+                 meter, seed, swing, humanize, variation, groove, mood, brightness, energy, \
+                 tension, syncopation, form, chords"
             ));
         }
     }

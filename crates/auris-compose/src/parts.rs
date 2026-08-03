@@ -98,6 +98,187 @@ fn velocity(weight: u8, intensity: f32) -> f32 {
     (base * (0.7 + 0.35 * intensity)).clamp(0.08, 1.0)
 }
 
+/// How hard a moment of a section is played, as a multiplier on its notes' velocity.
+///
+/// A section whose every bar sat at one level sounded like a loop rather than like a passage
+/// going somewhere: the only dynamic in the piece was the step between one section's intensity
+/// and the next's. This lifts the playing gently across each four-bar phrase and again across the
+/// section as a whole, which is what a player does to a repeated figure without being asked to.
+///
+/// Every part reads it, so the band leans together rather than one instrument at a time.
+fn phrase_shape(grid: Grid, section: &SectionPlan, at: Ticks) -> f32 {
+    let bar = (at.raw().max(0) / grid.bar_ticks().raw().max(1)) as usize;
+    let within = (bar % 4) as f32 / 3.0;
+    let through = if section.bars <= 1 {
+        0.0
+    } else {
+        (bar.min(section.bars - 1)) as f32 / (section.bars - 1) as f32
+    };
+    0.88 + 0.10 * within + 0.08 * through
+}
+
+/// The stream one bar of one pass draws its material from.
+///
+/// Keyed by the section's *name* and not by which playing of it this is, so the second chorus
+/// reaches for the same numbers as the first and comes out the same chorus. That is the whole
+/// point of a chorus: the composer used to put the instance in every stream, which made every
+/// repeat a new piece of music and left the piece with nothing in it to recognise.
+///
+/// [`SongSpec::variation`] buys the departures back. A bar it selects mixes the instance into the
+/// name, so that one bar — and only that one — draws different numbers and plays something else.
+fn bar_stream(
+    spec: &SongSpec,
+    frame: &Frame,
+    part: &PartSpec,
+    section: &SectionPlan,
+    pass: &str,
+    bar: usize,
+) -> Rng {
+    let mut path = vec![
+        RngKey::Word("part"),
+        RngKey::Word(&part.name),
+        RngKey::Word(pass),
+        RngKey::Word(&section.name),
+        RngKey::Index(bar as u64),
+    ];
+    // The first playing is the one the others are repeats of, so it never departs from itself.
+    if section.instance > 1 && spec.variation > 0.0 {
+        let mut choose = Rng::stream(
+            frame.seed,
+            &[
+                RngKey::Word("vary"),
+                RngKey::Word(&part.name),
+                RngKey::Word(pass),
+                RngKey::Word(&section.name),
+                RngKey::Index(section.instance as u64),
+                RngKey::Index(bar as u64),
+            ],
+        );
+        if choose.chance(spec.variation) {
+            path.push(RngKey::Index(section.instance as u64));
+        }
+    }
+    Rng::stream(frame.seed, &path)
+}
+
+/// Fewest notes a generated figure is allowed to have.
+///
+/// Three is the smallest number that can carry a shape: two notes are an interval, and one is a
+/// note. It is also the smallest [`vary_motif`] has anything to work with.
+const MOTIF_MINIMUM: usize = 3;
+
+/// A short figure the melody is built out of.
+///
+/// Written in scale steps from whatever pitch the frame's skeleton puts under it rather than in
+/// absolute notes, so restating it over a different chord keeps its shape while still belonging
+/// to the harmony.
+#[derive(Clone, Debug)]
+struct Motif {
+    cells: Vec<Cell>,
+}
+
+/// One note of a [`Motif`].
+#[derive(Copy, Clone, Debug)]
+struct Cell {
+    /// Step of the bar it starts on.
+    step: usize,
+    accent: Accent,
+    /// Steps it sounds for. Fewer than the gap to the next cell leaves a rest.
+    length: usize,
+    /// Scale steps above or below the bar's anchor pitch.
+    degree: i32,
+}
+
+/// Invents the figure a section is built from.
+///
+/// Drawn once per part and section and then restated, which is what gives a section something an
+/// ear can hold on to. A part with a written rhythm gets that rhythm; only the shape is invented.
+fn motif(
+    grid: Grid,
+    pattern: Option<&Pattern>,
+    density: f32,
+    syncopation: f32,
+    rng: &mut Rng,
+) -> Motif {
+    let steps = grid.steps_per_bar();
+    let mut onsets = bar_onsets(grid, pattern, density, syncopation, rng);
+    // A figure needs a few notes to be one, and one note cannot be varied at all. A thin roll
+    // used to average out because every bar rolled again; now a single roll decides the whole
+    // section, so a thin one would leave the section with nothing rather than with a quiet bar.
+    // The strongest free steps are filled first, which is where a note would have gone anyway.
+    if pattern.is_none() && onsets.len() < MOTIF_MINIMUM {
+        let mut spare: Vec<usize> = (0..steps)
+            .filter(|step| !onsets.iter().any(|(taken, _)| taken == step))
+            .collect();
+        spare.sort_by_key(|step| std::cmp::Reverse(grid.weight(*step)));
+        for step in spare.into_iter().take(MOTIF_MINIMUM - onsets.len()) {
+            onsets.push((step, Accent::Normal));
+        }
+        onsets.sort_by_key(|(step, _)| *step);
+    }
+
+    let mut cells = Vec::with_capacity(onsets.len());
+    let mut degree = 0i32;
+
+    for (position, (step, accent)) in onsets.iter().enumerate() {
+        // Mostly steps with the occasional leap, and bounded either side of the anchor: a figure
+        // that wandered off would not be recognisable when it came back.
+        if position > 0 {
+            let move_by = *rng.pick(&[-2, -1, -1, 1, 1, 2, 3, -3]).unwrap_or(&1);
+            degree = (degree + move_by).clamp(-6, 6);
+        }
+        let next = onsets
+            .get(position + 1)
+            .map(|(next, _)| *next)
+            .unwrap_or(steps);
+        let gap = next.saturating_sub(*step).max(1);
+        // The figure's last note stops short of the next bar, which is where the rest that lets a
+        // phrase breathe comes from. Inside the figure a note is occasionally detached too.
+        let length = if position + 1 == onsets.len() || rng.chance(0.25) {
+            1 + rng.below(gap)
+        } else {
+            gap
+        };
+        cells.push(Cell {
+            step: *step,
+            accent: *accent,
+            length: length.clamp(1, gap),
+            degree,
+        });
+    }
+    Motif { cells }
+}
+
+/// The figure with one thing about it changed.
+///
+/// Enough to stop four bars of the same bar, not so much that it stops being the same figure —
+/// which is the difference between a variation and a different tune.
+fn vary_motif(figure: &Motif, rng: &mut Rng) -> Motif {
+    let mut cells = figure.cells.clone();
+    if cells.len() < 2 {
+        return Motif { cells };
+    }
+    match rng.below(3) {
+        // Move the last note somewhere else, which is what turns a statement into a question.
+        0 => {
+            let last = cells.len() - 1;
+            cells[last].degree += if rng.chance(0.5) { 2 } else { -2 };
+        }
+        // Take a note out, leaving a hole where the ear expects one.
+        1 if cells.len() > 2 => {
+            let doomed = 1 + rng.below(cells.len() - 1);
+            cells.remove(doomed);
+        }
+        // Turn the figure over from its second note on.
+        _ => {
+            for cell in cells.iter_mut().skip(1) {
+                cell.degree = -cell.degree;
+            }
+        }
+    }
+    Motif { cells }
+}
+
 /// Picks the onsets of one bar, either from a written rhythm or by rolling one.
 ///
 /// The roll leans on the metric hierarchy: a strong step is far likelier to carry a note than a
@@ -148,86 +329,105 @@ fn melody(
     let grid = frame.grid;
     let (low, high) = part.range();
     let density = density(spec, part, section);
+
+    // One figure per part and section, restated bar after bar. Keyed by neither the bar nor the
+    // instance, so every bar of every playing reaches for the same one.
+    let mut invent = Rng::stream(
+        frame.seed,
+        &[
+            RngKey::Word("part"),
+            RngKey::Word(&part.name),
+            RngKey::Word("motif"),
+            RngKey::Word(&section.name),
+        ],
+    );
+    let figure = motif(
+        grid,
+        part.rhythm.as_ref(),
+        density,
+        spec.mood.syncopation,
+        &mut invent,
+    );
+
     let mut notes = Vec::new();
-    let mut previous: Option<i32> = None;
-
     for bar in 0..section.bars {
-        let mut rng = Rng::stream(
-            frame.seed,
-            &[
-                RngKey::Word("part"),
-                RngKey::Word(&part.name),
-                RngKey::Word(&section.name),
-                RngKey::Index(section.instance as u64),
-                RngKey::Index(bar as u64),
-            ],
-        );
+        let mut rng = bar_stream(spec, frame, part, section, "melody", bar);
+        // Four bars is the phrase almost everything is built in: state the figure, restate it,
+        // and then answer it. The fourth bar is where a tune stops repeating and goes somewhere.
+        let closing = bar % 4 == 3;
+        let cells = if closing || rng.chance(0.15) {
+            vary_motif(&figure, &mut rng)
+        } else {
+            figure.clone()
+        };
         let bar_start = grid.bar_ticks() * bar as i64;
-        let onsets = bar_onsets(
-            grid,
-            part.rhythm.as_ref(),
-            density,
-            spec.mood.syncopation,
-            &mut rng,
-        );
 
-        for window in 0..onsets.len() {
-            let (step, accent) = onsets[window];
-            let at = bar_start + grid.tick_of(step);
+        for cell in &cells.cells {
+            let at = bar_start + grid.tick_of(cell.step);
             let Some(event) = section.chord_at(at) else {
                 continue;
             };
             let event_index = section.event_index_at(at);
-            let weight = grid.weight(step);
-
-            // The structural pitch anchors the first strong note of each chord; everything else
-            // moves around it.
+            let weight = grid.weight(cell.step);
             let anchor = section
                 .skeleton
                 .get(event_index)
                 .copied()
                 .unwrap_or((low + high) / 2);
-            let pitch = if weight >= 3 || previous.is_none() {
-                anchor
-            } else if weight >= 1 {
-                // A chord tone near where the line already is.
-                event.chord.nearest_tone(previous.unwrap_or(anchor))
-            } else {
-                // A weak beat may sit on a scale tone between the chord tones, which is where
-                // passing notes live.
-                scale_step(section, previous.unwrap_or(anchor), &mut rng)
-            };
-            let pitch = fold_into(pitch, low, high);
 
-            // Hold until the next onset, or to the end of the bar.
-            let next = onsets
-                .get(window + 1)
-                .map(|(next_step, _)| grid.tick_of(*next_step))
-                .unwrap_or(grid.bar_ticks());
-            let length = (bar_start + next - at).max(grid.step_ticks());
+            // The figure is written in scale steps from the chord's structural pitch, so it keeps
+            // its shape while the harmony moves under it.
+            let mut pitch = shift_within(section, anchor, cell.degree, low, high);
+            // A note on a strong step has to agree with the chord, or the figure's shape wins an
+            // argument with the harmony that it should not be having.
+            if weight >= 3 {
+                pitch = fold_into(event.chord.nearest_tone(pitch), low, high);
+            }
 
             notes.push(Draft {
                 section: index,
                 pitch: pitch.clamp(0, 127) as u8,
-                velocity: velocity(weight, section.intensity) * accent.scale(),
+                velocity: (velocity(weight, section.intensity)
+                    * cell.accent.scale()
+                    * phrase_shape(grid, section, at))
+                .clamp(0.05, 1.0),
                 start: section.start + at,
-                length,
+                length: grid.step_ticks() * cell.length.max(1) as i64,
             });
-            previous = Some(pitch);
         }
     }
     notes
 }
 
-/// A neighbouring tone of the section's scale, one or two steps from `from`.
-fn scale_step(section: &SectionPlan, from: i32, rng: &mut Rng) -> i32 {
+/// The pitch `steps` scale degrees from `from`, in the section's scale.
+fn scale_shift(section: &SectionPlan, from: i32, steps: i32) -> i32 {
     let scale = section.key.scale;
     let tonic = section.key.tonic;
     let semitones = tonic.distance_up_to(PitchClass::new(from));
     let octaves = (from - tonic.midi(0) - semitones) / OCTAVE;
     let degree = scale.nearest_degree(semitones) + octaves * scale.degree_count() as i32;
-    let step = if rng.chance(0.5) { 1 } else { -1 };
-    tonic.midi(0) + scale.semitone(degree + step)
+    tonic.midi(0) + scale.semitone(degree + steps)
+}
+
+/// `anchor` shifted by `degree` scale steps, kept inside `low..=high` by shrinking the interval.
+///
+/// Folding an out-of-range note back by octaves moves it twelve semitones, which is a wider leap
+/// than any the figure asked for — so a shape chosen to be smooth arrived with a jump in it that
+/// nothing had priced. Pulling the interval in instead keeps the direction the figure was going,
+/// which is what an ear follows. Folding is kept only for the case where even the anchor is out
+/// of range, where there is nothing left to shrink.
+fn shift_within(section: &SectionPlan, anchor: i32, degree: i32, low: i32, high: i32) -> i32 {
+    let mut steps = degree;
+    loop {
+        let pitch = scale_shift(section, anchor, steps);
+        if (low..=high).contains(&pitch) {
+            return pitch;
+        }
+        if steps == 0 {
+            return fold_into(pitch, low, high);
+        }
+        steps -= steps.signum();
+    }
 }
 
 /// Chords, either comped in rhythm or held as a pad.
@@ -305,7 +505,10 @@ fn comp(
                 notes.push(Draft {
                     section: index,
                     pitch: (*pitch).clamp(0, 127) as u8,
-                    velocity: velocity(weight, section.intensity) * if held { 0.7 } else { 0.9 },
+                    velocity: (velocity(weight, section.intensity)
+                        * if held { 0.7 } else { 0.9 }
+                        * phrase_shape(frame.grid, section, at))
+                    .clamp(0.05, 1.0),
                     start: section.start + at,
                     length,
                 });
@@ -334,8 +537,8 @@ fn arp(
             RngKey::Word("part"),
             RngKey::Word(&part.name),
             RngKey::Word("arp"),
+            // Not the instance: a repeat of a section runs its arpeggio the same way round.
             RngKey::Word(&section.name),
-            RngKey::Index(section.instance as u64),
         ],
     );
     let descending = rng.chance(0.3);
@@ -356,7 +559,10 @@ fn arp(
             notes.push(Draft {
                 section: index,
                 pitch: pitch.clamp(0, 127) as u8,
-                velocity: velocity(grid.weight(grid.step_of(at)), section.intensity) * 0.8,
+                velocity: (velocity(grid.weight(grid.step_of(at)), section.intensity)
+                    * 0.8
+                    * phrase_shape(grid, section, at))
+                .clamp(0.05, 1.0),
                 start: section.start + at,
                 length: step_length,
             });
@@ -424,7 +630,9 @@ fn bass(
             notes.push(Draft {
                 section: index,
                 pitch: pitch.clamp(0, 127) as u8,
-                velocity: velocity(grid.weight(grid.step_of(at)), section.intensity),
+                velocity: (velocity(grid.weight(grid.step_of(at)), section.intensity)
+                    * phrase_shape(grid, section, at))
+                .clamp(0.05, 1.0),
                 start: section.start + at,
                 length: length.min(event.end() - at).max(grid.step_ticks()),
             });
@@ -457,19 +665,12 @@ fn drums(
     let mut notes = Vec::new();
 
     for bar in 0..section.bars {
-        let mut rng = Rng::stream(
-            frame.seed,
-            &[
-                RngKey::Word("part"),
-                RngKey::Word(&part.name),
-                RngKey::Word("drums"),
-                RngKey::Word(&section.name),
-                RngKey::Index(section.instance as u64),
-                RngKey::Index(bar as u64),
-            ],
-        );
+        let mut rng = bar_stream(spec, frame, part, section, "drums", bar);
         let bar_start = grid.bar_ticks() * bar as i64;
-        for step in 0..grid.steps_per_bar() {
+        // Which steps ended up carrying a hit, so a fill can go round them rather than double
+        // them: the pattern says where a hit belongs and thinning may already have taken it away.
+        let mut played = vec![false; grid.steps_per_bar()];
+        for (step, sounded) in played.iter_mut().enumerate() {
             let Some(accent) = pattern.at(step) else {
                 continue;
             };
@@ -483,18 +684,74 @@ fn drums(
                     continue;
                 }
             }
+            let at = bar_start + grid.tick_of(step);
+            *sounded = true;
             notes.push(Draft {
                 section: index,
                 pitch: voice.pitch(),
-                velocity: (velocity(weight, section.intensity) * accent.scale()).clamp(0.08, 1.0),
-                start: section.start + bar_start + grid.tick_of(step),
+                velocity: (velocity(weight, section.intensity)
+                    * accent.scale()
+                    * phrase_shape(grid, section, at))
+                .clamp(0.08, 1.0),
+                start: section.start + at,
                 // A one-shot drum ignores its note-off, so the length is only there to make the
                 // piano roll readable.
                 length: Ticks(120),
             });
         }
+        fill(frame, section, index, part, voice, bar, &played, &mut notes);
     }
     notes
+}
+
+/// Runs the snare into the section that follows.
+///
+/// A section that simply stops and is replaced sounds like an edit rather than like an arrival:
+/// the join is the one moment a listener is certain to notice, and nothing marked it. Only the
+/// last bar of a section that something follows gets one, and only the snare plays it — the other
+/// voices keep the groove underneath so the fill has something to be a departure from.
+///
+/// A part with a written rhythm is left alone, on the same principle as thinning: an instruction
+/// is not a suggestion.
+#[allow(clippy::too_many_arguments)]
+fn fill(
+    frame: &Frame,
+    section: &SectionPlan,
+    index: usize,
+    part: &PartSpec,
+    voice: DrumVoice,
+    bar: usize,
+    played: &[bool],
+    notes: &mut Vec<Draft>,
+) {
+    let last_bar = bar + 1 == section.bars;
+    let something_follows = index + 1 < frame.sections.len();
+    if part.rhythm.is_some() || voice != DrumVoice::Snare || !last_bar || !something_follows {
+        return;
+    }
+
+    let grid = frame.grid;
+    let steps = grid.steps_per_bar();
+    let per_beat = grid.steps_per_beat as usize;
+    // One beat of fill, or two when the section is playing hard enough to want the longer run.
+    let beats = if section.intensity >= 0.6 { 2 } else { 1 };
+    let from = steps.saturating_sub(beats * per_beat).max(1);
+    let bar_start = grid.bar_ticks() * bar as i64;
+
+    for step in from..steps {
+        if played.get(step).copied().unwrap_or(false) {
+            continue;
+        }
+        // Rising into the downbeat that follows, which is what makes it lead somewhere.
+        let through = (step - from) as f32 / (steps - from).max(1) as f32;
+        notes.push(Draft {
+            section: index,
+            pitch: voice.pitch(),
+            velocity: (0.45 + 0.5 * through).clamp(0.08, 1.0),
+            start: section.start + bar_start + grid.tick_of(step),
+            length: Ticks(120),
+        });
+    }
 }
 
 /// Swings, nudges and softens the timing so the part does not sound quantised.
@@ -548,6 +805,57 @@ mod tests {
         let frame = plan(&spec);
         let parts = write_parts(&spec, &frame);
         (spec, frame, parts)
+    }
+
+    /// The steps of `bar` that `draft` starts a note on, without repeats.
+    fn bar_steps(frame: &Frame, draft: &PartDraft, bar: usize) -> Vec<usize> {
+        let bar_ticks = frame.grid.bar_ticks();
+        let start = bar_ticks * bar as i64;
+        let mut steps: Vec<usize> = draft
+            .notes
+            .iter()
+            .filter(|note| note.start >= start && note.start < start + bar_ticks)
+            .map(|note| frame.grid.step_of(note.start - start))
+            .collect();
+        steps.sort_unstable();
+        steps.dedup();
+        steps
+    }
+
+    /// Everything `draft` plays in one section, positioned from that section's own start.
+    ///
+    /// Rebased so two playings of the same section can be compared directly; the velocity travels
+    /// as bits because two performances of the same music are equal or they are not.
+    fn section_notes(frame: &Frame, draft: &PartDraft, section: usize) -> Vec<(i64, u8, i64, u32)> {
+        let start = frame.sections[section].start;
+        let mut notes: Vec<(i64, u8, i64, u32)> = draft
+            .notes
+            .iter()
+            .filter(|note| note.section == section)
+            .map(|note| {
+                (
+                    (note.start - start).raw(),
+                    note.pitch,
+                    note.length.raw(),
+                    note.velocity.to_bits(),
+                )
+            })
+            .collect();
+        notes.sort_unstable();
+        notes
+    }
+
+    /// Everything `draft` plays in one section except its final bar.
+    ///
+    /// The last bar carries the fill into whatever comes next, which is a property of where the
+    /// section sits in the form rather than of the section itself — the last section of a piece
+    /// has nothing to lead into and so plays the groove to the end.
+    fn section_body(frame: &Frame, draft: &PartDraft, section: usize) -> Vec<(i64, u8, i64, u32)> {
+        let body = frame.sections[section].length - frame.grid.bar_ticks();
+        section_notes(frame, draft, section)
+            .into_iter()
+            .filter(|(start, ..)| *start < body.raw())
+            .collect()
     }
 
     fn part<'a>(parts: &'a [PartDraft], name: &str) -> &'a PartDraft {
@@ -914,6 +1222,156 @@ mod tests {
             "the hat played in a section it was left out of"
         );
         assert!(!part(&parts, "bass").notes.is_empty());
+    }
+
+    #[test]
+    fn the_melody_restates_its_figure_bar_after_bar() {
+        // Every bar used to roll its own rhythm from its own stream, so no figure ever recurred
+        // and a section had nothing in it to recognise.
+        let (_, frame, parts) = draft(
+            "form: verse\nchords: @axis\nhumanize: 0\nvariation: 0\n\
+             [section verse]\nbars: 8\n[part lead]",
+        );
+        let lead = part(&parts, "lead");
+        let figure = bar_steps(&frame, lead, 0);
+        assert!(!figure.is_empty(), "the melody played nothing at all");
+
+        let restated = (0..8)
+            .filter(|bar| bar_steps(&frame, lead, *bar) == figure)
+            .count();
+        assert!(
+            restated >= 4,
+            "only {restated} of 8 bars restate the figure {figure:?}"
+        );
+    }
+
+    #[test]
+    fn the_melody_leaves_room_to_breathe() {
+        // A note used to be held until the next onset or the bar line, so every bar was full of
+        // sound from end to end and a phrase never finished — it only stopped.
+        let (_, frame, parts) = draft(
+            "form: verse\nchords: @axis\nhumanize: 0\n\
+             [section verse]\nbars: 8\n[part lead]",
+        );
+        let lead = part(&parts, "lead");
+        let mut longest_rest = Ticks::ZERO;
+        let mut sounded_to = Ticks::ZERO;
+        for note in &lead.notes {
+            longest_rest = longest_rest.max(note.start - sounded_to);
+            sounded_to = sounded_to.max(note.start + note.length);
+        }
+        let beat = frame.grid.signature.ticks_per_beat();
+        assert!(
+            longest_rest >= beat,
+            "the longest rest in eight bars is {} ticks, under one beat of {}",
+            longest_rest.raw(),
+            beat.raw()
+        );
+    }
+
+    #[test]
+    fn a_repeated_section_plays_the_same_music() {
+        // The section instance used to be part of every stream name, so a second chorus shared
+        // nothing with the first and the piece had no chorus, only two sections with one name.
+        let (_, frame, parts) = draft(
+            "form: verse verse\nchords: @axis\nhumanize: 0\nvariation: 0\n\
+             [section verse]\nbars: 4",
+        );
+        assert_eq!(frame.sections.len(), 2);
+        for draft in &parts {
+            assert_eq!(
+                section_body(&frame, draft, 0),
+                section_body(&frame, draft, 1),
+                "`{}` played a different second verse",
+                draft.name
+            );
+        }
+    }
+
+    #[test]
+    fn a_section_runs_a_fill_into_the_one_that_follows() {
+        // A section that stopped and was replaced sounded like an edit rather than an arrival.
+        // The last section of a piece has nothing to lead into, so it keeps the groove instead.
+        let (_, frame, parts) = draft(
+            "form: verse verse\nchords: @axis\nhumanize: 0\nvariation: 0\n\
+             [section verse]\nbars: 4\nintensity: 0.8",
+        );
+        let snare = part(&parts, "snare");
+        let bar = frame.grid.bar_ticks();
+        let last_bar_hits = |section: usize| -> usize {
+            let plan = &frame.sections[section];
+            snare
+                .notes
+                .iter()
+                .filter(|note| {
+                    note.section == section && note.start >= plan.start + plan.length - bar
+                })
+                .count()
+        };
+        assert!(
+            last_bar_hits(0) > last_bar_hits(1),
+            "the first verse ran {} hits into the second's {}",
+            last_bar_hits(0),
+            last_bar_hits(1)
+        );
+    }
+
+    #[test]
+    fn a_section_leans_as_it_goes() {
+        // Every bar used to be played at one level, so the only dynamic anywhere in a piece was
+        // the step from one section's intensity to the next's.
+        let (_, frame, parts) = draft(
+            "form: verse\nchords: @axis\nhumanize: 0\n\
+             [section verse]\nbars: 8\n[part lead]",
+        );
+        let lead = part(&parts, "lead");
+        let mean = |from: i64, to: i64| -> f32 {
+            let levels: Vec<f32> = lead
+                .notes
+                .iter()
+                .filter(|note| note.start.raw() >= from && note.start.raw() < to)
+                .map(|note| note.velocity)
+                .collect();
+            levels.iter().sum::<f32>() / levels.len().max(1) as f32
+        };
+        let half = frame.length.raw() / 2;
+        let (early, late) = (mean(0, half), mean(half, frame.length.raw()));
+        assert!(
+            late > early,
+            "the second half of the section is no louder than the first: {late} against {early}"
+        );
+    }
+
+    #[test]
+    fn variation_lets_a_repeat_depart_from_the_first_playing() {
+        let text = "form: verse verse\nchords: @axis\nhumanize: 0\nvariation: 1.0\n\
+                    [section verse]\nbars: 4\n[part lead]";
+        let (_, frame, parts) = draft(text);
+        let lead = part(&parts, "lead");
+        assert_ne!(
+            section_notes(&frame, lead, 0),
+            section_notes(&frame, lead, 1),
+            "`variation: 1.0` left the repeat identical"
+        );
+    }
+
+    #[test]
+    fn a_figure_too_wide_for_the_range_shrinks_rather_than_folding() {
+        // Folding moves a note a whole octave, which is a wider leap than any figure asks for and
+        // usually in the opposite direction to the one it was going.
+        let (_, frame, _) = draft(BASE);
+        let section = &frame.sections[0];
+        let (low, high) = Role::Melody.range();
+        let anchor = high - 2;
+        let pitch = shift_within(section, anchor, 6, low, high);
+        assert!(
+            (low..=high).contains(&pitch),
+            "{pitch} is outside the range"
+        );
+        assert!(
+            pitch > anchor - OCTAVE,
+            "a figure reaching upward was folded an octave down: {pitch} from {anchor}"
+        );
     }
 
     #[test]

@@ -46,9 +46,11 @@ a missing-string marker.
 
 ### Automatic composition
 
-`auris compose song.asong` writes a piece from a text specification: key, scale, tempo, mood,
-chord progression, form and parts, in a line-oriented document that an agent can write and a
-person can edit one line of.
+**File → Compose from Specification…**, or `auris compose song.asong`, writes a piece from a text
+specification: key, scale, tempo, mood, chord progression, form and parts, in a line-oriented
+document that an agent can write and a person can edit one line of. The whole piece arrives as a
+single undo step, so a composition that is not what was wanted is one press away from the document
+that was there before it.
 
 ```
 title:  Neon Drive
@@ -69,9 +71,18 @@ written out in roman numerals (`| IVmaj7 | III7 | vi7 | I7 |`) in any key. A quo
 never recoloured, because the whole point of naming one is that it comes out sounding like
 itself.
 
+Each part is built from one short figure invented per section and then restated bar after bar,
+which is what gives a section something an ear can hold on to; the fourth bar of every phrase
+answers it rather than repeating it again. A section played twice is the same section both times —
+`variation: 0.4` buys back as much departure as you want, and `variation: 0` makes a second chorus
+note for note the first. A section that another follows runs a fill into it, and every part leans
+gently across a phrase rather than sitting at one level throughout.
+
 Everything is a pure function of the specification and its seed, so the same document always
-writes the same piece and `--seed 7` writes a different one. `auris progressions` lists the
-catalogue; `--set "field: value"` overrides any field from the command line.
+writes the same piece and `--seed 7` writes a different one. Every decision draws from a stream
+addressed by name rather than by call order, so changing the drum density does not silently
+rewrite the melody. `auris progressions` lists the catalogue; `--set "field: value"` overrides any
+field from the command line.
 
 ### Built-in instruments
 
