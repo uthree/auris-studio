@@ -49,6 +49,43 @@ pub struct SourceId(pub u64);
 #[serde(transparent)]
 pub struct EffectSlotId(pub u64);
 
+/// Identifies an imported SoundFont within a project.
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct SoundFontId(pub u64);
+
+/// Metadata about an imported SoundFont, stored in the project.
+///
+/// The samples are not here, for the same reason a decoded audio file is not: a font runs to
+/// hundreds of megabytes and a document has to stay small enough to read, to diff and to keep in
+/// an undo history. What is stored is what finds the file again.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SoundFontRef {
+    /// Unique within the project.
+    pub id: SoundFontId,
+    /// Display name, from the font itself where it has a usable one.
+    pub name: String,
+    /// Where the file was imported from, so a project can be re-opened later.
+    pub path: PathBuf,
+}
+
+/// Which sound of a font a track plays.
+///
+/// Bank and patch rather than a position in the preset list, because that pair is what identifies
+/// a sound across reloads — a position would move the moment anyone edited the file, and a
+/// project saved last week would come back playing a different instrument.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PresetRef {
+    /// Which font, by its id in this project.
+    pub font: SoundFontId,
+    /// MIDI bank, 0 for the standard set and 128 for percussion.
+    pub bank: i32,
+    /// MIDI program number within that bank.
+    pub patch: i32,
+}
+
 /// An RGB colour used for track and clip tinting.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -515,6 +552,12 @@ pub struct Project {
     pub master: MixerStrip,
     /// Imported file metadata by id.
     pub audio_sources: BTreeMap<SourceId, AudioSource>,
+    /// Imported SoundFont metadata by id.
+    ///
+    /// `default` so a project written before fonts existed still opens, which is the whole reason
+    /// every optional field in this document carries one.
+    #[serde(default)]
+    pub soundfonts: BTreeMap<SoundFontId, SoundFontRef>,
     /// Loop region, when looping is enabled.
     #[serde(default)]
     pub loop_region: Option<(Ticks, Ticks)>,
@@ -556,6 +599,7 @@ impl Project {
             tracks: Vec::new(),
             master: MixerStrip::default(),
             audio_sources: BTreeMap::new(),
+            soundfonts: BTreeMap::new(),
             loop_region: None,
             loop_enabled: false,
             grid: default_grid(),
@@ -849,6 +893,32 @@ impl Project {
         Some(id)
     }
 
+    /// Registers an imported SoundFont and returns its new id.
+    ///
+    /// A font already imported from the same path is returned rather than added again: importing
+    /// the same file twice is something a person does by accident, and the cost of not noticing
+    /// is a second copy of a very large object in memory.
+    pub fn add_soundfont(&mut self, name: impl Into<String>, path: PathBuf) -> SoundFontId {
+        if let Some(existing) = self
+            .soundfonts
+            .values()
+            .find(|font| font.path == path)
+            .map(|font| font.id)
+        {
+            return existing;
+        }
+        let id = SoundFontId(self.allocate_id());
+        self.soundfonts.insert(
+            id,
+            SoundFontRef {
+                id,
+                name: name.into(),
+                path,
+            },
+        );
+        id
+    }
+
     /// Registers imported file metadata and returns its new id.
     pub fn add_audio_source(
         &mut self,
@@ -1098,6 +1168,9 @@ impl Project {
         for id in self.audio_sources.keys() {
             highest = highest.max(id.0);
         }
+        for id in self.soundfonts.keys() {
+            highest = highest.max(id.0);
+        }
         self.next_id = self.next_id.max(highest + 1);
     }
 }
@@ -1246,6 +1319,56 @@ mod tests {
             .map(|clip| clip.start)
             .collect();
         assert_eq!(starts, vec![Ticks::ZERO, Ticks::from_beats(8.0)]);
+    }
+
+    #[test]
+    fn importing_the_same_font_twice_returns_the_first_one() {
+        // A font is hundreds of megabytes. Noticing the repeat is the difference between one copy
+        // in memory and two, and importing the same file twice is an ordinary slip.
+        let mut project = Project::new("Fonts", 48_000.0);
+        let first = project.add_soundfont("Grand", "/fonts/grand.sf2".into());
+        let again = project.add_soundfont("Grand Piano", "/fonts/grand.sf2".into());
+        assert_eq!(first, again);
+        assert_eq!(project.soundfonts.len(), 1);
+        // And the first name wins, rather than the entry being rewritten under whoever holds it.
+        assert_eq!(project.soundfonts[&first].name, "Grand");
+
+        let other = project.add_soundfont("Strings", "/fonts/strings.sf2".into());
+        assert_ne!(first, other);
+        assert_eq!(project.soundfonts.len(), 2);
+    }
+
+    #[test]
+    fn a_font_id_never_collides_with_anything_else() {
+        // Every id in the document comes from one counter, and `repair_ids` has to sweep the new
+        // map too or a project that is reopened will hand out an id that is already taken.
+        let mut project = Project::new("Fonts", 48_000.0);
+        let font = project.add_soundfont("Grand", "/fonts/grand.sf2".into());
+        let track = project.add_instrument_track("Lead", "x");
+        assert_ne!(font.0, track.0);
+
+        let mut reopened = project.clone();
+        reopened.next_id = 0;
+        reopened.repair_id_counter();
+        assert!(reopened.next_id > font.0, "an id could be handed out twice");
+    }
+
+    #[test]
+    fn a_project_written_before_fonts_existed_still_opens() {
+        // The `serde(default)` on the map, stated as a test rather than trusted to a comment.
+        let json = r#"{
+            "name": "Old",
+            "sample_rate": 48000.0,
+            "tempo_map": {"points": [{"tick": 0, "bpm": 120.0}]},
+            "time_signature": {"numerator": 4, "denominator": 4},
+            "grid": 240,
+            "tracks": [],
+            "master": {"gain_db": 0.0, "pan": 0.0, "mute": false, "solo": false, "effects": []},
+            "audio_sources": {},
+            "next_id": 1
+        }"#;
+        let project: Project = serde_json::from_str(json).expect("an older document still parses");
+        assert!(project.soundfonts.is_empty());
     }
 
     #[test]

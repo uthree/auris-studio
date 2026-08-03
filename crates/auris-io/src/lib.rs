@@ -15,6 +15,7 @@ pub mod error;
 pub mod export;
 pub mod import;
 pub mod project_file;
+pub mod soundfont;
 
 pub use error::{IoError, Result};
 pub use export::{WavBitDepth, WavExportSettings, write_wav};
@@ -22,6 +23,7 @@ pub use import::{
     DecodedAudio, decode_audio_file, import_audio_file, resample_buffer, supported_extensions,
 };
 pub use project_file::{PROJECT_EXTENSION, load_project, save_project};
+pub use soundfont::{SoundFontPreset, font_name, load_soundfont, presets, soundfont_extensions};
 
 #[cfg(test)]
 mod test_support {
