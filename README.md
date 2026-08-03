@@ -24,7 +24,8 @@ them through a built-in synth, shape them with effects, and render the result to
 
 Right-clicking any component opens its menu: tracks and clips offer duplicate, rename, delete
 and mute; a clip adds split-at-playhead and cycle-over-clip; the piano roll offers duplicate,
-delete and transposition of the selected notes; effect slots offer bypass, reorder and remove.
+delete, transposition and dynamics — pp through ff — for the selected notes; effect slots offer
+bypass, reorder and remove. A menu can be answered from the keyboard as well as the pointer.
 Renaming goes through the platform's input handler, so an IME composes into the field the way
 it does anywhere else.
 
@@ -33,6 +34,11 @@ defaults are Logic's — ⌘-click creates a note or a clip, a double-click dele
 the pointer — with ⌥-click available for either. Dragging across empty space in the piano roll
 or the arrangement sweeps a selection rectangle; ⇧-drag adds to what is already selected, and a
 multiple selection moves, duplicates and deletes as one.
+
+Everything placed snaps to the grid button's division, which cycles down to *free* — one tick,
+which is as fine as the document gets. Holding ⌘ (Ctrl on Windows) suspends snapping for the
+length of a drag, for when one thing has to sit off the beat. A double-click on any fader or knob
+puts it back to its default: 0 dB on a volume, centre on a pan.
 
 ### Languages
 
@@ -172,6 +178,12 @@ holds one project, which is why Save As creates the folder rather than trusting 
 documents sharing a folder would share its `Audio/`, and saving one under a new name would
 silently leave both pointing at the same files. Relative paths are stored with `/` separators
 whatever the platform wrote them, so a project saved on Windows opens on a Mac.
+
+Because the document goes one folder deeper than the name you type, the system save dialog cannot
+warn you about replacing one — it is asking about a path nothing is written to. Auris asks
+instead, naming the project that would go. It also asks before New Project, Open Project, closing
+the window or quitting throw away unsaved changes, since each of those clears the undo history
+along with the document.
 
 SoundFonts stay where they are, for the reason given above. **File → Collect Assets into Project**
 (or `auris collect`) copies those in too, for archiving a project or handing it to someone else —
