@@ -455,6 +455,7 @@ impl AurisApp {
         // end, and nothing else would ever pull it back.
         self.lane_scroll = self.lane_scroll.min(self.max_lane_scroll());
         let lane_scroll = self.lane_scroll;
+        let language = self.language();
 
         // Everything the paint closure needs, copied out so it does not borrow `self`.
         let lanes: Vec<LanePaint> = self.lane_paint_data();
@@ -556,6 +557,7 @@ impl AurisApp {
                                             &peaks,
                                             &view,
                                             &theme,
+                                            language,
                                         );
                                         y += px(lane.height);
                                         paint::hline(window, bounds, y, theme.border_subtle);
@@ -1048,6 +1050,7 @@ fn paint_lane(
     peaks: &PeakMap,
     view: &crate::ui::timeline::TimelineView,
     theme: &Theme,
+    language: auris_i18n::Language,
 ) {
     for clip in &lane.clips {
         let x = bounds.origin.x + view.tick_to_x(clip.start);
@@ -1061,7 +1064,7 @@ fn paint_lane(
         };
         let selected = lane.selected.contains(&clip.id);
         let body = if clip.muted {
-            Theme::translucent(lane.color, 0.16)
+            Theme::translucent(lane.color, 0.08)
         } else {
             Theme::translucent(lane.color, 0.30)
         };
@@ -1084,6 +1087,11 @@ fn paint_lane(
             },
             if selected {
                 theme.selection
+            } else if clip.muted {
+                // Mute used to be a body fill two per cent more transparent than an unmuted
+                // clip's — about 1.1:1 apart, which is to say invisible. It is the title strip
+                // that has to say it, because that is the part with the colour in it.
+                Theme::translucent(lane.color, 0.28)
             } else {
                 Theme::translucent(lane.color, 0.85)
             },
@@ -1153,6 +1161,14 @@ fn paint_lane(
         }
 
         if f32::from(clip_bounds.size.width) > 28.0 {
+            // The name says it too, so mute is not carried by a shade of a colour the user
+            // chose — which is unreadable for anyone who cannot separate those two shades, and
+            // was barely readable for anyone who can.
+            let name = if clip.muted {
+                format!("{} · {}", Key::MuteInitial.get(language), clip.name)
+            } else {
+                clip.name.clone()
+            };
             paint::label(
                 window,
                 cx,
@@ -1160,7 +1176,7 @@ fn paint_lane(
                     clip_bounds.origin.x + px(5.0),
                     clip_bounds.origin.y + px(1.5),
                 ),
-                clip.name.clone(),
+                name,
                 px(9.0),
                 // Read against the track's own colour rather than against the accent: the user
                 // chooses one and the scheme the other, and only one of them is behind this text.

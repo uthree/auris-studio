@@ -520,7 +520,13 @@ fn paint_notes(
                 note_bounds,
                 Metrics::RADIUS_XS,
                 px(1.5),
-                theme.selection,
+                // Against the note's own colour, not against the accent. The selection colour is
+                // a shade of the accent, and the velocity ramp runs through blue, green, yellow
+                // and red: at mid velocity the outline landed on green about one and a tenth to
+                // one from it, and a selected note in the middle of a phrase simply did not look
+                // selected. Deciding per note also stops the whole thing resting on hue, which
+                // is the one channel a red-green-deficient reader does not have.
+                theme.text_on(theme.velocity_color(note.velocity)),
             );
         }
     }

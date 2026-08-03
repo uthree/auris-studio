@@ -176,6 +176,54 @@ impl Scheme {
     }
 }
 
+/// A neutral shade at least `step` from the background, deepened until it reaches `ratio`.
+///
+/// Walked outwards a hundredth at a time rather than solved: the relationship between a step
+/// along the ramp and a contrast ratio depends on the scheme's hue and chroma, so there is no
+/// closed form worth writing. Four schemes times a few hundred steps, once at start-up.
+fn readable_shade(scheme: &Scheme, step: f32, ratio: f32) -> Hsla {
+    // Measured against the *nearest* surface in the stack rather than the background, because
+    // text is drawn on all of them and the one closest to it is the one that decides. A colour
+    // that clears the threshold on the window's background can still fail on a raised panel.
+    let hardest = scheme.shade(SURFACE_HOVER_STEP);
+    let mut step = step;
+    while step < 1.0 {
+        let candidate = scheme.shade(step);
+        if contrast_ratio(candidate, hardest) >= ratio {
+            return candidate;
+        }
+        step += 0.01;
+    }
+    scheme.shade(1.0)
+}
+
+/// The highest surface in the stack, and so the one text has the least contrast against.
+const SURFACE_HOVER_STEP: f32 = 0.114;
+
+/// The WCAG contrast ratio between two opaque colours, from 1:1 to 21:1.
+///
+/// Written out rather than eyeballed, because a difference in lightness is not a contrast: two
+/// colours a third of the ramp apart can still be under 3:1 when one of them is saturated. 4.5
+/// is the threshold for body text, 3.0 for large text and for anything that is not text.
+pub fn contrast_ratio(a: Hsla, b: Hsla) -> f32 {
+    let (a, b) = (relative_luminance(a), relative_luminance(b));
+    let (brighter, darker) = if a >= b { (a, b) } else { (b, a) };
+    (brighter + 0.05) / (darker + 0.05)
+}
+
+/// Relative luminance, as WCAG defines it: linearised channels under human sensitivity weights.
+fn relative_luminance(color: Hsla) -> f32 {
+    let rgba: gpui::Rgba = color.into();
+    let linear = |value: f32| {
+        if value <= 0.040_45 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(rgba.r) + 0.7152 * linear(rgba.g) + 0.0722 * linear(rgba.b)
+}
+
 /// Near-black or near-white, whichever can be read on `color`, tinted to match a scheme's greys.
 fn readable_on(color: Hsla, scheme: &Scheme) -> Hsla {
     hsla(
@@ -279,12 +327,21 @@ impl Theme {
             background: scheme.shade(0.0),
             surface: scheme.shade(0.034),
             surface_raised: scheme.shade(0.074),
-            surface_hover: scheme.shade(0.114),
+            surface_hover: scheme.shade(SURFACE_HOVER_STEP),
             border_subtle: scheme.shade(0.074),
             border: scheme.shade(0.149),
-            text: scheme.shade(0.824),
-            text_muted: scheme.shade(0.504),
-            text_faint: scheme.shade(0.354),
+            // The declared step is a *floor*, not the answer. The same distance along the ramp
+            // is a different contrast in a saturated scheme than in a grey one, and different
+            // again read downwards than upwards — which is how `text_faint` came to sit under
+            // 3:1 in every scheme and under 2:1 in Parchment while carrying readout captions
+            // and disabled menu commands.
+            text: readable_shade(scheme, 0.824, 7.0),
+            text_muted: readable_shade(scheme, 0.504, 4.5),
+            // 3.5 rather than 4.5: this is the tier below muted and has to stay visibly below
+            // it, and pushing both to the same threshold in the light schemes would collapse
+            // the two into one colour. Anything that carries information a user must read
+            // belongs in `text_muted`.
+            text_faint: readable_shade(scheme, 0.354, 3.5),
             grid_subdivision: scheme.shade(0.054),
             grid_beat: scheme.shade(0.104),
             grid_bar: scheme.shade(0.194),
@@ -579,20 +636,44 @@ mod tests {
                 ("surface", theme.surface),
                 ("raised", theme.surface_raised),
                 ("sunken", theme.surface_sunken),
+                // The hardest of the five, and the one a hovered row is drawn on.
+                ("hover", theme.surface_hover),
             ] {
-                assert!(
-                    (theme.text.l - behind.l).abs() > 0.45,
-                    "{}: text on {name} is {} against {}",
-                    entry.name,
-                    theme.text.l,
-                    behind.l
-                );
-                assert!(
-                    (theme.text_muted.l - behind.l).abs() > 0.25,
-                    "{}: muted text on {name} barely shows",
-                    entry.name
-                );
+                // Real ratios, not lightness deltas. A delta cannot tell a readable colour from
+                // an unreadable one — Parchment is a saturated scheme, and a third of its ramp
+                // came out under 2:1 while passing a 0.25 lightness check comfortably.
+                for (tier, color, least) in [
+                    ("text", theme.text, 7.0),
+                    ("muted text", theme.text_muted, 4.5),
+                    ("faint text", theme.text_faint, 3.5),
+                ] {
+                    let ratio = contrast_ratio(color, behind);
+                    assert!(
+                        ratio >= least,
+                        "{}: {tier} on {name} is {ratio:.2}:1, wanted {least}:1",
+                        entry.name,
+                    );
+                }
             }
+            // The tiers stay in order, or the hierarchy they exist to draw is a fiction.
+            assert!(
+                contrast_ratio(theme.text, theme.background)
+                    > contrast_ratio(theme.text_muted, theme.background),
+                "{}: muted text does not recede from text",
+                entry.name
+            );
+            assert!(
+                contrast_ratio(theme.text_muted, theme.background)
+                    > contrast_ratio(theme.text_faint, theme.background),
+                "{}: faint text does not recede from muted text",
+                entry.name
+            );
+            // A failure has to be readable where it is reported, which is the status bar.
+            assert!(
+                contrast_ratio(theme.danger, theme.surface_raised) >= 3.0,
+                "{}: a failure cannot be read on the status bar",
+                entry.name
+            );
             assert!(
                 (theme.text_on_accent.l - theme.accent.l).abs() > 0.35,
                 "{}: a label on the accent is unreadable",

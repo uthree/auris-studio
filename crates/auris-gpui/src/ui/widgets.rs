@@ -59,7 +59,14 @@ where
             gpui::transparent_black(),
         ),
     };
-    let hover = theme.hovered(background, 0.12);
+    // A Ghost button's background is transparent, and lightening transparency yields more
+    // transparency: its hover painted a quad with alpha 0, so the only entry point to the
+    // instrument editor in the whole application looked exactly like the label beside it.
+    let hover = if matches!((style, active), (ButtonStyle::Ghost, false)) {
+        theme.surface_hover
+    } else {
+        theme.hovered(background, 0.12)
+    };
 
     div()
         .id(id.into())

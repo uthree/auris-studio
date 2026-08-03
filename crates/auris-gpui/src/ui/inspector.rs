@@ -378,7 +378,12 @@ impl AurisApp {
                         value,
                         theme.accent,
                         &theme,
-                        cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            if event.click_count >= 2 {
+                                this.reset_param(target);
+                                cx.notify();
+                                return;
+                            }
                             // `set_param_value` marks the document dirty once the drag actually
                             // moves something; a click that only grabs the control is not an edit.
                             this.begin_drag(Drag::Param {
@@ -465,7 +470,12 @@ impl AurisApp {
             theme.accent,
             crate::ui::plugin_editor::slider_fill_for(&descriptor),
             &theme,
-            cx.listener(move |this, event: &MouseDownEvent, _, _| {
+            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                if event.click_count >= 2 {
+                    this.reset_param(target);
+                    cx.notify();
+                    return;
+                }
                 this.begin_drag(Drag::Param {
                     target,
                     start_value: value,
@@ -484,6 +494,18 @@ impl AurisApp {
             }),
         )
         .into_any_element()
+    }
+
+    /// Puts a parameter back to whatever its descriptor calls the default.
+    ///
+    /// Double-click, which is how every mixer in the world brings a fader back to 0 dB and a pan
+    /// back to centre. The number was already there; there was simply no gesture that asked for
+    /// it, and a fader nudged off unity could only be walked back by eye.
+    pub(crate) fn reset_param(&mut self, target: ParamTarget) {
+        let Some(descriptor) = self.session.descriptor_for(target) else {
+            return;
+        };
+        self.session.set_param(target, descriptor.default);
     }
 
     /// Applies a parameter drag.
