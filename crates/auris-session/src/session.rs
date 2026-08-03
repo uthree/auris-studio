@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use auris_core::harmony::Harmony;
 use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
@@ -142,6 +143,8 @@ pub struct Session {
     history: History,
     transaction: Option<Transaction>,
     needs_rebuild: bool,
+    /// The last edit recorded outside a transaction, and when, for [`Session::record_repeating`].
+    last_record: Option<(Edit, Instant)>,
 
     path: Option<PathBuf>,
     dirty: bool,
@@ -180,6 +183,12 @@ pub struct ComposeReport {
 struct Transaction {
     edit: Edit,
     before: Project,
+    /// Whether the document had unsaved changes when the gesture opened.
+    ///
+    /// Kept so [`Session::revert_transaction`] can put that back too: a drag on a freshly saved
+    /// document that is then abandoned has changed nothing, and the window should not claim it
+    /// has.
+    dirty_before: bool,
 }
 
 impl Session {
@@ -234,6 +243,7 @@ impl Session {
             history: History::default(),
             transaction: None,
             needs_rebuild: false,
+            last_record: None,
             path: None,
             dirty: false,
             scope: Arc::new(auris_engine::Scope::new()),
@@ -442,6 +452,7 @@ impl Session {
         self.transaction = Some(Transaction {
             edit,
             before: self.project.clone(),
+            dirty_before: self.dirty,
         });
     }
 
@@ -471,6 +482,30 @@ impl Session {
         if std::mem::take(&mut self.needs_rebuild) {
             self.rebuild_graph();
         }
+    }
+
+    /// Abandons a gesture and puts the document back the way it was when it opened.
+    ///
+    /// What Escape means during a drag: the clip goes back where it was picked up from, and
+    /// nothing lands on the undo stack. [`Self::cancel_transaction`] keeps the half-finished
+    /// result instead, for a host that has already told the user the edit took.
+    ///
+    /// Returns whether anything was put back.
+    pub fn revert_transaction(&mut self) -> bool {
+        let Some(transaction) = self.transaction.take() else {
+            return false;
+        };
+        if transaction.before == self.project {
+            // Nothing moved, so there is nothing to restore — but a mutation that cancelled
+            // itself out may still have marked the graph stale.
+            if std::mem::take(&mut self.needs_rebuild) {
+                self.rebuild_graph();
+            }
+            return false;
+        }
+        self.replace_project(transaction.before);
+        self.dirty = transaction.dirty_before;
+        true
     }
 
     /// Steps back one edit, returning what it reversed.
@@ -508,6 +543,7 @@ impl Session {
     pub fn forget_history(&mut self) {
         self.history.clear();
         self.transaction = None;
+        self.last_record = None;
         self.dirty = false;
     }
 
@@ -519,7 +555,39 @@ impl Session {
         if self.transaction.is_none() {
             self.history.push(edit, &self.project);
         }
+        // Any ordinary edit breaks a run of repeats: a tempo nudge, a note, another tempo nudge
+        // must be three steps, or undoing the second nudge would take the note with it.
+        self.last_record = None;
         self.dirty = true;
+    }
+
+    /// How long a repeated edit keeps folding into the step before it.
+    ///
+    /// Long enough to cover the gap between two notches of a wheel a user is still turning,
+    /// short enough that coming back to the same control a moment later is a step of its own.
+    const COALESCE: Duration = Duration::from_millis(600);
+
+    /// Records an edit that arrives as a stream of small steps — a wheel notch, a held arrow key
+    /// — folding it into the previous step when it is the same edit made a moment ago.
+    ///
+    /// A gesture with a beginning and an end wants [`Self::begin_transaction`] instead. This is
+    /// for the ones that have neither: without it a flick of the wheel over the tempo readout
+    /// pushes one undo step per event and shoves the real history off the end of the stack.
+    fn record_repeating(&mut self, edit: Edit) {
+        self.record_repeating_at(edit, Instant::now());
+    }
+
+    /// [`Self::record_repeating`] against a clock a test can hold still.
+    fn record_repeating_at(&mut self, edit: Edit, now: Instant) {
+        let folds = self
+            .last_record
+            .is_some_and(|(last, at)| last == edit && now.duration_since(at) < Self::COALESCE);
+        if folds {
+            self.dirty = true;
+        } else {
+            self.record(edit);
+        }
+        self.last_record = Some((edit, now));
     }
 
     /// Marks the render graph as stale, rebuilding immediately outside a transaction.
@@ -566,6 +634,7 @@ impl Session {
         self.project = project;
         self.transaction = None;
         self.needs_rebuild = false;
+        self.last_record = None;
         self.rebuild_graph();
         // The loop lives in the audio thread's transport and only `SetLoop` moves it, so a
         // document swap that does not republish leaves playback wrapping the old range.
@@ -621,8 +690,13 @@ impl Session {
     }
 
     /// Turns looping on or off, seeding a two-bar region when there is none.
+    ///
+    /// Deliberately not recorded. Cycling is how a user listens, not something they write: a
+    /// loop-and-listen pass would otherwise fill the undo stack with toggles and push the edits
+    /// the pass was checking off the end of it. Dragging the region *is* recorded — that is
+    /// aimed at a place in the song rather than at the transport.
     pub fn set_loop_enabled(&mut self, enabled: bool) {
-        self.record(Edit::ToggleLoop);
+        self.dirty = true;
         self.project.loop_enabled = enabled;
         if enabled && self.project.loop_region.is_none() {
             let bars = self.project.time_signature.ticks_per_bar() * 2;
@@ -662,7 +736,17 @@ impl Session {
 
     /// Sets the project tempo.
     pub fn set_bpm(&mut self, bpm: f64) {
-        self.record(Edit::ChangeTempo);
+        // A wheel over the readout arrives as a stream of small deltas, and re-flattening the
+        // graph is the expensive half of this. A value that has not moved is not a change — and
+        // it is the *clamped* value that decides, or holding the wheel past 999 would keep
+        // recording steps that change nothing. The map is a handful of points; probing a clone
+        // is cheaper than the rebuild it saves.
+        let mut probe = self.project.tempo_map.clone();
+        probe.set_initial_bpm(bpm);
+        if probe.initial_bpm() == self.project.bpm() {
+            return;
+        }
+        self.record_repeating(Edit::ChangeTempo);
         self.project.set_bpm(bpm);
         // Notes are scheduled in frames, so the graph has to be re-flattened, and the loop's
         // frame positions move with it.
@@ -1845,8 +1929,13 @@ impl Session {
     }
 
     /// Writes a parameter to the document and forwards it to the audio thread.
+    ///
+    /// Recorded like any other edit. Dragging a knob opens a transaction first, so a sweep is
+    /// still one step; every other way of reaching a parameter — a menu choice, a toggle, the
+    /// wheel — has no gesture around it and was going unrecorded, which made Undo take back the
+    /// edit *before* the parameter change instead.
     pub fn set_param(&mut self, target: ParamTarget, value: f32) {
-        self.dirty = true;
+        self.record_repeating(Edit::AdjustParameter);
         match target {
             ParamTarget::TrackGain(id) => {
                 let Ok(index) = self.require_track(id) else {
@@ -2523,6 +2612,21 @@ mod tests {
         Session::new(SessionOptions::headless()).expect("a headless session always opens")
     }
 
+    /// A moment `ms` after whichever `Instant` it is added to.
+    fn tick(ms: u64) -> Duration {
+        Duration::from_millis(ms)
+    }
+
+    /// How many steps deep the undo stack is, counted by walking it.
+    fn undo_depth(session: &mut Session) -> usize {
+        let mut depth = 0;
+        while session.undo().is_some() {
+            depth += 1;
+        }
+        while session.redo().is_some() {}
+        depth
+    }
+
     /// Registers a font in the document without a file behind it.
     ///
     /// Enough to exercise every command that decides what a track *plays*; what it *sounds* like
@@ -2814,6 +2918,140 @@ mod tests {
         assert_eq!(session.project().tracks.len(), 1);
         assert_eq!(session.redo(), Some(Edit::AddInstrumentTrack));
         assert_eq!(session.project().tracks.len(), 2);
+    }
+
+    #[test]
+    fn an_abandoned_gesture_puts_the_document_back_and_leaves_no_trace() {
+        // Escape during a drag. The clip goes back where it was picked up from, the undo stack
+        // is untouched, and a document that was saved a moment ago is still saved.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        session.forget_history();
+        let steps = session.history.can_undo();
+
+        session.begin_transaction(Edit::MoveClip);
+        session.move_clips(&[(clip, Ticks::ZERO)], Ticks::QUARTER);
+        assert_ne!(session.midi_clip(clip).unwrap().start, Ticks::ZERO);
+
+        assert!(session.revert_transaction());
+        assert_eq!(session.midi_clip(clip).unwrap().start, Ticks::ZERO);
+        assert_eq!(session.history.can_undo(), steps);
+        assert!(!session.is_dirty(), "an abandoned gesture edited nothing");
+    }
+
+    #[test]
+    fn a_gesture_that_moved_nothing_is_not_worth_reverting() {
+        let mut session = session();
+        session.add_default_instrument_track("Lead").unwrap();
+        session.begin_transaction(Edit::MoveClip);
+        assert!(!session.revert_transaction());
+        assert!(
+            session.transaction.is_none(),
+            "the gesture is over either way"
+        );
+    }
+
+    #[test]
+    fn a_parameter_changed_without_a_drag_can_still_be_undone() {
+        // A menu choice, a toggle or the wheel reaches `set_param` with no gesture around it.
+        // Unrecorded, Undo took back whatever the user did *before* touching the knob instead.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let target = ParamTarget::Instrument {
+            track,
+            param: ParamId(0),
+        };
+        let descriptor = session.descriptor_for(target).unwrap();
+        let before = session.param_value(target, &descriptor);
+        let after = descriptor.clamp(descriptor.max);
+        assert_ne!(before, after, "the test needs a parameter it can move");
+
+        session.set_param(target, after);
+        assert_eq!(session.undo(), Some(Edit::AdjustParameter));
+        assert_eq!(session.param_value(target, &descriptor), before);
+    }
+
+    #[test]
+    fn a_stream_of_notches_is_one_undo_step_and_a_later_one_is_its_own() {
+        let mut session = session();
+        session.add_default_instrument_track("Lead").unwrap();
+        session.forget_history();
+
+        let start = Instant::now();
+        for notch in 1..=8i32 {
+            session.record_repeating_at(Edit::ChangeTempo, start + tick(notch as u64 * 50));
+            session.project.set_bpm(120.0 + f64::from(notch));
+        }
+        assert_eq!(session.undo(), Some(Edit::ChangeTempo));
+        assert_eq!(session.project().bpm(), 120.0);
+        assert!(!session.can_undo(), "eight notches were one step");
+
+        // Coming back to the control after the window has closed is a step of its own.
+        session.redo();
+        session.record_repeating_at(Edit::ChangeTempo, start + tick(5_000));
+        session.project.set_bpm(140.0);
+        assert_eq!(session.undo(), Some(Edit::ChangeTempo));
+        assert_eq!(session.project().bpm(), 128.0);
+    }
+
+    #[test]
+    fn an_edit_in_between_keeps_two_repeats_apart() {
+        // Nudge, write a note, nudge again. Folding the second nudge into the first would make
+        // one Undo take the note with it.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        session.forget_history();
+
+        let start = Instant::now();
+        session.record_repeating_at(Edit::ChangeTempo, start);
+        session.project.set_bpm(130.0);
+        session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        session.record_repeating_at(Edit::ChangeTempo, start + tick(20));
+        session.project.set_bpm(140.0);
+
+        assert_eq!(session.undo(), Some(Edit::ChangeTempo));
+        assert_eq!(session.project().bpm(), 130.0);
+        assert_eq!(session.undo(), Some(Edit::AddClip));
+        assert_eq!(session.undo(), Some(Edit::ChangeTempo));
+        assert_eq!(session.project().bpm(), 120.0);
+    }
+
+    #[test]
+    fn a_tempo_that_has_not_moved_is_not_an_edit() {
+        let mut session = session();
+        session.forget_history();
+        session.set_bpm(session.project().bpm());
+        assert!(!session.can_undo());
+        // And neither is one the clamp refuses, however long the wheel is held past the end.
+        session.set_bpm(10_000.0);
+        let steps = undo_depth(&mut session);
+        assert_eq!(steps, 1, "the first push through the ceiling did move it");
+        session.set_bpm(20_000.0);
+        assert_eq!(undo_depth(&mut session), steps, "and the next one did not");
+    }
+
+    #[test]
+    fn cycling_is_listening_and_does_not_land_on_the_undo_stack() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+
+        for _ in 0..4 {
+            session.set_loop_enabled(true);
+            session.set_loop_enabled(false);
+        }
+        assert_eq!(
+            session.undo(),
+            Some(Edit::AddClip),
+            "the edits are still there"
+        );
     }
 
     #[test]

@@ -766,6 +766,22 @@ impl AurisApp {
         }
     }
 
+    /// Abandons any gesture in progress, putting the document back where it started.
+    ///
+    /// The counterpart to [`Self::end_drag`], for the paths that mean "never mind" rather than
+    /// "that will do". Every path that clears [`Self::drag`] must go through one of the two: a
+    /// transaction left open swallows every later edit, because [`auris_session::Session`]
+    /// neither records nor rebuilds while one is running.
+    pub(crate) fn abort_drag(&mut self) -> bool {
+        let Some(drag) = self.drag.take() else {
+            return false;
+        };
+        if drag.edit().is_some() {
+            self.session.revert_transaction();
+        }
+        true
+    }
+
     // ---------------------------------------------------------------- transport
 
     /// `true` when the transport is rolling.

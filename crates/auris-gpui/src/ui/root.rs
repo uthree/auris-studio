@@ -161,6 +161,11 @@ impl Render for AurisApp {
             // control that started them, which is what makes a fader usable.
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(gpui::MouseButton::Left, cx.listener(Self::on_mouse_up))
+            // …and a release *outside* the window ends them too. Letting go over the desktop is
+            // what a user does when they have dragged a fader to the end of its travel, and
+            // without this the drag never finishes: the pointer comes back still holding the
+            // clip, and the transaction it opened silently eats every edit made afterwards.
+            .on_mouse_up_out(gpui::MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_key_down(cx.listener(Self::on_key_down))
             .children(menu_bar)
             .child(transport)
@@ -685,14 +690,25 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Escape closes what is open before it does anything drastic. Panicking the engine
-        // while a menu is up would be a surprising answer to "never mind".
-        if self.close_menu() | self.close_menu_bar() | self.close_plugin_window() {
+        // Escape takes back the nearest thing first. Panicking the engine while a menu is up
+        // would be a surprising answer to "never mind", and so would silencing a drag that the
+        // user only wanted to abandon — so each of these returns rather than falling through.
+        if self.close_menu() || self.close_menu_bar() {
+            cx.notify();
+            return;
+        }
+        // A gesture in progress goes back where it started. Clearing the field alone would
+        // leave the session's transaction open, and every edit after that inaudible.
+        if self.abort_drag() {
+            self.stop_audition();
+            cx.notify();
+            return;
+        }
+        if self.close_plugin_window() {
             cx.notify();
             return;
         }
         self.session.panic();
-        self.drag = None;
         self.set_status(self.t(Key::PanicStopped));
         cx.notify();
     }
