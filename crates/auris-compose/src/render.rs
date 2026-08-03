@@ -262,7 +262,7 @@ mod tests {
                 "form: verse\nkey: C major\nseed: 7\ntension: 0.95\n[section verse]\nbars: 8"
             ),
             "verse·1 C major | C→Cmaj7 G Am F→Fmaj7 C→Cmaj7 G→Gmaj7 Am→Am9 F |\n\
-             229 notes, digest 1d554a521541d70b\n"
+             174 notes, digest 41255ea8039a50c5\n"
         );
 
         // The same in a minor key. `Fm→Gbm` is the borrow that has no spelling: `vi` read in the
@@ -274,7 +274,7 @@ mod tests {
                 "form: verse\nkey: A minor\nseed: 1\nmood: tense\n[section verse]\nbars: 8"
             ),
             "verse·1 A minor | A→Amaj7 E Fm→Fm7 D A→Amaj7 E→Emaj7 Fm→Gbm D→Dmaj7 |\n\
-             232 notes, digest f86f16dc04a88129\n"
+             213 notes, digest 0e3d50384b5c0d2d\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats.
@@ -283,7 +283,7 @@ mod tests {
             "intro·1 C major | C G Am F |\n\
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
-             541 notes, digest ae2cb361c63511b1\n"
+             557 notes, digest 82cd8a26b9ead474\n"
         );
 
         // A transposed section, which is about to become a key change on the timeline.
@@ -294,7 +294,7 @@ mod tests {
             ),
             "verse·1 C major | Fmaj7 E7 Am7 C7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
-             241 notes, digest d798e175fb1b7d78\n"
+             198 notes, digest 0124db2eba259b0f\n"
         );
     }
 

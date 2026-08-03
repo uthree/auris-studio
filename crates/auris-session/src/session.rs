@@ -3578,6 +3578,30 @@ mod tests {
     }
 
     #[test]
+    fn another_take_changes_the_notes_for_every_preset_from_the_seed_the_app_starts_at() {
+        // The desktop application gives the first clip in a project seed 1, so the first press of
+        // "another take" is always 1 to 2. If that one pair happened to write the same notes the
+        // button would look broken however well every other seed behaved.
+        for preset in ClipPreset::ALL {
+            let (mut session, track) = with_a_progression();
+            let clip = session
+                .generate_clip(track, Ticks::ZERO, BAR * 4, ClipRecipe::new(preset, 1))
+                .unwrap();
+            let first = session.project().midi_clip(clip).unwrap().1.notes.clone();
+            assert!(!first.is_empty(), "{} wrote nothing", preset.name());
+
+            session.reroll_clip(clip).unwrap();
+            let second = session.project().midi_clip(clip).unwrap().1.notes.clone();
+            assert_ne!(
+                first,
+                second,
+                "{} wrote the same notes for seed 1 and seed 2",
+                preset.name()
+            );
+        }
+    }
+
+    #[test]
     fn another_take_is_a_different_phrase_of_the_same_part() {
         let (mut session, track) = with_a_progression();
         let clip = session

@@ -209,6 +209,64 @@ mod tests {
         }
     }
 
+    /// How much two takes have in common, as a fraction of everything either of them plays.
+    ///
+    /// Compares which pitch lands on which sixteenth, ignoring the few ticks humanisation shakes
+    /// a note by — because a listener does too. Counted over the union of both takes, so a sparse
+    /// take whose notes all appear inside a busy one still counts as different.
+    fn overlap(preset: ClipPreset, one: u64, other: u64) -> f32 {
+        let figure = |notes: Vec<Note>| -> Vec<(u8, i64)> {
+            let mut out: Vec<(u8, i64)> = notes
+                .iter()
+                .map(|note| (note.pitch, note.start.snap_nearest(Ticks(240)).raw()))
+                .collect();
+            out.sort_unstable();
+            out.dedup();
+            out
+        };
+        let (a, b) = (figure(phrase(preset, one)), figure(phrase(preset, other)));
+        let shared = a.iter().filter(|entry| b.contains(entry)).count();
+        let union = a.len() + b.len() - shared;
+        shared as f32 / union.max(1) as f32
+    }
+
+    #[test]
+    fn another_take_is_a_take_a_listener_would_call_different() {
+        // The bug this pins, and it is worth spelling out because the obvious test missed it:
+        // four of the six presets used to write *byte for byte the same figure* for a different
+        // seed, and differ only in the ticks humanisation shook them by. `assert_ne!` passed
+        // happily. To a person pressing "another take" nothing happened at all.
+        //
+        // So the assertion is about what is heard, averaged over several pairs of seeds. An
+        // average and not each pair: a part choosing between a handful of figures will sometimes
+        // draw the same one twice, and that is honest variance rather than a fault. What it
+        // cannot do, and what this catches, is score the same every time.
+        let ceiling = |preset: ClipPreset| match preset {
+            // A bass plays the root when the chord changes — that is the job — so two takes over
+            // one progression share those notes however different the rest of the line is.
+            ClipPreset::Bass => 0.85,
+            // A pad holds the chord. All it can vary is the register it holds it in.
+            ClipPreset::Pad => 0.75,
+            // A kit follows its groove, and the groove is the part somebody chose.
+            ClipPreset::Drums => 0.75,
+            _ => 0.55,
+        };
+        for preset in ClipPreset::ALL {
+            let pairs = [(1u64, 2), (2, 3), (3, 4), (1, 7), (5, 9)];
+            let mean: f32 = pairs
+                .iter()
+                .map(|(one, other)| overlap(preset, *one, *other))
+                .sum::<f32>()
+                / pairs.len() as f32;
+            assert!(
+                mean < ceiling(preset),
+                "{}: two takes share {:.0}% of what they play on average",
+                preset.name(),
+                mean * 100.0
+            );
+        }
+    }
+
     #[test]
     fn a_different_seed_is_a_different_take_of_the_same_part() {
         // Different notes, but still the same instrument doing the same job — which is what a

@@ -110,6 +110,39 @@ pub fn write_parts(settings: &ScoreSettings, roster: &[PartSpec], frame: &Frame)
         .collect()
 }
 
+/// How a chord is struck through a bar.
+///
+/// A part that only ever played the chord on every beat wrote the same bar for every seed, so
+/// asking it for another take gave back what it had already given. These are the four ways a
+/// keyboard player actually comps, and one of them is chosen per bar.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum CompFigure {
+    /// Held for as long as the chord lasts.
+    Held,
+    /// Once on every beat.
+    Beats,
+    /// On the second half of each beat, which pushes the music forward.
+    Offbeats,
+    /// Beat one and the half-beat after beat two: the Charleston, and half of pop music.
+    Charleston,
+}
+
+/// The shape of a bass line through a bar.
+///
+/// Same reason as [`CompFigure`]: the bass followed the kick and alternated root and fifth, which
+/// is one bass line and not a choice of them.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum BassFigure {
+    /// The root, and nothing else. Solid, and what most of rock does.
+    Root,
+    /// Root on the strong hits, fifth on the weak ones: the oldest bass line there is.
+    Fifth,
+    /// The root, jumping an octave on the weak hits.
+    Octave,
+    /// Root and fifth, stepping into the next chord on the last hit before it.
+    Approach,
+}
+
 /// How busy a part is, as a fraction of the available steps.
 fn density(settings: &ScoreSettings, part: &PartSpec, section: &SectionPlan) -> f32 {
     let base = part.density.unwrap_or_else(|| settings.mood.density());
@@ -475,13 +508,20 @@ fn comp(
     let held = part.role == Role::Pad;
     let mut previous: Vec<i32> = Vec::new();
 
+    // How the part sits, decided once for the section. A pad has no rhythm to vary, so this is
+    // the whole of what makes one take of it differ from another: which octave it sits in, and
+    // which notes of the chord it chooses to sound.
+    let mut choose = bar_stream(settings, frame, part, section, "register", 0);
+    let register = (choose.below(3) as i32 - 1) * OCTAVE;
+    let voicing_variant = choose.below(3);
+
     for event in &section.events {
         // Voiced upward from a floor, so a ninth sounds an octave and a tone above the root
         // rather than being folded into the triad as a second. The floor is whichever octave
         // leaves the chord nearest to where the last one sat — as much voice leading as a part
         // that plays whole chords can honestly claim.
         let centre = if previous.is_empty() {
-            (low + high) / 2
+            (low + high) / 2 + register
         } else {
             previous.iter().sum::<i32>() / previous.len() as i32
         };
@@ -510,16 +550,72 @@ fn comp(
         }
         voicing.sort_unstable();
         voicing.dedup();
+        // Which notes of the chord actually sound. A player choosing what to leave out is most of
+        // what makes one voicing different from another, and for a pad it is nearly all of it.
+        match voicing_variant {
+            // Drop the fifth: the note the bass is most likely to be covering anyway.
+            1 if voicing.len() > 3 => {
+                voicing.remove(2);
+            }
+            // Double the root an octave up, for a wider chord.
+            2 => {
+                if let Some(root) = voicing.first().copied()
+                    && root + OCTAVE <= high
+                {
+                    voicing.push(root + OCTAVE);
+                }
+            }
+            _ => {}
+        }
         previous.clone_from(&voicing);
 
-        let onsets: Vec<usize> = if held {
+        // Which rhythm the chord is struck on. Chosen per bar from the section's own stream, so a
+        // repeat of the section comps the same way and a different seed comps differently — the
+        // whole of this part used to be one fixed pattern, which made "another take" a button
+        // that could not do anything.
+        let bar = frame.grid.step_of(event.start) / frame.grid.steps_per_bar().max(1);
+        let figure = if held {
+            CompFigure::Held
+        } else {
+            let mut rng = bar_stream(settings, frame, part, section, "comp", bar);
+            *rng.pick(&[
+                CompFigure::Beats,
+                CompFigure::Beats,
+                CompFigure::Offbeats,
+                CompFigure::Charleston,
+                CompFigure::Held,
+            ])
+            .unwrap_or(&CompFigure::Beats)
+        };
+
+        let onsets: Vec<usize> = if figure == CompFigure::Held {
             vec![0]
         } else {
-            let step = frame.grid.steps_per_beat as usize;
-            (0..frame.grid.step_of(event.length))
-                .step_by(step.max(1))
-                .collect()
+            let beat = (frame.grid.steps_per_beat as usize).max(1);
+            let half = (beat / 2).max(1);
+            let per_bar = frame.grid.steps_per_bar().max(1);
+            let from = frame.grid.step_of(event.start);
+            // Measured against the bar rather than against the chord, so a figure stays in step
+            // with the beat when two chords share a bar.
+            let mut chosen: Vec<usize> = (0..frame.grid.step_of(event.length))
+                .filter(|offset| {
+                    let at = (from + offset) % per_bar;
+                    match figure {
+                        CompFigure::Beats => at.is_multiple_of(beat),
+                        CompFigure::Offbeats => at % beat == half,
+                        CompFigure::Charleston => at == 0 || at == beat + half,
+                        CompFigure::Held => false,
+                    }
+                })
+                .collect();
+            // A chord nobody strikes is a chord nobody hears change, so its own start always
+            // sounds whatever the figure says.
+            if !chosen.contains(&0) {
+                chosen.insert(0, 0);
+            }
+            chosen
         };
+        let held = held || figure == CompFigure::Held;
 
         for onset in &onsets {
             let at = event.start + frame.grid.tick_of(*onset);
@@ -573,16 +669,37 @@ fn arp(
             RngKey::Word(&section.name),
         ],
     );
+    // One binary choice was the whole of this part's variety, so two seeds wrote the same
+    // arpeggio five times out of six. A shape and a span are two more.
     let descending = rng.chance(0.3);
+    let turns = rng.chance(0.45);
+    let span = 1 + rng.below(2) as i32;
 
     for event in &section.events {
-        let mut voicing = event.chord.voiced_from(low);
-        voicing.retain(|pitch| *pitch <= high);
+        let mut voicing: Vec<i32> = Vec::new();
+        for octave in 0..span {
+            for pitch in event.chord.voiced_from(low + octave * OCTAVE) {
+                if pitch <= high {
+                    voicing.push(pitch);
+                }
+            }
+        }
+        voicing.sort_unstable();
+        voicing.dedup();
         if voicing.is_empty() {
             continue;
         }
         if descending {
             voicing.reverse();
+        }
+        // Up and back down again, without repeating the note it turns on.
+        if turns && voicing.len() > 2 {
+            let back: Vec<i32> = voicing[1..voicing.len() - 1]
+                .iter()
+                .rev()
+                .copied()
+                .collect();
+            voicing.extend(back);
         }
         let count = (event.length.raw() / step_length.raw().max(1)) as usize;
         for position in 0..count {
@@ -620,7 +737,7 @@ fn bass(
     let kick = crate::frame::groove_pattern(&settings.groove, DrumVoice::Kick);
     let mut notes = Vec::new();
 
-    for event in &section.events {
+    for (position_in_section, event) in section.events.iter().enumerate() {
         let root = fold_into(event.chord.bass_class().midi(part.octave), low, high);
         // The chord's own fifth, read off the chord rather than assumed perfect and measured
         // from the chord's root rather than from a slash bass. A blind `root + 7` played F# over
@@ -638,14 +755,50 @@ fn bass(
         // own length — otherwise a meter that is not sixteen steps drifts against the drums.
         let per_bar = grid.steps_per_bar().max(1);
         let first = grid.step_of(event.start) % per_bar;
-        // Follow the kick inside this chord, and always sound its start so a change is heard.
-        let mut onsets: Vec<usize> = (0..steps)
-            .filter(|offset| kick.at((first + offset) % per_bar).is_some())
-            .collect();
+        // Which line to play over this chord, drawn from the section's own stream so a repeat
+        // plays the same line and a different seed plays a different one.
+        let bar = grid.step_of(event.start) / grid.steps_per_bar().max(1);
+        let mut choose = bar_stream(settings, frame, part, section, "figure", bar);
+        let figure = *choose
+            .pick(&[
+                BassFigure::Root,
+                BassFigure::Fifth,
+                BassFigure::Fifth,
+                BassFigure::Octave,
+                BassFigure::Approach,
+            ])
+            .unwrap_or(&BassFigure::Fifth);
+
+        // The figure decides how busy the line is as well as what it plays. Two lines that hit
+        // the same beats and differ only on the weak ones are the same line to a listener.
+        let mut onsets: Vec<usize> = match figure {
+            // One note under the chord, held: the sound of a bass player staying out of the way.
+            BassFigure::Root => Vec::new(),
+            // Follow the kick, which is what locks a rhythm section together.
+            BassFigure::Fifth | BassFigure::Approach => (0..steps)
+                .filter(|offset| kick.at((first + offset) % per_bar).is_some())
+                .collect(),
+            // The kick, and the half-beats between it: a busier, walking feel.
+            BassFigure::Octave => (0..steps)
+                .filter(|offset| {
+                    let at = (first + offset) % per_bar;
+                    kick.at(at).is_some()
+                        || at.is_multiple_of((grid.steps_per_beat as usize).max(1))
+                })
+                .collect(),
+        };
+        // Always sound the chord's start, so a change of chord is heard whatever the figure.
         if !onsets.contains(&0) {
             onsets.insert(0, 0);
         }
 
+        // Where the next chord's root is, for a line that steps into it.
+        let target = section
+            .events
+            .get(position_in_section + 1)
+            .map(|next| fold_into(next.chord.bass_class().midi(part.octave), low, high));
+
+        let last = onsets.len().saturating_sub(1);
         for (position, offset) in onsets.iter().enumerate() {
             let at = event.start + grid.tick_of(*offset);
             let next = onsets
@@ -653,11 +806,36 @@ fn bass(
                 .map(|next| grid.tick_of(*next))
                 .unwrap_or(event.length);
             let length = (next - grid.tick_of(*offset)).max(grid.step_ticks());
-            // Root on the strong hits, fifth on the weak ones: the oldest bass line there is.
-            let pitch = if position == 0 || grid.weight(grid.step_of(at)) >= 2 {
-                root
-            } else {
-                fifth
+            let strong = position == 0 || grid.weight(grid.step_of(at)) >= 2;
+            let pitch = match figure {
+                BassFigure::Root => root,
+                BassFigure::Fifth => {
+                    if strong {
+                        root
+                    } else {
+                        fifth
+                    }
+                }
+                BassFigure::Octave => {
+                    if strong {
+                        root
+                    } else {
+                        fold_into(root + OCTAVE, low, high)
+                    }
+                }
+                // A semitone below whatever comes next, on the last hit before it. A bass player
+                // reaching for the next chord is the sound of a line going somewhere, and it is
+                // the one figure here that needs to know what the next chord is.
+                BassFigure::Approach if position == last && last > 0 => {
+                    target.map_or(fifth, |next| fold_into(next - 1, low, high))
+                }
+                BassFigure::Approach => {
+                    if strong {
+                        root
+                    } else {
+                        fifth
+                    }
+                }
             };
             notes.push(Draft {
                 section: index,
