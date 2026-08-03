@@ -201,6 +201,7 @@ strings! {
     CmdZoomIn { en: "Zoom In", ja: "拡大" }
     CmdZoomOut { en: "Zoom Out", ja: "縮小" }
     CmdSettings { en: "Settings", ja: "設定" }
+    CmdCommandPalette { en: "Command Palette", ja: "コマンドパレット" }
 
     // ------------------------------------------------------------------ application menu
     // Separate from the commands above because a menu item that opens a window or a dialog
@@ -285,6 +286,9 @@ strings! {
 
     // ------------------------------------------------------------------ appearance
     AppearanceHeading { en: "Colour scheme", ja: "カラースキーム" }
+
+    // ------------------------------------------------------------------ command palette
+    PaletteNothingMatches { en: "No command matches", ja: "該当するコマンドがありません" }
 
     // ------------------------------------------------------------------ rename sheet
     RenameTrackTitle { en: "Rename track", ja: "トラック名の変更" }

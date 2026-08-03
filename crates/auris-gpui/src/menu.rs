@@ -168,6 +168,34 @@ pub fn model(language: Language) -> Vec<MenuSection> {
         ],
     });
 
+    // The palette leads, because a menu is where somebody who does not know it exists will find
+    // it — and once it is open, everything below is reachable by typing its name instead.
+    sections.push(MenuSection {
+        name: t(Key::GroupView),
+        rows: vec![
+            command(
+                t(Key::CmdCommandPalette),
+                actions::OpenCommandPalette,
+                "view.palette",
+            ),
+            MenuRow::Separator,
+            command(
+                t(Key::CmdShowLibrary),
+                actions::ToggleLibrary,
+                "view.library",
+            ),
+            command(
+                t(Key::CmdShowInspector),
+                actions::ToggleInspector,
+                "view.inspector",
+            ),
+            command(t(Key::CmdShowEditor), actions::ToggleEditor, "view.editor"),
+            MenuRow::Separator,
+            command(t(Key::CmdZoomIn), actions::ZoomIn, "view.zoom_in"),
+            command(t(Key::CmdZoomOut), actions::ZoomOut, "view.zoom_out"),
+        ],
+    });
+
     sections.push(MenuSection {
         name: t(Key::GroupTransport),
         rows: vec![
@@ -259,6 +287,25 @@ mod tests {
                 "`{expected}` is in no menu on this platform"
             );
         }
+    }
+
+    #[test]
+    fn the_palette_is_in_a_menu_where_somebody_can_find_it() {
+        // A palette reached only by a keystroke is a feature for people who already know about
+        // it. The menu row is how anybody else finds out it exists.
+        let labels: Vec<String> = model(Language::English)
+            .into_iter()
+            .flat_map(|section| section.rows)
+            .filter_map(|row| match row {
+                MenuRow::Command { label, .. } => Some(label.to_string()),
+                _ => None,
+            })
+            .collect();
+        let expected = Key::CmdCommandPalette.get(Language::English);
+        assert!(
+            labels.iter().any(|label| label == expected),
+            "`{expected}` is in no menu"
+        );
     }
 
     #[test]

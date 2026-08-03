@@ -237,32 +237,14 @@ impl AurisApp {
                                 .bg(theme.surface_sunken)
                                 .border_1()
                                 .border_color(theme.accent)
-                                .child({
-                                    let theme = theme.clone();
-                                    canvas(
-                                        |_, _, _| (),
-                                        move |bounds, _, window, cx| {
-                                            // Registering the handler is only legal during paint,
-                                            // and only matters while this element exists — which
-                                            // is exactly as long as the prompt is open.
-                                            window.handle_input(
-                                                &focus,
-                                                ElementInputHandler::new(bounds, view.clone()),
-                                                cx,
-                                            );
-                                            paint_field(
-                                                window,
-                                                cx,
-                                                bounds,
-                                                &text,
-                                                &selection,
-                                                marked.clone(),
-                                                &theme,
-                                            );
-                                        },
-                                    )
-                                    .size_full()
-                                }),
+                                .child(editable_text(
+                                    text,
+                                    selection,
+                                    marked,
+                                    focus,
+                                    view,
+                                    theme.clone(),
+                                )),
                         )
                         .child(
                             div()
@@ -298,10 +280,69 @@ impl AurisApp {
         )
     }
 
-    /// The prompt's field, when one is open.
+    /// The field the platform is typing into, when one is open.
+    ///
+    /// The palette first: opening it closes the rename sheet, so the two are never both open, and
+    /// asking in this order means the answer does not depend on that staying true.
     fn field(&mut self) -> Option<&mut TextField> {
-        self.prompt.as_mut().map(|prompt| &mut prompt.field)
+        match self.palette.as_mut() {
+            Some(palette) => Some(&mut palette.field),
+            None => self.prompt.as_mut().map(|prompt| &mut prompt.field),
+        }
     }
+
+    /// The same field, for the one handler method that only has `&self`.
+    fn readable_field(&self) -> Option<&TextField> {
+        match self.palette.as_ref() {
+            Some(palette) => Some(&palette.field),
+            None => self.prompt.as_ref().map(|prompt| &prompt.field),
+        }
+    }
+
+    /// Puts the palette's highlight back on the first row.
+    ///
+    /// Typing narrows the list, and the row that inherits the highlight's position is not the row
+    /// that had it. Called from the input handler because that is where typing arrives — the key
+    /// handler never sees a character, which is what lets an IME compose into the field.
+    fn restart_palette_selection(&mut self) {
+        if let Some(palette) = self.palette.as_mut() {
+            palette.selected = 0;
+        }
+    }
+}
+
+/// A one-line editable text element: the caret, the selection, the IME's pre-edit, and the
+/// registration that makes the platform type into it.
+///
+/// Everything is copied in rather than borrowed because a paint closure has to capture `'static`.
+/// Shared by the rename sheet and the command palette, which are the same field with different
+/// things underneath it.
+pub(crate) fn editable_text(
+    text: SharedString,
+    selection: Range<usize>,
+    marked: Option<Range<usize>>,
+    focus: gpui::FocusHandle,
+    view: gpui::Entity<AurisApp>,
+    theme: Theme,
+) -> impl IntoElement + use<> {
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, cx| {
+            // Registering the handler is only legal during paint, and only matters while this
+            // element exists — which is exactly as long as the sheet holding it is open.
+            window.handle_input(&focus, ElementInputHandler::new(bounds, view.clone()), cx);
+            paint_field(
+                window,
+                cx,
+                bounds,
+                &text,
+                &selection,
+                marked.clone(),
+                &theme,
+            );
+        },
+    )
+    .size_full()
 }
 
 /// Draws the text, its selection and the IME's pre-edit underline.
@@ -417,7 +458,7 @@ impl EntityInputHandler for AurisApp {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Range<usize>> {
-        let field = &self.prompt.as_ref()?.field;
+        let field = self.readable_field()?;
         Some(field.utf16_range(&field.marked()?))
     }
 
@@ -444,6 +485,7 @@ impl EntityInputHandler for AurisApp {
             }
             None => field.insert(text),
         }
+        self.restart_palette_selection();
         cx.notify();
     }
 
@@ -467,6 +509,7 @@ impl EntityInputHandler for AurisApp {
             start..utf16_to_byte(new_text, range.end).max(start)
         });
         field.replace_and_mark(range, new_text, selected);
+        self.restart_palette_selection();
         cx.notify();
     }
 

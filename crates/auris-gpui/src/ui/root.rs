@@ -95,15 +95,16 @@ impl Render for AurisApp {
         let status = self.render_status_bar();
         let export_overlay = self.render_export_overlay(cx);
         let prompt = self.render_prompt(cx);
+        let palette = self.render_palette(cx);
         let menu = self.render_context_menu(window, cx);
 
         div()
             .id("root")
-            // While a rename sheet is open the application's own bindings must not fire: `i`
-            // has to type an `i`, not toggle the inspector. Every binding is scoped to `Auris`,
-            // so switching the context here disables the lot in one move and lets the keystrokes
-            // through to the text input handler.
-            .key_context(if self.prompt.is_some() {
+            // While something is being typed into the application's own bindings must not fire:
+            // `i` has to type an `i`, not toggle the inspector. Every binding is scoped to
+            // `Auris`, so switching the context here disables the lot in one move and lets the
+            // keystrokes through to the text input handler.
+            .key_context(if self.prompt.is_some() || self.palette.is_some() {
                 "AurisPrompt"
             } else {
                 actions::KEY_CONTEXT
@@ -143,6 +144,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_toggle_inspector))
             .on_action(cx.listener(Self::on_toggle_editor))
             .on_action(cx.listener(Self::on_open_settings))
+            .on_action(cx.listener(Self::on_open_command_palette))
             // A click anywhere else dismisses an open menu-bar menu, the way a native menu bar
             // behaves. Capture phase, so it is seen even where a panel stops the event before it
             // reaches the root — but not over the bar itself, which decides for itself whether a
@@ -209,6 +211,7 @@ impl Render for AurisApp {
             // These come last so they paint — and are hit-tested — above the panels. The plugin
             // editor sits below the menu because a right-click inside it opens one.
             .children(prompt)
+            .children(palette)
             .children(plugin_window)
             .children(menu)
     }
@@ -498,10 +501,10 @@ impl AurisApp {
     fn on_key_down(
         &mut self,
         event: &gpui::KeyDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.prompt_key(event) {
+        if self.palette_key(event, window, cx) || self.prompt_key(event) {
             cx.stop_propagation();
             cx.notify();
         }
@@ -741,6 +744,16 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.open_settings(cx);
+        cx.notify();
+    }
+
+    fn on_open_command_palette(
+        &mut self,
+        _: &actions::OpenCommandPalette,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_palette();
         cx.notify();
     }
 }

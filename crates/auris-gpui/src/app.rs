@@ -611,6 +611,8 @@ pub struct AurisApp {
     pub(crate) menu_bar: Option<OpenMenu>,
     /// The open rename sheet, if any.
     pub(crate) prompt: Option<Prompt>,
+    /// The open command palette, if any.
+    pub(crate) palette: Option<crate::ui::palette::Palette>,
     /// The open plugin editor, if any.
     pub(crate) plugin_window: Option<crate::ui::plugin_window::PluginWindow>,
     /// Which SoundFont the library is showing the sounds of.
@@ -712,6 +714,7 @@ impl AurisApp {
             menu: None,
             menu_bar: None,
             prompt: None,
+            palette: None,
             plugin_window: None,
             expanded_font: None,
             settings,

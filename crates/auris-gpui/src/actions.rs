@@ -4,7 +4,7 @@
 //! dispatch the same action type, so a feature is bound once and reachable three ways.
 
 use auris_i18n::Key;
-use gpui::{App, KeyBinding, actions};
+use gpui::{Action, App, KeyBinding, actions};
 
 actions!(
     auris,
@@ -63,13 +63,18 @@ actions!(
         ToggleEditor,
         /// Open the settings window.
         OpenSettings,
+        /// Open the command palette.
+        OpenCommandPalette,
     ]
 );
 
 /// One command the user can rebind.
 ///
 /// `bind` exists because [`KeyBinding::new`] needs a concrete action type, so a table of
-/// `Box<dyn Action>` would not do — each entry carries its own constructor instead.
+/// `Box<dyn Action>` would not do — each entry carries its own constructor instead. `make` is the
+/// same problem from the other end: the command palette has to *dispatch* a command it picked out
+/// of this table, and dispatching takes an owned action.
+#[derive(Debug)]
 pub struct Bindable {
     /// Stable identifier written to the settings file. Never change a released one.
     pub id: &'static str,
@@ -80,12 +85,31 @@ pub struct Bindable {
     /// Keystroke used when the user has not chosen one.
     pub default: &'static str,
     bind: fn(&str) -> KeyBinding,
+    make: fn() -> Box<dyn Action>,
 }
+
+/// Two entries are the same command when they have the same id.
+///
+/// Written out rather than derived: a derive would compare the two function pointers as well, and
+/// comparing those is meaningless — the same function can have different addresses in different
+/// codegen units, and two different ones can be merged into the same address.
+impl PartialEq for Bindable {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for Bindable {}
 
 impl Bindable {
     /// Builds the binding for `keystroke`.
     pub fn binding(&self, keystroke: &str) -> KeyBinding {
         (self.bind)(keystroke)
+    }
+
+    /// The action this command dispatches.
+    pub fn action(&self) -> Box<dyn Action> {
+        (self.make)()
     }
 }
 
@@ -105,6 +129,7 @@ macro_rules! bindable {
                 label: Key::$label,
                 default: $default,
                 bind: |keys| KeyBinding::new(keys, $action, Some(KEY_CONTEXT)),
+                make: || Box::new($action),
             },)*
         ];
     };
@@ -145,6 +170,8 @@ bindable! {
     "view.zoom_in",         GroupView,      CmdZoomIn,             "secondary-=" => ZoomIn;
     "view.zoom_out",        GroupView,      CmdZoomOut,            "secondary--" => ZoomOut;
     "view.settings",        GroupView,      CmdSettings,           "secondary-," => OpenSettings;
+    // What VS Code and Zed both use, and free here — `p` alone already shows the editor.
+    "view.palette",         GroupView,      CmdCommandPalette,     "secondary-shift-p" => OpenCommandPalette;
 }
 
 /// The bindable command with this id.
