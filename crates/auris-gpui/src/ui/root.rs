@@ -567,10 +567,53 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.palette_key(event, window, cx) || self.prompt_key(event, window, cx) {
+        if self.palette_key(event, window, cx)
+            || self.prompt_key(event, window, cx)
+            || self.menu_key(event, window, cx)
+        {
             cx.stop_propagation();
             cx.notify();
         }
+    }
+
+    /// Arrow keys and Return, aimed at the open context menu.
+    ///
+    /// The menus had no keyboard path at all: a right-click opened one and only the pointer
+    /// could answer it. Escape already closes it, through the same handler that means "never
+    /// mind" everywhere else.
+    fn menu_key(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(menu) = self.menu.as_mut() else {
+            return false;
+        };
+        match event.keystroke.key.as_str() {
+            "down" => menu.step(1),
+            "up" => menu.step(-1),
+            "home" => {
+                menu.highlighted = None;
+                menu.step(1);
+            }
+            "end" => {
+                menu.highlighted = None;
+                menu.step(-1);
+            }
+            "enter" => {
+                let Some(command) = menu.highlighted_command() else {
+                    // Return on a menu nobody has moved through closes it, rather than being
+                    // swallowed by an overlay that looks like it is waiting for an answer.
+                    self.close_menu();
+                    return true;
+                };
+                self.close_menu();
+                self.run_menu_command(command, cx);
+            }
+            _ => return false,
+        }
+        true
     }
 
     fn on_toggle_play(

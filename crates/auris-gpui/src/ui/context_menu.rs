@@ -266,6 +266,11 @@ pub struct ContextMenu {
     pub title: SharedString,
     /// The rows.
     pub entries: Vec<MenuEntry>,
+    /// The row the keyboard is on, once the keyboard has been used.
+    ///
+    /// `None` until then, so a menu opened with the mouse does not draw a highlight nobody asked
+    /// for — and so the first arrow key lands on the first row rather than the second.
+    pub highlighted: Option<usize>,
 }
 
 impl ContextMenu {
@@ -275,6 +280,48 @@ impl ContextMenu {
             anchor,
             title: title.into(),
             entries: Vec::new(),
+            highlighted: None,
+        }
+    }
+
+    /// Moves the highlight `delta` rows, skipping separators and anything disabled.
+    ///
+    /// Wraps, and starts from whichever end the direction implies, so the first Down lands on the
+    /// first row and the first Up on the last. A menu with nothing to choose leaves it alone.
+    pub fn step(&mut self, delta: isize) {
+        let choosable: Vec<usize> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| matches!(entry, MenuEntry::Item(item) if item.enabled))
+            .map(|(index, _)| index)
+            .collect();
+        let Some(&first) = choosable.first() else {
+            return;
+        };
+        let Some(&last) = choosable.last() else {
+            return;
+        };
+        let Some(current) = self.highlighted else {
+            self.highlighted = Some(if delta >= 0 { first } else { last });
+            return;
+        };
+        // Where the current row sits among the choosable ones, or just before the next one down
+        // when it is a separator that somehow held the highlight.
+        let at = choosable
+            .iter()
+            .position(|index| *index == current)
+            .unwrap_or(0) as isize;
+        let count = choosable.len() as isize;
+        let next = (at + delta).rem_euclid(count) as usize;
+        self.highlighted = Some(choosable[next]);
+    }
+
+    /// The command the highlighted row would run.
+    pub fn highlighted_command(&self) -> Option<MenuCommand> {
+        match self.entries.get(self.highlighted?) {
+            Some(MenuEntry::Item(item)) if item.enabled => Some(item.command.clone()),
+            _ => None,
         }
     }
 
@@ -458,6 +505,11 @@ impl AurisApp {
                             this.cursor_pointer().hover(|this| {
                                 this.bg(theme.accent).text_color(theme.text_on_accent)
                             })
+                        })
+                        // The keyboard's row is drawn as though the pointer were on it, so Down
+                        // and a hover mean the same thing on screen as they do to the menu.
+                        .when(menu.highlighted == Some(index), |this| {
+                            this.bg(theme.accent).text_color(theme.text_on_accent)
                         })
                         .child(
                             div()
@@ -1690,6 +1742,65 @@ mod tests {
         (0..items).fold(ContextMenu::new(anchor, "Track 1"), |menu, index| {
             menu.item(format!("Item {index}"), MenuCommand::NewAudioTrack)
         })
+    }
+
+    #[test]
+    fn the_keyboard_walks_the_rows_and_wraps() {
+        let mut menu = menu(gpui::point(px(0.0), px(0.0)), 3);
+        assert_eq!(
+            menu.highlighted, None,
+            "a menu opened with the mouse draws no highlight"
+        );
+
+        menu.step(1);
+        assert_eq!(
+            menu.highlighted,
+            Some(0),
+            "the first Down lands on the first row"
+        );
+        menu.step(1);
+        menu.step(1);
+        assert_eq!(menu.highlighted, Some(2));
+        menu.step(1);
+        assert_eq!(menu.highlighted, Some(0), "and wraps round the end");
+        menu.step(-1);
+        assert_eq!(menu.highlighted, Some(2), "and back the other way");
+    }
+
+    #[test]
+    fn the_first_up_lands_on_the_last_row() {
+        let mut menu = menu(gpui::point(px(0.0), px(0.0)), 3);
+        menu.step(-1);
+        assert_eq!(menu.highlighted, Some(2));
+    }
+
+    #[test]
+    fn separators_and_disabled_rows_are_stepped_over() {
+        // Return on a separator would run nothing, and stopping on a disabled row is a keypress
+        // the user has to make twice.
+        let menu = ContextMenu::new(gpui::point(px(0.0), px(0.0)), "Track 1")
+            .item("Rename", MenuCommand::NewAudioTrack)
+            .separator()
+            .item_if(false, "Delete", MenuCommand::NewAudioTrack)
+            .item("Duplicate", MenuCommand::NewAudioTrack);
+
+        let mut walking = menu.clone();
+        walking.step(1);
+        assert_eq!(walking.highlighted, Some(0));
+        walking.step(1);
+        assert_eq!(
+            walking.highlighted,
+            Some(3),
+            "past the rule and the dead row"
+        );
+        assert!(walking.highlighted_command().is_some());
+
+        // A menu with nothing choosable in it leaves the highlight alone rather than pointing at
+        // a rule.
+        let mut rules = ContextMenu::new(gpui::point(px(0.0), px(0.0)), "Nothing").separator();
+        rules.step(1);
+        assert_eq!(rules.highlighted, None);
+        assert!(rules.highlighted_command().is_none());
     }
 
     #[test]
