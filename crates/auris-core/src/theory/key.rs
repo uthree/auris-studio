@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::pitch::PitchClass;
+use super::pitch::{OCTAVE, PitchClass, Spelling};
 use super::scale::ScaleId;
 
 /// Where the music is centred.
@@ -82,20 +82,39 @@ impl Key {
 
     /// How the key is written back out.
     pub fn to_text(self) -> String {
-        let name = if self.flat_spelled() {
-            self.tonic.flat_name()
-        } else {
-            self.tonic.sharp_name()
-        };
-        format!("{name} {}", self.scale.name())
+        format!("{} {}", self.tonic.name(self.spelling()), self.scale.name())
     }
 
-    /// Whether this key is conventionally written with flats.
+    /// Which way this key writes the notes that need an accidental.
     ///
-    /// Only the accidental tonics are in question; the flat side of the circle of fifths is
-    /// where a musician expects to read Bb rather than A#.
-    fn flat_spelled(self) -> bool {
-        matches!(self.tonic.semitones(), 1 | 3 | 8 | 10)
+    /// Decided by where the key sits on the circle of fifths, and so by the whole key rather than
+    /// by its tonic's own name: the IV of F major is B flat, though F itself takes no accidental
+    /// at all. Whichever direction needs fewer accidentals wins.
+    ///
+    /// The two directions tie at six, where both spellings are in real use and the mode decides:
+    /// six sharps is F sharp major, six flats is E flat minor, and both are what a musician
+    /// writes. A minor key takes its signature from the relative major a minor third above, which
+    /// is why C sharp minor is four sharps and not eight flats.
+    ///
+    /// A mode is treated as major or minor by its third. That is an approximation — D dorian
+    /// really belongs to C major rather than to F — but it only ever picks the side of the circle,
+    /// and a mode's own notes are the ones it shares with a key on that side.
+    pub fn spelling(self) -> Spelling {
+        let relative_major = if self.is_minor() {
+            self.tonic.transposed(3)
+        } else {
+            self.tonic
+        };
+        // Each step up a fifth adds a sharp, so the number of sharps is the tonic's position on
+        // the circle of fifths — and since seven fifths make an octave plus a semitone, a fifth is
+        // its own inverse modulo twelve.
+        let sharps = (relative_major.semitones() * 7).rem_euclid(OCTAVE);
+        let flats = (OCTAVE - sharps) % OCTAVE;
+        if flats < sharps || (flats == sharps && self.is_minor()) {
+            Spelling::Flats
+        } else {
+            Spelling::Sharps
+        }
     }
 }
 
@@ -115,6 +134,7 @@ impl TryFrom<String> for Key {
 
 #[cfg(test)]
 mod tests {
+    use super::super::pitch::Spelling;
     use super::*;
 
     #[test]
@@ -190,6 +210,42 @@ mod tests {
         assert_eq!(json, "\"Bb minor\"");
         assert_eq!(serde_json::from_str::<Key>(&json).unwrap(), key);
         assert!(serde_json::from_str::<Key>("\"H major\"").is_err());
+    }
+
+    #[test]
+    fn a_key_is_spelled_by_where_it_sits_on_the_circle_of_fifths() {
+        // Whichever direction needs fewer accidentals wins. The tonic's own name does not decide
+        // it: F major takes no accidental at all and is still a flat key, which is what makes its
+        // fourth degree a B flat rather than an A sharp.
+        assert_eq!(Key::parse("F major").unwrap().spelling(), Spelling::Flats);
+        assert_eq!(Key::parse("G major").unwrap().spelling(), Spelling::Sharps);
+        assert_eq!(Key::parse("Eb major").unwrap().spelling(), Spelling::Flats);
+        assert_eq!(Key::parse("E major").unwrap().spelling(), Spelling::Sharps);
+
+        // A minor key takes its signature from the relative major a minor third above, which is
+        // why C sharp minor is four sharps and not the eight flats of "D flat minor".
+        assert_eq!(Key::parse("C# minor").unwrap().to_text(), "C# minor");
+        assert_eq!(Key::parse("G# minor").unwrap().to_text(), "G# minor");
+        assert_eq!(Key::parse("Bb minor").unwrap().to_text(), "Bb minor");
+
+        // Six of each is a real tie, and the mode breaks it the way a musician does.
+        assert_eq!(Key::parse("F# major").unwrap().to_text(), "F# major");
+        assert_eq!(Key::parse("Eb minor").unwrap().to_text(), "Eb minor");
+    }
+
+    #[test]
+    fn every_key_writes_a_name_that_reads_back_as_itself() {
+        for tonic in 0..12 {
+            for scale in ScaleId::ALL {
+                let key = Key::new(PitchClass::new(tonic), scale);
+                let text = key.to_text();
+                assert_eq!(
+                    Key::parse(&text),
+                    Some(key),
+                    "`{text}` did not read back as what wrote it"
+                );
+            }
+        }
     }
 
     #[test]

@@ -672,11 +672,9 @@ mod tests {
         assert_eq!(harmony.chord_at(bar(1)).unwrap().to_string(), "F");
 
         // A modulation halfway through reharmonises the rest without touching a single chord.
-        // `Chord` always spells with sharps, so Eb major's tonic reads back as D#; that is the
-        // chord's own display convention and not something the harmony decides.
         harmony.keys.set_point(bar(4), key("Eb major"));
-        assert_eq!(harmony.chord_at(bar(4)).unwrap().to_string(), "D#");
-        assert_eq!(harmony.chord_at(bar(5)).unwrap().to_string(), "G#");
+        assert_eq!(harmony.chord_at(bar(4)).unwrap().to_string(), "Eb");
+        assert_eq!(harmony.chord_at(bar(5)).unwrap().to_string(), "Ab");
         assert_eq!(
             harmony.numeral_at(bar(5)),
             harmony.numeral_at(bar(1)),

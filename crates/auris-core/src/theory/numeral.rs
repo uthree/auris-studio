@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::chord::{Chord, Quality};
 use super::key::Key;
-use super::pitch::PitchClass;
+use super::pitch::{OCTAVE, PitchClass};
 
 /// A chord named by scale degree.
 ///
@@ -256,6 +256,75 @@ impl Numeral {
             None => chord,
         }
     }
+
+    /// The chord's name in `key`, with each root spelled by the degree it sits on.
+    ///
+    /// A root's letter follows from its degree and not from its pitch. The `vii` of A harmonic
+    /// minor is G sharp because it is a raised seventh; the `bVII` of C major is B flat because it
+    /// is a lowered one; and the `bII` of C major is D flat, which is what makes it a Neapolitan
+    /// rather than a chord on the sharpened tonic. Every one of those is a black key that the
+    /// pitch alone would name the other way half the time.
+    ///
+    /// Nothing holding only a [`Chord`] can know which, so this is where a chord gets its name
+    /// whenever the numeral that produced it is still to hand — which, on the harmony timeline, is
+    /// always. [`Chord::name_in`] is the fallback for when it is not.
+    pub fn name_in(self, key: Key) -> String {
+        let chord = self.chord_in(key);
+        let degree = match self.secondary_of {
+            // A dominant stands a fifth above what it resolves to, which is four degrees up.
+            Some((target, _)) => target + 4,
+            None => self.degree,
+        };
+        let Some(root) = spell_on_degree(key, degree, chord.root) else {
+            return chord.name_in(key);
+        };
+
+        let mut name = format!("{root}{}", chord.quality.suffix());
+        if let Some(bass) = self.bass_degree {
+            let class = chord.bass_class();
+            let spelled = spell_on_degree(key, bass, class)
+                .unwrap_or_else(|| class.name(key.spelling()).to_string());
+            name.push('/');
+            name.push_str(&spelled);
+        }
+        name
+    }
+}
+
+/// The letters in scale order, with the semitone each one stands for unaltered.
+const LETTERS: [(char, i32); 7] = [
+    ('C', 0),
+    ('D', 2),
+    ('E', 4),
+    ('F', 5),
+    ('G', 7),
+    ('A', 9),
+    ('B', 11),
+];
+
+/// The name `class` has when it sits on `degree` of `key`.
+///
+/// The letter is whichever one the degree lands on, counting up from the tonic's own letter, and
+/// the accidental is then whatever makes that letter mean `class`.
+///
+/// `None` when the letter that degree demands would need more than one accidental. A chord symbol
+/// is not a notehead: nobody writes D double-flat over a bar line, and a numeral that asks for one
+/// is not really describing that degree.
+fn spell_on_degree(key: Key, degree: u8, class: PitchClass) -> Option<String> {
+    let tonic = key.tonic.name(key.spelling()).chars().next()?;
+    let from = LETTERS.iter().position(|(letter, _)| *letter == tonic)?;
+    let (letter, natural) = LETTERS[(from + usize::from(degree.max(1)) - 1) % LETTERS.len()];
+
+    let mut offset = (class.semitones() - natural).rem_euclid(OCTAVE);
+    if offset > OCTAVE / 2 {
+        offset -= OCTAVE;
+    }
+    match offset {
+        0 => Some(letter.to_string()),
+        1 => Some(format!("{letter}#")),
+        -1 => Some(format!("{letter}b")),
+        _ => None,
+    }
 }
 
 impl fmt::Display for Numeral {
@@ -379,10 +448,44 @@ mod tests {
     }
 
     fn chord_of(numeral: &str, key_text: &str) -> String {
-        Numeral::parse(numeral)
-            .unwrap()
-            .chord_in(key(key_text))
-            .to_string()
+        Numeral::parse(numeral).unwrap().name_in(key(key_text))
+    }
+
+    #[test]
+    fn the_same_black_key_is_named_by_the_degree_it_stands_on() {
+        // These three are the same key of a piano, and all three names are right in their place.
+        // Nothing that sees only the pitch can tell them apart, which is why the numeral names the
+        // chord and `Chord` does not.
+        assert_eq!(chord_of("bVI", "C major"), "Ab", "a lowered sixth");
+        assert_eq!(chord_of("#V", "C major"), "G#", "a raised fifth");
+        assert_eq!(
+            chord_of("vii", "A harmonic-minor"),
+            "G#dim",
+            "a leading tone"
+        );
+
+        // And the pair that started this: the flat seven of C is a B flat, not an A sharp.
+        assert_eq!(chord_of("bVII", "C major"), "Bb");
+        assert_eq!(chord_of("#VI", "C major"), "A#");
+    }
+
+    #[test]
+    fn a_chord_is_spelled_for_the_key_it_is_in() {
+        // The same numeral in two keys, one of each side of the circle of fifths.
+        assert_eq!(chord_of("I", "Eb major"), "Eb");
+        assert_eq!(chord_of("IV", "Eb major"), "Ab");
+        assert_eq!(chord_of("V", "Eb major"), "Bb");
+        assert_eq!(chord_of("vi", "Eb major"), "Cm");
+
+        assert_eq!(chord_of("I", "E major"), "E");
+        assert_eq!(chord_of("IV", "E major"), "A");
+        assert_eq!(chord_of("ii", "E major"), "F#m");
+        assert_eq!(chord_of("iii", "E major"), "G#m");
+
+        // A slash chord spells its bass the same way. The number after the slash is a degree of
+        // the key, not of the chord, so `/5` is the key's fifth wherever the chord sits.
+        assert_eq!(chord_of("I/3", "Eb major"), "Eb/G");
+        assert_eq!(chord_of("IV/5", "Eb major"), "Ab/Bb");
     }
 
     #[test]
@@ -556,9 +659,9 @@ mod tests {
 
     #[test]
     fn accidentals_move_the_root_and_take_the_case_at_face_value() {
-        assert_eq!(chord_of("bVII", "C major"), "A#", "the flat seven");
-        assert_eq!(chord_of("bVI", "C major"), "G#");
-        assert_eq!(chord_of("bII", "C major"), "C#", "the Neapolitan");
+        assert_eq!(chord_of("bVII", "C major"), "Bb", "the flat seven");
+        assert_eq!(chord_of("bVI", "C major"), "Ab");
+        assert_eq!(chord_of("bII", "C major"), "Db", "the Neapolitan");
         assert_eq!(chord_of("#iv", "C major"), "F#m");
     }
 
@@ -671,7 +774,7 @@ mod tests {
     #[test]
     fn a_secondary_dominant_target_may_be_altered() {
         // V/bVI is the dominant of the flat sixth, not of the sixth.
-        assert_eq!(chord_of("V/bVI", "C major"), "D#7");
+        assert_eq!(chord_of("V/bVI", "C major"), "Eb7");
         assert_eq!(chord_of("V/VI", "C major"), "E7");
         assert_eq!(Numeral::parse("V/bVI").unwrap().to_string(), "V/bVI");
     }

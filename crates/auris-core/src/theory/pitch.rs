@@ -9,6 +9,19 @@ use std::fmt;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PitchClass(u8);
 
+/// Which way a note that needs an accidental is written.
+///
+/// The same key of a piano is D sharp or E flat depending on the music around it, and there is no
+/// answer without that context — which is why nothing here decides it. A
+/// [`Key`](super::key::Key) does, through [`Key::spelling`](super::key::Key::spelling).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Spelling {
+    /// C sharp, F sharp, G sharp.
+    Sharps,
+    /// D flat, G flat, A flat.
+    Flats,
+}
+
 /// Semitones in an octave.
 pub const OCTAVE: i32 = 12;
 
@@ -55,6 +68,14 @@ impl PitchClass {
             "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B",
         ];
         NAMES[self.0 as usize]
+    }
+
+    /// The name this class has under `spelling`.
+    pub fn name(self, spelling: Spelling) -> &'static str {
+        match spelling {
+            Spelling::Sharps => self.sharp_name(),
+            Spelling::Flats => self.flat_name(),
+        }
     }
 
     /// Reads a note name: a letter, then any number of `#`/`b`/`♯`/`♭`.

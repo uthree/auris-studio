@@ -206,6 +206,15 @@ pub struct HarmonicEvent {
 }
 
 impl HarmonicEvent {
+    /// What the chord is called, spelled for the key it was resolved against.
+    ///
+    /// This is the name to put on screen. An event carries both the numeral and the key, which is
+    /// everything needed to get the spelling right — [`Chord`]'s own [`Display`](fmt::Display) is
+    /// a guess made without a key, and would call the tonic of E flat major a D sharp.
+    pub fn name(&self) -> String {
+        self.numeral.name_in(self.key)
+    }
+
     /// Position just past the end of the chord.
     pub fn end(&self) -> Ticks {
         self.start + self.length

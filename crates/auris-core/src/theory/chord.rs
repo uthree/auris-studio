@@ -2,7 +2,9 @@
 
 use std::fmt;
 
-use super::pitch::{OCTAVE, PitchClass};
+use super::key::Key;
+use super::pitch::{OCTAVE, PitchClass, Spelling};
+use super::scale::ScaleId;
 
 /// The shape of a chord above its root.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -310,6 +312,27 @@ impl Chord {
         best
     }
 
+    /// The chord's name, spelled the way `key` spells its accidentals.
+    ///
+    /// This is what belongs on screen. The IV of E flat major is A flat, and calling it G sharp —
+    /// which is what a chord with no key to consult has to do — is the kind of wrongness a
+    /// musician reads as a bug in the program.
+    pub fn name_in(self, key: Key) -> String {
+        let mut name = String::new();
+        // Writing into a `String` cannot fail, so the error is unreachable rather than ignored.
+        let _ = self.write_name(&mut name, key.spelling());
+        name
+    }
+
+    /// Writes the chord using `spelling` for anything that needs an accidental.
+    fn write_name<W: fmt::Write>(&self, out: &mut W, spelling: Spelling) -> fmt::Result {
+        write!(out, "{}{}", self.root.name(spelling), self.quality.suffix())?;
+        if let Some(bass) = self.bass {
+            write!(out, "/{}", bass.name(spelling))?;
+        }
+        Ok(())
+    }
+
     /// Reads a chord symbol such as `C`, `Am7`, `F#m7b5` or `G7/B`.
     pub fn parse(text: &str) -> Option<Self> {
         let text = text.trim();
@@ -344,18 +367,45 @@ impl Chord {
 }
 
 impl fmt::Display for Chord {
+    /// Writes the chord as it would be written in the key of the same name.
+    ///
+    /// A chord on its own has no key to be spelled against, and the pitch class alone cannot
+    /// decide: the same key of a piano is D sharp in E major and E flat in E flat major. Falling
+    /// back to the chord's own major key gets the common cases right — E flat, A flat and B flat
+    /// rather than D sharp, G sharp and A sharp — and is at least a rule rather than a habit.
+    ///
+    /// Anywhere the key *is* known, [`Chord::name_in`] is the right call and this is the wrong
+    /// one.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}{}", self.root.sharp_name(), self.quality.suffix())?;
-        if let Some(bass) = self.bass {
-            write!(f, "/{}", bass.sharp_name())?;
-        }
-        Ok(())
+        self.write_name(f, Key::new(self.root, ScaleId::Major).spelling())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chord_with_no_key_is_spelled_as_the_key_of_its_own_name_would_be() {
+        // `Display` has no key to consult, so it falls back to the major key of the same name.
+        // That gets the common roots right, which is all a context-free rule can do.
+        assert_eq!(Chord::parse("Eb").unwrap().to_string(), "Eb");
+        assert_eq!(Chord::parse("D#").unwrap().to_string(), "Eb");
+        assert_eq!(Chord::parse("Abm7").unwrap().to_string(), "Abm7");
+        assert_eq!(Chord::parse("Bb").unwrap().to_string(), "Bb");
+        assert_eq!(Chord::parse("Gb").unwrap().to_string(), "F#", "six of each");
+    }
+
+    #[test]
+    fn a_chord_told_its_key_is_spelled_for_that_key() {
+        let chord = Chord::parse("D#").unwrap();
+        assert_eq!(chord.name_in(Key::parse("Eb major").unwrap()), "Eb");
+        assert_eq!(chord.name_in(Key::parse("E major").unwrap()), "D#");
+
+        let slash = Chord::parse("Bb/D").unwrap();
+        assert_eq!(slash.name_in(Key::parse("F major").unwrap()), "Bb/D");
+        assert_eq!(slash.name_in(Key::parse("B major").unwrap()), "A#/D");
+    }
 
     fn class(name: &str) -> PitchClass {
         PitchClass::parse(name).unwrap()
