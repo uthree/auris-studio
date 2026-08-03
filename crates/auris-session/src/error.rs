@@ -31,6 +31,14 @@ pub enum SessionError {
     #[error("no soundfont with id {0}")]
     UnknownSoundFont(u64),
 
+    /// Nothing in the catalogue answers to that name.
+    ///
+    /// An error rather than a clamp, unlike the settings a session quietly corrects: a grid of
+    /// zero has an obvious nearest right answer and a misspelt progression has none. Writing
+    /// nothing and saying nothing would be the worst of the three.
+    #[error("no chord progression is named `{0}`")]
+    UnknownProgression(String),
+
     /// The requested clip does not exist.
     #[error("no clip with id {0}")]
     UnknownClip(u64),

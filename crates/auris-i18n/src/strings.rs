@@ -305,6 +305,10 @@ strings! {
     EditImportAudio { en: "importing audio", ja: "オーディオの読み込み" }
     EditImportSoundFont { en: "importing a SoundFont", ja: "サウンドフォントの読み込み" }
     EditChoosePreset { en: "choosing a sound", ja: "音色の選択" }
+    EditSetKey { en: "setting the key", ja: "調の変更" }
+    EditSetChord { en: "setting a chord", ja: "コードの変更" }
+    EditClearHarmony { en: "clearing the chords", ja: "コードの消去" }
+    EditStampProgression { en: "writing a progression", ja: "コード進行の書き込み" }
     EditCompose { en: "composing a piece", ja: "自動作曲" }
 
     // ------------------------------------------------------------------ errors

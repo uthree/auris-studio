@@ -109,6 +109,10 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::ImportAudio => Key::EditImportAudio,
         Edit::ImportSoundFont => Key::EditImportSoundFont,
         Edit::ChoosePreset => Key::EditChoosePreset,
+        Edit::SetKey => Key::EditSetKey,
+        Edit::SetChord => Key::EditSetChord,
+        Edit::ClearHarmony => Key::EditClearHarmony,
+        Edit::StampProgression => Key::EditStampProgression,
         Edit::Compose => Key::EditCompose,
     }
 }
@@ -136,6 +140,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::UnknownTrack(_) => Key::ErrorUnknownTrack.get(language).to_string(),
         SessionError::UnknownClip(_) => Key::ErrorUnknownClip.get(language).to_string(),
         SessionError::UnknownSoundFont(_) => Key::ErrorUnknownSoundFont.get(language).to_string(),
+        SessionError::UnknownProgression(name) => messages::unknown_progression(language, name),
         SessionError::CannotSplit(_) => Key::ErrorCannotSplit.get(language).to_string(),
         SessionError::WrongTrackKind { .. } => Key::ErrorWrongTrackKind.get(language).to_string(),
         SessionError::NoPath => Key::ErrorNoPath.get(language).to_string(),

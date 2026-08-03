@@ -4,8 +4,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use auris_core::harmony::Harmony;
 use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
 use auris_core::plugin::{PluginKind, PluginState};
+use auris_core::theory::chart::{Chart, catalog};
+use auris_core::theory::key::Key as MusicalKey;
+use auris_core::theory::numeral::Numeral;
 use auris_core::time::{Seconds, Ticks};
 use auris_core::{
     AssetPath, AudioBuffer, AudioSourceBank, ClipId, EffectSlotId, MidiClip, Note, PluginRegistry,
@@ -667,6 +671,101 @@ impl Session {
     /// Sets the editing grid.
     pub fn set_grid(&mut self, grid: Ticks) {
         self.project.grid = Ticks(grid.raw().max(1));
+    }
+
+    // ---------------------------------------------------------------- harmony
+    //
+    // None of these touch the engine. Harmony is a part of the document the render graph never
+    // reads: the notes are already written, and changing the chord underneath them does not
+    // change a sample. Composing *from* the harmony does rebuild the graph, but that is a
+    // different command.
+
+    /// The key and the chords the song is written in, over the timeline.
+    pub fn harmony(&self) -> &Harmony {
+        &self.project.harmony
+    }
+
+    /// Sets the key from `at` onwards.
+    ///
+    /// `at` snaps to the editing grid, so a key change lands where a person aimed rather than
+    /// where the pointer happened to be. Tick zero is the song's own key and is always there, so
+    /// setting it there changes what the whole song is read in rather than adding a change to it.
+    pub fn set_key(&mut self, at: Ticks, key: MusicalKey) {
+        self.record(Edit::SetKey);
+        let at = self.snap(at);
+        self.project.harmony.keys.set_point(at, key);
+    }
+
+    /// Removes the key change at `at`, letting the key before it run through.
+    ///
+    /// The key at tick zero is not a change and cannot be removed: a song is always in some key.
+    pub fn remove_key(&mut self, at: Ticks) {
+        let at = self.snap(at);
+        if at == Ticks::ZERO {
+            return;
+        }
+        self.record(Edit::SetKey);
+        self.project.harmony.keys.remove_point(at);
+    }
+
+    /// Sets the chord sounding from `at` onwards, until the next change.
+    pub fn set_chord(&mut self, at: Ticks, chord: Numeral) {
+        self.record(Edit::SetChord);
+        let at = self.snap(at);
+        self.project.harmony.chords.set_point(at, Some(chord));
+    }
+
+    /// Removes the chord change at `at`, letting the chord before it run through.
+    pub fn remove_chord(&mut self, at: Ticks) {
+        self.record(Edit::SetChord);
+        let at = self.snap(at);
+        self.project.harmony.chords.remove_point(at);
+    }
+
+    /// Empties the chords in `from..to`, leaving the key timeline alone.
+    ///
+    /// What sounded at `to` still sounds there: clearing the middle of a song does not silence
+    /// the end of it.
+    pub fn clear_harmony(&mut self, from: Ticks, to: Ticks) {
+        self.record(Edit::ClearHarmony);
+        let (from, to) = (self.snap(from), self.snap(to));
+        self.project.harmony.clear(from, to);
+    }
+
+    /// Writes `chart` across `bars` bars from `from`, returning how many chords it wrote.
+    ///
+    /// The chart repeats or is truncated to fit. `from` snaps to the editing grid, but the chords
+    /// *inside* it do not: a chart divides each bar musically, and three chords in a bar of 4/4
+    /// are three lots of 1280 ticks, which is not a grid position and must not be rounded to one.
+    /// A stamp is a division of a bar; a drag is an edit on the grid.
+    pub fn stamp_progression(&mut self, chart: &Chart, from: Ticks, bars: usize) -> usize {
+        self.record(Edit::StampProgression);
+        let signature = self.project.time_signature;
+        let from = self.snap(from);
+        self.project.harmony.stamp(chart, from, bars, signature)
+    }
+
+    /// Writes the catalogue progression called `name`, such as `axis` or `丸サ`.
+    ///
+    /// `bars` of zero means the chart's own length, which is what "put this progression here"
+    /// usually means. A name nothing answers to is an error rather than a quiet no-op — there is
+    /// no nearest right answer to a misspelling, and stamping nothing while reporting success is
+    /// the one outcome nobody could debug.
+    pub fn stamp_named_progression(
+        &mut self,
+        name: &str,
+        from: Ticks,
+        bars: usize,
+    ) -> Result<usize, SessionError> {
+        let chart =
+            catalog(name).ok_or_else(|| SessionError::UnknownProgression(name.to_string()))?;
+        let bars = if bars == 0 { chart.bar_count() } else { bars };
+        Ok(self.stamp_progression(&chart, from, bars))
+    }
+
+    /// Rounds a position onto the editing grid, and never before the start of the song.
+    fn snap(&self, at: Ticks) -> Ticks {
+        at.max_zero().snap_nearest(self.project.grid)
     }
 
     // ---------------------------------------------------------------- tracks
@@ -3033,6 +3132,228 @@ mod tests {
 
         session.undo().unwrap();
         assert!(!session.midi_clip(clip).unwrap().muted);
+    }
+
+    // ------------------------------------------------------------------ harmony
+
+    /// One bar of 4/4, which is what every harmony test below counts in.
+    const BAR: Ticks = Ticks(3840);
+
+    fn numeral(text: &str) -> Numeral {
+        Numeral::parse(text).expect("a numeral the test wrote itself")
+    }
+
+    #[test]
+    fn a_new_project_is_in_c_major_with_nothing_written_in_it() {
+        let session = session();
+        assert_eq!(session.harmony().key_at(Ticks::ZERO).to_text(), "C major");
+        assert!(session.harmony().is_empty());
+        assert_eq!(session.harmony().chord_at(Ticks::ZERO), None);
+    }
+
+    #[test]
+    fn the_key_survives_undo_and_redo() {
+        let mut session = self::tests::session();
+        session.set_key(Ticks::ZERO, MusicalKey::parse("F# minor").unwrap());
+        assert_eq!(session.harmony().key_at(BAR).to_text(), "F# minor");
+
+        assert_eq!(session.undo(), Some(Edit::SetKey));
+        assert_eq!(session.harmony().key_at(BAR).to_text(), "C major");
+        assert_eq!(session.redo(), Some(Edit::SetKey));
+        assert_eq!(session.harmony().key_at(BAR).to_text(), "F# minor");
+    }
+
+    #[test]
+    fn the_key_at_the_start_of_the_song_cannot_be_removed() {
+        let mut session = self::tests::session();
+        session.set_key(Ticks::ZERO, MusicalKey::parse("D major").unwrap());
+        session.forget_history();
+
+        session.remove_key(Ticks::ZERO);
+        assert_eq!(session.harmony().key_at(Ticks::ZERO).to_text(), "D major");
+        assert!(
+            !session.can_undo(),
+            "a command that cannot do anything should not push an undo step"
+        );
+    }
+
+    #[test]
+    fn a_chord_lands_on_the_grid_rather_than_where_the_pointer_was() {
+        let mut session = self::tests::session();
+        // The default grid is a sixteenth: 240 ticks.
+        session.set_chord(Ticks(3840 + 130), numeral("V"));
+        assert_eq!(
+            session.harmony().chords.points()[0].tick,
+            Ticks(3840 + 240),
+            "snapped to the nearest sixteenth"
+        );
+        assert_eq!(
+            session.harmony().numeral_at(Ticks(3840 + 240)),
+            Some(numeral("V"))
+        );
+    }
+
+    #[test]
+    fn a_stamped_progression_is_one_undo_step_and_divides_its_bars_musically() {
+        let mut session = self::tests::session();
+        let written = session
+            .stamp_named_progression("axis", Ticks::ZERO, 8)
+            .unwrap();
+        assert_eq!(written, 8, "four bars of the axis, laid down twice");
+        assert_eq!(
+            session.harmony().chord_at(Ticks::ZERO).unwrap().to_string(),
+            "C"
+        );
+        assert_eq!(
+            session.harmony().chord_at(BAR * 2).unwrap().to_string(),
+            "Am"
+        );
+
+        // A three-chord bar is three lots of 1280, which is not a grid position — the stamp must
+        // not have been snapped to one.
+        session.forget_history();
+        let chart = Chart::parse("| I V vi |").unwrap();
+        session.stamp_progression(&chart, Ticks::ZERO, 1);
+        let ticks: Vec<i64> = session
+            .harmony()
+            .chords
+            .points()
+            .iter()
+            .take(3)
+            .map(|point| point.tick.raw())
+            .collect();
+        assert_eq!(ticks, [0, 1280, 2560]);
+
+        assert_eq!(session.undo(), Some(Edit::StampProgression));
+        assert_eq!(
+            session.harmony().chord_at(BAR * 2).unwrap().to_string(),
+            "Am"
+        );
+    }
+
+    #[test]
+    fn a_progression_can_be_asked_for_by_the_name_a_japanese_musician_uses() {
+        let mut session = self::tests::session();
+        session
+            .stamp_named_progression("丸サ", Ticks::ZERO, 0)
+            .expect("the catalogue knows it under that name too");
+        assert_eq!(
+            session.harmony().chord_at(Ticks::ZERO).unwrap().to_string(),
+            "Fmaj7",
+            "bars of zero means the chart's own length"
+        );
+        assert_eq!(session.harmony().chords.points().len(), 4);
+    }
+
+    #[test]
+    fn an_unknown_progression_is_an_error_and_writes_nothing() {
+        let mut session = self::tests::session();
+        session
+            .stamp_named_progression("axis", Ticks::ZERO, 4)
+            .unwrap();
+        session.forget_history();
+
+        let before = session.project().harmony.clone();
+        let error = session
+            .stamp_named_progression("marusaa", Ticks::ZERO, 4)
+            .unwrap_err();
+        assert!(matches!(error, SessionError::UnknownProgression(name) if name == "marusaa"));
+        assert_eq!(session.project().harmony, before, "nothing was written");
+        assert!(!session.can_undo(), "and nothing was recorded either");
+    }
+
+    #[test]
+    fn clearing_a_stretch_does_not_silence_what_comes_after_it() {
+        let mut session = self::tests::session();
+        session
+            .stamp_named_progression("axis", Ticks::ZERO, 16)
+            .unwrap();
+
+        session.clear_harmony(BAR * 8, BAR * 12);
+        assert!(
+            session.harmony().chord_at(BAR * 7).is_some(),
+            "before the gap"
+        );
+        assert!(session.harmony().chord_at(BAR * 9).is_none(), "inside it");
+        assert_eq!(
+            session.harmony().chord_at(BAR * 12).unwrap().to_string(),
+            "C",
+            "and the song picks up again on the far side"
+        );
+    }
+
+    #[test]
+    fn a_modulation_reharmonises_a_progression_without_rewriting_it() {
+        let mut session = self::tests::session();
+        session
+            .stamp_named_progression("axis", Ticks::ZERO, 8)
+            .unwrap();
+        let before: Vec<Numeral> = session
+            .harmony()
+            .chords
+            .points()
+            .iter()
+            .filter_map(|point| point.chord)
+            .collect();
+
+        session.set_key(BAR * 4, MusicalKey::parse("Eb major").unwrap());
+        assert_eq!(
+            session.harmony().chord_at(BAR * 3).unwrap().to_string(),
+            "F"
+        );
+        assert_eq!(
+            session.harmony().chord_at(BAR * 4).unwrap().to_string(),
+            "Eb"
+        );
+
+        let after: Vec<Numeral> = session
+            .harmony()
+            .chords
+            .points()
+            .iter()
+            .filter_map(|point| point.chord)
+            .collect();
+        assert_eq!(before, after, "not one chord was touched");
+    }
+
+    #[test]
+    fn the_harmony_is_saved_and_comes_back() {
+        let scratch = Scratch::new("harmony-round-trip");
+        let mut session = self::tests::session();
+        session.set_key(Ticks::ZERO, MusicalKey::parse("Bb minor").unwrap());
+        session
+            .stamp_named_progression("axis-minor", Ticks::ZERO, 4)
+            .unwrap();
+        let written = session.project().harmony.clone();
+
+        let document = session.save_as(&scratch.join("Song.auris")).unwrap();
+        let mut reopened = self::tests::session();
+        reopened.open(&document).unwrap();
+        assert_eq!(reopened.project().harmony, written);
+        assert_eq!(reopened.harmony().key_at(Ticks::ZERO).to_text(), "Bb minor");
+    }
+
+    #[test]
+    fn editing_the_harmony_leaves_the_notes_and_the_engine_alone() {
+        let mut session = self::tests::session();
+        let track = session.add_default_instrument_track("Keys").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, BAR)
+            .expect("an empty clip");
+        session
+            .add_note(clip, Note::new(60, Ticks::ZERO, BAR))
+            .unwrap();
+        let notes_before = session.project().clone();
+        session.forget_history();
+
+        session
+            .stamp_named_progression("axis", Ticks::ZERO, 4)
+            .unwrap();
+        assert_eq!(
+            session.project().tracks,
+            notes_before.tracks,
+            "harmony is not a note and must not move one"
+        );
     }
 
     #[test]

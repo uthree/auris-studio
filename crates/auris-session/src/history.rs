@@ -80,6 +80,14 @@ pub enum Edit {
     ImportSoundFont,
     /// A track was pointed at one of a SoundFont's sounds.
     ChoosePreset,
+    /// The key changed somewhere on the timeline.
+    SetKey,
+    /// A chord changed somewhere on the timeline.
+    SetChord,
+    /// A stretch of the timeline lost its chords.
+    ClearHarmony,
+    /// A named progression was written across a range of bars.
+    StampProgression,
     /// The document was replaced by a composed piece.
     Compose,
 }

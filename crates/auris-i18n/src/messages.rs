@@ -257,6 +257,18 @@ messages! {
         ja: "`{id}` というプラグインは登録されていません"
     }
 
+    /// Nothing in the chord-progression catalogue answers to that name.
+    fn unknown_progression(name: &str) {
+        en: "no chord progression is named `{name}`",
+        ja: "`{name}` というコード進行はありません"
+    }
+
+    /// A progression was written onto the timeline.
+    fn progression_written(name: &str, chords: usize) {
+        en: "wrote {chords} chord(s) of `{name}`",
+        ja: "`{name}` のコード {chords} 個を書き込みました"
+    }
+
     /// A project referenced audio files that are not where it said.
     fn missing_audio_files(count: usize) {
         en: "{count} audio file(s) could not be loaded",
