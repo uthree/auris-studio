@@ -52,15 +52,6 @@ pub enum EditorTab {
     Mixer,
 }
 
-/// Which page the right-hand inspector shows.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum InspectorTab {
-    /// The selected track's instrument and effect chain.
-    Track,
-    /// The plugin browser.
-    Browser,
-}
-
 /// Something the user is currently dragging.
 #[derive(Clone, Debug)]
 pub enum Drag {
@@ -146,6 +137,13 @@ pub enum Drag {
         /// Clips selected before the sweep started.
         base_clips: BTreeSet<ClipId>,
     },
+    /// Dragging the divider between the library and the arrangement.
+    ResizeLibrary {
+        /// Pointer x when the drag began.
+        start_x: Pixels,
+        /// Panel width when the drag began.
+        start_width: Pixels,
+    },
     /// Dragging the divider between the arrangement and the inspector.
     ResizeInspector {
         /// Pointer x when the drag began.
@@ -187,7 +185,8 @@ impl Drag {
             Drag::TimeZoom { .. } => None,
             // Panel geometry is a property of the window, not the document: resizing a panel
             // is not an edit and must never land on the undo stack.
-            Drag::ResizeInspector { .. }
+            Drag::ResizeLibrary { .. }
+            | Drag::ResizeInspector { .. }
             | Drag::ResizeEditor { .. }
             | Drag::ResizeHeaders { .. } => None,
         }
@@ -200,6 +199,10 @@ impl Drag {
 /// than each deriving the geometry from constants and drifting apart.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PanelLayout {
+    /// Whether the left-hand library is visible.
+    pub library_visible: bool,
+    /// Width of the library.
+    pub library_width: Pixels,
     /// Whether the right-hand inspector is visible.
     pub inspector_visible: bool,
     /// Width of the inspector.
@@ -215,6 +218,12 @@ pub struct PanelLayout {
 impl Default for PanelLayout {
     fn default() -> Self {
         Self {
+            // Open on first run, unlike Logic, which defaults its Library closed. There, a
+            // channel strip's instrument slot is a second way to load one; here the library is
+            // the only one, so starting closed would leave a new project with no visible way to
+            // choose an instrument at all.
+            library_visible: true,
+            library_width: Metrics::LIBRARY_WIDTH,
             inspector_visible: true,
             inspector_width: Metrics::INSPECTOR_WIDTH,
             editor_visible: true,
@@ -225,6 +234,10 @@ impl Default for PanelLayout {
 }
 
 impl PanelLayout {
+    /// Narrowest the library may be dragged.
+    pub const MIN_LIBRARY: Pixels = px(180.0);
+    /// Widest the library may be dragged.
+    pub const MAX_LIBRARY: Pixels = px(420.0);
     /// Narrowest the inspector may be dragged.
     pub const MIN_INSPECTOR: Pixels = px(200.0);
     /// Widest the inspector may be dragged.
@@ -238,6 +251,24 @@ impl PanelLayout {
 
     /// Height the arrangement must keep, so a dragged editor cannot swallow it.
     pub const MIN_ARRANGEMENT: Pixels = px(140.0);
+    /// Width the arrangement must keep, for the same reason horizontally.
+    pub const MIN_ARRANGEMENT_WIDTH: Pixels = px(240.0);
+
+    /// Library width after dragging its divider by `delta`.
+    ///
+    /// The divider sits on the panel's *right* edge, so dragging right widens it and the delta
+    /// is added — the opposite of [`Self::resized_inspector`], whose divider is on its left. The
+    /// sign is the whole difference between the two, and getting it wrong makes a panel run away
+    /// from the pointer.
+    ///
+    /// `available` is what is left of the window once the arrangement's own minimum width is
+    /// accounted for, in the shape [`Self::resized_editor`] already uses vertically. It is
+    /// clamped up to the minimum, so a window already narrower than the arrangement needs still
+    /// yields a usable library rather than a negative one.
+    pub fn resized_library(start_width: Pixels, delta: Pixels, available: Pixels) -> Pixels {
+        let ceiling = Self::MAX_LIBRARY.min(available).max(Self::MIN_LIBRARY);
+        (start_width + delta).max(Self::MIN_LIBRARY).min(ceiling)
+    }
 
     /// Inspector width after dragging its divider by `delta`.
     ///
@@ -272,6 +303,60 @@ impl PanelLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_library_follows_the_pointer_and_stops_at_its_limits() {
+        // Its divider is on the panel's right edge, so the delta is *added* — the opposite sign
+        // to the inspector's, whose test sits directly below this one so the difference is
+        // written down rather than remembered.
+        let roomy = px(9_000.0);
+        assert_eq!(
+            PanelLayout::resized_library(px(240.0), px(40.0), roomy),
+            px(280.0)
+        );
+        assert_eq!(
+            PanelLayout::resized_library(px(240.0), px(-40.0), roomy),
+            px(200.0)
+        );
+        assert_eq!(
+            PanelLayout::resized_library(px(240.0), px(9_000.0), roomy),
+            PanelLayout::MAX_LIBRARY
+        );
+        assert_eq!(
+            PanelLayout::resized_library(px(240.0), px(-9_000.0), roomy),
+            PanelLayout::MIN_LIBRARY
+        );
+    }
+
+    #[test]
+    fn the_library_cannot_squeeze_the_arrangement_off_the_window() {
+        // A drag with plenty of travel left still stops where the arrangement's minimum begins.
+        assert_eq!(
+            PanelLayout::resized_library(px(240.0), px(9_000.0), px(300.0)),
+            px(300.0)
+        );
+        // And a window already narrower than the arrangement needs gives a usable library rather
+        // than a negative one, the way the editor does when the window is too short for both.
+        assert_eq!(
+            PanelLayout::resized_library(px(240.0), px(9_000.0), px(-500.0)),
+            PanelLayout::MIN_LIBRARY
+        );
+    }
+
+    #[test]
+    fn resizing_the_library_is_never_an_edit() {
+        // It belongs in the arm that records nothing. A variant that fell through to a document
+        // edit would open a session transaction and land on the undo stack, so pressing undo
+        // after dragging a divider would lose the last real change instead.
+        assert!(
+            Drag::ResizeLibrary {
+                start_x: px(0.0),
+                start_width: px(0.0)
+            }
+            .edit()
+            .is_none()
+        );
+    }
 
     #[test]
     fn the_inspector_follows_the_pointer_and_stops_at_its_limits() {
@@ -388,7 +473,6 @@ pub struct AurisApp {
     pub(crate) selected_notes: BTreeSet<usize>,
     pub(crate) drag: Option<Drag>,
     pub(crate) editor: EditorTab,
-    pub(crate) inspector: InspectorTab,
     /// Which panels are showing and how large they are.
     pub(crate) panels: PanelLayout,
     pub(crate) status: String,
@@ -488,7 +572,6 @@ impl AurisApp {
             selected_notes: BTreeSet::new(),
             drag: None,
             editor: EditorTab::PianoRoll,
-            inspector: InspectorTab::Track,
             panels: PanelLayout::default(),
             status,
             export: None,
@@ -797,9 +880,23 @@ impl AurisApp {
 
     // ---------------------------------------------------------------- panels
 
+    /// Shows or hides the left-hand library.
+    pub(crate) fn toggle_library(&mut self) {
+        self.panels.library_visible = !self.panels.library_visible;
+    }
+
     /// Shows or hides the right-hand inspector.
     pub(crate) fn toggle_inspector(&mut self) {
         self.panels.inspector_visible = !self.panels.inspector_visible;
+    }
+
+    /// Applies a library resize drag.
+    pub(crate) fn resize_library(&mut self, start_width: Pixels, delta: Pixels) {
+        // What the library could grow into before the arrangement stops being usable. Read from
+        // the arrangement's painted width rather than the window's, so the clamp and the hit
+        // tests are measuring the same thing.
+        let available = start_width + self.arrangement_width - PanelLayout::MIN_ARRANGEMENT_WIDTH;
+        self.panels.library_width = PanelLayout::resized_library(start_width, delta, available);
     }
 
     /// Shows or hides the bottom editor.
@@ -828,12 +925,24 @@ impl AurisApp {
 
     // ---------------------------------------------------------------- geometry
 
+    /// How far the library pushes everything to its right.
+    ///
+    /// Only used by the fallbacks below, which answer for the frame before anything has been
+    /// painted; every frame after that reads the painted bounds instead.
+    fn library_offset(&self) -> Pixels {
+        if self.panels.library_visible {
+            self.panels.library_width + Metrics::SPLITTER
+        } else {
+            px(0.0)
+        }
+    }
+
     /// Origin of the arrangement's clip lanes, taken from where they were last painted.
     pub(crate) fn lanes_origin(&self) -> Point<Pixels> {
         self.canvas.lanes.get().map_or_else(
             || {
                 point(
-                    self.panels.header_width,
+                    self.library_offset() + self.panels.header_width,
                     Metrics::TRANSPORT_HEIGHT + Metrics::RULER_HEIGHT,
                 )
             },
@@ -844,7 +953,12 @@ impl AurisApp {
     /// Origin of the bar ruler, taken from where it was last painted.
     pub(crate) fn timeline_origin(&self) -> Point<Pixels> {
         self.canvas.ruler.get().map_or_else(
-            || point(self.panels.header_width, Metrics::TRANSPORT_HEIGHT),
+            || {
+                point(
+                    self.library_offset() + self.panels.header_width,
+                    Metrics::TRANSPORT_HEIGHT,
+                )
+            },
             |bounds| bounds.origin,
         )
     }

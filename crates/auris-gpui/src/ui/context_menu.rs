@@ -12,7 +12,7 @@ use gpui::{
     Size, Window, div, point, prelude::*, px, size,
 };
 
-use crate::app::{AurisApp, InspectorTab};
+use crate::app::AurisApp;
 use crate::theme::Metrics;
 use crate::ui::icons::{Icon, icon};
 use crate::ui::prompt::{Prompt, PromptTarget};
@@ -567,10 +567,9 @@ impl AurisApp {
             MenuCommand::MoveEffect { track, slot, delta } => self.move_effect(track, slot, delta),
             MenuCommand::RemoveEffect(slot) => self.remove_effect(slot),
             MenuCommand::BrowsePlugins { track } => {
-                // The browser adds to whatever is selected, so aim the selection first.
+                // The library adds to whatever is selected, so aim the selection first.
                 self.selected_track = track;
-                self.inspector = InspectorTab::Browser;
-                self.panels.inspector_visible = true;
+                self.panels.library_visible = true;
             }
 
             MenuCommand::SetLoopStart(tick) => {

@@ -43,6 +43,23 @@ impl Render for AurisApp {
             EditorTab::PianoRoll => self.render_piano_roll(window, cx),
             EditorTab::Mixer => self.render_mixer(window, cx).into_any_element(),
         });
+        let library = panels
+            .library_visible
+            .then(|| self.render_library(window, cx));
+        let library_splitter = panels.library_visible.then(|| {
+            splitter(
+                "split-library",
+                Axis::Vertical,
+                &theme,
+                cx.listener(|this, event: &gpui::MouseDownEvent, _, _| {
+                    let start_width = this.panels.library_width;
+                    this.begin_drag(Drag::ResizeLibrary {
+                        start_x: event.position.x,
+                        start_width,
+                    });
+                }),
+            )
+        });
         let inspector = panels
             .inspector_visible
             .then(|| self.render_inspector(window, cx));
@@ -119,6 +136,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_panic_stop))
             .on_action(cx.listener(Self::on_zoom_in))
             .on_action(cx.listener(Self::on_zoom_out))
+            .on_action(cx.listener(Self::on_toggle_library))
             .on_action(cx.listener(Self::on_toggle_inspector))
             .on_action(cx.listener(Self::on_toggle_editor))
             .on_action(cx.listener(Self::on_open_settings))
@@ -146,6 +164,18 @@ impl Render for AurisApp {
                     .flex()
                     .flex_1()
                     .min_h_0()
+                    // The library leads, then the arrangement, then the inspector. Only the
+                    // middle column carries `flex_1().min_w_0()`, so a narrowing window takes
+                    // the timeline and never a panel — a panel that shrank would move every
+                    // hit test in it out from under the pointer.
+                    .children(library.map(|library| {
+                        div()
+                            .w(panels.library_width)
+                            .flex_shrink_0()
+                            .flex()
+                            .child(library)
+                    }))
+                    .children(library_splitter)
                     .child(
                         div()
                             .flex()
@@ -388,6 +418,10 @@ impl AurisApp {
                 let delta = f64::from(f32::from(event.position.x - start_x)) * 0.25;
                 self.session.set_bpm(start_bpm + delta);
             }
+            Drag::ResizeLibrary {
+                start_x,
+                start_width,
+            } => self.resize_library(start_width, event.position.x - start_x),
             Drag::ResizeInspector {
                 start_x,
                 start_width,
@@ -609,6 +643,16 @@ impl AurisApp {
 
     fn on_zoom_out(&mut self, _: &actions::ZoomOut, _window: &mut Window, cx: &mut Context<Self>) {
         self.timeline.zoom_by(1.0 / 1.3, px(0.0));
+        cx.notify();
+    }
+
+    fn on_toggle_library(
+        &mut self,
+        _: &actions::ToggleLibrary,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_library();
         cx.notify();
     }
 

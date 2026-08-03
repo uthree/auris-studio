@@ -51,6 +51,8 @@ actions!(
         ZoomIn,
         /// Zoom the timeline out.
         ZoomOut,
+        /// Show or hide the left-hand library.
+        ToggleLibrary,
         /// Show or hide the right-hand inspector.
         ToggleInspector,
         /// Show or hide the bottom editor panel.
@@ -130,6 +132,8 @@ bindable! {
     "track.add_audio",      GroupTrack,     CmdAddAudioTrack,      "secondary-shift-t" => AddAudioTrack;
     "track.delete",         GroupTrack,     CmdDeleteTrack,        "secondary-backspace" => DeleteTrack;
 
+    // `y` is Logic's own Library key, and it is free here.
+    "view.library",         GroupView,      CmdShowLibrary,        "y"           => ToggleLibrary;
     "view.inspector",       GroupView,      CmdShowInspector,      "i"           => ToggleInspector;
     "view.editor",          GroupView,      CmdShowEditor,         "p"           => ToggleEditor;
     "view.zoom_in",         GroupView,      CmdZoomIn,             "secondary-=" => ZoomIn;

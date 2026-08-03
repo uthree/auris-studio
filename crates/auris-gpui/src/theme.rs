@@ -189,6 +189,8 @@ impl Metrics {
     pub const KEYBOARD_WIDTH: Pixels = px(56.0);
     /// Height of one piano-roll note row at 100 % zoom.
     pub const NOTE_ROW_HEIGHT: Pixels = px(14.0);
+    /// Width of the left-hand library panel.
+    pub const LIBRARY_WIDTH: Pixels = px(240.0);
     /// Width of the right-hand inspector panel.
     pub const INSPECTOR_WIDTH: Pixels = px(300.0);
     /// Height of the bottom editor panel, including its own header strip.

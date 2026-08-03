@@ -5,7 +5,7 @@ use auris_session::prelude::*;
 
 use gpui::{AnyElement, Axis, IntoElement, Window, div, prelude::*, px};
 
-use crate::app::{AurisApp, InspectorTab};
+use crate::app::AurisApp;
 use crate::theme::Metrics;
 use crate::ui::icons::Icon;
 use crate::ui::widgets::{ButtonStyle, button, db_to_meter_position, icon_label, level_meter};
@@ -328,10 +328,10 @@ impl AurisApp {
                 self.t(Key::Effect),
                 &theme,
                 cx.listener(|this, _, _, cx| {
-                    // The browser adds to the selected track, so clear the selection first to
+                    // The library adds to the selected track, so clear the selection first to
                     // make the next pick land on the master bus.
                     this.selected_track = None;
-                    this.inspector = InspectorTab::Browser;
+                    this.panels.library_visible = true;
                     cx.notify();
                 }),
             ))

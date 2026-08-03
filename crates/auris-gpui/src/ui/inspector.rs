@@ -7,14 +7,36 @@ use auris_session::prelude::*;
 
 use gpui::{AnyElement, IntoElement, MouseDownEvent, Window, div, prelude::*, px};
 
-use crate::app::{AurisApp, Drag, InspectorTab};
+use crate::app::{AurisApp, Drag};
 use crate::theme::Metrics;
+use crate::theme::Theme;
 use crate::ui::icons::Icon;
 use crate::ui::plugin_editor::{
     ParamControl, button_row, control_for, next_discrete_value, plugin_header, slider_row,
     value_after_drag, value_after_scroll,
 };
-use crate::ui::widgets::{ButtonStyle, button, chain_button, divider};
+use crate::ui::widgets::{chain_button, divider};
+
+/// The title strip at the top of a side panel.
+///
+/// Shared by the library and the inspector so the two line up: they sit either side of the
+/// arrangement at the same height, and a few pixels of difference between them is the kind of
+/// thing that is invisible in isolation and obvious once both are on screen.
+fn panel_header_of(title: &str, theme: &Theme) -> impl IntoElement + use<> {
+    let title: gpui::SharedString = title.to_string().into();
+    div()
+        .flex()
+        .items_center()
+        .h(Metrics::EDITOR_HEADER_HEIGHT)
+        .px_2()
+        .flex_shrink_0()
+        .bg(theme.surface_raised)
+        .border_b_1()
+        .border_color(theme.border)
+        .text_xs()
+        .text_color(theme.text_muted)
+        .child(title)
+}
 
 impl AurisApp {
     /// Renders the inspector panel.
@@ -24,13 +46,12 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
-        let tab = self.inspector;
+        let body = self.render_track_inspector(cx);
 
-        let body = match tab {
-            InspectorTab::Track => self.render_track_inspector(cx),
-            InspectorTab::Browser => self.render_browser(cx),
-        };
-
+        // One page now, with no tab bar. The plugin browser that used to share this panel is the
+        // library on the left: a picker that hid the thing it was editing had to be dismissed
+        // before its own result could be seen.
+        //
         // The width comes from the parent, which owns the resizable panel geometry, and the
         // divider line is drawn by the splitter beside it.
         div()
@@ -38,42 +59,39 @@ impl AurisApp {
             .flex_col()
             .size_full()
             .bg(theme.surface)
-            .child(
-                div()
-                    .flex()
-                    .gap_1()
-                    .p_1()
-                    .bg(theme.surface_raised)
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .child(div().flex_1().child(button(
-                        "tab-track",
-                        self.t(Key::Track),
-                        ButtonStyle::Normal,
-                        tab == InspectorTab::Track,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.inspector = InspectorTab::Track;
-                            cx.notify();
-                        }),
-                    )))
-                    .child(div().flex_1().child(button(
-                        "tab-browser",
-                        self.t(Key::Plugins),
-                        ButtonStyle::Normal,
-                        tab == InspectorTab::Browser,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.inspector = InspectorTab::Browser;
-                            cx.notify();
-                        }),
-                    ))),
-            )
+            .child(panel_header_of(self.t(Key::Track), &theme))
             .child(
                 div()
                     .id("inspector-body")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .p_2()
+                    .child(body),
+            )
+    }
+
+    /// The left-hand library: everything the plugin registry knows, ready to load.
+    ///
+    /// Logic's arrangement, and the reason for it: choosing an instrument is something you do
+    /// *to* the track you are looking at, so the list and the track's own settings have to be on
+    /// screen together. Sharing one panel meant picking a plugin hid the strip it was going onto.
+    pub(crate) fn render_library(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let theme = self.theme.clone();
+        let body = self.render_browser(cx);
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(theme.surface)
+            .child(panel_header_of(self.t(Key::Library), &theme))
+            .child(
+                div()
+                    .id("library-body")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
@@ -171,7 +189,9 @@ impl AurisApp {
                     self.t(Key::Add),
                     &theme,
                     cx.listener(|this, _, _, cx| {
-                        this.inspector = InspectorTab::Browser;
+                        // Reveal the library rather than switch a tab: the list it opens is on
+                        // the other side of the window now, and it may be closed.
+                        this.panels.library_visible = true;
                         cx.notify();
                     }),
                 ))
@@ -544,10 +564,14 @@ impl AurisApp {
     }
 
     /// Adds an effect to the selected track, or to the master bus when nothing is selected.
+    ///
+    /// Neither this nor [`Self::set_track_instrument`] bounces a panel back afterwards any more.
+    /// They both used to return the inspector to its Track tab, because the browser they were
+    /// called from had covered the strip being edited; a library that never covered it needs no
+    /// such correction, and the result is simply visible where it always was.
     pub(crate) fn add_effect_to_selection(&mut self, effect_id: &str) {
-        match self.session.add_effect(self.selected_track, effect_id) {
-            Ok(_) => self.inspector = InspectorTab::Track,
-            Err(error) => self.set_status(self.failure(Key::MenuAddEffect, &error)),
+        if let Err(error) = self.session.add_effect(self.selected_track, effect_id) {
+            self.set_status(self.failure(Key::MenuAddEffect, &error));
         }
     }
 
@@ -556,9 +580,8 @@ impl AurisApp {
         let Some(track) = self.selected_track else {
             return;
         };
-        match self.session.set_track_instrument(track, instrument_id) {
-            Ok(()) => self.inspector = InspectorTab::Track,
-            Err(error) => self.set_status(self.failure(Key::EditChangeInstrument, &error)),
+        if let Err(error) = self.session.set_track_instrument(track, instrument_id) {
+            self.set_status(self.failure(Key::EditChangeInstrument, &error));
         }
     }
 

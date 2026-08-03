@@ -72,16 +72,25 @@ strings! {
     Solo { en: "Solo", ja: "ソロ" }
     Effect { en: "Effect", ja: "エフェクト" }
 
-    // ------------------------------------------------------------------ inspector
+    // ------------------------------------------------------------------ library and channel strip
     Track { en: "Track", ja: "トラック" }
-    Plugins { en: "Plugins", ja: "プラグイン" }
     Instrument { en: "Instrument", ja: "音源" }
     Effects { en: "Effects", ja: "エフェクト" }
-    Add { en: "Add", ja: "追加" }
     NoTrackSelected { en: "No track selected", ja: "トラックが選択されていません" }
+    Library { en: "Library", ja: "ライブラリ" }
+    // Not `Instrument`'s Japanese: the two sit next to each other, and
+    // `no_key_is_left_untranslated_by_accident` compares English against Japanese within a key
+    // rather than key against key, so a duplicate would pass and read as a bug in the window.
+    Instruments { en: "Instruments", ja: "音源一覧" }
+    Inserts { en: "Inserts", ja: "インサート" }
+    LibraryNeedsInstrumentTrack {
+        en: "Select an instrument track to load one",
+        ja: "音源トラックを選択すると読み込めます"
+    }
+    Add { en: "Add", ja: "追加" }
     NoEffects {
-        en: "No effects — add one from the Plugins tab",
-        ja: "エフェクトなし — プラグインタブから追加できます"
+        en: "No effects — add one from the Library",
+        ja: "エフェクトなし — ライブラリから追加できます"
     }
     BrowserInstruments {
         en: "Instruments — click to set on the selected track",
@@ -173,6 +182,7 @@ strings! {
     CmdAddInstrumentTrack { en: "Add Instrument Track", ja: "ソフト音源トラックを追加" }
     CmdAddAudioTrack { en: "Add Audio Track", ja: "オーディオトラックを追加" }
     CmdDeleteTrack { en: "Delete Track", ja: "トラックを削除" }
+    CmdShowLibrary { en: "Show Library", ja: "ライブラリを表示" }
     CmdShowInspector { en: "Show Inspector", ja: "インスペクタを表示" }
     CmdShowEditor { en: "Show Editor Panel", ja: "エディタパネルを表示" }
     CmdZoomIn { en: "Zoom In", ja: "拡大" }
