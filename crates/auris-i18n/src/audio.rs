@@ -20,6 +20,16 @@ pub fn plugin_description(text: &str, language: Language) -> &str {
     lookup(PLUGIN_DESCRIPTIONS, text, language)
 }
 
+/// Translation of a chord progression's or a groove's one-line description.
+///
+/// Same shape as [`plugin_description`], and here for the same reason: what the picker has to
+/// show is a *sentence*, and the catalogue lives in `auris-core`, which may not name a language.
+/// The names themselves — `royal-road`, `basic-rock` — are not translated: they are what the
+/// text format writes and what a specification file has to say to get the same progression back.
+pub fn theory_description(text: &str, language: Language) -> &str {
+    lookup(THEORY_DESCRIPTIONS, text, language)
+}
+
 /// Translation of a parameter's display name, or `name` itself when it is not known here.
 pub fn parameter(name: &str, language: Language) -> &str {
     lookup(PARAMETERS, name, language)
@@ -201,6 +211,99 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("LP Gain", "LP ゲイン"),
     ("LP On", "LP 有効"),
     ("LP Q", "LP Q"),
+];
+
+/// Japanese versions of the one-line descriptions the progression and groove pickers show.
+///
+/// The progressions with Japanese names keep them: 王道進行 is what the thing is called, and a
+/// picker that said "the J-pop staple" instead would be naming it worse in either language.
+const THEORY_DESCRIPTIONS: &[(&str, &str)] = &[
+    (
+        "The four chords of a thousand pop songs",
+        "ポップスで千曲は書かれた 4 つのコード",
+    ),
+    (
+        "The same four chords starting from the relative minor",
+        "同じ 4 つのコードを平行短調から始めたもの",
+    ),
+    (
+        "The minor axis: dark, modal, and everywhere in game music",
+        "短調のアクシス。暗く、モーダルで、ゲーム音楽の定番",
+    ),
+    (
+        "小室進行: minor start resolving to major",
+        "小室進行: 短調で始まり長調に解決する",
+    ),
+    (
+        "丸サ進行: the Just-the-Two-of-Us loop that never lands on a tonic",
+        "丸サ進行: トニックに着地しない Just the Two of Us ループ",
+    ),
+    (
+        "丸サ進行 with the ii-V into the subdominant spelled out",
+        "丸サ進行。下属和音への ii-V を明示したもの",
+    ),
+    (
+        "王道進行 (4536): the J-pop staple",
+        "王道進行 (4536): J-POP の定番",
+    ),
+    (
+        "小悪魔進行: 王道進行 with the dominant over a subdominant pedal",
+        "小悪魔進行: 王道進行の属和音を下属和音のペダル上に置いたもの",
+    ),
+    (
+        "泣きの進行: the royal road with a secondary dominant in its third bar",
+        "泣きの進行: 王道進行の 3 小節目をセカンダリードミナントにしたもの",
+    ),
+    (
+        "カノン進行, after Pachelbel",
+        "カノン進行。パッヘルベルに由来",
+    ),
+    (
+        "純情進行: the canon over a stepwise descending bass",
+        "純情進行: カノン進行を順次下行するベースの上に置いたもの",
+    ),
+    ("The fifties progression", "50 年代進行"),
+    (
+        "The cadence jazz is built on",
+        "ジャズの土台となるケーデンス",
+    ),
+    (
+        "Twelve-bar blues with a quick change and a turnaround",
+        "クイックチェンジとターンアラウンドを備えた 12 小節ブルース",
+    ),
+    (
+        "The descending tetrachord: i bVII bVI V",
+        "下行テトラコルド: i bVII bVI V",
+    ),
+    (
+        "A four-bar loop that keeps turning back on itself",
+        "同じところへ戻り続ける 4 小節ループ",
+    ),
+    (
+        "Four on the snare's two and four, eighths on the hat",
+        "スネアは 2・4 拍、ハットは 8 分",
+    ),
+    (
+        "The straight eight-beat every J-rock song is built on",
+        "J-ROCK の土台となる素直な 8 ビート",
+    ),
+    (
+        "Busier hats and a syncopated kick",
+        "細かいハットとシンコペーションしたキック",
+    ),
+    (
+        "A kick on every beat, for house and its descendants",
+        "全拍にキック。ハウスとその系譜向け",
+    ),
+    ("A swung eight-beat", "スウィングした 8 ビート"),
+    (
+        "The backbeat moved to bar's centre, which halves the felt tempo",
+        "バックビートを小節の中央へ移し、体感テンポを半分にしたもの",
+    ),
+    (
+        "Almost nothing: for intros and ambient sections",
+        "ほとんど何も鳴らさない。イントロやアンビエントな場面に",
+    ),
 ];
 
 /// Japanese names for the browser's category headings.

@@ -213,9 +213,15 @@ messages! {
     }
 
     /// Something the user asked for did not work.
+    /// `action` is a command's own label, which is why the Japanese quotes it rather than
+    /// building a sentence out of it. The labels are a mixture of dictionary-form verbs
+    /// (「プロジェクトを開く」), サ変 nouns (「保存」) and noun phrases (「新規プロジェクト」), and no
+    /// single frame conjugates all three: 「プロジェクトを開くできませんでした」 is what the old one
+    /// produced. Naming the command in quotes is grammatical for every label there is and for
+    /// every label anybody adds later, which the alternative was not.
     fn failed(action: &str, reason: &str) {
         en: "Could not {action}: {reason}",
-        ja: "{action}できませんでした: {reason}"
+        ja: "「{action}」を実行できませんでした: {reason}"
     }
 
     /// A device's capabilities, under its name in the settings window.

@@ -1067,7 +1067,9 @@ impl AurisApp {
         let mut menu = ContextMenu::new(anchor, self.t(Key::PartGroove));
         for groove in groove_catalog() {
             menu = menu.toggle(
-                groove.name,
+                // The hyphenated identifier is what a specification writes; a menu row is a
+                // place for what the groove sounds like.
+                auris_i18n::audio::theory_description(groove.description, self.language()),
                 MenuCommand::SetClipGroove {
                     clip,
                     groove: groove.name,
@@ -1190,7 +1192,11 @@ impl AurisApp {
         let mut menu = ContextMenu::new(anchor, self.t(Key::MenuWriteProgression));
         for entry in progression_catalog() {
             menu = menu.item(
-                entry.name,
+                // What it is, not what the parser calls it. The rows read `axis-minor` and
+                // `doo-wop`, which is the vocabulary of a specification file rather than of
+                // somebody deciding what the next four bars should do — and the catalogue has
+                // carried a description for each of them all along.
+                auris_i18n::audio::theory_description(entry.description, self.language()),
                 MenuCommand::StampProgression {
                     name: entry.name,
                     at,

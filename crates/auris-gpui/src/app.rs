@@ -118,8 +118,8 @@ pub enum Drag {
         ///
         /// A clip's start is snapped to the grid as it moves, so a clip that is *not* on the grid
         /// — after a split at the playhead, say — jumped onto it the instant a click wobbled by a
-        /// pixel. Cleared once the gesture is past [`DRAG_THRESHOLD`], so coming back towards the
-        /// starting point still moves the clip rather than freezing it.
+        /// pixel. Cleared once the gesture is past [`crate::gestures::DRAG_THRESHOLD`], so coming
+        /// back towards the starting point still moves the clip rather than freezing it.
         pressed_at: Option<Point<Pixels>>,
     },
     /// Dragging a clip's right edge.

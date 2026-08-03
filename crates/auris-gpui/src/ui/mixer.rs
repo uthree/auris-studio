@@ -163,9 +163,12 @@ impl AurisApp {
                 div()
                     .flex()
                     .gap_1()
+                    // The initials, as the track header already uses. A strip is sized for
+                    // "Mute", and 「ミュート」 does not fit in it: every strip in the mixer read as
+                    // broken in the language this is mostly developed in.
                     .child(div().flex_1().child(button(
                         ("mixer-mute", index),
-                        self.t(Key::Mute),
+                        self.t(Key::MuteInitial),
                         ButtonStyle::Normal,
                         muted,
                         theme.mute,
@@ -177,7 +180,7 @@ impl AurisApp {
                     )))
                     .child(div().flex_1().child(button(
                         ("mixer-solo", index),
-                        self.t(Key::Solo),
+                        self.t(Key::SoloInitial),
                         ButtonStyle::Normal,
                         soloed,
                         theme.solo,

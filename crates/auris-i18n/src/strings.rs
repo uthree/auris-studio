@@ -143,8 +143,8 @@ strings! {
     OutputDevice { en: "Output Device", ja: "出力デバイス" }
     SystemDefaultDevice { en: "System Default", ja: "システムのデフォルト" }
     SystemDefaultDeviceDetail {
-        en: "Follows whatever macOS is set to",
-        ja: "macOS の設定に追従します"
+        en: "Follows whatever the system is set to",
+        ja: "システムの設定に追従します"
     }
     SampleRate { en: "Sample Rate", ja: "サンプルレート" }
     DeviceDefaultRate { en: "Device Default", ja: "デバイス標準" }
@@ -318,6 +318,23 @@ strings! {
     ReplaceTitle { en: "Replace project?", ja: "プロジェクトを置き換えますか？" }
     Replace { en: "Replace", ja: "置き換える" }
     MissingAudioTitle { en: "Audio files not found", ja: "見つからないオーディオファイル" }
+
+    // ------------------------------------------------------------------ file dialogs
+    //
+    // The system dialog's own chrome — its buttons and its sidebar — is drawn by the platform in
+    // the platform's language. The title and the file-type filter are ours, and were the only
+    // two English words left in an otherwise translated flow.
+    DialogSaveProject { en: "Save project", ja: "プロジェクトを保存" }
+    DialogOpenProject { en: "Open project", ja: "プロジェクトを開く" }
+    DialogComposeSpec { en: "Compose from specification", ja: "仕様書から作曲" }
+    DialogImportAudio { en: "Import audio", ja: "オーディオを読み込む" }
+    DialogImportSoundFont { en: "Import SoundFont", ja: "サウンドフォントを読み込む" }
+    DialogExportWav { en: "Export WAV", ja: "WAV を書き出す" }
+    FilterProject { en: "Auris project", ja: "Auris プロジェクト" }
+    FilterSpec { en: "Song specification", ja: "楽曲仕様書" }
+    FilterAudio { en: "Audio", ja: "オーディオ" }
+    FilterSoundFont { en: "SoundFont", ja: "サウンドフォント" }
+    FilterWav { en: "WAV audio", ja: "WAV オーディオ" }
     SpecRejectedTitle { en: "The specification was not accepted", ja: "仕様書を読み取れませんでした" }
 
     // ------------------------------------------------------------------ statuses

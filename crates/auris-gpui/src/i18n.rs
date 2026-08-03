@@ -170,6 +170,28 @@ mod tests {
     use auris_session::plugin_catalogue;
 
     #[test]
+    fn every_progression_and_groove_says_what_it_is_in_japanese() {
+        // The pickers show these sentences, and a missing entry falls back to English silently.
+        // The catalogues live in crates that may not name a language, so this is the only place
+        // the two halves can be checked against each other.
+        for (kind, description) in auris_session::prelude::progression_catalog()
+            .iter()
+            .map(|entry| ("progression", entry.description))
+            .chain(
+                auris_session::prelude::groove_catalog()
+                    .iter()
+                    .map(|groove| ("groove", groove.description)),
+            )
+        {
+            let translated = audio::theory_description(description, Language::Japanese);
+            assert_ne!(
+                translated, description,
+                "the {kind} described as {description:?} is still in English",
+            );
+        }
+    }
+
+    #[test]
     fn every_built_in_plugin_is_translated() {
         // The lookup falls back to English for a plugin nobody has translated, which is right
         // for a third-party one and wrong for ours — so ours are checked here rather than being

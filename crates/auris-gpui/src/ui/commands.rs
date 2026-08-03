@@ -325,15 +325,19 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         let name = self.project().name.clone();
+        let language = self.language();
         // Through the window rather than the app, so the continuation gets a `Window` back: the
         // follow-up may be "and now close it", which there is no other way to do from here.
         let view = cx.entity().downgrade();
         window
             .spawn(cx, async move |cx| {
                 let handle = rfd::AsyncFileDialog::new()
-                    .set_title("Save project")
+                    .set_title(Key::DialogSaveProject.get(language))
                     .set_file_name(format!("{name}.{}", auris_session::PROJECT_EXTENSION))
-                    .add_filter("Auris project", &[auris_session::PROJECT_EXTENSION])
+                    .add_filter(
+                        Key::FilterProject.get(language),
+                        &[auris_session::PROJECT_EXTENSION],
+                    )
                     .save_file()
                     .await;
                 let Some(handle) = handle else { return };
@@ -437,10 +441,14 @@ impl AurisApp {
 
     /// Prompts for a project file and opens it, with the document already dealt with.
     pub(crate) fn pick_and_open_project(&mut self, cx: &mut Context<Self>) {
+        let language = self.language();
         cx.spawn(async move |this, cx| {
             let handle = rfd::AsyncFileDialog::new()
-                .set_title("Open project")
-                .add_filter("Auris project", &[auris_session::PROJECT_EXTENSION])
+                .set_title(Key::DialogOpenProject.get(language))
+                .add_filter(
+                    Key::FilterProject.get(language),
+                    &[auris_session::PROJECT_EXTENSION],
+                )
                 .pick_file()
                 .await;
             let Some(handle) = handle else { return };
@@ -497,10 +505,14 @@ impl AurisApp {
     /// The whole piece is one undo step, so a composition that is not what was wanted is one
     /// press away from the document that was there before it.
     pub(crate) fn compose_from_spec(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let language = self.language();
         cx.spawn(async move |this, cx| {
             let handle = rfd::AsyncFileDialog::new()
-                .set_title("Compose from specification")
-                .add_filter("Song specification", &[auris_session::SPEC_EXTENSION])
+                .set_title(Key::DialogComposeSpec.get(language))
+                .add_filter(
+                    Key::FilterSpec.get(language),
+                    &[auris_session::SPEC_EXTENSION],
+                )
                 .pick_file()
                 .await;
             let Some(handle) = handle else { return };
@@ -597,11 +609,12 @@ impl AurisApp {
             .iter()
             .map(|s| s.to_string())
             .collect();
+        let language = self.language();
         cx.spawn(async move |this, cx| {
             let extension_refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
             let handle = rfd::AsyncFileDialog::new()
-                .set_title("Import audio")
-                .add_filter("Audio", &extension_refs)
+                .set_title(Key::DialogImportAudio.get(language))
+                .add_filter(Key::FilterAudio.get(language), &extension_refs)
                 .pick_file()
                 .await;
             let Some(handle) = handle else { return };
@@ -645,11 +658,12 @@ impl AurisApp {
             .iter()
             .map(|s| s.to_string())
             .collect();
+        let language = self.language();
         cx.spawn(async move |this, cx| {
             let extension_refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
             let handle = rfd::AsyncFileDialog::new()
-                .set_title("Import SoundFont")
-                .add_filter("SoundFont", &extension_refs)
+                .set_title(Key::DialogImportSoundFont.get(language))
+                .add_filter(Key::FilterSoundFont.get(language), &extension_refs)
                 .pick_file()
                 .await;
             let Some(handle) = handle else { return };
@@ -708,14 +722,15 @@ impl AurisApp {
         }
         self.choosing_export = true;
         let name = self.project().name.clone();
+        let language = self.language();
         // A snapshot, so the render is unaffected by anything edited while it runs.
         let job = self.session.render_job();
 
         cx.spawn(async move |this, cx| {
             let handle = rfd::AsyncFileDialog::new()
-                .set_title("Export WAV")
+                .set_title(Key::DialogExportWav.get(language))
                 .set_file_name(format!("{name}.wav"))
-                .add_filter("WAV audio", &["wav"])
+                .add_filter(Key::FilterWav.get(language), &["wav"])
                 .save_file()
                 .await;
             let Some(handle) = handle else {
