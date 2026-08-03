@@ -13,14 +13,21 @@ use crate::ui::widgets::{
 };
 
 /// Grid divisions offered in the transport bar, as a fraction of a quarter note.
-const GRID_CHOICES: [(&str, i64); 6] = [
+const GRID_CHOICES: [(&str, i64); 7] = [
     ("1/1", TICKS_PER_QUARTER * 4),
     ("1/2", TICKS_PER_QUARTER * 2),
     ("1/4", TICKS_PER_QUARTER),
     ("1/8", TICKS_PER_QUARTER / 2),
     ("1/16", TICKS_PER_QUARTER / 4),
     ("1/32", TICKS_PER_QUARTER / 8),
+    // Off. A tick is the finest position the document can hold, so snapping to one is not
+    // snapping — and `Key::GridFree` has labelled this state since the button was written, for
+    // a value the cycle could never reach.
+    (GRID_OFF_LABEL, 1),
 ];
+
+/// Marks the entry whose label is translated rather than notation. See [`AurisApp::grid_label`].
+const GRID_OFF_LABEL: &str = "";
 
 impl AurisApp {
     /// Renders the transport bar.
@@ -374,6 +381,7 @@ impl AurisApp {
             .iter()
             .find(|(_, ticks)| *ticks == self.project().grid.raw())
             .map(|(label, _)| *label)
+            .filter(|label| *label != GRID_OFF_LABEL)
             .unwrap_or_else(|| self.t(Key::GridFree))
     }
 }
@@ -386,11 +394,31 @@ mod tests {
     fn every_grid_choice_is_a_distinct_division() {
         let mut seen: Vec<i64> = Vec::new();
         for (label, ticks) in GRID_CHOICES {
-            assert!(label.starts_with("1/"), "`{label}` is not a division");
+            assert!(
+                label.starts_with("1/") || label == GRID_OFF_LABEL,
+                "`{label}` is not a division",
+            );
             assert!(!seen.contains(&ticks), "`{label}` repeats a division");
             seen.push(ticks);
         }
-        // Coarsest first, so cycling through them halves the division each time.
+        // Coarsest first, so cycling through them halves the division each time and lands on
+        // off at the end, which is the finest position there is.
         assert!(seen.windows(2).all(|pair| pair[0] > pair[1]));
+        assert_eq!(
+            GRID_CHOICES.last().map(|(label, _)| *label),
+            Some(GRID_OFF_LABEL),
+            "off comes last, so cycling reaches it without passing through it",
+        );
+    }
+
+    #[test]
+    fn the_grid_can_be_cycled_all_the_way_off_and_round_again() {
+        // `Key::GridFree` has labelled this state since the button was written, for a value the
+        // cycle could not produce: nothing a user placed could sit off the beat.
+        let ticks: Vec<i64> = GRID_CHOICES.iter().map(|(_, ticks)| *ticks).collect();
+        assert!(
+            ticks.contains(&1),
+            "one tick is as fine as the document gets"
+        );
     }
 }

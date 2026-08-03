@@ -85,6 +85,8 @@ pub enum MenuCommand {
     DeleteNotes,
     /// Shift the selected notes in pitch.
     TransposeNotes(i32),
+    /// Sets how hard the selected notes are struck, as a dynamic marking's MIDI velocity.
+    SetNoteVelocity(u8),
     /// Select every note in the clip being edited.
     SelectAllNotes,
     /// Add one note.
@@ -242,6 +244,19 @@ pub enum MenuEntry {
     Separator,
 }
 
+/// The dynamic markings the note menu offers, and the MIDI velocity each one means.
+///
+/// The usual mapping — six steps of about 20, centred so mf is a little above the middle. Not
+/// translated: pp and ff are the notation, and a Japanese score prints them the same way.
+const DYNAMICS: [(&str, u8); 6] = [
+    ("pp", 24),
+    ("p", 48),
+    ("mp", 64),
+    ("mf", 80),
+    ("f", 100),
+    ("ff", 120),
+];
+
 /// An open context menu.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ContextMenu {
@@ -276,6 +291,17 @@ impl ContextMenu {
         command: MenuCommand,
     ) -> Self {
         self.push(label, command, enabled, false)
+    }
+
+    /// Adds a run of rows that share one enabled condition.
+    pub fn items_if<L: Into<SharedString>>(
+        self,
+        enabled: bool,
+        rows: impl IntoIterator<Item = (L, MenuCommand)>,
+    ) -> Self {
+        rows.into_iter().fold(self, |menu, (label, command)| {
+            menu.item_if(enabled, label, command)
+        })
     }
 
     /// Adds a row that shows a tick when `checked`.
@@ -636,6 +662,15 @@ impl AurisApp {
                 };
                 let chosen: Vec<usize> = self.selected_notes.iter().copied().collect();
                 let _ = self.session.transpose_notes(clip, &chosen, semitones);
+            }
+            MenuCommand::SetNoteVelocity(midi) => {
+                let Some(clip) = self.selected_clip else {
+                    return;
+                };
+                let chosen: Vec<usize> = self.selected_notes.iter().copied().collect();
+                let _ = self
+                    .session
+                    .set_note_velocity(clip, &chosen, f32::from(midi) / 127.0);
             }
             MenuCommand::SelectAllNotes => {
                 let count = self
@@ -1259,6 +1294,16 @@ impl AurisApp {
                 has_selection,
                 self.t(Key::MenuSemitoneDown),
                 MenuCommand::TransposeNotes(-1),
+            )
+            .separator()
+            // Dynamics rather than a number, because that is what a musician means by "softer".
+            // The roll has coloured notes by velocity since it was written and nothing could
+            // change one; six markings cover the range a part is actually written in.
+            .items_if(
+                has_selection,
+                DYNAMICS
+                    .iter()
+                    .map(|(label, velocity)| (*label, MenuCommand::SetNoteVelocity(*velocity))),
             )
             .separator()
             .item_if(

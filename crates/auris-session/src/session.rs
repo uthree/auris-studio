@@ -1570,6 +1570,9 @@ impl Session {
         let grid = self.project.grid;
         if let Some(midi) = self.project.midi_clip_mut(clip) {
             midi.length = (end - midi.start).max(grid);
+            // The length is now the user's, so nothing grows it back. A clip dragged shorter to
+            // hide a tail used to reappear at full length on the next note edit.
+            midi.length_is_explicit = true;
             self.invalidate_graph();
             return Ok(());
         }
@@ -1690,6 +1693,50 @@ impl Session {
         let copies = (base..target.notes.len()).collect();
         self.invalidate_graph();
         Ok(copies)
+    }
+
+    /// Sets how hard the named notes are struck, from 0 to 1.
+    ///
+    /// The piano roll has painted a velocity heat map since it was written, and there was no
+    /// command that could change what it was showing: the one thing the colour said about a note
+    /// was the one thing about it nobody could edit.
+    pub fn set_note_velocity(
+        &mut self,
+        clip: ClipId,
+        indices: &[usize],
+        velocity: f32,
+    ) -> Result<(), SessionError> {
+        if self.project.midi_clip(clip).is_none() {
+            return Err(SessionError::UnknownClip(clip.0));
+        }
+        let velocity = velocity.clamp(0.0, 1.0);
+        // Nothing to record for a set that changes nothing — a menu applied to a chord already at
+        // that level should not push an undo step.
+        let unchanged = self
+            .project
+            .midi_clip(clip)
+            .map(|(_, target)| {
+                indices
+                    .iter()
+                    .filter_map(|index| target.notes.get(*index))
+                    .all(|note| note.velocity == velocity)
+            })
+            .unwrap_or(true);
+        if unchanged {
+            return Ok(());
+        }
+
+        self.record(Edit::SetNoteVelocity);
+        let Some(target) = self.project.midi_clip_mut(clip) else {
+            return Err(SessionError::UnknownClip(clip.0));
+        };
+        for index in indices {
+            if let Some(note) = target.notes.get_mut(*index) {
+                note.velocity = velocity;
+            }
+        }
+        self.invalidate_graph();
+        Ok(())
     }
 
     /// Shifts notes in pitch, keeping the intervals between them.
@@ -3087,6 +3134,92 @@ mod tests {
             Some(Edit::AddClip),
             "the edits are still there"
         );
+    }
+
+    #[test]
+    fn a_clip_dragged_shorter_stays_shorter() {
+        // The trimmed tail is still in the note list, and `fit_length_to_notes` grew the clip
+        // back to cover it on the next edit — material the user had just cut reappeared and
+        // started sounding again, with nothing on screen to explain it.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::QUARTER * 4)
+            .unwrap();
+        session
+            .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        session
+            .add_note(clip, Note::new(67, Ticks::QUARTER * 2, Ticks::QUARTER))
+            .unwrap();
+
+        session.resize_clip(clip, Ticks::QUARTER).unwrap();
+        let trimmed = session.midi_clip(clip).unwrap().length;
+        assert!(
+            trimmed < Ticks::QUARTER * 2,
+            "the second note is past the end now"
+        );
+
+        session
+            .add_note(clip, Note::new(64, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        assert_eq!(
+            session.midi_clip(clip).unwrap().length,
+            trimmed,
+            "the next note edit must not grow it back",
+        );
+    }
+
+    #[test]
+    fn a_clip_that_has_never_been_resized_still_grows_to_hold_what_is_written_in_it() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        session
+            .add_note(clip, Note::new(60, Ticks::QUARTER * 4, Ticks::QUARTER))
+            .unwrap();
+        assert!(session.midi_clip(clip).unwrap().length > Ticks::QUARTER * 4);
+    }
+
+    #[test]
+    fn how_hard_a_note_is_struck_can_be_changed() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::QUARTER * 4)
+            .unwrap();
+        let first = session
+            .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        let second = session
+            .add_note(clip, Note::new(64, Ticks::QUARTER, Ticks::QUARTER))
+            .unwrap();
+
+        session
+            .set_note_velocity(clip, &[first, second], 0.25)
+            .unwrap();
+        let velocities: Vec<f32> = session
+            .midi_clip(clip)
+            .unwrap()
+            .notes
+            .iter()
+            .map(|note| note.velocity)
+            .collect();
+        assert_eq!(velocities, vec![0.25, 0.25]);
+
+        assert_eq!(session.undo(), Some(Edit::SetNoteVelocity));
+        assert!(session.midi_clip(clip).unwrap().notes[0].velocity > 0.25);
+
+        // Out of range is clamped rather than refused, and a set that changes nothing is not an
+        // edit — applying a marking to a chord already at it should not push an undo step.
+        session.redo();
+        session.set_note_velocity(clip, &[first], 4.0).unwrap();
+        assert_eq!(session.midi_clip(clip).unwrap().notes[0].velocity, 1.0);
+        let depth = undo_depth(&mut session);
+        session.set_note_velocity(clip, &[first], 1.0).unwrap();
+        assert_eq!(undo_depth(&mut session), depth);
     }
 
     #[test]

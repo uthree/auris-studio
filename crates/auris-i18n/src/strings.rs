@@ -387,6 +387,7 @@ strings! {
     EditDeleteNotes { en: "deleting notes", ja: "ノートの削除" }
     EditDuplicateNotes { en: "duplicating notes", ja: "ノートの複製" }
     EditTransposeNotes { en: "transposing notes", ja: "ノートの移調" }
+    EditSetNoteVelocity { en: "changing note velocity", ja: "ノートの強さの変更" }
     EditMoveNotes { en: "moving notes", ja: "ノートの移動" }
     EditResizeNote { en: "resizing a note", ja: "ノートの長さ変更" }
     EditAddEffect { en: "adding an effect", ja: "エフェクトの追加" }

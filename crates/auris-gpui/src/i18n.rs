@@ -99,6 +99,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::DeleteNotes => Key::EditDeleteNotes,
         Edit::DuplicateNotes => Key::EditDuplicateNotes,
         Edit::TransposeNotes => Key::EditTransposeNotes,
+        Edit::SetNoteVelocity => Key::EditSetNoteVelocity,
         Edit::MoveNotes => Key::EditMoveNotes,
         Edit::ResizeNote => Key::EditResizeNote,
         Edit::AddEffect => Key::EditAddEffect,

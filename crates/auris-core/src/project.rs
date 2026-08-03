@@ -321,6 +321,14 @@ pub struct MidiClip {
     /// without a word about a composer that had nothing to do with it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recipe: Option<ClipRecipe>,
+    /// Whether the length above was chosen by hand rather than grown to fit the notes.
+    ///
+    /// Once it has been, [`Self::fit_length_to_notes`] leaves it alone. Without this a clip
+    /// dragged shorter to hide its tail grew straight back on the next note edit, and the
+    /// material the user had just trimmed away started sounding again — data resurrecting
+    /// itself, with nothing on screen to explain it.
+    #[serde(default)]
+    pub length_is_explicit: bool,
 }
 
 impl MidiClip {
@@ -334,6 +342,9 @@ impl MidiClip {
             notes: Vec::new(),
             muted: false,
             recipe: None,
+            // A new clip's length is a default, not a decision, so notes written past it still
+            // grow it. Dragging its edge is what makes it a decision.
+            length_is_explicit: false,
         }
     }
 
@@ -349,6 +360,9 @@ impl MidiClip {
 
     /// Grows the clip so that every note fits inside it, rounded up to `grid`.
     pub fn fit_length_to_notes(&mut self, grid: Ticks) {
+        if self.length_is_explicit {
+            return;
+        }
         let needed = self
             .notes
             .iter()

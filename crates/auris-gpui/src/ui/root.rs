@@ -370,7 +370,7 @@ impl AurisApp {
         match drag {
             Drag::Playhead => {
                 let x = event.position.x - self.timeline_origin().x;
-                let tick = self.snap(self.timeline.x_to_tick(x));
+                let tick = self.snap_unless_held(self.timeline.x_to_tick(x), event.modifiers);
                 self.seek(tick);
             }
             Drag::AuditionHarmony => {
@@ -392,7 +392,9 @@ impl AurisApp {
             }
             Drag::LoopRegion { anchor } => {
                 let x = event.position.x - self.timeline_origin().x;
-                let tick = self.snap(self.timeline.x_to_tick(x)).max_zero();
+                let tick = self
+                    .snap_unless_held(self.timeline.x_to_tick(x), event.modifiers)
+                    .max_zero();
                 let (start, end) = if tick < anchor {
                     (tick, anchor)
                 } else {
@@ -421,7 +423,9 @@ impl AurisApp {
                 }
                 let origin = self.lanes_origin();
                 let tick = self.timeline.x_to_tick(event.position.x - origin.x);
-                let start = self.snap(tick - grab_offset).max_zero();
+                let start = self
+                    .snap_unless_held(tick - grab_offset, event.modifiers)
+                    .max_zero();
                 // The delta comes from the clip under the pointer, so that one lands exactly on
                 // the grid and the rest keep their spacing relative to it.
                 let anchor = origins
@@ -440,7 +444,7 @@ impl AurisApp {
             }
             Drag::ClipResize { clip } => {
                 let x = event.position.x - self.lanes_origin().x;
-                let tick = self.snap(self.timeline.x_to_tick(x));
+                let tick = self.snap_unless_held(self.timeline.x_to_tick(x), event.modifiers);
                 let _ = self.session.resize_clip(clip, tick);
             }
             Drag::NoteMove {
@@ -455,7 +459,8 @@ impl AurisApp {
                 let Some(clip_start) = self.session.midi_clip(clip).map(|c| c.start) else {
                     return;
                 };
-                let delta_ticks = self.snap(tick - clip_start) - self.snap(origin_tick);
+                let delta_ticks = self.snap_unless_held(tick - clip_start, event.modifiers)
+                    - self.snap(origin_tick);
                 let delta_pitch = pitch as i32 - origin_pitch as i32;
                 let _ = self
                     .session
@@ -474,7 +479,7 @@ impl AurisApp {
                 let Some(clip_start) = self.session.midi_clip(clip).map(|c| c.start) else {
                     return;
                 };
-                let end = self.snap(tick - clip_start);
+                let end = self.snap_unless_held(tick - clip_start, event.modifiers);
                 let _ = self.session.resize_note(clip, index, end);
             }
             Drag::Param {

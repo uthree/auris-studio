@@ -874,6 +874,20 @@ impl AurisApp {
         tick.snap_nearest(self.project().grid)
     }
 
+    /// `tick` on the grid, unless the gesture asked for it not to be.
+    ///
+    /// Holding the platform's command modifier suspends snapping for as long as it is held,
+    /// which is the gesture every DAW uses for "put it exactly here". Without it — and without
+    /// an off position on the grid button, which there also was not — nothing a user placed
+    /// could sit off the beat.
+    pub(crate) fn snap_unless_held(&self, tick: Ticks, modifiers: gpui::Modifiers) -> Ticks {
+        if modifiers.secondary() {
+            tick
+        } else {
+            self.snap(tick)
+        }
+    }
+
     // ---------------------------------------------------------------- metering
 
     /// Linear peak level of a track.

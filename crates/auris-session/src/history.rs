@@ -60,6 +60,8 @@ pub enum Edit {
     DuplicateNotes,
     /// Notes were shifted in pitch.
     TransposeNotes,
+    /// Notes were struck harder or softer.
+    SetNoteVelocity,
     /// Notes were moved.
     MoveNotes,
     /// A note's length changed.
