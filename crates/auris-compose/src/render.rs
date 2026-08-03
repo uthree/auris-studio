@@ -192,6 +192,112 @@ mod tests {
         bars: 8
     ";
 
+    /// Everything a piece is, as one line per section and one number for the notes.
+    ///
+    /// Written so that a change shows up as a diff a person can read: the chords are the part a
+    /// musician would notice, and the digest catches a note that moved by one tick.
+    fn fingerprint(text: &str) -> String {
+        let spec = SongSpec::parse(text).expect("the fixture parses");
+        let frame = plan(&spec);
+        let piece = render(&spec, &frame);
+
+        let mut out = String::new();
+        for section in &frame.sections {
+            out.push_str(&format!("{}·{} ", section.name, section.instance));
+            out.push_str(&section.key.to_text());
+            out.push_str(" |");
+            for event in &section.events {
+                // Both, and not only one: `name()` reads the numeral, which is what the timeline
+                // will store, while `chord` is what the colouring pass actually produced and what
+                // is heard. The whole difficulty of this split is that today they can disagree,
+                // so a fingerprint that showed one of them would hide it.
+                let numeral = event.name();
+                let sounding = event.chord.name_in(event.key);
+                if numeral == sounding {
+                    out.push_str(&format!(" {numeral}"));
+                } else {
+                    out.push_str(&format!(" {numeral}→{sounding}"));
+                }
+            }
+            out.push_str(" |\n");
+        }
+        // A cheap order-sensitive digest: a note that moves, changes pitch or changes length
+        // changes it, and two pieces that differ anywhere differ here.
+        let mut digest: u64 = 1469598103934665603;
+        for track in &piece.tracks {
+            for clip in &track.clips {
+                for note in &clip.notes {
+                    for value in [
+                        note.pitch as i64,
+                        note.start.raw(),
+                        note.length.raw(),
+                        (note.velocity * 1000.0) as i64,
+                        clip.start.raw(),
+                    ] {
+                        digest ^= value as u64;
+                        digest = digest.wrapping_mul(1099511628211);
+                    }
+                }
+            }
+        }
+        out.push_str(&format!(
+            "{} notes, digest {digest:016x}\n",
+            piece.note_count()
+        ));
+        out
+    }
+
+    /// The pieces the composer writes today, pinned exactly.
+    ///
+    /// Not because this output is sacred — it is a composer, and what it writes is a matter of
+    /// taste — but because it is about to be taken apart and reassembled, and a change that
+    /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
+    /// a bug or a decision, and this is what makes anyone look.
+    #[test]
+    fn the_composer_writes_what_it_wrote_before() {
+        // A chart nobody asked for is the composer's own, and so the only kind it colours. In a
+        // major key every colour it can reach is writable as a numeral.
+        assert_eq!(
+            fingerprint(
+                "form: verse\nkey: C major\nseed: 7\ntension: 0.95\n[section verse]\nbars: 8"
+            ),
+            "verse·1 C major | C→Cmaj7 G Am F→Fmaj7 C→Cmaj7 G→Gmaj7 Am→Am9 F |\n\
+             229 notes, digest 1d554a521541d70b\n"
+        );
+
+        // The same in a minor key. `Fm→Gbm` is the borrow that has no spelling: `vi` read in the
+        // parallel major is an F sharp minor, and in A minor no combination of degree and
+        // accidental names an F sharp at all — `degree_class` measures from the key's own scale
+        // at zero and from the major scale otherwise, and F sharp falls between the two.
+        assert_eq!(
+            fingerprint(
+                "form: verse\nkey: A minor\nseed: 1\nmood: tense\n[section verse]\nbars: 8"
+            ),
+            "verse·1 A minor | A→Amaj7 E Fm→Fm7 D A→Amaj7 E→Emaj7 Fm→Gbm D→Dmaj7 |\n\
+             232 notes, digest f86f16dc04a88129\n"
+        );
+
+        // A quoted chart, which is never coloured, over a form that repeats.
+        assert_eq!(
+            fingerprint(BASE),
+            "intro·1 C major | C G Am F |\n\
+             verse·1 C major | C G Am F C G Am F |\n\
+             chorus·1 C major | C G Am F C G Am F |\n\
+             541 notes, digest ae2cb361c63511b1\n"
+        );
+
+        // A transposed section, which is about to become a key change on the timeline.
+        assert_eq!(
+            fingerprint(
+                "form: verse chorus\nchords: @marusa\nkey: C major\nseed: 3\n\
+                 [section verse]\nbars: 4\n[section chorus]\nbars: 4\ntranspose: 3"
+            ),
+            "verse·1 C major | Fmaj7 E7 Am7 C7 |\n\
+             chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
+             241 notes, digest d798e175fb1b7d78\n"
+        );
+    }
+
     #[test]
     fn a_default_spec_writes_a_playable_piece() {
         let piece = compose_text("");
