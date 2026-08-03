@@ -99,10 +99,10 @@ pub fn render_project_with_progress(
     let mut graph = RenderGraph::build_at(project, bank, registry, block_frames, sample_rate);
 
     let end_frames = options.end_frames.unwrap_or_else(|| {
-        // `Project::end_tick` measures audio clips through the *project's* rate, while the graph
-        // places them at the *render* rate, so the two disagree whenever an export overrides the
-        // rate. Taking whichever reaches further can only ever add silence; using the tick figure
-        // alone would chop the end off an audio clip.
+        // Both figures measure the same thing, but `Project::end_tick` rounds an audio clip's
+        // length to whole ticks on the way through while the graph converts it to frames
+        // directly, so they can land a frame or two apart. Taking whichever reaches further can
+        // only ever add silence; using the tick figure alone would chop the end off a clip.
         let from_ticks = project
             .tempo_map
             .ticks_to_samples(project.end_tick(), sample_rate)
@@ -143,19 +143,32 @@ pub fn render_project_with_progress(
         return Ok(out);
     }
 
+    // Plugin delay compensation holds the whole mix back, so the first `latency` frames out of
+    // the graph are the lead-in of empty delay lines rather than anything on the timeline. The
+    // render runs that much longer and the file starts where the lead-in ends, which is what
+    // keeps an export lined up with what the arrangement shows.
+    let latency = graph.latency_frames();
+    let end = total.checked_add(latency).ok_or_else(too_long)?;
+
     let mut transport = Transport::playing_from(options.start_frames);
     let mut scratch = AudioBuffer::new(RENDER_CHANNELS, block_frames, sample_rate);
-    let mut written = 0;
-    while written < total {
-        let frames = block_frames.min(total - written);
+    let mut rendered = 0;
+    while rendered < end {
+        let frames = block_frames.min(end - rendered);
         scratch.set_frame_count(frames);
         render_block(&mut graph, &mut transport, &mut scratch, true);
-        for channel in 0..RENDER_CHANNELS {
-            out.channel_mut(channel)[written..written + frames]
-                .copy_from_slice(&scratch.channel(channel)[..frames]);
+        // How much of this block is still lead-in, and where the rest lands in the file.
+        let skip = latency.saturating_sub(rendered).min(frames);
+        if skip < frames {
+            let at = rendered + skip - latency;
+            let count = (frames - skip).min(total - at);
+            for channel in 0..RENDER_CHANNELS {
+                out.channel_mut(channel)[at..at + count]
+                    .copy_from_slice(&scratch.channel(channel)[skip..skip + count]);
+            }
         }
-        written += frames;
-        progress(written as f32 / total as f32);
+        rendered += frames;
+        progress(rendered as f32 / end as f32);
     }
     Ok(out)
 }
@@ -230,6 +243,25 @@ mod tests {
     }
 
     #[test]
+    fn a_tail_behind_another_tail_lengthens_the_export_by_both() {
+        // The master chain is fed for the whole of the track's ring-out and only then starts its
+        // own, so the export needs room for the two end to end.
+        let mut project = four_beat_project();
+        let track = project.tracks[0].id;
+        project.add_effect(Some(track), testkit::TAIL_ID);
+        project.add_effect(None, testkit::TAIL_ID);
+
+        let rendered = render_project(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &OfflineOptions::default(),
+        )
+        .expect("render");
+        assert_eq!(rendered.frame_count(), 96_000 + 2 * TAIL_FRAMES);
+    }
+
+    #[test]
     fn a_bypassed_effect_does_not_lengthen_the_export() {
         // A bypassed slot is never handed a block, so it cannot ring out; counting its declared
         // tail would pad every export with silence. This is also what makes the placeholder for
@@ -280,6 +312,57 @@ mod tests {
 
         assert_eq!(exported.channel(0), realtime.channel(0));
         assert_eq!(exported.channel(1), realtime.channel(1));
+    }
+
+    #[test]
+    fn an_export_still_starts_on_the_timeline_when_something_looks_ahead() {
+        // Compensation holds the whole mix back, so the graph's first frames are the empty delay
+        // lines. Those are a lead-in, not part of the piece, and the file must not begin with
+        // them — an export that did would be shifted against every other export of the project.
+        let mut project = four_beat_project();
+        project.add_effect(None, testkit::LOOKAHEAD_ID);
+
+        let rendered = render_project(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &OfflineOptions::default(),
+        )
+        .expect("render");
+
+        assert_eq!(rendered.frame_count(), 96_000);
+        assert!(
+            (rendered.channel(0)[0] - TONE_AMPLITUDE).abs() < 1e-5,
+            "the file starts with the compensation lead-in: {}",
+            rendered.channel(0)[0]
+        );
+        assert!((rendered.channel(0)[95_999] - TONE_AMPLITUDE).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_look_ahead_effect_does_not_change_what_an_export_contains() {
+        // The same project with and without an effect that only delays: once compensated, the
+        // exported samples have to match.
+        let project = four_beat_project();
+        let plain = render_project(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &OfflineOptions::default(),
+        )
+        .expect("render");
+
+        let mut delayed_project = project.clone();
+        delayed_project.add_effect(None, testkit::LOOKAHEAD_ID);
+        let delayed = render_project(
+            &delayed_project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &OfflineOptions::default(),
+        )
+        .expect("render");
+
+        assert_eq!(plain.channel(0), delayed.channel(0));
     }
 
     #[test]
@@ -402,9 +485,11 @@ mod tests {
     }
 
     #[test]
-    fn an_overridden_sample_rate_does_not_truncate_audio_clips() {
-        // `Project::end_tick` measures audio clips at the *project* rate; rendering at a lower
-        // rate must not shorten the export to match that stale figure.
+    fn an_overridden_sample_rate_converts_a_clips_frame_counts() {
+        // The clip's trim is counted in the frames of the file as it was imported — 48 000 of
+        // them, one second — while this export runs at half that rate, where one second is
+        // 24 000 frames. The caller hands the bank over already converted, so the clip covers
+        // the whole export rather than half of it or twice it.
         let mut project = Project::new("Clip", SAMPLE_RATE);
         let track = project.add_audio_track("Sample");
         let source = project.add_audio_source("s", "s.wav".into(), 48_000, SAMPLE_RATE, 1);
@@ -412,9 +497,7 @@ mod tests {
         let mut bank = AudioSourceBank::new();
         bank.insert(
             source,
-            Arc::new(
-                AudioBuffer::from_planar(vec![vec![0.5; 48_000]], SAMPLE_RATE).expect("planar"),
-            ),
+            Arc::new(AudioBuffer::from_planar(vec![vec![0.5; 24_000]], 24_000.0).expect("planar")),
         );
 
         let rendered = render_project(
@@ -427,8 +510,13 @@ mod tests {
             },
         )
         .expect("render");
-        assert_eq!(rendered.frame_count(), 48_000);
-        assert!((rendered.channel(0)[47_999] - 0.5).abs() < 1e-5);
+        assert_eq!(rendered.frame_count(), 24_000);
+        assert_eq!(rendered.sample_rate(), 24_000.0);
+        assert!((rendered.channel(0)[0] - 0.5).abs() < 1e-5);
+        assert!(
+            (rendered.channel(0)[23_999] - 0.5).abs() < 1e-5,
+            "the clip stopped short of the end of the export"
+        );
     }
 
     #[test]

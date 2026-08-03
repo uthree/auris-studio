@@ -78,6 +78,13 @@ pub(crate) const GAIN_ID: &str = "test.gain";
 pub(crate) const TAIL_ID: &str = "test.tail";
 /// Registry id of [`BlockCounter`].
 pub(crate) const COUNTER_ID: &str = "test.counter";
+/// Registry id of [`HugeTail`].
+pub(crate) const HUGE_TAIL_ID: &str = "test.huge-tail";
+/// Registry id of [`Lookahead`].
+pub(crate) const LOOKAHEAD_ID: &str = "test.lookahead";
+
+/// Frames [`Lookahead`] holds its input back by, and declares as its latency.
+pub(crate) const LOOKAHEAD_FRAMES: usize = 64;
 
 /// Level [`ConstantTone`] emits per held note.
 pub(crate) const TONE_AMPLITUDE: f32 = 0.5;
@@ -92,6 +99,8 @@ pub(crate) fn registry() -> PluginRegistry {
     registry.register_effect(|| Box::new(LinearGain::new()));
     registry.register_effect(|| Box::new(RingingTail::new()));
     registry.register_effect(|| Box::new(BlockCounter));
+    registry.register_effect(|| Box::new(HugeTail));
+    registry.register_effect(|| Box::new(Lookahead::new()));
     registry
 }
 
@@ -336,5 +345,146 @@ impl Effect for RingingTail {
 
     fn tail_frames(&self) -> usize {
         TAIL_FRAMES
+    }
+}
+
+/// Hands its input back a settable number of frames late, and declares that as its latency.
+///
+/// This is the shape of every look-ahead processor — the limiter is the one that ships — reduced
+/// to the part the engine has to reason about: audio that comes out later than it went in, by a
+/// distance the user can change while the graph is running. Declaring no tail keeps the
+/// compensation tests measuring compensation and nothing else.
+pub(crate) struct Lookahead {
+    params: Vec<ParamDescriptor>,
+    frames: usize,
+    lines: Vec<Vec<f32>>,
+    write: usize,
+}
+
+impl Lookahead {
+    pub(crate) fn new() -> Self {
+        Self {
+            params: vec![ParamDescriptor::new(
+                0u32,
+                "frames",
+                "Lookahead",
+                0.0,
+                LOOKAHEAD_FRAMES as f32,
+                LOOKAHEAD_FRAMES as f32,
+            )],
+            frames: LOOKAHEAD_FRAMES,
+            lines: Vec::new(),
+            write: 0,
+        }
+    }
+}
+
+impl Parameterized for Lookahead {
+    fn parameters(&self) -> &[ParamDescriptor] {
+        &self.params
+    }
+
+    fn param(&self, id: ParamId) -> f32 {
+        if id.index() == 0 {
+            self.frames as f32
+        } else {
+            0.0
+        }
+    }
+
+    fn set_param(&mut self, id: ParamId, value: f32) {
+        if id.index() == 0 {
+            self.frames = self.params[0].clamp(value) as usize;
+            // The ring is read modulo the new length, so start it from a position that is inside.
+            self.write = 0;
+        }
+    }
+}
+
+impl Effect for Lookahead {
+    fn descriptor(&self) -> PluginDescriptor {
+        PluginDescriptor::effect(
+            LOOKAHEAD_ID,
+            "Lookahead",
+            "Returns its input a fixed number of frames late",
+            PluginCategory::Utility,
+        )
+    }
+
+    fn prepare(&mut self, ctx: &PrepareContext) {
+        // Sized for the longest look-ahead the parameter allows, so shortening it later is a
+        // change of modulus rather than an allocation on the audio thread.
+        self.lines = vec![vec![0.0; LOOKAHEAD_FRAMES]; ctx.channel_count.max(1)];
+        self.write = 0;
+    }
+
+    fn reset(&mut self) {
+        for line in &mut self.lines {
+            line.fill(0.0);
+        }
+        self.write = 0;
+    }
+
+    fn process(&mut self, buffer: &mut AudioBuffer, _ctx: &ProcessContext) {
+        if self.frames == 0 {
+            return;
+        }
+        let start = self.write;
+        let mut finished = start;
+        for (samples, line) in buffer.channels_mut().iter_mut().zip(&mut self.lines) {
+            let mut position = start;
+            for sample in samples.iter_mut() {
+                std::mem::swap(sample, &mut line[position]);
+                position += 1;
+                if position == self.frames {
+                    position = 0;
+                }
+            }
+            finished = position;
+        }
+        self.write = finished;
+    }
+
+    fn latency_frames(&self) -> usize {
+        self.frames
+    }
+}
+
+/// Passes audio through untouched and claims the longest tail expressible.
+///
+/// Nothing real reports this, which is the point: the numbers come from plugins, so the arithmetic
+/// that adds them up has to survive one that is absurd.
+pub(crate) struct HugeTail;
+
+impl Parameterized for HugeTail {
+    fn parameters(&self) -> &[ParamDescriptor] {
+        &[]
+    }
+
+    fn param(&self, _id: ParamId) -> f32 {
+        0.0
+    }
+
+    fn set_param(&mut self, _id: ParamId, _value: f32) {}
+}
+
+impl Effect for HugeTail {
+    fn descriptor(&self) -> PluginDescriptor {
+        PluginDescriptor::effect(
+            HUGE_TAIL_ID,
+            "Huge Tail",
+            "Declares an absurd tail without producing one",
+            PluginCategory::Utility,
+        )
+    }
+
+    fn prepare(&mut self, _ctx: &PrepareContext) {}
+
+    fn reset(&mut self) {}
+
+    fn process(&mut self, _buffer: &mut AudioBuffer, _ctx: &ProcessContext) {}
+
+    fn tail_frames(&self) -> usize {
+        usize::MAX
     }
 }

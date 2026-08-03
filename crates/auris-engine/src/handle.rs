@@ -25,6 +25,7 @@ pub struct EngineHandle {
     pub(crate) meters: Arc<MeterBank>,
     pub(crate) running: Arc<AtomicBool>,
     pub(crate) playing: Arc<AtomicBool>,
+    pub(crate) latency_stale: Arc<AtomicBool>,
     pub(crate) sample_rate: f64,
     pub(crate) channel_count: usize,
     pub(crate) max_block: usize,
@@ -103,6 +104,16 @@ impl EngineHandle {
     /// `Stop` command changed it.
     pub fn is_playing(&self) -> bool {
         self.playing.load(Ordering::Relaxed)
+    }
+
+    /// `true` when the running graph's delay compensation no longer matches its effect chains.
+    ///
+    /// Every way of changing a chain rebuilds the graph except writing a parameter, and a plugin
+    /// is free to report a different latency once one has been written — a look-ahead length is
+    /// a parameter like any other. The audio thread re-checks after each such write; a frontend
+    /// that sees this go true should rebuild, or that track will play out of step with the rest.
+    pub fn latency_is_stale(&self) -> bool {
+        self.latency_stale.load(Ordering::Relaxed)
     }
 
     /// `true` when an output stream is actually running.

@@ -22,7 +22,7 @@ use crate::error::SessionError;
 use crate::history::{Edit, History};
 use crate::param::ParamTarget;
 use crate::registry::default_registry;
-use crate::render::RenderJob;
+use crate::render::{RenderJob, bank_at_rate, source_at_rate};
 use crate::settings::AudioPreferences;
 
 /// How many samples one waveform bucket covers.
@@ -96,7 +96,23 @@ pub struct AudioStatus {
 /// [`Session::end_transaction`] so they become one undo step and one rebuild.
 pub struct Session {
     project: Project,
+    /// Decoded audio at the project's own rate, which is what the document and the waveform
+    /// drawing are expressed in.
     bank: AudioSourceBank,
+    /// The same audio at the rate the render graph is built for.
+    ///
+    /// The engine renders at whatever rate the output device runs at, and a device is free to
+    /// disagree with the project — 44.1 kHz hardware under a 48 kHz project is ordinary. The
+    /// graph reads a clip's samples one for one against the timeline, so it needs the sources at
+    /// its own rate or every audio clip plays at the wrong speed. Converting once, when the rate
+    /// changes, is what keeps that off the rebuild path: resampling a long file is expensive and
+    /// a rebuild happens on every structural edit.
+    ///
+    /// When the two rates agree — the usual case — this shares the same buffers and costs
+    /// nothing but the map holding them.
+    render_bank: AudioSourceBank,
+    /// Rate [`Self::render_bank`] currently holds.
+    render_bank_rate: f64,
     registry: Arc<PluginRegistry>,
     engine: EngineHandle,
     device: Option<AudioDevice>,
@@ -172,9 +188,12 @@ impl Session {
             None
         };
 
+        let render_bank_rate = engine.sample_rate();
         let mut session = Self {
             project,
             bank: AudioSourceBank::new(),
+            render_bank: AudioSourceBank::new(),
+            render_bank_rate,
             registry,
             engine,
             device: Some(device),
@@ -263,14 +282,23 @@ impl Session {
 
     /// Housekeeping a frontend should call periodically — once per rendered frame is plenty.
     ///
-    /// Frees graphs the audio thread has retired, and drains the command queue when running
-    /// silently, where nothing else would.
-    pub fn poll(&self) {
+    /// Frees graphs the audio thread has retired, drains the command queue when running silently
+    /// where nothing else would, and rebuilds the graph when a parameter has moved a plugin's
+    /// latency out from under the delay compensation.
+    pub fn poll(&mut self) {
         self.engine.collect_garbage();
         if let Some(device) = &self.device
             && !device.is_running()
         {
             device.discard_pending();
+        }
+        // Writing a parameter is the one edit that reaches a plugin without rebuilding, so it is
+        // also the one that can leave the tracks compensated for the wrong number of frames.
+        // Rebuilding re-measures every chain and re-sizes the delay lines to match — and going
+        // through `invalidate_graph` is what keeps a drag on such a control to one rebuild at the
+        // end of the gesture instead of one per pointer move.
+        if self.engine.latency_is_stale() {
+            self.invalidate_graph();
         }
     }
 
@@ -428,12 +456,19 @@ impl Session {
 
     /// Rebuilds the render graph and hands it to the audio thread.
     pub fn rebuild_graph(&mut self) {
+        let rate = self.engine.sample_rate();
+        // Only ever true just after the output device changed, which is also the only time
+        // resampling every source is worth what it costs.
+        if self.render_bank_rate != rate {
+            self.render_bank = bank_at_rate(&self.bank, rate);
+            self.render_bank_rate = rate;
+        }
         let graph = RenderGraph::build_at(
             &self.project,
-            &self.bank,
+            &self.render_bank,
             &self.registry,
             self.engine.max_block(),
-            self.engine.sample_rate(),
+            rate,
         );
         if let Err(error) = self.engine.set_graph(graph) {
             log::warn!("could not update the render graph: {error}");
@@ -1452,8 +1487,7 @@ impl Session {
         self.dirty = false;
         // History is cleared, so nothing can bring the old document's audio back; keeping the
         // decoded buffers would hold them for the rest of the process.
-        self.bank = AudioSourceBank::new();
-        self.waveforms.clear();
+        self.clear_sources();
         self.replace_project(project);
     }
 
@@ -1465,8 +1499,7 @@ impl Session {
     pub fn open(&mut self, path: &Path) -> Result<Vec<PathBuf>, SessionError> {
         let project = load_project(path)?;
         self.history.clear();
-        self.bank = AudioSourceBank::new();
-        self.waveforms.clear();
+        self.clear_sources();
         self.path = Some(path.to_path_buf());
         self.dirty = false;
         self.replace_project(project);
@@ -1531,11 +1564,21 @@ impl Session {
         Ok(clip)
     }
 
-    /// Stores decoded audio and the peaks used to draw it.
+    /// Stores decoded audio, the peaks used to draw it, and the copy the graph will render.
     fn install_source(&mut self, id: SourceId, buffer: Arc<AudioBuffer>) {
         let peaks = compute_peaks(self.gpu.as_deref(), &buffer, WAVEFORM_BUCKET);
         self.waveforms.insert(id, Arc::new(peaks));
+        if let Some(at_rate) = source_at_rate(id, &buffer, self.render_bank_rate) {
+            self.render_bank.insert(id, at_rate);
+        }
         self.bank.insert(id, buffer);
+    }
+
+    /// Drops every decoded source, from both banks and from the waveform cache.
+    fn clear_sources(&mut self) {
+        self.bank = AudioSourceBank::new();
+        self.render_bank = AudioSourceBank::new();
+        self.waveforms.clear();
     }
 }
 

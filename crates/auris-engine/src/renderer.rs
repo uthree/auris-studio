@@ -87,7 +87,9 @@ fn render_segment(
     master_scratch.clear();
 
     for track in graph.tracks.iter_mut() {
-        if !track.strip.is_active() {
+        // A track muted long enough to have finished fading out contributes nothing, so skip it
+        // entirely. One muted a moment ago still has a fade to slide down and must be rendered.
+        if track.strip.is_silent() {
             continue;
         }
         track.scratch.set_frame_count(frames);
@@ -97,7 +99,12 @@ fn render_segment(
                 effect.process(&mut track.scratch, &ctx);
             }
         }
+        // Delay compensation sits between the chain and the fader: the chain is what runs late,
+        // and putting it here keeps the fader and the mute acting when they are moved rather
+        // than a few milliseconds afterwards.
+        track.delay.process(&mut track.scratch);
         track.strip.apply_gain_and_pan(&mut track.scratch);
+        track.strip.apply_mute(&mut track.scratch);
         track.peak = track.peak.max(track.scratch.peak());
         master_scratch.mix_from(&track.scratch, 1.0);
     }
@@ -110,9 +117,7 @@ fn render_segment(
     graph.master.apply_gain_and_pan(master_scratch);
     // Mute is the last stage of the strip: the effects still run — so a reverb tail does not
     // freeze and un-muting does not pop — but nothing leaves the bus.
-    if !graph.master.is_active() {
-        master_scratch.clear();
-    }
+    graph.master.apply_mute(master_scratch);
     // One NaN out of a misbehaving plugin would otherwise reach the output device.
     master_scratch.sanitize();
     graph.master_peak[0] = graph.master_peak[0].max(master_scratch.channel_peak(0));
@@ -224,14 +229,20 @@ fn chase_notes(
     // Drop whatever the old position left sounding before restoring what belongs to the new one.
     out.push(NoteEvent::AllNotesOff { frame: 0 });
     for (pitch, count) in counts.iter().enumerate() {
-        if *count == 0 || out.len() == out.capacity() {
-            continue;
+        // Once per sounding note rather than once per pitch: two overlapping notes on the same
+        // pitch need two voices, or the first of the two offs that follow would silence the
+        // pair. The buffer is sized for the densest chord the track ever holds, so the capacity
+        // check is a guard rather than something that trims a real arrangement.
+        for _ in 0..*count {
+            if out.len() == out.capacity() {
+                return;
+            }
+            out.push(NoteEvent::NoteOn {
+                frame: 0,
+                pitch: pitch as u8,
+                velocity: velocity[pitch],
+            });
         }
-        out.push(NoteEvent::NoteOn {
-            frame: 0,
-            pitch: pitch as u8,
-            velocity: velocity[pitch],
-        });
     }
 }
 
@@ -296,6 +307,9 @@ mod tests {
     use std::sync::Arc;
 
     const SAMPLE_RATE: f64 = 48_000.0;
+
+    /// Length of the mute fade at [`SAMPLE_RATE`]: [`crate::graph::MUTE_FADE_MS`] of 48 kHz.
+    const FADE_FRAMES: usize = (SAMPLE_RATE * crate::graph::MUTE_FADE_MS / 1_000.0) as usize;
 
     /// Renders `frames` frames from `transport` in fixed-size blocks into one buffer.
     fn render_range(
@@ -514,12 +528,113 @@ mod tests {
         let project = one_note_project(Ticks::ZERO, Ticks::from_beats(4.0));
         let mut graph = build(&project, 512);
         graph.set_track_mute(0, true);
-        let silent = render_range(&mut graph, &mut Transport::playing_from(0), 2_048, 512);
-        assert_eq!(silent.peak(), 0.0);
+        // The switch fades rather than steps, so measure once the fade has run its length.
+        let silenced = render_range(&mut graph, &mut Transport::playing_from(0), 2_048, 512);
+        assert_eq!(silenced.slice(FADE_FRAMES, 2_048 - FADE_FRAMES).peak(), 0.0);
 
         graph.set_track_mute(0, false);
         let audible = render_range(&mut graph, &mut Transport::playing_from(2_048), 2_048, 512);
-        assert!((audible.peak() - TONE_AMPLITUDE).abs() < 1e-5);
+        let settled = audible.slice(FADE_FRAMES, 2_048 - FADE_FRAMES).peak();
+        assert!((settled - TONE_AMPLITUDE).abs() < 1e-5, "got {settled}");
+    }
+
+    #[test]
+    fn a_mute_fades_out_instead_of_stepping_to_silence() {
+        let project = one_note_project(Ticks::ZERO, Ticks::from_beats(4.0));
+        let mut graph = build(&project, 512);
+        let mut transport = Transport::playing_from(0);
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+        render_block(&mut graph, &mut transport, &mut out, false);
+
+        graph.set_track_mute(0, true);
+        render_block(&mut graph, &mut transport, &mut out, false);
+        // Still at full level where the fade starts, silent once it has run, and nowhere in
+        // between does one sample differ from the next by more than a single fade increment —
+        // which is the whole of the click this replaces.
+        assert!((out.channel(0)[0] - TONE_AMPLITUDE).abs() < 1e-5);
+        assert_eq!(out.slice(FADE_FRAMES, 512 - FADE_FRAMES).peak(), 0.0);
+        let biggest = out
+            .channel(0)
+            .windows(2)
+            .map(|pair| (pair[0] - pair[1]).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            biggest <= TONE_AMPLITUDE / FADE_FRAMES as f32 + 1e-6,
+            "the mute stepped by {biggest}"
+        );
+    }
+
+    #[test]
+    fn a_mute_fade_lands_on_the_same_samples_at_any_block_size() {
+        // The fade is counted in frames, not in blocks, so a small buffer must not stretch or
+        // shorten it. This is the same guarantee every other ramp in the renderer keeps.
+        let project = one_note_project(Ticks::ZERO, Ticks::from_beats(4.0));
+        let render = |block: usize| {
+            let mut graph = build(&project, block);
+            graph.set_track_mute(0, true);
+            render_range(&mut graph, &mut Transport::playing_from(0), 2_048, block)
+        };
+        assert_eq!(render(512).channel(0), render(64).channel(0));
+        assert_eq!(render(512).channel(0), render(1_000).channel(0));
+    }
+
+    #[test]
+    fn a_look_ahead_effect_does_not_drag_its_track_behind_the_others() {
+        // Two tracks playing the same note, one of them through an effect that hands its audio
+        // back late. Without compensation the plain track would arrive first and there would be
+        // a window where only one of the two is sounding; with it, they start together.
+        let mut project = Project::new("PDC", SAMPLE_RATE);
+        for name in ["Late", "Plain"] {
+            let track = project.add_instrument_track(name, testkit::TONE_ID);
+            let clip = project
+                .add_midi_clip(track, "c", Ticks::ZERO, Ticks::from_beats(4.0))
+                .unwrap();
+            project.midi_clip_mut(clip).unwrap().notes.push(Note::new(
+                60,
+                Ticks::ZERO,
+                Ticks::from_beats(4.0),
+            ));
+        }
+        let late = project.tracks[0].id;
+        project.add_effect(Some(late), testkit::LOOKAHEAD_ID);
+
+        let mut graph = build(&project, 512);
+        let rendered = render_range(&mut graph, &mut Transport::playing_from(0), 2_048, 512);
+
+        let lead_in = testkit::LOOKAHEAD_FRAMES;
+        assert_eq!(rendered.slice(0, lead_in).peak(), 0.0);
+        for frame in [lead_in, lead_in + 1, 1_000, 2_047] {
+            let sample = rendered.channel(0)[frame];
+            assert!(
+                (sample - 2.0 * TONE_AMPLITUDE).abs() < 1e-5,
+                "frame {frame} was {sample}: the two tracks are not in step"
+            );
+        }
+    }
+
+    #[test]
+    fn compensation_holds_at_any_block_size() {
+        let mut project = Project::new("PDC", SAMPLE_RATE);
+        for name in ["Late", "Plain"] {
+            let track = project.add_instrument_track(name, testkit::TONE_ID);
+            let clip = project
+                .add_midi_clip(track, "c", Ticks::from_beats(1.0), Ticks::from_beats(4.0))
+                .unwrap();
+            project.midi_clip_mut(clip).unwrap().notes.push(Note::new(
+                60,
+                Ticks::ZERO,
+                Ticks::from_beats(2.0),
+            ));
+        }
+        let late = project.tracks[0].id;
+        project.add_effect(Some(late), testkit::LOOKAHEAD_ID);
+
+        let render = |block: usize| {
+            let mut graph = build(&project, block);
+            render_range(&mut graph, &mut Transport::playing_from(0), 40_000, block)
+        };
+        assert_eq!(render(512).channel(0), render(97).channel(0));
+        assert_eq!(render(512).channel(0), render(4_096).channel(0));
     }
 
     #[test]
@@ -749,6 +864,65 @@ mod tests {
             "the wrapped block landed inside the note, so it must still sound"
         );
         assert_eq!(transport.position_frames, 13_048);
+    }
+
+    /// A pedal note over beats 0..4 with a second strike of the same pitch over beats 1..3.
+    fn overlapping_same_pitch_project() -> Project {
+        let mut project = Project::new("Overlap", SAMPLE_RATE);
+        let track = project.add_instrument_track("Pedal", testkit::TONE_ID);
+        let clip = project
+            .add_midi_clip(track, "c", Ticks::ZERO, Ticks::from_beats(8.0))
+            .unwrap();
+        let midi = project.midi_clip_mut(clip).unwrap();
+        midi.notes
+            .push(Note::new(60, Ticks::ZERO, Ticks::from_beats(4.0)));
+        midi.notes.push(Note::new(
+            60,
+            Ticks::from_beats(1.0),
+            Ticks::from_beats(2.0),
+        ));
+        project
+    }
+
+    #[test]
+    fn seeking_into_overlapping_notes_of_one_pitch_brings_all_of_them_back() {
+        // The tone's level counts held notes, so a chase that re-issued one note-on for a pitch
+        // sounding twice reads half as loud — and the first release that followed would then take
+        // the pedal with it.
+        let project = overlapping_same_pitch_project();
+        let mut graph = build(&project, 512);
+        // Frame 48 000 is beat 2: inside both notes.
+        let rendered = render_range(
+            &mut graph,
+            &mut Transport::playing_from(48_000),
+            60_000,
+            512,
+        );
+
+        assert!(
+            (rendered.channel(0)[0] - 2.0 * TONE_AMPLITUDE).abs() < 1e-5,
+            "both notes should be chased back, got {}",
+            rendered.channel(0)[0]
+        );
+        // The inner note ends at beat 3 (frame 72 000) and the pedal at beat 4 (frame 96 000).
+        assert!((rendered.channel(0)[24_100] - TONE_AMPLITUDE).abs() < 1e-5);
+        assert_eq!(rendered.channel(0)[48_100], 0.0);
+    }
+
+    #[test]
+    fn seeking_into_stacked_notes_matches_playing_through_them() {
+        let project = overlapping_same_pitch_project();
+        let mut straight = build(&project, 512);
+        let played = render_range(&mut straight, &mut Transport::playing_from(0), 108_000, 512);
+
+        let mut seeked = build(&project, 512);
+        let jumped = render_range(
+            &mut seeked,
+            &mut Transport::playing_from(48_000),
+            60_000,
+            512,
+        );
+        assert_eq!(&played.channel(0)[48_000..], jumped.channel(0));
     }
 
     #[test]

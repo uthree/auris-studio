@@ -627,6 +627,45 @@ mod tests {
     }
 
     #[test]
+    fn one_of_two_overlapping_notes_on_a_pitch_survives_the_first_release() {
+        // A pedal note with a second strike of the same pitch inside it. The release that ends
+        // the inner note must leave the pedal sounding, which it only does if each note-off is
+        // paired with one voice rather than with every voice at that pitch.
+        let mut rig = sine_rig();
+        rig.render(512, &[note_on(0, 60)]);
+        rig.render(512, &[note_on(0, 60)]);
+        assert_eq!(rig.instrument.active_voices(), 2);
+
+        rig.render(
+            512,
+            &[NoteEvent::NoteOff {
+                frame: 0,
+                pitch: 60,
+            }],
+        );
+        // Half a second is ten times the 50 ms release, so the voice that was let go has retired
+        // and anything still audible belongs to the note that was not.
+        let remaining = rig.render(24_000, &[]);
+        assert_eq!(rig.instrument.active_voices(), 1);
+        assert!(
+            peak_db(&remaining[12_000..]) > -12.0,
+            "the pedal note was cut short: {:.1} dBFS",
+            peak_db(&remaining[12_000..])
+        );
+
+        // The second off ends it, and a third has nothing left to pair with.
+        rig.render(
+            512,
+            &[NoteEvent::NoteOff {
+                frame: 0,
+                pitch: 60,
+            }],
+        );
+        rig.render(24_000, &[]);
+        assert_eq!(rig.instrument.active_voices(), 0);
+    }
+
+    #[test]
     fn more_notes_than_the_pool_holds_stay_finite() {
         let mut rig = sine_rig();
         let events: Vec<NoteEvent> = (0..32).map(|i| note_on(i * 4, 40 + i as u8)).collect();

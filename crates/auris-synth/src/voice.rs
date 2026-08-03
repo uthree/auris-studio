@@ -211,14 +211,30 @@ impl VoiceAllocator {
         Some(VoiceAssignment { index, stolen })
     }
 
-    /// Releases every held voice playing `pitch`, returning which ones they were.
+    /// Releases the oldest held voice playing `pitch`, returning which one it was.
+    ///
+    /// One voice, not every voice at that pitch: two overlapping notes on the same pitch are two
+    /// notes, and the arrangement schedules an on and an off for each of them. Releasing them all
+    /// would let the first note's off cut the second note short, which is audible whenever a part
+    /// holds a pedal note under a line that touches it. Pairing each off with a single voice, and
+    /// taking the oldest first, matches the offs to the ons in the order they arrived.
+    ///
+    /// The mask is empty when nothing at that pitch is held, which is what an off with no
+    /// matching on looks like.
     pub fn note_off(&mut self, pitch: u8) -> VoiceMask {
-        let mut mask = VoiceMask::empty();
-        for (index, slot) in self.slots.iter_mut().enumerate() {
-            if slot.state == VoiceState::Held && slot.pitch == pitch {
-                slot.state = VoiceState::Released;
-                mask.insert(index);
+        let mut oldest: Option<usize> = None;
+        for (index, slot) in self.slots.iter().enumerate() {
+            if slot.state != VoiceState::Held || slot.pitch != pitch {
+                continue;
             }
+            if oldest.is_none_or(|best| slot.age < self.slots[best].age) {
+                oldest = Some(index);
+            }
+        }
+        let mut mask = VoiceMask::empty();
+        if let Some(index) = oldest {
+            self.slots[index].state = VoiceState::Released;
+            mask.insert(index);
         }
         mask
     }
@@ -332,16 +348,37 @@ mod tests {
         allocator.prepare(4);
         allocator.note_on(60, 1.0);
         allocator.note_on(64, 1.0);
-        allocator.note_on(60, 1.0);
 
         let released = allocator.note_off(60);
-        assert_eq!(released.len(), 2);
-        assert!(released.contains(0) && released.contains(2));
-        assert!(!released.contains(1));
+        assert_eq!(released.len(), 1);
+        assert!(released.contains(0));
         assert_eq!(allocator.slot(1).unwrap().state, VoiceState::Held);
         // Still audible until the instrument retires them.
-        assert_eq!(allocator.active_count(), 3);
+        assert_eq!(allocator.active_count(), 2);
         assert!(allocator.note_off(60).is_empty());
+    }
+
+    #[test]
+    fn each_note_off_releases_one_voice_oldest_first() {
+        // Two overlapping notes on one pitch are two notes. The first off must release only the
+        // first of them, or a pedal note would be cut short by the line that crosses it.
+        let mut allocator = VoiceAllocator::new();
+        allocator.prepare(4);
+        allocator.note_on(60, 1.0);
+        allocator.note_on(64, 1.0);
+        allocator.note_on(60, 1.0);
+
+        let first = allocator.note_off(60);
+        assert_eq!(first.len(), 1);
+        assert!(first.contains(0), "the older of the two should go first");
+        assert_eq!(allocator.slot(2).unwrap().state, VoiceState::Held);
+
+        let second = allocator.note_off(60);
+        assert!(second.contains(2));
+        assert!(
+            allocator.note_off(60).is_empty(),
+            "a third off has nothing left to pair with"
+        );
     }
 
     #[test]

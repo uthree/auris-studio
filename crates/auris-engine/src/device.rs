@@ -229,6 +229,7 @@ fn start_with_device(
     let meters = Arc::new(MeterBank::new(settings.meter_tracks));
     let running = Arc::new(AtomicBool::new(false));
     let playing = Arc::new(AtomicBool::new(false));
+    let latency_stale = Arc::new(AtomicBool::new(false));
 
     let sample_rate = f64::from(setup.config.sample_rate);
     let channel_count = usize::from(setup.config.channels).max(1);
@@ -243,6 +244,7 @@ fn start_with_device(
             Arc::clone(&playhead),
             Arc::clone(&meters),
             Arc::clone(&playing),
+            Arc::clone(&latency_stale),
             sample_rate,
             channel_count,
             max_block,
@@ -283,6 +285,7 @@ fn start_with_device(
         meters,
         running,
         playing,
+        latency_stale,
         sample_rate,
         channel_count,
         max_block: setup.max_block,
@@ -320,9 +323,11 @@ pub fn start_silent(settings: &AudioSettings) -> (AudioDevice, EngineHandle) {
         playhead: Arc::new(AtomicU64::new(0)),
         meters: Arc::new(MeterBank::new(settings.meter_tracks)),
         running: Arc::new(AtomicBool::new(false)),
-        // A silent engine never renders, so nothing ever sets this; the transport reads as
-        // stopped, which is exactly what the UI should show with no output device.
+        // A silent engine never renders, so nothing ever sets these; the transport reads as
+        // stopped, which is exactly what the UI should show with no output device, and no graph
+        // is ever installed for its compensation to go stale.
         playing: Arc::new(AtomicBool::new(false)),
+        latency_stale: Arc::new(AtomicBool::new(false)),
         sample_rate,
         channel_count: 2,
         max_block,
@@ -477,6 +482,12 @@ pub(crate) struct AudioEngine {
     meters: Arc<MeterBank>,
     /// Mirrors `transport.playing` for the UI, published once per callback.
     playing: Arc<AtomicBool>,
+    /// Set when the graph's delay compensation no longer matches what its chains need.
+    ///
+    /// Published only when a command could have changed it, rather than every callback: the
+    /// answer costs a virtual call per effect, and nothing but writing an effect parameter can
+    /// move it — every other way of changing a chain arrives as a whole new graph.
+    latency_stale: Arc<AtomicBool>,
     scratch: AudioBuffer,
     sample_rate: f64,
     channels: usize,
@@ -484,7 +495,7 @@ pub(crate) struct AudioEngine {
 }
 
 impl AudioEngine {
-    // Eight arguments, all of them shared state the callback needs; grouping them into a struct
+    // Nine arguments, all of them shared state the callback needs; grouping them into a struct
     // would only move the same list one level down.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -493,6 +504,7 @@ impl AudioEngine {
         playhead: Arc<AtomicU64>,
         meters: Arc<MeterBank>,
         playing: Arc<AtomicBool>,
+        latency_stale: Arc<AtomicBool>,
         sample_rate: f64,
         channels: usize,
         max_block: usize,
@@ -509,11 +521,21 @@ impl AudioEngine {
             playhead,
             meters,
             playing,
+            latency_stale,
             scratch,
             sample_rate,
             channels: channels.max(1),
             max_block,
         }
+    }
+
+    /// Republishes whether the graph's compensation still matches its chains.
+    fn publish_latency(&self) {
+        let stale = self
+            .graph
+            .as_ref()
+            .is_some_and(|graph| graph.latency_is_stale());
+        self.latency_stale.store(stale, Ordering::Relaxed);
     }
 
     /// Fills one interleaved device buffer. This is the realtime path.
@@ -612,6 +634,9 @@ impl AudioEngine {
                 if let Some(previous) = self.graph.replace(graph) {
                     self.retire(previous);
                 }
+                // A freshly built graph is compensated for its own chains, so this clears any
+                // staleness the graph it replaced had reported.
+                self.publish_latency();
             }
             EngineCommand::Play => self.transport.playing = true,
             EngineCommand::Stop => {
@@ -666,6 +691,9 @@ impl AudioEngine {
                 if let Some(graph) = &mut self.graph {
                     graph.set_effect_param(track, slot, param, value);
                 }
+                // A look-ahead length is a parameter like any other, so this is the one command
+                // that can leave the delay lines compensating for the wrong number of frames.
+                self.publish_latency();
             }
             EngineCommand::SetInstrumentParam {
                 track,
@@ -716,6 +744,7 @@ where
 mod tests {
     use super::*;
     use crate::testkit::{self, TONE_AMPLITUDE};
+    use auris_core::ParamId;
     use auris_core::project::{AudioSourceBank, Note, Project};
     use auris_core::time::Ticks;
 
@@ -761,6 +790,7 @@ mod tests {
             graph_tx,
             Arc::clone(&playhead),
             Arc::clone(&meters),
+            Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
             SAMPLE_RATE,
             2,
@@ -899,6 +929,7 @@ mod tests {
             Arc::new(AtomicU64::new(0)),
             Arc::new(MeterBank::new(8)),
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
             SAMPLE_RATE,
             channels,
             256,
@@ -940,6 +971,73 @@ mod tests {
     }
 
     #[test]
+    fn a_parameter_that_moves_a_plugins_latency_reports_the_graph_as_stale() {
+        // Every other way of changing a chain arrives as a whole new graph, so this is the only
+        // path that can leave the delay lines compensating for a length no longer being used.
+        // The audio thread cannot re-size them itself — that would allocate — so it raises a flag
+        // and the session rebuilds.
+        let (command_tx, command_rx) = crossbeam_channel::bounded(16);
+        let (graph_tx, graph_rx) = crossbeam_channel::bounded(16);
+        let latency_stale = Arc::new(AtomicBool::new(false));
+        let mut engine = AudioEngine::new(
+            command_rx,
+            graph_tx,
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(MeterBank::new(8)),
+            Arc::new(AtomicBool::new(false)),
+            Arc::clone(&latency_stale),
+            SAMPLE_RATE,
+            2,
+            256,
+        );
+
+        let mut project = held_note_project();
+        let track = project.tracks[0].id;
+        project.add_effect(Some(track), testkit::LOOKAHEAD_ID);
+        project.add_instrument_track("Plain", testkit::TONE_ID);
+        let built = Box::new(RenderGraph::build(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            256,
+        ));
+
+        let mut data = [0.0f32; 512];
+        command_tx.send(EngineCommand::SetGraph(built)).unwrap();
+        engine.fill(&mut data);
+        assert!(
+            !latency_stale.load(Ordering::Relaxed),
+            "a freshly built graph compensates for its own chains"
+        );
+
+        command_tx
+            .send(EngineCommand::SetEffectParam {
+                track: Some(0),
+                slot: 0,
+                param: ParamId(0),
+                value: 0.0,
+            })
+            .unwrap();
+        engine.fill(&mut data);
+        assert!(
+            latency_stale.load(Ordering::Relaxed),
+            "shortening the look-ahead left the other track compensated for the old length"
+        );
+
+        // Installing a rebuilt graph clears it again.
+        let rebuilt = Box::new(RenderGraph::build(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            256,
+        ));
+        command_tx.send(EngineCommand::SetGraph(rebuilt)).unwrap();
+        engine.fill(&mut data);
+        assert!(!latency_stale.load(Ordering::Relaxed));
+        drop(graph_rx);
+    }
+
+    #[test]
     fn retired_graphs_survive_a_full_return_queue() {
         let (command_tx, command_rx) = crossbeam_channel::bounded(64);
         // A return queue far too small for the traffic, so the stash is exercised.
@@ -949,6 +1047,7 @@ mod tests {
             graph_tx,
             Arc::new(AtomicU64::new(0)),
             Arc::new(MeterBank::new(8)),
+            Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
             SAMPLE_RATE,
             2,

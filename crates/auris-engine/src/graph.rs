@@ -41,9 +41,9 @@ const DEFAULT_SAMPLE_RATE: f64 = 48_000.0;
 /// Room left in each track's per-block event buffer for notes played from the UI.
 const AUDITION_HEADROOM: usize = 16;
 
-/// Room left in the same buffer for the note-chase after a seek or a loop wrap: one event per
-/// MIDI pitch, plus the all-notes-off that precedes them.
-pub(crate) const CHASE_HEADROOM: usize = 129;
+/// Room the note-chase needs on top of whatever it is re-issuing: the all-notes-off that clears
+/// the old position before the notes belonging to the new one go in.
+pub(crate) const CHASE_HEADROOM: usize = 1;
 
 /// Number of MIDI pitches, and therefore the size of the chase table.
 pub(crate) const PITCH_COUNT: usize = 128;
@@ -184,6 +184,188 @@ fn sane_gain(gain: f32) -> f32 {
     if gain.is_finite() { gain } else { 0.0 }
 }
 
+/// How long a mute takes to close or open, in milliseconds.
+///
+/// Short enough that a mute still feels instant under the finger, long enough that the step it
+/// replaces is inaudible. At 48 kHz it is 240 frames — under half a typical block, so in practice
+/// a mute is silent by the end of the block it was pressed in.
+pub(crate) const MUTE_FADE_MS: f64 = 5.0;
+
+/// The mute switch as a gain sliding between silence and unity.
+///
+/// A mute that took effect within one sample would step the waveform to zero, and a step is a
+/// click. Sliding over [`MUTE_FADE_MS`] instead costs nothing audible and removes it.
+///
+/// The slide is counted in *frames*, not in blocks, which is what keeps it — like every other
+/// ramp in the renderer — independent of the block size: splitting a block in two and rendering
+/// the halves separately lands on the same samples, because a linear ramp cut anywhere is still
+/// the same linear ramp.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct MuteFade {
+    /// Frames the slide takes end to end.
+    length: usize,
+    /// How far up the slide the gain currently sits: `0` is silence, `length` is unity.
+    ///
+    /// Counted in frames rather than held as a gain because the slide advances by exactly one
+    /// frame per frame. That is what makes it block-size independent by construction: there is
+    /// no accumulated float position to drift depending on where the blocks happen to fall.
+    position: usize,
+    open: bool,
+}
+
+/// How far the fade slid across one block, and over how many frames of it.
+///
+/// `moving` is usually the whole block, but a fade that reaches its end partway through reports
+/// only the frames it actually covered; the rest of the block sits at the settled value.
+struct FadeStep {
+    /// Position the fade sat at on the block's first frame.
+    first: usize,
+    /// Whether the position climbs or falls across the block.
+    opening: bool,
+    /// Frames the fade slides over before settling.
+    moving: usize,
+}
+
+impl MuteFade {
+    /// A fade already settled: at unity when `open`, at silence otherwise.
+    ///
+    /// Settled rather than mid-slide, so a project that opens with a track already muted starts
+    /// silent instead of fading in over its first block.
+    fn new(open: bool, sample_rate: f64) -> Self {
+        let length = (sample_rate * MUTE_FADE_MS / 1_000.0).round().max(1.0) as usize;
+        Self {
+            length,
+            position: if open { length } else { 0 },
+            open,
+        }
+    }
+
+    /// Aims the fade at unity or at silence. Nothing moves until [`Self::advance`] runs.
+    fn set_open(&mut self, open: bool) {
+        self.open = open;
+    }
+
+    /// `true` once the fade has reached silence, so the strip can be skipped outright rather
+    /// than rendered into samples that are about to be multiplied by zero.
+    fn is_closed(&self) -> bool {
+        !self.open && self.position == 0
+    }
+
+    /// `true` once the fade has reached unity, so the pass over the buffer can be skipped.
+    fn is_open(&self) -> bool {
+        self.open && self.position == self.length
+    }
+
+    /// Gain of the frame `offset` frames into a slide that began at `first`.
+    ///
+    /// Derived from the position rather than accumulated frame by frame, so the value for a given
+    /// frame is the same however the block containing it was cut up. An accumulating `gain +=
+    /// step` drifts by a rounding error per frame and the drift depends on where the block
+    /// boundaries fell, which is exactly the dependence this is here to avoid.
+    fn gain_at(&self, first: usize, opening: bool, offset: usize) -> f32 {
+        let position = if opening {
+            first + offset
+        } else {
+            first - offset
+        };
+        position as f32 / self.length as f32
+    }
+
+    /// Consumes up to `frames` frames of the slide.
+    fn advance(&mut self, frames: usize) -> FadeStep {
+        let first = self.position;
+        let remaining = if self.open {
+            self.length - self.position
+        } else {
+            self.position
+        };
+        let moving = remaining.min(frames);
+        self.position = if self.open {
+            self.position + moving
+        } else {
+            self.position - moving
+        };
+        FadeStep {
+            first,
+            opening: self.open,
+            moving,
+        }
+    }
+}
+
+/// A fixed whole-frame delay, used to line the tracks up with each other.
+///
+/// An effect that looks ahead — the limiter is the one that ships — can only do so by handing
+/// back audio it has already held on to, so its output arrives late by however many frames it
+/// declares in [`Effect::latency_frames`]. That is not a fault to be removed; it is what makes
+/// the effect possible. What has to be removed is the *difference*: a track carrying such an
+/// effect would otherwise play behind the tracks that do not, and a mix where one part drags is
+/// wrong in a way no fader can fix.
+///
+/// So every track is delayed up to the longest chain in the graph. The whole mix then sits that
+/// far behind the playhead, which for playback is latency the engine cannot avoid and for an
+/// export is a lead-in that [`render_project`](crate::render_project) drops.
+///
+/// The buffer is a ring per channel, sized once here; [`Self::process`] only swaps samples in and
+/// out of it, so it allocates nothing and is safe on the audio thread.
+pub(crate) struct LatencyDelay {
+    lines: Vec<Vec<f32>>,
+    frames: usize,
+    write: usize,
+}
+
+impl LatencyDelay {
+    /// A delay of `frames` frames on `channels` channels. Zero frames is free and does nothing.
+    fn new(frames: usize, channels: usize) -> Self {
+        Self {
+            lines: if frames == 0 {
+                Vec::new()
+            } else {
+                vec![vec![0.0; frames]; channels]
+            },
+            frames,
+            write: 0,
+        }
+    }
+
+    /// Frames this delay holds back.
+    fn frames(&self) -> usize {
+        self.frames
+    }
+
+    /// Delays `buffer` in place.
+    ///
+    /// Every channel starts from the same ring position, so they stay in phase with each other;
+    /// the shared write cursor is only moved on once they have all been walked.
+    pub(crate) fn process(&mut self, buffer: &mut AudioBuffer) {
+        if self.frames == 0 {
+            return;
+        }
+        let start = self.write;
+        let mut finished = start;
+        for (samples, line) in buffer.channels_mut().iter_mut().zip(&mut self.lines) {
+            let mut position = start;
+            for sample in samples.iter_mut() {
+                std::mem::swap(sample, &mut line[position]);
+                position += 1;
+                if position == self.frames {
+                    position = 0;
+                }
+            }
+            finished = position;
+        }
+        self.write = finished;
+    }
+
+    /// Empties the delay, so nothing held from before a panic comes back afterwards.
+    fn reset(&mut self) {
+        for line in &mut self.lines {
+            line.fill(0.0);
+        }
+        self.write = 0;
+    }
+}
+
 /// Registry id reported by the stand-in for an effect that could not be created.
 pub(crate) const MISSING_EFFECT_ID: &str = "auris.engine.missing";
 
@@ -233,6 +415,8 @@ pub struct RenderStrip {
     pan_current: f32,
     pub(crate) mute: bool,
     pub(crate) audible: bool,
+    /// Mute and solo as a gain, so switching either one slides instead of stepping.
+    pub(crate) fade: MuteFade,
     pub(crate) effects: Vec<Box<dyn Effect>>,
     /// Bypass flags, parallel to `effects`, so toggling a bypass keeps slot indices stable.
     pub(crate) enabled: Vec<bool>,
@@ -240,7 +424,10 @@ pub struct RenderStrip {
 
 impl RenderStrip {
     /// A strip with no effects.
-    pub fn new(gain_db: f32, pan: f32, mute: bool, audible: bool) -> Self {
+    ///
+    /// `sample_rate` sizes the mute fade, which is measured in milliseconds and therefore has to
+    /// know how many frames one of those is.
+    pub fn new(gain_db: f32, pan: f32, mute: bool, audible: bool, sample_rate: f64) -> Self {
         let pan = pan.clamp(-1.0, 1.0);
         Self {
             gain: SmoothedGain::new(db_to_gain(gain_db)),
@@ -248,6 +435,7 @@ impl RenderStrip {
             pan_current: pan,
             mute,
             audible,
+            fade: MuteFade::new(audible && !mute, sample_rate),
             effects: Vec::new(),
             enabled: Vec::new(),
         }
@@ -266,7 +454,13 @@ impl RenderStrip {
         registry: &PluginRegistry,
         prepare: &PrepareContext,
     ) -> Self {
-        let mut strip = Self::new(mixer.gain_db, mixer.pan, mixer.mute, audible);
+        let mut strip = Self::new(
+            mixer.gain_db,
+            mixer.pan,
+            mixer.mute,
+            audible,
+            prepare.sample_rate,
+        );
         strip.effects.reserve(mixer.effects.len());
         strip.enabled.reserve(mixer.effects.len());
         for slot in &mixer.effects {
@@ -294,8 +488,20 @@ impl RenderStrip {
     }
 
     /// `true` when this strip should contribute to the mix.
+    ///
+    /// This is the switch position, not what is coming out: a strip muted a moment ago is already
+    /// inactive while its fade is still sliding down. Use [`Self::is_silent`] to decide whether
+    /// there is anything left to render.
     pub fn is_active(&self) -> bool {
         self.audible && !self.mute
+    }
+
+    /// `true` when the strip is muted *and* has finished fading out.
+    ///
+    /// Until then a muted strip still has to be rendered, because the fade needs samples to slide
+    /// down; afterwards it produces nothing but zeroes and can be skipped outright.
+    pub fn is_silent(&self) -> bool {
+        self.fade.is_closed()
     }
 
     /// Current fader position as a linear gain.
@@ -318,14 +524,16 @@ impl RenderStrip {
         self.pan = pan.clamp(-1.0, 1.0);
     }
 
-    /// Sets the strip's own mute switch.
+    /// Sets the strip's own mute switch. The change is faded in or out, not stepped.
     pub fn set_mute(&mut self, mute: bool) {
         self.mute = mute;
+        self.fade.set_open(self.is_active());
     }
 
-    /// Sets the solo-resolved audibility flag.
+    /// Sets the solo-resolved audibility flag. Faded like a mute, for the same reason.
     pub fn set_audible(&mut self, audible: bool) {
         self.audible = audible;
+        self.fade.set_open(self.is_active());
     }
 
     /// Number of slots in the chain, which always matches the project's chain length: a plugin
@@ -334,19 +542,39 @@ impl RenderStrip {
         self.effects.len()
     }
 
-    /// Longest tail declared by any *enabled* effect in the chain.
+    /// How long the chain keeps producing sound after its input stops, in frames.
+    ///
+    /// The slots are in series, so their tails add up rather than overlap: a delay ringing for
+    /// two seconds into a reverb that rings for three keeps the chain sounding for five, because
+    /// the reverb is still being fed for the whole of the delay's decay.
     ///
     /// A bypassed slot never has `process` called on it, so it cannot ring out and must not
     /// lengthen an export. That is also what makes the placeholder for a missing plugin free:
     /// it is always bypassed, so it can never claim a tail it could not produce.
+    ///
+    /// Saturating rather than wrapping, because the figures come from plugins: one that reports
+    /// a nonsense tail should pad an export, not overflow the length it is added to.
     pub fn tail_frames(&self) -> usize {
         self.effects
             .iter()
             .zip(&self.enabled)
             .filter(|(_, enabled)| **enabled)
             .map(|(effect, _)| effect.tail_frames())
-            .max()
-            .unwrap_or(0)
+            .fold(0usize, usize::saturating_add)
+    }
+
+    /// How late this chain's output is, in frames.
+    ///
+    /// Summed rather than maximised for the same reason as [`Self::tail_frames`]: the slots run
+    /// in series, so each one holds the audio back on top of whatever the one before it did. A
+    /// bypassed slot never sees a sample and so delays nothing.
+    pub fn latency_frames(&self) -> usize {
+        self.effects
+            .iter()
+            .zip(&self.enabled)
+            .filter(|(_, enabled)| **enabled)
+            .map(|(effect, _)| effect.latency_frames())
+            .fold(0usize, usize::saturating_add)
     }
 
     /// Writes a parameter on one effect. Out-of-range slots are ignored.
@@ -393,6 +621,37 @@ impl RenderStrip {
             }
         }
     }
+
+    /// Applies the mute fade, the last stage of the strip.
+    ///
+    /// Kept out of [`Self::apply_gain_and_pan`] rather than folded into its ramp because the two
+    /// are independent ramps: multiplying them together within a block would be a curve, not a
+    /// line, and the fade has to stay a straight line for splitting a block to be free. It costs
+    /// a pass over the buffer only while a mute is actually moving — a strip settled open returns
+    /// immediately, which is every strip almost all of the time.
+    pub(crate) fn apply_mute(&mut self, buffer: &mut AudioBuffer) {
+        if self.fade.is_open() {
+            return;
+        }
+        if self.fade.is_closed() {
+            buffer.clear();
+            return;
+        }
+        let step = self.fade.advance(buffer.frame_count());
+        // A fade that reached its end partway through the block leaves a settled remainder: held
+        // at silence when it closed, and left untouched when it opened, because that is unity.
+        let fill_rest = self.fade.is_closed();
+        for channel in buffer.channels_mut() {
+            let split = step.moving.min(channel.len());
+            let (sliding, settled) = channel.split_at_mut(split);
+            for (offset, sample) in sliding.iter_mut().enumerate() {
+                *sample *= self.fade.gain_at(step.first, step.opening, offset);
+            }
+            if fill_rest {
+                settled.fill(0.0);
+            }
+        }
+    }
 }
 
 /// Multiplies `samples` by a gain sweeping linearly from `start` to `end`.
@@ -422,6 +681,8 @@ pub struct RenderTrack {
     pub name: String,
     pub(crate) source: RenderSource,
     pub(crate) strip: RenderStrip,
+    /// Holds this track back to the longest chain in the graph, so the tracks line up.
+    pub(crate) delay: LatencyDelay,
     pub(crate) scratch: AudioBuffer,
     /// Events handed to the instrument for the current block, block-relative and sorted.
     pub(crate) block_events: Vec<NoteEvent>,
@@ -443,6 +704,11 @@ impl RenderTrack {
     /// The track's mixer strip.
     pub fn strip(&self) -> &RenderStrip {
         &self.strip
+    }
+
+    /// Frames this track is held back by to match the longest chain in the graph.
+    pub fn compensation_frames(&self) -> usize {
+        self.delay.frames()
     }
 
     /// The track's mixer strip, mutably.
@@ -524,6 +790,12 @@ pub struct RenderGraph {
     pub(crate) master: RenderStrip,
     sample_rate: f64,
     max_block: usize,
+    /// Track latency the delay lines were sized against, in frames.
+    ///
+    /// Kept rather than recomputed so it can be compared with [`Self::required_latency`]: a
+    /// parameter that moves a plugin's latency after the graph was built leaves the two
+    /// disagreeing, and that disagreement is the signal to rebuild.
+    compensation: usize,
     tempo_map: TempoMap,
     pub(crate) master_scratch: AudioBuffer,
     pub(crate) master_peak: [f32; 2],
@@ -597,9 +869,19 @@ impl RenderGraph {
                 TrackKind::Audio(audio_track) => {
                     let mut clips = Vec::with_capacity(audio_track.clips.len());
                     for clip in &audio_track.clips {
-                        if let Some(resolved) =
-                            resolve_audio_clip(clip, bank, &project.tempo_map, sample_rate)
-                        {
+                        // A clip's trim is counted in the frames of the file it came from, which
+                        // is not necessarily the rate this graph renders at.
+                        let source_rate = project
+                            .audio_sources
+                            .get(&clip.source)
+                            .map_or(project.sample_rate, |source| source.sample_rate);
+                        if let Some(resolved) = resolve_audio_clip(
+                            clip,
+                            bank,
+                            &project.tempo_map,
+                            sample_rate,
+                            source_rate,
+                        ) {
                             clips.push(resolved);
                         }
                     }
@@ -608,11 +890,14 @@ impl RenderGraph {
                 }
             };
 
-            let event_headroom = match &source {
-                RenderSource::Instrument { events, .. } => {
-                    max_events_in_window(events, max_block as u64)
-                }
-                _ => 0,
+            // Two independent bounds on the per-block event buffer: how many scheduled events
+            // can fall inside one block, and how many notes the chase can re-issue after a jump.
+            let (event_headroom, chase_headroom) = match &source {
+                RenderSource::Instrument { events, .. } => (
+                    max_events_in_window(events, max_block as u64),
+                    max_sounding_notes(events) + CHASE_HEADROOM,
+                ),
+                _ => (0, 0),
             };
             let mut scratch = AudioBuffer::new(RENDER_CHANNELS, max_block, sample_rate);
             scratch.reserve_frames(max_block);
@@ -622,9 +907,11 @@ impl RenderGraph {
                 name: track.name.clone(),
                 source,
                 strip,
+                // Sized below, once every chain's latency is known.
+                delay: LatencyDelay::new(0, RENDER_CHANNELS),
                 scratch,
                 block_events: Vec::with_capacity(
-                    event_headroom + AUDITION_HEADROOM + CHASE_HEADROOM,
+                    event_headroom + AUDITION_HEADROOM + chase_headroom,
                 ),
                 audition: Vec::with_capacity(AUDITION_HEADROOM),
                 continued_from: None,
@@ -632,6 +919,20 @@ impl RenderGraph {
                 chase_velocity: [0.0; PITCH_COUNT],
                 peak: 0.0,
             });
+        }
+
+        // Plugin delay compensation. The tracks run in parallel into one bus, so they can only
+        // stay in step if each is held back to the longest chain among them; the difference is
+        // what each track's delay line is for, and a graph where nothing looks ahead allocates
+        // nothing here because every difference is zero.
+        let compensation = tracks
+            .iter()
+            .map(|track| track.strip.latency_frames())
+            .max()
+            .unwrap_or(0);
+        for track in &mut tracks {
+            let behind = compensation - track.strip.latency_frames();
+            track.delay = LatencyDelay::new(behind, RENDER_CHANNELS);
         }
 
         let master = RenderStrip::from_mixer(&project.master, true, registry, &prepare);
@@ -643,6 +944,7 @@ impl RenderGraph {
             master,
             sample_rate,
             max_block,
+            compensation,
             tempo_map: project.tempo_map.clone(),
             master_scratch,
             master_peak: [0.0, 0.0],
@@ -729,7 +1031,11 @@ impl RenderGraph {
         self.master_peak[0].max(self.master_peak[1])
     }
 
-    /// Longest effect tail anywhere in the graph, in frames.
+    /// How long the graph keeps producing sound after its last event, in frames.
+    ///
+    /// Tracks run in parallel, so the longest of them decides when the mix bus stops being fed.
+    /// The master chain runs *after* that, so its own tail begins only once the last track has
+    /// finished decaying and adds on the end rather than overlapping.
     ///
     /// The offline renderer keeps going for this long past the end of the arrangement so that
     /// reverbs and delays are not chopped off in the exported file.
@@ -739,7 +1045,35 @@ impl RenderGraph {
             .map(|track| track.strip.tail_frames())
             .max()
             .unwrap_or(0)
-            .max(self.master.tail_frames())
+            .saturating_add(self.master.tail_frames())
+    }
+
+    /// How far behind the playhead this graph's output runs, in frames.
+    ///
+    /// The tracks are all held back to the longest chain among them, and the master chain adds
+    /// its own on top of that. Playback simply arrives this late; an export renders the extra
+    /// frames and drops them, so the file still lines up with the timeline.
+    pub fn latency_frames(&self) -> usize {
+        self.compensation
+            .saturating_add(self.master.latency_frames())
+    }
+
+    /// Track latency the graph would be built for if it were built now.
+    ///
+    /// Equal to what it *was* built for until a parameter moves a plugin's latency — nothing but
+    /// the limiter's lookahead does today — because every other way of changing a chain rebuilds
+    /// the graph outright. A caller that sees these two disagree should rebuild.
+    pub fn required_latency(&self) -> usize {
+        self.tracks
+            .iter()
+            .map(|track| track.strip.latency_frames())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// `true` when the delay lines no longer match what the chains need.
+    pub fn latency_is_stale(&self) -> bool {
+        self.required_latency() != self.compensation
     }
 
     /// Last frame any scheduled event or audio clip touches.
@@ -848,6 +1182,7 @@ impl RenderGraph {
         for track in &mut self.tracks {
             track.silence_voices();
             track.strip.reset();
+            track.delay.reset();
             track.peak = 0.0;
         }
         self.master.reset();
@@ -918,11 +1253,19 @@ fn sort_events(events: &mut [ScheduledEvent]) {
 }
 
 /// Resolves a project audio clip against the sample bank.
+///
+/// `source_rate` is the rate the clip's frame counts — its trim, its length, its fades — are
+/// expressed in, which is the rate the file was decoded at. `sample_rate` is the rate this graph
+/// renders at, and the two are not always the same: an output device is free to run at 44.1 kHz
+/// under a 48 kHz project, and an export can be asked for any rate at all. Every frame count is
+/// therefore converted on the way in, and the caller is expected to have handed the bank buffers
+/// at the render rate to match.
 fn resolve_audio_clip(
     clip: &AudioClip,
     bank: &AudioSourceBank,
     tempo_map: &TempoMap,
     sample_rate: f64,
+    source_rate: f64,
 ) -> Option<RenderAudioClip> {
     if clip.muted {
         return None;
@@ -935,9 +1278,19 @@ fn resolve_audio_clip(
         );
         return None;
     };
+    // A nonsense rate in the document would otherwise scale every position to zero or to NaN.
+    let ratio = if source_rate.is_finite() && source_rate > 0.0 {
+        sample_rate / source_rate
+    } else {
+        1.0
+    };
+    // Casting a float to an integer saturates in Rust, so an absurd figure clamps rather than
+    // wrapping round to a small one.
+    let convert = |frames: u64| (frames as f64 * ratio).round() as u64;
+
     let available = buffer.frame_count() as u64;
-    let source_offset = clip.offset_frames.min(available);
-    let length = clip.length_frames.min(available - source_offset);
+    let source_offset = convert(clip.offset_frames).min(available);
+    let length = convert(clip.length_frames).min(available - source_offset);
     if length == 0 {
         return None;
     }
@@ -949,8 +1302,8 @@ fn resolve_audio_clip(
         source_offset,
         length,
         gain: db_to_gain(clip.gain_db),
-        fade_in: clip.fade_in_frames,
-        fade_out: clip.fade_out_frames,
+        fade_in: convert(clip.fade_in_frames),
+        fade_out: convert(clip.fade_out_frames),
     })
 }
 
@@ -959,6 +1312,32 @@ fn resolve_audio_clip(
 /// This is the exact bound the per-block event buffer needs: rendering never sees more than one
 /// window's worth at a time, so sizing to this makes the buffer allocation-free without ever
 /// dropping an event.
+/// Largest number of notes this track ever has sounding at once.
+///
+/// That is exactly what the chase after a seek has to be able to re-issue: it re-triggers every
+/// note spanning the new position, including several on one pitch when they overlap. Sizing the
+/// event buffer to this makes the chase allocation-free without ever dropping a note.
+///
+/// The events arrive sorted by frame with releases ranked ahead of strikes on the same frame, so
+/// a single pass over them is enough — a note ending exactly where the next begins never counts
+/// as two.
+fn max_sounding_notes(events: &[ScheduledEvent]) -> usize {
+    let mut sounding = 0usize;
+    let mut most = 0usize;
+    for scheduled in events {
+        match scheduled.event {
+            NoteEvent::NoteOn { .. } => {
+                sounding += 1;
+                most = most.max(sounding);
+            }
+            NoteEvent::NoteOff { .. } => sounding = sounding.saturating_sub(1),
+            NoteEvent::AllNotesOff { .. } | NoteEvent::AllSoundOff { .. } => sounding = 0,
+            NoteEvent::PitchBend { .. } => {}
+        }
+    }
+    most
+}
+
 fn max_events_in_window(events: &[ScheduledEvent], window: u64) -> usize {
     let mut best = 0;
     let mut low = 0;
@@ -1075,6 +1454,165 @@ mod tests {
         assert!(strip.enabled[1]);
         // The placeholder declares no tail, so it cannot lengthen an export either.
         assert_eq!(strip.tail_frames(), 0);
+    }
+
+    #[test]
+    fn tails_add_up_along_a_chain() {
+        // Two ringing effects in series: the second is still being fed while the first decays,
+        // so the chain sounds for both tails end to end rather than for the longer of the two.
+        let mut project = Project::new("Tails", 48_000.0);
+        let track = project.add_instrument_track("Lead", testkit::TONE_ID);
+        project.add_effect(Some(track), testkit::TAIL_ID);
+        project.add_effect(Some(track), testkit::TAIL_ID);
+
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        assert_eq!(
+            graph.tracks()[0].strip().tail_frames(),
+            2 * testkit::TAIL_FRAMES
+        );
+    }
+
+    #[test]
+    fn a_bypassed_slot_contributes_nothing_to_the_sum() {
+        let mut project = Project::new("Tails", 48_000.0);
+        let track = project.add_instrument_track("Lead", testkit::TONE_ID);
+        project.add_effect(Some(track), testkit::TAIL_ID);
+        project.add_effect(Some(track), testkit::TAIL_ID);
+        project.tracks[0].mixer.effects[0].enabled = false;
+
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        assert_eq!(
+            graph.tracks()[0].strip().tail_frames(),
+            testkit::TAIL_FRAMES
+        );
+    }
+
+    #[test]
+    fn the_master_tail_follows_the_longest_track_tail_rather_than_overlapping_it() {
+        // Tracks are parallel, so the two of them together still only reach one tail's worth —
+        // but the master runs after both, so its tail starts where theirs ends.
+        let mut project = Project::new("Tails", 48_000.0);
+        let a = project.add_instrument_track("A", testkit::TONE_ID);
+        let b = project.add_instrument_track("B", testkit::TONE_ID);
+        project.add_effect(Some(a), testkit::TAIL_ID);
+        project.add_effect(Some(b), testkit::TAIL_ID);
+        project.add_effect(None, testkit::TAIL_ID);
+
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        assert_eq!(graph.tail_frames(), 2 * testkit::TAIL_FRAMES);
+    }
+
+    #[test]
+    fn a_nonsense_tail_saturates_instead_of_overflowing() {
+        // `tail_frames` is a figure a plugin chooses, so two greedy ones must not wrap the sum
+        // round to a short export.
+        let mut project = Project::new("Tails", 48_000.0);
+        let track = project.add_instrument_track("Lead", testkit::TONE_ID);
+        project.add_effect(Some(track), testkit::HUGE_TAIL_ID);
+        project.add_effect(Some(track), testkit::HUGE_TAIL_ID);
+        project.add_effect(None, testkit::HUGE_TAIL_ID);
+
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        assert_eq!(graph.tracks()[0].strip().tail_frames(), usize::MAX);
+        assert_eq!(graph.tail_frames(), usize::MAX);
+    }
+
+    #[test]
+    fn every_track_is_held_back_to_the_longest_chain() {
+        let mut project = Project::new("PDC", 48_000.0);
+        let late = project.add_instrument_track("Late", testkit::TONE_ID);
+        project.add_instrument_track("Plain", testkit::TONE_ID);
+        project.add_effect(Some(late), testkit::LOOKAHEAD_ID);
+
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        // The track that runs late needs no delay; the one that does not has to wait for it.
+        assert_eq!(graph.tracks()[0].compensation_frames(), 0);
+        assert_eq!(
+            graph.tracks()[1].compensation_frames(),
+            testkit::LOOKAHEAD_FRAMES
+        );
+        assert_eq!(graph.latency_frames(), testkit::LOOKAHEAD_FRAMES);
+        assert!(!graph.latency_is_stale());
+    }
+
+    #[test]
+    fn latencies_add_up_along_a_chain_and_the_master_adds_on_top() {
+        let mut project = Project::new("PDC", 48_000.0);
+        let track = project.add_instrument_track("Lead", testkit::TONE_ID);
+        project.add_effect(Some(track), testkit::LOOKAHEAD_ID);
+        project.add_effect(Some(track), testkit::LOOKAHEAD_ID);
+        project.add_effect(None, testkit::LOOKAHEAD_ID);
+
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        assert_eq!(
+            graph.tracks()[0].strip().latency_frames(),
+            2 * testkit::LOOKAHEAD_FRAMES
+        );
+        assert_eq!(graph.latency_frames(), 3 * testkit::LOOKAHEAD_FRAMES);
+    }
+
+    #[test]
+    fn a_bypassed_effect_delays_nothing_and_needs_no_compensation() {
+        let mut project = Project::new("PDC", 48_000.0);
+        let late = project.add_instrument_track("Late", testkit::TONE_ID);
+        project.add_instrument_track("Plain", testkit::TONE_ID);
+        project.add_effect(Some(late), testkit::LOOKAHEAD_ID);
+        project.tracks[0].mixer.effects[0].enabled = false;
+
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        assert_eq!(graph.latency_frames(), 0);
+        assert_eq!(graph.tracks()[1].compensation_frames(), 0);
+    }
+
+    #[test]
+    fn a_graph_with_nothing_to_compensate_allocates_no_delay_lines() {
+        let project = quarter_note_project();
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        assert_eq!(graph.latency_frames(), 0);
+        assert_eq!(graph.tracks()[0].compensation_frames(), 0);
+        assert!(graph.tracks()[0].delay.lines.is_empty());
+    }
+
+    #[test]
+    fn a_delay_line_hands_samples_back_a_fixed_number_of_frames_later() {
+        let mut delay = LatencyDelay::new(3, 2);
+        let mut buffer =
+            AudioBuffer::from_planar(vec![vec![1.0, 2.0, 3.0, 4.0]; 2], 48_000.0).expect("planar");
+        delay.process(&mut buffer);
+        // Three frames of the empty line come out first, then the input begins.
+        assert_eq!(buffer.channel(0), &[0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(buffer.channel(1), &[0.0, 0.0, 0.0, 1.0]);
+
+        let mut next =
+            AudioBuffer::from_planar(vec![vec![5.0, 6.0, 7.0, 8.0]; 2], 48_000.0).expect("planar");
+        delay.process(&mut next);
+        assert_eq!(next.channel(0), &[2.0, 3.0, 4.0, 5.0]);
+    }
+
+    #[test]
+    fn a_delay_line_reads_the_same_however_the_blocks_are_cut() {
+        let feed: Vec<f32> = (0..64).map(|index| index as f32).collect();
+        let run = |block: usize| {
+            let mut delay = LatencyDelay::new(7, 2);
+            let mut out = Vec::new();
+            for chunk in feed.chunks(block) {
+                let mut buffer =
+                    AudioBuffer::from_planar(vec![chunk.to_vec(); 2], 48_000.0).expect("planar");
+                delay.process(&mut buffer);
+                out.extend_from_slice(buffer.channel(0));
+            }
+            out
+        };
+        assert_eq!(run(64), run(5));
+        assert_eq!(run(64), run(1));
     }
 
     #[test]
@@ -1201,21 +1739,74 @@ mod tests {
     #[test]
     fn the_event_scratch_is_sized_for_the_densest_block() {
         // Six note-ons on frame 0; their releases are a quarter note away, so no 512-frame
-        // window ever holds more than six events.
+        // window ever holds more than six events — and six is also the most that can be sounding
+        // at once, so the chase needs room for six and the all-notes-off before them.
         let sparse = stacked_note_project(60..66, Ticks::QUARTER);
         let graph = RenderGraph::build(&sparse, &AudioSourceBank::new(), &testkit::registry(), 512);
         assert_eq!(
             graph.tracks()[0].block_events.capacity(),
-            6 + AUDITION_HEADROOM + CHASE_HEADROOM
+            6 + AUDITION_HEADROOM + 6 + CHASE_HEADROOM
         );
 
-        // Every pitch struck and released inside one block: 256 events in a single window, well
-        // past the 145 frames of fixed headroom, so the density term is what sizes the buffer.
+        // Every pitch struck and released inside one block: 256 events in a single window, twice
+        // the 128 that are ever sounding together, so the density term is what sizes the buffer.
         let dense = stacked_note_project(0..128, Ticks(1));
         let graph = RenderGraph::build(&dense, &AudioSourceBank::new(), &testkit::registry(), 512);
-        let expected = 256 + AUDITION_HEADROOM + CHASE_HEADROOM;
-        assert!(expected > AUDITION_HEADROOM + CHASE_HEADROOM);
+        let expected = 256 + AUDITION_HEADROOM + 128 + CHASE_HEADROOM;
         assert_eq!(graph.tracks()[0].block_events.capacity(), expected);
+    }
+
+    #[test]
+    fn the_chase_headroom_counts_overlapping_notes_on_one_pitch() {
+        // Four notes on the same pitch, each starting before the last has ended: all four are
+        // sounding together at the third strike, so a seek there has to re-issue four voices.
+        let mut project = Project::new("Overlap", 48_000.0);
+        let track = project.add_instrument_track("Pedal", testkit::TONE_ID);
+        let clip = project
+            .add_midi_clip(track, "c", Ticks::ZERO, Ticks::from_beats(16.0))
+            .unwrap();
+        let midi = project.midi_clip_mut(clip).unwrap();
+        for index in 0..4 {
+            midi.notes.push(Note::new(
+                60,
+                Ticks::from_beats(index as f64),
+                Ticks::from_beats(8.0),
+            ));
+        }
+
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        // One note-on per block at most, so density contributes 1.
+        assert_eq!(
+            graph.tracks()[0].block_events.capacity(),
+            1 + AUDITION_HEADROOM + 4 + CHASE_HEADROOM
+        );
+    }
+
+    #[test]
+    fn the_sounding_bound_ignores_notes_that_never_overlap() {
+        let events: Vec<ScheduledEvent> = [
+            (0u64, 60u8, true),
+            (10, 60, false),
+            (20, 62, true),
+            (30, 62, false),
+        ]
+        .into_iter()
+        .map(|(frame, pitch, on)| ScheduledEvent {
+            frame,
+            event: if on {
+                NoteEvent::NoteOn {
+                    frame: 0,
+                    pitch,
+                    velocity: 1.0,
+                }
+            } else {
+                NoteEvent::NoteOff { frame: 0, pitch }
+            },
+        })
+        .collect();
+        assert_eq!(max_sounding_notes(&events), 1);
+        assert_eq!(max_sounding_notes(&[]), 0);
     }
 
     #[test]
@@ -1270,6 +1861,71 @@ mod tests {
     }
 
     #[test]
+    fn a_clips_frame_counts_are_converted_to_the_render_rate() {
+        // The document counts a clip's trim in the frames of the file it came from. Rendering at
+        // another rate — an output device that disagrees with the project, or an export asked for
+        // a different rate — means those counts no longer measure the timeline, so they are
+        // converted rather than used as they stand.
+        let mut project = Project::new("Rate", 48_000.0);
+        let track = project.add_audio_track("Sample");
+        let source = project.add_audio_source("s", "s.wav".into(), 48_000, 48_000.0, 2);
+        let clip = project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
+        {
+            let clip = project.audio_clip_mut(clip).unwrap();
+            clip.offset_frames = 4_800;
+            clip.length_frames = 24_000;
+            clip.fade_in_frames = 480;
+            clip.fade_out_frames = 960;
+        }
+        // The bank holds the source converted to the rate the graph will render at.
+        let mut bank = AudioSourceBank::new();
+        bank.insert(source, Arc::new(AudioBuffer::stereo(96_000, 96_000.0)));
+
+        let graph = RenderGraph::build_at(&project, &bank, &testkit::registry(), 512, 96_000.0);
+        let RenderSource::Audio { clips } = &graph.tracks()[0].source else {
+            panic!("expected an audio source");
+        };
+        assert_eq!(clips[0].source_offset, 9_600);
+        assert_eq!(clips[0].length, 48_000);
+        assert_eq!(clips[0].fade_in, 960);
+        assert_eq!(clips[0].fade_out, 1_920);
+    }
+
+    #[test]
+    fn a_matching_rate_leaves_a_clips_frame_counts_alone() {
+        let mut project = Project::new("Rate", 48_000.0);
+        let track = project.add_audio_track("Sample");
+        let source = project.add_audio_source("s", "s.wav".into(), 1_000, 48_000.0, 2);
+        let clip = project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
+        project.audio_clip_mut(clip).unwrap().length_frames = 800;
+        let mut bank = AudioSourceBank::new();
+        bank.insert(source, Arc::new(AudioBuffer::stereo(1_000, 48_000.0)));
+
+        let graph = RenderGraph::build(&project, &bank, &testkit::registry(), 512);
+        let RenderSource::Audio { clips } = &graph.tracks()[0].source else {
+            panic!("expected an audio source");
+        };
+        assert_eq!(clips[0].length, 800);
+    }
+
+    #[test]
+    fn a_source_recorded_with_a_nonsense_rate_is_played_as_it_stands() {
+        // A corrupt document should not scale every position to zero or to NaN.
+        let mut project = Project::new("Rate", 48_000.0);
+        let track = project.add_audio_track("Sample");
+        let source = project.add_audio_source("s", "s.wav".into(), 1_000, 0.0, 2);
+        project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
+        let mut bank = AudioSourceBank::new();
+        bank.insert(source, Arc::new(AudioBuffer::stereo(1_000, 48_000.0)));
+
+        let graph = RenderGraph::build(&project, &bank, &testkit::registry(), 512);
+        let RenderSource::Audio { clips } = &graph.tracks()[0].source else {
+            panic!("expected an audio source");
+        };
+        assert_eq!(clips[0].length, 1_000);
+    }
+
+    #[test]
     fn a_smoothed_gain_ramps_once_then_settles() {
         let mut gain = SmoothedGain::new(1.0);
         assert_eq!(gain.advance(), (1.0, 1.0));
@@ -1280,7 +1936,7 @@ mod tests {
 
     #[test]
     fn a_centred_strip_at_unity_passes_audio_untouched() {
-        let mut strip = RenderStrip::new(0.0, 0.0, false, true);
+        let mut strip = RenderStrip::new(0.0, 0.0, false, true, 48_000.0);
         let mut buffer = AudioBuffer::from_planar(vec![vec![1.0; 4], vec![1.0; 4]], 48_000.0)
             .expect("planar buffer");
         strip.apply_gain_and_pan(&mut buffer);
@@ -1293,7 +1949,7 @@ mod tests {
 
     #[test]
     fn hard_panning_moves_all_the_energy_to_one_side() {
-        let mut strip = RenderStrip::new(0.0, 1.0, false, true);
+        let mut strip = RenderStrip::new(0.0, 1.0, false, true, 48_000.0);
         strip.pan_current = 1.0;
         let mut buffer = AudioBuffer::from_planar(vec![vec![1.0; 4], vec![1.0; 4]], 48_000.0)
             .expect("planar buffer");

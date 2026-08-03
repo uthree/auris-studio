@@ -97,13 +97,20 @@ Square and saw are PolyBLEP band-limited, so high notes stay clean instead of al
 | `auris.fx.distortion` | Distortion | Soft clip, hard clip, wavefolder, bitcrusher |
 | `auris.fx.limiter` | Limiter | Lookahead, so the ceiling is actually a ceiling |
 
-Effects can be chained on any track and on the master bus.
+Effects can be chained on any track and on the master bus. A chain that looks ahead — the limiter
+does — hands its audio back late, so every other track is held back to match it and the parts stay
+in step with each other. An export renders the resulting lead-in and drops it, so the file still
+lines up with the timeline.
 
 ### Export
 
 Render the whole project to a WAV file at 16-bit, 24-bit or 32-bit float, faster than
-realtime. The renderer keeps going past the last clip for as long as the longest effect tail,
-so reverb and delay decay naturally instead of being cut off.
+realtime. The renderer keeps going past the last clip for as long as the effects take to fall
+silent — the tails along a chain add up rather than overlap, because a delay feeding a reverb
+keeps feeding it for the whole of its own decay — so nothing is cut off.
+
+An export can be written at any sample rate; the sources are converted to it first, so a project
+exported at 96 kHz is the same piece rather than the same samples played faster.
 
 ### GPU acceleration
 
@@ -259,18 +266,17 @@ Effects work identically through the `Effect` trait.
 
 Honest list of what is not there yet, so nobody discovers these the hard way:
 
-* **No plugin delay compensation.** `Effect::latency_frames` is reported but not acted on, so
-  a latency-introducing effect shifts its track against the others. Every built-in effect is
-  zero-latency except the limiter.
-* **Effect tails take the maximum, not the sum.** A delay feeding a reverb exports a shorter
-  tail than it should.
-* **Audio sources are assumed to be at the render rate.** Import resamples to the project rate,
-  but if the output device runs at a different rate the engine does not resample again.
-* **Mute is a hard gate.** Toggling it during playback steps to zero within one sample rather
-  than ramping, which can click.
-* **Seeking into overlapping notes of the same pitch** re-triggers one note, so the first
-  following note-off cuts it short.
 * **No recording.** Audio tracks hold imported material only.
+* **Muting a track stops its effects.** The master bus keeps processing while muted, so its
+  reverb rings out and un-muting does not pop; a track is skipped once its mute has faded, which
+  is cheaper but cuts its tail off at the fade rather than letting it decay.
+* **Delay compensation is measured, not predicted.** A parameter that changes a plugin's latency
+  — the limiter's lookahead is the only one — is noticed after the fact rather than in advance, so
+  the tracks are out of step from the moment it moves until the graph is rebuilt: the next frame
+  for a single change, the end of the gesture for a drag.
+* **Latency compensation is per track, not per clip.** The whole mix plays back as far behind the
+  playhead as the longest chain needs, which is unavoidable, but it means turning on a
+  look-ahead effect anywhere raises the monitoring latency everywhere.
 
 ## Development
 

@@ -296,6 +296,11 @@ impl AudioSourceBank {
         self.buffers.remove(&id);
     }
 
+    /// Every loaded source and its audio, in id order.
+    pub fn iter(&self) -> impl Iterator<Item = (SourceId, &Arc<AudioBuffer>)> {
+        self.buffers.iter().map(|(id, buffer)| (*id, buffer))
+    }
+
     /// Number of loaded sources.
     pub fn len(&self) -> usize {
         self.buffers.len()
