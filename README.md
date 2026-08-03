@@ -178,6 +178,23 @@ recorded size, so a different one wearing the same name is not quietly adopted. 
 written back into the document, so the search happens once rather than on every open. Anything
 genuinely gone is reported, and the project still opens with that one track silent.
 
+### Settings, where dotfiles can reach them
+
+Preferences live in `~/.config/auris-studio/` on every platform — macOS and Windows included,
+rather than `~/Library/Application Support` and `%APPDATA%`:
+
+```
+~/.config/auris-studio/
+  settings.json       audio device, sample rate, buffer size, interface language
+  keymap.json         key bindings you have changed from the defaults
+  appearance.json     the chosen colour scheme
+```
+
+Three small JSON files, readable and hand-editable, in the directory a dotfiles repository is
+already checked out over. Set `AURIS_CONFIG_DIR` to name a directory outright, or `XDG_CONFIG_HOME`
+to move the parent. An installation predating the move keeps its settings: the old directory's
+files are copied across on the first run, never over a file already in the new place.
+
 ### Export
 
 Render the whole project to a WAV file at 16-bit, 24-bit or 32-bit float, faster than

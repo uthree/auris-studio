@@ -57,7 +57,7 @@ pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob};
 pub use session::{AudioStatus, ComposeReport, Session, SessionOptions};
-pub use settings::{AudioPreferences, Settings, config_dir};
+pub use settings::{AudioPreferences, CONFIG_DIR_VAR, Settings, config_dir, migrate_legacy_config};
 
 /// File extension of a saved project.
 pub use auris_io::PROJECT_EXTENSION;

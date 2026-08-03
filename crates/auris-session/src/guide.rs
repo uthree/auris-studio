@@ -651,7 +651,7 @@ pub mod platforms {
     //!
     //! Both run the desktop application and CI builds the whole workspace on both. Development
     //! happens on macOS, so the Windows-only paths are the ones that rot. Four rules keep them
-    //! honest.
+    //! honest, and one place deliberately breaks with both platforms' conventions at once.
     //!
     //! # Never name a platform key
     //!
@@ -695,4 +695,24 @@ pub mod platforms {
     //! `gpu-allocator` resolves `windows` to 0.61 while `wgpu-hal` uses 0.62. [`auris_gpu`] is
     //! optional analysis that steps aside when no backend is present, so a machine with neither
     //! still works — everything simply runs on the CPU.
+    //!
+    //! # One configuration directory, and it is not the platform's
+    //!
+    //! [`config_dir`](crate::config_dir) answers `~/.config/auris-studio` on macOS and on Windows
+    //! as well as on Linux, rather than `~/Library/Application Support` and `%APPDATA%`. Three
+    //! files live there — `settings.json` from this crate, `keymap.json` and `appearance.json`
+    //! from the desktop frontend — and they are small, hand-editable and worth version
+    //! controlling. The people who do that keep a dotfiles repository checked out over
+    //! `~/.config`, and a file in `%APPDATA%` cannot join it.
+    //!
+    //! It is the one rule above inverted on purpose, so it is worth being explicit about the
+    //! trade: the platform convention buys migration by an OS installer and a location a support
+    //! page can name, and neither is worth as much here as being able to carry a keymap between
+    //! two machines by cloning a repository. `AURIS_CONFIG_DIR` names the directory outright and
+    //! `XDG_CONFIG_HOME` moves its parent, for a setup that has already relocated one.
+    //!
+    //! [`migrate_legacy_config`](crate::migrate_legacy_config) carries an older installation's
+    //! files across on the first run after the move. It copies rather than moves and never writes
+    //! over a file already in the new place, so it is safe to call on every start-up — which both
+    //! frontends do, before the first `Settings::load`.
 }

@@ -4,15 +4,21 @@
 //! rate. A project file never carries them, because the machine that opens the file is rarely
 //! the machine that wrote it.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use auris_i18n::Language;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SessionError;
 
-/// Folder name used under the platform's configuration directory.
-const APP_FOLDER: &str = "AurisStudio";
+/// Folder name used under the user's configuration directory.
+const APP_FOLDER: &str = "auris-studio";
+
+/// Folder name earlier builds used, under the platform's own application-data directory.
+const LEGACY_APP_FOLDER: &str = "AurisStudio";
+
+/// Environment variable naming the configuration directory outright.
+pub const CONFIG_DIR_VAR: &str = "AURIS_CONFIG_DIR";
 
 /// Audio backend preferences.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -116,30 +122,109 @@ impl Settings {
 
 /// Directory this application keeps its configuration in.
 ///
-/// Hand-rolled rather than pulled from a crate: it is one match on `cfg!`, and the rules have
-/// not changed on any of these platforms in a decade.
+/// `~/.config/auris-studio` on every platform, including the two that have a convention of their
+/// own. That is deliberate: these files are small, hand-editable and worth version-controlling,
+/// and the people who do that keep a dotfiles repository checked out over `~/.config`. A
+/// configuration in `%APPDATA%` or in `~/Library/Application Support` cannot join it.
+///
+/// [`CONFIG_DIR_VAR`] overrides the answer outright, and `XDG_CONFIG_HOME` moves the parent —
+/// so a dotfiles setup that already relocates one can relocate this too.
 pub fn config_dir() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        home()
-            .join("Library")
-            .join("Application Support")
-            .join(APP_FOLDER)
+    resolve_config_dir(
+        std::env::var_os(CONFIG_DIR_VAR).map(PathBuf::from),
+        std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
+        &home(),
+    )
+}
+
+/// [`config_dir`] with the environment passed in, so it can be tested without setting variables.
+///
+/// An empty variable counts as unset. A shell that exports `XDG_CONFIG_HOME=` would otherwise
+/// put the configuration in `/auris-studio`.
+fn resolve_config_dir(override_dir: Option<PathBuf>, xdg: Option<PathBuf>, home: &Path) -> PathBuf {
+    let named = |dir: PathBuf| (!dir.as_os_str().is_empty()).then_some(dir);
+    if let Some(dir) = override_dir.and_then(named) {
+        return dir;
     }
-    #[cfg(target_os = "windows")]
-    {
+    xdg.and_then(named)
+        .unwrap_or_else(|| home.join(".config"))
+        .join(APP_FOLDER)
+}
+
+/// Directory builds before the move to [`config_dir`] kept their configuration in.
+///
+/// Read once, by [`migrate_legacy_config`], and never written to.
+fn legacy_config_dir() -> PathBuf {
+    let home = home();
+    if cfg!(target_os = "macos") {
+        home.join("Library")
+            .join("Application Support")
+            .join(LEGACY_APP_FOLDER)
+    } else if cfg!(target_os = "windows") {
         std::env::var_os("APPDATA")
             .map(PathBuf::from)
-            .unwrap_or_else(|| home().join("AppData").join("Roaming"))
-            .join(APP_FOLDER)
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
+            .unwrap_or_else(|| home.join("AppData").join("Roaming"))
+            .join(LEGACY_APP_FOLDER)
+    } else {
         std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
-            .unwrap_or_else(|| home().join(".config"))
-            .join(APP_FOLDER.to_lowercase())
+            .unwrap_or_else(|| home.join(".config"))
+            .join(LEGACY_APP_FOLDER.to_lowercase())
     }
+}
+
+/// Carries a configuration written before the move into the directory this build reads.
+///
+/// Call once at start-up, before anything is loaded. Returns what was carried across.
+///
+/// Every file is taken, not a list of the ones this crate knows about: `keymap.json` and
+/// `appearance.json` belong to the desktop frontend, and nothing at this level may name them.
+pub fn migrate_legacy_config() -> Vec<PathBuf> {
+    migrate_config(&legacy_config_dir(), &config_dir())
+}
+
+/// [`migrate_legacy_config`] with both directories passed in, so it can be tested.
+///
+/// Copies rather than moves, and never over a file that is already there. An older build left
+/// running keeps working, and running this twice does nothing the second time — which matters,
+/// because it runs on every start-up rather than behind a flag saying it has happened.
+fn migrate_config(from: &Path, to: &Path) -> Vec<PathBuf> {
+    if from == to {
+        return Vec::new();
+    }
+    // Nothing to carry is the ordinary case, not a failure: it is what a first run on a new
+    // machine finds, and what every run after the first one finds too.
+    let Ok(entries) = std::fs::read_dir(from) else {
+        return Vec::new();
+    };
+    let pending: Vec<(PathBuf, PathBuf)> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|source| source.is_file())
+        .filter_map(|source| {
+            let destination = to.join(source.file_name()?);
+            (!destination.exists()).then_some((source, destination))
+        })
+        .collect();
+    if pending.is_empty() {
+        return Vec::new();
+    }
+    if let Err(error) = std::fs::create_dir_all(to) {
+        log::warn!("could not create {}: {error}", to.display());
+        return Vec::new();
+    }
+
+    let mut carried = Vec::new();
+    for (source, destination) in pending {
+        match std::fs::copy(&source, &destination) {
+            Ok(_) => {
+                log::info!("carried {} to {}", source.display(), destination.display());
+                carried.push(destination);
+            }
+            Err(error) => log::warn!("could not carry {}: {error}", source.display()),
+        }
+    }
+    carried
 }
 
 /// The user's home directory.
@@ -196,14 +281,98 @@ mod tests {
     }
 
     #[test]
-    fn the_config_path_is_under_the_platform_directory() {
+    fn the_config_path_is_the_same_dotfile_path_on_every_platform() {
+        // The point of the whole arrangement: a dotfiles repository checked out over `~/.config`
+        // finds the file at the same place on a Mac and on Windows.
         let path = Settings::path();
         assert!(path.ends_with("settings.json"));
         assert!(path.parent().is_some_and(|parent| {
-            parent
-                .to_string_lossy()
-                .to_lowercase()
-                .contains("aurisstudio")
+            parent.ends_with(Path::new(".config").join(APP_FOLDER))
+                || std::env::var_os(CONFIG_DIR_VAR).is_some()
+                || std::env::var_os("XDG_CONFIG_HOME").is_some()
         }));
+    }
+
+    #[test]
+    fn the_environment_can_move_the_configuration_and_an_empty_variable_cannot() {
+        let home = Path::new("/home/somebody");
+
+        assert_eq!(
+            resolve_config_dir(None, None, home),
+            home.join(".config").join(APP_FOLDER)
+        );
+        // The override names the directory itself rather than its parent — the point is to say
+        // "read exactly this", which a symlinked dotfiles checkout wants to be able to do.
+        assert_eq!(
+            resolve_config_dir(Some(PathBuf::from("/dotfiles/auris")), None, home),
+            PathBuf::from("/dotfiles/auris")
+        );
+        assert_eq!(
+            resolve_config_dir(None, Some(PathBuf::from("/elsewhere")), home),
+            Path::new("/elsewhere").join(APP_FOLDER)
+        );
+        // `export XDG_CONFIG_HOME=` is a shell being unhelpful, not a request to write to the
+        // root of the filesystem.
+        assert_eq!(
+            resolve_config_dir(Some(PathBuf::new()), Some(PathBuf::new()), home),
+            home.join(".config").join(APP_FOLDER)
+        );
+    }
+
+    #[test]
+    fn an_earlier_configuration_is_carried_across_once_and_never_over_a_newer_one() {
+        let root = std::env::temp_dir().join(format!(
+            "auris-migrate-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let (from, to) = (root.join("legacy"), root.join("config"));
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::create_dir_all(&to).unwrap();
+        std::fs::write(from.join("settings.json"), "old settings").unwrap();
+        // A file belonging to a frontend, which this crate must carry without naming.
+        std::fs::write(from.join("keymap.json"), "old keymap").unwrap();
+        // Already answered for in the new place: the old one must not win.
+        std::fs::write(from.join("appearance.json"), "old scheme").unwrap();
+        std::fs::write(to.join("appearance.json"), "chosen since").unwrap();
+
+        let mut carried = migrate_config(&from, &to);
+        carried.sort();
+        assert_eq!(
+            carried,
+            vec![to.join("keymap.json"), to.join("settings.json")]
+        );
+        assert_eq!(
+            std::fs::read_to_string(to.join("settings.json")).unwrap(),
+            "old settings"
+        );
+        assert_eq!(
+            std::fs::read_to_string(to.join("appearance.json")).unwrap(),
+            "chosen since"
+        );
+        // Copied, not moved: an older build left running keeps its own configuration.
+        assert!(from.join("settings.json").exists());
+
+        // Every start-up runs this, so the second time must be a no-op rather than a restore of
+        // whatever has been changed since.
+        std::fs::write(to.join("settings.json"), "changed since").unwrap();
+        assert!(migrate_config(&from, &to).is_empty());
+        assert_eq!(
+            std::fs::read_to_string(to.join("settings.json")).unwrap(),
+            "changed since"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn there_is_nothing_to_carry_when_the_old_directory_is_the_new_one() {
+        // What every Linux machine that already used `~/.config` will hit, and a directory
+        // walked into itself would be at best pointless.
+        let same = std::env::temp_dir().join("auris-same");
+        assert!(migrate_config(&same, &same).is_empty());
+        // A directory that was never there is the ordinary first run, not an error.
+        assert!(migrate_config(&same.join("missing"), &same.join("also-missing")).is_empty());
+        assert!(!same.join("also-missing").exists());
     }
 }

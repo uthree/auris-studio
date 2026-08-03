@@ -24,6 +24,10 @@ fn language() -> Language {
 fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
+    // Before the first `Settings::load`: the configuration moved to `~/.config/auris-studio`, and
+    // whichever frontend runs first is the one that carries an older installation's across.
+    auris_session::migrate_legacy_config();
+
     let language = language();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(command) = args.first().map(String::as_str) else {

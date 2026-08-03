@@ -27,6 +27,10 @@ fn main() {
     // logged rather than shown — so surface them by default instead of requiring RUST_LOG.
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
+    // Before anything reads a preference: the configuration moved to `~/.config/auris-studio`,
+    // and an installation that predates the move keeps its settings, keymap and colour scheme.
+    auris_session::migrate_legacy_config();
+
     Application::new().run(|cx: &mut App| {
         cx.on_action(|_: &actions::Quit, cx: &mut App| cx.quit());
         // The menu bar is built before the window, so the language comes from the settings file
