@@ -88,6 +88,10 @@ pub enum Edit {
     ClearHarmony,
     /// A named progression was written across a range of bars.
     StampProgression,
+    /// A clip was written from the harmony under it.
+    GenerateClip,
+    /// A generated clip stopped being generated.
+    FreezeClip,
     /// The document was replaced by a composed piece.
     Compose,
 }

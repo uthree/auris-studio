@@ -47,6 +47,14 @@ pub enum SessionError {
     #[error("clip {0} cannot be split there")]
     CannotSplit(u64),
 
+    /// The clip was played rather than written, so there is no recipe to write it again from.
+    ///
+    /// An error rather than a quiet no-op: asking to regenerate a clip somebody performed is
+    /// either a mistake or a misunderstanding, and answering "done" to it would be a lie about
+    /// notes nobody touched.
+    #[error("clip {0} was not written by the composer")]
+    NotGenerated(u64),
+
     /// The operation only applies to one kind of track.
     #[error("track {id} is {actual}, but this needs {expected}")]
     WrongTrackKind {

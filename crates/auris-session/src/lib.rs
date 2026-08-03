@@ -83,7 +83,7 @@ pub fn supported_soundfont_extensions() -> &'static [&'static str] {
 /// text. Both names would compile — an explicit `use` beats a glob — but a reader would have to
 /// know that rule to tell which `Key` a line means, and one of the two would be wrong silently.
 pub mod prelude {
-    pub use auris_compose::{Composition, SongSpec, SpecError, compose};
+    pub use auris_compose::{Composition, SongSpec, SpecError, compose, default_instrument};
     pub use auris_core::harmony::{ChordMap, ChordPoint, Harmony, KeyMap, KeyPoint};
     pub use auris_core::param::{
         ParamDescriptor, ParamId, ParamUnit, ParamValueCurve, db_to_gain, gain_to_db,
@@ -97,9 +97,9 @@ pub mod prelude {
     pub use auris_core::theory::scale::ScaleId;
     pub use auris_core::time::{Seconds, TICKS_PER_QUARTER, Ticks, TimeSignature};
     pub use auris_core::{
-        AudioBuffer, AudioClip, AudioSource, ClipId, EffectSlotId, MidiClip, MixerStrip, Note,
-        PluginRegistry, PresetRef, Project, SoundFontId, SoundFontRef, SourceId, Track, TrackId,
-        TrackKind,
+        AudioBuffer, AudioClip, AudioSource, ClipId, ClipPreset, ClipRecipe, EffectSlotId,
+        MidiClip, MixerStrip, Note, PluginRegistry, PresetRef, Project, SoundFontId, SoundFontRef,
+        SourceId, Track, TrackId, TrackKind,
     };
 
     /// Every chord progression the composer knows by name.

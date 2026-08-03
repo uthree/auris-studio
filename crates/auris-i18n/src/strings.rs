@@ -318,6 +318,8 @@ strings! {
     EditSetChord { en: "setting a chord", ja: "コードの変更" }
     EditClearHarmony { en: "clearing the chords", ja: "コードの消去" }
     EditStampProgression { en: "writing a progression", ja: "コード進行の書き込み" }
+    EditGenerateClip { en: "writing a clip", ja: "クリップの自動生成" }
+    EditFreezeClip { en: "keeping a clip", ja: "クリップの確定" }
     EditCompose { en: "composing a piece", ja: "自動作曲" }
 
     // ------------------------------------------------------------------ errors
@@ -330,6 +332,10 @@ strings! {
     ErrorCannotSplit {
         en: "a clip can only be split inside itself",
         ja: "クリップの内側でしか分割できません"
+    }
+    ErrorNotGenerated {
+        en: "that clip was played rather than written, so there is nothing to write again",
+        ja: "そのクリップは自動生成ではないので、書き直す元がありません"
     }
     ErrorWrongTrackKind {
         en: "that command does not apply to this kind of track",

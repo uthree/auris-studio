@@ -582,6 +582,34 @@ pub mod harmony {
     //! tool that stamps spans, never a thing that is stored. Storing the chart would leave the
     //! timeline uneditable: changing one chord of bar six would mean editing a pattern that also
     //! governs bars two and ten.
+    //!
+    //! # Clips that write themselves
+    //!
+    //! A [`MidiClip`](auris_core::MidiClip) may carry a
+    //! [`ClipRecipe`](auris_core::ClipRecipe): a preset, a seed and a few dials saying how the
+    //! notes in it were written from the harmony underneath. It can then be written again — after
+    //! the chords move, or with a different feel, or simply as another take —
+    //! and [`freeze_clip`](crate::Session::freeze_clip) drops the recipe when one of the takes
+    //! turns out to be the keeper. This is Logic's Drummer, in a shape that costs one optional
+    //! field.
+    //!
+    //! It is a field on a clip and not a third kind of track, which was the alternative and is
+    //! how Logic does it. A generated clip *is* a clip: the engine plays it, the exporter writes
+    //! it, the piano roll edits it and undo reverses it, with no code anywhere that knows the
+    //! difference. A third [`TrackKind`](auris_core::TrackKind) would have broken fourteen
+    //! exhaustive matches across six crates and had most of them answer exactly what an
+    //! instrument track answers.
+    //!
+    //! Two consequences worth stating.
+    //!
+    //! The notes are stored, not recomputed on load. A project therefore plays and exports
+    //! without the composer running at all, and a file opened years later sounds like the piece
+    //! that was saved rather than like whatever the composer has since learned to write.
+    //!
+    //! Regenerating is always an explicit command. Nothing rewrites a clip because something
+    //! nearby changed, which is what makes it safe to edit a generated clip by hand — and why
+    //! contrast between a verse and a chorus is two clips with two sets of dials rather than a
+    //! notion of song form that the document would otherwise have to carry.
 }
 
 pub mod platforms {
