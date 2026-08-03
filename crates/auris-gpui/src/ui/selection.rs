@@ -148,8 +148,8 @@ impl AurisApp {
                 .x_to_tick(band.origin.x + band.size.width - origin.x),
         );
         let rows = (
-            band.origin.y - origin.y,
-            band.origin.y + band.size.height - origin.y,
+            self.lane_y(band.origin.y),
+            self.lane_y(band.origin.y + band.size.height),
         );
 
         let mut selected = BTreeSet::new();

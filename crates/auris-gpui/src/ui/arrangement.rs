@@ -20,6 +20,35 @@ use crate::ui::widgets::{
 /// Width of the grab zone on a clip's right edge, in pixels.
 const RESIZE_HANDLE: f32 = 7.0;
 
+/// How far a column of `content` can be scrolled inside a `viewport` before it runs out.
+///
+/// Never negative: content shorter than the viewport does not scroll at all, and a viewport
+/// whose size has not been recorded yet reports zero rather than letting the column drift.
+pub(crate) fn scroll_limit(content: Pixels, viewport: Pixels) -> Pixels {
+    (content - viewport).max(px(0.0))
+}
+
+/// The scroll offset that brings a row into view, moving as little as possible.
+///
+/// A row already on screen returns the offset unchanged. One above the top scrolls up to it, one
+/// below the bottom scrolls down until its foot is flush — and a row taller than the viewport
+/// puts its *top* on screen, because that is the end with the name on it.
+pub(crate) fn reveal_offset(
+    scroll: Pixels,
+    viewport: Pixels,
+    row_top: Pixels,
+    row_height: Pixels,
+) -> Pixels {
+    if row_top < scroll {
+        return row_top;
+    }
+    let below = row_top + row_height - viewport;
+    if below > scroll {
+        return below.min(row_top);
+    }
+    scroll
+}
+
 /// How wide the grab zone on a clip's right edge is, for a clip drawn `width` across.
 ///
 /// Never more than a third of the clip: zoomed far enough out, a fixed handle either side of the
@@ -256,11 +285,29 @@ impl AurisApp {
             .child(
                 div()
                     .id("track-headers")
-                    .flex()
-                    .flex_col()
+                    .relative()
                     .flex_1()
+                    .w_full()
                     .overflow_hidden()
-                    .children(headers),
+                    // The wheel here moves the same column it moves over the clips. A user who
+                    // has run out of tracks on screen reaches for the list, not the canvas.
+                    .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
+                        let delta = event.delta.pixel_delta(px(24.0));
+                        this.scroll_lanes_by(-delta.y);
+                        cx.notify();
+                    }))
+                    .child(
+                        // Pushed up by the shared offset rather than given its own scrollbar, so
+                        // a header can never drift out of line with the lane it belongs to.
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .top(-self.lane_scroll)
+                            .flex()
+                            .flex_col()
+                            .children(headers),
+                    ),
             )
     }
 
@@ -404,6 +451,11 @@ impl AurisApp {
             .loop_region
             .filter(|_| self.project().loop_enabled);
 
+        // A track deleted while the view was scrolled to the bottom leaves the offset past the
+        // end, and nothing else would ever pull it back.
+        self.lane_scroll = self.lane_scroll.min(self.max_lane_scroll());
+        let lane_scroll = self.lane_scroll;
+
         // Everything the paint closure needs, copied out so it does not borrow `self`.
         let lanes: Vec<LanePaint> = self.lane_paint_data();
         let peaks = self.waveform_map();
@@ -487,7 +539,10 @@ impl AurisApp {
                                         paint::loop_region(window, bounds, &view, region, &theme);
                                     }
 
-                                    let mut y = bounds.origin.y;
+                                    // Every lane is painted and the mask throws away what is off
+                                    // the top or the bottom. A project is tens of tracks, not
+                                    // thousands, so culling would cost more to read than to run.
+                                    let mut y = bounds.origin.y - lane_scroll;
                                     for lane in &lanes {
                                         let lane_bounds = Bounds {
                                             origin: point(bounds.origin.x, y),
@@ -651,7 +706,7 @@ impl AurisApp {
     /// Starts a drag in the clip lanes.
     fn begin_lane_drag(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
         let origin = self.lanes_origin();
-        let local = point(event.position.x - origin.x, event.position.y - origin.y);
+        let local = point(event.position.x - origin.x, self.lane_y(event.position.y));
         let tick = self.timeline.x_to_tick(local.x);
 
         let Some((track_id, _lane_top)) = self.track_at_y(local.y) else {
@@ -734,7 +789,7 @@ impl AurisApp {
     /// Opens the menu for whatever is under the pointer in the clip lanes.
     fn open_lane_menu(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
         let origin = self.lanes_origin();
-        let local = point(event.position.x - origin.x, event.position.y - origin.y);
+        let local = point(event.position.x - origin.x, self.lane_y(event.position.y));
         let tick = self.timeline.x_to_tick(local.x);
 
         let menu = match self.track_at_y(local.y) {
@@ -763,17 +818,83 @@ impl AurisApp {
         cx.notify();
     }
 
-    /// Wheel handling: plain scrolls, alt zooms.
+    /// Wheel handling: plain moves down the tracks, Shift moves along the song, Alt zooms.
     fn scroll_timeline(&mut self, event: &gpui::ScrollWheelEvent, cx: &mut gpui::Context<Self>) {
         let delta = event.delta.pixel_delta(px(24.0));
         if event.modifiers.alt {
             let anchor = event.position.x - self.timeline_origin().x;
             let factor = if delta.y > px(0.0) { 1.12 } else { 1.0 / 1.12 };
             self.timeline.zoom_by(factor, anchor);
+        } else if event.modifiers.shift {
+            self.timeline.scroll_by(-delta.y - delta.x);
         } else {
-            self.timeline.scroll_by(-delta.x - delta.y);
+            // Plain wheel moves down the track list, the way it does in every other panel and
+            // every other DAW; Shift is what turns it sideways. It used to scroll the timeline
+            // horizontally, which was the only thing it could do while the lanes had no scroll
+            // of their own — and left every track past the sixth unreachable.
+            self.scroll_lanes_by(-delta.y);
+            self.timeline.scroll_by(-delta.x);
         }
         cx.notify();
+    }
+
+    /// Moves the lane column, keeping it inside what there is to see.
+    pub(crate) fn scroll_lanes_by(&mut self, delta: Pixels) {
+        self.lane_scroll = (self.lane_scroll + delta).clamp(px(0.0), self.max_lane_scroll());
+    }
+
+    /// Combined height of every track's lane.
+    pub(crate) fn lanes_height(&self) -> Pixels {
+        px(self.project().tracks.iter().map(|track| track.height).sum())
+    }
+
+    /// How far the lanes may be scrolled before the last one is flush with the bottom.
+    pub(crate) fn max_lane_scroll(&self) -> Pixels {
+        let viewport = self
+            .canvas
+            .lanes
+            .get()
+            .map_or(px(0.0), |bounds| bounds.size.height);
+        scroll_limit(self.lanes_height(), viewport)
+    }
+
+    /// Scrolls the lanes just far enough to bring `track` into view.
+    ///
+    /// Just far enough, so selecting a track that is already on screen does not move the view out
+    /// from under the pointer — which is exactly the frame a click is landing in.
+    pub(crate) fn reveal_track(&mut self, track: TrackId) {
+        let Some((top, height)) = self.lane_span(track) else {
+            return;
+        };
+        let viewport = self
+            .canvas
+            .lanes
+            .get()
+            .map_or(px(0.0), |bounds| bounds.size.height);
+        self.lane_scroll = reveal_offset(self.lane_scroll, viewport, top, height)
+            .min(self.max_lane_scroll())
+            .max(px(0.0));
+    }
+
+    /// Where a track's lane starts in the column, and how tall it is.
+    fn lane_span(&self, track: TrackId) -> Option<(Pixels, Pixels)> {
+        let mut top = px(0.0);
+        for candidate in &self.project().tracks {
+            let height = px(candidate.height);
+            if candidate.id == track {
+                return Some((top, height));
+            }
+            top += height;
+        }
+        None
+    }
+
+    /// Where a window position falls in the lane column's own coordinates.
+    ///
+    /// Not merely the offset from the canvas: the column scrolls, so what is under the pointer is
+    /// how far into the canvas it is *plus* how far the column has been pushed up.
+    pub(crate) fn lane_y(&self, window_y: Pixels) -> Pixels {
+        window_y - self.lanes_origin().y + self.lane_scroll
     }
 
     /// Track whose lane contains `y`, with the lane's top offset.
@@ -1113,6 +1234,41 @@ mod tests {
                 "every column the bar is painted on takes hold of it",
             );
         }
+    }
+
+    #[test]
+    fn a_column_shorter_than_its_panel_does_not_scroll() {
+        assert_eq!(scroll_limit(px(300.0), px(600.0)), px(0.0));
+        assert_eq!(scroll_limit(px(600.0), px(600.0)), px(0.0));
+        assert_eq!(scroll_limit(px(900.0), px(600.0)), px(300.0));
+        // Before the first paint the panel has no recorded height, and the column must not drift.
+        assert_eq!(scroll_limit(px(900.0), px(0.0)), px(900.0));
+    }
+
+    #[test]
+    fn revealing_a_row_moves_the_view_as_little_as_it_can() {
+        let viewport = px(500.0);
+        let row = px(100.0);
+
+        // Already on screen: nothing moves, so a click does not shift the row out from under the
+        // pointer that is still on it.
+        assert_eq!(reveal_offset(px(0.0), viewport, px(200.0), row), px(0.0));
+        // Below the bottom edge: down until its foot is flush, and no further.
+        assert_eq!(reveal_offset(px(0.0), viewport, px(800.0), row), px(400.0));
+        // Above the top edge: up to it exactly.
+        assert_eq!(
+            reveal_offset(px(400.0), viewport, px(200.0), row),
+            px(200.0)
+        );
+    }
+
+    #[test]
+    fn a_row_taller_than_the_panel_is_shown_from_the_top() {
+        // Scrolling until its foot is flush would put the name off the top of the screen.
+        assert_eq!(
+            reveal_offset(px(0.0), px(200.0), px(300.0), px(600.0)),
+            px(300.0)
+        );
     }
 
     #[test]

@@ -404,7 +404,7 @@ impl AurisApp {
                 // The same idea vertically: the lane under the pointer decides how far the whole
                 // selection shifts, so a pair of clips on adjacent tracks stays a pair.
                 let lanes = origin_lanes.clone();
-                if let Some((under, _)) = self.track_at_y(event.position.y - origin.y) {
+                if let Some((under, _)) = self.track_at_y(self.lane_y(event.position.y)) {
                     self.move_clips_by_lane(&lanes, grab_lane, under);
                 }
             }

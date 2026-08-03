@@ -36,6 +36,7 @@ impl AurisApp {
         if self.selected_clip.is_some() {
             self.center_roll_on_selection();
         }
+        self.reveal_track(track);
     }
 
     /// Selects the track a press landed on, keeping a selection that already includes what was
@@ -94,6 +95,9 @@ impl AurisApp {
                 // A brand-new track has no clips, so nothing should stay selected from the old one.
                 self.select_clip(None);
                 self.selected_notes.clear();
+                // A track added past the bottom of the panel would otherwise look like a command
+                // that did nothing at all.
+                self.reveal_track(id);
             }
             Err(error) => self.set_status(self.failure(Key::CmdAddInstrumentTrack, &error)),
         }
@@ -107,6 +111,7 @@ impl AurisApp {
         self.selected_track = Some(id);
         self.select_clip(None);
         self.selected_notes.clear();
+        self.reveal_track(id);
     }
 
     /// Deletes the selected track.

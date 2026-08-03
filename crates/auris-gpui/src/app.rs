@@ -626,6 +626,11 @@ pub struct AurisApp {
     pub(crate) library: crate::ui::library::LibraryTree,
     /// The title the operating system was last told, so it is only told again on a change.
     pub(crate) titled: String,
+    /// How far the arrangement's lanes are scrolled down, in pixels.
+    ///
+    /// The headers and the clip canvas both read it, so the two columns cannot slide apart —
+    /// which is the whole reason it lives here rather than in either of them.
+    pub(crate) lane_scroll: Pixels,
 
     /// Preferences that outlive the session.
     pub(crate) settings: Settings,
@@ -724,6 +729,7 @@ impl AurisApp {
             plugin_window: None,
             library: crate::ui::library::LibraryTree::default(),
             titled: String::new(),
+            lane_scroll: px(0.0),
             settings,
             language,
             pointer: input.pointer,
