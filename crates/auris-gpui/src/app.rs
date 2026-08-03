@@ -530,7 +530,7 @@ impl Focusable for AurisApp {
 }
 
 impl AurisApp {
-    /// Builds the application, starting audio and creating a small demo project.
+    /// Builds the application, starting audio and opening an empty document.
     pub fn new(cx: &mut Context<Self>) -> Self {
         let settings = Settings::load();
         let language = settings.language();
@@ -543,7 +543,11 @@ impl AurisApp {
             ..SessionOptions::default()
         })
         .expect("a session opens even without audio");
-        seed_demo_project(&mut session);
+        // The same empty document File → New gives, rather than a separate idea of what a fresh
+        // start looks like. Launching used to leave a two-bar arpeggio and a bass line lying
+        // around, which was useful while there was nothing else to hear and is now just
+        // somebody else's music to delete before starting.
+        session.new_project();
 
         let status = audio_line(&session.audio_status(), language);
         log::info!("{status}");
@@ -576,7 +580,7 @@ impl AurisApp {
                 .map(|clip| clip.id)
         });
 
-        let mut app = Self {
+        Self {
             session,
             theme: Theme::dark(),
             timeline: TimelineView::default(),
@@ -606,11 +610,7 @@ impl AurisApp {
             keymap,
             settings_window: None,
             _repaint: repaint,
-        };
-        // The default pitch view sits two octaves above the demo material, so without this the
-        // roll opens on an empty grid and the clip looks like it has no notes.
-        app.center_roll_on_selection();
-        app
+        }
     }
 
     /// The document.
@@ -998,47 +998,4 @@ fn audio_line(status: &auris_session::AudioStatus, language: Language) -> String
         None => messages::gpu_unavailable(language),
     };
     format!("{engine} · {gpu}")
-}
-
-/// Fills a fresh session with something audible, so the app is not an empty grid on launch.
-fn seed_demo_project(session: &mut Session) {
-    let bar = Ticks::from_beats(4.0);
-
-    let Ok(lead) = session.add_default_instrument_track("Lead") else {
-        return;
-    };
-    let Ok(bass) = session.add_default_instrument_track("Bass") else {
-        return;
-    };
-    session.add_audio_track("Audio");
-
-    // A two-bar arpeggio over a root-fifth bass, in C minor.
-    if let Ok(clip) = session.add_midi_clip(lead, "Arp", Ticks::ZERO, bar * 2) {
-        let step = Ticks(Ticks::QUARTER.raw() / 2);
-        for (index, pitch) in [60u8, 63, 67, 70, 67, 63]
-            .iter()
-            .cycle()
-            .take(16)
-            .enumerate()
-        {
-            let _ = session.add_note(clip, Note::new(*pitch, step * index as i64, step));
-        }
-    }
-    if let Ok(clip) = session.add_midi_clip(bass, "Root", Ticks::ZERO, bar * 2) {
-        for bar_index in 0..2 {
-            let start = bar * bar_index;
-            let _ = session.add_note(clip, Note::new(36, start, Ticks::QUARTER * 2));
-            let _ = session.add_note(
-                clip,
-                Note::new(43, start + Ticks::QUARTER * 2, Ticks::QUARTER * 2),
-            );
-        }
-    }
-
-    session.set_param(ParamTarget::TrackGain(bass), -4.0);
-    session.set_loop_region(Ticks::ZERO, bar * 2);
-
-    // The demo is scaffolding, not an edit the user made: nothing here should be undoable, and
-    // the document should open clean rather than already marked as modified.
-    session.forget_history();
 }
