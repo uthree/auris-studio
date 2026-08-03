@@ -16,6 +16,15 @@ use crate::ui::timeline::{PitchView, TimelineView};
 /// Width of the grab zone on a note's right edge, in pixels.
 const RESIZE_HANDLE: f32 = 5.0;
 
+/// How wide the grab zone on a note's right edge is, for a note drawn `width` across.
+///
+/// Never more than a third of the note. At a 1/32 grid a note is about eight pixels wide, and a
+/// fixed five-pixel handle either side of its end swallowed the whole thing: the note could be
+/// stretched and never moved, which reads as the roll refusing to let go of it.
+fn resize_grab(width: Pixels) -> f32 {
+    RESIZE_HANDLE.min(f32::from(width) / 3.0)
+}
+
 /// Length given to a note drawn with a single click.
 fn default_note_length(grid: Ticks) -> Ticks {
     Ticks(grid.raw().max(1))
@@ -123,7 +132,15 @@ impl AurisApp {
                             .on_mouse_up(
                                 MouseButton::Left,
                                 cx.listener(|this, _, _, _| this.stop_audition()),
-                            ),
+                            )
+                            // The keyboard scrolls with the rows beside it. It is the strip a
+                            // user reaches for when they want to see a different octave, and the
+                            // wheel did nothing there while working on the grid an inch away.
+                            .on_scroll_wheel(cx.listener(
+                                |this, event: &gpui::ScrollWheelEvent, _, cx| {
+                                    this.scroll_roll(event, cx);
+                                },
+                            )),
                     )
                     .child(
                         div()
@@ -266,8 +283,10 @@ impl AurisApp {
                     .midi_clip(clip_id)
                     .and_then(|(_, c)| c.notes.get(index).copied());
                 let Some(note) = note else { return };
+                let start_x = self.timeline.tick_to_x(clip_start + note.start);
                 let end_x = self.timeline.tick_to_x(clip_start + note.end());
-                if f32::from(end_x - (event.position.x - origin.x)).abs() <= RESIZE_HANDLE {
+                let grab = resize_grab(end_x - start_x);
+                if f32::from(end_x - (event.position.x - origin.x)).abs() <= grab {
                     self.begin_drag(Drag::NoteResize {
                         clip: clip_id,
                         index,
@@ -394,7 +413,11 @@ impl AurisApp {
             let factor = if delta.y > px(0.0) { 1.12 } else { 1.0 / 1.12 };
             self.pitch.zoom_by(factor, anchor);
         } else if event.modifiers.alt {
-            let anchor = event.position.x - Metrics::KEYBOARD_WIDTH;
+            // The same origin the vertical branch above uses, and the same one the painter does.
+            // `KEYBOARD_WIDTH` is only half of it — the roll starts after the panel's own padding
+            // as well — so the anchor was a constant off, and the notes slid sideways on every
+            // zoom notch instead of staying put under the pointer.
+            let anchor = event.position.x - self.roll_origin().x;
             let factor = if delta.y > px(0.0) { 1.12 } else { 1.0 / 1.12 };
             self.timeline.zoom_by(factor, anchor);
         } else if event.modifiers.shift {
@@ -500,5 +523,23 @@ fn paint_notes(
                 theme.selection,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_note_can_always_be_moved_however_short_it_is() {
+        // At a 1/32 grid a note is about eight pixels across. A fixed five-pixel handle either
+        // side of its end covered the whole note, so it could be stretched and never dragged.
+        assert_eq!(resize_grab(px(120.0)), RESIZE_HANDLE);
+        let short = resize_grab(px(8.0));
+        assert!(short < RESIZE_HANDLE);
+        assert!(
+            short * 2.0 < 8.0,
+            "there is a middle left over to take hold of",
+        );
     }
 }

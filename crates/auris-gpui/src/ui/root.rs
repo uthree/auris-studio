@@ -10,6 +10,7 @@ use gpui::{
 
 use crate::actions;
 use crate::app::{AurisApp, Drag, EditorTab};
+use crate::gestures::past_drag_threshold;
 use crate::theme::Theme;
 use crate::ui::widgets::splitter;
 
@@ -375,7 +376,19 @@ impl AurisApp {
                 ref origins,
                 ref origin_lanes,
                 grab_lane,
+                pressed_at,
             } => {
+                // A press that has not travelled is a selection, not a move. Without this a
+                // one-pixel wobble snapped an off-grid clip onto the grid — undoable, but it
+                // reads as the arrangement rearranging itself under the pointer.
+                if let Some(from) = pressed_at {
+                    if !past_drag_threshold(from, event.position) {
+                        return;
+                    }
+                    if let Some(Drag::ClipMove { pressed_at, .. }) = &mut self.drag {
+                        *pressed_at = None;
+                    }
+                }
                 let origin = self.lanes_origin();
                 let tick = self.timeline.x_to_tick(event.position.x - origin.x);
                 let start = self.snap(tick - grab_offset).max_zero();

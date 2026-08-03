@@ -10,7 +10,25 @@
 //! gpui's `platform` modifier is the Windows key off a Mac and no application gets to use it.
 
 use auris_i18n::Key;
-use gpui::MouseDownEvent;
+use gpui::{MouseDownEvent, Pixels, Point, px};
+
+/// How far the pointer must travel before a press counts as a drag.
+///
+/// Three pixels is about the wobble a firm click produces on a trackpad, and well under what
+/// anybody would call a movement. Below it a gesture that snaps to the grid — moving a clip —
+/// would turn every selecting click into an edit.
+pub const DRAG_THRESHOLD: Pixels = px(3.0);
+
+/// Whether the pointer has moved far enough from `from` to have meant it.
+///
+/// Squared distance rather than a square root: the comparison is the same and the arithmetic is
+/// exact for the small integers a threshold is made of.
+pub fn past_drag_threshold(from: Point<Pixels>, to: Point<Pixels>) -> bool {
+    let dx = f32::from(to.x - from.x);
+    let dy = f32::from(to.y - from.y);
+    let limit = f32::from(DRAG_THRESHOLD);
+    dx * dx + dy * dy >= limit * limit
+}
 use serde::{Deserialize, Serialize};
 
 /// A click that means more than "select this".
@@ -125,6 +143,24 @@ mod tests {
     use super::*;
     use auris_i18n::Language;
     use gpui::{Modifiers, MouseButton, point, px};
+
+    #[test]
+    fn a_press_that_has_not_travelled_is_not_a_drag() {
+        // What stops a selecting click from snapping an off-grid clip onto the grid.
+        let from = point(px(100.0), px(100.0));
+        assert!(!past_drag_threshold(from, from));
+        assert!(!past_drag_threshold(from, point(px(102.0), px(100.0))));
+        assert!(!past_drag_threshold(from, point(px(102.0), px(102.0))));
+        assert!(past_drag_threshold(from, point(px(104.0), px(100.0))));
+        assert!(
+            past_drag_threshold(from, point(px(97.0), px(100.0))),
+            "and it counts in either direction",
+        );
+        assert!(
+            past_drag_threshold(from, point(px(100.0), px(103.0))),
+            "vertically too — a clip crosses tracks that way",
+        );
+    }
 
     fn click(modifiers: Modifiers, count: usize) -> MouseDownEvent {
         MouseDownEvent {

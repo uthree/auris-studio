@@ -248,6 +248,13 @@ pub const KEY_ROW_HEIGHT: Pixels = px(13.0);
 /// plays the progression, and a drag anywhere would have taken that away.
 pub const CHORD_HANDLE: Pixels = px(6.0);
 
+/// How far a chord block is drawn inside the span it occupies, so neighbours do not touch.
+///
+/// Read by the hit test as well as the painter. It was the painter's alone, which put the whole
+/// six-pixel grab zone one pixel to the left of the bar drawn for it: one press in six landed
+/// beside the handle and sounded the chord instead of taking hold of it.
+pub const CHORD_BLOCK_INSET: Pixels = px(1.0);
+
 /// The harmony lane's two rows: key changes above, chords below.
 ///
 /// They shared one strip until a key change was found to land on the chord that begins a new
@@ -310,8 +317,11 @@ pub fn harmony_lane(
         }
         let lit = harmony.held == Some(event.start);
         let block = Bounds {
-            origin: point(x + px(1.0), chord_row.origin.y + px(2.0)),
-            size: size(width - px(2.0), chord_row.size.height - px(4.0)),
+            origin: point(x + CHORD_BLOCK_INSET, chord_row.origin.y + px(2.0)),
+            size: size(
+                width - CHORD_BLOCK_INSET * 2.0,
+                chord_row.size.height - px(4.0),
+            ),
         };
         rounded_rect(
             window,

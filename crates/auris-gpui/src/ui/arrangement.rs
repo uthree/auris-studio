@@ -20,6 +20,14 @@ use crate::ui::widgets::{
 /// Width of the grab zone on a clip's right edge, in pixels.
 const RESIZE_HANDLE: f32 = 7.0;
 
+/// How wide the grab zone on a clip's right edge is, for a clip drawn `width` across.
+///
+/// Never more than a third of the clip: zoomed far enough out, a fixed handle either side of the
+/// end covers the whole block and the clip can be stretched but never moved.
+fn resize_grab(width: Pixels) -> f32 {
+    RESIZE_HANDLE.min(f32::from(width) / 3.0)
+}
+
 /// Height of a clip's name bar.
 const TITLE_HEIGHT: Pixels = px(14.0);
 
@@ -317,6 +325,11 @@ impl AurisApp {
                     cx.notify();
                 }),
             )
+            // The chords sit above the clips they belong to and share their horizontal scale, so
+            // the wheel has to move both together or the two rows disagree about where bar 9 is.
+            .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
+                this.scroll_timeline(event, cx);
+            }))
     }
 
     /// What a left press on the harmony lane grabs: a chord's handle, or the sound of it.
@@ -445,7 +458,13 @@ impl AurisApp {
                             this.open_menu(menu);
                             cx.notify();
                         }),
-                    ),
+                    )
+                    // The ruler scrolls the same timeline the lanes below it do. Without this the
+                    // wheel was dead over the top twenty pixels of the arrangement and worked two
+                    // centimetres lower, which is the kind of thing a user finds by accident.
+                    .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
+                        this.scroll_timeline(event, cx);
+                    })),
             )
             .child(self.render_harmony_lane(cx))
             .child(
@@ -678,8 +697,10 @@ impl AurisApp {
                     self.selected_clip = Some(clip_id);
                 }
                 self.selected_notes.clear();
+                let clip_start_x = self.timeline.tick_to_x(clip_start);
                 let clip_end_x = self.timeline.tick_to_x(clip_start + clip_length);
-                if f32::from(clip_end_x - local.x).abs() <= RESIZE_HANDLE {
+                let grab = resize_grab(clip_end_x - clip_start_x);
+                if f32::from(clip_end_x - local.x).abs() <= grab {
                     self.begin_drag(Drag::ClipResize { clip: clip_id });
                 } else {
                     let origins = self.selected_clip_origins();
@@ -691,6 +712,7 @@ impl AurisApp {
                         origins,
                         origin_lanes,
                         grab_lane,
+                        pressed_at: Some(event.position),
                     });
                 }
             }
@@ -783,17 +805,24 @@ impl AurisApp {
     }
 
     /// Clip on `track` covering `tick`, with its start and length.
+    ///
+    /// Searched backwards, because [`paint_lane`] draws the list forwards: where two clips
+    /// overlap the later one is on top, and a hit test that walked the same way as the painter
+    /// answered with the clip *underneath* — so the click selected, moved and deleted something
+    /// the user could not see.
     fn clip_at(&self, track: TrackId, tick: Ticks) -> Option<(ClipId, Ticks, Ticks)> {
         let track = self.project().track(track)?;
         match &track.kind {
             TrackKind::Instrument(inner) => inner
                 .clips
                 .iter()
+                .rev()
                 .find(|clip| tick >= clip.start && tick < clip.end())
                 .map(|clip| (clip.id, clip.start, clip.length)),
             TrackKind::Audio(inner) => inner
                 .clips
                 .iter()
+                .rev()
                 .map(|clip| (clip.id, clip.start, self.audio_clip_length_ticks(clip)))
                 .find(|(_, start, length)| tick >= *start && tick < *start + *length),
         }
@@ -850,7 +879,9 @@ fn chord_handle_at(
     x: Pixels,
 ) -> Option<Ticks> {
     handles.iter().copied().find(|start| {
-        let left = view.tick_to_x(*start);
+        // The same inset the painter uses, or the zone would sit a pixel to the left of the bar
+        // it belongs to and miss its rightmost column entirely.
+        let left = view.tick_to_x(*start) + paint::CHORD_BLOCK_INSET;
         x >= left && x < left + paint::CHORD_HANDLE
     })
 }
@@ -1039,11 +1070,13 @@ mod tests {
         let bar = Ticks(3840);
         let handles = [bar, bar * 4];
 
-        let edge = view.tick_to_x(bar);
+        // Where the *bar* is drawn, which is the block's inset edge and not the chord's tick.
+        let edge = view.tick_to_x(bar) + paint::CHORD_BLOCK_INSET;
         assert_eq!(chord_handle_at(&view, &handles, edge), Some(bar));
         assert_eq!(
             chord_handle_at(&view, &handles, edge + paint::CHORD_HANDLE - px(1.0)),
-            Some(bar)
+            Some(bar),
+            "the last column the handle is painted on is still the handle"
         );
         assert_eq!(
             chord_handle_at(&view, &handles, edge + paint::CHORD_HANDLE),
@@ -1053,13 +1086,46 @@ mod tests {
         assert_eq!(
             chord_handle_at(&view, &handles, edge - px(1.0)),
             None,
-            "and before it is the chord in front"
+            "and before it is the gap between the blocks"
         );
         assert_eq!(
-            chord_handle_at(&view, &handles, view.tick_to_x(bar * 4)),
+            chord_handle_at(
+                &view,
+                &handles,
+                view.tick_to_x(bar * 4) + paint::CHORD_BLOCK_INSET
+            ),
             Some(bar * 4)
         );
         assert_eq!(chord_handle_at(&view, &[], edge), None);
+    }
+
+    #[test]
+    fn the_grab_zone_covers_the_bar_that_is_drawn_and_nothing_beside_it() {
+        // The painter insets the block; the hit test did not, so the whole zone sat one pixel to
+        // the left of the bar and its rightmost column could not be pressed at all.
+        let view = view();
+        let bar = Ticks(3840);
+        let drawn = view.tick_to_x(bar) + paint::CHORD_BLOCK_INSET;
+        for offset in 0..(f32::from(paint::CHORD_HANDLE) as i32) {
+            assert_eq!(
+                chord_handle_at(&view, &[bar], drawn + px(offset as f32)),
+                Some(bar),
+                "every column the bar is painted on takes hold of it",
+            );
+        }
+    }
+
+    #[test]
+    fn a_resize_handle_never_swallows_the_thing_it_belongs_to() {
+        // Zoomed far out a clip is a few pixels wide, and a fixed handle either side of its end
+        // covered the whole block: the clip could be stretched and never moved.
+        assert_eq!(resize_grab(px(300.0)), RESIZE_HANDLE);
+        assert!(resize_grab(px(9.0)) < RESIZE_HANDLE);
+        assert!(
+            resize_grab(px(9.0)) * 2.0 < 9.0,
+            "a grab zone on both sides of the end still leaves a middle to drag by",
+        );
+        assert_eq!(resize_grab(px(0.0)), 0.0);
     }
 
     #[test]
@@ -1072,7 +1138,10 @@ mod tests {
         };
         let bar = Ticks(3840);
         assert_eq!(view.tick_to_x(bar), px(0.0));
-        assert_eq!(chord_handle_at(&view, &[bar], px(0.0)), Some(bar));
+        assert_eq!(
+            chord_handle_at(&view, &[bar], paint::CHORD_BLOCK_INSET),
+            Some(bar)
+        );
         // A chord off the left edge is hit at a negative x, which no press can produce.
         assert_eq!(chord_handle_at(&view, &[Ticks::ZERO], px(0.0)), None);
     }
