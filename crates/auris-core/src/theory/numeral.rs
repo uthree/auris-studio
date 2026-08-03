@@ -5,12 +5,20 @@
 
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 use super::chord::{Chord, Quality};
 use super::key::Key;
 use super::pitch::PitchClass;
 
 /// A chord named by scale degree.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+///
+/// Serialises as the text a musician writes — `"IVmaj7"` — like [`Key`] does, so a progression
+/// reads the same in a project file as it does on a chord chart. What is written is
+/// [`Self::to_text`] rather than [`Display`](fmt::Display); the two differ in one place, and the
+/// difference matters (see [`Self::to_text`]).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(into = "String", try_from = "String")]
 pub struct Numeral {
     /// One-based scale degree, as written: `1` for I, `5` for V.
     pub degree: u8,
@@ -64,6 +72,56 @@ impl Numeral {
             quality: Some(quality),
             ..self
         }
+    }
+
+    /// How the numeral is written down for storage.
+    ///
+    /// This is [`Display`](fmt::Display) except in one place, and the exception is the whole
+    /// reason the method exists. [`Quality::Major`]'s suffix is the empty string, so a numeral
+    /// someone spelled out as `IM` prints as `I` — and `I` parses back with no quality at all,
+    /// which [`Self::is_colourable`] then reports as free for the composer to rewrite. A chord a
+    /// person chose would quietly become a chord the machine may change, on the next save.
+    ///
+    /// Storage therefore writes the `M`. `Display` does not, because `IM` is not how a chord
+    /// chart is read.
+    pub fn to_text(self) -> String {
+        let mut text = String::new();
+        // Writing into a `String` cannot fail, so the error is unreachable rather than ignored.
+        let _ = self.write_symbol(&mut text, Quality::numeral_suffix);
+        text
+    }
+
+    /// Writes the numeral, spelling each quality with `suffix`.
+    fn write_symbol<W: fmt::Write>(
+        &self,
+        out: &mut W,
+        suffix: fn(Quality) -> &'static str,
+    ) -> fmt::Result {
+        for _ in 0..self.accidental.abs() {
+            out.write_str(if self.accidental < 0 { "b" } else { "#" })?;
+        }
+        let roman = ROMAN[(self.degree.clamp(1, 7) - 1) as usize];
+        if self.minor_case {
+            write!(out, "{}", roman.to_lowercase())?;
+        } else {
+            out.write_str(roman)?;
+        }
+        if let Some(extension) = self.extension {
+            write!(out, "{extension}")?;
+        } else if let Some(quality) = self.quality {
+            out.write_str(suffix(quality))?;
+        }
+        if let Some((target, alteration)) = self.secondary_of {
+            out.write_str("/")?;
+            for _ in 0..alteration.abs() {
+                out.write_str(if alteration < 0 { "b" } else { "#" })?;
+            }
+            out.write_str(ROMAN[(target.clamp(1, 7) - 1) as usize])?;
+        }
+        if let Some(bass) = self.bass_degree {
+            write!(out, "/{bass}")?;
+        }
+        Ok(())
     }
 
     /// Reads a numeral: `I`, `vi`, `bVII`, `V7`, `IVmaj7`, `V7/V`, `IV/5`.
@@ -202,31 +260,21 @@ impl Numeral {
 
 impl fmt::Display for Numeral {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for _ in 0..self.accidental.abs() {
-            f.write_str(if self.accidental < 0 { "b" } else { "#" })?;
-        }
-        let roman = ROMAN[(self.degree.clamp(1, 7) - 1) as usize];
-        if self.minor_case {
-            write!(f, "{}", roman.to_lowercase())?;
-        } else {
-            f.write_str(roman)?;
-        }
-        if let Some(extension) = self.extension {
-            write!(f, "{extension}")?;
-        } else if let Some(quality) = self.quality {
-            f.write_str(quality.suffix())?;
-        }
-        if let Some((target, alteration)) = self.secondary_of {
-            f.write_str("/")?;
-            for _ in 0..alteration.abs() {
-                f.write_str(if alteration < 0 { "b" } else { "#" })?;
-            }
-            f.write_str(ROMAN[(target.clamp(1, 7) - 1) as usize])?;
-        }
-        if let Some(bass) = self.bass_degree {
-            write!(f, "/{bass}")?;
-        }
-        Ok(())
+        self.write_symbol(f, Quality::suffix)
+    }
+}
+
+impl From<Numeral> for String {
+    fn from(numeral: Numeral) -> Self {
+        numeral.to_text()
+    }
+}
+
+impl TryFrom<String> for Numeral {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        Numeral::parse(&text).ok_or_else(|| format!("`{text}` is not a chord"))
     }
 }
 
@@ -335,6 +383,134 @@ mod tests {
             .unwrap()
             .chord_in(key(key_text))
             .to_string()
+    }
+
+    #[test]
+    fn a_numeral_survives_the_round_trip_to_stored_text_and_back() {
+        // Every quality on every degree, in both cases, with and without an accidental: whatever
+        // the composer or a chart can produce has to come back out of a file unchanged.
+        for degree in 1..=7u8 {
+            for minor_case in [false, true] {
+                for accidental in [-1, 0, 1] {
+                    let plain = Numeral {
+                        accidental,
+                        ..Numeral::new(degree, minor_case)
+                    };
+                    for quality in Quality::ALL {
+                        let numeral = plain.with_quality(quality);
+                        let text = numeral.to_text();
+                        assert_eq!(
+                            Numeral::parse(&text),
+                            Some(numeral),
+                            "`{text}` did not read back as what wrote it"
+                        );
+                    }
+                    for extension in [6u8, 7, 9] {
+                        let numeral = Numeral {
+                            extension: Some(extension),
+                            ..plain
+                        };
+                        let text = numeral.to_text();
+                        assert_eq!(Numeral::parse(&text), Some(numeral), "`{text}`");
+                    }
+                    assert_eq!(Numeral::parse(&plain.to_text()), Some(plain));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_forced_quality_is_never_stored_as_something_the_key_would_decide() {
+        // `V7` on a chart means "with a seventh, whichever the key holds": an extension. A quality
+        // forced to `Dominant7` is a different chord on `ii`, and writing both as `7` would let a
+        // save turn one into the other. Whatever a quality is stored as, it must not read back as
+        // an extension.
+        for quality in Quality::ALL {
+            let stored = quality.numeral_suffix();
+            assert!(
+                !matches!(stored, "6" | "7" | "9"),
+                "{quality:?} stores as `{stored}`, which reads back as an extension"
+            );
+            assert_eq!(
+                Quality::parse(stored),
+                Some(quality),
+                "`{stored}` is not a spelling of {quality:?}"
+            );
+        }
+
+        let forced = Numeral::new(2, true).with_quality(Quality::Dominant7);
+        let asked = Numeral {
+            extension: Some(7),
+            ..Numeral::new(2, true)
+        };
+        assert_eq!(forced.to_string(), asked.to_string(), "they read alike");
+        assert_ne!(
+            forced.to_text(),
+            asked.to_text(),
+            "they must not store alike"
+        );
+        assert_eq!(
+            forced.chord_in(key("C major")).to_string(),
+            "D7",
+            "a forced dominant on the second degree"
+        );
+        assert_eq!(
+            asked.chord_in(key("C major")).to_string(),
+            "Dm7",
+            "the seventh the key actually holds there"
+        );
+    }
+
+    #[test]
+    fn a_chord_spelled_out_as_major_does_not_become_rewritable_by_being_saved() {
+        // `Quality::Major`'s suffix is empty, so `Display` writes `IM` as `I`, and `I` parses with
+        // no quality at all — which `is_colourable` reports as fair game for the composer. Storing
+        // the `Display` form would hand a chord the user chose to the machine on the next save.
+        let spelled_out = Numeral::parse("IM").unwrap();
+        assert!(!spelled_out.is_colourable());
+        assert_eq!(
+            spelled_out.to_string(),
+            "I",
+            "reading form stays conventional"
+        );
+        assert_eq!(
+            spelled_out.to_text(),
+            "IM",
+            "storage form keeps the quality"
+        );
+
+        let reloaded = Numeral::parse(&spelled_out.to_text()).unwrap();
+        assert_eq!(reloaded, spelled_out);
+        assert!(
+            !reloaded.is_colourable(),
+            "a saved choice is still a choice"
+        );
+
+        // The bare numeral is genuinely unspecified, and must stay that way.
+        let bare = Numeral::parse("I").unwrap();
+        assert!(bare.is_colourable());
+        assert_eq!(bare.to_text(), "I");
+        assert_ne!(bare, spelled_out);
+    }
+
+    #[test]
+    fn every_progression_in_the_catalogue_round_trips_through_json() {
+        for entry in super::super::chart::CATALOG {
+            let chart = super::super::chart::Chart::parse(entry.chart).unwrap();
+            for bar in &chart.bars {
+                for numeral in bar {
+                    let json = serde_json::to_string(numeral).unwrap();
+                    assert_eq!(
+                        serde_json::from_str::<Numeral>(&json).unwrap(),
+                        *numeral,
+                        "{} in `{}`",
+                        json,
+                        entry.name
+                    );
+                }
+            }
+        }
+        assert!(serde_json::from_str::<Numeral>("\"H7\"").is_err());
     }
 
     #[test]

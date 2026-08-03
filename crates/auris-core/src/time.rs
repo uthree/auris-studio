@@ -228,6 +228,30 @@ impl TimeSignature {
     pub fn ticks_per_beat(&self) -> Ticks {
         Ticks::from_beats(4.0 / self.denominator as f64)
     }
+
+    /// Where 1-based `bar` begins. Bar 1 is [`Ticks::ZERO`].
+    ///
+    /// Bars are a function of the signature alone — the tempo map decides how long a bar *lasts*,
+    /// never where it *is*.
+    pub fn bar_start(&self, bar: u32) -> Ticks {
+        self.ticks_per_bar() * i64::from(bar.max(1) - 1)
+    }
+
+    /// Where 1-based `beat` of 1-based `bar` begins.
+    ///
+    /// The beat is fractional so that a chord landing on the second half of beat two — `2.5` — is
+    /// sayable. This is the constructor that keeps meaningless positions out of the harmony
+    /// timeline: nothing hands out a bare tick, so nothing can put a chord at tick 12345.
+    pub fn position(&self, bar: u32, beat: f64) -> Ticks {
+        let offset = (beat.max(1.0) - 1.0) * self.ticks_per_beat().raw() as f64;
+        self.bar_start(bar) + Ticks(offset.round() as i64)
+    }
+
+    /// The 1-based bar containing `tick`. Anything before the timeline starts is bar 1.
+    pub fn bar_of(&self, tick: Ticks) -> u32 {
+        let per_bar = self.ticks_per_bar().raw().max(1);
+        (tick.raw().max(0) / per_bar) as u32 + 1
+    }
 }
 
 /// A tempo change at a musical position.

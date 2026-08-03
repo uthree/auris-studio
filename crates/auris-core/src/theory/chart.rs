@@ -106,12 +106,17 @@ impl Chart {
         Self::new(fitted, self.origin)
     }
 
-    /// The chords this chart means in `key`, laid out from tick zero.
+    /// Where each chord falls, laid out from tick zero, before it is read against any key.
     ///
     /// `bar_ticks` is the length of one bar. Chords inside a bar divide it evenly, with any
-    /// remainder given to the last chord so the bar always adds up exactly.
-    pub fn resolve(&self, key: Key, bar_ticks: Ticks) -> Vec<HarmonicEvent> {
-        let mut events = Vec::new();
+    /// remainder given to the last chord so the bar always adds up exactly — a three-chord bar in
+    /// 4/4 is 1280 + 1280 + 1280, and never 1280 + 1280 + 1279.
+    ///
+    /// Both [`Self::resolve`] and [`Harmony::stamp`](crate::harmony::Harmony::stamp) go through
+    /// here, so a chart and the timeline stamped from it divide a bar the same way by
+    /// construction rather than because two people wrote the same arithmetic twice.
+    pub fn positions(&self, bar_ticks: Ticks) -> Vec<ChartSlot> {
+        let mut slots = Vec::new();
         for (index, bar) in self.bars.iter().enumerate() {
             if bar.is_empty() {
                 continue;
@@ -125,18 +130,50 @@ impl Chart {
                 } else {
                     bar_start + share * (position + 1) as i64
                 };
-                events.push(HarmonicEvent {
+                slots.push(ChartSlot {
                     numeral: *numeral,
-                    chord: numeral.chord_in(key),
-                    key,
                     start,
                     length: end - start,
                     bar: index,
                 });
             }
         }
-        events
+        slots
     }
+
+    /// The chords this chart means in `key`, laid out from tick zero.
+    ///
+    /// `bar_ticks` is the length of one bar; see [`Self::positions`] for how a bar is divided.
+    pub fn resolve(&self, key: Key, bar_ticks: Ticks) -> Vec<HarmonicEvent> {
+        self.positions(bar_ticks)
+            .into_iter()
+            .map(|slot| HarmonicEvent {
+                numeral: slot.numeral,
+                chord: slot.numeral.chord_in(key),
+                key,
+                start: slot.start,
+                length: slot.length,
+                bar: slot.bar,
+            })
+            .collect()
+    }
+}
+
+/// Where one chord of a chart falls, before any key has been chosen.
+///
+/// This is [`HarmonicEvent`] minus the two things a key decides. Laying a chart onto a timeline
+/// does not need them: the timeline stores numerals and reads them against whatever key is in
+/// force where they land, which may not be one key for the whole chart.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ChartSlot {
+    /// The numeral written there.
+    pub numeral: Numeral,
+    /// Where it starts, from the beginning of the chart.
+    pub start: Ticks,
+    /// How long it sounds.
+    pub length: Ticks,
+    /// Which bar of the chart it falls in, counting from zero.
+    pub bar: usize,
 }
 
 impl fmt::Display for Chart {

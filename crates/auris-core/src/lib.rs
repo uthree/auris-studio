@@ -12,15 +12,18 @@
 //! * [`asset`] — how that document refers to the files it is too small to contain.
 //! * [`theory`] — keys, scales, chords and roman numerals: music as it would be true without a
 //!   computer.
+//! * [`harmony`] — that theory laid out over the timeline, the way [`time::TempoMap`] lays out
+//!   tempo.
 //!
-//! The last of those is here rather than in the composer because the document holds a key and a
-//! chord progression of its own, and the document model may not depend on anything above it.
+//! The last two are here rather than in the composer because the document holds a key and a chord
+//! progression of its own, and the document model may not depend on anything above it.
 
 #![warn(missing_docs)]
 
 pub mod asset;
 pub mod buffer;
 pub mod error;
+pub mod harmony;
 pub mod param;
 pub mod plugin;
 pub mod project;
@@ -31,6 +34,7 @@ pub mod time;
 pub use asset::AssetPath;
 pub use buffer::AudioBuffer;
 pub use error::{CoreError, Result};
+pub use harmony::{ChordMap, ChordPoint, Harmony, KeyMap, KeyPoint};
 pub use param::{ParamDescriptor, ParamId, ParamUnit, ParamValueCurve};
 pub use plugin::{
     Effect, Instrument, NoteEvent, Parameterized, PluginCategory, PluginDescriptor, PluginKind,

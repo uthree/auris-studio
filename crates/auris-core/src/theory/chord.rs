@@ -126,6 +126,25 @@ impl Quality {
         }
     }
 
+    /// The suffix to write after a roman numeral, where the plain one would be misread.
+    ///
+    /// After a chord *letter*, `C7` can only be a dominant seventh. After a *numeral*, `V7` means
+    /// "with a seventh, whichever one the key holds" — an extension, which the key resolves —
+    /// and a quality that was forced to `Dominant7` has to be spelled out to survive being read
+    /// back. The same goes for `6` and `9`, and for a plain major, whose suffix is empty and
+    /// would vanish entirely.
+    ///
+    /// Every spelling here is one [`Self::parse`] already accepts; nothing new is invented.
+    pub fn numeral_suffix(self) -> &'static str {
+        match self {
+            Quality::Major => "M",
+            Quality::Major6 => "maj6",
+            Quality::Dominant7 => "dom7",
+            Quality::Dominant9 => "dom9",
+            other => other.suffix(),
+        }
+    }
+
     /// Reads a quality suffix, accepting the spellings chord charts actually use.
     pub fn parse(text: &str) -> Option<Self> {
         Some(match text {

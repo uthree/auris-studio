@@ -20,6 +20,7 @@ use std::path::Path;
 
 use crate::asset::AssetPath;
 use crate::buffer::AudioBuffer;
+use crate::harmony::Harmony;
 use crate::plugin::PluginState;
 use crate::time::{TempoMap, Ticks, TimeSignature};
 
@@ -562,6 +563,12 @@ pub struct Project {
     pub tempo_map: TempoMap,
     /// Bar/beat grid.
     pub time_signature: TimeSignature,
+    /// The key and the chords, over the timeline.
+    ///
+    /// Beside the tempo map rather than inside a track, because it is the same kind of thing: it
+    /// changes as the song goes on, and at any one moment every track obeys the same one.
+    #[serde(default)]
+    pub harmony: Harmony,
     /// Tracks, top to bottom.
     pub tracks: Vec<Track>,
     /// Master bus strip.
@@ -616,6 +623,7 @@ impl Project {
             sample_rate,
             tempo_map: TempoMap::constant(120.0),
             time_signature: TimeSignature::default(),
+            harmony: Harmony::default(),
             tracks: Vec::new(),
             master: MixerStrip::default(),
             audio_sources: BTreeMap::new(),
@@ -1449,6 +1457,48 @@ mod tests {
             project.soundfonts[&SoundFontId(2)].byte_size,
             0,
             "a size nobody recorded is 0, not a wrong number"
+        );
+        assert_eq!(
+            project.harmony,
+            Harmony::default(),
+            "a document written before songs had a key opens in C major with no chords"
+        );
+    }
+
+    #[test]
+    fn a_project_carries_its_harmony_through_a_save_and_a_load() {
+        use crate::theory::key::Key;
+        use crate::theory::numeral::Numeral;
+
+        let mut project = Project::new("Song", 48_000.0);
+        project
+            .harmony
+            .keys
+            .set_initial(Key::parse("F# minor").unwrap());
+        project
+            .harmony
+            .keys
+            .set_point(Ticks(3840 * 8), Key::parse("A major").unwrap());
+        project
+            .harmony
+            .chords
+            .set_point(Ticks::ZERO, Some(Numeral::parse("i").unwrap()));
+        project
+            .harmony
+            .chords
+            .set_point(Ticks(3840), Some(Numeral::parse("bVI").unwrap()));
+
+        let json = serde_json::to_string(&project).unwrap();
+        let reloaded: Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(reloaded.harmony, project.harmony);
+        assert_eq!(
+            reloaded.harmony.key_at(Ticks(3840 * 8)).to_text(),
+            "A major"
+        );
+        assert_eq!(
+            reloaded.harmony.chord_at(Ticks(3840)).unwrap().to_string(),
+            "D",
+            "bVI of F# minor"
         );
     }
 

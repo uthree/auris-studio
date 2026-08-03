@@ -28,6 +28,7 @@
 //! * [`realtime`] — what may and may not happen on the audio callback thread.
 //! * [`plugins`] — writing an instrument or an effect, with a worked example.
 //! * [`composition`] — the song specification and how a piece is written from it.
+//! * [`harmony`] — the key and the chords, and why they belong to the timeline.
 //! * [`documents`] — what a project is on disk, and how it refers to files it does not contain.
 //! * [`platforms`] — where macOS and Windows differ, and the rules that keep both alive.
 
@@ -509,6 +510,78 @@ pub mod documents {
     //! complaint about an unknown field. Backwards compatibility is carried by `serde(default)` on
     //! every optional field: version 1 stored assets as bare path strings, which is exactly what
     //! `External` means, so reading those as `External` is the whole of that migration.
+    //!
+    //! The version moves when an older build could *misread* a newer file, not merely when the
+    //! schema grows. A field an old build has never heard of is skipped and everything else opens;
+    //! `AssetPath` bumped the version because it changed how an *existing* field was to be read,
+    //! and an old build would have resolved a relative path as an absolute one and lost the audio.
+    //! [`harmony`](auris_core::harmony) did not, because nothing already in the file changed
+    //! meaning.
+}
+
+pub mod harmony {
+    //! The key and the chords, and why they belong to the timeline.
+    //!
+    //! # Whose property harmony is
+    //!
+    //! Harmony changes as a song goes on, and at any one moment every track obeys the same one.
+    //! That is the same shape as tempo, and so [`Harmony`](auris_core::harmony::Harmony) sits
+    //! beside [`TempoMap`](auris_core::time::TempoMap) on the
+    //! [`Project`](auris_core::Project) — not on a track, which could then disagree with its
+    //! neighbour, and not as a single constant, which could not hold a modulation.
+    //!
+    //! It is deliberately built to imitate the tempo map: a sorted list of points, each in force
+    //! until the next, anchored at tick 0, and deserialised through a repr rather than a plain
+    //! derive so a hand-edited file cannot produce a list the binary search will misread.
+    //!
+    //! It parts company with the tempo map on what a bad value costs. An impossible tempo divides
+    //! by zero in the render path and refuses the file; an impossible chord costs that one chord
+    //! and is dropped, because a song with a typo in bar nine should still open.
+    //!
+    //! # Two timelines
+    //!
+    //! [`KeyMap`](auris_core::harmony::KeyMap) and
+    //! [`ChordMap`](auris_core::harmony::ChordMap) are separate because a key change and a chord
+    //! change are separate events. Eight bars of `I V vi IV` should not restate the key eight
+    //! times, and a modulation should not rewrite eight chords. The cost is two lookups, which
+    //! [`Harmony::chord_at`](auris_core::harmony::Harmony::chord_at) does together.
+    //!
+    //! They differ in one way that matters. A key map is never empty and
+    //! [`key_at`](auris_core::harmony::KeyMap::key_at) always answers; a chord map may be empty and
+    //! [`numeral_at`](auris_core::harmony::ChordMap::numeral_at) may answer `None`. A song nobody
+    //! has written chords into has no chords, and putting an imaginary `I` at tick 0 to make the
+    //! lookup total would be a lie the composer would then go and obey.
+    //!
+    //! # Numerals, so that a key change means something
+    //!
+    //! A span stores a [`Numeral`](auris_core::theory::numeral::Numeral) — `IVmaj7` — and not a
+    //! [`Chord`](auris_core::theory::chord::Chord). Transposing the key then transposes the
+    //! progression, and a modulation halfway through a section reharmonises the rest of it without
+    //! a single span being touched. Storing the sounding chord would make both of those into
+    //! rewrites.
+    //!
+    //! That decision has a sharp edge in the file format.
+    //! [`Numeral`](auris_core::theory::numeral::Numeral) is stored as the text a musician writes,
+    //! but *not* its [`Display`](std::fmt::Display) form: `Quality::Major`'s suffix is empty and
+    //! `Quality::Dominant7`'s is `7`, so `IM` would print as `I` and a forced dominant would print
+    //! as the extension `7`, and both would read back as something else.
+    //! [`Numeral::to_text`](auris_core::theory::numeral::Numeral::to_text) writes the unambiguous
+    //! spelling. Without it a chord the user spelled out would come back from a save as a chord the
+    //! composer is free to rewrite.
+    //!
+    //! # Ticks, built from bars
+    //!
+    //! Positions are [`Ticks`](auris_core::time::Ticks), like every other position in the
+    //! document, because a stored bar number changes meaning the moment the time signature is
+    //! edited — notes would stay where they sound while chords slid elsewhere. Bars are how a
+    //! position is *built*: [`TimeSignature::position`](auris_core::time::TimeSignature::position)
+    //! takes a bar and a fractional beat, so several chords in one bar and a chord on an off-beat
+    //! are both sayable, and nothing hands out a bare tick.
+    //!
+    //! A [`Chart`](auris_core::theory::chart::Chart) — the named progressions like `@axis` — is a
+    //! tool that stamps spans, never a thing that is stored. Storing the chart would leave the
+    //! timeline uneditable: changing one chord of bar six would mean editing a pattern that also
+    //! governs bars two and ten.
 }
 
 pub mod platforms {
