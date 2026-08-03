@@ -57,6 +57,11 @@ impl TextField {
         self.reversed
     }
 
+    /// The text inside the selection, which is empty when the caret is a point.
+    pub fn selected_text(&self) -> String {
+        self.content[self.clamp(self.selection.clone())].to_string()
+    }
+
     /// The range the IME is composing, as byte offsets.
     pub fn marked(&self) -> Option<Range<usize>> {
         self.marked.clone()

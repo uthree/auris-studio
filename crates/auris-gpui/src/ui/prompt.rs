@@ -375,6 +375,30 @@ impl AurisApp {
             "home" | "up" => field.move_home(shift),
             "end" | "down" => field.move_end(shift),
             "a" if command => field.select_all(),
+            // Copy, cut and paste. A rename box that cannot take a name off the clipboard means
+            // retyping a chord symbol or a path by hand every time, and there is nowhere else in
+            // the application to type text.
+            "c" if command => {
+                let selected = field.selected_text();
+                if !selected.is_empty() {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected));
+                }
+            }
+            "x" if command => {
+                let selected = field.selected_text();
+                if !selected.is_empty() {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected));
+                    field.backspace();
+                }
+            }
+            "v" if command => {
+                let pasted = cx.read_from_clipboard().and_then(|item| item.text());
+                if let Some(text) = pasted {
+                    // One line. A clipboard full of newlines would otherwise be typed into a
+                    // field that draws exactly one row of text.
+                    field.insert(&text.replace(['\n', '\r'], " "));
+                }
+            }
             _ => return false,
         }
         true
@@ -645,6 +669,14 @@ pub(crate) fn editable_text(
 }
 
 /// Draws the text, its selection and the IME's pre-edit underline.
+/// The offset the field has to keep on screen.
+///
+/// The end of the IME's pre-edit while one is composing — that is where the candidate is being
+/// chosen — and otherwise the moving end of the selection, which is the caret.
+fn caret_offset(selection: &Range<usize>, marked: Option<&Range<usize>>) -> usize {
+    marked.map_or(selection.end, |marked| marked.end)
+}
+
 fn paint_field(
     window: &mut Window,
     cx: &mut gpui::App,
@@ -674,6 +706,15 @@ fn paint_field(
     };
 
     paint::clipped(window, bounds, |window| {
+        // Everything is drawn relative to a scrolled origin, so a name longer than the box does
+        // not walk the caret and everything after it off the right-hand edge. Past about fifty
+        // Latin characters — or twenty-five full-width ones, which is a sentence of Japanese —
+        // the user was typing blind.
+        let caret_at = advance(window, caret_offset(selection, marked.as_ref()));
+        let visible = bounds.size.width - FIELD_PADDING * 2.0;
+        let scroll = (caret_at - visible).max(px(0.0));
+        let origin = point(origin.x - scroll, origin.y);
+
         if !selection.is_empty() {
             let start = advance(window, selection.start);
             let end = advance(window, selection.end);

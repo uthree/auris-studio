@@ -700,7 +700,9 @@ impl SettingsWindow {
             return;
         }
 
-        let keystroke = event.keystroke.unparse();
+        // Stored the way the file spells things, not the way this keyboard reported them, so a
+        // keymap.json carried to the other platform still binds the modifier a user means.
+        let keystroke = crate::actions::portable_keystroke(&event.keystroke.unparse());
         self.capturing = None;
         if self.keymap.set(command, &keystroke) {
             let clash = self.keymap.conflicts(&keystroke, command);

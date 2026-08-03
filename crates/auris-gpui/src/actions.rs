@@ -215,6 +215,50 @@ pub fn menu_keystroke(keystroke: &str) -> String {
         .join(" ")
 }
 
+/// `keystroke` written the way the keymap file stores one.
+///
+/// gpui reports what the *keyboard* did — `cmd-s` on a Mac, `ctrl-s` on Windows — and the file
+/// is shared between machines and checked into dotfiles. `secondary-` is the spelling that means
+/// "whichever modifier this platform uses for a command", so a binding captured on either one
+/// works on both. Without this a keymap.json captured on a Mac asked Windows for the Windows
+/// key, which the shell claims long before the application sees it.
+pub fn portable_keystroke(keystroke: &str) -> String {
+    keystroke
+        .split_whitespace()
+        .map(portable_chunk)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// One keystroke of a binding, with the platform's command modifier written as `secondary-`.
+fn portable_chunk(chunk: &str) -> String {
+    let Ok(parsed) = gpui::Keystroke::parse(chunk) else {
+        return chunk.to_string();
+    };
+    let modifiers = parsed.modifiers;
+    let mut out = String::new();
+    if modifiers.secondary() {
+        out.push_str("secondary-");
+    }
+    // The other three are written out as they are. On macOS `secondary` is ⌘ and `control` is a
+    // modifier in its own right; elsewhere `secondary` *is* control, and printing it twice would
+    // produce `secondary-ctrl-s`.
+    if modifiers.control && !modifiers.secondary() {
+        out.push_str("ctrl-");
+    }
+    if modifiers.platform && !modifiers.secondary() {
+        out.push_str("cmd-");
+    }
+    if modifiers.alt {
+        out.push_str("alt-");
+    }
+    if modifiers.shift {
+        out.push_str("shift-");
+    }
+    out.push_str(&parsed.key);
+    out
+}
+
 /// One keystroke of a possibly multi-stroke binding, prettified.
 fn pretty_chunk(chunk: &str) -> String {
     let Ok(parsed) = gpui::Keystroke::parse(chunk) else {
