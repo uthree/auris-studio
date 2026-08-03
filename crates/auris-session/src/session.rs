@@ -689,6 +689,21 @@ impl Session {
             return Err(SessionError::UnknownPlugin(instrument_id.to_string()));
         }
         self.require_track(id)?;
+        // An audio track has no instrument to change. This used to fall through the `if let`
+        // below, do nothing, and report success — after recording an undo step for the edit it
+        // had not made, so the history grew a rung that reversed nothing. The guard belongs here
+        // rather than in whichever frontend happens to remember: the invariant is the document's.
+        if !self
+            .project
+            .track(id)
+            .is_some_and(|track| track.kind.is_instrument())
+        {
+            return Err(SessionError::WrongTrackKind {
+                id: id.0,
+                actual: "an audio track",
+                expected: "an instrument track",
+            });
+        }
         self.record(Edit::ChangeInstrument);
         if let Some(inner) = self
             .project
@@ -1655,6 +1670,24 @@ mod tests {
 
     fn session() -> Session {
         Session::new(SessionOptions::headless()).expect("a headless session always opens")
+    }
+
+    #[test]
+    fn an_audio_track_has_no_instrument_to_change() {
+        // This used to return `Ok` having changed nothing and recorded an undo step anyway, so
+        // the history grew a rung that reversed nothing at all.
+        let mut session = session();
+        let audio = session.add_audio_track("Sample");
+        let instrument = session
+            .registry()
+            .first_instrument_id()
+            .expect("the default registry has instruments")
+            .to_string();
+        session.forget_history();
+
+        let refused = session.set_track_instrument(audio, &instrument);
+        assert!(matches!(refused, Err(SessionError::WrongTrackKind { .. })));
+        assert!(!session.can_undo(), "a refused edit left a step behind");
     }
 
     #[test]
