@@ -12,7 +12,12 @@ macro_rules! strings {
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
         pub enum Key {
             $(
-                #[doc = $en]
+                // Fenced rather than written straight into the documentation, because these are
+                // *strings*, not prose: the command line usage text contains `<command>` and
+                // `[options]`, which rustdoc would otherwise read as an HTML tag and a link to a
+                // type called `options`. A block also keeps the alignment of a multi-line string,
+                // which is the whole point of the ones that have any.
+                #[doc = concat!("```text\n", $en, "\n```")]
                 $key,
             )*
         }

@@ -10,6 +10,8 @@
 //! * [`registry::PluginRegistry`] — the runtime lookup table those plugins register into.
 //! * [`project`] — the serialisable document model (tracks, clips, notes, mixer state).
 
+#![warn(missing_docs)]
+
 pub mod buffer;
 pub mod error;
 pub mod param;

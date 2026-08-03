@@ -49,6 +49,17 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+      # The documentation is checked the same way the code is, and on this job because it is the
+      # one that builds every crate including the frontend. Nothing was checking it before, which
+      # is how two dozen warnings accumulated — among them a macro feeding command line usage text
+      # through `#[doc]`, where `<command>` parsed as an HTML tag and `[options]` as a link to a
+      # type of that name. `RUSTDOCFLAGS` rather than `RUSTFLAGS`: rustdoc does not read the
+      # latter, so the workspace-wide `-D warnings` above does not reach it.
+      - name: Document
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps --locked
+
   # The whole workspace again, on the other platform the desktop application ships for.
   #
   # This job is the only thing standing between Windows and quiet rot, because nobody here

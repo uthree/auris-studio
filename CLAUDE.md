@@ -67,7 +67,12 @@ frontend gets it. New work that is *presentation* stays in the frontend.
 ## Conventions
 
 * Comments, documentation and the README are written in English.
-* Every public item carries a doc comment (`#![warn(missing_docs)]` is on in each crate).
+* Every public item carries a doc comment (`#![warn(missing_docs)]` is on in each crate). CI
+  builds the docs with warnings denied, so a link that does not resolve fails the build too — a
+  doc comment naming a private item wants backticks, not brackets.
+* The workspace has no root crate, so the account of how the crates fit together is
+  `auris_session::guide`. That is the only crate depending on every other, and so the only place
+  intra-doc links to them all resolve. Anything about the system as a whole belongs there.
 * Run `cargo fmt --all` and `cargo clippy --workspace --all-targets` before committing.
 * DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths)
   rather than on "it runs".
@@ -87,4 +92,5 @@ cargo run                                   # launch the DAW (default-members)
 cargo run -p auris-cli -- help              # the command line frontend
 cargo test --workspace                      # all tests
 cargo clippy --workspace --all-targets      # lints
+cargo doc --workspace --no-deps --open      # the API documentation
 ```

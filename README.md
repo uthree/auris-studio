@@ -295,7 +295,17 @@ Honest list of what is not there yet, so nobody discovers these the hard way:
 cargo test --workspace                    # unit tests
 cargo clippy --workspace --all-targets    # lints
 cargo fmt --all                           # formatting
+cargo doc --workspace --no-deps --open    # the API documentation
 ```
+
+Every crate carries `#![warn(missing_docs)]` and CI builds the documentation with warnings denied,
+so a public item without a doc comment and a link that does not resolve are both build failures.
+
+The workspace has no root crate, so the account of how the eleven of them fit together lives in
+`auris_session::guide` — it is the only crate that depends on every other, and so the only one
+whose links to them all resolve. It covers the architecture and the layering rules, the realtime
+contract, writing a plugin (with a worked example that is compiled as a test), the composition
+format, and where the two platforms differ.
 
 ## Licence
 

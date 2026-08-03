@@ -1,6 +1,6 @@
 //! Writing the parts.
 //!
-//! Every part is a pure function of the frozen [`Frame`](crate::frame::Frame) and its own name,
+//! Every part is a pure function of the frozen [`Frame`] and its own name,
 //! so no part can depend on another's notes. What makes them sound like a band anyway is that
 //! they all read the same harmony, and the rhythm section all reads the same groove.
 

@@ -131,7 +131,7 @@ pub enum RenderSource {
 
 /// A gain that ramps to its target across one block instead of jumping.
 ///
-/// A jump between blocks is audible as a click, so [`Self::advance`] hands the renderer the
+/// A jump between blocks is audible as a click, so `advance` hands the renderer the
 /// start and end of a linear ramp. When nothing has changed the two are equal and the ramp
 /// degenerates into a plain multiply, which is what keeps rendering independent of block size.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -194,7 +194,7 @@ pub(crate) const MUTE_FADE_MS: f64 = 5.0;
 /// The mute switch as a gain sliding between silence and unity.
 ///
 /// A mute that took effect within one sample would step the waveform to zero, and a step is a
-/// click. Sliding over [`MUTE_FADE_MS`] instead costs nothing audible and removes it.
+/// click. Sliding over a few milliseconds instead costs nothing audible and removes it.
 ///
 /// The slide is counted in *frames*, not in blocks, which is what keeps it — like every other
 /// ramp in the renderer — independent of the block size: splitting a block in two and rendering

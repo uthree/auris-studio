@@ -483,7 +483,7 @@ impl AurisApp {
         self.pitch.center_on(middle, body_height);
     }
 
-    /// "Could not <action>: <reason>", with both halves translated.
+    /// `"Could not <action>: <reason>"`, with both halves translated.
     pub(crate) fn failure(&self, action: Key, error: &SessionError) -> String {
         messages::failed(
             self.language(),

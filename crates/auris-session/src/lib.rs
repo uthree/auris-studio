@@ -33,10 +33,17 @@
 //! moved — which is what stops a selection click from quietly pushing real history off the end
 //! of the stack. The transaction also batches the graph rebuild: structural edits inside it
 //! set a flag and [`Session::end_transaction`] rebuilds once.
+//!
+//! # Where everything else is
+//!
+//! The workspace has no root crate, so [`guide`] carries the account of how the eleven of them
+//! fit together — it lives here because this is the only crate that depends on every other, and
+//! so the only one whose links to them all resolve. Start at [`guide::architecture`].
 
 #![warn(missing_docs)]
 
 pub mod error;
+pub mod guide;
 pub mod history;
 pub mod param;
 pub mod registry;

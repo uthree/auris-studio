@@ -6,7 +6,7 @@
 //! like it stops abruptly at the end.
 //!
 //! An exponential never actually reaches its target, so a stated time has to mean something
-//! else. Here "decay time" and "release time" are the time to come within [`SILENCE_LEVEL`] of
+//! else. Here "decay time" and "release time" are the time to come within -80 dBFS of
 //! the target, at which point the envelope snaps to it. That definition is what makes the
 //! release testable: one release time after a note off the envelope is at or below -80 dB of
 //! the level it started from, and the voice is free.
