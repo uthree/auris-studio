@@ -8,8 +8,10 @@ use auris_core::harmony::Harmony;
 use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
 use auris_core::plugin::{PluginKind, PluginState};
 use auris_core::theory::chart::{Chart, catalog};
+use auris_core::theory::chord::Chord;
 use auris_core::theory::key::Key as MusicalKey;
 use auris_core::theory::numeral::Numeral;
+use auris_core::theory::pitch::MIDDLE_C;
 use auris_core::time::{Seconds, Ticks};
 use auris_core::{
     AssetPath, AudioBuffer, AudioSourceBank, ClipId, ClipRecipe, EffectSlotId, MidiClip, Note,
@@ -1921,6 +1923,71 @@ impl Session {
         }
     }
 
+    /// Sounds several notes at once, which is what it takes to hear a chord.
+    pub fn notes_on(&mut self, track: TrackId, pitches: &[u8], velocity: f32) {
+        for pitch in pitches {
+            self.note_on(track, *pitch, velocity);
+        }
+    }
+
+    /// Releases them.
+    pub fn notes_off(&mut self, track: TrackId, pitches: &[u8]) {
+        for pitch in pitches {
+            self.note_off(track, *pitch);
+        }
+    }
+
+    /// The pitches to sound to hear the chord in force at `tick`.
+    ///
+    /// Empty when nothing is written there, which is the honest answer and not an error: the
+    /// stretches between chords are part of a progression too.
+    pub fn harmony_voicing(&self, tick: Ticks) -> Vec<u8> {
+        self.project
+            .harmony
+            .chord_at(tick)
+            .map(Self::voice_for_audition)
+            .unwrap_or_default()
+    }
+
+    /// A chord laid out to be listened to rather than played by a part.
+    ///
+    /// The body sits around middle C, where a chord is easiest to identify, and the bass an
+    /// octave and a half below it — far enough down to be heard as a bass rather than as the
+    /// chord's own lowest note, which is what makes a slash chord audibly a slash chord.
+    ///
+    /// This is not what any part would play. A part has a register to keep, neighbours to stay out
+    /// of the way of, and a previous chord to lead from; an audition has one job, which is to let
+    /// somebody recognise the chord they just wrote down.
+    pub fn voice_for_audition(chord: Chord) -> Vec<u8> {
+        let mut pitches: Vec<i32> = chord.voiced_near(MIDDLE_C);
+        pitches.push(chord.bass_class().midi(2));
+        pitches.retain(|pitch| (0..=127).contains(pitch));
+        pitches.sort_unstable();
+        pitches.dedup();
+        pitches.into_iter().map(|pitch| pitch as u8).collect()
+    }
+
+    /// A track that can sound an audition: `preferred` when it can, the first that can otherwise.
+    ///
+    /// Harmony belongs to the timeline rather than to any one track, so hearing it has to borrow
+    /// somebody's instrument. Falling back matters more than it looks: writing the chords before
+    /// the parts is the whole point of the lane, and at that moment the selected track may well be
+    /// the audio track somebody imported a reference mix onto.
+    pub fn audition_track(&self, preferred: Option<TrackId>) -> Option<TrackId> {
+        let plays_notes = |id: TrackId| {
+            self.project
+                .track(id)
+                .is_some_and(|track| track.kind.as_instrument().is_some())
+        };
+        preferred.filter(|id| plays_notes(*id)).or_else(|| {
+            self.project
+                .tracks
+                .iter()
+                .find(|track| track.kind.as_instrument().is_some())
+                .map(|track| track.id)
+        })
+    }
+
     // ---------------------------------------------------------------- files
 
     /// Replaces the document with an empty project holding one instrument track.
@@ -3506,6 +3573,79 @@ mod tests {
             session.project().tracks,
             notes_before.tracks,
             "harmony is not a note and must not move one"
+        );
+    }
+
+    // ------------------------------------------------- hearing the harmony
+
+    #[test]
+    fn the_chord_under_a_position_can_be_heard_and_the_silence_between_them_cannot() {
+        let (session, _) = with_a_progression();
+
+        // The axis progression in C major: I is C, and it sounds as one.
+        let opening = session.harmony_voicing(Ticks::ZERO);
+        assert!(!opening.is_empty(), "the first chord is silent");
+        let chord = session.project().harmony.chord_at(Ticks::ZERO).unwrap();
+        for pitch in &opening {
+            assert!(
+                chord.contains_midi(i32::from(*pitch)),
+                "{pitch} is not in {chord}"
+            );
+        }
+
+        // Nothing written is nothing sounded, rather than an error or a guess.
+        let empty = self::tests::session();
+        assert!(empty.harmony_voicing(Ticks::ZERO).is_empty());
+    }
+
+    #[test]
+    fn an_audition_puts_the_bass_below_the_chord_and_the_chord_around_middle_c() {
+        // A slash chord is the case that decides the layout: if the bass were voiced with the
+        // rest, `C/E` and `C` would sound identical and the slash would be a silent decoration.
+        let plain = Session::voice_for_audition(Chord::parse("C").unwrap());
+        let slash = Session::voice_for_audition(Chord::parse("C/E").unwrap());
+        assert_ne!(plain, slash);
+        assert!(slash[0] < slash[1], "the bass is the lowest note");
+        assert_eq!(
+            i32::from(slash[0]) % 12,
+            4,
+            "the bass is the one that was named"
+        );
+
+        for chord in ["C", "F#m", "Bbmaj7", "G7", "D9"] {
+            let pitches = Session::voice_for_audition(Chord::parse(chord).unwrap());
+            let body = &pitches[1..];
+            assert!(pitches[0] < 48, "{chord}: the bass is not a bass");
+            assert!(
+                body.iter().all(|pitch| (48..=96).contains(pitch)),
+                "{chord} left the register a chord is recognised in: {pitches:?}"
+            );
+            assert!(
+                pitches.windows(2).all(|pair| pair[0] < pair[1]),
+                "{chord} sounded a pitch twice: {pitches:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_audition_borrows_an_instrument_when_the_selection_cannot_play_one() {
+        // The case this exists for: chords are written before parts are, so the selected track at
+        // that moment may be an audio track — or there may be no selection at all.
+        let mut session = self::tests::session();
+        let audio = session.add_audio_track("Reference");
+        assert_eq!(
+            session.audition_track(Some(audio)),
+            None,
+            "nothing can play"
+        );
+
+        let instrument = session.add_default_instrument_track("Piano").unwrap();
+        assert_eq!(session.audition_track(None), Some(instrument));
+        assert_eq!(session.audition_track(Some(audio)), Some(instrument));
+        assert_eq!(
+            session.audition_track(Some(instrument)),
+            Some(instrument),
+            "a track that can play keeps the audition"
         );
     }
 

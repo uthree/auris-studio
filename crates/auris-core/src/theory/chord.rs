@@ -275,6 +275,16 @@ impl Chord {
             .collect()
     }
 
+    /// The chord voiced with its root within half an octave of `centre`, above or below.
+    ///
+    /// [`Self::voiced_from`] takes a floor, so its roots land in `centre..centre + 11` — the same
+    /// span, sitting entirely above the pitch that was named. That is right for a part with a
+    /// register to stay inside, and wrong for asking to hear a chord *around* middle C, which
+    /// would come out an average of half an octave sharp of it.
+    pub fn voiced_near(self, centre: i32) -> Vec<i32> {
+        self.voiced_from(centre - OCTAVE / 2)
+    }
+
     /// `true` when `pitch` is one of the chord's notes, in any octave.
     pub fn contains(self, pitch: PitchClass) -> bool {
         self.classes().contains(&pitch)
@@ -499,6 +509,28 @@ mod tests {
             Chord::parse("C9").unwrap().voiced_from(48),
             vec![48, 52, 55, 58, 62]
         );
+    }
+
+    #[test]
+    fn voicing_near_a_centre_straddles_it_where_voicing_upward_sits_above_it() {
+        // Both bound a progression to one octave of movement — that is not the difference. The
+        // difference is *which* octave: from a floor, I–V–vi–IV in C sits above middle C and
+        // averages a fourth sharp of it; around the same pitch it sits either side.
+        let roots = |voice: fn(Chord) -> Vec<i32>| -> Vec<i32> {
+            ["C", "G", "Am", "F"]
+                .iter()
+                .map(|name| voice(Chord::parse(name).unwrap())[0])
+                .collect()
+        };
+        assert_eq!(roots(|chord| chord.voiced_from(60)), vec![60, 67, 69, 65]);
+        assert_eq!(roots(|chord| chord.voiced_near(60)), vec![60, 55, 57, 65]);
+
+        // Every root lands within half an octave of the centre, whichever chord it is.
+        for semitone in 0..12 {
+            let chord = Chord::new(PitchClass::new(semitone), Quality::Major);
+            let root = chord.voiced_near(60)[0];
+            assert!((root - 60).abs() <= 6, "{semitone} landed on {root}");
+        }
     }
 
     #[test]

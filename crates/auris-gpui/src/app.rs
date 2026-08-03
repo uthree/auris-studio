@@ -34,6 +34,42 @@ use crate::ui::menu_bar::OpenMenu;
 use crate::ui::prompt::Prompt;
 use crate::ui::timeline::{PitchView, TimelineView};
 
+/// What a press or a sweep at one position should do to whatever is already sounding.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Audition {
+    /// Nothing is written here; release what is sounding.
+    Silence,
+    /// The same chord is already sounding; leave it alone.
+    Hold,
+    /// A different chord; strike it.
+    Strike,
+}
+
+/// Which of the three a set of pitches calls for, given what is sounding now.
+///
+/// Extracted from the handler because [`Audition::Hold`] is the case that is easy to lose and
+/// impossible to miss once it is gone: a sweep along the lane asks this on every pointer move, and
+/// without it a chord four bars wide is struck again every few pixels.
+pub fn audition_for(sounding: Option<&[u8]>, pitches: &[u8]) -> Audition {
+    if pitches.is_empty() {
+        Audition::Silence
+    } else if sounding == Some(pitches) {
+        Audition::Hold
+    } else {
+        Audition::Strike
+    }
+}
+
+/// How hard an auditioned note is struck.
+const NOTE_VELOCITY: f32 = 0.8;
+
+/// How hard each note of an auditioned chord is struck.
+///
+/// Softer than one note, because four or five voices sum. A piano would not need this — striking
+/// a chord is striking each key — but four synth voices at the same velocity as one are four
+/// times the signal, and the point is to identify the chord rather than to be startled by it.
+const CHORD_VELOCITY: f32 = 0.55;
+
 /// A surface a selection rectangle can be swept across.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BandSurface {
@@ -110,6 +146,13 @@ pub enum Drag {
         /// Pointer x when the drag began.
         start_x: Pixels,
     },
+    /// Sweeping along the harmony lane with the button held, hearing each chord in turn.
+    ///
+    /// Carries nothing: what sounds is whatever is written under the pointer, which the document
+    /// already knows. It is a drag rather than a click so that a progression can be *heard as a
+    /// progression* — pressing four chords one at a time tells you what each one is, and dragging
+    /// across them tells you whether they go anywhere.
+    AuditionHarmony,
     /// Turning one of a generated clip's dials.
     ///
     /// Separate from [`Drag::Param`] because a recipe is not a plugin parameter: there is no
@@ -206,6 +249,8 @@ impl Drag {
             Drag::Tempo { .. } => Some(Edit::ChangeTempo),
             // Selecting is not an edit; it changes what a later edit will act on.
             Drag::RubberBand { .. } => None,
+            // Listening changes nothing at all.
+            Drag::AuditionHarmony => None,
             // How far in the view is zoomed is a property of the window, like a panel's width.
             Drag::TimeZoom { .. } => None,
             // Panel and window geometry is a property of the window, not the document: resizing
@@ -330,6 +375,37 @@ impl PanelLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sweeping_a_progression_strikes_each_chord_once() {
+        // One gesture across four bars of chords, as a sequence of pointer moves. What must come
+        // out is one strike per chord — not one per pixel, which is what a check for "is this
+        // already sounding" is the only thing preventing.
+        let c = [48u8, 60, 64, 67];
+        let g = [43u8, 55, 59, 62];
+
+        assert_eq!(audition_for(None, &c), Audition::Strike, "the first press");
+        assert_eq!(audition_for(Some(&c), &c), Audition::Hold, "still on C");
+        assert_eq!(audition_for(Some(&c), &g), Audition::Strike, "onto G");
+
+        // Off the end of the written chords, and back on again.
+        assert_eq!(audition_for(Some(&g), &[]), Audition::Silence);
+        assert_eq!(audition_for(None, &[]), Audition::Silence, "already quiet");
+        assert_eq!(audition_for(None, &g), Audition::Strike);
+    }
+
+    #[test]
+    fn pressing_the_same_chord_again_sounds_it_again() {
+        // Two separate presses on one chord, which is a different thing from a sweep that never
+        // left it: the button coming up releases the notes, so the second press finds silence.
+        let c = [48u8, 60, 64, 67];
+        assert_eq!(audition_for(Some(&c), &c), Audition::Hold);
+        assert_eq!(
+            audition_for(None, &c),
+            Audition::Strike,
+            "after the release"
+        );
+    }
 
     #[test]
     fn the_library_follows_the_pointer_and_stops_at_its_limits() {
@@ -506,8 +582,9 @@ pub struct AurisApp {
     pub(crate) panels: PanelLayout,
     pub(crate) status: String,
     pub(crate) export: Option<ExportState>,
-    /// Note currently sounding because the user is holding a key or dragging one.
-    pub(crate) auditioning: Option<(TrackId, u8)>,
+    /// Notes currently sounding because the user is holding a key, dragging one, or pressing a
+    /// chord on the harmony lane.
+    pub(crate) auditioning: Option<(TrackId, Vec<u8>)>,
     /// Keyboard focus target, so the action bindings reach this view.
     pub(crate) focus: FocusHandle,
     /// Window height as of the last frame, used only as a fallback before the first paint.
@@ -758,21 +835,58 @@ impl AurisApp {
 
     // ---------------------------------------------------------------- audition
 
-    /// Sounds one note on the selected track, replacing any note already sounding.
+    /// Sounds one note on the selected track, replacing anything already sounding.
     pub(crate) fn audition(&mut self, pitch: u8) {
         let Some(track) = self.selected_track else {
             return;
         };
-        self.stop_audition();
-        self.session.note_on(track, pitch, 0.8);
-        self.auditioning = Some((track, pitch));
+        self.sound(track, vec![pitch], NOTE_VELOCITY);
     }
 
-    /// Releases the auditioned note, if any.
-    pub(crate) fn stop_audition(&mut self) {
-        if let Some((track, pitch)) = self.auditioning.take() {
-            self.session.note_off(track, pitch);
+    /// Sounds the chord in force at `tick`, and says so when nothing can play it.
+    ///
+    /// The instrument is borrowed rather than required to be selected: harmony belongs to the
+    /// timeline, and the point of writing it first is that the parts do not exist yet.
+    ///
+    /// Safe to call on every pointer move, which is what lets one gesture sweep a progression. A
+    /// chord already sounding is left alone rather than struck again — retriggering it every few
+    /// pixels would turn a sweep into a machine gun — and moving off the end of the chords goes
+    /// quiet, because that is what is written there.
+    pub(crate) fn audition_chord(&mut self, tick: Ticks) {
+        let pitches = self.session.harmony_voicing(tick);
+        let sounding = self
+            .auditioning
+            .as_ref()
+            .map(|(_, pitches)| pitches.as_slice());
+        match audition_for(sounding, &pitches) {
+            Audition::Silence => self.stop_audition(),
+            Audition::Hold => {}
+            Audition::Strike => match self.session.audition_track(self.selected_track) {
+                Some(track) => self.sound(track, pitches, CHORD_VELOCITY),
+                None => self.set_status(self.t(Key::NoInstrumentToHearItOn)),
+            },
         }
+    }
+
+    /// Sounds a set of notes, replacing anything already sounding.
+    fn sound(&mut self, track: TrackId, pitches: Vec<u8>, velocity: f32) {
+        self.stop_audition();
+        self.session.notes_on(track, &pitches, velocity);
+        self.auditioning = Some((track, pitches));
+    }
+
+    /// Releases whatever is being auditioned.
+    pub(crate) fn stop_audition(&mut self) {
+        if let Some((track, pitches)) = self.auditioning.take() {
+            self.session.notes_off(track, &pitches);
+        }
+    }
+
+    /// Whether `pitch` is the only thing sounding, which is what a note drag needs to know.
+    pub(crate) fn is_auditioning(&self, pitch: u8) -> bool {
+        self.auditioning
+            .as_ref()
+            .is_some_and(|(_, pitches)| pitches.as_slice() == [pitch])
     }
 
     // ---------------------------------------------------------------- chrome

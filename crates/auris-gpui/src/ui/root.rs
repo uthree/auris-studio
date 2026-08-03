@@ -324,6 +324,10 @@ impl AurisApp {
                 let tick = self.snap(self.timeline.x_to_tick(x));
                 self.seek(tick);
             }
+            Drag::AuditionHarmony => {
+                let x = event.position.x - self.timeline_origin().x;
+                self.audition_chord(self.timeline.x_to_tick(x).max_zero());
+            }
             Drag::LoopRegion { anchor } => {
                 let x = event.position.x - self.timeline_origin().x;
                 let tick = self.snap(self.timeline.x_to_tick(x)).max_zero();
@@ -386,7 +390,7 @@ impl AurisApp {
                 // a third was otherwise silent, so the pitch had to be counted off the keyboard
                 // at the side of the roll instead of simply heard. Only on a change, or every
                 // pointer move would retrigger the note and turn a drag into a stutter.
-                if self.auditioning.map(|(_, sounding)| sounding) != Some(pitch) {
+                if !self.is_auditioning(pitch) {
                     self.audition(pitch);
                 }
             }

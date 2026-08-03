@@ -610,6 +610,21 @@ pub mod harmony {
     //! nearby changed, which is what makes it safe to edit a generated clip by hand — and why
     //! contrast between a verse and a chorus is two clips with two sets of dials rather than a
     //! notion of song form that the document would otherwise have to carry.
+    //!
+    //! # Hearing it before anything plays it
+    //!
+    //! Writing the chords first is the workflow the lane exists for, and until this the result was
+    //! silent until a part had been generated from it — structure first, but confirmation last.
+    //! [`harmony_voicing`](crate::Session::harmony_voicing) answers with the pitches to sound at a
+    //! position and [`audition_track`](crate::Session::audition_track) finds somebody's instrument
+    //! to sound them on, because harmony belongs to the timeline and owns none.
+    //!
+    //! The voicing is deliberately not a part's.
+    //! [`voice_for_audition`](crate::Session::voice_for_audition) puts the body
+    //! around middle C and the bass an octave and a half under it, every time, so that a slash
+    //! chord is audibly a slash chord and consecutive chords are comparable. A part instead has a
+    //! register to keep, neighbours to stay clear of and a previous chord to lead from — all of
+    //! which make it *better music* and a *worse answer* to "what did I just write down".
 }
 
 pub mod platforms {

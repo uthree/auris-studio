@@ -265,6 +265,10 @@ strings! {
     PresetBass { en: "Bass", ja: "ベース" }
     PresetDrums { en: "Drums", ja: "ドラム" }
     MenuClearHarmony { en: "Clear Chords", ja: "コードを消去" }
+    NoInstrumentToHearItOn {
+        en: "No instrument track to hear it on",
+        ja: "鳴らせるソフト音源トラックがありません"
+    }
 
     // ------------------------------------------------------------------ the part inspector
     // The dials on a generated clip's recipe. `Groove` is deliberately not translated into

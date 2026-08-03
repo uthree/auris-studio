@@ -293,6 +293,22 @@ impl AurisApp {
                 )
                 .size_full()
             })
+            // Press a chord to hear it, the way you would press a piano key, and sweep along the
+            // lane to hear the progression go by. It sounds until the button comes up, which the
+            // window's own mouse-up handler takes care of.
+            //
+            // The tick is *not* snapped, unlike the right-click below. A menu acts on a grid
+            // position, so it rounds; an audition answers "what is written here", and rounding
+            // forward would sound the chord after the one under the pointer.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                    let x = event.position.x - this.timeline_origin().x;
+                    this.begin_drag(crate::app::Drag::AuditionHarmony);
+                    this.audition_chord(this.timeline.x_to_tick(x).max_zero());
+                    cx.notify();
+                }),
+            )
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(|this, event: &MouseDownEvent, _, cx| {
