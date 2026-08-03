@@ -60,6 +60,7 @@ impl Render for AurisApp {
                 }),
             )
         });
+        let plugin_window = self.render_plugin_window(window.viewport_size(), cx);
         let inspector = panels
             .inspector_visible
             .then(|| self.render_inspector(window, cx));
@@ -203,8 +204,10 @@ impl Render for AurisApp {
             )
             .child(status)
             .children(export_overlay)
-            // Both overlays come last so they paint — and are hit-tested — above the panels.
+            // These come last so they paint — and are hit-tested — above the panels. The plugin
+            // editor sits below the menu because a right-click inside it opens one.
             .children(prompt)
+            .children(plugin_window)
             .children(menu)
     }
 }
@@ -418,6 +421,14 @@ impl AurisApp {
                 let delta = f64::from(f32::from(event.position.x - start_x)) * 0.25;
                 self.session.set_bpm(start_bpm + delta);
             }
+            Drag::MovePluginWindow { grab_offset } => {
+                if let Some(window) = self.plugin_window.as_mut() {
+                    window.anchor = gpui::point(
+                        event.position.x - grab_offset.x,
+                        event.position.y - grab_offset.y,
+                    );
+                }
+            }
             Drag::ResizeLibrary {
                 start_x,
                 start_width,
@@ -626,7 +637,7 @@ impl AurisApp {
     ) {
         // Escape closes what is open before it does anything drastic. Panicking the engine
         // while a menu is up would be a surprising answer to "never mind".
-        if self.close_menu() | self.close_menu_bar() {
+        if self.close_menu() | self.close_menu_bar() | self.close_plugin_window() {
             cx.notify();
             return;
         }

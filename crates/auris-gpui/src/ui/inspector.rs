@@ -12,9 +12,10 @@ use crate::theme::Metrics;
 use crate::theme::Theme;
 use crate::ui::icons::Icon;
 use crate::ui::plugin_editor::{
-    ParamControl, button_row, control_for, next_discrete_value, plugin_header, slider_row,
-    value_after_drag, value_after_scroll,
+    ParamControl, button_row, control_for, next_discrete_value, slider_row, value_after_drag,
+    value_after_scroll,
 };
+use crate::ui::plugin_window::PluginSubject;
 use crate::ui::widgets::{chain_button, divider};
 
 /// One row of a channel strip's insert list.
@@ -194,23 +195,20 @@ impl AurisApp {
                             .text_color(theme.text_muted)
                             .child(self.t(Key::Instrument)),
                     )
-                    .child(div().text_xs().text_color(theme.text).child(name))
-                    .into_any_element(),
-            );
-            let descriptors = self.session.param_descriptors(&instrument_id);
-            sections.push(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .children(self.param_controls(
-                        &descriptors,
-                        move |param| ParamTarget::Instrument {
-                            track: track_id,
-                            param,
-                        },
-                        "inst",
-                        cx,
+                    .child(crate::ui::widgets::button(
+                        "inst-open",
+                        name,
+                        crate::ui::widgets::ButtonStyle::Ghost,
+                        false,
+                        theme.accent_soft,
+                        &theme,
+                        cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                            this.open_plugin_window(
+                                PluginSubject::Instrument(track_id),
+                                event.position(),
+                            );
+                            cx.notify();
+                        }),
                     ))
                     .into_any_element(),
             );
@@ -265,30 +263,23 @@ impl AurisApp {
             };
             let slot_index = insert_element_key(Some(slot_id));
             let name = self.plugin_label(&effect_id);
-            let descriptors = self.session.param_descriptors(&effect_id);
-            let controls = self.param_controls(
-                &descriptors,
-                move |param| ParamTarget::Effect {
-                    track: Some(track_id),
-                    slot: slot_id,
-                    param,
-                },
-                "fx",
-                cx,
-            );
-
             let menu_name = name.clone();
+
+            // One row per insert, and its parameters live in the plugin editor rather than
+            // underneath it. Expanding every effect in place pushed the rest of the chain down
+            // the panel, so a four-effect strip could not be read without scrolling — and the
+            // slot you were about to reach for kept moving.
+            //
+            // The reorder and remove buttons stay visible here, unlike on the mixer's 128px
+            // strips where the same row has room for none of them. Losing them to the right-click
+            // menu everywhere would be a real reduction in discoverability, and this panel has
+            // the width to keep them.
             sections.push(
                 div()
                     .flex()
-                    .flex_col()
+                    .items_center()
                     .gap_1()
-                    .p_1p5()
-                    .mb_2()
-                    .rounded(Metrics::RADIUS_MD)
-                    .bg(theme.surface_raised)
-                    .border_1()
-                    .border_color(theme.border_subtle)
+                    .h(Metrics::CONTROL_HEIGHT)
                     .on_mouse_down(
                         gpui::MouseButton::Right,
                         cx.listener(move |this, event: &MouseDownEvent, _, cx| {
@@ -299,57 +290,55 @@ impl AurisApp {
                                 menu_name.clone(),
                             );
                             this.open_menu(menu);
+                            cx.stop_propagation();
                             cx.notify();
                         }),
                     )
-                    .child(plugin_header(
-                        ("fx-bypass", slot_index),
+                    .child(div().flex_1().min_w_0().child(crate::ui::widgets::button(
+                        ("insert-open", slot_index),
                         name,
+                        crate::ui::widgets::ButtonStyle::Ghost,
                         enabled,
-                        self.t(if enabled { Key::ValueOn } else { Key::ValueOff }),
+                        theme.accent_soft,
+                        &theme,
+                        cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                            this.open_plugin_window(
+                                PluginSubject::Insert {
+                                    track: Some(track_id),
+                                    slot: slot_id,
+                                },
+                                event.position(),
+                            );
+                            cx.notify();
+                        }),
+                    )))
+                    .child(chain_button(
+                        ("fx-up", slot_index),
+                        Icon::ChevronUp,
                         &theme,
                         cx.listener(move |this, _, _, cx| {
-                            this.toggle_effect(Some(track_id), slot_id);
+                            this.move_effect(Some(track_id), slot_id, -1);
                             cx.notify();
                         }),
                     ))
-                    .children(controls)
-                    // Reordering and removal are icons rather than words: this row repeats once
-                    // per effect, and three text buttons each time drowns out the parameters.
-                    .child(
-                        div()
-                            .flex()
-                            .justify_end()
-                            .gap_1()
-                            .pt_1()
-                            .child(chain_button(
-                                ("fx-up", slot_index),
-                                Icon::ChevronUp,
-                                &theme,
-                                cx.listener(move |this, _, _, cx| {
-                                    this.move_effect(Some(track_id), slot_id, -1);
-                                    cx.notify();
-                                }),
-                            ))
-                            .child(chain_button(
-                                ("fx-down", slot_index),
-                                Icon::ChevronDown,
-                                &theme,
-                                cx.listener(move |this, _, _, cx| {
-                                    this.move_effect(Some(track_id), slot_id, 1);
-                                    cx.notify();
-                                }),
-                            ))
-                            .child(chain_button(
-                                ("fx-remove", slot_index),
-                                Icon::Cross,
-                                &theme,
-                                cx.listener(move |this, _, _, cx| {
-                                    this.remove_effect(slot_id);
-                                    cx.notify();
-                                }),
-                            )),
-                    )
+                    .child(chain_button(
+                        ("fx-down", slot_index),
+                        Icon::ChevronDown,
+                        &theme,
+                        cx.listener(move |this, _, _, cx| {
+                            this.move_effect(Some(track_id), slot_id, 1);
+                            cx.notify();
+                        }),
+                    ))
+                    .child(chain_button(
+                        ("fx-remove", slot_index),
+                        Icon::Cross,
+                        &theme,
+                        cx.listener(move |this, _, _, cx| {
+                            this.remove_effect(slot_id);
+                            cx.notify();
+                        }),
+                    ))
                     .into_any_element(),
             );
         }

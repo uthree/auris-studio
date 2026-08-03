@@ -14,6 +14,7 @@ pub mod mixer;
 pub mod paint;
 pub mod piano_roll;
 pub mod plugin_editor;
+pub mod plugin_window;
 pub mod prompt;
 pub mod root;
 pub mod selection;

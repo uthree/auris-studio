@@ -251,8 +251,14 @@ impl AurisApp {
                 enabled,
                 theme.accent_soft,
                 theme,
-                cx.listener(move |this, _, _, cx| {
-                    this.toggle_effect(track, slot);
+                // Opens the plugin's editor, the same as the inspector's own slots. Bypass used
+                // to be on this click, which meant the only way to *see* an effect from the
+                // mixer was to switch it off on the way.
+                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                    this.open_plugin_window(
+                        crate::ui::plugin_window::PluginSubject::Insert { track, slot },
+                        event.position(),
+                    );
                     cx.notify();
                 }),
             ))

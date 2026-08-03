@@ -137,6 +137,12 @@ pub enum Drag {
         /// Clips selected before the sweep started.
         base_clips: BTreeSet<ClipId>,
     },
+    /// Moving the floating plugin editor by its title bar.
+    MovePluginWindow {
+        /// Distance from the window's own origin to the point that was grabbed, so it does not
+        /// jump under the pointer.
+        grab_offset: Point<Pixels>,
+    },
     /// Dragging the divider between the library and the arrangement.
     ResizeLibrary {
         /// Pointer x when the drag began.
@@ -183,12 +189,14 @@ impl Drag {
             Drag::RubberBand { .. } => None,
             // How far in the view is zoomed is a property of the window, like a panel's width.
             Drag::TimeZoom { .. } => None,
-            // Panel geometry is a property of the window, not the document: resizing a panel
-            // is not an edit and must never land on the undo stack.
+            // Panel and window geometry is a property of the window, not the document: resizing
+            // a panel or moving the plugin editor is not an edit and must never land on the undo
+            // stack.
             Drag::ResizeLibrary { .. }
             | Drag::ResizeInspector { .. }
             | Drag::ResizeEditor { .. }
-            | Drag::ResizeHeaders { .. } => None,
+            | Drag::ResizeHeaders { .. }
+            | Drag::MovePluginWindow { .. } => None,
         }
     }
 }
@@ -493,6 +501,8 @@ pub struct AurisApp {
     pub(crate) menu_bar: Option<OpenMenu>,
     /// The open rename sheet, if any.
     pub(crate) prompt: Option<Prompt>,
+    /// The open plugin editor, if any.
+    pub(crate) plugin_window: Option<crate::ui::plugin_window::PluginWindow>,
 
     /// Preferences that outlive the session.
     pub(crate) settings: Settings,
@@ -583,6 +593,7 @@ impl AurisApp {
             menu: None,
             menu_bar: None,
             prompt: None,
+            plugin_window: None,
             settings,
             language,
             pointer: input.pointer,
