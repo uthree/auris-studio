@@ -625,6 +625,25 @@ pub mod harmony {
     //! chord is audibly a slash chord and consecutive chords are comparable. A part instead has a
     //! register to keep, neighbours to stay clear of and a previous chord to lead from — all of
     //! which make it *better music* and a *worse answer* to "what did I just write down".
+    //!
+    //! # Two grids, and editing through the chord rather than at it
+    //!
+    //! Harmony is written coarser than notes are. Everything that writes it rounds through
+    //! [`snap_harmony`](crate::Session::snap_harmony), which is the beat — or the editing grid
+    //! where that is coarser, since somebody who set the grid to a bar asked for whole bars. A
+    //! sixteenth is the right resolution for placing a hi-hat and the wrong one for placing a
+    //! chord: at a normal zoom the two are three pixels apart, and nobody aiming at bar five means
+    //! bar five and a sixteenth.
+    //!
+    //! Editing runs the other way. A chord occupies everything from where it starts to the next
+    //! change, so [`remove_chord`](crate::Session::remove_chord),
+    //! [`move_chord`](crate::Session::move_chord) and
+    //! [`remove_key`](crate::Session::remove_key) resolve their argument through
+    //! [`change_at`](auris_core::harmony::ChordMap::change_at) — the change *in force* there —
+    //! rather than by rounding it. Rounding would be wrong twice over: the chord being edited
+    //! almost never starts under the pointer, and a stamped progression divides each bar
+    //! musically, so three chords in a bar of 4/4 sit on thirds of it and no editing grid can name
+    //! them at all.
 }
 
 pub mod platforms {

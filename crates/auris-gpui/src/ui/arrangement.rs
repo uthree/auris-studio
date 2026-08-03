@@ -273,8 +273,15 @@ impl AurisApp {
             .get()
             .map_or(px(1200.0), |b| b.size.width);
         let (from, to) = view.visible_range(width);
-        let events = self.project().harmony.events_in(from, to, signature);
-        let keys = self.project().harmony.keys.points().to_vec();
+        let harmony = paint::HarmonyPaint {
+            events: self.project().harmony.events_in(from, to, signature),
+            keys: self.project().harmony.keys.points().to_vec(),
+            handles: self.chord_handles(),
+            held: match self.drag {
+                Some(Drag::HarmonyChord { at, .. }) => Some(at),
+                _ => None,
+            },
+        };
 
         div()
             .id("harmony-lane")
@@ -287,25 +294,16 @@ impl AurisApp {
                     move |bounds, _, _| recorded.set(Some(bounds)),
                     move |bounds, _, window, cx| {
                         paint::clipped(window, bounds, |window| {
-                            paint::harmony_lane(window, cx, bounds, &view, &events, &keys, &theme);
+                            paint::harmony_lane(window, cx, bounds, &view, &harmony, &theme);
                         });
                     },
                 )
                 .size_full()
             })
-            // Press a chord to hear it, the way you would press a piano key, and sweep along the
-            // lane to hear the progression go by. It sounds until the button comes up, which the
-            // window's own mouse-up handler takes care of.
-            //
-            // The tick is *not* snapped, unlike the right-click below. A menu acts on a grid
-            // position, so it rounds; an audition answers "what is written here", and rounding
-            // forward would sound the chord after the one under the pointer.
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                    let x = event.position.x - this.timeline_origin().x;
-                    this.begin_drag(crate::app::Drag::AuditionHarmony);
-                    this.audition_chord(this.timeline.x_to_tick(x).max_zero());
+                    this.press_harmony_lane(event);
                     cx.notify();
                 }),
             )
@@ -313,12 +311,73 @@ impl AurisApp {
                 MouseButton::Right,
                 cx.listener(|this, event: &MouseDownEvent, _, cx| {
                     let x = event.position.x - this.timeline_origin().x;
-                    let tick = this.snap(this.timeline.x_to_tick(x)).max_zero();
+                    let tick = this.timeline.x_to_tick(x).max_zero();
                     let menu = this.harmony_menu(event.position, tick);
                     this.open_menu(menu);
                     cx.notify();
                 }),
             )
+    }
+
+    /// What a left press on the harmony lane grabs: a chord's handle, or the sound of it.
+    ///
+    /// Pressing anywhere but a handle sounds the chord written there, the way you would press a
+    /// piano key, and sweeping along the lane plays the progression past. It sounds until the
+    /// button comes up, which the window's own mouse-up handler takes care of.
+    ///
+    /// The tick an audition reads is *not* snapped, unlike everything that writes. A menu acts on
+    /// a grid position and so rounds; an audition answers "what is written here", and rounding
+    /// forward would sound the chord after the one under the pointer.
+    fn press_harmony_lane(&mut self, event: &MouseDownEvent) {
+        let x = event.position.x - self.timeline_origin().x;
+        let tick = self.timeline.x_to_tick(x).max_zero();
+
+        if self.harmony_row_at(event.position.y) == Some(HarmonyRow::Chords)
+            && let Some(at) = chord_handle_at(&self.timeline, &self.chord_handles(), x)
+        {
+            self.begin_drag(Drag::HarmonyChord {
+                at,
+                grab_offset: tick - at,
+            });
+            return;
+        }
+        self.begin_drag(Drag::AuditionHarmony);
+        self.audition_chord(tick);
+    }
+
+    /// Which row of the harmony lane a window-space `y` falls in, if either.
+    fn harmony_row_at(&self, y: Pixels) -> Option<HarmonyRow> {
+        let bounds = self.canvas.harmony.get()?;
+        let (keys, chords) = paint::harmony_rows(bounds);
+        if (keys.origin.y..keys.origin.y + keys.size.height).contains(&y) {
+            Some(HarmonyRow::Keys)
+        } else if (chords.origin.y..chords.origin.y + chords.size.height).contains(&y) {
+            Some(HarmonyRow::Chords)
+        } else {
+            None
+        }
+    }
+
+    /// Where each chord block on screen may be taken hold of.
+    ///
+    /// A key change splits a chord into two blocks, and only the first of them is where the
+    /// numeral is actually written — so only that one gets a handle. Dragging the second would
+    /// move a chord that starts somewhere off to the left of it.
+    pub(crate) fn chord_handles(&self) -> Vec<Ticks> {
+        let width = self
+            .canvas
+            .harmony
+            .get()
+            .map_or(px(1200.0), |bounds| bounds.size.width);
+        let (from, to) = self.timeline.visible_range(width);
+        self.project()
+            .harmony
+            .chords
+            .points()
+            .iter()
+            .filter(|point| point.chord.is_some() && point.tick >= from && point.tick <= to)
+            .map(|point| point.tick)
+            .collect()
     }
 
     /// The right side: ruler plus the clip lanes, all painted on one canvas.
@@ -771,6 +830,31 @@ impl AurisApp {
     }
 }
 
+/// One of the harmony lane's two rows.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum HarmonyRow {
+    /// The thin strip of key changes along the top.
+    Keys,
+    /// The chord blocks below it.
+    Chords,
+}
+
+/// The chord a press at `x` takes hold of, if it landed on that chord's handle.
+///
+/// Free rather than a method so the rule can be tested without a window: a handle is six pixels
+/// wide, and which side of them a press lands on is the difference between moving a chord and
+/// playing it.
+fn chord_handle_at(
+    view: &crate::ui::timeline::TimelineView,
+    handles: &[Ticks],
+    x: Pixels,
+) -> Option<Ticks> {
+    handles.iter().copied().find(|start| {
+        let left = view.tick_to_x(*start);
+        x >= left && x < left + paint::CHORD_HANDLE
+    })
+}
+
 /// What one lane draws.
 struct LanePaint {
     height: f32,
@@ -929,5 +1013,65 @@ fn paint_lane(
                 theme.text_on_accent,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::timeline::TimelineView;
+
+    fn view() -> TimelineView {
+        TimelineView {
+            pixels_per_beat: 48.0,
+            scroll_ticks: Ticks::ZERO,
+        }
+    }
+
+    #[test]
+    fn a_chord_is_taken_hold_of_by_its_leading_edge_and_played_anywhere_else() {
+        // The whole gesture rests on this: a press inside the handle moves the chord, and a press
+        // one pixel past it sounds the chord instead and sweeps the progression. Both are the
+        // same button on the same block.
+        let view = view();
+        let bar = Ticks(3840);
+        let handles = [bar, bar * 4];
+
+        let edge = view.tick_to_x(bar);
+        assert_eq!(chord_handle_at(&view, &handles, edge), Some(bar));
+        assert_eq!(
+            chord_handle_at(&view, &handles, edge + paint::CHORD_HANDLE - px(1.0)),
+            Some(bar)
+        );
+        assert_eq!(
+            chord_handle_at(&view, &handles, edge + paint::CHORD_HANDLE),
+            None,
+            "past the handle is the body of the chord"
+        );
+        assert_eq!(
+            chord_handle_at(&view, &handles, edge - px(1.0)),
+            None,
+            "and before it is the chord in front"
+        );
+        assert_eq!(
+            chord_handle_at(&view, &handles, view.tick_to_x(bar * 4)),
+            Some(bar * 4)
+        );
+        assert_eq!(chord_handle_at(&view, &[], edge), None);
+    }
+
+    #[test]
+    fn a_chord_scrolled_off_the_left_keeps_its_handle_where_it_belongs() {
+        // Handles are hit-tested in the same space the lane is painted in, so a scrolled view
+        // must not leave them at the position they had before it scrolled.
+        let view = TimelineView {
+            pixels_per_beat: 48.0,
+            scroll_ticks: Ticks(3840),
+        };
+        let bar = Ticks(3840);
+        assert_eq!(view.tick_to_x(bar), px(0.0));
+        assert_eq!(chord_handle_at(&view, &[bar], px(0.0)), Some(bar));
+        // A chord off the left edge is hit at a negative x, which no press can produce.
+        assert_eq!(chord_handle_at(&view, &[Ticks::ZERO], px(0.0)), None);
     }
 }

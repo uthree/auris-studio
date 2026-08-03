@@ -687,22 +687,51 @@ impl Session {
         &self.project.harmony
     }
 
+    /// The grid a chord or a key change lands on: the beat, or the editing grid where that is
+    /// coarser.
+    ///
+    /// Harmony is written coarser than notes are. A sixteenth-note editing grid is the right
+    /// resolution for placing a hi-hat and the wrong one for placing a chord — nobody aiming at
+    /// bar five means bar five and a sixteenth, and at a normal zoom the two are three pixels
+    /// apart. The editing grid still wins when it is the coarser of the two, because somebody who
+    /// set the grid to a bar asked for whole bars and should get them.
+    pub fn harmony_grid(&self) -> Ticks {
+        self.project
+            .time_signature
+            .ticks_per_beat()
+            .max(self.project.grid)
+    }
+
+    /// Rounds a position onto [`Self::harmony_grid`]. What every harmony command writes through.
+    ///
+    /// Public because a frontend has to agree with it: a menu that offers "remove the chord here"
+    /// only where one exists has to round the pointer the same way the command that writes them
+    /// does, or the two disagree by a sixteenth and the item is never offered.
+    pub fn snap_harmony(&self, at: Ticks) -> Ticks {
+        at.max_zero().snap_nearest(self.harmony_grid())
+    }
+
     /// Sets the key from `at` onwards.
     ///
-    /// `at` snaps to the editing grid, so a key change lands where a person aimed rather than
+    /// `at` snaps to the harmony grid, so a key change lands where a person aimed rather than
     /// where the pointer happened to be. Tick zero is the song's own key and is always there, so
     /// setting it there changes what the whole song is read in rather than adding a change to it.
     pub fn set_key(&mut self, at: Ticks, key: MusicalKey) {
         self.record(Edit::SetKey);
-        let at = self.snap(at);
+        let at = self.snap_harmony(at);
         self.project.harmony.keys.set_point(at, key);
     }
 
-    /// Removes the key change at `at`, letting the key before it run through.
+    /// Removes the key change in force at `at`, letting the key before it run through.
+    ///
+    /// *In force at*, not *starting at*: a key change is a boundary, and the stretch it governs
+    /// runs to the next one. Removing the change that put the song in E flat means pointing
+    /// anywhere in the E flat, which is the whole of what is on screen — rather than at the one
+    /// grid position the change happens to sit on.
     ///
     /// The key at tick zero is not a change and cannot be removed: a song is always in some key.
     pub fn remove_key(&mut self, at: Ticks) {
-        let at = self.snap(at);
+        let at = self.project.harmony.keys.change_at(at.max_zero());
         if at == Ticks::ZERO {
             return;
         }
@@ -713,15 +742,39 @@ impl Session {
     /// Sets the chord sounding from `at` onwards, until the next change.
     pub fn set_chord(&mut self, at: Ticks, chord: Numeral) {
         self.record(Edit::SetChord);
-        let at = self.snap(at);
+        let at = self.snap_harmony(at);
         self.project.harmony.chords.set_point(at, Some(chord));
     }
 
-    /// Removes the chord change at `at`, letting the chord before it run through.
+    /// Removes the chord change in force at `at`, letting the chord before it run through.
+    ///
+    /// Found through [`ChordMap::change_at`](auris_core::harmony::ChordMap::change_at) rather
+    /// than by rounding `at`, for the reason given on [`Self::remove_key`] and one more: a
+    /// progression stamped three chords to a bar sits on thirds of a bar, which is not a position
+    /// any editing grid can round to, so a rounded removal would silently miss every one of them.
     pub fn remove_chord(&mut self, at: Ticks) {
+        let Some(at) = self.project.harmony.chords.change_at(at.max_zero()) else {
+            return;
+        };
         self.record(Edit::SetChord);
-        let at = self.snap(at);
         self.project.harmony.chords.remove_point(at);
+    }
+
+    /// Moves the chord change in force at `from` to `to`, and says whether it moved one.
+    ///
+    /// `to` snaps to the harmony grid; `from` is resolved the way [`Self::remove_chord`] resolves
+    /// its argument, so a drag can start anywhere inside the chord rather than on the one pixel
+    /// it begins at. Dropping a chord onto another replaces that one.
+    pub fn move_chord(&mut self, from: Ticks, to: Ticks) -> bool {
+        let Some(from) = self.project.harmony.chords.change_at(from.max_zero()) else {
+            return false;
+        };
+        let to = self.snap_harmony(to);
+        if from == to {
+            return false;
+        }
+        self.record(Edit::MoveChord);
+        self.project.harmony.chords.move_point(from, to)
     }
 
     /// Empties the chords in `from..to`, leaving the key timeline alone.
@@ -730,20 +783,20 @@ impl Session {
     /// the end of it.
     pub fn clear_harmony(&mut self, from: Ticks, to: Ticks) {
         self.record(Edit::ClearHarmony);
-        let (from, to) = (self.snap(from), self.snap(to));
+        let (from, to) = (self.snap_harmony(from), self.snap_harmony(to));
         self.project.harmony.clear(from, to);
     }
 
     /// Writes `chart` across `bars` bars from `from`, returning how many chords it wrote.
     ///
-    /// The chart repeats or is truncated to fit. `from` snaps to the editing grid, but the chords
+    /// The chart repeats or is truncated to fit. `from` snaps to the harmony grid, but the chords
     /// *inside* it do not: a chart divides each bar musically, and three chords in a bar of 4/4
     /// are three lots of 1280 ticks, which is not a grid position and must not be rounded to one.
     /// A stamp is a division of a bar; a drag is an edit on the grid.
     pub fn stamp_progression(&mut self, chart: &Chart, from: Ticks, bars: usize) -> usize {
         self.record(Edit::StampProgression);
         let signature = self.project.time_signature;
-        let from = self.snap(from);
+        let from = self.snap_harmony(from);
         self.project.harmony.stamp(chart, from, bars, signature)
     }
 
@@ -3398,19 +3451,80 @@ mod tests {
     }
 
     #[test]
-    fn a_chord_lands_on_the_grid_rather_than_where_the_pointer_was() {
+    fn a_chord_lands_on_the_beat_rather_than_where_the_pointer_was() {
         let mut session = self::tests::session();
-        // The default grid is a sixteenth: 240 ticks.
-        session.set_chord(Ticks(3840 + 130), numeral("V"));
+        // The editing grid is a sixteenth — 240 ticks — and harmony is written coarser than
+        // that: a third of a beat past the bar line means the bar line.
+        assert_eq!(session.project().grid, Ticks(240));
+        assert_eq!(session.harmony_grid(), Ticks(960), "one beat of 4/4");
+
+        session.set_chord(BAR + Ticks(300), numeral("V"));
+        assert_eq!(session.harmony().chords.points()[0].tick, BAR);
+        assert_eq!(session.harmony().numeral_at(BAR), Some(numeral("V")));
+
+        // Two thirds of the way along is the next beat, not the next sixteenth.
+        session.set_chord(BAR + Ticks(700), numeral("IV"));
         assert_eq!(
-            session.harmony().chords.points()[0].tick,
-            Ticks(3840 + 240),
-            "snapped to the nearest sixteenth"
+            session.harmony().chords.points()[1].tick,
+            BAR + Ticks(960),
+            "rounded up to beat two"
         );
+    }
+
+    #[test]
+    fn a_grid_coarser_than_a_beat_is_what_a_chord_lands_on() {
+        // Somebody who set the editing grid to a bar asked for whole bars, and harmony must not
+        // quietly offer them something finer than they chose.
+        let mut session = self::tests::session();
+        session.set_grid(BAR);
+        assert_eq!(session.harmony_grid(), BAR);
+        session.set_chord(BAR + Ticks(960), numeral("V"));
+        assert_eq!(session.harmony().chords.points()[0].tick, BAR);
+    }
+
+    #[test]
+    fn a_chord_is_removed_and_moved_by_pointing_anywhere_inside_it() {
+        // A chord occupies everything up to the next change, and a stamp divides a bar musically
+        // — three chords in a bar of 4/4 sit on thirds of it. Neither is reachable by rounding a
+        // pointer position onto a grid, so both commands resolve through the change in force.
+        let mut session = self::tests::session();
+        session.set_chord(BAR, numeral("I"));
+        session.set_chord(BAR * 4, numeral("V"));
+
+        assert!(
+            session.move_chord(BAR * 2 + Ticks(17), BAR * 3),
+            "mid-chord"
+        );
+        assert_eq!(session.harmony().numeral_at(BAR * 3), Some(numeral("I")));
         assert_eq!(
-            session.harmony().numeral_at(Ticks(3840 + 240)),
-            Some(numeral("V"))
+            session.harmony().numeral_at(BAR * 2),
+            None,
+            "the chord left where it was, rather than being copied"
         );
+        assert_eq!(session.undo(), Some(Edit::MoveChord));
+        assert_eq!(session.harmony().numeral_at(BAR * 2), Some(numeral("I")));
+
+        session.remove_chord(BAR * 2 + Ticks(17));
+        assert!(session.harmony().numeral_at(BAR).is_none());
+        assert_eq!(
+            session.harmony().numeral_at(BAR * 4),
+            Some(numeral("V")),
+            "the one after it is untouched"
+        );
+    }
+
+    #[test]
+    fn nothing_to_move_or_remove_is_not_an_undo_step() {
+        let mut session = self::tests::session();
+        session.set_chord(BAR * 4, numeral("V"));
+        session.forget_history();
+
+        // Before the first chord there is nothing in force to act on.
+        assert!(!session.move_chord(Ticks::ZERO, BAR));
+        session.remove_chord(Ticks::ZERO);
+        // And a move that rounds back onto where the chord already sits changes nothing.
+        assert!(!session.move_chord(BAR * 4, BAR * 4 + Ticks(30)));
+        assert!(!session.can_undo(), "none of those changed the document");
     }
 
     #[test]

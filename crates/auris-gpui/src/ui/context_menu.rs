@@ -911,7 +911,13 @@ impl AurisApp {
             )
     }
 
-    /// The menu for the harmony lane, at the bar the pointer is over.
+    /// The menu for the harmony lane, aimed at whatever the pointer is over.
+    ///
+    /// `tick` is where the pointer is, unrounded. What the chord items act on is the chord *in
+    /// force* there rather than that position: a chord occupies everything up to the next change,
+    /// so retyping or removing "the chord here" has to mean the one you can see, not one that
+    /// happens to begin under the pixel. Only writing a chord where there is none falls back to
+    /// the rounded position, which is what [`Session::snap_harmony`] decides.
     ///
     /// The range a progression is written across is the cycle region when there is one, and the
     /// chart's own length otherwise. That is the rule everywhere else in the application — set the
@@ -919,20 +925,39 @@ impl AurisApp {
     /// nothing else would use.
     pub(crate) fn harmony_menu(&self, anchor: Point<Pixels>, tick: Ticks) -> ContextMenu {
         let signature = self.project().time_signature;
-        let bar = signature.bar_of(tick);
-        let (from, bars) = progression_target(self.project().loop_region, tick, signature);
+        let placed = self.session.snap_harmony(tick);
+        let (from, bars) = progression_target(self.project().loop_region, placed, signature);
         let harmony = &self.project().harmony;
+        let target = harmony_target(harmony, tick, placed);
 
-        ContextMenu::new(anchor, messages::harmony_at_bar(self.language(), bar))
-            .item(self.t(Key::MenuSetChordHere), MenuCommand::SetChordAt(tick))
+        // Naming the chord rather than the bar when there is one: this menu can retype or remove
+        // it, and a heading reading "Harmony · bar 5" over an item that acts on the chord that
+        // started in bar 3 would be pointing somewhere else entirely.
+        let title = match harmony.chord_at(tick) {
+            Some(chord) => messages::harmony_chord(
+                self.language(),
+                &harmony
+                    .numeral_at(tick)
+                    .map(|numeral| numeral.to_string())
+                    .unwrap_or_default(),
+                &chord.to_string(),
+            ),
+            None => messages::harmony_at_bar(self.language(), signature.bar_of(placed)),
+        };
+
+        ContextMenu::new(anchor, title)
+            .item(
+                self.t(Key::MenuSetChordHere),
+                MenuCommand::SetChordAt(target.chord),
+            )
             .item_if(
-                harmony.chords.points().iter().any(|at| at.tick == tick),
+                target.sounding,
                 self.t(Key::MenuRemoveChordHere),
                 MenuCommand::RemoveChordAt(tick),
             )
-            .item(self.t(Key::MenuSetKeyHere), MenuCommand::SetKeyAt(tick))
+            .item(self.t(Key::MenuSetKeyHere), MenuCommand::SetKeyAt(placed))
             .item_if(
-                tick != Ticks::ZERO && harmony.keys.points().iter().any(|at| at.tick == tick),
+                target.removable_key,
                 self.t(Key::MenuRemoveKeyHere),
                 MenuCommand::RemoveKeyAt(tick),
             )
@@ -1412,6 +1437,41 @@ fn progression_target(
     }
 }
 
+/// What the harmony lane's menu acts on.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct HarmonyTarget {
+    /// Where a chord typed from this menu goes.
+    chord: Ticks,
+    /// Whether a chord sounds here, which is what makes removing one worth offering.
+    sounding: bool,
+    /// Whether the key here came from a change that can be removed — the anchor at tick zero
+    /// cannot, since a song is always in some key.
+    removable_key: bool,
+}
+
+/// What a right-click at `tick` aims the harmony menu at, `placed` being that position rounded.
+///
+/// Editing a chord means editing the one you can see, and a chord occupies everything from where
+/// it starts to the next change — so a menu that acted on the rounded pointer position would write
+/// a *second* chord a beat later instead of retyping the one that is there. Only where nothing
+/// sounds does the rounded position win, because then there is nothing to edit and the menu is
+/// placing something new.
+///
+/// Free rather than a method so the aiming can be tested: everything else it would take is a whole
+/// session and a window.
+fn harmony_target(harmony: &Harmony, tick: Ticks, placed: Ticks) -> HarmonyTarget {
+    let sounding = harmony.chord_at(tick).is_some();
+    HarmonyTarget {
+        chord: harmony
+            .chords
+            .change_at(tick)
+            .filter(|_| sounding)
+            .unwrap_or(placed),
+        sounding,
+        removable_key: harmony.keys.change_at(tick) != Ticks::ZERO,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1612,6 +1672,71 @@ mod tests {
         assert_eq!(
             built.size().height,
             TITLE_HEIGHT + PADDING * 2.0 + BORDER * 2.0 + ITEM_HEIGHT * 2.0 + SEPARATOR_HEIGHT
+        );
+    }
+
+    /// One bar of 4/4.
+    const BAR: Ticks = Ticks(3840);
+
+    fn numeral(text: &str) -> Option<Numeral> {
+        Some(Numeral::parse(text).expect("a numeral the test wrote itself"))
+    }
+
+    #[test]
+    fn the_harmony_menu_edits_the_chord_you_can_see() {
+        // A chord runs until the next change, so pointing part-way into one must retype *it*
+        // rather than write a second chord where the pointer rounded to. The positions matter: a
+        // progression written three chords to a bar sits on thirds of one, which no editing grid
+        // rounds to, so an aim that went through the grid would miss every chord in it.
+        let mut harmony = Harmony::default();
+        harmony.chords.set_point(BAR, numeral("I"));
+        harmony.chords.set_point(BAR + Ticks(1280), numeral("IV"));
+
+        let target = harmony_target(&harmony, BAR + Ticks(700), BAR + Ticks(960));
+        assert_eq!(target.chord, BAR, "aimed at the chord, not at the grid");
+        assert!(target.sounding);
+
+        let later = harmony_target(&harmony, BAR * 4, BAR * 4);
+        assert_eq!(later.chord, BAR + Ticks(1280), "the last one runs on");
+
+        // Before anything is written there is nothing to edit, so a new chord goes where the
+        // pointer rounded to.
+        let empty = harmony_target(&harmony, Ticks::ZERO, Ticks::ZERO);
+        assert_eq!(empty.chord, Ticks::ZERO);
+        assert!(
+            !empty.sounding,
+            "removing a chord that is not there was offered"
+        );
+    }
+
+    #[test]
+    fn a_cleared_stretch_offers_a_chord_rather_than_removing_a_silence() {
+        // Clearing writes a `None` marker, which is a change like any other. It is not a chord,
+        // though, so the menu must offer to write one there rather than to remove one.
+        let mut harmony = Harmony::default();
+        harmony.chords.set_point(Ticks::ZERO, numeral("I"));
+        harmony.clear(BAR, BAR * 2);
+
+        let target = harmony_target(&harmony, BAR + Ticks(100), BAR);
+        assert!(!target.sounding);
+        assert_eq!(target.chord, BAR, "the rounded position: nothing to edit");
+    }
+
+    #[test]
+    fn only_a_key_change_can_be_removed_and_never_the_song_s_own_key() {
+        let mut harmony = Harmony::default();
+        assert!(
+            !harmony_target(&harmony, BAR * 9, BAR * 9).removable_key,
+            "a song in one key throughout has no key change to remove"
+        );
+
+        harmony
+            .keys
+            .set_point(BAR * 4, MusicalKey::parse("Eb major").unwrap());
+        assert!(!harmony_target(&harmony, BAR * 2, BAR * 2).removable_key);
+        assert!(
+            harmony_target(&harmony, BAR * 9, BAR * 9).removable_key,
+            "pointing anywhere inside the E flat finds the change that started it"
         );
     }
 }

@@ -187,6 +187,16 @@ impl KeyMap {
         }
     }
 
+    /// Where the key change in force at `tick` sits.
+    ///
+    /// Total, because the anchor at tick 0 is always in force somewhere: a `tick` before every
+    /// change answers [`Ticks::ZERO`]. This is what an editor acts *through* — "remove the key
+    /// change here" means the one that is sounding, not one that happens to start under the
+    /// pixel the pointer landed on.
+    pub fn change_at(&self, tick: Ticks) -> Ticks {
+        self.points[self.segment_index(tick)].tick
+    }
+
     /// The key in force at `tick`.
     ///
     /// Total, like [`TempoMap::bpm_at`](crate::time::TempoMap::bpm_at): there is always a key, and
@@ -305,6 +315,42 @@ impl ChordMap {
         if let Ok(index) = self.points.binary_search_by_key(&tick, |point| point.tick) {
             self.points.remove(index);
         }
+    }
+
+    /// Where the change in force at `tick` sits, if there is one.
+    ///
+    /// `None` when nothing has been written at or before `tick`. A cleared stretch answers with
+    /// the position of the `None` that cleared it: that is a change like any other and can be
+    /// removed like one.
+    ///
+    /// This is the position an editor acts *through*. A chord occupies everything from where it
+    /// starts to the next change, so "the chord here" is almost never the chord that starts at
+    /// the pixel under the pointer — and a progression stamped three-to-a-bar does not start on
+    /// any grid position an editor could round to.
+    pub fn change_at(&self, tick: Ticks) -> Option<Ticks> {
+        let index = self
+            .points
+            .binary_search_by_key(&tick, |point| point.tick)
+            .unwrap_or_else(|index| index.wrapping_sub(1));
+        self.points.get(index).map(|point| point.tick)
+    }
+
+    /// Moves the change at `from` to `to`, and says whether there was one to move.
+    ///
+    /// Landing on another change replaces it. Two chords cannot share a position, and dropping
+    /// one onto another is how a person deletes the one underneath — the alternative, refusing
+    /// the move, leaves the dragged chord snapping back for a reason nothing on screen explains.
+    pub fn move_point(&mut self, from: Ticks, to: Ticks) -> bool {
+        let (from, to) = (from.max_zero(), to.max_zero());
+        let Ok(index) = self.points.binary_search_by_key(&from, |point| point.tick) else {
+            return false;
+        };
+        if from == to {
+            return true;
+        }
+        let moved = self.points.remove(index);
+        self.set_point(to, moved.chord);
+        true
     }
 
     /// The chord written for `tick`.
@@ -588,6 +634,61 @@ mod tests {
         keys.remove_point(bar(4));
         assert!(keys.is_constant());
         assert_eq!(keys.key_at(bar(4)), key("A minor"));
+    }
+
+    #[test]
+    fn the_change_in_force_is_found_from_anywhere_inside_it() {
+        // What an editor needs and what a lookup gives are different questions. `numeral_at`
+        // answers "what sounds here"; this answers "which change put it there", which is the
+        // thing that then gets moved, retyped or removed.
+        let mut chords = ChordMap::default();
+        assert_eq!(chords.change_at(bar(4)), None, "nothing written yet");
+
+        chords.set_point(bar(1), Some(numeral("I")));
+        chords.set_point(bar(3), Some(numeral("V")));
+        assert_eq!(chords.change_at(Ticks::ZERO), None, "before the first one");
+        assert_eq!(chords.change_at(bar(1)), Some(bar(1)));
+        assert_eq!(chords.change_at(bar(2)), Some(bar(1)), "part-way through");
+        assert_eq!(chords.change_at(bar(3) - Ticks(1)), Some(bar(1)));
+        assert_eq!(
+            chords.change_at(bar(9)),
+            Some(bar(3)),
+            "the last one runs on"
+        );
+
+        let mut keys = KeyMap::constant(key("C major"));
+        keys.set_point(bar(4), key("Eb major"));
+        assert_eq!(
+            keys.change_at(bar(2)),
+            Ticks::ZERO,
+            "the anchor is a change"
+        );
+        assert_eq!(keys.change_at(bar(6)), bar(4));
+    }
+
+    #[test]
+    fn a_chord_can_be_moved_and_takes_its_numeral_with_it() {
+        let mut chords = ChordMap::default();
+        chords.set_point(bar(1), Some(numeral("I")));
+        chords.set_point(bar(2), Some(numeral("V")));
+
+        assert!(chords.move_point(bar(2), bar(5)));
+        assert_eq!(chords.numeral_at(bar(5)), Some(numeral("V")));
+        assert_eq!(
+            chords.numeral_at(bar(2)),
+            Some(numeral("I")),
+            "the chord before it now runs through where it was"
+        );
+        // Still sorted, which the binary search in every lookup depends on.
+        for pair in chords.points().windows(2) {
+            assert!(pair[0].tick < pair[1].tick);
+        }
+
+        assert!(!chords.move_point(bar(9), bar(1)), "nothing sits at bar 9");
+        // Dropping one onto another leaves one chord, not two at the same tick.
+        assert!(chords.move_point(bar(5), bar(1)));
+        assert_eq!(chords.points().len(), 1);
+        assert_eq!(chords.numeral_at(bar(1)), Some(numeral("V")));
     }
 
     #[test]

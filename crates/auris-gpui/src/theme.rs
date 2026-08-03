@@ -184,7 +184,10 @@ impl Metrics {
     /// Height of the timeline ruler above the arrangement.
     pub const RULER_HEIGHT: Pixels = px(28.0);
     /// Height of the harmony lane, between the ruler and the clip lanes.
-    pub const HARMONY_LANE_HEIGHT: Pixels = px(22.0);
+    ///
+    /// Two rows: a thin strip of key changes over a taller strip of chords. See
+    /// [`paint::harmony_rows`](crate::ui::paint::harmony_rows) for why they are not one.
+    pub const HARMONY_LANE_HEIGHT: Pixels = px(34.0);
     /// Everything above the clip lanes on the right, and the strip that matches it on the left.
     ///
     /// The track headers line up with their lanes only because the left column reserves exactly
@@ -196,7 +199,7 @@ impl Metrics {
     /// Spelled out rather than summed because `Pixels` keeps its inner value private and there is
     /// no const arithmetic to be had. `the_two_columns_reserve_the_same_height_above_the_lanes`
     /// is what keeps the three numbers honest.
-    pub const TIMELINE_HEADER_HEIGHT: Pixels = px(50.0);
+    pub const TIMELINE_HEADER_HEIGHT: Pixels = px(62.0);
     /// Width of the track header column.
     pub const TRACK_HEADER_WIDTH: Pixels = px(196.0);
     /// Width of the piano-roll keyboard.

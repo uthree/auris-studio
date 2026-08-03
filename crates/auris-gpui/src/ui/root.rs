@@ -328,6 +328,19 @@ impl AurisApp {
                 let x = event.position.x - self.timeline_origin().x;
                 self.audition_chord(self.timeline.x_to_tick(x).max_zero());
             }
+            Drag::HarmonyChord { at, grab_offset } => {
+                let x = event.position.x - self.timeline_origin().x;
+                let landed = self
+                    .session
+                    .snap_harmony(self.timeline.x_to_tick(x) - grab_offset);
+                // The chord has moved, so the drag has to follow it: the next pointer move will
+                // otherwise look for it where it no longer is and move nothing at all.
+                if self.session.move_chord(at, landed)
+                    && let Some(Drag::HarmonyChord { at, .. }) = &mut self.drag
+                {
+                    *at = landed;
+                }
+            }
             Drag::LoopRegion { anchor } => {
                 let x = event.position.x - self.timeline_origin().x;
                 let tick = self.snap(self.timeline.x_to_tick(x)).max_zero();

@@ -84,6 +84,8 @@ pub enum Edit {
     SetKey,
     /// A chord changed somewhere on the timeline.
     SetChord,
+    /// A chord moved along the timeline.
+    MoveChord,
     /// A stretch of the timeline lost its chords.
     ClearHarmony,
     /// A named progression was written across a range of bars.

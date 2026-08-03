@@ -281,6 +281,15 @@ messages! {
         ja: "コード進行 · {bar} 小節目"
     }
 
+    /// Title of the harmony lane's menu, naming the chord it was opened over.
+    ///
+    /// Both halves: the numeral is what is stored and what the menu edits, and the chord is what
+    /// it means in the key it sits in — which is the half a reader recognises.
+    fn harmony_chord(numeral: &str, chord: &str) {
+        en: "Harmony · {numeral} ({chord})",
+        ja: "コード進行 · {numeral}（{chord}）"
+    }
+
     /// One catalogue progression, as a menu row.
     fn write_progression(description: &str) {
         en: "Write {description}",

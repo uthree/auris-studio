@@ -345,6 +345,7 @@ strings! {
     EditChoosePreset { en: "choosing a sound", ja: "音色の選択" }
     EditSetKey { en: "setting the key", ja: "調の変更" }
     EditSetChord { en: "setting a chord", ja: "コードの変更" }
+    EditMoveChord { en: "moving a chord", ja: "コードの移動" }
     EditClearHarmony { en: "clearing the chords", ja: "コードの消去" }
     EditStampProgression { en: "writing a progression", ja: "コード進行の書き込み" }
     EditGenerateClip { en: "writing a clip", ja: "クリップの自動生成" }

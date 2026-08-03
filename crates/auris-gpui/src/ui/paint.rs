@@ -238,41 +238,103 @@ pub fn ruler(
     }
 }
 
+/// Height of the strip the key changes get, along the top of the harmony lane.
+pub const KEY_ROW_HEIGHT: Pixels = px(13.0);
+
+/// Width of the grab zone on a chord's leading edge — the bar that moves it.
+///
+/// A chord *is* its start position, so its start edge is what there is to take hold of. The rest
+/// of the block belongs to listening: pressing it sounds the chord and sweeping across the lane
+/// plays the progression, and a drag anywhere would have taken that away.
+pub const CHORD_HANDLE: Pixels = px(6.0);
+
+/// The harmony lane's two rows: key changes above, chords below.
+///
+/// They shared one strip until a key change was found to land on the chord that begins a new
+/// section far more often than not — which is exactly where the badge naming the key was printed
+/// over the name of the chord underneath it. Both the painter and the hit test read this, so a
+/// press lands on the row it looks like it lands on.
+pub fn harmony_rows(bounds: Bounds<Pixels>) -> (Bounds<Pixels>, Bounds<Pixels>) {
+    let key_height = KEY_ROW_HEIGHT.min(bounds.size.height);
+    (
+        Bounds {
+            origin: bounds.origin,
+            size: size(bounds.size.width, key_height),
+        },
+        Bounds {
+            origin: point(bounds.origin.x, bounds.origin.y + key_height),
+            size: size(bounds.size.width, bounds.size.height - key_height),
+        },
+    )
+}
+
+/// What the harmony lane draws, copied out of the document for the paint closure.
+#[derive(Clone, Debug, Default)]
+pub struct HarmonyPaint {
+    /// The chords sounding across the visible range, song-absolute and already clipped to it.
+    pub events: Vec<HarmonicEvent>,
+    /// Every key change in the song, in order.
+    pub keys: Vec<KeyPoint>,
+    /// Where a chord block may be taken hold of — see [`CHORD_HANDLE`].
+    pub handles: Vec<Ticks>,
+    /// The chord being dragged, drawn lit so it can be followed while it moves.
+    pub held: Option<Ticks>,
+}
+
 /// Draws the chords, and the key changes, across `bounds`.
 ///
-/// `events` are song-absolute and already clipped to what is visible. Each one is a block from
-/// where it starts to where it ends, labelled with the numeral and — when the block is wide enough
-/// to hold both — the chord that numeral means where it sits. A cleared stretch has no event and
-/// so draws as bare background, which is the honest picture of it.
+/// Each chord is a block from where it starts to where it ends, labelled with the numeral and —
+/// when the block is wide enough to hold both — the chord that numeral means where it sits. A
+/// cleared stretch has no event and so draws as bare background, which is the honest picture of
+/// it.
 pub fn harmony_lane(
     window: &mut Window,
     cx: &mut App,
     bounds: Bounds<Pixels>,
     view: &TimelineView,
-    events: &[HarmonicEvent],
-    keys: &[KeyPoint],
+    harmony: &HarmonyPaint,
     theme: &Theme,
 ) {
+    let (key_row, chord_row) = harmony_rows(bounds);
     // A shade below the ruler and above the lanes, so the three read as a descending stack rather
-    // than as a hole cut in the middle of them.
-    rect(window, bounds, theme.surface);
+    // than as a hole cut in the middle of them. The key strip is sunk out of the way of the
+    // chords, which are the part anybody is looking at.
+    rect(window, chord_row, theme.surface);
+    rect(window, key_row, theme.surface_sunken);
 
-    for event in events {
-        let x = bounds.origin.x + view.tick_to_x(event.start);
+    for event in &harmony.events {
+        let x = chord_row.origin.x + view.tick_to_x(event.start);
         let width = view.duration_to_width(event.length);
         if width <= px(1.0) {
             continue;
         }
+        let lit = harmony.held == Some(event.start);
         let block = Bounds {
-            origin: point(x + px(1.0), bounds.origin.y + px(2.0)),
-            size: size(width - px(2.0), bounds.size.height - px(4.0)),
+            origin: point(x + px(1.0), chord_row.origin.y + px(2.0)),
+            size: size(width - px(2.0), chord_row.size.height - px(4.0)),
         };
         rounded_rect(
             window,
             block,
             px(3.0),
-            Theme::translucent(theme.accent, 0.22),
+            Theme::translucent(theme.accent, if lit { 0.42 } else { 0.22 }),
         );
+        // The handle is the visible half of the gesture: without something drawn at the edge,
+        // being able to drag a chord there is a fact only the manual knows. Only where the
+        // numeral is actually written — a chord split in two by a key change has one position,
+        // and a handle on the far half would move music that starts off to the left of it.
+        let movable = harmony.handles.contains(&event.start);
+        if movable {
+            rounded_rect(
+                window,
+                Bounds {
+                    origin: block.origin,
+                    size: size(CHORD_HANDLE.min(block.size.width), block.size.height),
+                },
+                px(3.0),
+                if lit { theme.selection } else { theme.accent },
+            );
+        }
 
         // The numeral is what is stored and what transposes, so it leads; the sounding chord
         // follows only when there is room for it, since it is a readout rather than the truth.
@@ -285,7 +347,10 @@ pub fn harmony_lane(
             label(
                 window,
                 cx,
-                point(block.origin.x + px(5.0), block.origin.y + px(3.0)),
+                point(
+                    block.origin.x + if movable { CHORD_HANDLE } else { px(0.0) } + px(4.0),
+                    block.origin.y + (block.size.height - px(13.0)) / 2.0,
+                ),
                 text,
                 px(10.0),
                 theme.text,
@@ -293,40 +358,75 @@ pub fn harmony_lane(
         });
     }
 
-    // A key change is a boundary, not a span: it is drawn where it happens and named there. It
-    // goes on top of the chords and carries its own background, because the two occupy the same
-    // strip and a key change usually lands exactly on the chord that begins the new section —
-    // which is precisely where the two labels would otherwise be printed over each other.
     let (start, end) = view.visible_range(bounds.size.width);
-    for change in keys {
+    // What key the view is scrolled into, pinned at the left edge. A song that modulates once in
+    // bar 40 would otherwise show no key at all everywhere except bar 40, and reading a numeral
+    // needs the key it is read against. Anything at or after the left edge is drawn where it
+    // belongs by the loop below.
+    if let Some(current) = harmony.keys.iter().rev().find(|change| change.tick < start) {
+        let text = current.key.to_text();
+        key_badge(
+            window,
+            cx,
+            key_row,
+            key_row.origin.x,
+            &text,
+            theme.text_faint,
+        );
+    }
+
+    // A key change is a boundary rather than a span: it is drawn where it happens, named in the
+    // strip above the chords, and marked by a line running down through them so the boundary is
+    // visible where the music actually turns.
+    for change in &harmony.keys {
         if change.tick < start || change.tick > end {
             continue;
         }
         let x = bounds.origin.x + view.tick_to_x(change.tick);
-        let text = change.key.to_text();
-        // The badge has to be drawn before the text sits on it, and `label` only reports its
-        // width after drawing, so the width is estimated. Over- or under-shooting costs a little
-        // padding, which is why the estimate is generous rather than exact.
-        let badge = Bounds {
-            origin: point(x, bounds.origin.y + px(1.0)),
-            size: size(
-                px(text.chars().count() as f32 * 6.0 + 10.0),
-                bounds.size.height - px(2.0),
-            ),
-        };
         clipped(window, bounds, |window| {
-            rounded_rect(window, badge, px(2.0), theme.surface_raised);
-            vline(window, bounds, x, px(2.0), theme.selection);
+            vline(window, chord_row, x, px(1.5), theme.selection);
         });
-        label(
+        key_badge(
             window,
             cx,
-            point(x + px(5.0), bounds.origin.y + px(3.0)),
-            text,
-            px(10.0),
+            key_row,
+            x,
+            &change.key.to_text(),
             theme.selection,
         );
     }
+}
+
+/// One key name in the strip above the chords, starting at `x`.
+fn key_badge(
+    window: &mut Window,
+    cx: &mut App,
+    row: Bounds<Pixels>,
+    x: Pixels,
+    text: &str,
+    color: Hsla,
+) {
+    // The badge has to be drawn before the text sits on it, and `label` only reports its width
+    // after drawing, so the width is estimated. Over- or under-shooting costs a little padding,
+    // which is why the estimate is generous rather than exact.
+    let badge = Bounds {
+        origin: point(x, row.origin.y),
+        size: size(
+            px(text.chars().count() as f32 * 6.0 + 10.0),
+            row.size.height,
+        ),
+    };
+    clipped(window, row, |window| {
+        rounded_rect(window, badge, px(2.0), Theme::translucent(color, 0.14));
+        label(
+            window,
+            cx,
+            point(x + px(5.0), row.origin.y + px(1.0)),
+            text.to_string(),
+            px(9.0),
+            color,
+        );
+    });
 }
 
 /// Tints the loop region across `bounds`.
@@ -565,5 +665,42 @@ pub fn keyboard(
                 theme.surface_sunken,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_harmony_lane_gives_the_keys_a_strip_of_their_own() {
+        // Two rows that tile the lane exactly: a gap between them would be a band of pixels no
+        // hit test claims, and an overlap would make a press on a chord land on a key change.
+        let bounds = Bounds {
+            origin: point(px(10.0), px(40.0)),
+            size: size(px(800.0), crate::theme::Metrics::HARMONY_LANE_HEIGHT),
+        };
+        let (keys, chords) = harmony_rows(bounds);
+        assert_eq!(keys.origin, bounds.origin);
+        assert_eq!(keys.size.height, KEY_ROW_HEIGHT);
+        assert_eq!(chords.origin.y, keys.origin.y + keys.size.height);
+        assert_eq!(chords.size.height + keys.size.height, bounds.size.height);
+        assert!(
+            chords.size.height > keys.size.height,
+            "the chords are what anybody is looking at"
+        );
+    }
+
+    #[test]
+    fn a_lane_too_short_for_two_rows_still_gives_both_a_real_rectangle() {
+        // Nothing lays the lane out this small today, but a negative height would paint the key
+        // strip over the whole window rather than merely looking wrong.
+        let bounds = Bounds {
+            origin: point(px(0.0), px(0.0)),
+            size: size(px(800.0), px(6.0)),
+        };
+        let (keys, chords) = harmony_rows(bounds);
+        assert_eq!(keys.size.height, px(6.0));
+        assert_eq!(chords.size.height, px(0.0));
     }
 }

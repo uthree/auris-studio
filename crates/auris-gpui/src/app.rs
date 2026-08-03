@@ -153,6 +153,16 @@ pub enum Drag {
     /// progression* — pressing four chords one at a time tells you what each one is, and dragging
     /// across them tells you whether they go anywhere.
     AuditionHarmony,
+    /// Moving a chord along the harmony lane by its leading edge.
+    HarmonyChord {
+        /// Where the chord being moved sits *now*, which the drag updates as it goes: the
+        /// document is edited on every pointer move, so the position it started from stops being
+        /// the position it is at.
+        at: Ticks,
+        /// Distance from the chord to the point that was grabbed, so it does not jump under the
+        /// pointer.
+        grab_offset: Ticks,
+    },
     /// Turning one of a generated clip's dials.
     ///
     /// Separate from [`Drag::Param`] because a recipe is not a plugin parameter: there is no
@@ -251,6 +261,7 @@ impl Drag {
             Drag::RubberBand { .. } => None,
             // Listening changes nothing at all.
             Drag::AuditionHarmony => None,
+            Drag::HarmonyChord { .. } => Some(Edit::MoveChord),
             // How far in the view is zoomed is a property of the window, like a panel's width.
             Drag::TimeZoom { .. } => None,
             // Panel and window geometry is a property of the window, not the document: resizing
