@@ -262,6 +262,9 @@ pub fn readout<C: Into<SharedString>, V: Into<SharedString>>(
         )
 }
 
+/// How wide a zoom slider is drawn, and therefore how far a full sweep of it drags.
+pub const ZOOM_SLIDER_WIDTH: Pixels = px(96.0);
+
 /// Where a slider's fill grows from.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SliderFill {
@@ -395,6 +398,66 @@ where
                         .text_xs()
                         .text_color(theme.text)
                         .child(value_text.into()),
+                ),
+        )
+        .on_mouse_down(gpui::MouseButton::Left, on_drag_start)
+        .on_scroll_wheel(on_scroll)
+}
+
+/// A compact slider for a view setting, with no label and no readout.
+///
+/// Deliberately not [`value_slider`]: that one names a parameter and prints its value, which is
+/// what a plugin control needs and what a strip of window chrome has no room for. This is a bare
+/// track and a thumb, sized so a full sweep of it covers the whole range it drives.
+pub fn zoom_slider<I, D, S>(
+    id: I,
+    fraction: f32,
+    theme: &Theme,
+    on_drag_start: D,
+    on_scroll: S,
+) -> impl IntoElement + use<I, D, S>
+where
+    I: Into<ElementId>,
+    D: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+    S: Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
+{
+    let fraction = fraction.clamp(0.0, 1.0);
+    div()
+        .id(id.into())
+        .flex()
+        .items_center()
+        .w(ZOOM_SLIDER_WIDTH)
+        .flex_shrink_0()
+        .h(Metrics::CONTROL_HEIGHT)
+        .cursor_pointer()
+        .child(
+            div()
+                .relative()
+                .w_full()
+                .h(px(4.0))
+                .rounded(Metrics::RADIUS_SM)
+                .bg(theme.surface_sunken)
+                .child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top_0()
+                        .bottom_0()
+                        .w(relative(fraction))
+                        .rounded(Metrics::RADIUS_SM)
+                        .bg(Theme::translucent(theme.accent, 0.5)),
+                )
+                .child(
+                    // Inset by the thumb's own width so it stays inside the track at both ends
+                    // rather than hanging off them.
+                    div()
+                        .absolute()
+                        .top(px(-3.0))
+                        .left(relative(fraction * 0.94))
+                        .w(px(6.0))
+                        .h(px(10.0))
+                        .rounded(Metrics::RADIUS_SM)
+                        .bg(theme.accent),
                 ),
         )
         .on_mouse_down(gpui::MouseButton::Left, on_drag_start)

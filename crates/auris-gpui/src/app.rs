@@ -119,6 +119,13 @@ pub enum Drag {
         /// Pointer x when the drag began.
         start_x: Pixels,
     },
+    /// Dragging the time-zoom slider.
+    TimeZoom {
+        /// Slider position when the drag began, from 0 to 1.
+        start_fraction: f32,
+        /// Pointer x when the drag began.
+        start_x: Pixels,
+    },
     /// Dragging the tempo readout.
     Tempo {
         /// Tempo when the drag began.
@@ -176,6 +183,8 @@ impl Drag {
             Drag::Tempo { .. } => Some(Edit::ChangeTempo),
             // Selecting is not an edit; it changes what a later edit will act on.
             Drag::RubberBand { .. } => None,
+            // How far in the view is zoomed is a property of the window, like a panel's width.
+            Drag::TimeZoom { .. } => None,
             // Panel geometry is a property of the window, not the document: resizing a panel
             // is not an edit and must never land on the undo stack.
             Drag::ResizeInspector { .. }

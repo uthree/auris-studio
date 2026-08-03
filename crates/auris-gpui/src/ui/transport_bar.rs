@@ -91,6 +91,21 @@ impl AurisApp {
                                     cx.notify();
                                 }),
                             )),
+                    )
+                    .child(
+                        // The arrangement's own zoom, next to the grid because both are about
+                        // how finely the timeline reads rather than about what it contains.
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.text_faint)
+                                    .child(self.t(Key::Zoom)),
+                            )
+                            .child(self.zoom_slider("timeline-zoom", cx)),
                     ),
             )
             .child(

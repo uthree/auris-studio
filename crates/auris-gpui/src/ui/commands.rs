@@ -13,7 +13,7 @@ use auris_i18n::{Key, messages};
 use auris_session::prelude::*;
 use gpui::{Context, Window};
 
-use crate::app::{AurisApp, ExportState};
+use crate::app::{AurisApp, Drag, ExportState};
 use crate::i18n::{edit_key, error_text};
 
 impl AurisApp {
@@ -135,6 +135,37 @@ impl AurisApp {
                 self.set_status(self.t(Key::AudioClipsComeFromImport));
             }
         }
+    }
+
+    /// The time-zoom slider, for whichever view is drawing its own chrome.
+    ///
+    /// The arrangement and the piano roll share one [`crate::ui::timeline::TimelineView`], so
+    /// both sliders drive the same value and move together. That is the honest rendering of what
+    /// the application does: the two views agree pixel-for-pixel about where a tick lands, which
+    /// is why a clip and its notes line up at all.
+    pub(crate) fn zoom_slider(
+        &self,
+        id: &'static str,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::AnyElement {
+        let theme = self.theme.clone();
+        gpui::IntoElement::into_any_element(crate::ui::widgets::zoom_slider(
+            id,
+            self.timeline.zoom_fraction(),
+            &theme,
+            cx.listener(move |this, event: &gpui::MouseDownEvent, _, _| {
+                this.begin_drag(Drag::TimeZoom {
+                    start_fraction: this.timeline.zoom_fraction(),
+                    start_x: event.position.x,
+                });
+            }),
+            cx.listener(move |this, event: &gpui::ScrollWheelEvent, _, cx| {
+                let notches = f32::from(event.delta.pixel_delta(gpui::px(16.0)).y) / 16.0;
+                let fraction = this.timeline.zoom_fraction() + notches * 0.04;
+                this.timeline.set_zoom_fraction(fraction);
+                cx.notify();
+            }),
+        ))
     }
 
     /// Shifts a dragged selection by however many lanes the pointer has crossed.

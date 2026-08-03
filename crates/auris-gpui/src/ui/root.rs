@@ -372,6 +372,16 @@ impl AurisApp {
                 let delta = f32::from(event.position.x - start_x);
                 self.drag_param(target, start_value, delta);
             }
+            Drag::TimeZoom {
+                start_fraction,
+                start_x,
+            } => {
+                // A full sweep of the slider is a full sweep of the range, so the drag is
+                // measured against the width the widget was drawn at.
+                let travel = f32::from(crate::ui::widgets::ZOOM_SLIDER_WIDTH).max(1.0);
+                let delta = f32::from(event.position.x - start_x) / travel;
+                self.timeline.set_zoom_fraction(start_fraction + delta);
+            }
             Drag::Tempo { start_bpm, start_x } => {
                 // Half a beat per pixel would be unusable; 0.25 BPM/px lets a short drag cover
                 // the musically interesting range while still landing on exact values.

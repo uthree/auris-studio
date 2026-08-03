@@ -43,6 +43,7 @@ strings! {
     // ------------------------------------------------------------------ transport bar
     ExportWav { en: "Export WAV", ja: "WAV 書き出し" }
     Grid { en: "Grid", ja: "グリッド" }
+    Zoom { en: "Zoom", ja: "拡大" }
     GridFree { en: "free", ja: "自由" }
     Position { en: "Position", ja: "位置" }
     Tempo { en: "Tempo", ja: "テンポ" }

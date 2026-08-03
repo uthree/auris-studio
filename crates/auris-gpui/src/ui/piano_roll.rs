@@ -81,7 +81,8 @@ impl AurisApp {
                         self.language(),
                         self.t(self.pointer.create.label()),
                         self.t(self.pointer.delete.label()),
-                    )),
+                    ))
+                    .child(self.zoom_slider("roll-zoom", cx)),
             )
             .child(
                 div()

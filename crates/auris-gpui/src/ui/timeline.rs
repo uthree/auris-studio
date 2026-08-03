@@ -86,6 +86,27 @@ impl TimelineView {
         }
     }
 
+    /// The zoom as a position from 0 to 1, for a slider to show and set.
+    ///
+    /// Logarithmic. The useful range spans two orders of magnitude, and on a linear slider the
+    /// whole zoomed-out half — where a piece is actually laid out — would live in the first two
+    /// per cent of the travel.
+    pub fn zoom_fraction(&self) -> f32 {
+        let span = (Self::MAX_PIXELS_PER_BEAT / Self::MIN_PIXELS_PER_BEAT).ln();
+        ((self.pixels_per_beat / Self::MIN_PIXELS_PER_BEAT).ln() / span).clamp(0.0, 1.0)
+    }
+
+    /// Sets the zoom from a slider position, keeping the left edge of the view where it is.
+    ///
+    /// The left edge rather than the pointer, which is what [`Self::zoom_by`] anchors on: a
+    /// slider is nowhere near the thing being zoomed, so there is no position under it to hold
+    /// still, and holding the left edge keeps the view somewhere the eye already is.
+    pub fn set_zoom_fraction(&mut self, fraction: f32) {
+        let span = (Self::MAX_PIXELS_PER_BEAT / Self::MIN_PIXELS_PER_BEAT).ln();
+        let scale = Self::MIN_PIXELS_PER_BEAT * (fraction.clamp(0.0, 1.0) * span).exp();
+        self.pixels_per_beat = scale.clamp(Self::MIN_PIXELS_PER_BEAT, Self::MAX_PIXELS_PER_BEAT);
+    }
+
     /// Scrolls by a pixel delta, clamping at the timeline start.
     pub fn scroll_by(&mut self, delta_x: Pixels) {
         let ticks = self.width_to_duration(delta_x);
@@ -276,6 +297,52 @@ mod tests {
             view.zoom_by(0.5, px(0.0));
         }
         assert_eq!(view.pixels_per_beat, TimelineView::MIN_PIXELS_PER_BEAT);
+    }
+
+    #[test]
+    fn the_zoom_slider_covers_the_whole_range_and_round_trips() {
+        let mut view = TimelineView::default();
+        view.set_zoom_fraction(0.0);
+        assert_eq!(view.pixels_per_beat, TimelineView::MIN_PIXELS_PER_BEAT);
+        assert_eq!(view.zoom_fraction(), 0.0);
+
+        view.set_zoom_fraction(1.0);
+        assert_eq!(view.pixels_per_beat, TimelineView::MAX_PIXELS_PER_BEAT);
+        assert_eq!(view.zoom_fraction(), 1.0);
+
+        for step in 0..=10 {
+            let fraction = step as f32 / 10.0;
+            view.set_zoom_fraction(fraction);
+            assert!(
+                (view.zoom_fraction() - fraction).abs() < 1e-4,
+                "{fraction} came back as {}",
+                view.zoom_fraction()
+            );
+        }
+    }
+
+    #[test]
+    fn the_zoom_slider_spends_half_its_travel_below_the_default() {
+        // The point of the logarithmic mapping: on a linear one the whole zoomed-out half, which
+        // is where a piece is laid out, would live in the first few per cent of the slider.
+        let mut view = TimelineView::default();
+        view.set_zoom_fraction(0.5);
+        assert!(
+            view.pixels_per_beat > TimelineView::MIN_PIXELS_PER_BEAT * 4.0,
+            "half travel gave {}",
+            view.pixels_per_beat
+        );
+        assert!(view.pixels_per_beat < TimelineView::MAX_PIXELS_PER_BEAT / 4.0);
+    }
+
+    #[test]
+    fn setting_the_zoom_from_a_slider_leaves_the_view_where_it_was() {
+        let mut view = TimelineView {
+            pixels_per_beat: 48.0,
+            scroll_ticks: Ticks(TICKS_PER_QUARTER * 8),
+        };
+        view.set_zoom_fraction(0.9);
+        assert_eq!(view.scroll_ticks, Ticks(TICKS_PER_QUARTER * 8));
     }
 
     #[test]
