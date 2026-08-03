@@ -9,7 +9,7 @@ use auris_core::time::Ticks;
 use crate::frame::{Frame, SectionPlan};
 use crate::rhythm::{Accent, DrumVoice, Grid, Pattern, swing_offset};
 use crate::rng::{Key as RngKey, Rng};
-use crate::spec::{PartSpec, Role, SongSpec};
+use crate::spec::{Mood, PartSpec, Role, SongSpec};
 use crate::theory::pitch::{OCTAVE, PitchClass, fold_into};
 
 /// A note as the composer writes it, before it becomes a clip.
@@ -42,9 +42,41 @@ pub struct PartDraft {
     pub notes: Vec<Draft>,
 }
 
-/// Writes every part of a spec against its frame.
-pub fn write_parts(spec: &SongSpec, frame: &Frame) -> Vec<PartDraft> {
-    spec.parts
+/// How a part is played, as opposed to what it plays.
+///
+/// The five dials the writers read that are neither the harmony, the form, nor the part itself.
+/// They arrive separately from a [`SongSpec`] so that a caller who has no specification — one
+/// regenerating a single clip against the harmony already in a document — can still ask for a
+/// part without inventing a whole song around it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScoreSettings {
+    /// How the music should feel, which sets density and syncopation.
+    pub mood: Mood,
+    /// How far the offbeats are delayed, as a percentage where 50 is straight.
+    pub swing: u8,
+    /// How far timing and velocity wander, from 0 for a machine to 1 for a sloppy band.
+    pub humanize: f32,
+    /// How much a repeat departs from what the section played the first time.
+    pub variation: f32,
+    /// Which drum groove the rhythm section plays.
+    pub groove: String,
+}
+
+impl From<&SongSpec> for ScoreSettings {
+    fn from(spec: &SongSpec) -> Self {
+        Self {
+            mood: spec.mood,
+            swing: spec.swing,
+            humanize: spec.humanize,
+            variation: spec.variation,
+            groove: spec.groove.clone(),
+        }
+    }
+}
+
+/// Writes every part of a roster against a frame.
+pub fn write_parts(settings: &ScoreSettings, roster: &[PartSpec], frame: &Frame) -> Vec<PartDraft> {
+    roster
         .iter()
         .map(|part| {
             let mut draft = PartDraft {
@@ -59,17 +91,17 @@ pub fn write_parts(spec: &SongSpec, frame: &Frame) -> Vec<PartDraft> {
                     continue;
                 }
                 let notes = match part.role {
-                    Role::Melody => melody(spec, frame, section, index, part),
-                    Role::Chords | Role::Pad => comp(spec, frame, section, index, part),
-                    Role::Arp => arp(spec, frame, section, index, part),
-                    Role::Bass => bass(spec, frame, section, index, part),
+                    Role::Melody => melody(settings, frame, section, index, part),
+                    Role::Chords | Role::Pad => comp(settings, frame, section, index, part),
+                    Role::Arp => arp(settings, frame, section, index, part),
+                    Role::Bass => bass(settings, frame, section, index, part),
                     Role::Kick | Role::Snare | Role::Hat => {
-                        drums(spec, frame, section, index, part)
+                        drums(settings, frame, section, index, part)
                     }
                 };
                 draft.notes.extend(notes);
             }
-            humanise(spec, frame, part, &mut draft.notes);
+            humanise(settings, frame, part, &mut draft.notes);
             draft
                 .notes
                 .sort_by_key(|note| (note.start.raw(), note.pitch));
@@ -79,8 +111,8 @@ pub fn write_parts(spec: &SongSpec, frame: &Frame) -> Vec<PartDraft> {
 }
 
 /// How busy a part is, as a fraction of the available steps.
-fn density(spec: &SongSpec, part: &PartSpec, section: &SectionPlan) -> f32 {
-    let base = part.density.unwrap_or_else(|| spec.mood.density());
+fn density(settings: &ScoreSettings, part: &PartSpec, section: &SectionPlan) -> f32 {
+    let base = part.density.unwrap_or_else(|| settings.mood.density());
     let role = match part.role {
         Role::Melody => 1.0,
         Role::Arp => 1.2,
@@ -127,7 +159,7 @@ fn phrase_shape(grid: Grid, section: &SectionPlan, at: Ticks) -> f32 {
 /// [`SongSpec::variation`] buys the departures back. A bar it selects mixes the instance into the
 /// name, so that one bar — and only that one — draws different numbers and plays something else.
 fn bar_stream(
-    spec: &SongSpec,
+    settings: &ScoreSettings,
     frame: &Frame,
     part: &PartSpec,
     section: &SectionPlan,
@@ -142,7 +174,7 @@ fn bar_stream(
         RngKey::Index(bar as u64),
     ];
     // The first playing is the one the others are repeats of, so it never departs from itself.
-    if section.instance > 1 && spec.variation > 0.0 {
+    if section.instance > 1 && settings.variation > 0.0 {
         let mut choose = Rng::stream(
             frame.seed,
             &[
@@ -154,7 +186,7 @@ fn bar_stream(
                 RngKey::Index(bar as u64),
             ],
         );
-        if choose.chance(spec.variation) {
+        if choose.chance(settings.variation) {
             path.push(RngKey::Index(section.instance as u64));
         }
     }
@@ -320,7 +352,7 @@ fn bar_onsets(
 
 /// The tune.
 fn melody(
-    spec: &SongSpec,
+    settings: &ScoreSettings,
     frame: &Frame,
     section: &SectionPlan,
     index: usize,
@@ -328,7 +360,7 @@ fn melody(
 ) -> Vec<Draft> {
     let grid = frame.grid;
     let (low, high) = part.range();
-    let density = density(spec, part, section);
+    let density = density(settings, part, section);
 
     // One figure per part and section, restated bar after bar. Keyed by neither the bar nor the
     // instance, so every bar of every playing reaches for the same one.
@@ -345,13 +377,13 @@ fn melody(
         grid,
         part.rhythm.as_ref(),
         density,
-        spec.mood.syncopation,
+        settings.mood.syncopation,
         &mut invent,
     );
 
     let mut notes = Vec::new();
     for bar in 0..section.bars {
-        let mut rng = bar_stream(spec, frame, part, section, "melody", bar);
+        let mut rng = bar_stream(settings, frame, part, section, "melody", bar);
         // Four bars is the phrase almost everything is built in: state the figure, restate it,
         // and then answer it. The fourth bar is where a tune stops repeating and goes somewhere.
         let closing = bar % 4 == 3;
@@ -432,7 +464,7 @@ fn shift_within(section: &SectionPlan, anchor: i32, degree: i32, low: i32, high:
 
 /// Chords, either comped in rhythm or held as a pad.
 fn comp(
-    spec: &SongSpec,
+    settings: &ScoreSettings,
     frame: &Frame,
     section: &SectionPlan,
     index: usize,
@@ -515,13 +547,13 @@ fn comp(
             }
         }
     }
-    let _ = spec;
+    let _ = settings;
     notes
 }
 
 /// A broken chord.
 fn arp(
-    spec: &SongSpec,
+    settings: &ScoreSettings,
     frame: &Frame,
     section: &SectionPlan,
     index: usize,
@@ -568,7 +600,7 @@ fn arp(
             });
         }
     }
-    let _ = spec;
+    let _ = settings;
     notes
 }
 
@@ -577,7 +609,7 @@ fn arp(
 /// Locked to the kick pattern rather than to the kick *part*: reading the groove keeps the two
 /// together without making one part depend on another's notes.
 fn bass(
-    spec: &SongSpec,
+    settings: &ScoreSettings,
     frame: &Frame,
     section: &SectionPlan,
     index: usize,
@@ -585,7 +617,7 @@ fn bass(
 ) -> Vec<Draft> {
     let (low, high) = part.range();
     let grid = frame.grid;
-    let kick = crate::frame::groove_pattern(spec, DrumVoice::Kick);
+    let kick = crate::frame::groove_pattern(&settings.groove, DrumVoice::Kick);
     let mut notes = Vec::new();
 
     for event in &section.events {
@@ -643,7 +675,7 @@ fn bass(
 
 /// One drum voice.
 fn drums(
-    spec: &SongSpec,
+    settings: &ScoreSettings,
     frame: &Frame,
     section: &SectionPlan,
     index: usize,
@@ -660,12 +692,12 @@ fn drums(
     let pattern = part
         .rhythm
         .clone()
-        .unwrap_or_else(|| crate::frame::groove_pattern(spec, voice));
+        .unwrap_or_else(|| crate::frame::groove_pattern(&settings.groove, voice));
     let grid = frame.grid;
     let mut notes = Vec::new();
 
     for bar in 0..section.bars {
-        let mut rng = bar_stream(spec, frame, part, section, "drums", bar);
+        let mut rng = bar_stream(settings, frame, part, section, "drums", bar);
         let bar_start = grid.bar_ticks() * bar as i64;
         // Which steps ended up carrying a hit, so a fill can go round them rather than double
         // them: the pattern says where a hit belongs and thinning may already have taken it away.
@@ -758,7 +790,7 @@ fn fill(
 ///
 /// `humanize: 0` is exactly the identity apart from swing, which is what lets every timing test
 /// assert on an exact tick rather than on a tolerance.
-fn humanise(spec: &SongSpec, frame: &Frame, part: &PartSpec, notes: &mut [Draft]) {
+fn humanise(settings: &ScoreSettings, frame: &Frame, part: &PartSpec, notes: &mut [Draft]) {
     let grid = frame.grid;
     // Where a player sits against the beat: a hat pushes, a bass drags.
     let push = match part.role {
@@ -767,13 +799,13 @@ fn humanise(spec: &SongSpec, frame: &Frame, part: &PartSpec, notes: &mut [Draft]
         Role::Bass => 6.0,
         Role::Snare => 10.0,
         _ => 0.0,
-    } * spec.humanize;
+    } * settings.humanize;
 
     for note in notes.iter_mut() {
         let bar_position = note.start.raw().rem_euclid(grid.bar_ticks().raw().max(1));
         let step = grid.step_of(Ticks(bar_position));
-        let mut start = note.start + swing_offset(grid, step, spec.swing);
-        if spec.humanize > 0.0 {
+        let mut start = note.start + swing_offset(grid, step, settings.swing);
+        if settings.humanize > 0.0 {
             // Named by *where the note is* rather than by how many notes came before it, so
             // adding a note to bar one does not re-time the whole song.
             let mut rng = Rng::stream(
@@ -786,9 +818,9 @@ fn humanise(spec: &SongSpec, frame: &Frame, part: &PartSpec, notes: &mut [Draft]
                     RngKey::Index(u64::from(note.pitch)),
                 ],
             );
-            let jitter = rng.jitter(6.0 + 19.0 * spec.humanize) + push;
+            let jitter = rng.jitter(6.0 + 19.0 * settings.humanize) + push;
             start += Ticks(jitter.round() as i64);
-            let scale = 1.0 + rng.jitter(0.06 * spec.humanize);
+            let scale = 1.0 + rng.jitter(0.06 * settings.humanize);
             note.velocity = (note.velocity * scale).clamp(0.05, 1.0);
         }
         note.start = start.max_zero();
@@ -803,7 +835,7 @@ mod tests {
     fn draft(text: &str) -> (SongSpec, Frame, Vec<PartDraft>) {
         let spec = SongSpec::parse(text).expect("the fixture parses");
         let frame = plan(&spec);
-        let parts = write_parts(&spec, &frame);
+        let parts = write_parts(&ScoreSettings::from(&spec), &spec.parts, &frame);
         (spec, frame, parts)
     }
 

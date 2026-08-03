@@ -4,7 +4,7 @@ use auris_core::Note;
 use auris_core::time::{Ticks, TimeSignature};
 
 use crate::frame::{Frame, plan};
-use crate::parts::write_parts;
+use crate::parts::{ScoreSettings, write_parts};
 use crate::spec::SongSpec;
 
 /// One clip: a run of notes with a place on the timeline.
@@ -101,7 +101,7 @@ pub fn compose(spec: &SongSpec) -> Composition {
 
 /// Turns a planned frame and its parts into tracks of clips.
 fn render(spec: &SongSpec, frame: &Frame) -> Composition {
-    let drafts = write_parts(spec, frame);
+    let drafts = write_parts(&ScoreSettings::from(spec), &spec.parts, frame);
     let mut tracks = Vec::new();
 
     for draft in drafts {

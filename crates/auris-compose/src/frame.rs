@@ -172,7 +172,7 @@ fn colour(events: &mut [HarmonicEvent], mood: Mood, seed: u64, section: &str, in
 /// A dynamic program rather than a series of local choices: picking each note from its
 /// predecessor gives a line that wanders, because nothing is looking ahead to where the phrase
 /// has to end. Solving the whole phrase at once is what makes it arrive somewhere.
-fn skeleton(
+pub(crate) fn skeleton(
     events: &[HarmonicEvent],
     key: Key,
     seed: u64,
@@ -295,8 +295,8 @@ fn skeleton(
 }
 
 /// The drum pattern for a voice, at the song's groove.
-pub fn groove_pattern(spec: &SongSpec, voice: crate::rhythm::DrumVoice) -> Pattern {
-    crate::rhythm::groove(&spec.groove)
+pub fn groove_pattern(groove: &str, voice: crate::rhythm::DrumVoice) -> Pattern {
+    crate::rhythm::groove(groove)
         .map(|groove| groove.pattern(voice))
         .unwrap_or_else(|| Pattern::rests(16))
 }

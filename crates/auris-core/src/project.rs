@@ -170,6 +170,134 @@ impl Note {
     }
 }
 
+/// What an automatically written clip is trying to be.
+///
+/// The vocabulary a person chooses from, which is not quite the vocabulary the composer writes
+/// in: `Drums` is one choice here and three parts inside the composer, because a kick, a snare and
+/// a hat share an instrument and belong in one clip rather than three.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClipPreset {
+    /// The tune.
+    Lead,
+    /// Chords, played rhythmically.
+    Chords,
+    /// A held chord bed.
+    Pad,
+    /// A broken chord.
+    Arp,
+    /// The bass line.
+    Bass,
+    /// Kick, snare and hat together.
+    Drums,
+}
+
+impl ClipPreset {
+    /// Every preset, in the order a picker should offer them.
+    pub const ALL: [ClipPreset; 6] = [
+        ClipPreset::Lead,
+        ClipPreset::Chords,
+        ClipPreset::Pad,
+        ClipPreset::Arp,
+        ClipPreset::Bass,
+        ClipPreset::Drums,
+    ];
+
+    /// The name the interface and the command line write.
+    pub fn name(self) -> &'static str {
+        match self {
+            ClipPreset::Lead => "lead",
+            ClipPreset::Chords => "chords",
+            ClipPreset::Pad => "pad",
+            ClipPreset::Arp => "arp",
+            ClipPreset::Bass => "bass",
+            ClipPreset::Drums => "drums",
+        }
+    }
+
+    /// Reads a preset name, accepting the obvious synonyms.
+    pub fn parse(text: &str) -> Option<Self> {
+        Some(match text.trim().to_ascii_lowercase().as_str() {
+            "lead" | "melody" | "tune" => ClipPreset::Lead,
+            "chords" | "comp" => ClipPreset::Chords,
+            "pad" | "strings" => ClipPreset::Pad,
+            "arp" | "arpeggio" => ClipPreset::Arp,
+            "bass" => ClipPreset::Bass,
+            "drums" | "drum" | "kit" => ClipPreset::Drums,
+            _ => return None,
+        })
+    }
+}
+
+/// How a clip was written, so that it can be written again.
+///
+/// A clip carrying one of these was produced from the harmony underneath it rather than played,
+/// and can be produced again with a different seed or a different feel. Dropping the recipe is
+/// what freezing a clip means: the notes stay exactly where they are and stop being derived from
+/// anything, which is how a phrase somebody likes stops being at the mercy of the next
+/// regeneration.
+///
+/// The notes are stored alongside it rather than recomputed on load, so a project plays and
+/// exports without the composer ever running, and so a file opened by a build whose composer has
+/// changed still sounds like the piece that was saved.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ClipRecipe {
+    /// What the clip is trying to be.
+    pub preset: ClipPreset,
+    /// The number every random choice is drawn from. A different one is a different take.
+    pub seed: u64,
+    /// How busy it is, from 0 for sparse to 1 for a wall of notes.
+    ///
+    /// Read by the parts that generate their own figures. What a drum kit plays is decided by its
+    /// [`groove`](Self::groove) instead, which is the same choice made in the vocabulary a
+    /// drummer would use.
+    pub density: f32,
+    /// How hard it is played, from 0 to 1.
+    ///
+    /// Every preset reads this: it sets how the notes are struck, not how many there are.
+    pub intensity: f32,
+    /// Which drum groove the kit plays. Ignored by everything except the drums.
+    #[serde(default = "default_groove")]
+    pub groove: String,
+    /// How far the offbeats are delayed, as a percentage where 50 is straight.
+    #[serde(default = "default_swing")]
+    pub swing: u8,
+    /// How far timing and velocity wander, from 0 for a machine to 1 for a sloppy band.
+    #[serde(default)]
+    pub humanize: f32,
+}
+
+fn default_swing() -> u8 {
+    50
+}
+
+fn default_groove() -> String {
+    "basic-rock".to_string()
+}
+
+impl ClipRecipe {
+    /// A recipe for `preset`, with the dials where a first attempt should start.
+    pub fn new(preset: ClipPreset, seed: u64) -> Self {
+        Self {
+            preset,
+            seed,
+            density: 0.5,
+            intensity: 0.7,
+            groove: default_groove(),
+            swing: 50,
+            humanize: 0.25,
+        }
+    }
+
+    /// The same recipe with a different seed, which is what "another take" means.
+    pub fn with_seed(&self, seed: u64) -> Self {
+        Self {
+            seed,
+            ..self.clone()
+        }
+    }
+}
+
 /// A block of notes placed on an instrument track.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MidiClip {
@@ -186,6 +314,13 @@ pub struct MidiClip {
     /// Whether the clip is skipped during playback.
     #[serde(default)]
     pub muted: bool,
+    /// How the clip was written, when it was written rather than played.
+    ///
+    /// Added the way [`Self::muted`] was — an optional field with a default — so a document from
+    /// before this existed opens unchanged, and so a clip somebody played by hand is stored
+    /// without a word about a composer that had nothing to do with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe: Option<ClipRecipe>,
 }
 
 impl MidiClip {
@@ -198,7 +333,13 @@ impl MidiClip {
             length,
             notes: Vec::new(),
             muted: false,
+            recipe: None,
         }
+    }
+
+    /// `true` when the clip was written by the composer rather than played.
+    pub fn is_generated(&self) -> bool {
+        self.recipe.is_some()
     }
 
     /// Position just past the end of the clip.

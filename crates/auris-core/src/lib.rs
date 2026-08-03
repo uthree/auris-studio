@@ -41,9 +41,9 @@ pub use plugin::{
     PluginState, PrepareContext, ProcessContext,
 };
 pub use project::{
-    AudioClip, AudioSource, AudioSourceBank, AudioTrack, ClipId, Color, EffectSlot, EffectSlotId,
-    InstrumentTrack, MidiClip, MixerStrip, Note, PresetRef, Project, SoundFontId, SoundFontRef,
-    SourceId, Track, TrackId, TrackKind,
+    AudioClip, AudioSource, AudioSourceBank, AudioTrack, ClipId, ClipPreset, ClipRecipe, Color,
+    EffectSlot, EffectSlotId, InstrumentTrack, MidiClip, MixerStrip, Note, PresetRef, Project,
+    SoundFontId, SoundFontRef, SourceId, Track, TrackId, TrackKind,
 };
 pub use registry::{PluginPack, PluginRegistry};
 pub use time::{Beats, Samples, Seconds, TICKS_PER_QUARTER, TempoMap, Ticks, TimeSignature};
