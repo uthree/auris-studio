@@ -233,6 +233,17 @@ impl AurisApp {
         if !self.library.is_open(Branch::Instruments) {
             return rows;
         }
+        // What a click on a *plugin* does, said under the heading rather than on it. And when
+        // there is no instrument track to put one on, why the clicks are about to do nothing —
+        // this string has existed since the panel was written and was referenced nowhere.
+        rows.push(self.note_row(
+            1,
+            self.t(if self.selected_track_takes_an_instrument() {
+                Key::BrowserInstrumentsHint
+            } else {
+                Key::LibraryNeedsInstrumentTrack
+            }),
+        ));
         for (category, members) in groups {
             let branch = Branch::InstrumentCategory(category);
             rows.push(self.category_row(branch, category, members.len(), cx));
@@ -280,6 +291,16 @@ impl AurisApp {
         if !self.library.is_open(Branch::Effects) {
             return rows;
         }
+        // An effect with no track selected lands on the master bus, which is a reasonable
+        // default and was a completely silent one.
+        rows.push(self.note_row(
+            1,
+            self.t(if self.selected_track.is_some() {
+                Key::BrowserEffectsHint
+            } else {
+                Key::LibraryNeedsTrack
+            }),
+        ));
         for (category, members) in groups {
             let branch = Branch::EffectCategory(category);
             rows.push(self.category_row(branch, category, members.len(), cx));
@@ -492,8 +513,13 @@ impl AurisApp {
             .pl(indent(depth))
             .p_1p5()
             .rounded(Metrics::RADIUS_SM)
-            .cursor_pointer()
-            .hover(|this| this.bg(theme.surface_hover))
+            // A branch with nothing to open — a font whose file has gone — must not offer the
+            // pointer and the hover fill of a row that would answer a click. It looked exactly
+            // like a font that works, and clicking it did nothing for ever.
+            .when(enabled, |this| {
+                this.cursor_pointer()
+                    .hover(|this| this.bg(theme.surface_hover))
+            })
             .child(crate::ui::icons::icon(
                 // A shut branch points at what opening it would reveal, an open one down at what
                 // it has revealed. The two rotations are the whole of the affordance.
@@ -592,6 +618,16 @@ impl AurisApp {
     }
 
     /// A line of explanation where a branch would otherwise open onto nothing.
+    /// Whether the selected track is one an instrument can be loaded onto.
+    ///
+    /// An audio track has no instrument, so clicking a sound with one selected does nothing at
+    /// all — which is a thing worth saying rather than a click to be swallowed.
+    fn selected_track_takes_an_instrument(&self) -> bool {
+        self.selected_track
+            .and_then(|id| self.project().track(id))
+            .is_some_and(|track| track.kind.as_instrument().is_some())
+    }
+
     fn note_row(&self, depth: usize, text: &str) -> AnyElement {
         div()
             .text_xs()

@@ -87,17 +87,25 @@ strings! {
         en: "Select an instrument track to load one",
         ja: "音源トラックを選択すると読み込めます"
     }
-    BrowserInstruments {
-        en: "Instruments — click to set on the selected track",
-        ja: "音源 — クリックで選択中のトラックに設定します"
+    // The heading names the section and nothing else. It used to carry the instruction — "click
+    // to set on the selected track" — on the one row where clicking does something quite
+    // different: it collapses the section the instruction is about.
+    BrowserInstruments { en: "Instruments", ja: "音源" }
+    BrowserEffects { en: "Effects", ja: "エフェクト" }
+    BrowserSoundFonts { en: "SoundFonts", ja: "サウンドフォント" }
+    // Under the heading, where it belongs: a line about the rows rather than about the row it is
+    // written on.
+    BrowserInstrumentsHint {
+        en: "Click a sound to set it on the selected track",
+        ja: "音色をクリックすると選択中のトラックに設定されます"
     }
-    BrowserEffects {
-        en: "Effects — click to add to the selected track",
-        ja: "エフェクト — クリックで選択中のトラックに追加します"
+    BrowserEffectsHint {
+        en: "Click an effect to add it to the selected track",
+        ja: "エフェクトをクリックすると選択中のトラックに追加されます"
     }
-    BrowserSoundFonts {
-        en: "SoundFonts — click a font to see its sounds",
-        ja: "サウンドフォント — フォントをクリックすると音色が出ます"
+    LibraryNeedsTrack {
+        en: "No track selected — effects will go to the master bus",
+        ja: "トラックが未選択です — エフェクトはマスターに追加されます"
     }
     BrowserNoSoundFonts {
         en: "None imported yet",
@@ -203,9 +211,11 @@ strings! {
     CmdAddInstrumentTrack { en: "Add Instrument Track", ja: "ソフト音源トラックを追加" }
     CmdAddAudioTrack { en: "Add Audio Track", ja: "オーディオトラックを追加" }
     CmdDeleteTrack { en: "Delete Track", ja: "トラックを削除" }
-    CmdShowLibrary { en: "Show Library", ja: "ライブラリを表示" }
-    CmdShowInspector { en: "Show Inspector", ja: "インスペクタを表示" }
-    CmdShowEditor { en: "Show Editor Panel", ja: "エディタパネルを表示" }
+    // "Show" was a lie on a toggle with no state beside it: choosing Show Inspector hid the
+    // inspector. These say what the command does either way.
+    CmdShowLibrary { en: "Library", ja: "ライブラリ" }
+    CmdShowInspector { en: "Inspector", ja: "インスペクタ" }
+    CmdShowEditor { en: "Editor Panel", ja: "エディタパネル" }
     CmdZoomIn { en: "Zoom In", ja: "拡大" }
     CmdZoomOut { en: "Zoom Out", ja: "縮小" }
     CmdSettings { en: "Settings", ja: "設定" }

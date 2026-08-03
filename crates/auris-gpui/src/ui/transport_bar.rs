@@ -45,6 +45,7 @@ impl AurisApp {
         let editor = self.editor;
         let editor_open = self.panels.editor_visible;
         let inspector_open = self.panels.inspector_visible;
+        let library_open = self.panels.library_visible;
 
         // Three columns of equal weight, so the middle one lands on the window's centre line
         // however wide the sides grow. Every hardware transport and every DAW puts the
@@ -232,6 +233,21 @@ impl AurisApp {
                                 &theme,
                                 cx.listener(|this, _, _, cx| {
                                     this.toggle_inspector();
+                                    cx.notify();
+                                }),
+                            ))
+                            // The library was the only panel with no button of its own, so
+                            // toggling it off read as having lost it: the way back was a menu
+                            // item or a keystroke, and nothing on screen said either existed.
+                            .child(button(
+                                "tab-library",
+                                self.t(Key::Library),
+                                ButtonStyle::Normal,
+                                library_open,
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.toggle_library();
                                     cx.notify();
                                 }),
                             )),
