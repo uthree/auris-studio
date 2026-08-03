@@ -217,6 +217,12 @@ pub struct Theme {
     pub accent: Hsla,
     /// Accent used for large filled areas.
     pub accent_soft: Hsla,
+    /// Something went wrong, or is about to.
+    ///
+    /// The colour of a failure in the status bar and of the answer on a sheet that throws work
+    /// away. Not derived from the accent: a scheme whose accent is already red would otherwise
+    /// report every failure in the same colour it draws its buttons.
+    pub danger: Hsla,
     /// Transport playing indicator.
     pub playing: Hsla,
     /// Playhead line.
@@ -302,6 +308,10 @@ impl Theme {
             },
             playing: scheme.signal(0.38, 0.52),
             playhead: scheme.signal(0.02, 0.85),
+            // A signal rather than a shade, so it lands at the lightness this scheme reserves for
+            // colours that have to be read against its background — which is what a status line
+            // reporting a failure in it needs.
+            danger: scheme.signal(0.01, 0.72),
             meter_low: scheme.signal(0.38, 0.52),
             meter_mid: scheme.signal(0.14, 0.62),
             meter_high: scheme.signal(0.01, 0.68),

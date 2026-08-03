@@ -262,6 +262,19 @@ impl AurisApp {
         }
     }
 
+    /// Replaces the document with an empty project, asking first if that would lose work.
+    ///
+    /// `Session::new_project` clears the undo history along with the document, so there is no
+    /// getting the old one back afterwards — and `secondary-n` is one key away from two other
+    /// bindings. The sheet finishes the command itself once it has an answer.
+    pub(crate) fn new_project_asking(&mut self) -> bool {
+        if !self.confirm_discard(crate::ui::prompt::PendingAction::NewProject) {
+            return false;
+        }
+        self.new_project();
+        true
+    }
+
     /// Replaces the document with an empty project.
     pub(crate) fn new_project(&mut self) {
         self.session.new_project();
@@ -290,30 +303,84 @@ impl AurisApp {
     /// `MySong/MySong.auris` with the song's audio beside it, so the whole thing can be moved or
     /// handed to someone else afterwards. The status line names the document that resulted rather
     /// than the path that was typed, since they differ.
-    pub(crate) fn save_as(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn save_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_as_then(None, window, cx);
+    }
+
+    /// [`Self::save_as`], carrying on with `then` once the file has landed.
+    ///
+    /// The follow-up has to travel with the dialog rather than be done when this returns: the
+    /// picker is asynchronous, so "save, then close the window" would otherwise close it while
+    /// the user was still choosing a name.
+    pub(crate) fn save_as_then(
+        &mut self,
+        then: Option<crate::ui::prompt::PendingAction>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let name = self.project().name.clone();
-        cx.spawn(async move |this, cx| {
-            let handle = rfd::AsyncFileDialog::new()
-                .set_title("Save project")
-                .set_file_name(format!("{name}.{}", auris_session::PROJECT_EXTENSION))
-                .add_filter("Auris project", &[auris_session::PROJECT_EXTENSION])
-                .save_file()
-                .await;
-            let Some(handle) = handle else { return };
-            let path = handle.path().to_path_buf();
-            let _ = this.update(cx, |this, cx| {
-                match this.session.save_as(&path) {
-                    Ok(document) => {
-                        let text =
-                            messages::saved(this.language(), &document.display().to_string());
-                        this.set_status(text);
-                    }
-                    Err(error) => this.set_status(this.failure(Key::CmdSave, &error)),
+        // Through the window rather than the app, so the continuation gets a `Window` back: the
+        // follow-up may be "and now close it", which there is no other way to do from here.
+        let view = cx.entity().downgrade();
+        window
+            .spawn(cx, async move |cx| {
+                let handle = rfd::AsyncFileDialog::new()
+                    .set_title("Save project")
+                    .set_file_name(format!("{name}.{}", auris_session::PROJECT_EXTENSION))
+                    .add_filter("Auris project", &[auris_session::PROJECT_EXTENSION])
+                    .save_file()
+                    .await;
+                let Some(handle) = handle else { return };
+                let path = handle.path().to_path_buf();
+                let _ = view.update_in(cx, |this, window, cx| {
+                    this.finish_save_as(&path, then, window, cx);
+                    cx.notify();
+                });
+            })
+            .detach();
+    }
+
+    /// Writes the document at the chosen path, or asks before replacing what is there.
+    fn finish_save_as(
+        &mut self,
+        path: &std::path::Path,
+        then: Option<crate::ui::prompt::PendingAction>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self.session.save_as(path) {
+            Ok(report) => {
+                self.report_save(&report);
+                if let Some(next) = then {
+                    self.run_pending(next, window, cx);
                 }
-                cx.notify();
-            });
-        })
-        .detach();
+            }
+            // The system dialog checked for a collision at the name that was typed. A project is
+            // written one folder deeper than that, so it never saw this one.
+            Err(SessionError::WouldReplace(existing)) => {
+                self.open_prompt(crate::ui::prompt::Prompt::ask(
+                    self.t(Key::ReplaceTitle),
+                    crate::ui::prompt::Question::Replace {
+                        chosen: path.to_path_buf(),
+                        existing,
+                    },
+                ));
+            }
+            Err(error) => self.set_status(self.failure(Key::CmdSave, &error)),
+        }
+    }
+
+    /// Reports where a project landed, and what did not travel with it.
+    pub(crate) fn report_save(&mut self, report: &auris_session::SaveReport) {
+        let language = self.language();
+        let shown = report.document.display().to_string();
+        self.set_status(if report.uncollected.is_empty() {
+            messages::saved(language, &shown)
+        } else {
+            // The folder is not portable, and the only way to find that out used to be opening
+            // it on another machine and hearing silence.
+            messages::saved_uncollected(language, &shown, report.uncollected.len())
+        });
     }
 
     /// Copies everything the project refers to into its folder.
@@ -326,8 +393,19 @@ impl AurisApp {
         }
     }
 
-    /// Prompts for a project file and opens it.
+    /// Prompts for a project file and opens it, asking first if that would lose work.
+    ///
+    /// Opening an old project "just to look at something" is routine, and `Session::open` clears
+    /// the undo history, so the document on screen has to be dealt with before the picker opens
+    /// rather than after a file has been chosen.
     pub(crate) fn open_project(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.confirm_discard(crate::ui::prompt::PendingAction::OpenProject) {
+            self.pick_and_open_project(cx);
+        }
+    }
+
+    /// Prompts for a project file and opens it, with the document already dealt with.
+    pub(crate) fn pick_and_open_project(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let handle = rfd::AsyncFileDialog::new()
                 .set_title("Open project")

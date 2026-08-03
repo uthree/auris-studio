@@ -617,6 +617,8 @@ pub struct AurisApp {
     pub(crate) plugin_window: Option<crate::ui::plugin_window::PluginWindow>,
     /// Which branches of the library are open.
     pub(crate) library: crate::ui::library::LibraryTree,
+    /// The title the operating system was last told, so it is only told again on a change.
+    pub(crate) titled: String,
 
     /// Preferences that outlive the session.
     pub(crate) settings: Settings,
@@ -714,6 +716,7 @@ impl AurisApp {
             palette: None,
             plugin_window: None,
             library: crate::ui::library::LibraryTree::default(),
+            titled: String::new(),
             settings,
             language,
             pointer: input.pointer,

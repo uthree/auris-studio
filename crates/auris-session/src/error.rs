@@ -89,4 +89,13 @@ pub enum SessionError {
     /// The project itself opened; these clips will be silent until the files come back.
     #[error("{} audio file(s) could not be loaded", .0.len())]
     MissingAudio(Vec<PathBuf>),
+
+    /// Saving here would replace a project that is already in that folder.
+    ///
+    /// Raised before anything is written, because the system save dialog cannot warn about it:
+    /// it offers to replace the path the user typed, and a project goes into a folder named
+    /// after that path instead. A host that has asked the user may call
+    /// [`Session::save_as_replacing`](crate::Session::save_as_replacing) to go ahead.
+    #[error("{} is already a project", .0.display())]
+    WouldReplace(PathBuf),
 }

@@ -308,6 +308,16 @@ strings! {
     Rename { en: "Rename", ja: "変更" }
     NameCannotBeEmpty { en: "Name cannot be empty", ja: "名前を空にはできません" }
 
+    // ------------------------------------------------------------------ unsaved changes
+    UnsavedTitle { en: "Save changes?", ja: "変更を保存しますか？" }
+    UnsavedBody {
+        en: "This project has changes that have not been saved. They cannot be recovered afterwards.",
+        ja: "このプロジェクトには保存されていない変更があります。あとから元に戻すことはできません。"
+    }
+    Discard { en: "Discard", ja: "破棄" }
+    ReplaceTitle { en: "Replace project?", ja: "プロジェクトを置き換えますか？" }
+    Replace { en: "Replace", ja: "置き換える" }
+
     // ------------------------------------------------------------------ statuses
     NothingToUndo { en: "Nothing to undo", ja: "取り消せる操作がありません" }
     NothingToRedo { en: "Nothing to redo", ja: "やり直せる操作がありません" }

@@ -34,6 +34,15 @@ impl Render for AurisApp {
             self.timeline.scroll_to_reveal(playhead, width);
         }
 
+        // The taskbar and the Alt-Tab list are where a user looks to tell one project's window
+        // from another's, and they were both showing a constant. Only on a change: setting it is
+        // a call into the platform, and this runs on every repaint.
+        let title = self.window_title();
+        if title != self.titled {
+            window.set_window_title(&title);
+            self.titled = title;
+        }
+
         let theme = self.theme.clone();
         let panels = self.panels.clone();
         let menu_bar = self.render_menu_bar(window, cx);
@@ -124,6 +133,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_toggle_loop))
             .on_action(cx.listener(Self::on_new_project))
             .on_action(cx.listener(Self::on_open_project))
+            .on_action(cx.listener(Self::on_quit))
             .on_action(cx.listener(Self::on_compose_song))
             .on_action(cx.listener(Self::on_save_project))
             .on_action(cx.listener(Self::on_save_project_as))
@@ -509,7 +519,7 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.palette_key(event, window, cx) || self.prompt_key(event) {
+        if self.palette_key(event, window, cx) || self.prompt_key(event, window, cx) {
             cx.stop_propagation();
             cx.notify();
         }
@@ -556,7 +566,16 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.new_project();
+        self.new_project_asking();
+        cx.notify();
+    }
+
+    fn on_quit(&mut self, _: &actions::Quit, _window: &mut Window, cx: &mut Context<Self>) {
+        // Handled here rather than on the application, because `App::quit` does not run the
+        // window's close guard and a document with unsaved changes has to get its say.
+        if self.confirm_discard(crate::ui::prompt::PendingAction::Quit) {
+            cx.quit();
+        }
         cx.notify();
     }
 

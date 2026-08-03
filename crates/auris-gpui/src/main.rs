@@ -15,8 +15,8 @@ mod ui;
 
 use auris_session::Settings;
 use gpui::{
-    App, AppContext, Application, Bounds, Focusable, TitlebarOptions, WindowBounds, WindowOptions,
-    px, size,
+    App, AppContext, Application, Bounds, Focusable, Pixels, TitlebarOptions, WindowBounds,
+    WindowOptions, px, size,
 };
 
 use app::AurisApp;
@@ -32,13 +32,16 @@ fn main() {
     auris_session::migrate_legacy_config();
 
     Application::new().run(|cx: &mut App| {
+        // Quit is handled by the view (`AurisApp::on_quit`) so an unsaved document can stop it.
+        // This is the fallback for a keystroke that arrives with nothing focused, and for the
+        // Settings window, which has no document of its own to lose.
         cx.on_action(|_: &actions::Quit, cx: &mut App| cx.quit());
         // The menu bar is built before the window, so the language comes from the settings file
         // rather than from the view that has not been created yet. `AurisApp` loads the same
         // file a moment later, and rebuilds these menus whenever the choice changes.
         cx.set_menus(menus(Settings::load().language()));
 
-        let bounds = Bounds::centered(None, size(px(1500.), px(940.)), cx);
+        let bounds = opening_bounds(cx);
         let window = cx
             .open_window(
                 WindowOptions {
@@ -59,6 +62,19 @@ fn main() {
         window
             .update(cx, |view, window, cx| {
                 window.focus(&view.focus_handle(cx));
+
+                // The close button is the last thing standing between an afternoon's work and
+                // nothing. Returning `false` keeps the window open and leaves the sheet asking.
+                let asked = cx.entity().downgrade();
+                window.on_window_should_close(cx, move |_window, cx| {
+                    asked
+                        .update(cx, |this, cx| {
+                            let go = this.confirm_discard(ui::prompt::PendingAction::CloseWindow);
+                            cx.notify();
+                            go
+                        })
+                        .unwrap_or(true)
+                });
             })
             .ok();
 
@@ -71,4 +87,64 @@ fn main() {
 
         cx.activate(true);
     });
+}
+
+/// Where the window opens, shrunk to fit the display it opens on.
+///
+/// 1500×940 is the size this interface was laid out at, and asking for it unconditionally is
+/// what a fixed size costs: a 1366×768 laptop — or a 1920×1080 screen at 150% scaling, which
+/// reports 1280×720 — got a window taller than the desktop, with the title bar above the top of
+/// the screen and no way to drag it back down. Every launch, not an edge case.
+fn opening_bounds(cx: &App) -> Bounds<Pixels> {
+    let Some(display) = cx.primary_display() else {
+        return Bounds::centered(None, PREFERRED_SIZE, cx);
+    };
+    Bounds::centered(None, fitted_size(PREFERRED_SIZE, display.bounds().size), cx)
+}
+
+/// The size the interface was laid out at.
+const PREFERRED_SIZE: gpui::Size<Pixels> = gpui::Size {
+    width: px(1500.),
+    height: px(940.),
+};
+
+/// `wanted`, shrunk to leave a margin inside `available`.
+///
+/// Never smaller than something usable, on the theory that a window that has to be scrolled to
+/// is still better than one that cannot be reached at all.
+fn fitted_size(wanted: gpui::Size<Pixels>, available: gpui::Size<Pixels>) -> gpui::Size<Pixels> {
+    // Left clear of the screen edges, so a taskbar or a dock does not sit on the status bar.
+    let margin = px(80.);
+    size(
+        wanted.width.min((available.width - margin).max(px(640.))),
+        wanted.height.min((available.height - margin).max(px(480.))),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_window_opens_no_larger_than_the_screen_it_opens_on() {
+        // A 1920×1080 panel at 150% reports 1280×720, and the interface wants 1500×940. Asking
+        // for it anyway put the title bar above the top of the screen at every launch.
+        let small = fitted_size(PREFERRED_SIZE, size(px(1280.), px(720.)));
+        assert!(small.width < PREFERRED_SIZE.width);
+        assert!(small.height < PREFERRED_SIZE.height);
+        assert!(small.width <= px(1200.) && small.height <= px(640.));
+    }
+
+    #[test]
+    fn a_screen_with_room_to_spare_gets_the_size_the_layout_wants() {
+        let roomy = fitted_size(PREFERRED_SIZE, size(px(2560.), px(1440.)));
+        assert_eq!(roomy, PREFERRED_SIZE);
+    }
+
+    #[test]
+    fn a_screen_smaller_than_the_margin_still_gets_a_window() {
+        // Subtracting the margin from a tiny display would otherwise ask for a negative size.
+        let tiny = fitted_size(PREFERRED_SIZE, size(px(40.), px(30.)));
+        assert_eq!(tiny, size(px(640.), px(480.)));
+    }
 }

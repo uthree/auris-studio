@@ -165,6 +165,19 @@ pub struct Session {
     waveforms: HashMap<SourceId, Arc<WaveformPeaks>>,
 }
 
+/// What a Save As produced.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SaveReport {
+    /// The document that was written.
+    pub document: PathBuf,
+    /// Audio the project refers to that could not be copied into the folder.
+    ///
+    /// The project saved, and it opens on this machine. It is the *folder* that is incomplete:
+    /// carried to another machine, the clips these belong to would be silent. Reported rather
+    /// than logged because a save that says nothing is a save the user believes was complete.
+    pub uncollected: Vec<PathBuf>,
+}
+
 /// What composing produced.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ComposeReport {
@@ -2198,7 +2211,24 @@ impl Session {
     /// SoundFonts are left where they are. A font is a library shared by every project that uses
     /// it, and a copy per project would cost gigabytes to save a path; [`Self::collect_assets`]
     /// is how someone archiving a project asks for those too.
-    pub fn save_as(&mut self, chosen: &Path) -> Result<PathBuf, SessionError> {
+    pub fn save_as(&mut self, chosen: &Path) -> Result<SaveReport, SessionError> {
+        let document = document_in_folder(chosen);
+        // The system save dialog offered to replace whatever is at `chosen`. It is not what gets
+        // written: a project goes into a folder named after the file, so choosing `Songs/Ballad`
+        // when `Songs/Ballad/Ballad.auris` already exists looked to the dialog like a name
+        // nothing was using, and destroyed last week's song without a word. Saving back over
+        // *this* project is not a replacement and is allowed to proceed.
+        if document.exists() && self.path.as_deref() != Some(document.as_path()) {
+            return Err(SessionError::WouldReplace(document));
+        }
+        self.save_as_replacing(chosen)
+    }
+
+    /// [`Self::save_as`] with the replacement already agreed to.
+    ///
+    /// For a host that has shown the user which project is about to be overwritten and been told
+    /// to go ahead. Nothing else differs.
+    pub fn save_as_replacing(&mut self, chosen: &Path) -> Result<SaveReport, SessionError> {
         let document = document_in_folder(chosen);
         let folder = auris_io::project_folder(&document)
             .ok_or(SessionError::NoPath)?
@@ -2221,16 +2251,21 @@ impl Session {
         // files land there, and their references are read against wherever `self.path` says the
         // document is. Leaving it pointing at the old folder is what would be inconsistent.
         self.path = Some(document.clone());
+        let mut uncollected = Vec::new();
         for (id, from) in audio {
             let Some(from) = from else { continue };
             if let Err(error) = self.collect_source(id, &from) {
                 log::warn!("could not collect {}: {error}", from.display());
+                uncollected.push(from);
             }
         }
 
         save_project(&document, &self.project)?;
         self.dirty = false;
-        Ok(document)
+        Ok(SaveReport {
+            document,
+            uncollected,
+        })
     }
 
     /// Saves to the path the project was last saved to or opened from.
@@ -3055,6 +3090,59 @@ mod tests {
     }
 
     #[test]
+    fn saving_over_another_project_is_refused_until_it_is_agreed_to() {
+        // The system save dialog offers to replace the *name* that was typed. A project is
+        // written one folder deeper than that, so the dialog never saw the document that would
+        // actually be destroyed and asked nothing.
+        let scratch = Scratch::new("would-replace");
+        let mut first = session();
+        first.add_default_instrument_track("Old").unwrap();
+        let existing = first
+            .save_as(&scratch.join("Ballad.auris"))
+            .expect("saves")
+            .document;
+        assert!(existing.exists());
+
+        let mut second = session();
+        second.add_default_instrument_track("New").unwrap();
+        let refused = second.save_as(&scratch.join("Ballad.auris")).unwrap_err();
+        assert!(
+            matches!(&refused, SessionError::WouldReplace(path) if *path == existing),
+            "the error names the document that would go, not the name that was typed",
+        );
+        assert!(
+            second.is_dirty(),
+            "nothing was written, so nothing is saved"
+        );
+
+        // And with the replacement agreed to it goes ahead.
+        second
+            .save_as_replacing(&scratch.join("Ballad.auris"))
+            .expect("replaces");
+        let reopened = {
+            let mut session = session();
+            session.open(&existing).expect("opens");
+            session.project().tracks[0].name.clone()
+        };
+        assert_eq!(reopened, "New");
+    }
+
+    #[test]
+    fn saving_back_over_this_project_is_not_a_replacement() {
+        let scratch = Scratch::new("save-over-itself");
+        let mut session = session();
+        session.add_default_instrument_track("Lead").unwrap();
+        let document = session
+            .save_as(&scratch.join("Ballad.auris"))
+            .expect("saves")
+            .document;
+
+        session.add_default_instrument_track("Bass").unwrap();
+        let again = session.save_as(&document).expect("saves over itself");
+        assert_eq!(again.document, document);
+    }
+
+    #[test]
     fn unknown_plugin_ids_are_refused_rather_than_stored() {
         let mut session = session();
         let error = session
@@ -3293,7 +3381,8 @@ mod tests {
         session.import_audio(&loose, Ticks::ZERO).expect("imports");
         let document = session
             .save_as(&scratch.join("MySong.auris"))
-            .expect("saves");
+            .expect("saves")
+            .document;
 
         assert_eq!(document, scratch.join("MySong").join("MySong.auris"));
         assert!(
@@ -3324,7 +3413,8 @@ mod tests {
         assert_eq!(
             session
                 .save_as(&scratch.join("Before.auris"))
-                .expect("saves"),
+                .expect("saves")
+                .document,
             scratch.join("Before").join("Before.auris")
         );
         drop(session);
@@ -3898,7 +3988,10 @@ mod tests {
             .unwrap();
         let written = session.project().harmony.clone();
 
-        let document = session.save_as(&scratch.join("Song.auris")).unwrap();
+        let document = session
+            .save_as(&scratch.join("Song.auris"))
+            .unwrap()
+            .document;
         let mut reopened = self::tests::session();
         reopened.open(&document).unwrap();
         assert_eq!(reopened.project().harmony, written);
@@ -4186,7 +4279,10 @@ mod tests {
             .unwrap();
         let written = session.project().midi_clip(clip).unwrap().1.notes.clone();
 
-        let document = session.save_as(&scratch.join("Song.auris")).unwrap();
+        let document = session
+            .save_as(&scratch.join("Song.auris"))
+            .unwrap()
+            .document;
         let mut reopened = self::tests::session();
         reopened.open(&document).unwrap();
 

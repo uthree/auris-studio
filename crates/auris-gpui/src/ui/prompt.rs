@@ -46,15 +46,73 @@ pub enum PromptTarget {
     Seed(ClipId),
 }
 
-/// An open rename sheet.
+/// What the user was doing when the document turned out to be in the way.
+///
+/// Carried through the sheet so that answering it finishes the command the user actually gave,
+/// rather than dismissing a box and leaving them to give it again.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PendingAction {
+    /// Empty the document.
+    NewProject,
+    /// Read another document over this one.
+    OpenProject,
+    /// Shut the window.
+    CloseWindow,
+    /// Leave.
+    Quit,
+}
+
+/// Which button was pressed on a [`Question`].
+///
+/// Cancel is not one of them: it closes the sheet and nothing else, so it needs no answer.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Answer {
+    /// The safe one — Save, or Replace.
+    Confirm,
+    /// The destructive one — Discard. Only [`Question::Unsaved`] offers it.
+    Deny,
+}
+
+/// A question the sheet is asking, and what turns on the answer.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Question {
+    /// Something is about to destroy unsaved work.
+    ///
+    /// Three answers: save first, throw the changes away, or do neither.
+    Unsaved(PendingAction),
+    /// Saving would replace a project already in that folder.
+    ///
+    /// Two answers, because there is no third thing to do with it. The path is the one that
+    /// would be *written*, which is not the one the system dialog asked about.
+    Replace {
+        /// What the user chose in the save dialog.
+        chosen: std::path::PathBuf,
+        /// The document that already exists there.
+        existing: std::path::PathBuf,
+    },
+}
+
+/// What an open sheet is for.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PromptBody {
+    /// A line of text, committed with Return.
+    Text {
+        /// What gets renamed on commit.
+        target: PromptTarget,
+        /// The text being edited.
+        field: TextField,
+    },
+    /// A question, answered with a button.
+    Ask(Question),
+}
+
+/// An open sheet.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Prompt {
-    /// Heading above the field.
+    /// Heading above the body.
     pub title: SharedString,
-    /// What gets renamed on commit.
-    pub target: PromptTarget,
-    /// The text being edited.
-    pub field: TextField,
+    /// What it is asking for.
+    pub body: PromptBody,
 }
 
 impl Prompt {
@@ -66,8 +124,34 @@ impl Prompt {
     ) -> Self {
         Self {
             title: title.into(),
-            target,
-            field: TextField::new(text),
+            body: PromptBody::Text {
+                target,
+                field: TextField::new(text),
+            },
+        }
+    }
+
+    /// A prompt asking a question rather than taking a name.
+    pub fn ask(title: impl Into<SharedString>, question: Question) -> Self {
+        Self {
+            title: title.into(),
+            body: PromptBody::Ask(question),
+        }
+    }
+
+    /// The text being edited, when this sheet is editing any.
+    pub fn field(&self) -> Option<&TextField> {
+        match &self.body {
+            PromptBody::Text { field, .. } => Some(field),
+            PromptBody::Ask(_) => None,
+        }
+    }
+
+    /// The same field, to type into.
+    pub fn field_mut(&mut self) -> Option<&mut TextField> {
+        match &mut self.body {
+            PromptBody::Text { field, .. } => Some(field),
+            PromptBody::Ask(_) => None,
         }
     }
 }
@@ -86,19 +170,29 @@ impl AurisApp {
         self.prompt = Some(prompt);
     }
 
-    /// Applies the prompt's text and closes it.
-    pub(crate) fn commit_prompt(&mut self) {
+    /// Applies the prompt and closes it.
+    ///
+    /// For a question that is the affirmative answer, which is what Return means on a sheet with
+    /// a default button.
+    pub(crate) fn commit_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(prompt) = self.prompt.take() else {
             return;
         };
-        let text = prompt.field.content().trim().to_string();
+        let (target, field) = match prompt.body {
+            PromptBody::Text { target, field } => (target, field),
+            PromptBody::Ask(question) => {
+                self.answer(question, Answer::Confirm, window, cx);
+                return;
+            }
+        };
+        let text = field.content().trim().to_string();
         if text.is_empty() {
             // An empty name would leave an unlabelled row the user cannot tell apart from its
             // neighbours, and an empty key or chord is not a key or a chord.
             self.set_status(self.t(Key::NameCannotBeEmpty));
             return;
         }
-        let outcome = match prompt.target {
+        let outcome = match target {
             PromptTarget::Track(track) => self.session.rename_track(track, text),
             PromptTarget::Clip(clip) => self.session.rename_clip(clip, text),
             // These two parse rather than rename, and a rejection has to say what was rejected:
@@ -144,12 +238,87 @@ impl AurisApp {
         self.prompt.take().is_some()
     }
 
+    /// Asks about unsaved work before `next` destroys it.
+    ///
+    /// Returns `true` when there was nothing to ask about and the caller may go ahead. When it
+    /// returns `false` the sheet is open and will finish the command itself.
+    pub(crate) fn confirm_discard(&mut self, next: PendingAction) -> bool {
+        if !self.session.is_dirty() {
+            return true;
+        }
+        self.open_prompt(Prompt::ask(
+            self.t(Key::UnsavedTitle),
+            Question::Unsaved(next),
+        ));
+        false
+    }
+
+    /// Acts on a question's answer, having already closed the sheet.
+    fn answer(
+        &mut self,
+        question: Question,
+        answer: Answer,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match (question, answer) {
+            // Save first, then carry on — but only if the save worked. A disk that is full must
+            // not be the thing that throws the afternoon away.
+            (Question::Unsaved(next), Answer::Confirm) => self.save_then(next, window, cx),
+            (Question::Unsaved(next), Answer::Deny) => self.run_pending(next, window, cx),
+            (Question::Replace { chosen, .. }, _) => {
+                match self.session.save_as_replacing(&chosen) {
+                    Ok(report) => self.report_save(&report),
+                    Err(error) => self.set_status(self.failure(Key::CmdSave, &error)),
+                }
+            }
+        }
+    }
+
+    /// Saves, and does `next` if that worked.
+    fn save_then(&mut self, next: PendingAction, window: &mut Window, cx: &mut Context<Self>) {
+        if self.session.path().is_none() {
+            // Never saved, so this needs a name — and the file dialog is asynchronous, which is
+            // why `next` has to travel with it rather than being done when this returns.
+            self.save_as_then(Some(next), window, cx);
+            return;
+        }
+        match self.session.save_in_place() {
+            Ok(()) => {
+                let path = self.session.path().map(|p| p.display().to_string());
+                self.set_status(messages::saved(self.language(), &path.unwrap_or_default()));
+                self.run_pending(next, window, cx);
+            }
+            Err(error) => self.set_status(self.failure(Key::CmdSave, &error)),
+        }
+    }
+
+    /// Does what the user asked for before the document got in the way.
+    pub(crate) fn run_pending(
+        &mut self,
+        next: PendingAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match next {
+            PendingAction::NewProject => self.new_project(),
+            PendingAction::OpenProject => self.pick_and_open_project(cx),
+            PendingAction::CloseWindow => window.remove_window(),
+            PendingAction::Quit => cx.quit(),
+        }
+    }
+
     /// Handles a keystroke aimed at the open prompt.
     ///
     /// Returns `true` when the key was used, so the caller can stop it reaching the rest of the
     /// application. Only the keys the platform does *not* deliver as text are handled here;
     /// everything else arrives through the input handler, which is what keeps an IME working.
-    pub(crate) fn prompt_key(&mut self, event: &gpui::KeyDownEvent) -> bool {
+    pub(crate) fn prompt_key(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let shift = event.keystroke.modifiers.shift;
         // ⌘ on macOS, Ctrl elsewhere. Reading `platform` directly would put select-all on the
         // Windows key, which opens the shell's own menu long before the application sees it.
@@ -157,30 +326,41 @@ impl AurisApp {
         let Some(prompt) = self.prompt.as_mut() else {
             return false;
         };
+        // A question has no field to type into, so only the two keys that answer it apply.
+        let Some(field) = prompt.field_mut() else {
+            match event.keystroke.key.as_str() {
+                "escape" => {
+                    self.cancel_prompt();
+                }
+                "enter" => self.commit_prompt(window, cx),
+                _ => return false,
+            }
+            return true;
+        };
         // While the IME is composing, these keys belong to the candidate window, and the
         // platform has already offered them to it before we see them.
-        let composing = prompt.field.marked().is_some();
+        let composing = field.marked().is_some();
 
         match event.keystroke.key.as_str() {
             "escape" if !composing => {
                 self.cancel_prompt();
             }
             "enter" if !composing => {
-                self.commit_prompt();
+                self.commit_prompt(window, cx);
             }
-            "backspace" => prompt.field.backspace(),
-            "delete" => prompt.field.delete_forward(),
-            "left" => prompt.field.move_left(shift),
-            "right" => prompt.field.move_right(shift),
-            "home" | "up" => prompt.field.move_home(shift),
-            "end" | "down" => prompt.field.move_end(shift),
-            "a" if command => prompt.field.select_all(),
+            "backspace" => field.backspace(),
+            "delete" => field.delete_forward(),
+            "left" => field.move_left(shift),
+            "right" => field.move_right(shift),
+            "home" | "up" => field.move_home(shift),
+            "end" | "down" => field.move_end(shift),
+            "a" if command => field.select_all(),
             _ => return false,
         }
         true
     }
 
-    /// Draws the rename sheet over everything else.
+    /// Draws the sheet over everything else.
     pub(crate) fn render_prompt(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         let prompt = self.prompt.as_ref()?;
         let theme = self.theme.clone();
@@ -188,9 +368,31 @@ impl AurisApp {
         let focus = self.focus.clone();
         let view = cx.entity();
 
-        let text: SharedString = prompt.field.content().to_string().into();
-        let selection = prompt.field.selection();
-        let marked = prompt.field.marked();
+        let (body, buttons) = match &prompt.body {
+            PromptBody::Text { field, .. } => (
+                self.render_prompt_field(
+                    field.content().to_string().into(),
+                    field.selection(),
+                    field.marked(),
+                    focus,
+                    view,
+                    &theme,
+                )
+                .into_any_element(),
+                self.render_prompt_buttons(None, self.t(Key::Rename).into(), cx),
+            ),
+            PromptBody::Ask(question) => {
+                let (message, confirm, deny) = self.question_text(question);
+                (
+                    div()
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .child(message)
+                        .into_any_element(),
+                    self.render_prompt_buttons(deny, confirm, cx),
+                )
+            }
+        };
 
         Some(
             div()
@@ -229,55 +431,117 @@ impl AurisApp {
                             |_: &MouseDownEvent, _, cx: &mut gpui::App| cx.stop_propagation(),
                         )
                         .child(div().text_sm().text_color(theme.text).child(title))
-                        .child(
-                            div()
-                                .h(FIELD_HEIGHT)
-                                .w_full()
-                                .rounded(Metrics::RADIUS_SM)
-                                .bg(theme.surface_sunken)
-                                .border_1()
-                                .border_color(theme.accent)
-                                .child(editable_text(
-                                    text,
-                                    selection,
-                                    marked,
-                                    focus,
-                                    view,
-                                    theme.clone(),
-                                )),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .justify_end()
-                                .gap_2()
-                                .child(button(
-                                    "prompt-cancel",
-                                    self.t(Key::Cancel),
-                                    ButtonStyle::Normal,
-                                    false,
-                                    theme.accent,
-                                    &theme,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.cancel_prompt();
-                                        cx.notify();
-                                    }),
-                                ))
-                                .child(button(
-                                    "prompt-ok",
-                                    self.t(Key::Rename),
-                                    ButtonStyle::Primary,
-                                    false,
-                                    theme.accent,
-                                    &theme,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.commit_prompt();
-                                        cx.notify();
-                                    }),
-                                )),
-                        ),
+                        .child(body)
+                        .child(buttons),
                 ),
         )
+    }
+
+    /// The box the rename sheet types into.
+    fn render_prompt_field(
+        &self,
+        text: SharedString,
+        selection: Range<usize>,
+        marked: Option<Range<usize>>,
+        focus: gpui::FocusHandle,
+        view: gpui::Entity<AurisApp>,
+        theme: &Theme,
+    ) -> impl IntoElement + use<> {
+        div()
+            .h(FIELD_HEIGHT)
+            .w_full()
+            .rounded(Metrics::RADIUS_SM)
+            .bg(theme.surface_sunken)
+            .border_1()
+            .border_color(theme.accent)
+            .child(editable_text(
+                text,
+                selection,
+                marked,
+                focus,
+                view,
+                theme.clone(),
+            ))
+    }
+
+    /// The row of answers: always Cancel, sometimes a destructive one, then the default.
+    ///
+    /// Cancel leads and the default trails, so the button under the pointer when a sheet appears
+    /// is never the one that throws work away.
+    fn render_prompt_buttons(
+        &self,
+        deny: Option<SharedString>,
+        confirm: SharedString,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let theme = self.theme.clone();
+        div()
+            .flex()
+            .justify_end()
+            .gap_2()
+            .child(button(
+                "prompt-cancel",
+                self.t(Key::Cancel),
+                ButtonStyle::Normal,
+                false,
+                theme.accent,
+                &theme,
+                cx.listener(|this, _, _, cx| {
+                    this.cancel_prompt();
+                    cx.notify();
+                }),
+            ))
+            .children(deny.map(|label| {
+                button(
+                    "prompt-deny",
+                    label,
+                    ButtonStyle::Normal,
+                    false,
+                    theme.danger,
+                    &theme,
+                    cx.listener(|this, _, window, cx| {
+                        if let Some(Prompt {
+                            body: PromptBody::Ask(question),
+                            ..
+                        }) = this.prompt.take()
+                        {
+                            this.answer(question, Answer::Deny, window, cx);
+                        }
+                        cx.notify();
+                    }),
+                )
+            }))
+            .child(button(
+                "prompt-ok",
+                confirm,
+                ButtonStyle::Primary,
+                false,
+                theme.accent,
+                &theme,
+                cx.listener(|this, _, window, cx| {
+                    this.commit_prompt(window, cx);
+                    cx.notify();
+                }),
+            ))
+    }
+
+    /// The words a question is asked in: the body, the affirmative, and the destructive answer.
+    fn question_text(
+        &self,
+        question: &Question,
+    ) -> (SharedString, SharedString, Option<SharedString>) {
+        match question {
+            Question::Unsaved(_) => (
+                self.t(Key::UnsavedBody).into(),
+                self.t(Key::CmdSave).into(),
+                Some(self.t(Key::Discard).into()),
+            ),
+            Question::Replace { existing, .. } => (
+                messages::would_replace(self.language(), &existing.display().to_string()).into(),
+                self.t(Key::Replace).into(),
+                None,
+            ),
+        }
     }
 
     /// The field the platform is typing into, when one is open.
@@ -287,7 +551,7 @@ impl AurisApp {
     fn field(&mut self) -> Option<&mut TextField> {
         match self.palette.as_mut() {
             Some(palette) => Some(&mut palette.field),
-            None => self.prompt.as_mut().map(|prompt| &mut prompt.field),
+            None => self.prompt.as_mut().and_then(Prompt::field_mut),
         }
     }
 
@@ -295,7 +559,7 @@ impl AurisApp {
     fn readable_field(&self) -> Option<&TextField> {
         match self.palette.as_ref() {
             Some(palette) => Some(&palette.field),
-            None => self.prompt.as_ref().map(|prompt| &prompt.field),
+            None => self.prompt.as_ref().and_then(Prompt::field),
         }
     }
 

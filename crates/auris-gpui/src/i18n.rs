@@ -155,6 +155,11 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         ),
         SessionError::AudioRestart(reason) => messages::audio_restart_failed(language, reason),
         SessionError::MissingAudio(paths) => messages::missing_audio_files(language, paths.len()),
+        // Reaches a status line only when a host did not ask; the desktop app turns this one into
+        // a sheet before it ever gets here.
+        SessionError::WouldReplace(path) => {
+            messages::would_replace(language, &path.display().to_string())
+        }
     }
 }
 

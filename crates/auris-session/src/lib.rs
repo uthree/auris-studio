@@ -56,7 +56,7 @@ pub use history::{Edit, History};
 pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob};
-pub use session::{AudioStatus, ComposeReport, Session, SessionOptions};
+pub use session::{AudioStatus, ComposeReport, SaveReport, Session, SessionOptions};
 pub use settings::{AudioPreferences, CONFIG_DIR_VAR, Settings, config_dir, migrate_legacy_config};
 
 /// File extension of a saved project.
@@ -122,7 +122,7 @@ pub mod prelude {
     pub use auris_sampler::SAMPLER_ID;
 
     pub use crate::{
-        AudioPreferences, ComposeReport, Edit, ExportSummary, ParamTarget, RenderJob, Session,
-        SessionError, SessionOptions, Settings,
+        AudioPreferences, ComposeReport, Edit, ExportSummary, ParamTarget, RenderJob, SaveReport,
+        Session, SessionError, SessionOptions, Settings,
     };
 }

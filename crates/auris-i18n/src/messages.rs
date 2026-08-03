@@ -104,6 +104,21 @@ messages! {
         ja: "{path} を保存しました"
     }
 
+    /// The sheet shown when saving would write over a project that is already there.
+    ///
+    /// Names the document that would be lost rather than the name that was typed: the system
+    /// save dialog already asked about the typed one, and it is not the file that gets written.
+    fn would_replace(existing: &str) {
+        en: "{existing} already exists. Saving here replaces it, and it cannot be recovered.",
+        ja: "{existing} はすでに存在します。ここに保存すると置き換えられ、元に戻すことはできません。"
+    }
+
+    /// A project saved, but some of its audio could not be brought into the folder with it.
+    fn saved_uncollected(path: &str, count: usize) {
+        en: "Saved {path} — {count} audio file(s) stayed outside the folder",
+        ja: "{path} を保存しました — {count} 件の音声ファイルはフォルダの外に残りました"
+    }
+
     /// Confirmation that a project was read.
     fn opened(path: &str) {
         en: "Opened {path}",
