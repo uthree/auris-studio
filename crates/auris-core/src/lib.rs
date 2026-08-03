@@ -10,6 +10,11 @@
 //! * [`registry::PluginRegistry`] — the runtime lookup table those plugins register into.
 //! * [`project`] — the serialisable document model (tracks, clips, notes, mixer state).
 //! * [`asset`] — how that document refers to the files it is too small to contain.
+//! * [`theory`] — keys, scales, chords and roman numerals: music as it would be true without a
+//!   computer.
+//!
+//! The last of those is here rather than in the composer because the document holds a key and a
+//! chord progression of its own, and the document model may not depend on anything above it.
 
 #![warn(missing_docs)]
 
@@ -20,6 +25,7 @@ pub mod param;
 pub mod plugin;
 pub mod project;
 pub mod registry;
+pub mod theory;
 pub mod time;
 
 pub use asset::AssetPath;

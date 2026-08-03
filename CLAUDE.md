@@ -39,7 +39,7 @@ resolves `windows` to 0.61 while `wgpu-hal` uses 0.62. Windows runs `auris-gpu` 
 
 ```
 Cargo.toml               virtual manifest; `default-members` points at the desktop app
-crates/auris-core        types, plugin traits, project model — no local dependencies
+crates/auris-core        types, music theory, plugin traits, project model — no local dependencies
 crates/auris-dsp         effects and DSP primitives
 crates/auris-synth       built-in chiptune instruments
 crates/auris-sampler     SoundFont playback: the font bank and the sampler instrument
@@ -58,6 +58,10 @@ Dependency direction is strictly downhill and the frontend boundary matters:
 * Nothing at or below `auris-session` may name a UI toolkit.
 * `auris-engine` may not name `auris-dsp`, `auris-synth` or `auris-sampler`; it drives plugins
   through the `auris-core` traits only.
+* Music theory (`auris_core::theory` — keys, scales, chords, roman numerals) lives in `auris-core`
+  because the document holds a key and a chord progression, and the document model may not name a
+  crate above it. `auris-compose` re-exports the module, so `crate::theory::…` still resolves there.
+  It is the composer's vocabulary, not the composer's property.
 * Sample data cannot travel through a `PluginState`, which is a map of `f32`. `auris-sampler`
   therefore keeps a `SoundFontBank` that the session owns and the registry's factory closure
   captures; a track names a sound by font id, bank and patch, never by position.

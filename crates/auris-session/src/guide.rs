@@ -41,7 +41,7 @@ pub mod architecture {
     //!
     //! ```text
     //! BACKEND — no UI dependency of any kind
-    //!   auris-core      types, plugin traits, project model — no local dependencies at all
+    //!   auris-core      types, music theory, plugin traits, project model — no local dependencies
     //!   auris-dsp       effects and DSP primitives
     //!   auris-synth     built-in instruments
     //!   auris-sampler   SoundFont playback: the font bank and the sampler instrument
@@ -64,6 +64,11 @@ pub mod architecture {
     //! traits, the parameter model, the [`PluginRegistry`](auris_core::registry::PluginRegistry) and
     //! the serialisable [`Project`](auris_core::project::Project). Everything else is downstream of
     //! it, so a change here is a change to the whole system and is made carefully.
+    //!
+    //! [`auris_core::theory`] is here for that reason and no other. Keys, scales, chords and roman
+    //! numerals started in the composer, where they were used; they came down when the document
+    //! itself gained a key and a chord progression, because the document model may not name a crate
+    //! above it. [`auris_compose`] re-exports the module, so the composer's own paths are unchanged.
     //!
     //! **[`auris_engine`] does not depend on [`auris_dsp`] or [`auris_synth`].** It drives plugins
     //! purely through the `auris-core` traits. That is what keeps the plugin system honest: if the

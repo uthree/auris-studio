@@ -9,9 +9,9 @@ rust-version.workspace = true
 
 # Depends on the document model and nothing else. This crate writes notes; it must never learn
 # what a sample is, which is why `auris-dsp`, `auris-synth` and `auris-engine` are absent.
+#
+# No `serde` either: a specification is read from text and a composition is handed straight to the
+# session, so nothing here is ever written to a file. The theory types that *are* serialised live
+# in `auris-core`, next to the document that holds them.
 [dependencies]
 auris-core.workspace = true
-serde = { workspace = true, features = ["derive"] }
-
-[dev-dependencies]
-serde_json.workspace = true

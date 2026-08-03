@@ -77,13 +77,23 @@ pub fn supported_soundfont_extensions() -> &'static [&'static str] {
 
 /// Re-exports of the backend types that appear in [`Session`]'s signatures, so a frontend can
 /// depend on this crate alone.
+///
+/// [`Key`](auris_core::theory::key::Key) is re-exported as `MusicalKey`, because a frontend that
+/// glob-imports this module almost certainly also imports `auris_i18n::Key` for its interface
+/// text. Both names would compile — an explicit `use` beats a glob — but a reader would have to
+/// know that rule to tell which `Key` a line means, and one of the two would be wrong silently.
 pub mod prelude {
-    pub use auris_compose::theory::chart::{CatalogEntry, Chart};
     pub use auris_compose::{Composition, SongSpec, SpecError, compose};
     pub use auris_core::param::{
         ParamDescriptor, ParamId, ParamUnit, ParamValueCurve, db_to_gain, gain_to_db,
     };
     pub use auris_core::plugin::{PluginCategory, PluginDescriptor, PluginKind};
+    pub use auris_core::theory::chart::{CatalogEntry, Chart, HarmonicEvent};
+    pub use auris_core::theory::chord::{Chord, Quality};
+    pub use auris_core::theory::key::Key as MusicalKey;
+    pub use auris_core::theory::numeral::Numeral;
+    pub use auris_core::theory::pitch::PitchClass;
+    pub use auris_core::theory::scale::ScaleId;
     pub use auris_core::time::{Seconds, TICKS_PER_QUARTER, Ticks, TimeSignature};
     pub use auris_core::{
         AudioBuffer, AudioClip, AudioSource, ClipId, EffectSlotId, MidiClip, MixerStrip, Note,
@@ -93,7 +103,7 @@ pub mod prelude {
 
     /// Every chord progression the composer knows by name.
     pub fn progression_catalog() -> &'static [CatalogEntry] {
-        auris_compose::theory::chart::CATALOG
+        auris_core::theory::chart::CATALOG
     }
     pub use auris_engine::{OfflineOptions, OutputDeviceInfo};
     pub use auris_gpu::WaveformPeaks;

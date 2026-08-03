@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use auris_core::time::Ticks;
+use crate::time::Ticks;
 
 use super::chord::Chord;
 use super::key::Key;
@@ -300,7 +300,7 @@ pub fn catalog(name: &str) -> Option<Chart> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use auris_core::time::TICKS_PER_QUARTER;
+    use crate::time::TICKS_PER_QUARTER;
 
     /// One bar of four four, in ticks.
     const BAR: Ticks = Ticks(TICKS_PER_QUARTER * 4);
