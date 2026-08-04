@@ -651,7 +651,11 @@ fn comp(
     let grid = part_grid(frame, part);
     let (low, high) = part.range();
     let mut notes: Vec<Draft> = Vec::new();
-    let pad = part.role == Role::Pad;
+    // A rhythm the user wrote overrides the generated one — that is the field's stated
+    // contract, and the melody and the drums already keep it. It overrides a pad's stillness
+    // too: a pad's "rhythm" is that it has none, and writing one asks for strikes.
+    let written = part.rhythm.is_some();
+    let pad = part.role == Role::Pad && !written;
     let mut previous: Vec<i32> = Vec::new();
     // Which voice of the last chord is still sounding, and where its note is, so that a pad can
     // let it run on. See the loop below: this is most of what makes a pad a pad.
@@ -684,16 +688,27 @@ fn comp(
             RngKey::Word(&section.name),
         ],
     );
-    let chosen_figure = if pad {
+    let chosen_figure = if written {
+        // The written rhythm plays through the rolled figure's machinery, which is already
+        // "strike on exactly these steps".
+        CompFigure::Rolled
+    } else if pad {
         CompFigure::Held
     } else {
         pick_figure(&mut invent, busy)
     };
-    // The rolled figure's own rhythm, drawn from the same stream so that it belongs to the
-    // section too. Drawn whether or not it is wanted, so that a turnaround reaching for it later
-    // finds the section's rhythm rather than a different one — and so the stream does not shift
-    // under everything else depending on which figure came out.
-    let rolled = bar_onsets(grid, None, busy, settings.mood.syncopation, &mut invent);
+    // The rolled figure's own rhythm — or the written one, played as written. Drawn from the
+    // same stream so that it belongs to the section too, and drawn whether or not it is wanted,
+    // so that a turnaround reaching for it later finds the section's rhythm rather than a
+    // different one — and so the stream does not shift under everything else depending on which
+    // figure came out.
+    let rolled = bar_onsets(
+        grid,
+        part.rhythm.as_ref(),
+        busy,
+        settings.mood.syncopation,
+        &mut invent,
+    );
 
     for event in &section.events {
         // Voiced upward from a floor, so a ninth sounds an octave and a tone above the root
@@ -762,7 +777,7 @@ fn comp(
         // turns over. It is the only bar allowed to depart, and only sometimes: anywhere else a
         // change reads as the part losing its place rather than as a player finishing a thought.
         // `variation` reaches this through `bar_stream`, so a repeat can turn around differently.
-        let figure = if pad || bar % 4 != 3 {
+        let figure = if pad || written || bar % 4 != 3 {
             chosen_figure
         } else {
             let mut rng = bar_stream(settings, frame, part, section, "comp", bar);
@@ -800,8 +815,9 @@ fn comp(
                 })
                 .collect();
             // A chord nobody strikes is a chord nobody hears change, so its own start always
-            // sounds whatever the figure says.
-            if !chosen.contains(&0) {
+            // sounds whatever the figure says — unless the rhythm was written by hand, whose
+            // rests are as much the instruction as its hits.
+            if !written && !chosen.contains(&0) {
                 chosen.insert(0, 0);
             }
             chosen
@@ -928,6 +944,36 @@ fn arp(
                 .collect();
             voicing.extend(back);
         }
+        // A rhythm the user wrote is played as written: the climb strikes on those steps and
+        // only those, walking the chord in the same order it always does.
+        if let Some(pattern) = part.rhythm.as_ref() {
+            let per_bar = grid.steps_per_bar().max(1);
+            let from = grid.step_of(event.start);
+            let mut strike = 0usize;
+            for offset in 0..grid.step_of(event.length) {
+                if pattern.at((from + offset) % per_bar).is_none() {
+                    continue;
+                }
+                let at = event.start + grid.tick_of(offset);
+                let pitch = voicing[strike % voicing.len()];
+                strike += 1;
+                notes.push(Draft {
+                    section: index,
+                    pitch: pitch.clamp(0, 127) as u8,
+                    velocity: (velocity(
+                        grid.weight(grid.step_of(at)),
+                        section.intensity,
+                        settings.dynamics,
+                    ) * 0.8
+                        * phrase_shape(grid, section, at, settings.dynamics))
+                    .clamp(0.05, 1.0),
+                    start: section.start + at,
+                    length: grid.step_ticks(),
+                });
+            }
+            continue;
+        }
+
         let count = (event.length.raw() / step_length.raw().max(1)) as usize;
         for position in 0..count {
             let at = event.start + step_length * position as i64;
@@ -1013,24 +1059,33 @@ fn bass(
 
         // The figure decides how busy the line is as well as what it plays. Two lines that hit
         // the same beats and differ only on the weak ones are the same line to a listener.
-        let mut onsets: Vec<usize> = match figure {
-            // One note under the chord, held: the sound of a bass player staying out of the way.
-            BassFigure::Root => Vec::new(),
-            // Follow the kick, which is what locks a rhythm section together.
-            BassFigure::Fifth | BassFigure::Approach => (0..steps)
-                .filter(|offset| kick_at(event.start + grid.tick_of(*offset)))
+        // A rhythm the user wrote replaces the figure's rhythm outright — the figure still
+        // chooses the notes, which is the half of the job the field never claimed.
+        let mut onsets: Vec<usize> = match part.rhythm.as_ref() {
+            Some(pattern) => (0..steps)
+                .filter(|offset| pattern.at((first + offset) % per_bar).is_some())
                 .collect(),
-            // The kick, and the half-beats between it: a busier, walking feel.
-            BassFigure::Octave => (0..steps)
-                .filter(|offset| {
-                    kick_at(event.start + grid.tick_of(*offset))
-                        || ((first + offset) % per_bar)
-                            .is_multiple_of((grid.steps_per_beat as usize).max(1))
-                })
-                .collect(),
+            None => match figure {
+                // One note under the chord, held: the sound of a bass player staying out of
+                // the way.
+                BassFigure::Root => Vec::new(),
+                // Follow the kick, which is what locks a rhythm section together.
+                BassFigure::Fifth | BassFigure::Approach => (0..steps)
+                    .filter(|offset| kick_at(event.start + grid.tick_of(*offset)))
+                    .collect(),
+                // The kick, and the half-beats between it: a busier, walking feel.
+                BassFigure::Octave => (0..steps)
+                    .filter(|offset| {
+                        kick_at(event.start + grid.tick_of(*offset))
+                            || ((first + offset) % per_bar)
+                                .is_multiple_of((grid.steps_per_beat as usize).max(1))
+                    })
+                    .collect(),
+            },
         };
-        // Always sound the chord's start, so a change of chord is heard whatever the figure.
-        if !onsets.contains(&0) {
+        // Always sound the chord's start, so a change of chord is heard whatever the figure —
+        // except under a written rhythm, whose rests are part of the instruction.
+        if part.rhythm.is_none() && !onsets.contains(&0) {
             onsets.insert(0, 0);
         }
 
@@ -1152,6 +1207,11 @@ fn drums(
 
     for bar in 0..section.bars {
         let mut rng = bar_stream(settings, frame, part, section, "drums", bar);
+        // The ghosts draw from a stream of their own. They exist only above the dial's middle,
+        // and a draw that appears the moment the dial crosses it would shift every later
+        // survival roll in the bar — nudging density from 0.50 to 0.51 rescrambled which hits
+        // of the groove survive instead of only adding ghosts. One decision, one stream.
+        let mut haunt = bar_stream(settings, frame, part, section, "ghosts", bar);
         let bar_start = grid.bar_ticks() * bar as i64;
         // Which steps ended up carrying a hit, so a fill can go round them rather than double
         // them: the pattern says where a hit belongs and thinning may already have taken it away.
@@ -1174,7 +1234,7 @@ fn drums(
                 // A rhythm somebody wrote is played as written, so nothing is added to one
                 // either: thinning and filling are both what to do with a suggestion.
                 None if written || weight > 1 || ghosting <= 0.0 => continue,
-                None if !rng.chance(ghosting * 0.45) => continue,
+                None if !haunt.chance(ghosting * 0.45) => continue,
                 None => Accent::Ghost,
             };
             let at = bar_start + grid.tick_of(step);
@@ -1883,6 +1943,64 @@ mod tests {
         assert!(
             pitch > anchor - OCTAVE,
             "a figure reaching upward was folded an octave down: {pitch} from {anchor}"
+        );
+    }
+
+    #[test]
+    fn a_written_rhythm_reaches_every_pitched_part() {
+        // The field's contract is that it overrides the generated rhythm, and the parser
+        // promises that nothing it accepts is quietly ignored. The melody and the drums kept
+        // that promise; the chords, the pad, the stab, the arp and the bass parsed the line,
+        // round-tripped it through to_text, and played their own rhythm anyway.
+        for role in ["chords", "pad", "stab", "arp", "bass"] {
+            let text = format!(
+                "form: verse\nchords: @axis\nhumanize: 0\nswing: 50\n\
+                 [section verse]\nbars: 2\n[part {role}]\n\
+                 rhythm: x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~"
+            );
+            let (_, frame, parts) = draft(&text);
+            let played = part(&parts, role);
+            let notes = section_notes(&frame, played, 0);
+            assert!(!notes.is_empty(), "{role} wrote nothing at all");
+            let beat = frame.grid.bar_ticks().raw() / 4;
+            for (start, ..) in &notes {
+                assert!(
+                    start % beat == 0,
+                    "{role} struck tick {start}, off the written rhythm"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nudging_density_past_the_middle_only_adds_ghosts() {
+        // Crossing 0.5 used to insert a ghost draw before every later survival roll in the
+        // bar, so the dial's smallest movement rescrambled which hits of the groove survive
+        // instead of only thickening the playing. With the ghosts on a stream of their own,
+        // everything the kit plays at the middle it still plays above it — the ghosts arrive
+        // on top.
+        let kit = |density: f32| {
+            let text = format!(
+                "form: verse\nchords: @axis\nhumanize: 0\nswing: 50\n\
+                 [section verse]\nbars: 4\n[part kick]\ndensity: {density}"
+            );
+            let (_, frame, parts) = draft(&text);
+            section_notes(&frame, part(&parts, "kick"), 0)
+                .into_iter()
+                .map(|(start, pitch, ..)| (start, pitch))
+                .collect::<Vec<_>>()
+        };
+        let middle = kit(0.5);
+        let above = kit(0.9);
+        for note in &middle {
+            assert!(
+                above.contains(note),
+                "a groove hit at {note:?} was lost by asking for *more*"
+            );
+        }
+        assert!(
+            above.len() > middle.len(),
+            "nothing was added above the middle"
         );
     }
 
