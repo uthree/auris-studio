@@ -87,9 +87,12 @@ catalogue `auris progressions` lists and the composer reads as `@marusa`. A prog
 across the cycle region when there is one, and across its own length otherwise.
 
 The box says what it wants and offers it: a line of syntax under the field, and a row of the
-degrees or keys it would accept, narrowing as you type. Pressing one answers the box. The rule
-worth stating before it is broken rather than after is the case of a numeral — `IV` is major and
-`iv` is minor — which nothing else on screen was saying.
+degrees or keys it would accept, narrowing as you type. Clicking one answers the box; **Tab** walks
+the row without leaving the keyboard, marking where it has got to, and wraps at the end. The walk
+follows what was *typed* rather than what the last press wrote, so `b` reaches all four borrowings
+rather than completing to `bIII` and stopping there. The rule worth stating before it is broken
+rather than after is the case of a numeral — `IV` is major and `iv` is minor — which nothing else
+on screen was saying.
 
 A chord is stored as a roman numeral, not as `Fmaj7`, so changing the key transposes the whole
 progression and a modulation halfway through a section reharmonises the rest of it without a

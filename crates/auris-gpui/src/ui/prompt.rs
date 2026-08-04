@@ -212,6 +212,14 @@ pub struct Prompt {
     pub title: SharedString,
     /// What it is asking for.
     pub body: PromptBody,
+    /// A Tab walk in progress: what was typed when it began, and how far along it is.
+    ///
+    /// The text Tab started from has to be kept, because completing *into* the field narrows the
+    /// list the next Tab would compute — after one press of `v` → `V` the candidates are those
+    /// beginning with `V`, and half of what the user was walking has gone. Remembering the
+    /// original prefix is what makes the second press offer the second candidate for what was
+    /// typed rather than the second candidate for what the first press wrote.
+    completing: Option<(String, usize)>,
 }
 
 impl Prompt {
@@ -227,6 +235,7 @@ impl Prompt {
                 target,
                 field: TextField::new(text),
             },
+            completing: None,
         }
     }
 
@@ -235,6 +244,7 @@ impl Prompt {
         Self {
             title: title.into(),
             body: PromptBody::Ask(question),
+            completing: None,
         }
     }
 
@@ -246,6 +256,7 @@ impl Prompt {
         Self {
             title: title.into(),
             body: PromptBody::Notice(lines.into_iter().collect()),
+            completing: None,
         }
     }
 
@@ -258,11 +269,51 @@ impl Prompt {
     }
 
     /// The same field, to type into.
+    ///
+    /// Taking it ends any Tab walk in progress, because the next Tab should complete what is in
+    /// the box now rather than resume a list derived from what was in it three keystrokes ago.
+    /// Every path that changes the text comes through here — the key handler and the platform's
+    /// input handler both — which is why the reset can live in one place. [`Self::completing`]
+    /// is set by the walk itself, which reaches the field without going through this.
     pub fn field_mut(&mut self) -> Option<&mut TextField> {
+        self.completing = None;
         match &mut self.body {
             PromptBody::Text { field, .. } => Some(field),
             PromptBody::Ask(_) | PromptBody::Notice(_) => None,
         }
+    }
+
+    /// Walks to the next completion, returning `true` when there was one to walk to.
+    ///
+    /// Wraps, so a list that has been walked to the end comes back round to where it started
+    /// rather than sticking on the last entry with no way back but retyping.
+    pub fn complete_next(&mut self) -> bool {
+        let PromptBody::Text { target, field } = &self.body else {
+            return false;
+        };
+        let (from, next) = match &self.completing {
+            Some((from, index)) => (from.clone(), index + 1),
+            None => (field.content().to_string(), 0),
+        };
+        let offered = completions(*target, &from);
+        if offered.is_empty() {
+            return false;
+        }
+        let index = next % offered.len();
+        let chosen = offered[index];
+        if let PromptBody::Text { field, .. } = &mut self.body {
+            let whole = 0..field.content().len();
+            field.replace(whole, chosen);
+        }
+        self.completing = Some((from, index));
+        true
+    }
+
+    /// The text a Tab walk started from, and how far it has got.
+    pub fn completing(&self) -> Option<(&str, usize)> {
+        self.completing
+            .as_ref()
+            .map(|(from, index)| (from.as_str(), *index))
     }
 }
 
@@ -462,6 +513,26 @@ impl AurisApp {
         // ⌘ on macOS, Ctrl elsewhere. Reading `platform` directly would put select-all on the
         // Windows key, which opens the shell's own menu long before the application sees it.
         let command = event.keystroke.modifiers.secondary();
+
+        // Tab walks the completions, and is answered before the field is taken. `field_mut` ends
+        // a walk in progress, which is right for every key that changes the text and wrong for
+        // the one key that is *continuing* the walk — taking it here would reset on every step.
+        //
+        // Not while an IME is composing: Tab belongs to the candidate window then, and the
+        // platform has already offered it there before the window sees it.
+        if event.keystroke.key == "tab"
+            && let Some(field) = self.prompt.as_ref().and_then(Prompt::field)
+        {
+            if field.marked().is_none()
+                && let Some(prompt) = self.prompt.as_mut()
+            {
+                prompt.complete_next();
+            }
+            // Swallowed either way. There is nothing else on the sheet for Tab to reach, and a
+            // sheet that let it out would move the focus ring behind a box that is still open.
+            return true;
+        }
+
         let Some(prompt) = self.prompt.as_mut() else {
             return false;
         };
@@ -550,7 +621,7 @@ impl AurisApp {
                             .hint()
                             .map(|hint| self.render_prompt_hint(hint, &theme)),
                     )
-                    .children(self.render_prompt_completions(*target, field.content(), cx))
+                    .children(self.render_prompt_completions(prompt, cx))
                     .into_any_element(),
                 self.render_prompt_buttons(None, self.t(Key::Rename).into(), cx),
             ),
@@ -667,11 +738,20 @@ impl AurisApp {
     /// press to do what the first one already said.
     fn render_prompt_completions(
         &self,
-        target: PromptTarget,
-        typed: &str,
+        prompt: &Prompt,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement + use<>> {
-        let offered = completions(target, typed);
+        let PromptBody::Text { target, field } = &prompt.body else {
+            return None;
+        };
+        // While Tab is walking, the row is the list it is walking rather than one recomputed from
+        // what the last press wrote — which would narrow under the walk, so that the candidates
+        // slid out from under the eye at every step.
+        let (typed, walking) = match prompt.completing() {
+            Some((from, index)) => (from, Some(index)),
+            None => (field.content(), None),
+        };
+        let offered = completions(*target, typed);
         if offered.is_empty() {
             return None;
         }
@@ -681,12 +761,12 @@ impl AurisApp {
                 .flex()
                 .flex_wrap()
                 .gap_1()
-                .children(offered.into_iter().map(|entry| {
+                .children(offered.into_iter().enumerate().map(|(index, entry)| {
                     button(
                         SharedString::from(format!("complete:{entry}")),
                         entry,
                         ButtonStyle::Normal,
-                        false,
+                        walking == Some(index),
                         theme.accent,
                         &theme,
                         cx.listener(move |this, _, window, cx| {
@@ -1061,5 +1141,64 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn tab_walks_the_list_it_started_from_rather_than_the_one_it_wrote() {
+        // `b` offers four borrowings. Completing into the field narrows the list to the entry
+        // just written, so a walk that recomputed from the box would put `bIII` there and then
+        // have nowhere left to go — three of the four unreachable from the keyboard.
+        let mut prompt = Prompt::new("", PromptTarget::Chord(AT), "b");
+        let mut walked = Vec::new();
+        for _ in 0..4 {
+            assert!(prompt.complete_next(), "the walk stopped early");
+            walked.push(prompt.field().unwrap().content().to_string());
+        }
+        assert_eq!(walked, ["bIII", "bVI", "bVII", "bVII7"]);
+    }
+
+    #[test]
+    fn the_walk_wraps_rather_than_sticking_at_the_end() {
+        // Sticking on the last entry would leave retyping as the only way back to the first.
+        let offered = completions(PromptTarget::Chord(AT), "b");
+        let mut prompt = Prompt::new("", PromptTarget::Chord(AT), "b");
+        for _ in 0..offered.len() {
+            prompt.complete_next();
+        }
+        assert_eq!(prompt.field().unwrap().content(), *offered.last().unwrap());
+        prompt.complete_next();
+        assert_eq!(
+            prompt.field().unwrap().content(),
+            offered[0],
+            "the walk did not come back round"
+        );
+    }
+
+    #[test]
+    fn typing_begins_a_new_walk() {
+        // A Tab after an edit that resumed a list derived from what was in the box three
+        // keystrokes ago is the one thing a completion must never do.
+        let mut prompt = Prompt::new("", PromptTarget::Chord(AT), "b");
+        prompt.complete_next();
+        prompt.complete_next();
+        assert_eq!(prompt.field().unwrap().content(), "bVI");
+        assert!(prompt.completing().is_some());
+
+        // Through the door every typing path uses, which is where the reset lives.
+        prompt.field_mut().unwrap().select_all();
+        assert!(prompt.completing().is_none(), "the walk outlived the edit");
+        prompt.field_mut().unwrap().insert("v");
+        prompt.complete_next();
+        assert_eq!(prompt.field().unwrap().content(), "V");
+    }
+
+    #[test]
+    fn a_field_with_no_vocabulary_has_nothing_to_walk() {
+        // Tab is swallowed on every sheet, but on a name it has to leave the text alone rather
+        // than replacing it with whatever a chord field would have offered.
+        let mut prompt = Prompt::new("", PromptTarget::Track(TrackId(1)), "Drums");
+        assert!(!prompt.complete_next());
+        assert_eq!(prompt.field().unwrap().content(), "Drums");
+        assert!(prompt.completing().is_none());
     }
 }
