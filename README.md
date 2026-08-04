@@ -30,10 +30,26 @@ Renaming goes through the platform's input handler, so an IME composes into the 
 it does anywhere else.
 
 Creating and deleting are pointer gestures, and which gesture does which is a setting. The
-defaults are Logic's — ⌘-click creates a note or a clip, a double-click deletes what is under
-the pointer — with ⌥-click available for either. Dragging across empty space in the piano roll
-or the arrangement sweeps a selection rectangle; ⇧-drag adds to what is already selected, and a
-multiple selection moves, duplicates and deletes as one.
+defaults are Logic's — ⌘-click creates a note or a clip, ⌥-click deletes what is under the
+pointer — with the double-click available for either, though nothing destructive is bound there
+by default: a double-click opens a clip in every editor that has clips, and the gesture people
+arrive with should not destroy their work. Dragging across empty space in the piano roll or the
+arrangement sweeps a selection rectangle; ⇧-drag adds to what is already selected, and a multiple
+selection moves, duplicates and deletes as one.
+
+The piano roll has two tools, and the strip in its header says which one is in hand. The pointer
+selects, moves, resizes and creates. The velocity tool does one thing: drag a note up or down and
+it is struck harder or softer, with the value shown beside it as it goes. A selection is dragged
+together and keeps its shape — a phrase written soft-loud-soft is still soft-loud-soft once it
+has been played harder — and running off either end and coming back restores that shape rather
+than leaving the whole chord flat against the limit it was pushed into. One drag is one undo
+step, and Escape during it puts the notes back. Every note also carries a bar inside it showing
+the same value, because the colour ramp can say roughly where in the range a note sits but not
+the difference between 96 and 100, which is the difference the drag is being made to find.
+
+Logic offers that gesture on ⌃⌥-drag as well as on the tool, and that half cannot be carried
+across: on macOS a ⌃-click becomes a right-click before the window sees it — ⌃ stripped off on
+the way — so it would arrive as a request for the context menu rather than as a drag.
 
 Everything placed snaps to the grid button's division, which cycles down to *free* — one tick,
 which is as fine as the document gets. Holding ⌘ (Ctrl on Windows) suspends snapping for the

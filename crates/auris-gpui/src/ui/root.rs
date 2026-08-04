@@ -473,6 +473,16 @@ impl AurisApp {
                     self.audition(pitch);
                 }
             }
+            Drag::NoteVelocity {
+                clip,
+                start_y,
+                ref origins,
+                ..
+            } => {
+                // No origin to measure against and no snapping to do, so the roll's own y is not
+                // wanted here: the drag is a distance from where the button went down.
+                self.drag_velocity(clip, start_y, origins, event.position.y);
+            }
             Drag::NoteResize { clip, index } => {
                 let origin = self.roll_origin();
                 let tick = self.timeline.x_to_tick(event.position.x - origin.x);

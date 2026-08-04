@@ -62,6 +62,12 @@ messages! {
         ja: "{create}: ノート追加 · ドラッグ: 移動 · 右端: 長さ変更 · {delete}: 削除 · 右クリック: メニュー"
     }
 
+    /// The same line while the velocity tool is in hand, which binds none of those gestures.
+    fn piano_roll_velocity_hint() {
+        en: "drag a note up or down: velocity · right-click: menu",
+        ja: "ノートを上下にドラッグ: 強さを変更 · 右クリック: メニュー"
+    }
+
     /// What the piano roll says when no clip is selected.
     fn piano_roll_empty(create: &str) {
         en: "Select a MIDI clip to edit its notes ({create} an empty lane to make one)",

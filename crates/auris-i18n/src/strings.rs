@@ -178,6 +178,11 @@ strings! {
     GestureControlClick { en: "Ctrl-click", ja: "Ctrl＋クリック" }
     GestureAltClick { en: "Alt-click", ja: "Alt＋クリック" }
     GestureDoubleClick { en: "Double-click", ja: "ダブルクリック" }
+    // The piano roll's tools, named as Logic names them — this is the vocabulary a user arrives
+    // with, and the tool is the only way in: the modifier Logic puts velocity on cannot reach a
+    // window at all on macOS, where ⌃ and a click become a request for the context menu.
+    ToolPointer { en: "Pointer", ja: "ポインタ" }
+    ToolVelocity { en: "Velocity", ja: "ベロシティ" }
     PointerNote {
         en: "The two cannot share a gesture; picking one that is taken swaps them.",
         ja: "2 つに同じ操作は割り当てられません。使用中のものを選ぶと入れ替わります。"

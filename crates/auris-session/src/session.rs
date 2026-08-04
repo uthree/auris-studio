@@ -1706,20 +1706,41 @@ impl Session {
         indices: &[usize],
         velocity: f32,
     ) -> Result<(), SessionError> {
+        let changes: Vec<(usize, f32)> = indices.iter().map(|index| (*index, velocity)).collect();
+        self.set_note_velocities(clip, &changes)
+    }
+
+    /// Sets how hard individual notes are struck, each to a value of its own from 0 to 1.
+    ///
+    /// The per-note form is what a *gesture* needs. Dragging the dynamics of a chord has to keep
+    /// the differences between its notes — a phrase written soft-loud-soft is still soft-loud-soft
+    /// once it is played harder — so every note in the selection lands somewhere different, and
+    /// one value for all of them cannot say that.
+    ///
+    /// An index that names no note is skipped rather than refused: a selection is held by
+    /// position, and half a chord going through is better than a whole gesture failing because
+    /// one note was deleted underneath it.
+    pub fn set_note_velocities(
+        &mut self,
+        clip: ClipId,
+        changes: &[(usize, f32)],
+    ) -> Result<(), SessionError> {
         if self.project.midi_clip(clip).is_none() {
             return Err(SessionError::UnknownClip(clip.0));
         }
-        let velocity = velocity.clamp(0.0, 1.0);
         // Nothing to record for a set that changes nothing — a menu applied to a chord already at
-        // that level should not push an undo step.
+        // that level should not push an undo step, and neither should a drag that has not yet
+        // travelled far enough to move a note off the value it started on.
         let unchanged = self
             .project
             .midi_clip(clip)
             .map(|(_, target)| {
-                indices
-                    .iter()
-                    .filter_map(|index| target.notes.get(*index))
-                    .all(|note| note.velocity == velocity)
+                changes.iter().all(|(index, velocity)| {
+                    target
+                        .notes
+                        .get(*index)
+                        .is_none_or(|note| note.velocity == velocity.clamp(0.0, 1.0))
+                })
             })
             .unwrap_or(true);
         if unchanged {
@@ -1730,9 +1751,9 @@ impl Session {
         let Some(target) = self.project.midi_clip_mut(clip) else {
             return Err(SessionError::UnknownClip(clip.0));
         };
-        for index in indices {
+        for (index, velocity) in changes {
             if let Some(note) = target.notes.get_mut(*index) {
-                note.velocity = velocity;
+                note.velocity = velocity.clamp(0.0, 1.0);
             }
         }
         self.invalidate_graph();
@@ -3220,6 +3241,60 @@ mod tests {
         let depth = undo_depth(&mut session);
         session.set_note_velocity(clip, &[first], 1.0).unwrap();
         assert_eq!(undo_depth(&mut session), depth);
+    }
+
+    #[test]
+    fn a_chord_can_be_played_harder_without_losing_its_shape() {
+        // What a velocity drag over a selection needs: each note goes somewhere of its own, so
+        // the phrasing written into the part survives being made louder.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::QUARTER * 4)
+            .unwrap();
+        let quiet = session
+            .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        let loud = session
+            .add_note(clip, Note::new(64, Ticks::QUARTER, Ticks::QUARTER))
+            .unwrap();
+
+        session
+            .set_note_velocities(clip, &[(quiet, 0.4), (loud, 0.6)])
+            .unwrap();
+        let velocities = |session: &Session| -> Vec<f32> {
+            session
+                .midi_clip(clip)
+                .unwrap()
+                .notes
+                .iter()
+                .map(|note| note.velocity)
+                .collect()
+        };
+        assert_eq!(velocities(&session), vec![0.4, 0.6]);
+
+        // One undo step for the pair, not one each: the whole gesture is a single edit.
+        let depth = undo_depth(&mut session);
+        session
+            .set_note_velocities(clip, &[(quiet, 0.5), (loud, 0.7)])
+            .unwrap();
+        assert_eq!(velocities(&session), vec![0.5, 0.7]);
+        assert_eq!(undo_depth(&mut session), depth + 1);
+        assert_eq!(session.undo(), Some(Edit::SetNoteVelocity));
+        assert_eq!(velocities(&session), vec![0.4, 0.6]);
+
+        // A note that has gone is skipped, and the rest of the gesture still lands. A selection
+        // is held by position, so one missing index must not throw the others away.
+        session.remove_notes(clip, &[loud]).unwrap();
+        session
+            .set_note_velocities(clip, &[(quiet, 0.9), (loud, 0.9)])
+            .unwrap();
+        assert_eq!(velocities(&session), vec![0.9]);
+
+        assert!(matches!(
+            session.set_note_velocities(ClipId(9999), &[(0, 0.5)]),
+            Err(SessionError::UnknownClip(_))
+        ));
     }
 
     #[test]

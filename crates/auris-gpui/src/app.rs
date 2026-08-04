@@ -32,6 +32,7 @@ use crate::settings_window::SettingsWindow;
 use crate::theme::{Metrics, Theme};
 use crate::ui::context_menu::ContextMenu;
 use crate::ui::menu_bar::OpenMenu;
+use crate::ui::piano_roll::RollTool;
 use crate::ui::prompt::Prompt;
 use crate::ui::timeline::{PitchView, TimelineView};
 
@@ -137,6 +138,23 @@ pub enum Drag {
         origin_pitch: u8,
         /// Starting position of every selected note, so the whole selection moves together.
         origins: Vec<(usize, Ticks, u8)>,
+    },
+    /// Dragging a note's velocity up or down with the roll's velocity tool.
+    NoteVelocity {
+        /// Clip the notes live in.
+        clip: ClipId,
+        /// Pointer y when the drag began.
+        start_y: Pixels,
+        /// What every selected note was struck at when the drag began, as MIDI 1 to 127.
+        ///
+        /// The drag is measured against these rather than against wherever the notes are now, so
+        /// a selection keeps the differences between its notes: a phrase written soft-loud-soft
+        /// is still soft-loud-soft after being played harder. It also means a drag that runs off
+        /// the top and comes back restores the shape, instead of leaving the whole chord
+        /// flattened against the ceiling it was pushed into.
+        origins: Vec<(usize, u8)>,
+        /// The note that was grabbed, which the readout is drawn beside.
+        grabbed: usize,
     },
     /// Dragging a note's right edge.
     NoteResize {
@@ -259,6 +277,7 @@ impl Drag {
             Drag::ClipResize { .. } => Some(Edit::ResizeClip),
             Drag::NoteMove { .. } => Some(Edit::MoveNotes),
             Drag::NoteResize { .. } => Some(Edit::ResizeNote),
+            Drag::NoteVelocity { .. } => Some(Edit::SetNoteVelocity),
             Drag::Param { .. } => Some(Edit::AdjustParameter),
             // One undo step for the whole sweep, and the same label the right-click menu's
             // "Write It Again" uses — moving a dial is writing the part again with one thing
@@ -595,6 +614,12 @@ pub struct AurisApp {
     /// Every selected clip. Edits act on all of them; the piano roll edits the primary one.
     pub(crate) selected_clips: BTreeSet<ClipId>,
     pub(crate) selected_notes: BTreeSet<usize>,
+    /// Which tool the piano roll has in hand.
+    ///
+    /// Deliberately not a setting: a tool is a mode, and a mode the application remembers is a
+    /// mode the user comes back to having forgotten. The roll opens holding the pointer every
+    /// time, and the strip in its header says which one is in hand.
+    pub(crate) tool: RollTool,
     pub(crate) drag: Option<Drag>,
     pub(crate) editor: EditorTab,
     /// Which panels are showing and how large they are.
@@ -719,6 +744,7 @@ impl AurisApp {
             selected_clip,
             selected_clips: selected_clip.into_iter().collect(),
             selected_notes: BTreeSet::new(),
+            tool: RollTool::default(),
             drag: None,
             editor: EditorTab::PianoRoll,
             panels: PanelLayout::default(),
@@ -904,10 +930,19 @@ impl AurisApp {
 
     /// Sounds one note on the selected track, replacing anything already sounding.
     pub(crate) fn audition(&mut self, pitch: u8) {
+        self.audition_at(pitch, NOTE_VELOCITY);
+    }
+
+    /// Sounds one note as hard as it is written, which is what the velocity tool wants to hear.
+    ///
+    /// Struck once, when the note is taken hold of, and not again as the drag runs: what the
+    /// gesture is *for* is the level it started from, and restriking every few pixels would turn
+    /// setting a dynamic into a drum roll.
+    pub(crate) fn audition_at(&mut self, pitch: u8, velocity: f32) {
         let Some(track) = self.selected_track else {
             return;
         };
-        self.sound(track, vec![pitch], NOTE_VELOCITY);
+        self.sound(track, vec![pitch], velocity);
     }
 
     /// Sounds the chord in force at `tick`, and says so when nothing can play it.
