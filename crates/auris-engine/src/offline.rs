@@ -150,11 +150,28 @@ pub fn render_project_with_progress(
     let latency = graph.latency_frames();
     let end = total.checked_add(latency).ok_or_else(too_long)?;
 
+    // Only an explicit range can have material lying beyond its end; a whole-project render
+    // ends where the material does, and stopping it there would cut the natural releases out
+    // of its own tail.
+    let ranged = options.end_frames.is_some();
+    let performed = total - tail;
+
     let mut transport = Transport::playing_from(options.start_frames);
     let mut scratch = AudioBuffer::new(RENDER_CHANNELS, block_frames, sample_rate);
     let mut rendered = 0;
     while rendered < end {
-        let frames = block_frames.min(end - rendered);
+        // The range's end is a Stop, exactly as realtime playback stops there: the voices are
+        // released and what runs on into the tail is the effects' ring-out — not the material
+        // that lies beyond the range, which used to keep performing straight through it.
+        if ranged && transport.playing && rendered >= performed {
+            transport.playing = false;
+            graph.reset_voices();
+        }
+        let mut frames = block_frames.min(end - rendered);
+        if ranged && transport.playing {
+            // Never render across the boundary; the block after this one starts stopped.
+            frames = frames.min(performed - rendered);
+        }
         scratch.set_frame_count(frames);
         render_block(&mut graph, &mut transport, &mut scratch, true);
         // How much of this block is still lead-in, and where the rest lands in the file.
@@ -240,6 +257,45 @@ mod tests {
         )
         .expect("render");
         assert_eq!(without.frame_count(), 96_000);
+    }
+
+    #[test]
+    fn a_range_export_does_not_perform_what_lies_beyond_the_range() {
+        // A note that starts after the exported range, in a graph with a tail. The tail must
+        // hold the ring-out of what was *in* the range — realtime playback of the same span
+        // followed by Stop releases the voices and lets only the effects ring — and it used to
+        // hold a full-level performance of material past the range instead, because nothing
+        // ever told the transport the range had ended.
+        let mut project = Project::new("Range", SAMPLE_RATE);
+        let track = project.add_instrument_track("Lead", testkit::TONE_ID);
+        let clip = project
+            .add_midi_clip(
+                track,
+                "Late",
+                Ticks::from_beats(4.0),
+                Ticks::from_beats(4.0),
+            )
+            .unwrap();
+        project.midi_clip_mut(clip).unwrap().notes.push(Note::new(
+            60,
+            Ticks::ZERO,
+            Ticks::from_beats(4.0),
+        ));
+        project.add_effect(None, testkit::TAIL_ID);
+
+        // Bars one to four hold nothing; the note begins at bar five, past the range.
+        let rendered = render_project(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &OfflineOptions::default().with_range(0, 96_000),
+        )
+        .expect("render");
+        assert_eq!(rendered.frame_count(), 96_000 + TAIL_FRAMES);
+        assert!(
+            rendered.slice(96_000, TAIL_FRAMES).peak() < TONE_AMPLITUDE * 0.01,
+            "the tail performed material that lies beyond the range"
+        );
     }
 
     #[test]

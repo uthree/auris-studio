@@ -184,6 +184,18 @@ fn sane_gain(gain: f32) -> f32 {
     if gain.is_finite() { gain } else { 0.0 }
 }
 
+/// A pan a mix can survive: `clamp` passes NaN through, and a NaN pan does not silence one
+/// track the way a NaN gain does — its gains poison the track's scratch, `mix_from` spreads
+/// them across the master, and the sanitiser zeroes the whole mix. Centre is the only answer
+/// that costs nothing.
+fn sane_pan(pan: f32) -> f32 {
+    if pan.is_finite() {
+        pan.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
 /// How long a mute takes to close or open, in milliseconds.
 ///
 /// Short enough that a mute still feels instant under the finger, long enough that the step it
@@ -428,7 +440,7 @@ impl RenderStrip {
     /// `sample_rate` sizes the mute fade, which is measured in milliseconds and therefore has to
     /// know how many frames one of those is.
     pub fn new(gain_db: f32, pan: f32, mute: bool, audible: bool, sample_rate: f64) -> Self {
-        let pan = pan.clamp(-1.0, 1.0);
+        let pan = sane_pan(pan);
         Self {
             gain: SmoothedGain::new(db_to_gain(gain_db)),
             pan,
@@ -521,7 +533,7 @@ impl RenderStrip {
 
     /// Moves the pan control; the change is ramped across the next block.
     pub fn set_pan(&mut self, pan: f32) {
-        self.pan = pan.clamp(-1.0, 1.0);
+        self.pan = sane_pan(pan);
     }
 
     /// Sets the strip's own mute switch. The change is faded in or out, not stepped.

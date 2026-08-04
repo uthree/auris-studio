@@ -114,7 +114,13 @@ impl Scope {
         if matches!(self.watching(), ScopeSource::Off) {
             return;
         }
+        // The odd count has to become visible before any store below it, and the even one
+        // after every store — that ordering *is* the tear detection. With everything Relaxed
+        // there was none: a weakly ordered machine was free to let the sample stores overtake
+        // the first increment, so a reader could copy half a new window under a counter that
+        // never appeared to move. Fences on this side, acquire on the reader's.
         self.sequence.fetch_add(1, Ordering::Relaxed);
+        std::sync::atomic::fence(Ordering::Release);
         // Newest-last, so a reader can walk the slice forwards and get time's own order.
         let taken = samples.len().min(SCOPE_WINDOW);
         let keep = SCOPE_WINDOW - taken;
@@ -128,7 +134,7 @@ impl Scope {
         }
         self.rate
             .store((sample_rate as f32).to_bits(), Ordering::Relaxed);
-        self.sequence.fetch_add(1, Ordering::Relaxed);
+        self.sequence.fetch_add(1, Ordering::Release);
     }
 
     /// Copies the newest window into `out`, reporting whether the copy is whole.
@@ -137,7 +143,7 @@ impl Scope {
     /// it drew last rather than draw a window with a seam in it. Retrying is not worth it: the
     /// next repaint is 16 ms away and will find a settled window.
     pub fn read(&self, out: &mut [f32]) -> bool {
-        let before = self.sequence.load(Ordering::Relaxed);
+        let before = self.sequence.load(Ordering::Acquire);
         if before % 2 == 1 {
             return false;
         }
@@ -148,6 +154,9 @@ impl Scope {
         for (offset, slot) in out.iter_mut().enumerate().take(count) {
             *slot = f32::from_bits(self.samples[start + offset].load(Ordering::Relaxed));
         }
+        // The fence keeps the sample loads above from drifting past the re-check below — the
+        // reader's half of the ordering the writer's fence promises.
+        std::sync::atomic::fence(Ordering::Acquire);
         self.sequence.load(Ordering::Relaxed) == before
     }
 
