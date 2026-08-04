@@ -6,6 +6,7 @@
 
 #![warn(missing_docs)]
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -91,7 +92,23 @@ fn pad(text: &str, columns: usize) -> String {
 }
 
 fn print_usage(language: Language) {
-    println!("{}", Key::CliUsage.get(language));
+    // Ignored on purpose: usage goes to whoever is still listening, and a reader that has
+    // gone away is not a failure worth reporting over the top of the one being explained.
+    let _ = writeln!(std::io::stdout(), "{}", Key::CliUsage.get(language));
+}
+
+/// Turns a listing's write errors into the command's verdict.
+///
+/// Every listing used to print through `println!`, which panics when the write fails — and
+/// Rust ignores SIGPIPE on Unix, so `auris plugins | head` ended in a panic message and exit
+/// code 101 the moment `head` closed its end. A closed pipe is the reader having heard
+/// enough, which is a clean exit; any other write failure is a real error.
+fn printed(result: std::io::Result<()>) -> Result<(), String> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 fn with_path(
@@ -112,12 +129,25 @@ fn headless() -> Result<Session, String> {
 
 /// Lists the chord progressions the composer knows by name.
 fn list_progressions(language: Language) -> Result<(), String> {
-    println!("{}", Key::CliProgressions.get(language));
-    for entry in auris_session::prelude::progression_catalog() {
-        println!("  @{:<14} {}", entry.name, entry.description);
-        println!("  {:<15} {}", "", entry.chart);
-    }
-    Ok(())
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    let print = (|| {
+        writeln!(out, "{}", Key::CliProgressions.get(language))?;
+        for entry in auris_session::prelude::progression_catalog() {
+            // Through the same lookup the desktop's menu uses: the descriptions all have
+            // Japanese translations, pinned complete by a test, and this listing printed the
+            // raw English under a translated heading.
+            writeln!(
+                out,
+                "  @{:<14} {}",
+                entry.name,
+                auris_i18n::audio::theory_description(entry.description, language)
+            )?;
+            writeln!(out, "  {:<15} {}", "", entry.chart)?;
+        }
+        Ok(())
+    })();
+    printed(print)
 }
 
 /// Writes a piece from a specification and saves it as a project.
@@ -160,9 +190,11 @@ fn compose(args: &[String], language: Language) -> Result<(), String> {
             "--seed" | "--key" | "--tempo" | "--mood" | "--groove" | "--scale" | "--swing" => {
                 let field = args[index].trim_start_matches('-').to_string();
                 index += 1;
-                let value = args
-                    .get(index)
-                    .ok_or_else(|| messages::option_needs_value(language, &field, "a value"))?;
+                let value = args.get(index).ok_or_else(|| {
+                    // Through the table, like every sibling arm: a literal here was English
+                    // interpolated verbatim into the middle of the Japanese message.
+                    messages::option_needs_value(language, &field, Key::CliNeedsValue.get(language))
+                })?;
                 overrides.push(format!("{field}: {value}"));
             }
             "--print" => print_only = true,
@@ -189,8 +221,7 @@ fn compose(args: &[String], language: Language) -> Result<(), String> {
     })?;
 
     if print_only {
-        print!("{}", spec.to_text());
-        return Ok(());
+        return printed(write!(std::io::stdout(), "{}", spec.to_text()));
     }
 
     let piece = auris_session::prelude::compose(&spec);
@@ -201,7 +232,8 @@ fn compose(args: &[String], language: Language) -> Result<(), String> {
     }
     session.save(&output).map_err(|error| error.to_string())?;
 
-    println!(
+    printed(writeln!(
+        std::io::stdout(),
         "{}",
         messages::composed(
             language,
@@ -210,8 +242,8 @@ fn compose(args: &[String], language: Language) -> Result<(), String> {
             report.notes,
             piece.seed,
         )
-    );
-    print!("{}", piece.summary());
+    ))?;
+    printed(write!(std::io::stdout(), "{}", piece.summary()))?;
     Ok(())
 }
 
@@ -220,8 +252,13 @@ fn list_plugins(language: Language) -> Result<(), String> {
     let registry = session.registry();
 
     // The registry id stays as it is: it is what a project file stores and what a script types.
-    let describe = |descriptor: &PluginDescriptor| {
-        println!(
+    fn describe(
+        out: &mut impl Write,
+        descriptor: &PluginDescriptor,
+        language: Language,
+    ) -> std::io::Result<()> {
+        writeln!(
+            out,
             "  {:<26} {} {}",
             descriptor.id,
             pad(
@@ -229,24 +266,30 @@ fn list_plugins(language: Language) -> Result<(), String> {
                 14
             ),
             auris_i18n::audio::plugin_name(&descriptor.name, language)
-        );
-        println!(
+        )?;
+        writeln!(
+            out,
             "  {:<26} {:<14} {}",
             "",
             "",
             auris_i18n::audio::plugin_description(&descriptor.description, language)
-        );
-    };
+        )
+    }
 
-    println!("{}", Key::CliInstruments.get(language));
-    for descriptor in registry.instruments() {
-        describe(descriptor);
-    }
-    println!("\n{}", Key::CliEffects.get(language));
-    for descriptor in registry.effects() {
-        describe(descriptor);
-    }
-    Ok(())
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    let print = (|| {
+        writeln!(out, "{}", Key::CliInstruments.get(language))?;
+        for descriptor in registry.instruments() {
+            describe(&mut out, descriptor, language)?;
+        }
+        writeln!(out, "\n{}", Key::CliEffects.get(language))?;
+        for descriptor in registry.effects() {
+            describe(&mut out, descriptor, language)?;
+        }
+        Ok(())
+    })();
+    printed(print)
 }
 
 /// Copies every file a project refers to into its folder, and saves it.
@@ -266,7 +309,11 @@ fn collect(path: &Path, language: Language) -> Result<(), String> {
         .collect_assets()
         .map_err(|error| error.to_string())?;
     session.save_in_place().map_err(|error| error.to_string())?;
-    println!("{}", messages::assets_collected(language, collected));
+    printed(writeln!(
+        std::io::stdout(),
+        "{}",
+        messages::assets_collected(language, collected)
+    ))?;
     Ok(())
 }
 
@@ -276,70 +323,89 @@ fn info(path: &Path, language: Language) -> Result<(), String> {
     let project = session.project();
     let field = |key: Key| Key::get(key, language);
 
-    println!("{}", project.name);
-    let label = |key: Key| pad(field(key), 14);
-    println!("  {} {}", label(Key::CliFieldPath), path.display());
-    println!("  {} {:.2} BPM", label(Key::CliFieldTempo), project.bpm());
-    println!(
-        "  {} {}/{}",
-        label(Key::CliFieldSignature),
-        project.time_signature.numerator,
-        project.time_signature.denominator
-    );
-    println!(
-        "  {} {:.0} Hz",
-        label(Key::CliFieldSampleRate),
-        project.sample_rate
-    );
-    println!(
-        "  {} {}",
-        label(Key::CliFieldDuration),
-        Seconds(project.duration_seconds()).format_clock()
-    );
-    println!("  {} {}", label(Key::CliFieldTracks), project.tracks.len());
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    let print = (|| {
+        writeln!(out, "{}", project.name)?;
+        let label = |key: Key| pad(field(key), 14);
+        writeln!(out, "  {} {}", label(Key::CliFieldPath), path.display())?;
+        writeln!(
+            out,
+            "  {} {:.2} BPM",
+            label(Key::CliFieldTempo),
+            project.bpm()
+        )?;
+        writeln!(
+            out,
+            "  {} {}/{}",
+            label(Key::CliFieldSignature),
+            project.time_signature.numerator,
+            project.time_signature.denominator
+        )?;
+        writeln!(
+            out,
+            "  {} {:.0} Hz",
+            label(Key::CliFieldSampleRate),
+            project.sample_rate
+        )?;
+        writeln!(
+            out,
+            "  {} {}",
+            label(Key::CliFieldDuration),
+            Seconds(project.duration_seconds()).format_clock()
+        )?;
+        writeln!(
+            out,
+            "  {} {}",
+            label(Key::CliFieldTracks),
+            project.tracks.len()
+        )?;
 
-    for track in &project.tracks {
-        let clips = field(Key::CliClipCount);
-        let detail = match &track.kind {
-            TrackKind::Instrument(inner) => format!(
-                "{} {:<24} {} {clips}",
-                pad(field(Key::CliKindInstrument), 12),
-                inner.instrument_id,
-                inner.clips.len()
-            ),
-            TrackKind::Audio(inner) => format!(
-                "{} {:<24} {} {clips}",
-                pad(field(Key::CliKindAudio), 12),
-                "",
-                inner.clips.len()
-            ),
-        };
-        println!("    {} {detail}", pad(&track.name, 18));
-        if !track.mixer.effects.is_empty() {
-            let chain: Vec<&str> = track
-                .mixer
+        for track in &project.tracks {
+            let clips = field(Key::CliClipCount);
+            let detail = match &track.kind {
+                TrackKind::Instrument(inner) => format!(
+                    "{} {:<24} {} {clips}",
+                    pad(field(Key::CliKindInstrument), 12),
+                    inner.instrument_id,
+                    inner.clips.len()
+                ),
+                TrackKind::Audio(inner) => format!(
+                    "{} {:<24} {} {clips}",
+                    pad(field(Key::CliKindAudio), 12),
+                    "",
+                    inner.clips.len()
+                ),
+            };
+            writeln!(out, "    {} {detail}", pad(&track.name, 18))?;
+            if !track.mixer.effects.is_empty() {
+                let chain: Vec<&str> = track
+                    .mixer
+                    .effects
+                    .iter()
+                    .map(|slot| slot.effect_id.as_str())
+                    .collect();
+                writeln!(out, "    {:<18} {:<10} {}", "", "fx", chain.join(" -> "))?;
+            }
+        }
+
+        if !project.master.effects.is_empty() {
+            let chain: Vec<&str> = project
+                .master
                 .effects
                 .iter()
                 .map(|slot| slot.effect_id.as_str())
                 .collect();
-            println!("    {:<18} {:<10} {}", "", "fx", chain.join(" -> "));
+            writeln!(
+                out,
+                "    {} {:<10} {}",
+                pad(field(Key::CliMaster), 18),
+                "fx",
+                chain.join(" -> ")
+            )?;
         }
-    }
-
-    if !project.master.effects.is_empty() {
-        let chain: Vec<&str> = project
-            .master
-            .effects
-            .iter()
-            .map(|slot| slot.effect_id.as_str())
-            .collect();
-        println!(
-            "    {} {:<10} {}",
-            pad(field(Key::CliMaster), 18),
-            "fx",
-            chain.join(" -> ")
-        );
-    }
+        Ok(())
+    })();
 
     for path in &missing {
         eprintln!(
@@ -347,7 +413,7 @@ fn info(path: &Path, language: Language) -> Result<(), String> {
             messages::warning_missing_audio(language, &path.display().to_string())
         );
     }
-    Ok(())
+    printed(print)
 }
 
 fn render(args: &[String], language: Language) -> Result<(), String> {
@@ -415,7 +481,8 @@ fn render(args: &[String], language: Language) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     eprintln!();
 
-    println!(
+    printed(writeln!(
+        std::io::stdout(),
         "{}",
         messages::wrote_file(
             language,
@@ -425,7 +492,7 @@ fn render(args: &[String], language: Language) -> Result<(), String> {
             settings.bit_depth.bits(),
             summary.peak_db,
         )
-    );
+    ))?;
     Ok(())
 }
 
@@ -485,7 +552,8 @@ fn new_project(args: &[String], language: Language) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     session.save(&target).map_err(|error| error.to_string())?;
 
-    println!(
+    printed(writeln!(
+        std::io::stdout(),
         "{}",
         messages::created_project(
             language,
@@ -493,7 +561,7 @@ fn new_project(args: &[String], language: Language) -> Result<(), String> {
             session.project().bpm(),
             session.project().sample_rate,
         )
-    );
+    ))?;
     Ok(())
 }
 

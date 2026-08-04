@@ -580,6 +580,7 @@ new のオプション
     CliFieldSampleRate { en: "sample rate", ja: "サンプルレート" }
     CliNeedsPath { en: "a path", ja: "パス" }
     CliNeedsNumber { en: "a number", ja: "数値" }
+    CliNeedsValue { en: "a value", ja: "値" }
     CliFieldSignature { en: "signature", ja: "拍子" }
     CliMaster { en: "master", ja: "マスター" }
     CliFieldDuration { en: "duration", ja: "長さ" }
