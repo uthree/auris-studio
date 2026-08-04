@@ -181,13 +181,14 @@ pub fn time_grid(
     }
 }
 
-/// Draws the bar-number ruler.
+/// Draws the bar-number ruler, with any tempo changes along its lower edge.
 pub fn ruler(
     window: &mut Window,
     cx: &mut App,
     bounds: Bounds<Pixels>,
     view: &TimelineView,
     signature: TimeSignature,
+    tempo: &[TempoPoint],
     theme: &Theme,
 ) {
     rect(window, bounds, theme.surface_raised);
@@ -235,6 +236,44 @@ pub fn ruler(
                 theme.text_muted,
             );
         }
+    }
+
+    // Tempo changes sit along the ruler's lower edge, in the accent so they read as data
+    // rather than as chrome. A constant-tempo song draws nothing here: the transport readout
+    // already says what the one tempo is, and a marker on every song would be noise.
+    if tempo.len() > 1 {
+        let marker_top = bounds.origin.y + bounds.size.height - px(12.0);
+        for change in tempo {
+            let x = bounds.origin.x + view.tick_to_x(change.tick);
+            if x < bounds.origin.x - px(40.0) || x > bounds.origin.x + bounds.size.width {
+                continue;
+            }
+            rect(
+                window,
+                Bounds {
+                    origin: point(x, marker_top),
+                    size: size(px(2.0), px(12.0)),
+                },
+                theme.accent,
+            );
+            label(
+                window,
+                cx,
+                point(x + px(4.0), marker_top + px(1.0)),
+                format_bpm(change.bpm),
+                px(8.0),
+                theme.accent,
+            );
+        }
+    }
+}
+
+/// A BPM written the way a musician says it: whole numbers bare, anything else to one place.
+pub fn format_bpm(bpm: f64) -> String {
+    if (bpm - bpm.round()).abs() < 0.005 {
+        format!("{bpm:.0}")
+    } else {
+        format!("{bpm:.1}")
     }
 }
 
@@ -764,6 +803,16 @@ pub fn keyboard(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tempo_marker_says_the_number_a_musician_would() {
+        // Whole tempos are the overwhelmingly common case and a trailing .0 on every marker
+        // would double their width for nothing; a genuinely fractional tempo keeps its place.
+        assert_eq!(format_bpm(120.0), "120");
+        assert_eq!(format_bpm(120.001), "120");
+        assert_eq!(format_bpm(97.5), "97.5");
+        assert_eq!(format_bpm(174.26), "174.3");
+    }
 
     #[test]
     fn the_harmony_lane_gives_the_keys_a_strip_of_their_own() {

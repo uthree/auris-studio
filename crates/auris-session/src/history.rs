@@ -6,6 +6,7 @@
 //! one edit path forgets to record its inverse.
 
 use auris_core::Project;
+use auris_core::time::Ticks;
 
 use crate::param::ParamTarget;
 
@@ -20,8 +21,16 @@ pub enum Edit {
     ToggleLoop,
     /// The cycle region was moved.
     SetLoopRegion,
-    /// The project tempo changed.
-    ChangeTempo,
+    /// The tempo of one stretch of the timeline was turned.
+    ///
+    /// The position of the change being turned travels along, because repeated-edit coalescing
+    /// compares whole `Edit` values — see [`Edit::AdjustParameter`]. Without it, nudging the
+    /// tempo here and then seeking elsewhere and nudging there folded into a single step.
+    ChangeTempo(Ticks),
+    /// A tempo change was written somewhere on the timeline.
+    SetTempoPoint,
+    /// A tempo change was removed, letting the tempo before it run through.
+    RemoveTempoPoint,
     /// An instrument track was added.
     AddInstrumentTrack,
     /// An audio track was added.

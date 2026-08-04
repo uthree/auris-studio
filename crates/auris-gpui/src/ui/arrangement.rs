@@ -558,6 +558,8 @@ impl AurisApp {
         let view = self.timeline.clone();
         let signature = self.project().time_signature;
         let playhead = self.playhead_ticks();
+        // The whole map, cheaply: the painter draws nothing for a constant-tempo song.
+        let tempo: Vec<TempoPoint> = self.project().tempo_map.points().to_vec();
         let loop_region = self
             .project()
             .loop_region
@@ -593,7 +595,9 @@ impl AurisApp {
                             move |bounds, _, _| recorded.set(Some(bounds)),
                             move |bounds, _, window, cx| {
                                 paint::clipped(window, bounds, |window| {
-                                    paint::ruler(window, cx, bounds, &view, signature, &theme);
+                                    paint::ruler(
+                                        window, cx, bounds, &view, signature, &tempo, &theme,
+                                    );
                                     if let Some(region) = loop_region {
                                         paint::loop_region(window, bounds, &view, region, &theme);
                                     }

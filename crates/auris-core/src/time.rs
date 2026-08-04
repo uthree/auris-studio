@@ -411,6 +411,16 @@ impl TempoMap {
         self.points[self.segment_index(tick)].bpm
     }
 
+    /// Where the tempo change in force at `tick` sits.
+    ///
+    /// Total, like [`Self::bpm_at`]: the anchor at tick 0 is always in force somewhere, so a
+    /// `tick` before every change answers [`Ticks::ZERO`]. This is what an editor acts
+    /// *through* — "remove the tempo change here" means the one currently driving the clock,
+    /// not one that happens to start under the pixel the pointer landed on.
+    pub fn change_at(&self, tick: Ticks) -> Ticks {
+        self.points[self.segment_index(tick)].tick
+    }
+
     /// Seconds per tick within a segment at `bpm`.
     fn seconds_per_tick(bpm: f64) -> f64 {
         60.0 / (bpm * TICKS_PER_QUARTER as f64)
@@ -521,6 +531,28 @@ mod tests {
         assert_eq!(map.seconds_to_ticks(Seconds(3.0)), bar * 2);
         assert_eq!(map.bpm_at(bar), 240.0);
         assert_eq!(map.bpm_at(bar - Ticks(1)), 120.0);
+    }
+
+    #[test]
+    fn the_change_in_force_is_found_from_anywhere_inside_its_stretch() {
+        let bar = Ticks::from_beats(4.0);
+        let map = TempoMap::from_points(vec![
+            TempoPoint {
+                tick: Ticks::ZERO,
+                bpm: 120.0,
+            },
+            TempoPoint {
+                tick: bar,
+                bpm: 240.0,
+            },
+        ])
+        .unwrap();
+        assert_eq!(map.change_at(Ticks::ZERO), Ticks::ZERO);
+        assert_eq!(map.change_at(bar - Ticks(1)), Ticks::ZERO);
+        assert_eq!(map.change_at(bar), bar);
+        assert_eq!(map.change_at(bar * 3), bar);
+        // Before the timeline starts, the anchor is what is in force.
+        assert_eq!(map.change_at(Ticks(-5)), Ticks::ZERO);
     }
 
     #[test]

@@ -45,12 +45,19 @@ pub enum PromptTarget {
     /// the way back to a take somebody liked is to type the number it had. Undo reaches the same
     /// place while the take is still on the stack, and not afterwards.
     Seed(ClipId),
-    /// The tempo, in beats per minute.
+    /// The tempo of the stretch a position falls in, in beats per minute.
     ///
     /// The wheel and the drag are for finding a tempo by feel. This is for the case where the
     /// number is already known — 174 for a drum and bass track, or whatever the last one was —
-    /// and spinning up to it a beat at a time is absurd.
-    Tempo,
+    /// and spinning up to it a beat at a time is absurd. It edits the tempo change already in
+    /// force at the position rather than writing a new one, because it is opened from the
+    /// transport readout, which shows exactly that.
+    Tempo(Ticks),
+    /// The tempo from a position on the timeline onwards — a new tempo change.
+    ///
+    /// The ruler's counterpart to [`PromptTarget::Tempo`]: the same number, but written *here*,
+    /// the way [`PromptTarget::Key`] writes a key change here.
+    TempoFrom(Ticks),
     /// Where the playhead sits, as bar, beat and hundredth.
     Position,
 }
@@ -68,7 +75,7 @@ impl PromptTarget {
             PromptTarget::Chord(_) => Key::HintChord,
             PromptTarget::Section(_) => Key::HintSection,
             PromptTarget::Seed(_) => Key::HintSeed,
-            PromptTarget::Tempo => Key::HintTempo,
+            PromptTarget::Tempo(_) | PromptTarget::TempoFrom(_) => Key::HintTempo,
             PromptTarget::Position => Key::HintPosition,
             PromptTarget::Track(_) | PromptTarget::Clip(_) => return None,
         })
@@ -434,9 +441,19 @@ impl AurisApp {
             // A tempo out of range is clamped rather than refused. The bounds are the session's,
             // and a number a person typed is a number they meant — landing on the nearest tempo
             // that exists says more than a box that empties itself.
-            PromptTarget::Tempo => match text.parse::<f64>() {
+            PromptTarget::Tempo(at) => match text.parse::<f64>() {
                 Ok(bpm) if bpm.is_finite() && bpm > 0.0 => {
-                    self.session.set_bpm(bpm);
+                    self.session.set_tempo_at(at, bpm);
+                    Ok(())
+                }
+                _ => {
+                    self.set_failed_status(messages::not_a_tempo(self.language(), &text));
+                    return;
+                }
+            },
+            PromptTarget::TempoFrom(at) => match text.parse::<f64>() {
+                Ok(bpm) if bpm.is_finite() && bpm > 0.0 => {
+                    self.session.set_tempo_point(at, bpm);
                     Ok(())
                 }
                 _ => {
@@ -1106,7 +1123,8 @@ mod tests {
             PromptTarget::Key(AT),
             PromptTarget::Chord(AT),
             PromptTarget::Seed(ClipId(1)),
-            PromptTarget::Tempo,
+            PromptTarget::Tempo(AT),
+            PromptTarget::TempoFrom(AT),
             PromptTarget::Position,
         ]
     }
@@ -1151,7 +1169,7 @@ mod tests {
         assert!(!completions(PromptTarget::Key(AT), "").is_empty());
         // And a name has no vocabulary to offer, so it gets no row at all.
         assert!(completions(PromptTarget::Track(TrackId(1)), "").is_empty());
-        assert!(completions(PromptTarget::Tempo, "1").is_empty());
+        assert!(completions(PromptTarget::Tempo(AT), "1").is_empty());
     }
 
     #[test]

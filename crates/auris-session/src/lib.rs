@@ -95,7 +95,9 @@ pub mod prelude {
     pub use auris_core::theory::numeral::Numeral;
     pub use auris_core::theory::pitch::PitchClass;
     pub use auris_core::theory::scale::ScaleId;
-    pub use auris_core::time::{Seconds, TICKS_PER_QUARTER, TempoMap, Ticks, TimeSignature};
+    pub use auris_core::time::{
+        Seconds, TICKS_PER_QUARTER, TempoMap, TempoPoint, Ticks, TimeSignature,
+    };
     pub use auris_core::{
         AudioBuffer, AudioClip, AudioSource, ClipId, ClipPreset, ClipRecipe, EffectSlotId,
         MidiClip, MixerStrip, Note, PluginRegistry, PresetRef, Project, SectionMap, SectionPoint,

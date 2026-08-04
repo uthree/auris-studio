@@ -314,6 +314,10 @@ pub enum Drag {
     },
     /// Dragging the tempo readout.
     Tempo {
+        /// Where the playhead sat when the drag began. The gesture turns the tempo of the
+        /// stretch this falls in, held fixed so a drag during playback does not slide onto
+        /// the next tempo change mid-gesture.
+        at: Ticks,
         /// Tempo when the drag began.
         start_bpm: f64,
         /// Pointer x when the drag began.
@@ -384,7 +388,7 @@ impl Drag {
             // "Write It Again" uses — moving a dial is writing the part again with one thing
             // changed, and a stack full of "Adjusted parameter" would say nothing about which.
             Drag::PartDial { .. } => Some(Edit::GenerateClip),
-            Drag::Tempo { .. } => Some(Edit::ChangeTempo),
+            Drag::Tempo { at, .. } => Some(Edit::ChangeTempo(*at)),
             // Selecting is not an edit; it changes what a later edit will act on.
             Drag::RubberBand { .. } => None,
             // Listening changes nothing at all.

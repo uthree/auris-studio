@@ -751,22 +751,70 @@ impl Session {
         });
     }
 
-    /// Sets the project tempo.
+    /// Sets the project tempo at the start of the timeline.
+    ///
+    /// The whole-song knob: it turns the stretch that begins at tick zero and leaves any tempo
+    /// changes written further along where they are. A transport readout parked mid-song wants
+    /// [`Self::set_tempo_at`] with the playhead instead.
     pub fn set_bpm(&mut self, bpm: f64) {
-        // A wheel over the readout arrives as a stream of small deltas, and re-flattening the
-        // graph is the expensive half of this. A value that has not moved is not a change — and
-        // it is the *clamped* value that decides, or holding the wheel past 999 would keep
-        // recording steps that change nothing. The map is a handful of points; probing a clone
-        // is cheaper than the rebuild it saves.
+        self.set_tempo_at(Ticks::ZERO, bpm);
+    }
+
+    /// Replaces the tempo of the stretch `at` falls in.
+    ///
+    /// A wheel over the readout arrives as a stream of small deltas, and re-flattening the
+    /// graph is the expensive half of this. A value that has not moved is not a change — and
+    /// it is the *clamped* value that decides, or holding the wheel past 999 would keep
+    /// recording steps that change nothing. The map is a handful of points; probing a clone
+    /// is cheaper than the rebuild it saves.
+    ///
+    /// The recorded edit carries the position of the change being turned, so nudging the tempo
+    /// of one stretch and then another stays two undo steps however quickly the hand moves.
+    pub fn set_tempo_at(&mut self, at: Ticks, bpm: f64) {
+        let at = self.project.tempo_map.change_at(at.max_zero());
         let mut probe = self.project.tempo_map.clone();
-        probe.set_initial_bpm(bpm);
-        if probe.initial_bpm() == self.project.bpm() {
+        probe.set_point(at, bpm);
+        if probe == self.project.tempo_map {
             return;
         }
-        self.record_repeating(Edit::ChangeTempo);
-        self.project.set_bpm(bpm);
+        self.record_repeating(Edit::ChangeTempo(at));
+        self.project.tempo_map = probe;
         // Notes are scheduled in frames, so the graph has to be re-flattened, and the loop's
         // frame positions move with it.
+        self.invalidate_graph();
+        self.publish_loop();
+    }
+
+    /// Sets the tempo from `at` onwards, writing a change on the beat `at` rounds to.
+    ///
+    /// `at` snaps the way the harmony does — see [`Self::snap_harmony`] — because a tempo
+    /// change is aimed at a place in the song, not at the sixteenth the pointer happened to
+    /// cross. Writing at tick zero turns the song's opening tempo rather than adding to it,
+    /// exactly as [`Self::set_key`] treats the anchor.
+    pub fn set_tempo_point(&mut self, at: Ticks, bpm: f64) {
+        let at = self.snap_harmony(at);
+        let mut probe = self.project.tempo_map.clone();
+        probe.set_point(at, bpm);
+        if probe == self.project.tempo_map {
+            return;
+        }
+        self.record(Edit::SetTempoPoint);
+        self.project.tempo_map = probe;
+        self.invalidate_graph();
+        self.publish_loop();
+    }
+
+    /// Removes the tempo change in force at `at`, letting the tempo before it run through.
+    ///
+    /// *In force at*, not *starting at*, for the reason given on [`Self::remove_key`]. The
+    /// anchor at tick zero is not a change and cannot be removed: a song always has a tempo.
+    pub fn remove_tempo_point(&mut self, at: Ticks) {
+        let at = self.project.tempo_map.change_at(at.max_zero());
+        if at == Ticks::ZERO {
+            return;
+        }
+        self.record(Edit::RemoveTempoPoint);
+        self.project.tempo_map.remove_point(at);
         self.invalidate_graph();
         self.publish_loop();
     }
@@ -3383,18 +3431,21 @@ mod tests {
 
         let start = Instant::now();
         for notch in 1..=8i32 {
-            session.record_repeating_at(Edit::ChangeTempo, start + tick(notch as u64 * 50));
+            session.record_repeating_at(
+                Edit::ChangeTempo(Ticks::ZERO),
+                start + tick(notch as u64 * 50),
+            );
             session.project.set_bpm(120.0 + f64::from(notch));
         }
-        assert_eq!(session.undo(), Some(Edit::ChangeTempo));
+        assert_eq!(session.undo(), Some(Edit::ChangeTempo(Ticks::ZERO)));
         assert_eq!(session.project().bpm(), 120.0);
         assert!(!session.can_undo(), "eight notches were one step");
 
         // Coming back to the control after the window has closed is a step of its own.
         session.redo();
-        session.record_repeating_at(Edit::ChangeTempo, start + tick(5_000));
+        session.record_repeating_at(Edit::ChangeTempo(Ticks::ZERO), start + tick(5_000));
         session.project.set_bpm(140.0);
-        assert_eq!(session.undo(), Some(Edit::ChangeTempo));
+        assert_eq!(session.undo(), Some(Edit::ChangeTempo(Ticks::ZERO)));
         assert_eq!(session.project().bpm(), 128.0);
     }
 
@@ -3407,18 +3458,18 @@ mod tests {
         session.forget_history();
 
         let start = Instant::now();
-        session.record_repeating_at(Edit::ChangeTempo, start);
+        session.record_repeating_at(Edit::ChangeTempo(Ticks::ZERO), start);
         session.project.set_bpm(130.0);
         session
             .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::QUARTER)
             .unwrap();
-        session.record_repeating_at(Edit::ChangeTempo, start + tick(20));
+        session.record_repeating_at(Edit::ChangeTempo(Ticks::ZERO), start + tick(20));
         session.project.set_bpm(140.0);
 
-        assert_eq!(session.undo(), Some(Edit::ChangeTempo));
+        assert_eq!(session.undo(), Some(Edit::ChangeTempo(Ticks::ZERO)));
         assert_eq!(session.project().bpm(), 130.0);
         assert_eq!(session.undo(), Some(Edit::AddClip));
-        assert_eq!(session.undo(), Some(Edit::ChangeTempo));
+        assert_eq!(session.undo(), Some(Edit::ChangeTempo(Ticks::ZERO)));
         assert_eq!(session.project().bpm(), 120.0);
     }
 
@@ -3434,6 +3485,75 @@ mod tests {
         assert_eq!(steps, 1, "the first push through the ceiling did move it");
         session.set_bpm(20_000.0);
         assert_eq!(undo_depth(&mut session), steps, "and the next one did not");
+        // A written change that changes nothing is not an edit either.
+        session.set_tempo_point(Ticks::ZERO, session.project().bpm());
+        assert_eq!(undo_depth(&mut session), steps);
+    }
+
+    #[test]
+    fn a_tempo_change_lands_on_the_beat_and_stays_undoable() {
+        let mut session = session();
+        session.forget_history();
+
+        // A pointer aims a little past the second beat; the change lands on the beat itself.
+        session.set_tempo_point(Ticks(970), 90.0);
+        let points = session.project().tempo_map.points();
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[1].tick, Ticks(960));
+        assert_eq!(session.project().tempo_map.bpm_at(Ticks(959)), 120.0);
+        assert_eq!(session.project().tempo_map.bpm_at(Ticks(960)), 90.0);
+        // The initial tempo is untouched: the change is a change, not the project knob.
+        assert_eq!(session.project().bpm(), 120.0);
+
+        assert_eq!(session.undo(), Some(Edit::SetTempoPoint));
+        assert_eq!(session.project().tempo_map.points().len(), 1);
+    }
+
+    #[test]
+    fn editing_the_tempo_edits_the_stretch_it_is_aimed_at() {
+        let mut session = session();
+        session.set_tempo_point(Ticks(3_840), 90.0);
+        session.forget_history();
+
+        // Aimed mid-stretch, the edit turns the change governing that stretch rather than
+        // writing a new one.
+        session.set_tempo_at(Ticks(5_000), 96.0);
+        assert_eq!(session.project().tempo_map.points().len(), 2);
+        assert_eq!(session.project().tempo_map.bpm_at(Ticks(3_840)), 96.0);
+        assert_eq!(
+            session.project().bpm(),
+            120.0,
+            "the opening stretch kept its own"
+        );
+
+        // Turning the opening stretch straight afterwards is its own undo step: the recorded
+        // edits carry different positions, so they can never coalesce however fast they come.
+        session.set_tempo_at(Ticks::ZERO, 110.0);
+        assert_eq!(session.undo(), Some(Edit::ChangeTempo(Ticks::ZERO)));
+        assert_eq!(session.undo(), Some(Edit::ChangeTempo(Ticks(3_840))));
+        assert_eq!(session.project().tempo_map.bpm_at(Ticks(3_840)), 90.0);
+    }
+
+    #[test]
+    fn removing_a_tempo_change_is_aimed_from_anywhere_inside_it() {
+        let mut session = session();
+        session.set_tempo_point(Ticks(3_840), 90.0);
+        session.forget_history();
+
+        // The anchor is not a change: pointing inside the opening stretch removes nothing.
+        session.remove_tempo_point(Ticks(100));
+        assert_eq!(session.project().tempo_map.points().len(), 2);
+        assert!(
+            !session.can_undo(),
+            "refusing to remove the anchor is not an edit"
+        );
+
+        // Pointing far past the change still removes the change in force there.
+        session.remove_tempo_point(Ticks(50_000));
+        assert_eq!(session.project().tempo_map.points().len(), 1);
+        assert_eq!(session.project().tempo_map.bpm_at(Ticks(3_840)), 120.0);
+        assert_eq!(session.undo(), Some(Edit::RemoveTempoPoint));
+        assert_eq!(session.project().tempo_map.points().len(), 2);
     }
 
     #[test]

@@ -644,11 +644,15 @@ impl AurisApp {
                 let delta = f32::from(event.position.x - start_x) / travel;
                 self.timeline.set_zoom_fraction(start_fraction + delta);
             }
-            Drag::Tempo { start_bpm, start_x } => {
+            Drag::Tempo {
+                at,
+                start_bpm,
+                start_x,
+            } => {
                 // Half a beat per pixel would be unusable; 0.25 BPM/px lets a short drag cover
                 // the musically interesting range while still landing on exact values.
                 let delta = f64::from(f32::from(event.position.x - start_x)) * 0.25;
-                self.session.set_bpm(start_bpm + delta);
+                self.session.set_tempo_at(at, start_bpm + delta);
             }
             Drag::MovePluginWindow { grab_offset } => {
                 if let Some(window) = self.plugin_window.as_mut() {

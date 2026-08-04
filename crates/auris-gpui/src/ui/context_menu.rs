@@ -158,6 +158,10 @@ pub enum MenuCommand {
     SetKeyAt(Ticks),
     /// Remove the key change at a position.
     RemoveKeyAt(Ticks),
+    /// Type the tempo that runs from a position.
+    SetTempoAt(Ticks),
+    /// Remove the tempo change in force at a position.
+    RemoveTempoAt(Ticks),
     /// Type the chord that sounds from a position.
     SetChordAt(Ticks),
     /// Remove the chord change at a position.
@@ -843,6 +847,8 @@ impl AurisApp {
                 self.open_prompt(Prompt::new(title, PromptTarget::Key(tick), current));
             }
             MenuCommand::RemoveKeyAt(tick) => self.session.remove_key(tick),
+            MenuCommand::SetTempoAt(tick) => self.prompt_for_tempo_from(tick),
+            MenuCommand::RemoveTempoAt(tick) => self.session.remove_tempo_point(tick),
             MenuCommand::SetChordAt(tick) => {
                 let current = self
                     .project()
@@ -1023,7 +1029,7 @@ impl AurisApp {
             .item(self.t(Key::MenuNewAudioTrack), MenuCommand::NewAudioTrack)
     }
 
-    /// The menu for the bar ruler.
+    /// The menu for the bar ruler: the cycle above, the tempo below.
     pub(crate) fn ruler_menu(&self, anchor: Point<Pixels>, tick: Ticks) -> ContextMenu {
         ContextMenu::new(anchor, self.t(Key::MenuCycleTitle))
             .item(
@@ -1042,6 +1048,25 @@ impl AurisApp {
                 self.t(Key::MenuClearCycle),
                 MenuCommand::ClearLoop,
             )
+            .separator()
+            .item(self.t(Key::MenuSetTempoHere), MenuCommand::SetTempoAt(tick))
+            // Offered only where a change governs: the anchor at tick zero is the song's own
+            // tempo, not a change, and cannot be removed.
+            .item_if(
+                self.project().tempo_map.change_at(tick) != Ticks::ZERO,
+                self.t(Key::MenuRemoveTempoHere),
+                MenuCommand::RemoveTempoAt(tick),
+            )
+    }
+
+    /// Opens the tempo sheet aimed at the beat `at` rounds to.
+    ///
+    /// The field comes up holding the tempo already in force there, so the sheet reads as "the
+    /// tempo from here is —" whether the answer confirms it or changes it.
+    pub(crate) fn prompt_for_tempo_from(&mut self, at: Ticks) {
+        let title = self.t(Key::SetTempoTitle);
+        let current = format!("{:.2}", self.project().tempo_map.bpm_at(at));
+        self.open_prompt(Prompt::new(title, PromptTarget::TempoFrom(at), current));
     }
 
     /// Opens the naming sheet for the section in force at `tick`.

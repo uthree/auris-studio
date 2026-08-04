@@ -292,6 +292,8 @@ strings! {
     MenuRemoveKeyHere { en: "Remove Key Change", ja: "転調を取り消す" }
     MenuSetChordHere { en: "Chord Here…", ja: "ここにコードを…" }
     MenuRemoveChordHere { en: "Remove Chord", ja: "コードを削除" }
+    MenuSetTempoHere { en: "Tempo from Here…", ja: "ここからのテンポ…" }
+    MenuRemoveTempoHere { en: "Remove Tempo Change", ja: "テンポチェンジを削除" }
     MenuSetSectionHere { en: "Name Section Here…", ja: "ここからのセクション名を…" }
     MenuRemoveSectionHere { en: "Remove Section", ja: "セクションを削除" }
     MenuEndSectionsHere { en: "End Sections Here", ja: "ここで構造を終える" }
@@ -438,6 +440,8 @@ strings! {
     EditToggleLoop { en: "toggling the cycle", ja: "サイクルの切り替え" }
     EditSetLoopRegion { en: "setting the cycle region", ja: "サイクル範囲の設定" }
     EditChangeTempo { en: "the tempo change", ja: "テンポの変更" }
+    EditSetTempoPoint { en: "writing a tempo change", ja: "テンポチェンジの追加" }
+    EditRemoveTempoPoint { en: "removing a tempo change", ja: "テンポチェンジの削除" }
     EditAddInstrumentTrack { en: "adding an instrument track", ja: "ソフト音源トラックの追加" }
     EditAddAudioTrack { en: "adding an audio track", ja: "オーディオトラックの追加" }
     EditDeleteTrack { en: "deleting a track", ja: "トラックの削除" }

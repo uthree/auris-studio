@@ -99,7 +99,10 @@ impl AurisApp {
             self.project().time_signature,
         );
         let seconds = self.project().tempo_map.ticks_to_seconds(playhead);
-        let bpm = self.project().bpm();
+        // The tempo where the playhead is, not the tempo the song opens at: once the timeline
+        // holds tempo changes, the readout follows the playhead through them, and editing it
+        // turns the stretch being listened to.
+        let bpm = self.project().tempo_map.bpm_at(playhead);
         let grid_label = self.grid_label();
         let master_db = gain_to_db(self.master_level());
         let master_gain_db = self.project().master.gain_db;
@@ -410,8 +413,10 @@ impl AurisApp {
                         cx.notify();
                         return;
                     }
-                    let start_bpm = this.project().bpm();
+                    let at = this.playhead_ticks();
+                    let start_bpm = this.project().tempo_map.bpm_at(at);
                     this.begin_drag(Drag::Tempo {
+                        at,
                         start_bpm,
                         start_x: event.position.x,
                     });
@@ -419,17 +424,22 @@ impl AurisApp {
             )
             .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
                 let notches = f32::from(event.delta.pixel_delta(px(16.0)).y) / 16.0;
-                let bpm = this.project().bpm() + f64::from(notches);
-                this.session.set_bpm(bpm);
+                let at = this.playhead_ticks();
+                let bpm = this.project().tempo_map.bpm_at(at) + f64::from(notches);
+                this.session.set_tempo_at(at, bpm);
                 cx.notify();
             }))
     }
 
     /// Opens the sheet that takes a tempo as a number.
+    ///
+    /// Aimed where the playhead sits when the sheet opens — and held there, so a sheet typed
+    /// into during playback still edits the stretch it came up showing.
     pub(crate) fn prompt_for_tempo(&mut self) {
         let title = self.t(Key::SetTempoTitle);
-        let current = format!("{:.2}", self.project().bpm());
-        self.open_prompt(Prompt::new(title, PromptTarget::Tempo, current));
+        let at = self.playhead_ticks();
+        let current = format!("{:.2}", self.project().tempo_map.bpm_at(at));
+        self.open_prompt(Prompt::new(title, PromptTarget::Tempo(at), current));
     }
 
     /// Opens the sheet that takes a position as bar, beat and hundredth.
