@@ -44,6 +44,10 @@ impl Render for AurisApp {
             self.titled = title;
         }
 
+        // Before anything is built: a sheet needs the keyboard for the platform to type into it,
+        // and a panel needs it back once the sheet is gone.
+        self.reconcile_focus(window);
+
         let theme = self.theme.clone();
         let panels = self.panels.clone();
         let menu_bar = self.render_menu_bar(window, cx);
@@ -263,9 +267,10 @@ impl AurisApp {
             gpui::transparent_black()
         };
         div()
+            // The tab order is on the handle rather than here: `div().tab_index(n)` is copied
+            // onto a handle gpui made itself and silently ignored for one the application owns.
+            // See `PaneFocus::new`.
             .track_focus(self.panes.handle(pane))
-            .tab_stop(true)
-            .tab_index(pane.tab_index())
             .when_some(self.pane_context(pane), |this, context| {
                 this.key_context(context)
             })

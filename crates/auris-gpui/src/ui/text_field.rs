@@ -9,7 +9,10 @@
 //! every value crossing that boundary is converted — a multi-byte character is one UTF-16 unit
 //! and three bytes, and mixing the two up cuts a character in half.
 
+use std::cell::Cell;
 use std::ops::Range;
+
+use gpui::{Bounds, Pixels};
 
 /// A single line of editable text with a selection and optional IME pre-edit.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -264,6 +267,30 @@ impl TextField {
     }
 }
 
+thread_local! {
+    /// Where the caret was drawn last, in window coordinates.
+    ///
+    /// The platform asks for this when an IME starts composing, so it can put the candidate list
+    /// under the text being composed rather than wherever it feels like — bottom right of the
+    /// screen, on Windows, when the application does not answer. It can only be worked out during
+    /// paint, from the shaped line, and it is asked for outside one; a cell between the two is the
+    /// cheapest honest way across.
+    ///
+    /// One cell for the whole application, because one field at a time is being typed into: the
+    /// platform asks whichever input handler is registered, and only one ever is.
+    static CARET: Cell<Option<Bounds<Pixels>>> = const { Cell::new(None) };
+}
+
+/// Records where the caret was painted, for the platform to place an IME beside.
+pub fn set_caret_bounds(bounds: Bounds<Pixels>) {
+    CARET.with(|caret| caret.set(Some(bounds)));
+}
+
+/// Where the caret was painted last, if a field has painted one.
+pub fn caret_bounds() -> Option<Bounds<Pixels>> {
+    CARET.with(Cell::get)
+}
+
 /// A view the platform can type into.
 ///
 /// One field at a time — whichever sheet, palette or box currently owns the keyboard. Two views
@@ -397,10 +424,11 @@ macro_rules! entity_input_handler {
                 _window: &mut ::gpui::Window,
                 _cx: &mut ::gpui::Context<Self>,
             ) -> Option<::gpui::Bounds<::gpui::Pixels>> {
-                // Good enough to put the candidate window under the field. Placing it under the
-                // composing characters themselves would need the shaped line, which only exists
-                // during paint, and the difference is a few pixels of horizontal offset.
-                Some(element_bounds)
+                // The caret if a field has painted one, so the candidate list sits under the
+                // characters being composed. The field's own box otherwise, which is the right
+                // row and the wrong column — still far better than the nothing that sends the
+                // list to the corner of the screen.
+                Some($crate::ui::text_field::caret_bounds().unwrap_or(element_bounds))
             }
 
             fn character_index_for_point(

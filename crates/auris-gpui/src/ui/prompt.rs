@@ -721,6 +721,13 @@ fn paint_field(
         let scroll = (caret_at - visible).max(px(0.0));
         let origin = point(origin.x - scroll, origin.y);
 
+        // Where the platform should put an IME's candidate list. Only knowable here, from the
+        // shaped line, and asked for outside a paint — see `text_field::set_caret_bounds`.
+        crate::ui::text_field::set_caret_bounds(Bounds {
+            origin: point(origin.x + caret_at, bounds.origin.y),
+            size: size(px(1.0), bounds.size.height),
+        });
+
         if !selection.is_empty() {
             let start = advance(window, selection.start);
             let end = advance(window, selection.end);

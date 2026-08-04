@@ -121,8 +121,11 @@ impl Pane {
     ///
     /// Handed to gpui, which walks its tab stops in this order and skips the ones that were not
     /// painted — so a hidden library drops out of the cycle without anything here saying so.
+    ///
+    /// From one rather than zero: the window's own handle is registered too, at zero, and two
+    /// stops sharing an index leaves the order between them down to which was painted first.
     pub fn tab_index(self) -> isize {
-        Self::ALL.iter().position(|pane| *pane == self).unwrap_or(0) as isize
+        Self::ALL.iter().position(|pane| *pane == self).unwrap_or(0) as isize + 1
     }
 }
 
@@ -139,13 +142,21 @@ pub struct PaneFocus {
 }
 
 impl PaneFocus {
-    /// Makes a handle for every pane.
+    /// Makes a handle for every pane, in the order Tab walks them.
+    ///
+    /// The tab order goes on the *handle* and not on the element. `div().tab_index(n)` looks like
+    /// the way to say this and is silently ignored for a handle the application owns: gpui copies
+    /// those settings onto a handle it made itself, and skips the whole block when the element is
+    /// tracking one that was handed to it. The tab stop map reads the handle, so every panel came
+    /// out `tab_stop: false` and Tab walked a cycle with nothing in it.
     pub fn new(cx: &mut App) -> Self {
+        let stop =
+            |cx: &mut App, pane: Pane| cx.focus_handle().tab_index(pane.tab_index()).tab_stop(true);
         Self {
-            library: cx.focus_handle(),
-            arrangement: cx.focus_handle(),
-            editor: cx.focus_handle(),
-            inspector: cx.focus_handle(),
+            library: stop(cx, Pane::Library),
+            arrangement: stop(cx, Pane::Arrangement),
+            editor: stop(cx, Pane::Editor),
+            inspector: stop(cx, Pane::Inspector),
         }
     }
 
@@ -485,6 +496,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_pane_has_its_own_place_in_the_tab_order() {
+        // Two stops on one index leaves the order between them down to which was painted first,
+        // and the panels are not painted in the order the eye reads them.
+        let mut seen = BTreeSet::new();
+        for pane in Pane::ALL {
+            assert!(
+                seen.insert(pane.tab_index()),
+                "{pane:?} shares an index with another panel"
+            );
+            assert!(
+                pane.tab_index() > 0,
+                "{pane:?} collides with the window's own handle at zero"
+            );
+        }
+        // And the numbering follows the declaration, which is the order Tab should walk them in.
+        let indices: Vec<isize> = Pane::ALL.iter().map(|pane| pane.tab_index()).collect();
+        let mut sorted = indices.clone();
+        sorted.sort_unstable();
+        assert_eq!(indices, sorted);
+    }
+
+    #[test]
     fn sweeping_a_progression_strikes_each_chord_once() {
         // One gesture across four bars of chords, as a sequence of pointer moves. What must come
         // out is one strike per chord — not one per pixel, which is what a check for "is this
@@ -703,6 +736,8 @@ pub struct AurisApp {
     pub(crate) focus: FocusHandle,
     /// Focus handles for the panels, which is what scopes a binding to one of them.
     pub(crate) panes: PaneFocus,
+    /// The panel that last held the keyboard, to give it back after a sheet closes.
+    pub(crate) last_pane: Pane,
     /// Window height as of the last frame, used only as a fallback before the first paint.
     pub(crate) viewport_height: Pixels,
     /// Width of the arrangement body as of the last frame.
@@ -825,6 +860,7 @@ impl AurisApp {
             auditioning: None,
             focus: cx.focus_handle(),
             panes: PaneFocus::new(cx),
+            last_pane: Pane::Arrangement,
             viewport_height: px(900.0),
             arrangement_width: px(900.0),
             canvas: CanvasBounds::default(),
@@ -905,7 +941,32 @@ impl AurisApp {
 
     /// Puts the keyboard in `pane`, which is what clicking one does.
     pub(crate) fn focus_pane(&mut self, pane: Pane, window: &mut Window) {
+        self.last_pane = pane;
         window.focus(self.panes.handle(pane));
+    }
+
+    /// Moves the keyboard between a panel and an open sheet as one opens and closes.
+    ///
+    /// A text field registers itself as the window's input handler only while *its own* handle is
+    /// focused — [`gpui::Window::handle_input`] checks that and quietly does nothing otherwise. The
+    /// sheet's field is on the window's handle, so a sheet opened while a panel held the keyboard
+    /// got no input handler at all: nothing typed reached it, and the platform, with no caret to
+    /// ask about, put the IME's candidate window wherever it liked.
+    ///
+    /// Reconciled here rather than at each of the dozen places a sheet opens, most of which have
+    /// no window to hand — and this way it is right again after any path that misses.
+    pub(crate) fn reconcile_focus(&mut self, window: &mut Window) {
+        let sheet = self.prompt.is_some() || self.palette.is_some();
+        if sheet {
+            if !self.focus.is_focused(window) {
+                window.focus(&self.focus);
+            }
+        } else if self.focus.is_focused(window) {
+            // Back where it came from, so the panel bindings work again the moment the sheet is
+            // gone rather than after the next click.
+            let pane = self.last_pane;
+            window.focus(self.panes.handle(pane));
+        }
     }
 
     // ---------------------------------------------------------------- gestures

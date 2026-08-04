@@ -1043,7 +1043,14 @@ impl HasTextField for SettingsWindow {
 crate::entity_input_handler!(SettingsWindow);
 
 impl Render for SettingsWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // This window has one focusable thing in it, and both the key capture and the search box
+        // need it: a text field only registers itself as the window's input handler while its own
+        // handle is focused, and a key press only reaches `on_key` through the focused element.
+        if !self.focus.is_focused(window) {
+            window.focus(&self.focus);
+        }
+
         let theme = self.theme.clone();
         let tabs = self.render_tabs(cx);
         let body = match self.tab {
