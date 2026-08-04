@@ -46,8 +46,8 @@ pub struct SoundFontPreset {
 /// that does not.
 ///
 /// The whole file is read first and its chunk tree walked before the parser is allowed to
-/// believe it — see [`check_chunks`] for what the parser would otherwise do with a size field
-/// that lies.
+/// believe it — see `check_chunks` below for what the parser would otherwise do with a size
+/// field that lies.
 pub fn load_soundfont(path: &Path) -> Result<Arc<SoundFont>> {
     let bytes = fs::read(path)
         .map_err(|error| IoError::Decode(format!("could not open {}: {error}", path.display())))?;
