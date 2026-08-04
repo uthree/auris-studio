@@ -32,10 +32,6 @@ fn main() {
     auris_session::migrate_legacy_config();
 
     Application::new().run(|cx: &mut App| {
-        // Quit is handled by the view (`AurisApp::on_quit`) so an unsaved document can stop it.
-        // This is the fallback for a keystroke that arrives with nothing focused, and for the
-        // Settings window, which has no document of its own to lose.
-        cx.on_action(|_: &actions::Quit, cx: &mut App| cx.quit());
         // The menu bar is built before the window, so the language comes from the settings file
         // rather than from the view that has not been created yet. `AurisApp` loads the same
         // file a moment later, and rebuilds these menus whenever the choice changes.
@@ -56,6 +52,29 @@ fn main() {
                 |_, cx| cx.new(AurisApp::new),
             )
             .expect("could not open the main window");
+
+        // Quit is normally handled by the main window's view (`AurisApp::on_quit`) so an
+        // unsaved document can stop it. But a Quit can also land where no view is listening —
+        // dispatch goes to the *active* window, and the Settings window listens for nothing —
+        // and quitting from there would lose the main window's document just the same. So the
+        // fallback runs the same guard through the main window instead of quitting on the spot.
+        cx.on_action(move |_: &actions::Quit, cx: &mut App| {
+            let guarded = window.update(cx, |view, window, cx| {
+                let go = view.confirm_discard(ui::prompt::PendingAction::Quit);
+                if !go {
+                    // The sheet is asking in the main window; bring it forward so the
+                    // question is not left behind the window the keystroke landed in.
+                    window.activate_window();
+                }
+                cx.notify();
+                go
+            });
+            // A clean document quits now — and so does a main window that is already gone,
+            // because then there is nothing left to guard.
+            if guarded.unwrap_or(true) {
+                cx.quit();
+            }
+        });
 
         // The key bindings are dispatched to the focused view, so focus the app up front —
         // otherwise the space bar would not start playback until something was clicked. The
