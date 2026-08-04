@@ -678,37 +678,57 @@ impl SettingsWindow {
             .flex()
             .items_center()
             .h(px(28.0))
-            .px_2()
             .mb_2()
             .rounded(Metrics::RADIUS_SM)
             .bg(theme.surface_sunken)
             .border_1()
             .border_color(if armed { theme.border } else { theme.accent })
-            .child(if armed || empty {
+            .child(
                 div()
-                    .flex_1()
-                    .text_xs()
-                    .text_color(if empty { theme.text_faint } else { theme.text })
-                    .child(if empty {
-                        self.t(Key::SearchCommands).to_string()
-                    } else {
-                        self.search.content().to_string()
-                    })
-                    .into_any_element()
-            } else {
-                div()
+                    .relative()
                     .flex_1()
                     .h_full()
-                    .child(crate::ui::prompt::editable_text(
-                        self.search.content().to_string().into(),
-                        self.search.selection(),
-                        self.search.marked(),
-                        self.focus.clone(),
-                        cx.entity(),
-                        theme.clone(),
-                    ))
-                    .into_any_element()
-            })
+                    // Behind the field, never instead of it. Swapping the box for a label while
+                    // it was empty meant the field never painted, so it never registered itself
+                    // as the window's input handler — and a box that cannot be typed into cannot
+                    // stop being empty. Nothing could be searched for at all.
+                    .children(empty.then(|| {
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .items_center()
+                            // The same inset and size the field draws its own text at, so the
+                            // first character typed lands where the placeholder was.
+                            .pl(crate::ui::prompt::FIELD_PADDING)
+                            .text_size(crate::ui::prompt::TEXT_SIZE)
+                            .text_color(theme.text_faint)
+                            .child(self.t(Key::SearchCommands))
+                    }))
+                    .child(if armed {
+                        // A row is waiting for a key press, and the field must not take it. Drawn
+                        // rather than editable for exactly as long as that is true.
+                        div()
+                            .size_full()
+                            .flex()
+                            .items_center()
+                            .pl(crate::ui::prompt::FIELD_PADDING)
+                            .text_size(crate::ui::prompt::TEXT_SIZE)
+                            .text_color(theme.text)
+                            .child(self.search.content().to_string())
+                            .into_any_element()
+                    } else {
+                        crate::ui::prompt::editable_text(
+                            self.search.content().to_string().into(),
+                            self.search.selection(),
+                            self.search.marked(),
+                            self.focus.clone(),
+                            cx.entity(),
+                            theme.clone(),
+                        )
+                        .into_any_element()
+                    }),
+            )
             .into_any_element()
     }
 

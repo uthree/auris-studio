@@ -173,11 +173,11 @@ impl Prompt {
 }
 
 /// Font size of the edited text.
-const TEXT_SIZE: Pixels = px(13.0);
+pub(crate) const TEXT_SIZE: Pixels = px(13.0);
 /// Height of the field's box.
 const FIELD_HEIGHT: Pixels = px(28.0);
 /// Space between the field's edge and its text.
-const FIELD_PADDING: Pixels = px(8.0);
+pub(crate) const FIELD_PADDING: Pixels = px(8.0);
 
 impl AurisApp {
     /// Opens a rename sheet, replacing any open menu.

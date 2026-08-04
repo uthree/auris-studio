@@ -428,7 +428,13 @@ macro_rules! entity_input_handler {
                 // characters being composed. The field's own box otherwise, which is the right
                 // row and the wrong column — still far better than the nothing that sends the
                 // list to the corner of the screen.
-                Some($crate::ui::text_field::caret_bounds().unwrap_or(element_bounds))
+                //
+                // Only when the caret is inside *this* field. One cell serves the application and
+                // two windows can both have a field on screen; a caret left there by the other
+                // one would put the candidate list in a window nobody is typing into.
+                let caret = $crate::ui::text_field::caret_bounds()
+                    .filter(|caret| element_bounds.contains(&caret.origin));
+                Some(caret.unwrap_or(element_bounds))
             }
 
             fn character_index_for_point(
