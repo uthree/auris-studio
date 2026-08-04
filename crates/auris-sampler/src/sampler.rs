@@ -105,7 +105,13 @@ pub fn register_sampler(registry: &mut PluginRegistry, fonts: SharedSoundFonts) 
 ///
 /// The synthesiser is built in [`Instrument::prepare`], which is where the font is looked up and
 /// every buffer it needs is allocated. [`Instrument::process`] renders into buffers that already
-/// exist and touches neither the bank nor the filesystem.
+/// exist and touches neither the bank nor the filesystem, and [`Instrument::reset`] — reachable
+/// from the callback through every transport stop and seek — re-selects the preset `prepare`
+/// resolved rather than going back to the bank, whose lock is not one to take there.
+///
+/// If the library panics while rendering — a degenerate font can push its oscillator off the end
+/// of the sample data — the panic is caught and the instance goes silent until the next
+/// `prepare` builds a fresh synthesiser. One track's sound is the most a bad font may cost.
 ///
 /// Note events are honoured by splitting the block at each event's frame, so timing does not
 /// depend on the host's buffer size — down to the synthesiser's own internal block, which is
@@ -116,8 +122,19 @@ pub struct Sampler {
     values: [f32; PARAM_COUNT],
     /// Which sound to play, from the saved state. `None` means nothing has chosen one.
     preset: Option<PresetRef>,
+    /// What [`Self::resolve`] answered when the synthesiser was built.
+    ///
+    /// `reset` re-selects from this rather than resolving again: it runs on the audio thread,
+    /// where taking the bank's lock — let alone logging a missing font — is not allowed.
+    selected: Option<PresetRef>,
     /// Built in `prepare`; `None` when there is no font to play.
     synth: Option<Synthesizer>,
+    /// Set when the synthesiser panicked while rendering.
+    ///
+    /// A poisoned synthesiser is never called again — whatever state the panic left it in is
+    /// not one to play — but it is also not dropped here, because dropping it would free its
+    /// buffers on the audio thread. It waits for the next `prepare`.
+    poisoned: bool,
     /// Only used to fold stereo into a host that asked for one channel.
     scratch_left: Vec<f32>,
     scratch_right: Vec<f32>,
@@ -149,7 +166,9 @@ impl Sampler {
             params,
             values,
             preset: None,
+            selected: None,
             synth: None,
+            poisoned: false,
             scratch_left: Vec::new(),
             scratch_right: Vec::new(),
             held: 0,
@@ -237,10 +256,18 @@ impl Sampler {
 
     /// Applies one event.
     fn dispatch(&mut self, event: NoteEvent) {
-        let Sampler { synth, held, .. } = self;
+        let Sampler {
+            synth,
+            held,
+            poisoned,
+            ..
+        } = self;
         let Some(synth) = synth.as_mut() else {
             return;
         };
+        if *poisoned {
+            return;
+        }
         match event {
             NoteEvent::NoteOn {
                 pitch, velocity, ..
@@ -275,16 +302,34 @@ impl Sampler {
     fn render_range(&mut self, out: &mut AudioBuffer, start: usize, end: usize) {
         let Sampler {
             synth,
+            poisoned,
             scratch_left,
             scratch_right,
+            held,
             ..
         } = self;
         let Some(synth) = synth.as_mut() else {
             return;
         };
+        if *poisoned {
+            // Poisoned mid-block: the rest of the block is silence, not another attempt.
+            for channel in out.channels_mut() {
+                channel[start..end].fill(0.0);
+            }
+            return;
+        }
         match out.channels_mut() {
             [left, right, rest @ ..] => {
-                synth.render(&mut left[start..end], &mut right[start..end]);
+                if !rendered_safely(synth, &mut left[start..end], &mut right[start..end]) {
+                    *poisoned = true;
+                    *held = 0;
+                    left[start..end].fill(0.0);
+                    right[start..end].fill(0.0);
+                    for extra in rest.iter_mut() {
+                        extra[start..end].fill(0.0);
+                    }
+                    return;
+                }
                 // More than two channels is not something the engine asks for, but a buffer
                 // that arrives with them should not come back with silence in the extras.
                 for (index, extra) in rest.iter_mut().enumerate() {
@@ -295,7 +340,16 @@ impl Sampler {
             [mono] => {
                 let available = scratch_left.len().min(scratch_right.len());
                 let frames = (end - start).min(available);
-                synth.render(&mut scratch_left[..frames], &mut scratch_right[..frames]);
+                if !rendered_safely(
+                    synth,
+                    &mut scratch_left[..frames],
+                    &mut scratch_right[..frames],
+                ) {
+                    *poisoned = true;
+                    *held = 0;
+                    mono[start..end].fill(0.0);
+                    return;
+                }
                 for (index, sample) in mono[start..start + frames].iter_mut().enumerate() {
                     *sample = 0.5 * (scratch_left[index] + scratch_right[index]);
                 }
@@ -306,6 +360,19 @@ impl Sampler {
             [] => {}
         }
     }
+}
+
+/// Lets the synthesiser render, and answers whether it survived.
+///
+/// The library indexes its sample data with arithmetic a degenerate font can push out of range,
+/// and this is the audio callback thread: an unwind escaping into the C callback would abort the
+/// whole process. Catching costs nothing until something actually panics; the price of that —
+/// the hook's message, an allocation for the payload — is paid once, on the way to silence.
+///
+/// `AssertUnwindSafe` is honest here because the synthesiser is never called again once
+/// poisoned: whatever invariants the panic broke are invariants nobody will read.
+fn rendered_safely(synth: &mut Synthesizer, left: &mut [f32], right: &mut [f32]) -> bool {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| synth.render(left, right))).is_ok()
 }
 
 impl Parameterized for Sampler {
@@ -362,7 +429,13 @@ impl Instrument for Sampler {
     }
 
     fn prepare(&mut self, ctx: &PrepareContext) {
+        if self.poisoned {
+            // Deferred from the audio thread, which had no business saying it there.
+            log::warn!("the synthesiser panicked while rendering and is being rebuilt");
+        }
+        self.poisoned = false;
         self.synth = None;
+        self.selected = None;
         self.held = 0;
 
         // Only a host asking for fewer than two channels needs anywhere to fold stereo down.
@@ -399,25 +472,32 @@ impl Instrument for Sampler {
                 return;
             }
         }
+        self.selected = Some(preset);
         self.select(preset);
         self.push_all();
     }
 
     fn reset(&mut self) {
         self.held = 0;
+        if self.poisoned {
+            // The synthesiser died rendering; whatever state it was left in is not one to
+            // call back into. `prepare` will build a fresh one.
+            return;
+        }
         if let Some(synth) = self.synth.as_mut() {
             synth.reset();
         }
         // A reset returns the channel to bank 0 patch 0 with the library's own controller
-        // defaults, so everything the track chose has to be said again.
-        if let Some((_, preset)) = self.resolve() {
+        // defaults, so everything the track chose has to be said again — from what `prepare`
+        // resolved, because this runs on the audio thread and the bank's lock does not.
+        if let Some(preset) = self.selected {
             self.select(preset);
         }
         self.push_all();
     }
 
     fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
-        if self.synth.is_none() {
+        if self.synth.is_none() || self.poisoned {
             out.clear();
             return;
         }
@@ -777,6 +857,75 @@ mod tests {
     }
 
     #[test]
+    fn a_font_that_breaks_the_synthesiser_costs_its_sound_and_not_the_process() {
+        // The library walks a looping voice by folding the position back one loop length per
+        // frame; this font's one-frame loop at a preposterous claimed rate outruns the fold,
+        // runs off the end of the sample data and hits an unchecked index. Uncontained, that
+        // panic unwinds into the C audio callback and aborts the whole application.
+        let bank = SoundFontBank::shared();
+        bank.insert(FONT, crate::test_support::runaway_font(RATE as i32 * 512));
+        let mut sampler = playing(bank, 0, 512);
+
+        let ctx = ProcessContext::realtime(RATE, 512, 0, 120.0, true);
+        let mut out = AudioBuffer::stereo(512, RATE);
+        for sample in out.channel_mut(0) {
+            *sample = 0.5;
+        }
+        sampler.process(&[note_on(0)], &mut out, &ctx);
+
+        assert!(
+            sampler.poisoned,
+            "the runaway loop should have taken the synthesiser down"
+        );
+        assert!(
+            out.channel(0).iter().all(|s| *s == 0.0),
+            "a poisoned block must come back as silence, not as what was in the buffer"
+        );
+        assert_eq!(sampler.active_voices(), 0);
+
+        // Every later block is silence rather than another attempt, and a reset must not call
+        // back into whatever state the panic left behind.
+        sampler.reset();
+        let mut later = AudioBuffer::stereo(512, RATE);
+        for sample in later.channel_mut(0) {
+            *sample = 0.5;
+        }
+        sampler.process(&[note_on(0)], &mut later, &ctx);
+        assert!(later.channel(0).iter().all(|s| *s == 0.0));
+
+        // `prepare` is the way back to life.
+        sampler.prepare(&PrepareContext::new(RATE, 512, 2));
+        assert!(!sampler.poisoned);
+        assert!(sampler.has_voice());
+    }
+
+    #[test]
+    fn a_reset_never_goes_back_to_the_bank() {
+        // `reset` runs on the audio callback thread — every transport stop and seek reaches it
+        // — so it must play from what `prepare` resolved rather than take the bank's lock.
+        // Observable from outside: a font that leaves the bank after `prepare` keeps sounding,
+        // and keeps sounding as the sound the track chose rather than the library's default.
+        let bank = stocked();
+        let frames = 1_024;
+        let mut sampler = playing(bank.clone(), 42, frames);
+        bank.remove(FONT);
+
+        let ctx = ProcessContext::realtime(RATE, frames, 0, 120.0, true);
+        let level = |sampler: &mut Sampler| {
+            let mut out = AudioBuffer::stereo(frames, RATE);
+            sampler.process(&[note_on(0)], &mut out, &ctx);
+            rms(&out.channel(0)[frames / 2..])
+        };
+        let before = level(&mut sampler);
+        sampler.reset();
+        let after = level(&mut sampler);
+        assert!(
+            (before - after).abs() < before * 0.05,
+            "the chosen sound should survive a reset with the bank emptied: {before} then {after}"
+        );
+    }
+
+    #[test]
     fn a_reset_keeps_playing_the_sound_the_track_chose() {
         // Resetting the synthesiser resets its channels too, which would otherwise silently
         // return the track to bank 0 patch 0 — a different instrument, from the same font.
@@ -819,7 +968,8 @@ mod tests {
     #[test]
     fn nothing_on_the_audio_path_allocates() {
         // The realtime contract, as a test rather than as a sentence in a doc comment. It covers
-        // `process` and `set_param`, which are the two things the audio thread calls.
+        // `process`, `set_param` and `reset`, which are the three things the audio thread calls
+        // — `reset` is how this file once ended up taking a lock and logging on the callback.
         let mut sampler = playing(stocked(), 0, 512);
         let mut out = AudioBuffer::stereo(512, RATE);
         let ctx = ProcessContext::realtime(RATE, 512, 0, 120.0, true);
@@ -842,6 +992,7 @@ mod tests {
             for _ in 0..64 {
                 sampler.process(&events, &mut out, &ctx);
                 sampler.set_param_by_key("level", -3.0);
+                sampler.reset();
             }
         });
         assert_eq!(allocations, 0, "the sampler allocated while rendering");

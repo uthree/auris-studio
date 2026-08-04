@@ -77,6 +77,8 @@ static ALLOCATOR: CountingAllocator = CountingAllocator;
 const GENERATOR_INSTRUMENT: u16 = 41;
 /// Generator that names which sample an instrument zone plays.
 const GENERATOR_SAMPLE_ID: u16 = 53;
+/// Generator that sets how a sample loops; the value `1` loops it continuously.
+const GENERATOR_SAMPLE_MODES: u16 = 54;
 
 /// Frames of sample data per voice.
 ///
@@ -134,6 +136,103 @@ pub(crate) fn two_tone_font(sample_rate: i32) -> Arc<SoundFont> {
         ],
         sample_rate,
     )
+}
+
+/// A font whose one voice loops a single frame while claiming to have been recorded at
+/// `claimed_rate` — degenerate on purpose, and accepted by the library's own sanity check.
+///
+/// The library walks a looping voice by folding the play position back one loop length per
+/// output frame. A pitch ratio (claimed rate over engine rate) larger than the loop length
+/// makes the position climb faster than the fold can bring it back, off the end of the sample
+/// data, into an unchecked index — the panic [`crate::Sampler`] has to contain rather than let
+/// unwind into the C audio callback.
+pub(crate) fn runaway_font(claimed_rate: i32) -> Arc<SoundFont> {
+    let bytes = runaway_bytes(claimed_rate);
+    let font = SoundFont::new(&mut Cursor::new(bytes)).expect("the font this module writes");
+    Arc::new(font)
+}
+
+/// Writes the degenerate file behind [`runaway_font`].
+///
+/// Same skeleton as [`soundfont_bytes`], except the one instrument zone carries a second
+/// generator — loop continuously — and the sample header declares the one-frame loop.
+fn runaway_bytes(claimed_rate: i32) -> Vec<u8> {
+    let voice = Voice {
+        name: "Runaway",
+        bank: 0,
+        patch: 0,
+        amplitude: 0.5,
+    };
+    let voices = std::slice::from_ref(&voice);
+
+    let mut info = Vec::new();
+    info.extend(chunk(b"ifil", {
+        let mut version = Vec::new();
+        push_u16(&mut version, 2);
+        push_u16(&mut version, 1);
+        version
+    }));
+    info.extend(chunk(b"isng", padded(b"EMU8000")));
+    info.extend(chunk(b"INAM", padded(b"Auris Runaway Font")));
+
+    let sdta = chunk(b"smpl", sample_data(voices, claimed_rate));
+
+    let mut pdta = Vec::new();
+    pdta.extend(chunk(b"phdr", preset_headers(voices)));
+    pdta.extend(chunk(b"pbag", zones(1)));
+    pdta.extend(chunk(b"pmod", modulator_terminator()));
+    pdta.extend(chunk(b"pgen", generators(GENERATOR_INSTRUMENT, 1)));
+    pdta.extend(chunk(b"inst", instrument_headers(voices)));
+    // The one instrument zone holds two generators, so its bag spans 0..2.
+    pdta.extend(chunk(b"ibag", {
+        let mut out = Vec::new();
+        push_u16(&mut out, 0);
+        push_u16(&mut out, 0);
+        push_u16(&mut out, 2);
+        push_u16(&mut out, 0);
+        out
+    }));
+    pdta.extend(chunk(b"imod", modulator_terminator()));
+    pdta.extend(chunk(b"igen", {
+        // Loop continuously, then name the sample — the sample id has to come last.
+        let mut out = Vec::new();
+        push_u16(&mut out, GENERATOR_SAMPLE_MODES);
+        push_u16(&mut out, 1);
+        push_u16(&mut out, GENERATOR_SAMPLE_ID);
+        push_u16(&mut out, 0);
+        push_u16(&mut out, 0);
+        push_u16(&mut out, 0);
+        out
+    }));
+    pdta.extend(chunk(b"shdr", {
+        // The one-frame loop at the very start is what the fold cannot keep up with.
+        let mut out = Vec::new();
+        push_name(&mut out, voice.name);
+        push_i32(&mut out, 0); // start
+        push_i32(&mut out, SAMPLE_FRAMES as i32); // end
+        push_i32(&mut out, 0); // loop start
+        push_i32(&mut out, 1); // loop end
+        push_i32(&mut out, claimed_rate);
+        out.push(ROOT_KEY);
+        out.push(0); // pitch correction, in cents
+        push_u16(&mut out, 0); // link to the other half of a stereo pair
+        push_u16(&mut out, 1); // mono
+        push_name(&mut out, "EOS");
+        out.extend_from_slice(&[0; 26]);
+        out
+    }));
+
+    let mut body = Vec::new();
+    body.extend(list(b"INFO", info));
+    body.extend(list(b"sdta", sdta));
+    body.extend(list(b"pdta", pdta));
+
+    let mut file = Vec::new();
+    file.extend_from_slice(b"RIFF");
+    push_u32(&mut file, (body.len() + 4) as u32);
+    file.extend_from_slice(b"sfbk");
+    file.extend(body);
+    file
 }
 
 /// Writes the file.
