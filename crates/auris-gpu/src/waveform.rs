@@ -211,11 +211,16 @@ impl GpuContext {
 
         for channel in 0..channel_count {
             let samples = buffer.channel(channel);
+            // Clamped to `frames` as well as to the channel's own length: the CPU reference
+            // reads no further, and a secondary channel longer than the first would otherwise
+            // fold its samples past `frame_count` into the last bucket — when the crate's
+            // whole contract is that the two paths differ only in speed.
+            let usable = samples.len().min(frames);
             let mut first_bucket = 0;
             while first_bucket < buckets {
                 let count = buckets_per_chunk.min(buckets - first_bucket);
                 let start = first_bucket * stride;
-                let end = ((first_bucket + count) * stride).min(samples.len());
+                let end = ((first_bucket + count) * stride).min(usable);
                 let chunk = samples.get(start..end)?;
 
                 let params = Params {
