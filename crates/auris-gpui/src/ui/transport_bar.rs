@@ -8,6 +8,7 @@ use gpui::{Axis, IntoElement, Window, div, prelude::*, px};
 use crate::app::{AurisApp, Drag, EditorTab};
 use crate::theme::Metrics;
 use crate::ui::icons::Icon;
+use crate::ui::prompt::{Prompt, PromptTarget};
 use crate::ui::widgets::{
     ButtonStyle, button, db_to_meter_position, icon_button, level_meter, readout,
 };
@@ -29,6 +30,56 @@ const GRID_CHOICES: [(&str, i64); 7] = [
 /// Marks the entry whose label is translated rather than notation. See [`AurisApp::grid_label`].
 const GRID_OFF_LABEL: &str = "";
 
+/// Ticks in one unit of the position readout's last field.
+///
+/// The readout has always shown hundredths of a beat rather than raw ticks, because 960 of
+/// anything is a number nobody reads. Typing one back has to use the same unit, or the box would
+/// be asking for something other than what the display just said.
+const POSITION_UNIT: i64 = TICKS_PER_QUARTER / 96;
+
+/// The playhead position as the readout writes it: bar, beat and hundredth, counting from one.
+pub fn format_position(at: Ticks, tempo: &TempoMap, signature: TimeSignature) -> String {
+    let (bar, beat, tick) = tempo.bar_beat_at(at, signature);
+    format!("{bar}.{beat}.{:03}", tick / POSITION_UNIT)
+}
+
+/// Reads a position back out of what [`format_position`] wrote.
+///
+/// Forgiving about how much of it is there — `17` is the top of bar seventeen and `17.3` is its
+/// third beat — because the trailing fields are almost always zero and typing `.1.000` every time
+/// is the sort of thing that makes people go back to the wheel. Strict about the rest: a beat past
+/// the end of its bar is a typo rather than a way of writing the next bar, and answering it by
+/// silently jumping somewhere else would be worse than saying no.
+pub fn parse_position(text: &str, signature: TimeSignature) -> Option<Ticks> {
+    let mut fields = text
+        .split(['.', ':', '|', ' '])
+        .filter(|field| !field.is_empty());
+    let bar: i64 = fields.next()?.trim().parse().ok()?;
+    let beat: i64 = fields
+        .next()
+        .map_or(Ok(1), |field| field.trim().parse())
+        .ok()?;
+    let unit: i64 = fields
+        .next()
+        .map_or(Ok(0), |field| field.trim().parse())
+        .ok()?;
+    if fields.next().is_some() {
+        return None;
+    }
+
+    let beats_per_bar = i64::from(signature.numerator.max(1));
+    let ticks_per_beat = signature.ticks_per_beat().raw().max(1);
+    let units_per_beat = ticks_per_beat / POSITION_UNIT.max(1);
+    if bar < 1 || !(1..=beats_per_bar).contains(&beat) || !(0..units_per_beat).contains(&unit) {
+        return None;
+    }
+    Some(Ticks(
+        (bar - 1) * signature.ticks_per_bar().raw()
+            + (beat - 1) * ticks_per_beat
+            + unit * POSITION_UNIT,
+    ))
+}
+
 impl AurisApp {
     /// Renders the transport bar.
     pub(crate) fn render_transport(
@@ -40,10 +91,11 @@ impl AurisApp {
         let playing = self.is_playing();
         let looping = self.project().loop_enabled;
         let playhead = self.playhead_ticks();
-        let (bar, beat, tick) = self
-            .project()
-            .tempo_map
-            .bar_beat_at(playhead, self.project().time_signature);
+        let position = format_position(
+            playhead,
+            &self.project().tempo_map,
+            self.project().time_signature,
+        );
         let seconds = self.project().tempo_map.ticks_to_seconds(playhead);
         let bpm = self.project().bpm();
         let grid_label = self.grid_label();
@@ -183,13 +235,31 @@ impl AurisApp {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(readout(
-                                self.t(Key::Position),
-                                format!("{bar}.{beat}.{:03}", tick / 10),
-                                Some(seconds.format_clock().into()),
-                                px(118.0),
-                                &theme,
-                            ))
+                            .child(
+                                // The readout is a display; the double-click that turns it into
+                                // an input goes on a wrapper, so that `readout` stays the plain
+                                // thing every other transport uses.
+                                div()
+                                    .id("position")
+                                    .cursor_pointer()
+                                    .on_mouse_down(
+                                        gpui::MouseButton::Left,
+                                        cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
+                                            if event.click_count < 2 {
+                                                return;
+                                            }
+                                            this.prompt_for_position();
+                                            cx.notify();
+                                        }),
+                                    )
+                                    .child(readout(
+                                        self.t(Key::Position),
+                                        position,
+                                        Some(seconds.format_clock().into()),
+                                        px(118.0),
+                                        &theme,
+                                    )),
+                            )
                             .child(self.render_tempo_control(bpm, cx)),
                     ),
             )
@@ -328,7 +398,16 @@ impl AurisApp {
             )
             .on_mouse_down(
                 gpui::MouseButton::Left,
-                cx.listener(|this, event: &gpui::MouseDownEvent, _, _| {
+                cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                    if event.click_count >= 2 {
+                        // The first click of the pair already began a drag. It has not moved, so
+                        // it has changed nothing, but leaving it live would have the sheet's own
+                        // pointer dragging the tempo behind it.
+                        this.end_drag(window, cx);
+                        this.prompt_for_tempo();
+                        cx.notify();
+                        return;
+                    }
                     let start_bpm = this.project().bpm();
                     this.begin_drag(Drag::Tempo {
                         start_bpm,
@@ -342,6 +421,24 @@ impl AurisApp {
                 this.session.set_bpm(bpm);
                 cx.notify();
             }))
+    }
+
+    /// Opens the sheet that takes a tempo as a number.
+    pub(crate) fn prompt_for_tempo(&mut self) {
+        let title = self.t(Key::SetTempoTitle);
+        let current = format!("{:.2}", self.project().bpm());
+        self.open_prompt(Prompt::new(title, PromptTarget::Tempo, current));
+    }
+
+    /// Opens the sheet that takes a position as bar, beat and hundredth.
+    pub(crate) fn prompt_for_position(&mut self) {
+        let title = self.t(Key::SetPositionTitle);
+        let current = format_position(
+            self.playhead_ticks(),
+            &self.project().tempo_map,
+            self.project().time_signature,
+        );
+        self.open_prompt(Prompt::new(title, PromptTarget::Position, current));
     }
 
     /// Shows `tab` in the bottom editor, or hides the panel when that tab is already showing.
@@ -389,6 +486,87 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn four_four() -> TimeSignature {
+        TimeSignature::default()
+    }
+
+    #[test]
+    fn a_position_reads_back_as_the_one_the_readout_showed() {
+        // The box is opened by double-clicking the readout and comes up holding what it said, so
+        // a value that did not survive the round trip would move the playhead on a Return that
+        // was meant to change nothing.
+        let tempo = TempoMap::constant(120.0);
+        for ticks in [0, 1, 240, 960, 3840, 3840 * 16 + 960 + 250] {
+            let at = Ticks(ticks - ticks % POSITION_UNIT);
+            let text = format_position(at, &tempo, four_four());
+            assert_eq!(
+                parse_position(&text, four_four()),
+                Some(at),
+                "`{text}` did not read back as {}",
+                at.raw()
+            );
+        }
+    }
+
+    #[test]
+    fn a_position_may_be_typed_with_the_trailing_fields_left_off() {
+        // The fields after the bar are almost always zero, and typing `.1.000` every time is what
+        // sends people back to the wheel.
+        let bar = TimeSignature::default().ticks_per_bar().raw();
+        let beat = TimeSignature::default().ticks_per_beat().raw();
+        assert_eq!(parse_position("17", four_four()), Some(Ticks(bar * 16)));
+        assert_eq!(
+            parse_position("17.3", four_four()),
+            Some(Ticks(bar * 16 + beat * 2))
+        );
+        assert_eq!(
+            parse_position("17.3.050", four_four()),
+            Some(Ticks(bar * 16 + beat * 2 + 50 * POSITION_UNIT))
+        );
+        // Bar one, beat one is the start, not one bar in: the readout counts from one.
+        assert_eq!(parse_position("1.1.000", four_four()), Some(Ticks::ZERO));
+        // Spaces and other separators a person might reach for.
+        assert_eq!(
+            parse_position(" 17 : 3 ", four_four()),
+            parse_position("17.3", four_four())
+        );
+    }
+
+    #[test]
+    fn a_position_outside_its_bar_is_refused_rather_than_carried_over() {
+        // Answering `1.9` by jumping to bar three would be answering a typo with a surprise. The
+        // readout has never written one, so nothing is being refused that it could have shown.
+        assert_eq!(
+            parse_position("1.5", four_four()),
+            None,
+            "beat five of four"
+        );
+        assert_eq!(
+            parse_position("1.0", four_four()),
+            None,
+            "beats count from one"
+        );
+        assert_eq!(parse_position("0", four_four()), None, "so do bars");
+        assert_eq!(
+            parse_position("1.1.096", four_four()),
+            None,
+            "hundredths run 0..95"
+        );
+        assert_eq!(parse_position("", four_four()), None);
+        assert_eq!(parse_position("later", four_four()), None);
+        assert_eq!(
+            parse_position("1.1.0.0", four_four()),
+            None,
+            "one field too many"
+        );
+        assert_eq!(parse_position("-3", four_four()), None);
+
+        // Three four has three beats to a bar, and the check follows the meter rather than a four.
+        let three_four = TimeSignature::new(3, 4);
+        assert!(parse_position("2.3", three_four).is_some());
+        assert_eq!(parse_position("2.4", three_four), None);
+    }
 
     #[test]
     fn every_grid_choice_is_a_distinct_division() {

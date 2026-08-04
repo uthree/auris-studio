@@ -377,6 +377,18 @@ messages! {
         ja: "`{text}` はシードではありません — 整数を入力してください"
     }
 
+    /// The text typed into the tempo prompt is not a number of beats per minute.
+    fn not_a_tempo(text: &str) {
+        en: "`{text}` is not a tempo — try `128` or `174.5`",
+        ja: "`{text}` はテンポではありません — `128` や `174.5` のように"
+    }
+
+    /// The text typed into the position prompt is not a bar, beat and hundredth.
+    fn not_a_position(text: &str) {
+        en: "`{text}` is not a position — try `17` for a bar, or `17.3` for its third beat",
+        ja: "`{text}` は位置ではありません — 小節なら `17`、その3拍目なら `17.3` のように"
+    }
+
     /// A project referenced audio files that are not where it said.
     fn missing_audio_files(count: usize) {
         en: "{count} audio file(s) could not be loaded",

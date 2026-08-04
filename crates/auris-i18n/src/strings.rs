@@ -349,9 +349,31 @@ strings! {
     SetKeyTitle { en: "Key from here", ja: "ここからの調" }
     SetChordTitle { en: "Chord from here", ja: "ここからのコード" }
     SetSeedTitle { en: "Seed for this part", ja: "このパートのシード" }
+    SetTempoTitle { en: "Tempo", ja: "テンポ" }
+    SetPositionTitle { en: "Go to position", ja: "位置へ移動" }
     Cancel { en: "Cancel", ja: "キャンセル" }
     Rename { en: "Rename", ja: "変更" }
     NameCannotBeEmpty { en: "Name cannot be empty", ja: "名前を空にはできません" }
+    // What each sheet is asking for, shown under the field before anything goes wrong. The chord
+    // one carries the rule nothing else on screen states: case is what says major or minor, and
+    // a user who has not been told that has no way to guess it from an empty box.
+    HintKey {
+        en: "Tonic and mode: C major, Bb minor, D dorian",
+        ja: "主音とモード: C major、Bb minor、D dorian"
+    }
+    HintChord {
+        en: "Roman numeral of the degree. CAPITALS are major, lower case minor: IV, vi, bVII7",
+        ja: "度数のローマ数字。大文字がメジャー、小文字がマイナー: IV、vi、bVII7"
+    }
+    HintTempo { en: "Beats per minute", ja: "1分あたりの拍数" }
+    HintPosition {
+        en: "Bar, beat, hundredth: 17, or 17.3, or 17.3.050",
+        ja: "小節・拍・1/100拍: 17、17.3、17.3.050 のように"
+    }
+    HintSeed {
+        en: "Any whole number. Another take is the next one along.",
+        ja: "任意の整数。「別テイク」は次の番号です。"
+    }
 
     // ------------------------------------------------------------------ unsaved changes
     UnsavedTitle { en: "Save changes?", ja: "変更を保存しますか？" }

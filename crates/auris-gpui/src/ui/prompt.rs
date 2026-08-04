@@ -43,6 +43,100 @@ pub enum PromptTarget {
     /// the way back to a take somebody liked is to type the number it had. Undo reaches the same
     /// place while the take is still on the stack, and not afterwards.
     Seed(ClipId),
+    /// The tempo, in beats per minute.
+    ///
+    /// The wheel and the drag are for finding a tempo by feel. This is for the case where the
+    /// number is already known — 174 for a drum and bass track, or whatever the last one was —
+    /// and spinning up to it a beat at a time is absurd.
+    Tempo,
+    /// Where the playhead sits, as bar, beat and hundredth.
+    Position,
+}
+
+impl PromptTarget {
+    /// The line under the field saying what would be a valid answer.
+    ///
+    /// A name explains itself; everything else here is a small notation with rules, and an empty
+    /// box states none of them. The chord field was the worst of it — nothing anywhere on screen
+    /// said that the case of a numeral is what makes it major or minor, so the only way to find
+    /// out was to type something, have it refused, and read the refusal.
+    pub fn hint(self) -> Option<Key> {
+        Some(match self {
+            PromptTarget::Key(_) => Key::HintKey,
+            PromptTarget::Chord(_) => Key::HintChord,
+            PromptTarget::Seed(_) => Key::HintSeed,
+            PromptTarget::Tempo => Key::HintTempo,
+            PromptTarget::Position => Key::HintPosition,
+            PromptTarget::Track(_) | PromptTarget::Clip(_) => return None,
+        })
+    }
+}
+
+/// The chord degrees a person actually writes, offered under the chord field.
+///
+/// Roman numerals and not chord names, because numerals are what the document stores: `V` is `V`
+/// in every key, which is the whole reason the harmony lane holds a key and degrees rather than a
+/// list of notes. The diatonic seven, then the sevenths, then the borrowings that turn up in
+/// nearly every pop song.
+const CHORD_VOCABULARY: &[&str] = &[
+    "I", "ii", "iii", "IV", "V", "vi", "vii", "Imaj7", "ii7", "iii7", "IVmaj7", "V7", "vi7",
+    "bIII", "bVI", "bVII", "iv", "bVII7",
+];
+
+/// The keys offered under the key field.
+///
+/// Enough of the circle to be a starting point and not so much that it is a table to read. The
+/// modes are there because the field accepts them and nothing else would say so.
+const KEY_VOCABULARY: &[&str] = &[
+    "C major",
+    "G major",
+    "D major",
+    "F major",
+    "Bb major",
+    "Eb major",
+    "A minor",
+    "E minor",
+    "B minor",
+    "D minor",
+    "G minor",
+    "C minor",
+    "D dorian",
+    "G mixolydian",
+    "F lydian",
+];
+
+/// How many completions the sheet offers at once.
+///
+/// A row that wraps to three lines is a table, and a table is something to read rather than
+/// something to reach for.
+const COMPLETION_LIMIT: usize = 8;
+
+/// What the sheet offers for the text typed so far.
+///
+/// Prefix matches lead and substring matches follow, so typing `7` reaches the sevenths while
+/// typing `v` still leads with `V` rather than with whatever sorts first. Case is ignored for the
+/// matching and kept in the answer: `vi` and `VI` are different chords, and half the point of the
+/// list is to show that both exist.
+pub fn completions(target: PromptTarget, typed: &str) -> Vec<&'static str> {
+    let vocabulary = match target {
+        PromptTarget::Chord(_) => CHORD_VOCABULARY,
+        PromptTarget::Key(_) => KEY_VOCABULARY,
+        _ => return Vec::new(),
+    };
+    let needle = typed.trim().to_ascii_lowercase();
+    let mut offered: Vec<&'static str> = Vec::new();
+    let mut contained: Vec<&'static str> = Vec::new();
+    for entry in vocabulary {
+        let candidate = entry.to_ascii_lowercase();
+        if needle.is_empty() || candidate.starts_with(&needle) {
+            offered.push(entry);
+        } else if candidate.contains(&needle) {
+            contained.push(entry);
+        }
+    }
+    offered.extend(contained);
+    offered.truncate(COMPLETION_LIMIT);
+    offered
 }
 
 /// What the user was doing when the document turned out to be in the way.
@@ -246,6 +340,32 @@ impl AurisApp {
                     return;
                 }
             },
+            // A tempo out of range is clamped rather than refused. The bounds are the session's,
+            // and a number a person typed is a number they meant — landing on the nearest tempo
+            // that exists says more than a box that empties itself.
+            PromptTarget::Tempo => match text.parse::<f64>() {
+                Ok(bpm) if bpm.is_finite() && bpm > 0.0 => {
+                    self.session.set_bpm(bpm);
+                    Ok(())
+                }
+                _ => {
+                    self.set_failed_status(messages::not_a_tempo(self.language(), &text));
+                    return;
+                }
+            },
+            PromptTarget::Position => {
+                let signature = self.project().time_signature;
+                match crate::ui::transport_bar::parse_position(&text, signature) {
+                    Some(at) => {
+                        self.seek(at);
+                        Ok(())
+                    }
+                    None => {
+                        self.set_failed_status(messages::not_a_position(self.language(), &text));
+                        return;
+                    }
+                }
+            }
         };
         if let Err(error) = outcome {
             self.set_failed_status(self.failure(Key::Rename, &error));
@@ -412,16 +532,26 @@ impl AurisApp {
         let view = cx.entity();
 
         let (body, buttons) = match &prompt.body {
-            PromptBody::Text { field, .. } => (
-                self.render_prompt_field(
-                    field.content().to_string().into(),
-                    field.selection(),
-                    field.marked(),
-                    focus,
-                    view,
-                    &theme,
-                )
-                .into_any_element(),
+            PromptBody::Text { target, field } => (
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(self.render_prompt_field(
+                        field.content().to_string().into(),
+                        field.selection(),
+                        field.marked(),
+                        focus,
+                        view,
+                        &theme,
+                    ))
+                    .children(
+                        target
+                            .hint()
+                            .map(|hint| self.render_prompt_hint(hint, &theme)),
+                    )
+                    .children(self.render_prompt_completions(*target, field.content(), cx))
+                    .into_any_element(),
                 self.render_prompt_buttons(None, self.t(Key::Rename).into(), cx),
             ),
             PromptBody::Ask(question) => {
@@ -520,6 +650,66 @@ impl AurisApp {
                 view,
                 theme.clone(),
             ))
+    }
+
+    /// The line under the field saying what a valid answer looks like.
+    fn render_prompt_hint(&self, hint: Key, theme: &Theme) -> impl IntoElement + use<> {
+        div()
+            .text_xs()
+            .text_color(theme.text_faint)
+            .child(self.t(hint))
+    }
+
+    /// The row of values the field would accept, narrowing as the text is typed.
+    ///
+    /// Pressing one fills the field *and* commits, because every one of them is a whole answer
+    /// rather than a prefix of one. A chip that only filled the box would be asking for a second
+    /// press to do what the first one already said.
+    fn render_prompt_completions(
+        &self,
+        target: PromptTarget,
+        typed: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
+        let offered = completions(target, typed);
+        if offered.is_empty() {
+            return None;
+        }
+        let theme = self.theme.clone();
+        Some(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_1()
+                .children(offered.into_iter().map(|entry| {
+                    button(
+                        SharedString::from(format!("complete:{entry}")),
+                        entry,
+                        ButtonStyle::Normal,
+                        false,
+                        theme.accent,
+                        &theme,
+                        cx.listener(move |this, _, window, cx| {
+                            this.complete_prompt(entry, window, cx);
+                            cx.notify();
+                        }),
+                    )
+                })),
+        )
+    }
+
+    /// Answers the open prompt with `text`.
+    pub(crate) fn complete_prompt(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(field) = self.prompt.as_mut().and_then(Prompt::field_mut) {
+            let whole = 0..field.content().len();
+            field.replace(whole, text);
+        }
+        self.commit_prompt(window, cx);
     }
 
     /// The row of answers: always Cancel, sometimes a destructive one, then the default.
@@ -773,4 +963,103 @@ fn paint_field(
             );
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const AT: Ticks = Ticks(3840);
+
+    /// Every target, so a new one cannot be added without this file being opened.
+    fn every_target() -> Vec<PromptTarget> {
+        vec![
+            PromptTarget::Track(TrackId(1)),
+            PromptTarget::Clip(ClipId(1)),
+            PromptTarget::Key(AT),
+            PromptTarget::Chord(AT),
+            PromptTarget::Seed(ClipId(1)),
+            PromptTarget::Tempo,
+            PromptTarget::Position,
+        ]
+    }
+
+    #[test]
+    fn everything_that_is_a_notation_rather_than_a_name_says_so() {
+        // A name explains itself. Everything else is a small notation with rules that an empty
+        // box states none of, which is exactly the complaint the hints answer.
+        for target in every_target() {
+            let named = matches!(target, PromptTarget::Track(_) | PromptTarget::Clip(_));
+            assert_eq!(
+                target.hint().is_none(),
+                named,
+                "{target:?} has the wrong idea about needing a hint"
+            );
+        }
+    }
+
+    #[test]
+    fn every_offered_completion_is_one_the_field_would_accept() {
+        // The whole point is to answer "what am I supposed to type here". A list containing
+        // something the parser refuses would answer it wrongly, which is worse than not
+        // answering — the user would have no reason left to doubt their own typing.
+        for entry in CHORD_VOCABULARY {
+            assert!(
+                Numeral::parse(entry).is_some(),
+                "`{entry}` is offered under the chord field and is not a chord"
+            );
+        }
+        for entry in KEY_VOCABULARY {
+            assert!(
+                MusicalKey::parse(entry).is_some(),
+                "`{entry}` is offered under the key field and is not a key"
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_field_is_offered_somewhere_to_start() {
+        // The moment the hint matters most is before anything has been typed.
+        assert!(!completions(PromptTarget::Chord(AT), "").is_empty());
+        assert!(!completions(PromptTarget::Key(AT), "").is_empty());
+        // And a name has no vocabulary to offer, so it gets no row at all.
+        assert!(completions(PromptTarget::Track(TrackId(1)), "").is_empty());
+        assert!(completions(PromptTarget::Tempo, "1").is_empty());
+    }
+
+    #[test]
+    fn typing_narrows_the_list_and_prefixes_lead_it() {
+        // `v` has to lead with `V` rather than with whatever sorts first, or the list reads as
+        // unrelated to what is being typed.
+        let offered = completions(PromptTarget::Chord(AT), "v");
+        assert_eq!(offered.first(), Some(&"V"));
+        assert!(offered.contains(&"vi"), "{offered:?}");
+        assert!(!offered.contains(&"I"), "{offered:?} is not narrowed");
+
+        // Case is ignored for matching, so shift is not something to get right before finding
+        // out what the options are — and both cases are still offered, which is how the rule
+        // about case gets seen.
+        let upper = completions(PromptTarget::Chord(AT), "V");
+        assert_eq!(upper, offered);
+
+        // A substring match follows the prefixes: `7` reaches the sevenths.
+        let sevenths = completions(PromptTarget::Chord(AT), "7");
+        assert!(sevenths.contains(&"V7"), "{sevenths:?}");
+        assert!(sevenths.iter().all(|entry| entry.contains('7')));
+
+        // Nothing matching is an empty row rather than the whole list back again.
+        assert!(completions(PromptTarget::Chord(AT), "zzz").is_empty());
+    }
+
+    #[test]
+    fn the_list_never_grows_into_a_table() {
+        for typed in ["", "i", "v", "b", "major", "minor"] {
+            for target in [PromptTarget::Chord(AT), PromptTarget::Key(AT)] {
+                assert!(
+                    completions(target, typed).len() <= COMPLETION_LIMIT,
+                    "{target:?} offered too many for `{typed}`"
+                );
+            }
+        }
+    }
 }

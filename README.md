@@ -59,6 +59,12 @@ which is as fine as the document gets. Holding ⌘ (Ctrl on Windows) suspends sn
 length of a drag, for when one thing has to sit off the beat. A double-click on any fader or knob
 puts it back to its default: 0 dB on a volume, centre on a pan.
 
+The tempo and position readouts in the middle of the transport bar are typeable: double-click
+either and the number can be entered directly. A wheel is for finding a tempo by feel and a drag
+for nudging it, but neither is any way to reach 174 from 120, or bar 97 from bar 1. The position
+takes as much of `bar.beat.hundredth` as you care to give it — `97` is the top of bar 97, `97.3`
+is its third beat.
+
 ### Languages
 
 The interface is available in English and Japanese, chosen under Settings → General or followed
@@ -79,6 +85,11 @@ Right-click it to type a chord (`IV`, `vi`, `bVII7`) or a key (`Eb`, `F# minor`)
 of the named progressions — `axis`, `marusa`, `royal-road`, `canon` and a dozen more, the same
 catalogue `auris progressions` lists and the composer reads as `@marusa`. A progression is written
 across the cycle region when there is one, and across its own length otherwise.
+
+The box says what it wants and offers it: a line of syntax under the field, and a row of the
+degrees or keys it would accept, narrowing as you type. Pressing one answers the box. The rule
+worth stating before it is broken rather than after is the case of a numeral — `IV` is major and
+`iv` is minor — which nothing else on screen was saying.
 
 A chord is stored as a roman numeral, not as `Fmaj7`, so changing the key transposes the whole
 progression and a modulation halfway through a section reharmonises the rest of it without a
