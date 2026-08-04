@@ -533,7 +533,19 @@ impl AurisApp {
                 origin_tick,
                 origin_pitch,
                 ref origins,
+                pressed_at,
             } => {
+                // The same wobble guard the clips have. Rows are floor-binned, so a click
+                // drifting one pixel across a row boundary transposed the whole selection —
+                // and auditioned the wrong pitch — before the hand had decided anything.
+                if let Some(from) = pressed_at {
+                    if !past_drag_threshold(from, event.position) {
+                        return;
+                    }
+                    if let Some(Drag::NoteMove { pressed_at, .. }) = &mut self.drag {
+                        *pressed_at = None;
+                    }
+                }
                 let origin = self.roll_origin();
                 let tick = self.timeline.x_to_tick(event.position.x - origin.x);
                 let pitch = self.pitch.y_to_pitch(event.position.y - origin.y);
@@ -564,7 +576,22 @@ impl AurisApp {
                 // wanted here: the drag is a distance from where the button went down.
                 self.drag_velocity(clip, start_y, origins, event.position.y);
             }
-            Drag::NoteResize { clip, index } => {
+            Drag::NoteResize {
+                clip,
+                index,
+                pressed_at,
+            } => {
+                // Guarded only for a grabbed existing note — `pressed_at` is `None` while
+                // drawing a new one — so a click wobble cannot snap an off-grid end onto the
+                // grid.
+                if let Some(from) = pressed_at {
+                    if !past_drag_threshold(from, event.position) {
+                        return;
+                    }
+                    if let Some(Drag::NoteResize { pressed_at, .. }) = &mut self.drag {
+                        *pressed_at = None;
+                    }
+                }
                 let origin = self.roll_origin();
                 let tick = self.timeline.x_to_tick(event.position.x - origin.x);
                 let Some(clip_start) = self.session.midi_clip(clip).map(|c| c.start) else {

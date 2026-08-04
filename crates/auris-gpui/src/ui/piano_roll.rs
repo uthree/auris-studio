@@ -433,6 +433,7 @@ impl AurisApp {
                     self.begin_drag(Drag::NoteResize {
                         clip: clip_id,
                         index,
+                        pressed_at: Some(event.position),
                     });
                 } else {
                     let origins = self.selected_note_origins(clip_id);
@@ -441,6 +442,7 @@ impl AurisApp {
                         origin_tick: local_tick,
                         origin_pitch: pitch,
                         origins,
+                        pressed_at: Some(event.position),
                     });
                     self.audition(pitch);
                 }
@@ -454,6 +456,7 @@ impl AurisApp {
                     self.begin_drag(Drag::NoteResize {
                         clip: clip_id,
                         index: 0,
+                        pressed_at: None,
                     });
                     let Ok(index) = self
                         .session
@@ -465,6 +468,7 @@ impl AurisApp {
                     self.drag = Some(Drag::NoteResize {
                         clip: clip_id,
                         index,
+                        pressed_at: None,
                     });
                     self.selected_notes.clear();
                     self.selected_notes.insert(index);

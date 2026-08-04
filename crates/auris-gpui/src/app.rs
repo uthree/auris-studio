@@ -219,6 +219,12 @@ pub enum Drag {
         origin_pitch: u8,
         /// Starting position of every selected note, so the whole selection moves together.
         origins: Vec<(usize, Ticks, u8)>,
+        /// Where the button went down, until the pointer has travelled far enough to mean it.
+        ///
+        /// The same guard `ClipMove` carries, for the same wobble: rows are floor-binned, so a
+        /// click drifting one pixel across a row boundary transposed the whole selection — and
+        /// auditioned the wrong pitch — before the hand had decided anything.
+        pressed_at: Option<Point<Pixels>>,
     },
     /// Dragging a note's velocity up or down with the roll's velocity tool.
     NoteVelocity {
@@ -243,6 +249,12 @@ pub enum Drag {
         clip: ClipId,
         /// Note being resized.
         index: usize,
+        /// Where the button went down, until the pointer has travelled far enough to mean it.
+        ///
+        /// Guards a grabbed *existing* note the way `ClipMove` guards a clip: a click wobble
+        /// on an off-grid note's handle snapped its end onto the grid. `None` when the drag is
+        /// drawing a brand-new note, whose end starts on the grid and should follow at once.
+        pressed_at: Option<Point<Pixels>>,
     },
     /// Turning a parameter.
     Param {

@@ -794,7 +794,10 @@ impl AurisApp {
                     Err(error) => {
                         let text =
                             messages::failed(language, Key::CmdExportWav.get(language), &error);
-                        this.set_status(text.clone());
+                        // The failure colour, like every other Err arm: once the overlay is
+                        // dismissed the status line is the only record of the failure, and in
+                        // the ordinary grey it read as just another note.
+                        this.set_failed_status(text.clone());
                         Err(text)
                     }
                 };

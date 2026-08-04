@@ -232,12 +232,25 @@ impl Keymap {
 
     /// Replaces the keystroke in one slot, leaving the command's other keystrokes alone.
     ///
-    /// Returns `false` for a keystroke gpui cannot parse, leaving the binding untouched.
+    /// Returns `false` for a keystroke gpui cannot parse, or one the command already holds in a
+    /// *different* slot — the same duplicate rule [`Keymap::add`] applies on append, without
+    /// which replacing a slot could store the same keystroke twice, show two identical chips
+    /// with no conflict warning (`conflicts` excludes the command itself), and write the pair
+    /// to disk. Re-entering the keystroke a slot already has is a no-op, not a refusal.
     ///
     /// A slot past the end appends, which is what makes [`Keymap::add`] this function with the
     /// length passed in.
     pub fn set_at(&mut self, command: &Bindable, index: usize, keystroke: &str) -> bool {
         if !actions::is_valid_keystroke(keystroke) {
+            return false;
+        }
+        let normalised = actions::normalise_keystroke(keystroke);
+        let elsewhere = self
+            .displays(command)
+            .iter()
+            .enumerate()
+            .any(|(slot, held)| slot != index && *held == normalised);
+        if elsewhere {
             return false;
         }
         let mut keystrokes = self.owned_keystrokes(command);
@@ -391,6 +404,29 @@ mod tests {
             !keymap.is_overridden(play),
             "an override equal to the default would freeze today's default into the file"
         );
+    }
+
+    #[test]
+    fn replacing_a_slot_with_a_key_another_slot_holds_is_refused() {
+        // `add` refuses a duplicate on append, but the settings window routes an existing
+        // chip through `set_at`, which only checked parseability: replacing slot 0 with the
+        // key in slot 1 stored the same keystroke twice, showed two identical chips with no
+        // conflict warning (`conflicts` excludes the command itself), and wrote the pair to
+        // disk.
+        let mut keymap = Keymap::default();
+        let play = command("transport.play");
+        assert!(keymap.set_at(play, 0, "f5"));
+        assert!(keymap.add(play, "f6"));
+
+        assert!(
+            !keymap.set_at(play, 0, "f6"),
+            "slot 0 took the keystroke slot 1 already holds"
+        );
+        assert_eq!(keymap.keystrokes(play), &["f5", "f6"]);
+
+        // Re-entering the keystroke a slot already has is a no-op, not a refusal.
+        assert!(keymap.set_at(play, 0, "f5"));
+        assert_eq!(keymap.keystrokes(play), &["f5", "f6"]);
     }
 
     #[test]
