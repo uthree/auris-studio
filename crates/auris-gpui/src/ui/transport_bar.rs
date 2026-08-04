@@ -73,11 +73,13 @@ pub fn parse_position(text: &str, signature: TimeSignature) -> Option<Ticks> {
     if bar < 1 || !(1..=beats_per_bar).contains(&beat) || !(0..units_per_beat).contains(&unit) {
         return None;
     }
-    Some(Ticks(
-        (bar - 1) * signature.ticks_per_bar().raw()
-            + (beat - 1) * ticks_per_beat
-            + unit * POSITION_UNIT,
-    ))
+    // Checked, because the bar is the one field with no upper bound: sixteen typed nines times
+    // a bar of ticks overflows an `i64`, which is a panic in a debug build and a seek to a
+    // wrapped nonsense position in a release one. Refused like any other typo.
+    let ticks = (bar - 1)
+        .checked_mul(signature.ticks_per_bar().raw())?
+        .checked_add((beat - 1) * ticks_per_beat + unit * POSITION_UNIT)?;
+    Some(Ticks(ticks))
 }
 
 impl AurisApp {
@@ -489,6 +491,17 @@ mod tests {
 
     fn four_four() -> TimeSignature {
         TimeSignature::default()
+    }
+
+    #[test]
+    fn a_bar_past_any_timeline_is_refused_rather_than_wrapped() {
+        // Sixteen nines parse fine as an i64 and then overflow it multiplied by a bar of
+        // ticks: a debug build panicked on the multiply, a release build seeked to a wrapped
+        // nonsense position. A number too large to mean anything is a typo like any other.
+        assert_eq!(parse_position("9999999999999999", four_four()), None);
+        assert_eq!(parse_position(&i64::MAX.to_string(), four_four()), None);
+        // While a merely enormous song is still addressable.
+        assert!(parse_position("1000000", four_four()).is_some());
     }
 
     #[test]

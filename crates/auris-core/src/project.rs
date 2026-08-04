@@ -930,7 +930,16 @@ impl Project {
     pub const FORMAT_VERSION: u32 = 3;
 
     /// An empty project.
+    ///
+    /// A `sample_rate` that is not a positive finite number becomes 48 kHz: every duration in
+    /// the project divides by this field, and storing `inf` or `NaN` would serialise as JSON
+    /// `null` — a document that can never be opened again.
     pub fn new(name: impl Into<String>, sample_rate: f64) -> Self {
+        let sample_rate = if sample_rate.is_finite() && sample_rate > 0.0 {
+            sample_rate
+        } else {
+            48_000.0
+        };
         Self {
             format_version: Self::FORMAT_VERSION,
             name: name.into(),
@@ -1584,6 +1593,17 @@ fn split_notes_right(notes: &[Note], offset: Ticks) -> Vec<Note> {
 mod tests {
     use super::*;
     use crate::time::TICKS_PER_QUARTER;
+
+    #[test]
+    fn a_rate_that_is_not_a_rate_becomes_the_default() {
+        // Every duration in a project divides by this field, and a non-finite value would
+        // serialise as JSON null — a document that can never be opened again.
+        for bad in [0.0, -44_100.0, f64::NAN, f64::INFINITY] {
+            let project = Project::new("Bad", bad);
+            assert_eq!(project.sample_rate, 48_000.0, "for {bad}");
+        }
+        assert_eq!(Project::new("Good", 44_100.0).sample_rate, 44_100.0);
+    }
 
     fn demo_project() -> Project {
         let mut project = Project::new("Demo", 48_000.0);

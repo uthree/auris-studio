@@ -459,6 +459,11 @@ fn new_project(args: &[String], language: Language) -> Result<(), String> {
                 sample_rate = args
                     .get(index)
                     .and_then(|value| value.parse().ok())
+                    // `parse::<f64>` happily accepts `inf`, `NaN` and overflowing literals
+                    // like `1e999`, and a project stored with one serialises its rate as JSON
+                    // null — a file this very tool can never read back. A rate that is not a
+                    // positive finite number is not a rate.
+                    .filter(|rate: &f64| rate.is_finite() && *rate > 0.0)
                     .ok_or_else(|| {
                         messages::option_needs_value(
                             language,
