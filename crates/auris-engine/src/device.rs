@@ -117,8 +117,12 @@ pub fn output_devices() -> Vec<OutputDeviceInfo> {
 /// A running (or silently idle) output stream.
 pub struct AudioDevice {
     stream: Option<cpal::Stream>,
-    /// Kept alive in silent mode so that the UI's command queue stays connected.
+    /// A second reading end of the command queue, so that a queue nothing is consuming — no
+    /// device at all, or a stream that died — can still be drained from the UI thread.
     idle_commands: Option<Receiver<EngineCommand>>,
+    /// Shared with [`EngineHandle`] and with the stream's error callback, which clears it when
+    /// the device disappears out from under the stream.
+    running: Arc<AtomicBool>,
     name: String,
     sample_rate: f64,
     channel_count: usize,
@@ -127,9 +131,12 @@ pub struct AudioDevice {
 }
 
 impl AudioDevice {
-    /// `true` when a real output stream is open.
+    /// `true` when a real output stream is open and still alive.
+    ///
+    /// A stream whose device was unplugged still *exists* — cpal only reports the error — so
+    /// existence alone would answer `true` for a callback that will never run again.
     pub fn is_running(&self) -> bool {
-        self.stream.is_some()
+        self.stream.is_some() && self.running.load(Ordering::Relaxed)
     }
 
     /// Name of the device, or a placeholder in silent mode.
@@ -173,12 +180,17 @@ impl AudioDevice {
         }
     }
 
-    /// Throws away commands that piled up while running silently.
+    /// Throws away commands that piled up with nothing consuming them.
     ///
-    /// Without an audio thread nothing consumes the queue, so a UI that keeps rebuilding graphs
-    /// on a machine with no output device should call this occasionally. Returns how many
-    /// commands were discarded.
+    /// Without an audio thread — none was ever opened, or the device disappeared and the stream
+    /// died — nothing drains the queue, so after `command_capacity` sends every later command
+    /// would be refused. A frontend's per-frame housekeeping should call this occasionally.
+    /// Returns how many commands were discarded, and refuses to touch the queue while a live
+    /// audio thread is the consumer.
     pub fn discard_pending(&self) -> usize {
+        if self.is_running() {
+            return 0;
+        }
         self.idle_commands
             .as_ref()
             .map_or(0, |commands| commands.try_iter().count())
@@ -256,6 +268,7 @@ fn start_with_device(
         setup.config,
         setup.sample_format,
         new_engine(),
+        Arc::clone(&running),
     ) {
         Ok(stream) => stream,
         // Several backends (WASAPI in particular) refuse an explicit buffer size outright.
@@ -271,6 +284,7 @@ fn start_with_device(
                 setup.config,
                 setup.sample_format,
                 new_engine(),
+                Arc::clone(&running),
             )?
         }
         Err(error) => return Err(error),
@@ -292,7 +306,11 @@ fn start_with_device(
     };
     let device = AudioDevice {
         stream: Some(stream),
-        idle_commands: None,
+        // The clone matters: while the stream is alive its engine is the queue's consumer and
+        // `discard_pending` refuses to compete with it, but the moment the error callback
+        // declares the stream dead, this is what lets the queue be drained at all.
+        idle_commands: Some(command_rx),
+        running: Arc::clone(&handle.running),
         name: setup.name,
         sample_rate,
         channel_count,
@@ -335,6 +353,7 @@ pub fn start_silent(settings: &AudioSettings) -> (AudioDevice, EngineHandle) {
     let device = AudioDevice {
         stream: None,
         idle_commands: Some(command_rx),
+        running: Arc::clone(&handle.running),
         name: "silent".to_string(),
         sample_rate,
         channel_count: 2,
@@ -438,8 +457,18 @@ fn build_stream(
     config: StreamConfig,
     format: SampleFormat,
     engine: AudioEngine,
+    running: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, EngineError> {
-    let on_error = |error: cpal::Error| log::error!("audio stream error: {error}");
+    // cpal reports stream errors from a thread of its own, not from the audio callback, so a
+    // log is allowed here — but a log alone tells nobody. Unplugging the device stops the
+    // callback for good while the stream object lives on, and everything reading `is_running`
+    // would go on seeing a live engine: the playhead frozen, the queue filling, every later
+    // command silently refused. Clearing the flag is what turns "the device is gone" into a
+    // state the rest of the application can see.
+    let on_error = move |error: cpal::Error| {
+        running.store(false, Ordering::Relaxed);
+        log::error!("audio stream error: {error}; the output stream is dead");
+    };
     let mut engine = engine;
     let stream = match format {
         SampleFormat::F32 => device.build_output_stream(
