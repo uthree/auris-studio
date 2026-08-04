@@ -171,6 +171,15 @@ impl PaneFocus {
     }
 }
 
+/// Which end of an audio clip a fade belongs to.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum FadeEdge {
+    /// The fade-in, growing from the clip's left edge.
+    In,
+    /// The fade-out, growing back from the clip's right edge.
+    Out,
+}
+
 /// Something the user is currently dragging.
 #[derive(Clone, Debug)]
 pub enum Drag {
@@ -208,6 +217,13 @@ pub enum Drag {
     ClipResize {
         /// Clip being resized.
         clip: ClipId,
+    },
+    /// Shaping an audio clip's fade by its handle.
+    ClipFade {
+        /// Clip whose fade is being drawn.
+        clip: ClipId,
+        /// Which end of the clip the fade belongs to.
+        edge: FadeEdge,
     },
     /// Moving one or more notes in the piano roll.
     NoteMove {
@@ -380,6 +396,7 @@ impl Drag {
             Drag::LoopRegion { .. } => Some(Edit::SetLoopRegion),
             Drag::ClipMove { .. } => Some(Edit::MoveClip),
             Drag::ClipResize { .. } => Some(Edit::ResizeClip),
+            Drag::ClipFade { .. } => Some(Edit::SetClipFade),
             Drag::NoteMove { .. } => Some(Edit::MoveNotes),
             Drag::NoteResize { .. } => Some(Edit::ResizeNote),
             Drag::NoteVelocity { .. } => Some(Edit::SetNoteVelocity),

@@ -294,6 +294,8 @@ strings! {
     MenuRemoveChordHere { en: "Remove Chord", ja: "コードを削除" }
     MenuSetTempoHere { en: "Tempo from Here…", ja: "ここからのテンポ…" }
     MenuRemoveTempoHere { en: "Remove Tempo Change", ja: "テンポチェンジを削除" }
+    MenuClipGain { en: "Clip Gain…", ja: "クリップゲイン…" }
+    MenuClearFades { en: "Remove Fades", ja: "フェードを削除" }
     MenuSetSectionHere { en: "Name Section Here…", ja: "ここからのセクション名を…" }
     MenuRemoveSectionHere { en: "Remove Section", ja: "セクションを削除" }
     MenuEndSectionsHere { en: "End Sections Here", ja: "ここで構造を終える" }
@@ -362,6 +364,7 @@ strings! {
     SetSectionTitle { en: "Section from here", ja: "ここからのセクション" }
     SetSeedTitle { en: "Seed for this part", ja: "このパートのシード" }
     SetTempoTitle { en: "Tempo", ja: "テンポ" }
+    SetClipGainTitle { en: "Clip gain", ja: "クリップゲイン" }
     SetPositionTitle { en: "Go to position", ja: "位置へ移動" }
     Cancel { en: "Cancel", ja: "キャンセル" }
     Rename { en: "Rename", ja: "変更" }
@@ -378,6 +381,10 @@ strings! {
         ja: "度数のローマ数字。大文字がメジャー、小文字がマイナー: IV、vi、bVII7"
     }
     HintTempo { en: "Beats per minute", ja: "1分あたりの拍数" }
+    HintClipGain {
+        en: "In decibels. 0 plays the clip as recorded; negative is quieter",
+        ja: "デシベル単位。0で元の音量、負の値で小さく"
+    }
     HintPosition {
         en: "Bar, beat, hundredth: 17, or 17.3, or 17.3.050",
         ja: "小節・拍・1/100拍: 17、17.3、17.3.050 のように"
@@ -442,6 +449,8 @@ strings! {
     EditChangeTempo { en: "the tempo change", ja: "テンポの変更" }
     EditSetTempoPoint { en: "writing a tempo change", ja: "テンポチェンジの追加" }
     EditRemoveTempoPoint { en: "removing a tempo change", ja: "テンポチェンジの削除" }
+    EditSetClipGain { en: "the clip gain", ja: "クリップゲインの変更" }
+    EditSetClipFade { en: "the fade", ja: "フェードの変更" }
     EditAddInstrumentTrack { en: "adding an instrument track", ja: "ソフト音源トラックの追加" }
     EditAddAudioTrack { en: "adding an audio track", ja: "オーディオトラックの追加" }
     EditDeleteTrack { en: "deleting a track", ja: "トラックの削除" }
@@ -495,6 +504,11 @@ strings! {
         en: "a clip can only be split inside itself",
         ja: "クリップの内側でしか分割できません"
     }
+    ErrorNotAudio {
+        en: "that is a note clip; its loudness is its velocities",
+        ja: "ノートクリップです — 音量はベロシティで調整してください"
+    }
+    ErrorNotFinite { en: "that is not a finite number", ja: "有限の数値ではありません" }
     ErrorNotGenerated {
         en: "that clip was played rather than written, so there is nothing to write again",
         ja: "そのクリップは自動生成ではないので、書き直す元がありません"

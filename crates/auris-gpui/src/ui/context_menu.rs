@@ -162,6 +162,10 @@ pub enum MenuCommand {
     SetTempoAt(Ticks),
     /// Remove the tempo change in force at a position.
     RemoveTempoAt(Ticks),
+    /// Type an audio clip's own gain.
+    ClipGain(ClipId),
+    /// Remove an audio clip's fades.
+    ClearFades(ClipId),
     /// Type the chord that sounds from a position.
     SetChordAt(Ticks),
     /// Remove the chord change at a position.
@@ -849,6 +853,10 @@ impl AurisApp {
             MenuCommand::RemoveKeyAt(tick) => self.session.remove_key(tick),
             MenuCommand::SetTempoAt(tick) => self.prompt_for_tempo_from(tick),
             MenuCommand::RemoveTempoAt(tick) => self.session.remove_tempo_point(tick),
+            MenuCommand::ClipGain(clip) => self.prompt_for_clip_gain(clip),
+            MenuCommand::ClearFades(clip) => {
+                let _ = self.session.set_clip_fades(clip, 0, 0);
+            }
             MenuCommand::SetChordAt(tick) => {
                 let current = self
                     .project()
@@ -967,6 +975,18 @@ impl AurisApp {
                 MenuCommand::LoopOverClip(clip),
             )
             .separator()
+            // What only an audio clip has: its own gain, and fades to take back off.
+            .item_if(
+                !is_midi,
+                self.t(Key::MenuClipGain),
+                MenuCommand::ClipGain(clip),
+            )
+            .item_if(
+                self.audio_clip_shape(clip)
+                    .is_some_and(|(_, _, _, _, fade_in, fade_out)| fade_in > 0 || fade_out > 0),
+                self.t(Key::MenuClearFades),
+                MenuCommand::ClearFades(clip),
+            )
             .item_if(
                 is_midi,
                 self.t(Key::MenuEditInPianoRoll),
@@ -1067,6 +1087,19 @@ impl AurisApp {
         let title = self.t(Key::SetTempoTitle);
         let current = format!("{:.2}", self.project().tempo_map.bpm_at(at));
         self.open_prompt(Prompt::new(title, PromptTarget::TempoFrom(at), current));
+    }
+
+    /// Opens the sheet that takes an audio clip's gain in decibels.
+    ///
+    /// The field comes up holding the gain the clip already has, so nudging by a decibel is
+    /// an edit of the number on screen rather than an act of memory.
+    pub(crate) fn prompt_for_clip_gain(&mut self, clip: ClipId) {
+        let Some((_, _, _, gain_db, _, _)) = self.audio_clip_shape(clip) else {
+            return;
+        };
+        let title = self.t(Key::SetClipGainTitle);
+        let current = format!("{gain_db:.1}");
+        self.open_prompt(Prompt::new(title, PromptTarget::ClipGain(clip), current));
     }
 
     /// Opens the naming sheet for the section in force at `tick`.

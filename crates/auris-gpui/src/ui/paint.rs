@@ -697,6 +697,81 @@ pub fn waveform(
     }
 }
 
+/// Draws an audio clip's fades over its content: a dimming wedge across what each fade takes
+/// away, the ramp itself, and a handle at the top of each ramp where a drag takes hold.
+///
+/// `fade_in` and `fade_out` are widths in pixels, already scaled by the caller from frame
+/// counts, so this stays a pure painter. The handles are drawn even for a fade of nothing —
+/// sitting in the clip's top corners, which is where a fade is first picked up — while the
+/// wedge and the ramp appear only once there is a fade to show.
+pub fn clip_fades(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    fade_in: f32,
+    fade_out: f32,
+    theme: &Theme,
+) {
+    let width = f32::from(bounds.size.width);
+    let top = bounds.origin.y;
+    let bottom = bounds.origin.y + bounds.size.height;
+    let left = bounds.origin.x;
+    let right = bounds.origin.x + bounds.size.width;
+    // A black scrim rather than a theme surface: it has to read as "quieter" over the
+    // waveform in every scheme, light ones included.
+    let scrim = Theme::translucent(gpui::black(), 0.32);
+
+    if fade_in > 0.5 {
+        let end = left + px(fade_in.min(width));
+        let mut wedge = gpui::PathBuilder::fill();
+        wedge.move_to(point(left, top));
+        wedge.line_to(point(end, top));
+        wedge.line_to(point(left, bottom));
+        wedge.close();
+        if let Ok(path) = wedge.build() {
+            window.paint_path(path, scrim);
+        }
+        let mut ramp = gpui::PathBuilder::stroke(px(1.0));
+        ramp.move_to(point(left, bottom));
+        ramp.line_to(point(end, top));
+        if let Ok(path) = ramp.build() {
+            window.paint_path(path, theme.text_muted);
+        }
+    }
+    if fade_out > 0.5 {
+        let start = right - px(fade_out.min(width));
+        let mut wedge = gpui::PathBuilder::fill();
+        wedge.move_to(point(right, top));
+        wedge.line_to(point(start, top));
+        wedge.line_to(point(right, bottom));
+        wedge.close();
+        if let Ok(path) = wedge.build() {
+            window.paint_path(path, scrim);
+        }
+        let mut ramp = gpui::PathBuilder::stroke(px(1.0));
+        ramp.move_to(point(start, top));
+        ramp.line_to(point(right, bottom));
+        if let Ok(path) = ramp.build() {
+            window.paint_path(path, theme.text_muted);
+        }
+    }
+
+    let handle = px(7.0);
+    for x in [
+        left + px(fade_in.clamp(0.0, width)),
+        right - px(fade_out.clamp(0.0, width)),
+    ] {
+        rounded_rect(
+            window,
+            Bounds {
+                origin: point(x - handle / 2.0, top + px(1.0)),
+                size: size(handle, handle),
+            },
+            handle / 2.0,
+            theme.accent,
+        );
+    }
+}
+
 /// Draws the piano-roll row backgrounds and horizontal separators.
 pub fn pitch_rows(
     window: &mut Window,

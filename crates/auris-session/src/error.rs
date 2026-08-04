@@ -47,6 +47,21 @@ pub enum SessionError {
     #[error("clip {0} cannot be split there")]
     CannotSplit(u64),
 
+    /// The clip holds notes rather than audio, so it has no gain or fades of its own.
+    ///
+    /// A note clip's loudness is its velocities; offering to fade one here would quietly do
+    /// nothing, which is worse than saying which kind of clip was addressed.
+    #[error("clip {0} is not an audio clip")]
+    NotAudio(u64),
+
+    /// A numeric setting arrived as NaN or infinity.
+    ///
+    /// Refused rather than clamped: a clamp picks the nearest value that exists, and NaN has
+    /// no nearest anything — whatever produced it was a bug, and folding it into a real number
+    /// would bury that.
+    #[error("{0} is not a finite number")]
+    NotFinite(f64),
+
     /// The clip was played rather than written, so there is no recipe to write it again from.
     ///
     /// An error rather than a quiet no-op: asking to regenerate a clip somebody performed is

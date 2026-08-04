@@ -545,6 +545,13 @@ impl AurisApp {
                 let tick = self.snap_unless_held(self.timeline.x_to_tick(x), event.modifiers);
                 let _ = self.session.resize_clip(clip, tick);
             }
+            Drag::ClipFade { clip, edge } => {
+                // Unsnapped on purpose: a fade is shaped by ear against the waveform, and no
+                // grid position has anything to do with where a breath ends.
+                let x = event.position.x - self.lanes_origin().x;
+                let tick = self.timeline.x_to_tick(x);
+                self.drag_clip_fade(clip, edge, tick);
+            }
             Drag::NoteMove {
                 clip,
                 origin_tick,

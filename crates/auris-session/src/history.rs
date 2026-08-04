@@ -63,6 +63,10 @@ pub enum Edit {
     MoveClip,
     /// A clip's length changed.
     ResizeClip,
+    /// An audio clip's own gain changed.
+    SetClipGain,
+    /// An audio clip's fade-in or fade-out changed.
+    SetClipFade,
     /// A note was added.
     AddNote,
     /// Notes were deleted.

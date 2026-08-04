@@ -383,6 +383,12 @@ messages! {
         ja: "`{text}` はテンポではありません — `128` や `174.5` のように"
     }
 
+    /// The text typed into the clip gain prompt is not a number of decibels.
+    fn not_a_gain(text: &str) {
+        en: "`{text}` is not a gain — try `-3` or `2.5`",
+        ja: "`{text}` はゲインではありません — `-3` や `2.5` のように"
+    }
+
     /// The text typed into the position prompt is not a bar, beat and hundredth.
     fn not_a_position(text: &str) {
         en: "`{text}` is not a position — try `17` for a bar, or `17.3` for its third beat",

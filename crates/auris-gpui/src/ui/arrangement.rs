@@ -8,7 +8,7 @@ use gpui::{
     point, prelude::*, px, size,
 };
 
-use crate::app::{AurisApp, Drag};
+use crate::app::{AurisApp, Drag, FadeEdge};
 use crate::i18n::track_kind_key;
 use crate::theme::{Metrics, Theme};
 use crate::ui::icons::Icon;
@@ -59,6 +59,21 @@ fn resize_grab(width: Pixels) -> f32 {
 
 /// Height of a clip's name bar.
 const TITLE_HEIGHT: Pixels = px(14.0);
+
+/// Height of the band under the name bar where an audio clip's fade handles live.
+///
+/// The band splits the clip's edges by height: a press in it takes hold of a fade, one below
+/// it takes the resize handle or the clip body, exactly as the painter draws the handles.
+const FADE_BAND: Pixels = px(12.0);
+
+/// Half-width of the grab zone around a fade handle, in pixels.
+const FADE_GRAB: f32 = 6.0;
+
+/// Clips narrower than this draw no fade handles and offer none to grab.
+///
+/// On a sliver of a clip the two handles and the resize zone would overlap into a lottery;
+/// the fades themselves still play and still draw, only the handles go.
+const FADE_HANDLE_MIN_WIDTH: f32 = 40.0;
 
 impl AurisApp {
     /// Renders the arrangement panel.
@@ -752,6 +767,65 @@ impl AurisApp {
         self.selected_clips.clone()
     }
 
+    /// An audio clip's stored shape: where it sits, how long it is both ways, and its dials.
+    ///
+    /// `None` for a MIDI clip or an id nothing answers to, which is what lets the fade
+    /// gesture and the gain sheet simply not exist for note clips.
+    pub(crate) fn audio_clip_shape(
+        &self,
+        clip: ClipId,
+    ) -> Option<(Ticks, Ticks, u64, f32, u64, u64)> {
+        self.project().tracks.iter().find_map(|track| {
+            let audio = track.kind.as_audio()?;
+            let found = audio.clips.iter().find(|c| c.id == clip)?;
+            Some((
+                found.start,
+                self.session.audio_clip_length_ticks(found),
+                found.length_frames,
+                found.gain_db,
+                found.fade_in_frames,
+                found.fade_out_frames,
+            ))
+        })
+    }
+
+    /// The fade handle under a press inside a clip, if the clip is audio and has one there.
+    ///
+    /// `x` is in timeline pixels and `y_in_lane` measured from the lane's top; the clip is
+    /// drawn two pixels inside its lane, which this subtracts before asking the geometry.
+    fn fade_edge_at(&self, clip: ClipId, x: Pixels, y_in_lane: Pixels) -> Option<FadeEdge> {
+        let (start, length, frames, _, fade_in, fade_out) = self.audio_clip_shape(clip)?;
+        fade_handle_at(
+            &self.timeline,
+            start,
+            length,
+            frames,
+            fade_in,
+            fade_out,
+            x,
+            y_in_lane - px(2.0),
+        )
+    }
+
+    /// Shapes a fade towards the pointer, measured as a fraction of the clip.
+    ///
+    /// The pointer's tick becomes a fraction of the clip's tick length and that fraction a
+    /// frame count, which is exactly how the painter spreads the frames across the width —
+    /// so the ramp lands where the pointer is, whatever the zoom.
+    pub(crate) fn drag_clip_fade(&mut self, clip: ClipId, edge: FadeEdge, at: Ticks) {
+        let Some((start, length, frames, _, fade_in, fade_out)) = self.audio_clip_shape(clip)
+        else {
+            return;
+        };
+        let fraction = ((at - start).raw() as f64 / length.raw().max(1) as f64).clamp(0.0, 1.0);
+        let at_frame = (fraction * frames as f64).round() as u64;
+        let (fade_in, fade_out) = match edge {
+            FadeEdge::In => (at_frame, fade_out),
+            FadeEdge::Out => (fade_in, frames.saturating_sub(at_frame)),
+        };
+        let _ = self.session.set_clip_fades(clip, fade_in, fade_out);
+    }
+
     /// Snapshot of what each lane draws, taken while `self` is still borrowable.
     fn lane_paint_data(&self) -> Vec<LanePaint> {
         self.project()
@@ -790,6 +864,9 @@ impl AurisApp {
                                     source: clip.source,
                                     offset_frames: clip.offset_frames,
                                     length_frames: clip.length_frames,
+                                    gain_db: clip.gain_db,
+                                    fade_in_frames: clip.fade_in_frames,
+                                    fade_out_frames: clip.fade_out_frames,
                                 },
                             }
                         })
@@ -828,7 +905,7 @@ impl AurisApp {
         let local = point(event.position.x - origin.x, self.lane_y(event.position.y));
         let tick = self.timeline.x_to_tick(local.x);
 
-        let Some((track_id, _lane_top)) = self.track_at_y(local.y) else {
+        let Some((track_id, lane_top)) = self.track_at_y(local.y) else {
             // Below the last track there is nothing to grab, so the press can only be the start
             // of a sweep across the lanes above it.
             self.begin_rubber_band(
@@ -871,6 +948,16 @@ impl AurisApp {
                     self.selected_clip = Some(clip_id);
                 }
                 self.selected_notes.clear();
+                // The band under the title belongs to the fades; a press there takes hold of
+                // the nearer handle, and the resize edge keeps everything below the band.
+                if let Some(edge) = self.fade_edge_at(clip_id, local.x, local.y - lane_top) {
+                    self.begin_drag(Drag::ClipFade {
+                        clip: clip_id,
+                        edge,
+                    });
+                    cx.notify();
+                    return;
+                }
                 let clip_start_x = self.timeline.tick_to_x(clip_start);
                 let clip_end_x = self.timeline.tick_to_x(clip_start + clip_length);
                 let grab = resize_grab(clip_end_x - clip_start_x);
@@ -1126,6 +1213,51 @@ fn chord_handle_at(
     })
 }
 
+/// The fade handle a press at `x`, `y_in_clip` takes hold of, on an audio clip drawn from
+/// `start` for `length` whose fades cover `fade_in` and `fade_out` of its `frames` frames.
+///
+/// Free rather than a method for the same reason [`chord_handle_at`] is. `y_in_clip` is
+/// measured from the clip's own top edge: the handles live in the band just under the title
+/// strip, which is what leaves the rest of the right edge to the resize grab. When both
+/// handles are within reach — a clip with no fades yet is exactly its two corners — the
+/// nearer one wins, and a tie goes to the fade-in.
+#[allow(clippy::too_many_arguments)]
+fn fade_handle_at(
+    view: &crate::ui::timeline::TimelineView,
+    start: Ticks,
+    length: Ticks,
+    frames: u64,
+    fade_in: u64,
+    fade_out: u64,
+    x: Pixels,
+    y_in_clip: Pixels,
+) -> Option<FadeEdge> {
+    if frames == 0 {
+        return None;
+    }
+    let width = f32::from(view.duration_to_width(length));
+    if width <= FADE_HANDLE_MIN_WIDTH {
+        return None;
+    }
+    if y_in_clip < TITLE_HEIGHT || y_in_clip > TITLE_HEIGHT + FADE_BAND {
+        return None;
+    }
+    let left = f32::from(view.tick_to_x(start));
+    let in_x = left + width * (fade_in as f64 / frames as f64) as f32;
+    let out_x = left + width * (1.0 - (fade_out as f64 / frames as f64) as f32);
+    let x = f32::from(x);
+    let to_in = (x - in_x).abs();
+    let to_out = (x - out_x).abs();
+    if to_in > FADE_GRAB && to_out > FADE_GRAB {
+        return None;
+    }
+    Some(if to_in <= to_out {
+        FadeEdge::In
+    } else {
+        FadeEdge::Out
+    })
+}
+
 /// What one lane draws.
 struct LanePaint {
     height: f32,
@@ -1155,6 +1287,9 @@ enum ClipContent {
         source: SourceId,
         offset_frames: u64,
         length_frames: u64,
+        gain_db: f32,
+        fade_in_frames: u64,
+        fade_out_frames: u64,
     },
 }
 
@@ -1252,6 +1387,9 @@ fn paint_lane(
                 source,
                 offset_frames,
                 length_frames,
+                fade_in_frames,
+                fade_out_frames,
+                ..
             } => {
                 if let Some(peaks) = peaks.get(source) {
                     // Peaks are stored channel-major, so take the first channel's run only —
@@ -1274,6 +1412,16 @@ fn paint_lane(
                         );
                     }
                 }
+                // Fades are drawn as a fraction of the clip's frames, exactly as the waveform
+                // above spreads its frames across the width — the ramp ends over the sample it
+                // ends on. Handles only where there is room to grab them; the hit test reads
+                // the same constant.
+                if f32::from(clip_bounds.size.width) > FADE_HANDLE_MIN_WIDTH && *length_frames > 0 {
+                    let width = f32::from(content_bounds.size.width);
+                    let fade_in = width * (*fade_in_frames as f64 / *length_frames as f64) as f32;
+                    let fade_out = width * (*fade_out_frames as f64 / *length_frames as f64) as f32;
+                    paint::clip_fades(window, content_bounds, fade_in, fade_out, theme);
+                }
             }
         }
 
@@ -1281,11 +1429,18 @@ fn paint_lane(
             // The name says it too, so mute is not carried by a shade of a colour the user
             // chose — which is unreadable for anyone who cannot separate those two shades, and
             // was barely readable for anyone who can.
-            let name = if clip.muted {
+            let mut name = if clip.muted {
                 format!("{} · {}", Key::MuteInitial.get(language), clip.name)
             } else {
                 clip.name.clone()
             };
+            // An audio clip carrying its own gain says the number on its face — the mix
+            // reads differently from how the faders alone say it should, and this is why.
+            if let ClipContent::Waveform { gain_db, .. } = &clip.content
+                && *gain_db != 0.0
+            {
+                name = format!("{name} · {gain_db:+.1} dB");
+            }
             paint::label(
                 window,
                 cx,
@@ -1367,6 +1522,72 @@ mod tests {
                 "every column the bar is painted on takes hold of it",
             );
         }
+    }
+
+    #[test]
+    fn a_fade_is_taken_hold_of_in_the_band_under_the_title() {
+        // Four beats at 48 px/beat: a 192-pixel clip, 48 000 frames behind it.
+        let view = view();
+        let length = Ticks::from_beats(4.0);
+        let frames = 48_000;
+        let y = TITLE_HEIGHT + px(4.0);
+
+        // With no fades yet, the handles are the clip's top corners.
+        let grab = |fade_in, fade_out, x: f32, y| {
+            fade_handle_at(
+                &view,
+                Ticks::ZERO,
+                length,
+                frames,
+                fade_in,
+                fade_out,
+                px(x),
+                y,
+            )
+        };
+        assert_eq!(grab(0, 0, 0.0, y), Some(FadeEdge::In));
+        assert_eq!(grab(0, 0, 192.0, y), Some(FadeEdge::Out));
+        assert_eq!(grab(0, 0, 96.0, y), None, "between the handles is the body");
+        assert_eq!(
+            grab(0, 0, 192.0, TITLE_HEIGHT + FADE_BAND + px(1.0)),
+            None,
+            "below the band the same pixel is the resize edge"
+        );
+        assert_eq!(
+            grab(0, 0, 96.0, TITLE_HEIGHT - px(2.0)),
+            None,
+            "the title strip stays the move grab"
+        );
+
+        // A fade already drawn moves its handle to the top of the ramp.
+        let quarter = frames / 4;
+        assert_eq!(grab(quarter, 0, 48.0, y), Some(FadeEdge::In));
+        assert_eq!(
+            grab(quarter, 0, 0.0, y),
+            None,
+            "the corner stopped being the handle once the fade moved it"
+        );
+        assert_eq!(grab(0, quarter, 144.0, y), Some(FadeEdge::Out));
+    }
+
+    #[test]
+    fn a_sliver_of_a_clip_offers_no_fade_handles() {
+        // Half a beat is 24 pixels — under the minimum, where the two handles and the resize
+        // grab would overlap into a lottery.
+        let view = view();
+        assert_eq!(
+            fade_handle_at(
+                &view,
+                Ticks::ZERO,
+                Ticks::from_beats(0.5),
+                6_000,
+                0,
+                0,
+                px(0.0),
+                TITLE_HEIGHT + px(4.0),
+            ),
+            None
+        );
     }
 
     #[test]

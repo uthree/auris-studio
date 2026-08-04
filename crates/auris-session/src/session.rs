@@ -1726,9 +1726,80 @@ impl Session {
             let end_seconds = tempo.ticks_to_seconds(end).0;
             audio.length_frames = (((end_seconds - start_seconds).max(0.0)) * sample_rate) as u64;
             audio.length_frames = audio.length_frames.max(1);
+            // The fades keep fitting inside the clip as it shrinks, under the same rule
+            // `set_clip_fades` writes them by: the fade-in keeps its place and the fade-out
+            // takes what is left.
+            audio.fade_in_frames = audio.fade_in_frames.min(audio.length_frames);
+            audio.fade_out_frames = audio
+                .fade_out_frames
+                .min(audio.length_frames - audio.fade_in_frames);
         }
         self.invalidate_graph();
         Ok(())
+    }
+
+    /// Sets an audio clip's own gain, in decibels.
+    ///
+    /// Clip gain is the clip's, not the track's: it travels with the clip when it moves, and it
+    /// is applied before the track's effect chain, which is what makes it the tool for evening
+    /// out a loud take against its neighbours. Clamped to −60…+24 dB; a non-finite value is
+    /// refused outright.
+    pub fn set_clip_gain(&mut self, clip: ClipId, gain_db: f32) -> Result<(), SessionError> {
+        if !gain_db.is_finite() {
+            return Err(SessionError::NotFinite(f64::from(gain_db)));
+        }
+        let gain_db = gain_db.clamp(-60.0, 24.0);
+        if self.require_audio_clip(clip)?.gain_db == gain_db {
+            return Ok(());
+        }
+        self.record(Edit::SetClipGain);
+        if let Some(audio) = self.project.audio_clip_mut(clip) {
+            audio.gain_db = gain_db;
+        }
+        self.invalidate_graph();
+        Ok(())
+    }
+
+    /// Sets an audio clip's fades, in frames of its source.
+    ///
+    /// The fade-in is clamped to the clip and the fade-out to what the fade-in leaves, so the
+    /// two can meet but never cross — crossed fades would multiply into a dip no hand drew.
+    /// [`auris_core::AudioClip::fade_gain_at`] is the shape, shared by playback and by
+    /// whatever a frontend draws.
+    pub fn set_clip_fades(
+        &mut self,
+        clip: ClipId,
+        fade_in: u64,
+        fade_out: u64,
+    ) -> Result<(), SessionError> {
+        let current = self.require_audio_clip(clip)?;
+        let length = current.length_frames;
+        let fade_in = fade_in.min(length);
+        let fade_out = fade_out.min(length - fade_in);
+        if current.fade_in_frames == fade_in && current.fade_out_frames == fade_out {
+            return Ok(());
+        }
+        self.record(Edit::SetClipFade);
+        if let Some(audio) = self.project.audio_clip_mut(clip) {
+            audio.fade_in_frames = fade_in;
+            audio.fade_out_frames = fade_out;
+        }
+        self.invalidate_graph();
+        Ok(())
+    }
+
+    /// The audio clip called `clip`, or the error saying what was addressed instead.
+    fn require_audio_clip(&self, clip: ClipId) -> Result<&auris_core::AudioClip, SessionError> {
+        let found = self
+            .project
+            .tracks
+            .iter()
+            .find_map(|track| track.kind.as_audio()?.clips.iter().find(|c| c.id == clip));
+        match found {
+            Some(audio) => Ok(audio),
+            None if self.project.midi_clip(clip).is_some() => Err(SessionError::NotAudio(clip.0)),
+            None => Err(SessionError::UnknownClip(clip.0)),
+        }
     }
 
     fn audio_clip_exists(&self, clip: ClipId) -> bool {
@@ -3554,6 +3625,109 @@ mod tests {
         assert_eq!(session.project().tempo_map.bpm_at(Ticks(3_840)), 120.0);
         assert_eq!(session.undo(), Some(Edit::RemoveTempoPoint));
         assert_eq!(session.project().tempo_map.points().len(), 2);
+    }
+
+    /// An audio clip of `frames` frames on its own track, with no samples behind it.
+    ///
+    /// Enough to exercise every command that shapes the clip; what it *sounds* like needs
+    /// decoded audio, which is an importer's business rather than a fixture's.
+    fn audio_clip(session: &mut Session, frames: u64) -> ClipId {
+        let rate = session.project().sample_rate;
+        let track = session.project.add_audio_track("Take");
+        let source = session.project.add_audio_source(
+            "take",
+            AssetPath::external("/audio/take.wav"),
+            frames,
+            rate,
+            2,
+        );
+        session
+            .project
+            .add_audio_clip(track, source, Ticks::ZERO)
+            .expect("the track was just added")
+    }
+
+    /// The audio clip's stored shape, read back for assertions.
+    fn audio_shape(session: &Session, clip: ClipId) -> (f32, u64, u64) {
+        let audio = session
+            .project()
+            .tracks
+            .iter()
+            .find_map(|track| track.kind.as_audio()?.clips.iter().find(|c| c.id == clip))
+            .expect("the clip exists");
+        (audio.gain_db, audio.fade_in_frames, audio.fade_out_frames)
+    }
+
+    #[test]
+    fn clip_gain_belongs_to_audio_and_comes_back_on_undo() {
+        let mut session = session();
+        let clip = audio_clip(&mut session, 48_000);
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let midi = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        session.forget_history();
+
+        session.set_clip_gain(clip, -6.0).unwrap();
+        assert_eq!(audio_shape(&session, clip).0, -6.0);
+        // Way past the range is the nearest gain that exists, not an error.
+        session.set_clip_gain(clip, 100.0).unwrap();
+        assert_eq!(audio_shape(&session, clip).0, 24.0);
+        // NaN has no nearest anything and is refused outright.
+        assert!(matches!(
+            session.set_clip_gain(clip, f32::NAN),
+            Err(SessionError::NotFinite(_))
+        ));
+        // A note clip's loudness is its velocities; addressing it here says so.
+        assert!(matches!(
+            session.set_clip_gain(midi, 0.0),
+            Err(SessionError::NotAudio(_))
+        ));
+        assert!(matches!(
+            session.set_clip_gain(ClipId(9_999), 0.0),
+            Err(SessionError::UnknownClip(_))
+        ));
+
+        // A value that has not moved is not an edit.
+        session.set_clip_gain(clip, 24.0).unwrap();
+        assert_eq!(session.undo(), Some(Edit::SetClipGain));
+        assert_eq!(session.undo(), Some(Edit::SetClipGain));
+        assert_eq!(audio_shape(&session, clip).0, 0.0);
+        assert!(!session.can_undo());
+    }
+
+    #[test]
+    fn fades_fit_the_clip_and_never_cross() {
+        let mut session = session();
+        let clip = audio_clip(&mut session, 48_000);
+        session.forget_history();
+
+        session.set_clip_fades(clip, 10_000, 6_000).unwrap();
+        assert_eq!(audio_shape(&session, clip), (0.0, 10_000, 6_000));
+        // A fade asked for past the end takes the whole clip and leaves the other nothing.
+        session.set_clip_fades(clip, 96_000, 6_000).unwrap();
+        assert_eq!(audio_shape(&session, clip), (0.0, 48_000, 0));
+        // Two that would cross meet instead: the fade-out takes what the fade-in leaves.
+        session.set_clip_fades(clip, 30_000, 30_000).unwrap();
+        assert_eq!(audio_shape(&session, clip), (0.0, 30_000, 18_000));
+        // Writing what is already there is not an edit.
+        session.set_clip_fades(clip, 30_000, 18_000).unwrap();
+        assert_eq!(undo_depth(&mut session), 3);
+    }
+
+    #[test]
+    fn shrinking_a_clip_keeps_its_fades_inside_it() {
+        let mut session = session();
+        let clip = audio_clip(&mut session, 48_000);
+        session.set_clip_fades(clip, 30_000, 18_000).unwrap();
+        session.forget_history();
+
+        // 48 000 frames at 120 BPM and 48 kHz is two beats; dragging the end to beat one
+        // halves the clip to 24 000 frames, which the fades must fit inside.
+        session.resize_clip(clip, Ticks::QUARTER).unwrap();
+        assert_eq!(audio_shape(&session, clip), (0.0, 24_000, 0));
+        assert_eq!(session.undo(), Some(Edit::ResizeClip));
+        assert_eq!(audio_shape(&session, clip), (0.0, 30_000, 18_000));
     }
 
     #[test]

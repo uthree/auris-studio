@@ -58,6 +58,8 @@ pub enum PromptTarget {
     /// The ruler's counterpart to [`PromptTarget::Tempo`]: the same number, but written *here*,
     /// the way [`PromptTarget::Key`] writes a key change here.
     TempoFrom(Ticks),
+    /// An audio clip's own gain, in decibels.
+    ClipGain(ClipId),
     /// Where the playhead sits, as bar, beat and hundredth.
     Position,
 }
@@ -76,6 +78,7 @@ impl PromptTarget {
             PromptTarget::Section(_) => Key::HintSection,
             PromptTarget::Seed(_) => Key::HintSeed,
             PromptTarget::Tempo(_) | PromptTarget::TempoFrom(_) => Key::HintTempo,
+            PromptTarget::ClipGain(_) => Key::HintClipGain,
             PromptTarget::Position => Key::HintPosition,
             PromptTarget::Track(_) | PromptTarget::Clip(_) => return None,
         })
@@ -458,6 +461,15 @@ impl AurisApp {
                 }
                 _ => {
                     self.set_failed_status(messages::not_a_tempo(self.language(), &text));
+                    return;
+                }
+            },
+            // Out of range is clamped for the same reason a tempo is; only a value that is
+            // not a number at all is turned away.
+            PromptTarget::ClipGain(clip) => match text.parse::<f32>() {
+                Ok(gain_db) if gain_db.is_finite() => self.session.set_clip_gain(clip, gain_db),
+                _ => {
+                    self.set_failed_status(messages::not_a_gain(self.language(), &text));
                     return;
                 }
             },
@@ -1125,6 +1137,7 @@ mod tests {
             PromptTarget::Seed(ClipId(1)),
             PromptTarget::Tempo(AT),
             PromptTarget::TempoFrom(AT),
+            PromptTarget::ClipGain(ClipId(1)),
             PromptTarget::Position,
         ]
     }
