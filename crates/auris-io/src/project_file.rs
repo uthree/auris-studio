@@ -51,10 +51,22 @@ pub fn project_folder(document: &Path) -> Option<&Path> {
 /// named after it — which is what saving over an existing project looks like — leaves it where
 /// it is rather than burrowing one level deeper each time.
 ///
-/// The extension is forced, so a name typed without one still produces a project and not a file
-/// nothing will offer to open.
+/// The extension is *appended* when it is missing, never substituted: `with_extension` would
+/// replace a final dot-suffix, so `Mix.v2` — which a Windows save dialog passes through
+/// verbatim, `v2` counting as an extension — would quietly become `Mix`, and the save would
+/// land on a different project's document, or on the previous version of this one.
 pub fn document_in_folder(chosen: &Path) -> PathBuf {
-    let document = chosen.with_extension(PROJECT_EXTENSION);
+    let already_named = chosen
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(PROJECT_EXTENSION));
+    let document = if already_named {
+        chosen.to_path_buf()
+    } else {
+        let mut name = chosen.as_os_str().to_os_string();
+        name.push(".");
+        name.push(PROJECT_EXTENSION);
+        PathBuf::from(name)
+    };
     let Some(stem) = document.file_stem().map(OsString::from) else {
         return document;
     };
@@ -200,6 +212,31 @@ mod tests {
         assert_eq!(
             document_in_folder(Path::new("/songs/MySong")),
             PathBuf::from("/songs/MySong/MySong.auris")
+        );
+    }
+
+    #[test]
+    fn a_dotted_name_keeps_its_dots() {
+        // `with_extension` would replace `.v2`, collapsing `Mix.v2` onto `Mix` — a different
+        // project, or the previous version of this one, silently saved over. The Windows save
+        // dialog passes such a name through verbatim, since `v2` counts as an extension.
+        assert_eq!(
+            document_in_folder(Path::new("/songs/Mix.v2")),
+            PathBuf::from("/songs/Mix.v2/Mix.v2.auris")
+        );
+        assert_eq!(
+            document_in_folder(Path::new("/songs/Mix.v2.auris")),
+            PathBuf::from("/songs/Mix.v2/Mix.v2.auris")
+        );
+    }
+
+    #[test]
+    fn the_extension_is_recognised_whatever_its_case() {
+        // A document renamed to `.AURIS` elsewhere is still this application's file, not a
+        // name to hang another `.auris` off the end of.
+        assert_eq!(
+            document_in_folder(Path::new("/songs/MySong.AURIS")),
+            PathBuf::from("/songs/MySong/MySong.AURIS")
         );
     }
 
