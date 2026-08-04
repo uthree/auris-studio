@@ -151,9 +151,48 @@ enum CompFigure {
     /// A euclidean rhythm across the bar: the tresillo and its relatives, which put three
     /// against the bar's four and are where a comp gets its lift without getting busier.
     Cross,
-    /// Every step there is. The wall of chords that dance music is built on, and — with the gate
-    /// most of the way down — the release-cut piano it is usually played with.
-    Driving,
+    /// A rhythm rolled from the metric hierarchy: most of the steps, with the holes that make it
+    /// a rhythm. This is the fast one — with the gate most of the way down it is the release-cut
+    /// piano dance music is built on.
+    ///
+    /// It used to be a chord on literally every step, which was reachable and too plain to use:
+    /// sixteen identical strikes in a bar is a tremolo, not a part. Rolling it the way the melody
+    /// rolls its figure keeps the density and buys back a shape.
+    Rolled,
+}
+
+/// How often the last bar of a four-bar phrase departs from the figure the section chose.
+///
+/// A turnaround, not a new part. Somewhere to put it is worth having — the fourth bar is where a
+/// phrase turns over, and it is the one place a change reads as intent rather than as drift.
+const TURNAROUND: f32 = 0.45;
+
+/// Draws one comping figure, weighted by how busy the part was asked to be.
+///
+/// Sparse reaches for the held chord, busy for the offbeats and the rolled figure. Every figure
+/// keeps some weight, because a dial that forbids a choice outright makes every section the same
+/// again.
+fn pick_figure(rng: &mut Rng, busy: f32) -> CompFigure {
+    const FIGURES: [CompFigure; 6] = [
+        CompFigure::Held,
+        CompFigure::Beats,
+        CompFigure::Charleston,
+        CompFigure::Offbeats,
+        CompFigure::Cross,
+        CompFigure::Rolled,
+    ];
+    FIGURES[rng
+        .weighted(&[
+            0.2 + (1.0 - busy) * 2.0,
+            1.0,
+            0.2 + busy,
+            0.2 + busy * 1.6,
+            0.2 + busy * 1.4,
+            // Squared, so the fast one is somewhere the dial has to be pushed rather than
+            // somewhere a middling setting wanders into. It is the loudest thing a comp can do.
+            0.05 + busy * busy * 3.0,
+        ])
+        .min(FIGURES.len() - 1)]
 }
 
 /// The shape of a bass line through a bar.
@@ -584,6 +623,33 @@ fn comp(
     let busy = density(settings, part, section);
     let voicing_variant = choose.weighted(&[1.0, 0.2 + (1.0 - busy) * 1.8, 0.2 + busy * 1.8]);
 
+    // How the part comps, drawn once for the section and then restated over every chord in it.
+    //
+    // Per bar was wrong, and wrong in the way the melody used to be wrong: a keyboard player
+    // picks a feel and keeps it, so a comp that drew again every bar was four bars of four
+    // different players and left the section with nothing an ear could hold on to. Keyed by the
+    // section's name and not by which playing of it this is, so a second chorus comps like the
+    // first.
+    let mut invent = Rng::stream(
+        frame.seed,
+        &[
+            RngKey::Word("part"),
+            RngKey::Word(&part.name),
+            RngKey::Word("comp"),
+            RngKey::Word(&section.name),
+        ],
+    );
+    let chosen_figure = if held {
+        CompFigure::Held
+    } else {
+        pick_figure(&mut invent, busy)
+    };
+    // The rolled figure's own rhythm, drawn from the same stream so that it belongs to the
+    // section too. Drawn whether or not it is wanted, so that a turnaround reaching for it later
+    // finds the section's rhythm rather than a different one — and so the stream does not shift
+    // under everything else depending on which figure came out.
+    let rolled = bar_onsets(grid, None, busy, settings.mood.syncopation, &mut invent);
+
     for event in &section.events {
         // Voiced upward from a floor, so a ninth sounds an octave and a tone above the root
         // rather than being folded into the triad as a second. The floor is whichever octave
@@ -643,36 +709,19 @@ fn comp(
         // whole of this part used to be one fixed pattern, which made "another take" a button
         // that could not do anything.
         let bar = grid.step_of(event.start) / grid.steps_per_bar().max(1);
-        let figure = if held {
-            CompFigure::Held
+        // Four bars is the phrase almost everything is built in, and the fourth is where one
+        // turns over. It is the only bar allowed to depart, and only sometimes: anywhere else a
+        // change reads as the part losing its place rather than as a player finishing a thought.
+        // `variation` reaches this through `bar_stream`, so a repeat can turn around differently.
+        let figure = if held || bar % 4 != 3 {
+            chosen_figure
         } else {
-            // Weighted by how busy the part was asked to be, so the density dial reaches a part
-            // that plays figures rather than counting notes: a sparse setting reaches for the
-            // held chord, a busy one for the offbeats. Every figure keeps some weight, because a
-            // dial that forbids a choice outright makes every bar the same again.
-            let busy = density(settings, part, section);
             let mut rng = bar_stream(settings, frame, part, section, "comp", bar);
-            const FIGURES: [CompFigure; 6] = [
-                CompFigure::Held,
-                CompFigure::Beats,
-                CompFigure::Charleston,
-                CompFigure::Offbeats,
-                CompFigure::Cross,
-                CompFigure::Driving,
-            ];
-            FIGURES[rng
-                .weighted(&[
-                    0.2 + (1.0 - busy) * 2.0,
-                    1.0,
-                    0.2 + busy,
-                    0.2 + busy * 1.6,
-                    0.2 + busy * 1.4,
-                    // Squared, so a chord on every step is something the dial has to be pushed
-                    // most of the way up to reach rather than something a middling setting
-                    // wanders into. It is the loudest thing this part can do.
-                    0.05 + busy * busy * 3.0,
-                ])
-                .min(FIGURES.len() - 1)]
+            if rng.chance(TURNAROUND) {
+                pick_figure(&mut rng, busy)
+            } else {
+                chosen_figure
+            }
         };
 
         let onsets: Vec<usize> = if figure == CompFigure::Held {
@@ -696,7 +745,7 @@ fn comp(
                         CompFigure::Offbeats => at % beat == half,
                         CompFigure::Charleston => at == 0 || at == beat + half,
                         CompFigure::Cross => cross.at(at).is_some(),
-                        CompFigure::Driving => true,
+                        CompFigure::Rolled => rolled.iter().any(|(step, _)| *step == at),
                         CompFigure::Held => false,
                     }
                 })
@@ -1736,20 +1785,32 @@ mod tests {
         // The whole point of the setting: a position a sixteenth grid cannot express. A third of
         // a beat is 320 ticks, and no multiple of 320 but the beats themselves is a multiple of
         // the 240 a sixteenth is.
-        let (_, _, parts) = draft(&roster("subdivision: 8t\n"));
-        let chords = part(&parts, "chords");
-        assert!(!chords.notes.is_empty());
-        for note in &chords.notes {
-            assert_eq!(
-                note.start.raw() % 320,
-                0,
-                "{} is not on a triplet",
-                note.start.raw()
-            );
+        //
+        // Over several seeds, because the figure is now drawn once per section: a seed that draws
+        // the held chord puts everything on a downbeat, which is a legitimate comp and lands on
+        // both grids at once. What has to be true is that the setting is *reachable*.
+        let mut off_the_straight_grid = 0;
+        for seed in 1..=8u64 {
+            let text = roster("subdivision: 8t\ndensity: 0.9\n")
+                .replace("seed: 5", &format!("seed: {seed}"));
+            let (_, _, parts) = draft(&text);
+            let chords = part(&parts, "chords");
+            assert!(!chords.notes.is_empty(), "seed {seed} wrote nothing");
+            for note in &chords.notes {
+                assert_eq!(
+                    note.start.raw() % 320,
+                    0,
+                    "seed {seed} put a note at {}, which is not on a triplet",
+                    note.start.raw()
+                );
+            }
+            if chords.notes.iter().any(|note| note.start.raw() % 240 != 0) {
+                off_the_straight_grid += 1;
+            }
         }
         assert!(
-            chords.notes.iter().any(|note| note.start.raw() % 240 != 0),
-            "every note landed somewhere a straight grid could have reached"
+            off_the_straight_grid > 0,
+            "not one of eight seeds put a note where a straight grid could not reach"
         );
     }
 
@@ -1797,28 +1858,71 @@ mod tests {
     }
 
     #[test]
-    fn a_comp_at_full_density_hammers_every_step_of_its_grid() {
-        // The figure the four original ones could not express: they topped out at the offbeat
-        // eighth, so no setting anywhere reached a chord on every sixteenth. Averaged over seeds,
-        // because the dial weighs the choice rather than making it.
+    fn a_comp_at_full_density_is_dense_without_being_a_metronome() {
+        // Two claims, and the second is the one that was learned the hard way. The four original
+        // figures topped out at the offbeat eighth, so no setting anywhere reached a comp that
+        // moved on sixteenths — but the first fix was a chord on *literally* every step, which is
+        // a tremolo rather than a part and was too plain to use. What the top of the dial should
+        // give is most of the steps, with the holes that make it a rhythm.
         let full = |seed: u64| {
             format!(
                 "form: verse\nchords: @axis\nhumanize: 0\nseed: {seed}\n\
                  [section verse]\nbars: 4\nintensity: 1.0\n[part chords]\ndensity: 1.0"
             )
         };
-        let mut driven = 0;
+        let mut counts = Vec::new();
         for seed in 1..=8 {
             let (_, frame, parts) = draft(&full(seed));
             let chords = part(&parts, "chords");
-            let steps = frame.grid.steps_per_bar();
-            driven += (0..4)
-                .filter(|bar| bar_steps(&frame, chords, *bar).len() == steps)
-                .count();
+            counts.extend((0..4).map(|bar| bar_steps(&frame, chords, bar).len()));
         }
+        let steps = 16;
+        let busiest = counts.iter().copied().max().unwrap_or(0);
         assert!(
-            driven > 0,
-            "not one bar in thirty-two struck every step at full density"
+            busiest > steps / 2,
+            "the busiest bar in thirty-two struck {busiest} of {steps} steps at full density"
+        );
+        assert!(
+            counts.iter().any(|count| *count < steps),
+            "every bar struck every step, which is a tremolo rather than a rhythm"
+        );
+    }
+
+    #[test]
+    fn a_comp_keeps_one_figure_through_a_section_and_turns_it_over_at_the_end() {
+        // A keyboard player picks a feel and keeps it. Drawing again every bar was four bars of
+        // four different players, and left the section with nothing an ear could hold on to —
+        // the same mistake the melody used to make, and the same fix. Only the fourth bar of a
+        // phrase may depart, because that is where a phrase turns over.
+        let mut steady = 0;
+        for seed in 1..=8u64 {
+            let (_, frame, parts) = draft(&format!(
+                "form: verse\nchords: @axis\nhumanize: 0\nvariation: 0\nseed: {seed}\n\
+                 [section verse]\nbars: 8\n[part chords]\ndensity: 0.8"
+            ));
+            let chords = part(&parts, "chords");
+            // Bars 0, 1 and 2 of each four-bar phrase are never allowed to differ from each
+            // other. The chords move underneath them, but the steps struck do not.
+            for phrase in 0..2 {
+                let first = bar_steps(&frame, chords, phrase * 4);
+                for bar in 1..3 {
+                    assert_eq!(
+                        bar_steps(&frame, chords, phrase * 4 + bar),
+                        first,
+                        "seed {seed} changed figure inside a phrase, at bar {}",
+                        phrase * 4 + bar
+                    );
+                }
+                if bar_steps(&frame, chords, phrase * 4 + 3) == first {
+                    steady += 1;
+                }
+            }
+        }
+        // And the turnaround is a departure rather than a rule: most closing bars carry straight
+        // on. A fourth bar that always changed would be a figure eight bars long, not a phrase.
+        assert!(
+            steady > 0,
+            "every closing bar in sixteen phrases departed from its figure"
         );
     }
 

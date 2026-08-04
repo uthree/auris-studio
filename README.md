@@ -146,10 +146,15 @@ setting rather than a fight. Swing disappears on a triplet grid, because a grid 
 where swing is trying to push it has nothing left to be pushed — and a drum kit ignores the
 subdivision entirely, since a groove is written in sixteenths and read by index.
 
-The **stab** preset is the two of these that have to be turned up together: a chord struck on every
-step with its release cut off, which is what most dance music has underneath it. It arrives with
-its own dials rather than the middling defaults, and moving one of them keeps it moved when the
-preset changes — a dial somebody set is theirs, a dial still where the last preset left it is not.
+A chord part picks its figure once for the section and restates it, the way a keyboard player picks
+a feel and keeps it; only the fourth bar of a phrase is allowed to turn it over, and only
+sometimes. At the top of the density dial the figure it reaches for is a rhythm rolled from the
+metric hierarchy — most of the steps, with the holes that make it a rhythm rather than a tremolo.
+
+The **stab** preset is the settings that have to be turned up together: fast, short and hammered,
+which is what most dance music has underneath it. It arrives with its own dials rather than the
+middling defaults, and moving one of them keeps it moved when the preset changes — a dial somebody
+set is theirs, a dial still where the last preset left it is not.
 
 `auris` compose specifications reach the same settings, per part:
 

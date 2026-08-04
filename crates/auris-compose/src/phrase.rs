@@ -366,26 +366,39 @@ mod tests {
     fn a_triplet_recipe_writes_notes_a_straight_one_cannot() {
         // The dial is the reason the grid became a setting: a third of a beat is 320 ticks, and
         // nothing a sixteenth grid can reach lands between two of them.
-        let triplet = write_phrase(
-            &axis(),
-            Ticks::ZERO,
-            BAR * 4,
-            four_four(),
-            &ClipRecipe {
-                humanize: 0.0,
-                density: 1.0,
-                subdivision: auris_core::Subdivision::EighthTriplet,
-                ..ClipRecipe::new(ClipPreset::Chords, 2)
-            },
-        );
-        assert!(!triplet.is_empty());
+        //
+        // Over several seeds, because a clip draws one figure for the whole of itself: a seed
+        // that draws the held chord puts every note on a downbeat, which is on both grids at
+        // once and a perfectly good comp. What must be true is that the setting is reachable.
+        let triplet = |seed: u64| {
+            write_phrase(
+                &axis(),
+                Ticks::ZERO,
+                BAR * 4,
+                four_four(),
+                &ClipRecipe {
+                    humanize: 0.0,
+                    density: 1.0,
+                    subdivision: auris_core::Subdivision::EighthTriplet,
+                    ..ClipRecipe::new(ClipPreset::Chords, seed)
+                },
+            )
+        };
+        let mut off_the_straight_grid = 0;
+        for seed in 1..=8u64 {
+            let notes = triplet(seed);
+            assert!(!notes.is_empty(), "seed {seed} wrote nothing");
+            assert!(
+                notes.iter().all(|note| note.start.raw() % 320 == 0),
+                "seed {seed} landed off its own grid"
+            );
+            if notes.iter().any(|note| note.start.raw() % 240 != 0) {
+                off_the_straight_grid += 1;
+            }
+        }
         assert!(
-            triplet.iter().all(|note| note.start.raw() % 320 == 0),
-            "a triplet part landed off its own grid"
-        );
-        assert!(
-            triplet.iter().any(|note| note.start.raw() % 240 != 0),
-            "every note landed somewhere a straight grid could have reached"
+            off_the_straight_grid > 0,
+            "not one of eight seeds put a note where a straight grid could not reach"
         );
     }
 

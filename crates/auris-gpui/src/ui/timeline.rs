@@ -220,12 +220,19 @@ impl PitchView {
     }
 
     /// Scrolls the pitch axis by a pixel delta.
+    ///
+    /// A positive delta advances the view — the same direction [`TimelineView::scroll_by`] and
+    /// the arrangement's lane scroll take a positive delta to mean, and the reason all three
+    /// call sites can pass `-delta.y` and agree. Advancing down the keyboard *lowers*
+    /// [`Self::top_pitch`], because the top of the view is the highest pitch in it; adding here
+    /// instead was the whole of why the wheel ran backwards in the roll and forwards everywhere
+    /// else.
     pub fn scroll_by(&mut self, delta_y: Pixels) {
         if self.row_height <= 0.0 {
             return;
         }
         let rows = (f32::from(delta_y) / self.row_height).round() as i32;
-        self.top_pitch = (self.top_pitch as i32 + rows).clamp(0, Self::MAX_PITCH as i32) as u8;
+        self.top_pitch = (self.top_pitch as i32 - rows).clamp(0, Self::MAX_PITCH as i32) as u8;
     }
 
     /// Centres the view on `pitch` given a body `height` pixels tall.
@@ -417,6 +424,32 @@ mod tests {
             view.zoom_by(0.5, anchor);
         }
         assert_eq!(view.row_height, PitchView::MIN_ROW_HEIGHT);
+    }
+
+    #[test]
+    fn every_axis_takes_a_positive_delta_to_mean_the_same_direction() {
+        // The three scrollers are passed `-delta.y` from three places that each believe they are
+        // doing the same thing, so they had better be. The pitch axis was the odd one out: it
+        // added where the others subtract, and the wheel ran backwards in the piano roll and
+        // forwards in the arrangement an inch away.
+        //
+        // "Advance" is what a positive delta means. Along the timeline that is later; down the
+        // keyboard that is lower, which *lowers* the top pitch, because the top of the roll is
+        // the highest note in it and not the lowest.
+        let mut time = TimelineView::default();
+        time.scroll_by(px(100.0));
+        assert!(time.scroll_ticks > Ticks::ZERO, "time went backwards");
+
+        let mut pitch = PitchView {
+            row_height: 10.0,
+            top_pitch: 96,
+        };
+        pitch.scroll_by(px(100.0));
+        assert_eq!(pitch.top_pitch, 86, "the pitch axis went the other way");
+
+        // And back again, so a wheel rolled one way and then the other lands where it started.
+        pitch.scroll_by(px(-100.0));
+        assert_eq!(pitch.top_pitch, 96);
     }
 
     #[test]
