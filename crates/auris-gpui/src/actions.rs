@@ -67,6 +67,8 @@ actions!(
         OpenSettings,
         /// Open the command palette.
         OpenCommandPalette,
+        /// Drop open the menu bar this window draws for itself.
+        OpenMenuBar,
         /// Move keyboard focus to the next panel.
         FocusNextPane,
         /// Move keyboard focus to the previous panel.
@@ -218,6 +220,10 @@ bindable! {
         "view.settings",        GroupView,      CmdSettings,           "secondary-," => OpenSettings;
         // What VS Code and Zed both use, and free here — `p` alone already shows the editor.
         "view.palette",         GroupView,      CmdCommandPalette,     "secondary-shift-p" => OpenCommandPalette;
+        // F10 is what Windows has reached the menu bar with since there was one. Not the Alt key
+        // it also uses: a modifier on its own is not a keystroke gpui can bind, and one that was
+        // would fire on every ⌥-click the roll uses to delete a note.
+        "view.menu_bar",        GroupView,      CmdOpenMenuBar,        "f10"         => OpenMenuBar;
         "view.focus_next",      GroupView,      CmdFocusNextPane,      "tab"         => FocusNextPane;
         "view.focus_previous",  GroupView,      CmdFocusPreviousPane,  "shift-tab"   => FocusPreviousPane;
     }

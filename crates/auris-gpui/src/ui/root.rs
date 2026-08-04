@@ -11,7 +11,9 @@ use gpui::{
 use crate::actions;
 use crate::app::{AurisApp, Drag, EditorTab, Pane};
 use crate::gestures::past_drag_threshold;
+use crate::menu::MenuRow;
 use crate::theme::Theme;
+use crate::ui::menu_bar;
 use crate::ui::widgets::splitter;
 
 impl Render for AurisApp {
@@ -125,7 +127,7 @@ impl Render for AurisApp {
             // one nothing is bound to disables the window's bindings in a single move; the panes
             // drop their contexts at the same time, in `pane_context`, which is what stops a
             // pane-scoped binding firing from the pane that still holds focus behind the sheet.
-            .key_context(if self.prompt.is_some() || self.palette.is_some() {
+            .key_context(if self.keys_are_claimed() {
                 actions::context::PROMPT
             } else {
                 actions::KEY_CONTEXT
@@ -168,6 +170,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_toggle_editor))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_open_command_palette))
+            .on_action(cx.listener(Self::on_open_menu_bar))
             .on_action(cx.listener(Self::on_focus_next_pane))
             .on_action(cx.listener(Self::on_focus_previous_pane))
             // A click anywhere else dismisses an open menu-bar menu, the way a native menu bar
@@ -658,10 +661,104 @@ impl AurisApp {
         if self.palette_key(event, window, cx)
             || self.prompt_key(event, window, cx)
             || self.menu_key(event, window, cx)
+            || self.menu_bar_key(event, window, cx)
         {
             cx.stop_propagation();
             cx.notify();
         }
+    }
+
+    /// Arrow keys, Return and Escape, aimed at the menu bar this window draws for itself.
+    ///
+    /// The bar could be opened with a key and then only answered with the pointer, which is the
+    /// half of a keyboard path that is worse than none: the hand leaves the keyboard anyway, and
+    /// it has to find a menu that has already dropped open under the cursor.
+    ///
+    /// Left and right walk the titles, which is what a menu bar does that a lone menu does not —
+    /// the bar is one row of menus, and stepping off the end of File onto Edit is how anyone who
+    /// has used one expects to get there.
+    fn menu_bar_key(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(open) = self.menu_bar else {
+            return false;
+        };
+        let sections = crate::menu::model(self.language());
+        let Some(section) = sections.get(open.index) else {
+            // The menus are rebuilt from the language on every frame; an index left over from a
+            // shorter set is not a state to try to recover, only one to stop being in.
+            self.close_menu_bar();
+            return true;
+        };
+
+        match event.keystroke.key.as_str() {
+            "escape" => {
+                self.close_menu_bar();
+            }
+            "left" | "right" => {
+                let delta = if event.keystroke.key == "left" { -1 } else { 1 };
+                let index = menu_bar::stepped_section(sections.len(), open.index, delta);
+                self.menu_bar = Some(menu_bar::OpenMenu::at(index));
+            }
+            "down" | "up" | "home" | "end" => {
+                let key = event.keystroke.key.as_str();
+                let delta = if matches!(key, "down" | "home") {
+                    1
+                } else {
+                    -1
+                };
+                // Home and End are the same step taken from nothing, which is where a step lands
+                // on whichever end the direction implies.
+                let from = matches!(key, "down" | "up")
+                    .then_some(open.highlighted)
+                    .flatten();
+                self.menu_bar = Some(menu_bar::OpenMenu {
+                    highlighted: menu_bar::stepped(&section.rows, from, delta),
+                    ..open
+                });
+            }
+            "enter" => {
+                let action = open
+                    .highlighted
+                    .and_then(|index| section.rows.get(index))
+                    .and_then(|row| match row {
+                        MenuRow::Command { action, .. } => Some(action.boxed_clone()),
+                        MenuRow::Separator | MenuRow::System { .. } => None,
+                    });
+                // Closed either way. Return on a menu nobody has walked through means "I am done
+                // here", not "wait for an answer nobody is going to give".
+                self.close_menu_bar();
+                if let Some(action) = action {
+                    // Dispatched rather than called, the same as a click on the row: the root
+                    // view already handles every one of these for the keymap and the system menu
+                    // bar, and routing through it keeps the three in step.
+                    window.dispatch_action(action, cx);
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn on_open_menu_bar(
+        &mut self,
+        _: &actions::OpenMenuBar,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Nothing to open where the system owns the bar; macOS has its own way in to that.
+        if !Self::wants_menu_bar() {
+            return;
+        }
+        self.menu = None;
+        self.menu_bar = match self.menu_bar {
+            Some(_) => None,
+            None => Some(menu_bar::OpenMenu::at(0)),
+        };
+        cx.notify();
     }
 
     /// Arrow keys and Return, aimed at the open context menu.
@@ -679,6 +776,13 @@ impl AurisApp {
             return false;
         };
         match event.keystroke.key.as_str() {
+            // Handled here rather than left to the Escape *binding*, which no longer fires: an
+            // open menu takes every binding out of reach so that walking it with the arrow keys
+            // cannot also have a letter run a command underneath it.
+            "escape" => {
+                self.close_menu();
+                return true;
+            }
             "down" => menu.step(1),
             "up" => menu.step(-1),
             "home" => {
@@ -891,6 +995,12 @@ impl AurisApp {
         // Escape takes back the nearest thing first. Panicking the engine while a menu is up
         // would be a surprising answer to "never mind", and so would silencing a drag that the
         // user only wanted to abandon — so each of these returns rather than falling through.
+        //
+        // The menus close themselves on Escape now, in their own key handlers, because a menu
+        // takes every binding out of reach while it is open and this one is a binding. Kept
+        // because the action is dispatchable from the palette as well as from the keyboard, and
+        // "silence everything" arriving from there should still put a menu away rather than
+        // leave it hanging over a stopped engine.
         if self.close_menu() || self.close_menu_bar() {
             cx.notify();
             return;

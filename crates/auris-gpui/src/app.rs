@@ -908,6 +908,20 @@ impl AurisApp {
 
     // ---------------------------------------------------------------- panes
 
+    /// Whether something on top of the window has first claim on the keyboard.
+    ///
+    /// A sheet, the palette, or either menu. Every binding goes out of reach while one is up: a
+    /// text field needs the keystrokes to be text, and a menu being walked with the arrow keys
+    /// must not also have `y` toggle the library away underneath it. Each of the four handles
+    /// Escape itself, since the binding that used to close them is one of the ones now out of
+    /// reach.
+    pub(crate) fn keys_are_claimed(&self) -> bool {
+        self.prompt.is_some()
+            || self.palette.is_some()
+            || self.menu.is_some()
+            || self.menu_bar.is_some()
+    }
+
     /// The key context a pane's element should name, or `None` while a sheet is up.
     ///
     /// A prompt or the palette puts every binding out of reach so a text field can have the
@@ -915,7 +929,7 @@ impl AurisApp {
     /// its context altogether, because a pane that kept its name would keep matching its own
     /// bindings — it still holds focus, and `t` would put a tool in hand instead of typing a `t`.
     pub(crate) fn pane_context(&self, pane: Pane) -> Option<&'static str> {
-        if self.prompt.is_some() || self.palette.is_some() {
+        if self.keys_are_claimed() {
             return None;
         }
         Some(match pane {

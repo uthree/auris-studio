@@ -36,6 +36,22 @@ pub struct OpenMenu {
     /// `true` when a click opened it, `false` when the pointer slid onto it with another
     /// already open.
     pub clicked: bool,
+    /// The row the keyboard is on, once the keyboard has been used.
+    ///
+    /// `None` until then, so a menu dropped open with the mouse does not draw a highlight nobody
+    /// asked for — and so the first Down lands on the first row rather than the second.
+    pub highlighted: Option<usize>,
+}
+
+impl OpenMenu {
+    /// The menu at `index`, opened by a click, with nothing highlighted yet.
+    pub fn at(index: usize) -> Self {
+        Self {
+            index,
+            clicked: true,
+            highlighted: None,
+        }
+    }
 }
 
 /// What the bar shows after a click on the title at `index`.
@@ -46,10 +62,9 @@ pub struct OpenMenu {
 pub fn after_click(open: Option<OpenMenu>, index: usize) -> Option<OpenMenu> {
     match open {
         Some(open) if open.index == index && open.clicked => None,
-        _ => Some(OpenMenu {
-            index,
-            clicked: true,
-        }),
+        // The highlight is not carried across. It belongs to the row the keyboard was on, and
+        // the pointer has just said it is somewhere else entirely.
+        _ => Some(OpenMenu::at(index)),
     }
 }
 
@@ -62,9 +77,44 @@ pub fn after_hover(open: Option<OpenMenu>, index: usize) -> Option<OpenMenu> {
         Some(open) if open.index != index => Some(OpenMenu {
             index,
             clicked: false,
+            highlighted: None,
         }),
         other => other,
     }
+}
+
+/// The menu `delta` titles along from `index`, wrapping round the ends of the bar.
+pub fn stepped_section(count: usize, index: usize, delta: isize) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    (index as isize + delta).rem_euclid(count as isize) as usize
+}
+
+/// Where the highlight lands after moving `delta` rows through `rows`.
+///
+/// Wraps, and starts from whichever end the direction implies, so the first Down lands on the
+/// first row and the first Up on the last. Rules are stepped over, and so is the submenu the
+/// system fills in — Return on either runs nothing, and stopping on a row that does nothing is a
+/// keypress the user has to make twice. A menu with nothing to choose highlights nothing.
+pub fn stepped(rows: &[MenuRow], from: Option<usize>, delta: isize) -> Option<usize> {
+    let choosable: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| matches!(row, MenuRow::Command { .. }))
+        .map(|(index, _)| index)
+        .collect();
+    let first = *choosable.first()?;
+    let last = *choosable.last()?;
+    let Some(current) = from else {
+        return Some(if delta >= 0 { first } else { last });
+    };
+    let at = choosable
+        .iter()
+        .position(|index| *index == current)
+        .unwrap_or(0) as isize;
+    let count = choosable.len() as isize;
+    Some(choosable[(at + delta).rem_euclid(count) as usize])
 }
 
 impl AurisApp {
@@ -143,9 +193,10 @@ impl AurisApp {
                                 cx.notify();
                             }
                         }))
-                        .children(
-                            is_open.then(|| self.render_menu_bar_dropdown(index, &section, cx)),
-                        )
+                        .children(is_open.then(|| {
+                            let highlighted = open.and_then(|open| open.highlighted);
+                            self.render_menu_bar_dropdown(index, &section, highlighted, cx)
+                        }))
                 }))
                 .into_any_element(),
         )
@@ -156,6 +207,7 @@ impl AurisApp {
         &self,
         section_index: usize,
         section: &MenuSection,
+        highlighted: Option<usize>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
@@ -199,6 +251,11 @@ impl AurisApp {
                         .text_color(theme.text)
                         .cursor_pointer()
                         .hover(|this| this.bg(theme.accent).text_color(theme.text_on_accent))
+                        // The same fill the pointer gives it, because it means the same thing:
+                        // this is the row Return would run.
+                        .when(highlighted == Some(index), |this| {
+                            this.bg(theme.accent).text_color(theme.text_on_accent)
+                        })
                         .child(div().flex_1().min_w_0().truncate().child(label.clone()))
                         .child(
                             div()
@@ -271,17 +328,99 @@ mod tests {
     }
 
     fn clicked(index: usize) -> Option<OpenMenu> {
-        Some(OpenMenu {
-            index,
-            clicked: true,
-        })
+        Some(OpenMenu::at(index))
     }
 
     fn slid(index: usize) -> Option<OpenMenu> {
         Some(OpenMenu {
             index,
             clicked: false,
+            highlighted: None,
         })
+    }
+
+    /// The rows of the first menu that has a rule in it, which is the case worth stepping over.
+    fn rows_with_a_rule() -> Vec<MenuRow> {
+        model(auris_i18n::Language::English)
+            .into_iter()
+            .map(|section| section.rows)
+            .find(|rows| rows.iter().any(|row| matches!(row, MenuRow::Separator)))
+            .expect("the menus have rules in them")
+    }
+
+    #[test]
+    fn the_first_arrow_lands_on_the_end_it_came_from() {
+        let rows = rows_with_a_rule();
+        let commands: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| matches!(row, MenuRow::Command { .. }))
+            .map(|(index, _)| index)
+            .collect();
+
+        assert_eq!(
+            stepped(&rows, None, 1),
+            Some(commands[0]),
+            "Down opens at the top"
+        );
+        assert_eq!(
+            stepped(&rows, None, -1),
+            commands.last().copied(),
+            "and Up at the bottom"
+        );
+    }
+
+    #[test]
+    fn the_highlight_steps_over_the_rules_and_wraps() {
+        let rows = rows_with_a_rule();
+        let commands: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| matches!(row, MenuRow::Command { .. }))
+            .map(|(index, _)| index)
+            .collect();
+
+        // Walking the whole menu one row at a time visits every command and nothing else — a
+        // separator that held the highlight would be a Return that ran nothing.
+        let mut at = stepped(&rows, None, 1);
+        let mut visited = vec![at.unwrap()];
+        for _ in 1..commands.len() {
+            at = stepped(&rows, at, 1);
+            visited.push(at.unwrap());
+        }
+        assert_eq!(visited, commands);
+        assert_eq!(
+            stepped(&rows, at, 1),
+            Some(commands[0]),
+            "and one more comes back round to the top"
+        );
+    }
+
+    #[test]
+    fn a_menu_with_nothing_to_choose_highlights_nothing() {
+        assert_eq!(stepped(&[], None, 1), None);
+        assert_eq!(stepped(&[MenuRow::Separator], None, 1), None);
+    }
+
+    #[test]
+    fn the_titles_wrap_in_both_directions() {
+        assert_eq!(stepped_section(4, 0, -1), 3);
+        assert_eq!(stepped_section(4, 3, 1), 0);
+        assert_eq!(stepped_section(4, 1, 1), 2);
+        // A bar with no menus in it is not a division by zero.
+        assert_eq!(stepped_section(0, 0, 1), 0);
+    }
+
+    #[test]
+    fn the_pointer_takes_the_highlight_off_the_row_the_keyboard_had() {
+        // The two are the same highlight, and the pointer has just said it is somewhere else.
+        let walked = Some(OpenMenu {
+            index: 1,
+            clicked: true,
+            highlighted: Some(4),
+        });
+        assert_eq!(after_click(walked, 2).unwrap().highlighted, None);
+        assert_eq!(after_hover(walked, 2).unwrap().highlighted, None);
     }
 
     #[test]

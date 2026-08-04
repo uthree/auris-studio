@@ -232,6 +232,11 @@ and the one holding the keyboard is outlined. Two commands on one key in *differ
 a conflict and is not reported as one; a clash you could actually reach is shown, and allowed —
 you may be halfway through swapping a pair over.
 
+Nothing needs the mouse. **F10** drops open the menu bar this window draws for itself on Windows
+and Linux; ← and → walk the menus, ↑ and ↓ the rows, Return runs one and Escape closes it. A
+right-click menu answers to the same keys. While either is open every binding is out of reach, so
+walking a menu cannot also run the command a letter is bound to.
+
 ### Settings, where dotfiles can reach them
 
 Preferences live in `~/.config/auris-studio/` on every platform — macOS and Windows included,

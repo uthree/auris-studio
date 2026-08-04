@@ -184,6 +184,7 @@ strings! {
     ToolPointer { en: "Pointer", ja: "ポインタ" }
     ToolVelocity { en: "Velocity", ja: "ベロシティ" }
     CmdNextTool { en: "Next Tool", ja: "次のツール" }
+    CmdOpenMenuBar { en: "Open Menu Bar", ja: "メニューバーを開く" }
     CmdFocusNextPane { en: "Focus Next Panel", ja: "次のパネルにフォーカス" }
     CmdFocusPreviousPane { en: "Focus Previous Panel", ja: "前のパネルにフォーカス" }
     // Where a key binding reaches. Shown beside the commands that are not reachable everywhere.
