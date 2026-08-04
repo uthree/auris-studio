@@ -202,8 +202,8 @@ impl Effect for Delay {
                 let delayed_left = left_line.read(delay);
                 let delayed_right = right_line.read(delay);
 
-                left_damp += alpha * (delayed_right - left_damp);
-                right_damp += alpha * (delayed_left - right_damp);
+                left_damp = flushed(left_damp + alpha * (delayed_right - left_damp));
+                right_damp = flushed(right_damp + alpha * (delayed_left - right_damp));
                 // The crossed feedback is what makes repeats alternate between the speakers.
                 left_line.write(*left_sample + feedback * left_damp);
                 right_line.write(*right_sample + feedback * right_damp);
@@ -226,7 +226,7 @@ impl Effect for Delay {
                 let delay = time.next_value();
                 let wet_amount = mix.next_value();
                 let delayed = line.read(delay);
-                damp += alpha * (delayed - damp);
+                damp = flushed(damp + alpha * (delayed - damp));
                 line.write(*sample + feedback * damp);
                 *sample = *sample * (1.0 - wet_amount) + delayed * wet_amount;
             }
@@ -250,6 +250,18 @@ impl Effect for Delay {
         let frames = delay_samples * repeats;
         (frames).clamp(0.0, MAX_TAIL_SECONDS * self.sample_rate) as usize
     }
+}
+
+/// The damping state, flushed to zero once it decays past hearing.
+///
+/// This is the crate's one other feedback loop, and `biquad.rs` says why its sibling is
+/// flushed: a decaying tail must not drag the audio thread into microcoded denormal
+/// arithmetic. The floor is the biquad's — far below anything audible, well above the largest
+/// subnormal — and because the loop recirculates *through* the damp, zeroing it here is what
+/// lets the whole tail reach actual silence instead of grinding towards it.
+#[inline]
+fn flushed(value: f32) -> f32 {
+    if value.abs() < 1.0e-30 { 0.0 } else { value }
 }
 
 #[cfg(test)]

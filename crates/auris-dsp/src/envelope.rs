@@ -91,6 +91,11 @@ impl EnvelopeFollower {
     /// Feeds one sample and returns the new envelope, in the same units as the input.
     #[inline]
     pub fn process(&mut self, input: f32) -> f32 {
+        // Silence, not arithmetic: a single NaN would latch, because every later comparison
+        // against a NaN state is false and the release path re-injects it for ever — long
+        // after the audio itself has recovered. The same answer `DelayLine::read` gives a
+        // non-finite sample.
+        let input = if input.is_finite() { input } else { 0.0 };
         // RMS smooths the *square* of the signal, so the pole sees energy rather than
         // amplitude; the square root is taken only on the way out.
         let rectified = match self.mode {
@@ -120,6 +125,26 @@ mod tests {
     use super::*;
 
     const SR: f32 = 48_000.0;
+
+    #[test]
+    fn a_nan_sample_does_not_latch_the_follower() {
+        // Unguarded, one NaN made the state NaN, every later comparison false, and the
+        // release path re-injected it for ever: the follower reported NaN long after the
+        // audio had recovered.
+        for mode in [EnvelopeMode::Peak, EnvelopeMode::Rms] {
+            let mut follower = EnvelopeFollower::new(SR, 0.001, 0.001, mode);
+            follower.process(0.5);
+            follower.process(f32::NAN);
+            for _ in 0..SR as usize {
+                follower.process(0.5);
+            }
+            assert!(
+                (follower.value() - 0.5).abs() < 1e-4,
+                "{mode:?} never recovered: {}",
+                follower.value()
+            );
+        }
+    }
 
     #[test]
     fn peak_mode_converges_to_the_input_amplitude() {

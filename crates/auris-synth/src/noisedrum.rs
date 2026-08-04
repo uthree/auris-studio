@@ -193,8 +193,13 @@ impl NoiseDrum {
         };
         voice.note = f32::from(pitch);
         voice.velocity = velocity;
-        voice.oscillator.reset();
-        voice.filter.reset();
+        if !assignment.stolen {
+            // Only on a silent voice, as the other instruments already do. Noise has no phase
+            // to protect, but this is the crate's one filter, and zeroing a ringing filter's
+            // state steps the stolen voice's output to nothing in a single sample.
+            voice.oscillator.reset();
+            voice.filter.reset();
+        }
         voice.amplitude.trigger();
         voice.sweep.trigger();
     }
