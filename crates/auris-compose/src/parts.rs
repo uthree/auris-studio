@@ -10,6 +10,7 @@ use crate::frame::{Frame, SectionPlan};
 use crate::rhythm::{Accent, DrumVoice, Grid, Pattern, swing_offset};
 use crate::rng::{Key as RngKey, Rng};
 use crate::spec::{Mood, PartSpec, Role, SongSpec};
+use crate::theory::key::Key;
 use crate::theory::pitch::{OCTAVE, PitchClass, fold_into};
 
 /// A note as the composer writes it, before it becomes a clip.
@@ -581,8 +582,9 @@ fn melody(
                 .unwrap_or((low + high) / 2);
 
             // The figure is written in scale steps from the chord's structural pitch, so it keeps
-            // its shape while the harmony moves under it.
-            let mut pitch = shift_within(section, anchor, cell.degree, low, high);
+            // its shape while the harmony moves under it — in the scale of the *event's* key,
+            // so a modulation inside the range moves the scale at the tick it moves the chords.
+            let mut pitch = shift_within(event.key, anchor, cell.degree, low, high);
             // A note on a strong step has to agree with the chord, or the figure's shape wins an
             // argument with the harmony that it should not be having.
             if weight >= 3 {
@@ -604,10 +606,13 @@ fn melody(
     notes
 }
 
-/// The pitch `steps` scale degrees from `from`, in the section's scale.
-fn scale_shift(section: &SectionPlan, from: i32, steps: i32) -> i32 {
-    let scale = section.key.scale;
-    let tonic = section.key.tonic;
+/// The pitch `steps` scale degrees from `from`, in `key`'s scale.
+///
+/// The key is a parameter rather than the section's, because a section written over a document
+/// can modulate inside itself: the caller passes the key of the chord the note sounds over.
+fn scale_shift(key: Key, from: i32, steps: i32) -> i32 {
+    let scale = key.scale;
+    let tonic = key.tonic;
     let semitones = tonic.distance_up_to(PitchClass::new(from));
     let octaves = (from - tonic.midi(0) - semitones) / OCTAVE;
     let degree = scale.nearest_degree(semitones) + octaves * scale.degree_count() as i32;
@@ -621,10 +626,10 @@ fn scale_shift(section: &SectionPlan, from: i32, steps: i32) -> i32 {
 /// nothing had priced. Pulling the interval in instead keeps the direction the figure was going,
 /// which is what an ear follows. Folding is kept only for the case where even the anchor is out
 /// of range, where there is nothing left to shrink.
-fn shift_within(section: &SectionPlan, anchor: i32, degree: i32, low: i32, high: i32) -> i32 {
+fn shift_within(key: Key, anchor: i32, degree: i32, low: i32, high: i32) -> i32 {
     let mut steps = degree;
     loop {
-        let pitch = scale_shift(section, anchor, steps);
+        let pitch = scale_shift(key, anchor, steps);
         if (low..=high).contains(&pitch) {
             return pitch;
         }
@@ -1870,7 +1875,7 @@ mod tests {
         let section = &frame.sections[0];
         let (low, high) = Role::Melody.range();
         let anchor = high - 2;
-        let pitch = shift_within(section, anchor, 6, low, high);
+        let pitch = shift_within(section.key, anchor, 6, low, high);
         assert!(
             (low..=high).contains(&pitch),
             "{pitch} is outside the range"

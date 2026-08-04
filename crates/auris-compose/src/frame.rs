@@ -41,12 +41,17 @@ pub struct SectionPlan {
 
 impl SectionPlan {
     /// The chord sounding at a tick measured from the section's start.
+    ///
+    /// `None` when nothing sounds there — before the first chord, or in a stretch somebody
+    /// cleared. The composer's own charts tile a section completely, so a hole only exists when
+    /// the harmony came from a document; answering with the nearest chord anyway would mean
+    /// playing over a silence the person deliberately wrote.
     pub fn chord_at(&self, tick: Ticks) -> Option<&HarmonicEvent> {
         self.events
             .iter()
             .rev()
             .find(|event| event.start <= tick)
-            .or_else(|| self.events.first())
+            .filter(|event| tick < event.end())
     }
 
     /// The index of the chord sounding at a tick from the section's start.
@@ -111,7 +116,7 @@ pub fn plan(spec: &SongSpec) -> Frame {
         }
 
         let length = grid.bar_ticks() * section.bars as i64;
-        let skeleton = skeleton(&events, key, spec.seed, name, instance);
+        let skeleton = skeleton(&events, spec.seed, name, instance);
 
         sections.push(SectionPlan {
             name: name.clone(),
@@ -184,7 +189,6 @@ fn colour(events: &mut [HarmonicEvent], mood: Mood, seed: u64, section: &str, in
 /// has to end. Solving the whole phrase at once is what makes it arrive somewhere.
 pub(crate) fn skeleton(
     events: &[HarmonicEvent],
-    key: Key,
     seed: u64,
     section: &str,
     instance: usize,
@@ -249,7 +253,10 @@ pub(crate) fn skeleton(
             // stable when the phrase is ending.
             let mut emission = ((*pitch as f32 - target).abs() * 10.0) as i32;
             if final_event {
-                let degree = key
+                // The ending chord's own key: after a modulation inside the range, the key the
+                // phrase has to sound finished in is the one in force where it ends.
+                let degree = events[index]
+                    .key
                     .tonic
                     .distance_up_to(crate::theory::pitch::PitchClass::new(*pitch));
                 // A phrase that ends on the tonic or the fifth sounds finished; one that ends

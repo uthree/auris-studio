@@ -80,11 +80,14 @@ pub fn write_phrase(
         return Vec::new();
     }
 
+    // The key at the range's start goes on the section plan, but nothing melodic hangs off it
+    // any more: the skeleton and the melody's scale walk both read each event's own key, which
+    // is what lets a modulation inside the range move the scale at the tick it moves the chords.
     let key = harmony.key_at(start);
     // Keyed by the preset rather than by a section name, so that changing the preset writes a
     // different part and changing the seed writes a different take of the same one.
     let section_key = recipe.preset.name();
-    let skeleton = skeleton(&events, key, recipe.seed, section_key, 1);
+    let skeleton = skeleton(&events, recipe.seed, section_key, 1);
 
     let frame = Frame {
         grid,
@@ -126,7 +129,7 @@ pub fn write_phrase(
             // A register somebody asked for, on top of the one the role implies. The one the
             // part chooses for itself is drawn from the seed, which is right for a take and no
             // use at all when the answer wanted is "the same thing, an octave up".
-            part.octave = part.octave + recipe.octave.clamp(-2, 2);
+            part.octave += recipe.octave.clamp(-2, 2);
             // The recipe's dial, not the mood's: a person moving a slider expects that slider to
             // be what decides, rather than to be averaged with something they cannot see.
             part.density = Some(recipe.density.clamp(0.0, 1.0));
@@ -436,6 +439,100 @@ mod tests {
             &ClipRecipe::new(ClipPreset::Chords, 1),
         );
         assert!(short.is_empty());
+    }
+
+    #[test]
+    fn a_stretch_with_no_chords_is_silent_in_the_melody_too() {
+        // The comp, the bass and the arp walk the events and always fell silent over a hole;
+        // the melody asked `chord_at`, which used to answer with the nearest chord it could
+        // find — and played over bars the person deliberately left empty. Both flavours of
+        // hole: bars before the first chord, and a stretch cleared out of the middle.
+        let mut leading = Harmony::in_key(Key::parse("C major").unwrap());
+        leading.stamp(&Chart::parse("| I | V |").unwrap(), BAR * 2, 2, four_four());
+
+        let mut cleared = axis();
+        cleared.chords.clear_range(BAR, BAR * 3);
+
+        for (name, harmony, silent_from, silent_to) in [
+            ("leading", &leading, Ticks::ZERO, BAR * 2),
+            ("cleared", &cleared, BAR, BAR * 3),
+        ] {
+            for seed in 1..=4u64 {
+                let notes = write_phrase(
+                    harmony,
+                    Ticks::ZERO,
+                    BAR * 4,
+                    four_four(),
+                    &ClipRecipe {
+                        humanize: 0.0,
+                        ..ClipRecipe::new(ClipPreset::Lead, seed)
+                    },
+                );
+                assert!(
+                    !notes.is_empty(),
+                    "{name}: seed {seed} wrote nothing at all"
+                );
+                for note in &notes {
+                    assert!(
+                        note.start < silent_from || note.start >= silent_to,
+                        "{name}: seed {seed} put a note at tick {} where no chord sounds",
+                        note.start.raw()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_key_change_inside_the_range_moves_the_scale_with_it() {
+        // The other key test puts the change exactly at the range's start — the one position a
+        // key frozen at the start got right. Here it lands in the middle, where the melody's
+        // weak steps used to walk the old key's scale over the new key's chords: one degree up
+        // from a B anchor in C major is C natural, which E major does not contain.
+        let mut harmony = axis();
+        harmony.stamp(
+            &Chart::parse("| I | IV |").unwrap(),
+            BAR * 4,
+            4,
+            four_four(),
+        );
+        harmony
+            .keys
+            .set_point(BAR * 4, Key::parse("E major").unwrap());
+
+        let mut after_the_change = 0;
+        for seed in 1..=4u64 {
+            let notes = write_phrase(
+                &harmony,
+                Ticks::ZERO,
+                BAR * 8,
+                four_four(),
+                &ClipRecipe {
+                    humanize: 0.0,
+                    ..ClipRecipe::new(ClipPreset::Lead, seed)
+                },
+            );
+            for note in &notes {
+                let key = harmony.key_at(note.start);
+                let chord = harmony
+                    .chord_at(note.start)
+                    .expect("a chord under every note of the range");
+                let class = auris_core::theory::pitch::PitchClass::new(i32::from(note.pitch));
+                assert!(
+                    chord.contains(class) || key.scale.contains(key.tonic, class),
+                    "seed {seed} played {class} over {chord} in {} at tick {}",
+                    key.to_text(),
+                    note.start.raw()
+                );
+                if note.start >= BAR * 4 {
+                    after_the_change += 1;
+                }
+            }
+        }
+        assert!(
+            after_the_change > 8,
+            "only {after_the_change} notes after the modulation to judge"
+        );
     }
 
     #[test]
