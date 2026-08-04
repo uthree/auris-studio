@@ -171,7 +171,32 @@ fn quantize(sample: f32, dither_lsb: f64, scale: f64, min_code: f64, max_code: f
 ///
 /// The buffer's own sample rate is ignored in favour of `settings.sample_rate`; the caller is
 /// responsible for having rendered at that rate.
+///
+/// Streamed into a sibling scratch file and renamed over the target, exactly as `save_project`
+/// writes a document: creating the writer truncates, so
+/// a failure partway — a full disk, a dropped network share — would otherwise already have
+/// destroyed whatever bounce lived at that path, possibly the only render of an older mix.
 pub fn write_wav(path: &Path, buffer: &AudioBuffer, settings: &WavExportSettings) -> Result<()> {
+    let in_progress = crate::project_file::in_progress_path(path);
+    if let Err(error) = stream_wav(&in_progress, path, buffer, settings) {
+        let _ = std::fs::remove_file(&in_progress);
+        return Err(error);
+    }
+    if let Err(error) = std::fs::rename(&in_progress, path) {
+        let _ = std::fs::remove_file(&in_progress);
+        return Err(IoError::from_fs(path, error));
+    }
+    Ok(())
+}
+
+/// Streams the samples into `target`, with errors reported against `reported` — the name the
+/// user asked to export, the scratch file being an implementation detail.
+fn stream_wav(
+    target: &Path,
+    reported: &Path,
+    buffer: &AudioBuffer,
+    settings: &WavExportSettings,
+) -> Result<()> {
     let channel_count = u16::try_from(buffer.channel_count()).map_err(|_| {
         IoError::WavWrite(format!(
             "{} channels is more than the WAV format can describe",
@@ -191,7 +216,7 @@ pub fn write_wav(path: &Path, buffer: &AudioBuffer, settings: &WavExportSettings
         sample_format: settings.bit_depth.sample_format(),
     };
 
-    let mut writer = WavWriter::create(path, spec).map_err(|e| wav_error(path, e))?;
+    let mut writer = WavWriter::create(target, spec).map_err(|e| wav_error(reported, e))?;
     let planes = buffer.channels();
     let frames = buffer.frame_count();
 
@@ -207,7 +232,9 @@ pub fn write_wav(path: &Path, buffer: &AudioBuffer, settings: &WavExportSettings
                     0.0
                 };
                 let code = quantize(plane[frame], dither_lsb, scale, min_code, max_code);
-                writer.write_sample(code).map_err(|e| wav_error(path, e))?;
+                writer
+                    .write_sample(code)
+                    .map_err(|e| wav_error(reported, e))?;
             }
         }
     } else {
@@ -217,12 +244,12 @@ pub fn write_wav(path: &Path, buffer: &AudioBuffer, settings: &WavExportSettings
                 let sample = if sample.is_finite() { sample } else { 0.0 };
                 writer
                     .write_sample(sample)
-                    .map_err(|e| wav_error(path, e))?;
+                    .map_err(|e| wav_error(reported, e))?;
             }
         }
     }
 
-    writer.finalize().map_err(|e| wav_error(path, e))
+    writer.finalize().map_err(|e| wav_error(reported, e))
 }
 
 fn wav_error(path: &Path, error: hound::Error) -> IoError {
@@ -260,6 +287,31 @@ mod tests {
         assert_eq!(settings.bit_depth, WavBitDepth::Int24);
         assert_eq!(settings.sample_rate, 48_000);
         assert!(!settings.dither);
+    }
+
+    #[test]
+    fn a_failed_export_leaves_the_previous_bounce_intact() {
+        // The exporter used to open the destination with truncation, so a failure partway
+        // destroyed whatever file was already there — possibly the only render of an older
+        // mix. Same defence, and same test shape, as the project save.
+        let file = TempFile::new("preserved-bounce.wav");
+        write_wav(file.path(), &test_buffer(), &WavExportSettings::default()).unwrap();
+        let before = std::fs::read(file.path()).unwrap();
+
+        // A directory in place of the scratch file makes the write fail after the point where
+        // a truncating export would already have destroyed the target.
+        let blocker = crate::project_file::in_progress_path(file.path());
+        std::fs::create_dir(&blocker).unwrap();
+        assert!(write_wav(file.path(), &test_buffer(), &WavExportSettings::default()).is_err());
+        std::fs::remove_dir(&blocker).unwrap();
+
+        assert_eq!(std::fs::read(file.path()).unwrap(), before);
+        let (spec, _) = read_int_samples(file.path());
+        assert_eq!(spec.bits_per_sample, 24, "the old bounce still opens");
+
+        // And a successful export leaves no scratch file behind.
+        write_wav(file.path(), &test_buffer(), &WavExportSettings::default()).unwrap();
+        assert!(!crate::project_file::in_progress_path(file.path()).exists());
     }
 
     #[test]

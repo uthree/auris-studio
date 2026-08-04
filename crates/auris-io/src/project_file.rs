@@ -96,7 +96,9 @@ fn assumed_format_version() -> u32 {
 ///
 /// It has to be a sibling rather than something under the system temp directory: the final step
 /// is a rename, and a rename is only atomic — often only *possible* — within one filesystem.
-fn in_progress_path(path: &Path) -> PathBuf {
+///
+/// Shared with the WAV exporter, which writes the same way for the same reason.
+pub(crate) fn in_progress_path(path: &Path) -> PathBuf {
     let mut name = path
         .file_name()
         .map(OsString::from)
