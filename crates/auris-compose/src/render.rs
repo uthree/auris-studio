@@ -253,6 +253,10 @@ mod tests {
     /// taste — but because it is about to be taken apart and reassembled, and a change that
     /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
     /// a bug or a decision, and this is what makes anyone look.
+    ///
+    /// It last moved when comping gained the `Cross` and `Driving` figures and a chord's length
+    /// became the gap to the next chord rather than a fixed beat: 179 notes to 222, every one of
+    /// them in the `chords` part, with the melody, bass and kit note for note as they were.
     #[test]
     fn the_composer_writes_what_it_wrote_before() {
         // A chart nobody asked for is the composer's own, and so the only kind it colours. In a
@@ -262,7 +266,7 @@ mod tests {
                 "form: verse\nkey: C major\nseed: 7\ntension: 0.95\n[section verse]\nbars: 8"
             ),
             "verse·1 C major | C→Cmaj7 G Am F→Fmaj7 C→Cmaj7 G→Gmaj7 Am→Am9 F |\n\
-             179 notes, digest 1769d2120561fabc\n"
+             222 notes, digest f7a7aa0ff3d7898e\n"
         );
 
         // The same in a minor key. `Fm→Gbm` is the borrow that has no spelling: `vi` read in the
@@ -274,7 +278,7 @@ mod tests {
                 "form: verse\nkey: A minor\nseed: 1\nmood: tense\n[section verse]\nbars: 8"
             ),
             "verse·1 A minor | A→Amaj7 E Fm→Fm7 D A→Amaj7 E→Emaj7 Fm→Gbm D→Dmaj7 |\n\
-             197 notes, digest 28e24144b8b63e92\n"
+             242 notes, digest 37f1cdfd7defa868\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats.
@@ -283,7 +287,7 @@ mod tests {
             "intro·1 C major | C G Am F |\n\
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
-             438 notes, digest c7424837ec850cd4\n"
+             463 notes, digest 152189cfed55124d\n"
         );
 
         // A transposed section, which is about to become a key change on the timeline.
@@ -294,7 +298,7 @@ mod tests {
             ),
             "verse·1 C major | Fmaj7 E7 Am7 C7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
-             186 notes, digest 6c136c4b3918db68\n"
+             267 notes, digest 953bf73e67184e07\n"
         );
     }
 

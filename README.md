@@ -124,6 +124,41 @@ addressed by name rather than by call order, so changing the drum density does n
 rewrite the melody. `auris progressions` lists the catalogue; `--set "field: value"` overrides any
 field from the command line.
 
+### Clips that write themselves
+
+A single clip can be written from the chords underneath it without a specification for a whole
+song: right-click an empty stretch of an instrument track and choose a preset — lead, chords, pad,
+arpeggio, stab, bass or drums. The clip keeps the recipe that produced it, so **Another Take** is
+the next seed, **Write It Again** follows the chords when they move, and **Keep This One** drops
+the recipe when a take turns out to be the keeper. The dials are in the inspector:
+
+| | |
+|---|---|
+| **Subdivision** | How finely the beat divides: 1/8, 1/16, or either of them in triplets |
+| **Density** | How busy the part is — for a comp, which figure it reaches for |
+| **Gate** | How long each note sounds, as a share of the gap to the next |
+| **Intensity** | How hard it is played |
+| **Swing** | How late the offbeats are |
+| **Humanize** | How far timing and velocity wander |
+
+The subdivision is per part, not per song, so a stab hammering triplets over a straight kit is a
+setting rather than a fight. Swing disappears on a triplet grid, because a grid already sitting
+where swing is trying to push it has nothing left to be pushed — and a drum kit ignores the
+subdivision entirely, since a groove is written in sixteenths and read by index.
+
+The **stab** preset is the two of these that have to be turned up together: a chord struck on every
+step with its release cut off, which is what most dance music has underneath it. It arrives with
+its own dials rather than the middling defaults, and moving one of them keeps it moved when the
+preset changes — a dial somebody set is theirs, a dial still where the last preset left it is not.
+
+`auris` compose specifications reach the same settings, per part:
+
+```
+[part chords]
+subdivision: 16t
+gate: 0.25
+```
+
 ### Built-in instruments
 
 Deliberately simple chiptune voices, enough to hear the engine working:

@@ -92,7 +92,9 @@ pub fn write_parts(settings: &ScoreSettings, roster: &[PartSpec], frame: &Frame)
                 }
                 let notes = match part.role {
                     Role::Melody => melody(settings, frame, section, index, part),
-                    Role::Chords | Role::Pad => comp(settings, frame, section, index, part),
+                    Role::Chords | Role::Pad | Role::Stab => {
+                        comp(settings, frame, section, index, part)
+                    }
                     Role::Arp => arp(settings, frame, section, index, part),
                     Role::Bass => bass(settings, frame, section, index, part),
                     Role::Kick | Role::Snare | Role::Hat => {
@@ -101,6 +103,7 @@ pub fn write_parts(settings: &ScoreSettings, roster: &[PartSpec], frame: &Frame)
                 };
                 draft.notes.extend(notes);
             }
+            shorten(part, &mut draft.notes);
             humanise(settings, frame, part, &mut draft.notes);
             draft
                 .notes
@@ -110,11 +113,31 @@ pub fn write_parts(settings: &ScoreSettings, roster: &[PartSpec], frame: &Frame)
         .collect()
 }
 
+/// The grid a part's figures land on: the frame's meter at that part's own subdivision.
+///
+/// Per part and not per song, because a stab hammering triplets over a straight kit is the whole
+/// reason for having the setting. The bar is the same length whichever way it is divided, so the
+/// parts still line up at every bar line and every chord change.
+///
+/// A drum part is the exception and reads the frame's own grid. A groove is written in sixteenths
+/// and read by index, so a kit on a grid of twelve would wrap its pattern a third of the way
+/// through the bar: not a groove in triplets, a scrambled groove.
+fn part_grid(frame: &Frame, part: &PartSpec) -> Grid {
+    if part.role.is_drum() {
+        return frame.grid;
+    }
+    Grid::new(frame.grid.signature, part.subdivision.steps_per_beat())
+}
+
 /// How a chord is struck through a bar.
 ///
 /// A part that only ever played the chord on every beat wrote the same bar for every seed, so
-/// asking it for another take gave back what it had already given. These are the four ways a
-/// keyboard player actually comps, and one of them is chosen per bar.
+/// asking it for another take gave back what it had already given. These are the ways a keyboard
+/// player actually comps, and one of them is chosen per bar.
+///
+/// Every one is written against the *beat* rather than against a note value, so the same six
+/// figures mean the same six things whether the part is dividing its beats in two, three, four or
+/// six. That is what lets a triplet grid be a setting rather than a separate set of figures.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum CompFigure {
     /// Held for as long as the chord lasts.
@@ -125,6 +148,12 @@ enum CompFigure {
     Offbeats,
     /// Beat one and the half-beat after beat two: the Charleston, and half of pop music.
     Charleston,
+    /// A euclidean rhythm across the bar: the tresillo and its relatives, which put three
+    /// against the bar's four and are where a comp gets its lift without getting busier.
+    Cross,
+    /// Every step there is. The wall of chords that dance music is built on, and — with the gate
+    /// most of the way down — the release-cut piano it is usually played with.
+    Driving,
 }
 
 /// The shape of a bass line through a bar.
@@ -151,10 +180,45 @@ fn density(settings: &ScoreSettings, part: &PartSpec, section: &SectionPlan) -> 
         Role::Arp => 1.2,
         Role::Chords => 0.8,
         Role::Pad => 0.4,
+        // A stab that is not busy is a chord part. The whole of what distinguishes it is that it
+        // reaches for the figures nothing else does, so it starts near the top of the dial.
+        Role::Stab => 1.3,
         Role::Bass => 0.9,
         _ => 1.0,
     };
     (base * role * (0.55 + 0.45 * section.intensity)).clamp(0.05, 1.0)
+}
+
+/// The shortest a gate is allowed to cut a note to. Below this it is a click rather than a pitch.
+const MIN_NOTE_TICKS: i64 = 30;
+
+/// The lowest the gate goes: a twentieth of the gap, which is already a staccatissimo.
+const MIN_GATE: f32 = 0.05;
+
+/// Cuts every note back to its share of the gap to the one after it.
+///
+/// Applied here rather than inside each writer so that one setting means the same thing in every
+/// part. Each writer has already decided a note's length by where the next note starts; the gate
+/// says how much of that the note actually sounds for, which is the difference between a chord
+/// struck sixteen times a bar and a chord held for one.
+///
+/// A drum is left alone. A one-shot ignores its note-off, so shortening one would change nothing
+/// anybody can hear and only make the piano roll harder to read.
+fn shorten(part: &PartSpec, notes: &mut [Draft]) {
+    if part.role.is_drum() {
+        return;
+    }
+    let gate = part.gate.clamp(MIN_GATE, 1.0);
+    if gate >= 1.0 {
+        return;
+    }
+    for note in notes.iter_mut() {
+        // The floor never lengthens a note: a chord shorter than the floor to begin with is a
+        // chord the harmony asked for, and the gate is not the place to argue with it.
+        let floor = MIN_NOTE_TICKS.min(note.length.raw()).max(1);
+        let shortened = (note.length.raw() as f32 * gate).round() as i64;
+        note.length = Ticks(shortened.max(floor));
+    }
 }
 
 /// A velocity for a note at grid weight `weight` in a section of `intensity`.
@@ -391,7 +455,7 @@ fn melody(
     index: usize,
     part: &PartSpec,
 ) -> Vec<Draft> {
-    let grid = frame.grid;
+    let grid = part_grid(frame, part);
     let (low, high) = part.range();
     let density = density(settings, part, section);
 
@@ -503,6 +567,7 @@ fn comp(
     index: usize,
     part: &PartSpec,
 ) -> Vec<Draft> {
+    let grid = part_grid(frame, part);
     let (low, high) = part.range();
     let mut notes = Vec::new();
     let held = part.role == Role::Pad;
@@ -577,7 +642,7 @@ fn comp(
         // repeat of the section comps the same way and a different seed comps differently — the
         // whole of this part used to be one fixed pattern, which made "another take" a button
         // that could not do anything.
-        let bar = frame.grid.step_of(event.start) / frame.grid.steps_per_bar().max(1);
+        let bar = grid.step_of(event.start) / grid.steps_per_bar().max(1);
         let figure = if held {
             CompFigure::Held
         } else {
@@ -587,33 +652,51 @@ fn comp(
             // dial that forbids a choice outright makes every bar the same again.
             let busy = density(settings, part, section);
             let mut rng = bar_stream(settings, frame, part, section, "comp", bar);
-            const FIGURES: [CompFigure; 4] = [
+            const FIGURES: [CompFigure; 6] = [
                 CompFigure::Held,
                 CompFigure::Beats,
                 CompFigure::Charleston,
                 CompFigure::Offbeats,
+                CompFigure::Cross,
+                CompFigure::Driving,
             ];
             FIGURES[rng
-                .weighted(&[0.2 + (1.0 - busy) * 2.0, 1.0, 0.2 + busy, 0.2 + busy * 1.6])
+                .weighted(&[
+                    0.2 + (1.0 - busy) * 2.0,
+                    1.0,
+                    0.2 + busy,
+                    0.2 + busy * 1.6,
+                    0.2 + busy * 1.4,
+                    // Squared, so a chord on every step is something the dial has to be pushed
+                    // most of the way up to reach rather than something a middling setting
+                    // wanders into. It is the loudest thing this part can do.
+                    0.05 + busy * busy * 3.0,
+                ])
                 .min(FIGURES.len() - 1)]
         };
 
         let onsets: Vec<usize> = if figure == CompFigure::Held {
             vec![0]
         } else {
-            let beat = (frame.grid.steps_per_beat as usize).max(1);
+            let beat = (grid.steps_per_beat as usize).max(1);
             let half = (beat / 2).max(1);
-            let per_bar = frame.grid.steps_per_bar().max(1);
-            let from = frame.grid.step_of(event.start);
+            let per_bar = grid.steps_per_bar().max(1);
+            let from = grid.step_of(event.start);
+            // Three hits to the bar's eight, which is the tresillo on an eighth grid and the
+            // 3-3-2 of every dance record on a sixteenth one. Rounded up so a grid of twelve
+            // gets five rather than the four that would just be the beats again.
+            let cross = crate::rhythm::euclid((per_bar * 3).div_ceil(8).max(2), per_bar, 0);
             // Measured against the bar rather than against the chord, so a figure stays in step
             // with the beat when two chords share a bar.
-            let mut chosen: Vec<usize> = (0..frame.grid.step_of(event.length))
+            let mut chosen: Vec<usize> = (0..grid.step_of(event.length))
                 .filter(|offset| {
                     let at = (from + offset) % per_bar;
                     match figure {
                         CompFigure::Beats => at.is_multiple_of(beat),
                         CompFigure::Offbeats => at % beat == half,
                         CompFigure::Charleston => at == 0 || at == beat + half,
+                        CompFigure::Cross => cross.at(at).is_some(),
+                        CompFigure::Driving => true,
                         CompFigure::Held => false,
                     }
                 })
@@ -626,26 +709,32 @@ fn comp(
             chosen
         };
         let held = held || figure == CompFigure::Held;
+        let last = onsets.len().saturating_sub(1);
 
-        for onset in &onsets {
-            let at = event.start + frame.grid.tick_of(*onset);
+        for (position, onset) in onsets.iter().enumerate() {
+            let at = event.start + grid.tick_of(*onset);
             if at >= event.end() {
                 continue;
             }
-            let length = if held {
-                event.length
+            // To wherever the next chord in this figure begins, and to the end of the chord for
+            // the last of them. A fixed beat was right for a figure that struck once a beat and
+            // never oftener; sixteen chords in a bar would each have run over the fifteen behind
+            // it, and the wall of sound that came out could have been one held note. This is also
+            // what gives the gate something to be a fraction *of*.
+            let next = if position < last {
+                event.start + grid.tick_of(onsets[position + 1])
             } else {
-                frame.grid.step_ticks() * frame.grid.steps_per_beat as i64
+                event.end()
             };
-            let length = length.min(event.end() - at);
-            let weight = frame.grid.weight(frame.grid.step_of(at));
+            let length = (next - at).min(event.end() - at).max(Ticks(1));
+            let weight = grid.weight(grid.step_of(at));
             for pitch in &voicing {
                 notes.push(Draft {
                     section: index,
                     pitch: (*pitch).clamp(0, 127) as u8,
                     velocity: (velocity(weight, section.intensity)
                         * if held { 0.7 } else { 0.9 }
-                        * phrase_shape(frame.grid, section, at))
+                        * phrase_shape(grid, section, at))
                     .clamp(0.05, 1.0),
                     start: section.start + at,
                     length,
@@ -666,7 +755,7 @@ fn arp(
     part: &PartSpec,
 ) -> Vec<Draft> {
     let (low, high) = part.range();
-    let grid = frame.grid;
+    let grid = part_grid(frame, part);
     // How fast the figure runs. An arpeggio's density is the rate it climbs at, not how many of
     // its notes are dropped — dropping them would leave a broken chord with holes in it.
     let busy = density(settings, part, section);
@@ -753,8 +842,17 @@ fn bass(
     part: &PartSpec,
 ) -> Vec<Draft> {
     let (low, high) = part.range();
-    let grid = frame.grid;
+    let grid = part_grid(frame, part);
     let kick = crate::frame::groove_pattern(&settings.groove, DrumVoice::Kick);
+    // Asked in ticks and answered on the *drums'* grid, not the bass's. A groove is sixteen steps
+    // and is read by index, so a bass dividing its beats any other way would have wrapped the
+    // pattern partway through the bar and followed a kick nobody was playing.
+    let drums = frame.grid;
+    let drum_bar = drums.bar_ticks().raw().max(1);
+    let kick_at = |at: Ticks| {
+        kick.at(drums.step_of(Ticks(at.raw().rem_euclid(drum_bar))))
+            .is_some()
+    };
     let mut notes = Vec::new();
 
     for (position_in_section, event) in section.events.iter().enumerate() {
@@ -799,14 +897,14 @@ fn bass(
             BassFigure::Root => Vec::new(),
             // Follow the kick, which is what locks a rhythm section together.
             BassFigure::Fifth | BassFigure::Approach => (0..steps)
-                .filter(|offset| kick.at((first + offset) % per_bar).is_some())
+                .filter(|offset| kick_at(event.start + grid.tick_of(*offset)))
                 .collect(),
             // The kick, and the half-beats between it: a busier, walking feel.
             BassFigure::Octave => (0..steps)
                 .filter(|offset| {
-                    let at = (first + offset) % per_bar;
-                    kick.at(at).is_some()
-                        || at.is_multiple_of((grid.steps_per_beat as usize).max(1))
+                    kick_at(event.start + grid.tick_of(*offset))
+                        || ((first + offset) % per_bar)
+                            .is_multiple_of((grid.steps_per_beat as usize).max(1))
                 })
                 .collect(),
         };
@@ -909,7 +1007,7 @@ fn drums(
         .rhythm
         .clone()
         .unwrap_or_else(|| crate::frame::groove_pattern(&settings.groove, voice));
-    let grid = frame.grid;
+    let grid = part_grid(frame, part);
     let mut notes = Vec::new();
 
     for bar in 0..section.bars {
@@ -978,7 +1076,7 @@ fn fill(
         return;
     }
 
-    let grid = frame.grid;
+    let grid = part_grid(frame, part);
     let steps = grid.steps_per_bar();
     let per_beat = grid.steps_per_beat as usize;
     // One beat of fill, or two when the section is playing hard enough to want the longer run.
@@ -1007,7 +1105,7 @@ fn fill(
 /// `humanize: 0` is exactly the identity apart from swing, which is what lets every timing test
 /// assert on an exact tick rather than on a tolerance.
 fn humanise(settings: &ScoreSettings, frame: &Frame, part: &PartSpec, notes: &mut [Draft]) {
-    let grid = frame.grid;
+    let grid = part_grid(frame, part);
     // Where a player sits against the beat: a hat pushes, a bass drags.
     let push = match part.role {
         Role::Hat => -8.0,
@@ -1619,6 +1717,108 @@ mod tests {
         assert!(
             pitch > anchor - OCTAVE,
             "a figure reaching upward was folded an octave down: {pitch} from {anchor}"
+        );
+    }
+
+    /// The default roster with `extra` inserted into the `chords` block.
+    ///
+    /// Every part is named, because declaring one part replaces the roster rather than adding to
+    /// it — and the point of these tests is what the *other* parts do.
+    fn roster(extra: &str) -> String {
+        format!(
+            "form: verse\nchords: @axis\nhumanize: 0\nseed: 5\n[section verse]\nbars: 4\n\
+             [part lead]\n[part chords]\n{extra}[part bass]\n[part kick]"
+        )
+    }
+
+    #[test]
+    fn a_part_on_a_triplet_grid_plays_where_no_straight_grid_reaches() {
+        // The whole point of the setting: a position a sixteenth grid cannot express. A third of
+        // a beat is 320 ticks, and no multiple of 320 but the beats themselves is a multiple of
+        // the 240 a sixteenth is.
+        let (_, _, parts) = draft(&roster("subdivision: 8t\n"));
+        let chords = part(&parts, "chords");
+        assert!(!chords.notes.is_empty());
+        for note in &chords.notes {
+            assert_eq!(
+                note.start.raw() % 320,
+                0,
+                "{} is not on a triplet",
+                note.start.raw()
+            );
+        }
+        assert!(
+            chords.notes.iter().any(|note| note.start.raw() % 240 != 0),
+            "every note landed somewhere a straight grid could have reached"
+        );
+    }
+
+    #[test]
+    fn a_subdivision_and_a_gate_reach_only_the_part_that_asked_for_them() {
+        // Both live on the part, so turning them up must leave every other part where it was.
+        // This is also what makes the fixture in `render` readable: when it moves, the part that
+        // moved it is the part that was changed.
+        let before = draft(&roster("")).2;
+        let after = draft(&roster("subdivision: 16t\ngate: 0.25\n")).2;
+        for name in ["lead", "bass", "kick"] {
+            assert_eq!(
+                part(&before, name).notes,
+                part(&after, name).notes,
+                "changing the chords rewrote `{name}`"
+            );
+        }
+        assert_ne!(
+            part(&before, "chords").notes,
+            part(&after, "chords").notes,
+            "the settings reached nothing"
+        );
+    }
+
+    #[test]
+    fn the_gate_shortens_a_note_without_moving_it() {
+        // Articulation, not rhythm. A gate that shifted a note would be a second timing control
+        // fighting the swing and the humanising for the same tick.
+        let long = draft(&roster("")).2;
+        let short = draft(&roster("gate: 0.25\n")).2;
+        let (long, short) = (part(&long, "chords"), part(&short, "chords"));
+        assert_eq!(long.notes.len(), short.notes.len());
+
+        let mut shortened = 0;
+        for (a, b) in long.notes.iter().zip(&short.notes) {
+            assert_eq!(a.start, b.start, "the gate moved a note");
+            assert_eq!(a.pitch, b.pitch);
+            assert!(b.length <= a.length, "the gate lengthened a note");
+            assert!(b.length > Ticks::ZERO, "the gate silenced a note");
+            if b.length < a.length {
+                shortened += 1;
+            }
+        }
+        assert!(shortened > 0, "the gate shortened nothing");
+    }
+
+    #[test]
+    fn a_comp_at_full_density_hammers_every_step_of_its_grid() {
+        // The figure the four original ones could not express: they topped out at the offbeat
+        // eighth, so no setting anywhere reached a chord on every sixteenth. Averaged over seeds,
+        // because the dial weighs the choice rather than making it.
+        let full = |seed: u64| {
+            format!(
+                "form: verse\nchords: @axis\nhumanize: 0\nseed: {seed}\n\
+                 [section verse]\nbars: 4\nintensity: 1.0\n[part chords]\ndensity: 1.0"
+            )
+        };
+        let mut driven = 0;
+        for seed in 1..=8 {
+            let (_, frame, parts) = draft(&full(seed));
+            let chords = part(&parts, "chords");
+            let steps = frame.grid.steps_per_bar();
+            driven += (0..4)
+                .filter(|bar| bar_steps(&frame, chords, *bar).len() == steps)
+                .count();
+        }
+        assert!(
+            driven > 0,
+            "not one bar in thirty-two struck every step at full density"
         );
     }
 

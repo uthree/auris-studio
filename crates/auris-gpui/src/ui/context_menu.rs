@@ -208,6 +208,13 @@ pub enum MenuCommand {
         /// Catalogue name, such as `basic-rock` or `shuffle`.
         groove: &'static str,
     },
+    /// Divide a generated clip's beats a different way.
+    SetClipSubdivision {
+        /// Clip to rewrite.
+        clip: ClipId,
+        /// How finely the beat should divide.
+        subdivision: Subdivision,
+    },
 
     /// Put a discrete plugin parameter on one of its named positions.
     ///
@@ -808,6 +815,9 @@ impl AurisApp {
             MenuCommand::FreezeClip(clip) => self.freeze_clip(clip),
             MenuCommand::SetClipPreset { clip, preset } => self.set_clip_preset(clip, preset),
             MenuCommand::SetClipGroove { clip, groove } => self.set_clip_groove(clip, groove),
+            MenuCommand::SetClipSubdivision { clip, subdivision } => {
+                self.set_clip_subdivision(clip, subdivision)
+            }
             MenuCommand::SetParamChoice { target, value } => self.session.set_param(target, value),
 
             MenuCommand::SetKeyAt(tick) => {
@@ -1145,6 +1155,23 @@ impl AurisApp {
         menu
     }
 
+    /// Every way of dividing a beat, aimed at one generated clip.
+    pub(crate) fn clip_subdivision_menu(&self, anchor: Point<Pixels>, clip: ClipId) -> ContextMenu {
+        let current = self
+            .session
+            .clip_recipe(clip)
+            .map(|recipe| recipe.subdivision);
+        let mut menu = ContextMenu::new(anchor, self.t(Key::PartSubdivision));
+        for subdivision in Subdivision::ALL {
+            menu = menu.toggle(
+                self.t(subdivision_key(subdivision)),
+                MenuCommand::SetClipSubdivision { clip, subdivision },
+                current == Some(subdivision),
+            );
+        }
+        menu
+    }
+
     /// Every groove the composer knows by name, aimed at one drum clip.
     pub(crate) fn clip_groove_menu(&self, anchor: Point<Pixels>, clip: ClipId) -> ContextMenu {
         let current = self
@@ -1195,10 +1222,7 @@ impl AurisApp {
         if recipe.preset == preset {
             return;
         }
-        let recipe = ClipRecipe {
-            preset,
-            ..recipe.clone()
-        };
+        let recipe = crate::ui::part::with_preset(recipe, preset);
         match self.session.set_clip_recipe(clip, recipe) {
             Ok(_) => self.report_clip(preset, clip),
             Err(error) => self.set_failed_status(self.failure(Key::MenuGenerateClip, &error)),
@@ -1230,6 +1254,24 @@ impl AurisApp {
         }
         let recipe = ClipRecipe {
             groove: groove.to_string(),
+            ..recipe.clone()
+        };
+        match self.session.set_clip_recipe(clip, recipe) {
+            Ok(_) => self.report_clip_preset(clip),
+            Err(error) => self.set_failed_status(self.failure(Key::MenuGenerateClip, &error)),
+        }
+    }
+
+    /// Writes a generated clip over a beat divided a different way.
+    pub(crate) fn set_clip_subdivision(&mut self, clip: ClipId, subdivision: Subdivision) {
+        let Some(recipe) = self.session.clip_recipe(clip) else {
+            return;
+        };
+        if recipe.subdivision == subdivision {
+            return;
+        }
+        let recipe = ClipRecipe {
+            subdivision,
             ..recipe.clone()
         };
         match self.session.set_clip_recipe(clip, recipe) {
@@ -1499,7 +1541,18 @@ pub(crate) fn preset_key(preset: ClipPreset) -> Key {
         ClipPreset::Pad => Key::PresetPad,
         ClipPreset::Arp => Key::PresetArp,
         ClipPreset::Bass => Key::PresetBass,
+        ClipPreset::Stab => Key::PresetStab,
         ClipPreset::Drums => Key::PresetDrums,
+    }
+}
+
+/// The note value a subdivision goes by on screen.
+pub(crate) fn subdivision_key(subdivision: Subdivision) -> Key {
+    match subdivision {
+        Subdivision::Eighth => Key::SubdivisionEighth,
+        Subdivision::Sixteenth => Key::SubdivisionSixteenth,
+        Subdivision::EighthTriplet => Key::SubdivisionEighthTriplet,
+        Subdivision::SixteenthTriplet => Key::SubdivisionSixteenthTriplet,
     }
 }
 

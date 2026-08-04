@@ -303,6 +303,10 @@ strings! {
     PresetPad { en: "Pad", ja: "パッド" }
     PresetArp { en: "Arpeggio", ja: "アルペジオ" }
     PresetBass { en: "Bass", ja: "ベース" }
+    // The short chords hammered on every step that dance music runs on. Japanese producers name
+    // it after the sound rather than the gesture — a piano with its release cut off — and that
+    // is the word anybody looking for it would search for.
+    PresetStab { en: "Stab", ja: "リリースカットピアノ" }
     PresetDrums { en: "Drums", ja: "ドラム" }
     MenuClearHarmony { en: "Clear Chords", ja: "コードを消去" }
     NoInstrumentToHearItOn {
@@ -316,12 +320,22 @@ strings! {
     PartHeading { en: "Part", ja: "パート" }
     PartPreset { en: "Preset", ja: "プリセット" }
     PartDensity { en: "Density", ja: "密度" }
+    // How long a note sounds for, as a share of the gap to the next one. Not 「ゲート」 alone,
+    // which in a Japanese studio is as likely to mean a noise gate as a note length.
+    PartGate { en: "Gate", ja: "音の長さ" }
     PartIntensity { en: "Intensity", ja: "強さ" }
+    PartSubdivision { en: "Subdivision", ja: "音符の細かさ" }
     PartSwing { en: "Swing", ja: "スウィング" }
     PartHumanize { en: "Humanize", ja: "ゆらぎ" }
     PartGroove { en: "Groove", ja: "グルーヴ" }
     PartSeed { en: "Seed", ja: "シード" }
     PartStraight { en: "straight", ja: "イーブン" }
+    // Note values. Written as the fraction in both languages, because that is what is printed on
+    // every other DAW's grid menu and the words for them are longer than the row is wide.
+    SubdivisionEighth { en: "1/8", ja: "1/8" }
+    SubdivisionSixteenth { en: "1/16", ja: "1/16" }
+    SubdivisionEighthTriplet { en: "1/8 triplet", ja: "1/8 三連" }
+    SubdivisionSixteenthTriplet { en: "1/16 triplet", ja: "1/16 三連" }
 
     // ------------------------------------------------------------------ appearance
     AppearanceHeading { en: "Colour scheme", ja: "カラースキーム" }
@@ -576,7 +590,15 @@ mod tests {
         // Identical text in both languages is legitimate for a few strings — "M" is "M" — but
         // it is nearly always a forgotten translation, so the exceptions are listed rather than
         // waved through.
-        const SHARED: &[Key] = &[Key::MuteInitial, Key::SoloInitial];
+        // A note value written as a fraction is that fraction in either language, the same way an
+        // initial is an initial. The triplet rows are not here, because "triplet" and 「三連」
+        // are words rather than numbers and both languages have their own.
+        const SHARED: &[Key] = &[
+            Key::MuteInitial,
+            Key::SoloInitial,
+            Key::SubdivisionEighth,
+            Key::SubdivisionSixteenth,
+        ];
         for key in Key::ALL {
             if SHARED.contains(key) {
                 continue;

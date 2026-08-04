@@ -99,7 +99,7 @@ pub mod prelude {
     pub use auris_core::{
         AudioBuffer, AudioClip, AudioSource, ClipId, ClipPreset, ClipRecipe, EffectSlotId,
         MidiClip, MixerStrip, Note, PluginRegistry, PresetRef, Project, SoundFontId, SoundFontRef,
-        SourceId, Track, TrackId, TrackKind,
+        SourceId, Subdivision, Track, TrackId, TrackKind,
     };
 
     /// Every chord progression the composer knows by name.

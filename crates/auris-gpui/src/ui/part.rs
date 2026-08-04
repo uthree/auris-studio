@@ -25,14 +25,22 @@ pub const SWING_MIN: u8 = 50;
 /// next beat rather than as swing, and at 100 it lands on it exactly.
 pub const SWING_MAX: u8 = 75;
 
+/// The shortest a gate dial reaches, as a share of the gap to the next note.
+///
+/// Not zero: a note of no length is a note nobody hears, and a dial whose bottom end silences the
+/// part is a dial with a broken position on it. A twentieth of the gap is already a click.
+pub const GATE_MIN: f32 = 0.05;
+
 /// One continuous dial on a [`ClipRecipe`].
 ///
-/// The seed, the preset and the groove are all choices from a set and are picked from a menu; these
-/// four are the ones with a range, and so the ones that get a bar to drag.
+/// The seed, the preset, the groove and the subdivision are all choices from a set and are picked
+/// from a menu; these five are the ones with a range, and so the ones that get a bar to drag.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Dial {
     /// How busy the part is.
     Density,
+    /// How long each note sounds, against the gap to the next.
+    Gate,
     /// How hard it is played.
     Intensity,
     /// How late the offbeats are.
@@ -46,6 +54,7 @@ impl Dial {
     pub fn label(self) -> Key {
         match self {
             Dial::Density => Key::PartDensity,
+            Dial::Gate => Key::PartGate,
             Dial::Intensity => Key::PartIntensity,
             Dial::Swing => Key::PartSwing,
             Dial::Humanize => Key::PartHumanize,
@@ -58,6 +67,7 @@ impl Dial {
             Dial::Density => recipe.density,
             Dial::Intensity => recipe.intensity,
             Dial::Humanize => recipe.humanize,
+            Dial::Gate => (recipe.gate - GATE_MIN) / (1.0 - GATE_MIN),
             Dial::Swing => {
                 let span = f32::from(SWING_MAX - SWING_MIN);
                 (f32::from(recipe.swing) - f32::from(SWING_MIN)) / span
@@ -81,6 +91,7 @@ impl Dial {
             Dial::Density => recipe.density = whole_percent(fraction),
             Dial::Intensity => recipe.intensity = whole_percent(fraction),
             Dial::Humanize => recipe.humanize = whole_percent(fraction),
+            Dial::Gate => recipe.gate = GATE_MIN + whole_percent(fraction) * (1.0 - GATE_MIN),
             Dial::Swing => {
                 let span = f32::from(SWING_MAX - SWING_MIN);
                 recipe.swing = SWING_MIN + (fraction * span).round() as u8;
@@ -107,16 +118,30 @@ fn whole_percent(fraction: f32) -> f32 {
     (fraction * 100.0).round() / 100.0
 }
 
-/// The dials a preset actually reads, in the order they are drawn.
+/// The dials a recipe actually reads, in the order they are drawn.
 ///
-/// A drum kit has no density row. How busy a kit is *is* which groove it plays, so the dial is
-/// replaced by the groove picker rather than shown doing nothing — the same rule the composer
-/// itself keeps, and for the same reason.
-pub fn dials_for(preset: ClipPreset) -> &'static [Dial] {
-    match preset {
-        ClipPreset::Drums => &[Dial::Intensity, Dial::Swing, Dial::Humanize],
-        _ => &[Dial::Density, Dial::Intensity, Dial::Swing, Dial::Humanize],
+/// The rule throughout: a control that cannot change what is heard is not drawn. It is the same
+/// rule the composer itself keeps, stated where the interface can break it, and it costs a
+/// changing row count in exchange for never lying about what is reachable.
+pub fn dials_for(recipe: &ClipRecipe) -> &'static [Dial] {
+    // A kit reads neither the density nor the gate: how busy it is *is* which groove it plays,
+    // and a one-shot drum ignores its note-off. It ignores the subdivision too, which is why its
+    // swing is the one that is never inert.
+    if recipe.preset == ClipPreset::Drums {
+        return &[Dial::Intensity, Dial::Swing, Dial::Humanize];
     }
+    // Swing exists to push a straight offbeat toward the third triplet. A part already dividing
+    // its beats in three is sitting there, and has nothing left for the dial to do.
+    if recipe.subdivision.is_triplet() {
+        return &[Dial::Density, Dial::Gate, Dial::Intensity, Dial::Humanize];
+    }
+    &[
+        Dial::Density,
+        Dial::Gate,
+        Dial::Intensity,
+        Dial::Swing,
+        Dial::Humanize,
+    ]
 }
 
 /// Whether a preset's groove is worth offering, which is to say whether anything reads it.
@@ -124,11 +149,48 @@ pub fn takes_a_groove(preset: ClipPreset) -> bool {
     matches!(preset, ClipPreset::Drums)
 }
 
+/// Whether a preset's subdivision is worth offering.
+///
+/// Everything but the kit, for the reason the composer gives: a groove is sixteen steps read by
+/// index, so a kit on any other grid would scramble it rather than divide it.
+pub fn takes_a_subdivision(preset: ClipPreset) -> bool {
+    !matches!(preset, ClipPreset::Drums)
+}
+
+/// The recipe a clip takes when its preset changes.
+///
+/// A dial somebody moved is theirs, and follows them across the change. A dial still sitting
+/// exactly where the old preset put it is the old preset's opinion rather than anybody's, and
+/// becomes the new preset's instead.
+///
+/// Without this the stab would be unreachable from the picker: its whole identity is a gate near
+/// the floor and a density near the ceiling, and choosing it from a pad would have kept the pad's
+/// and given back a pad under a new name.
+pub fn with_preset(recipe: &ClipRecipe, preset: ClipPreset) -> ClipRecipe {
+    let was = ClipRecipe::new(recipe.preset, recipe.seed);
+    let becomes = ClipRecipe::new(preset, recipe.seed);
+    let untouched = |current: f32, before: f32, after: f32| {
+        if current == before { after } else { current }
+    };
+    ClipRecipe {
+        preset,
+        density: untouched(recipe.density, was.density, becomes.density),
+        gate: untouched(recipe.gate, was.gate, becomes.gate),
+        intensity: untouched(recipe.intensity, was.intensity, becomes.intensity),
+        humanize: untouched(recipe.humanize, was.humanize, becomes.humanize),
+        ..recipe.clone()
+    }
+}
+
 /// What a dial reads as, given the word this language uses for unswung eighths.
 pub fn dial_text(dial: Dial, recipe: &ClipRecipe, straight: &str) -> String {
     match dial {
         Dial::Swing if recipe.swing <= SWING_MIN => straight.to_string(),
         Dial::Swing => format!("{}%", recipe.swing),
+        // The stored share of the gap, not the bar's position: at the bottom of its travel the
+        // bar is empty and the note is still a twentieth long, and a readout saying 0% would be
+        // describing the control rather than the music.
+        Dial::Gate => format!("{}%", (recipe.gate * 100.0).round() as i32),
         _ => format!("{}%", (dial.fraction(recipe) * 100.0).round() as i32),
     }
 }
@@ -145,6 +207,7 @@ fn dial_element_key(dial: Dial) -> usize {
         Dial::Intensity => 1,
         Dial::Swing => 2,
         Dial::Humanize => 3,
+        Dial::Gate => 4,
     }
 }
 
@@ -179,7 +242,24 @@ impl AurisApp {
             .into_any_element(),
         ];
 
-        for dial in dials_for(recipe.preset) {
+        if takes_a_subdivision(recipe.preset) {
+            rows.push(
+                self.picker_row(
+                    "part-subdivision",
+                    Key::PartSubdivision,
+                    self.t(crate::ui::context_menu::subdivision_key(recipe.subdivision))
+                        .to_string(),
+                    cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                        let menu = this.clip_subdivision_menu(event.position(), clip);
+                        this.open_menu(menu);
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+            );
+        }
+
+        for dial in dials_for(&recipe) {
             let dial = *dial;
             let fraction = dial.fraction(&recipe);
             rows.push(
@@ -376,7 +456,7 @@ mod tests {
     fn a_dial_reads_back_what_it_was_set_to() {
         // The bar is drawn from `fraction` and dragged into `set`, so a value that did not survive
         // the round trip would make the bar jump away from the pointer while it was being dragged.
-        for dial in [Dial::Density, Dial::Intensity, Dial::Humanize] {
+        for dial in [Dial::Density, Dial::Gate, Dial::Intensity, Dial::Humanize] {
             for target in [0.0, 0.25, 0.5, 0.75, 1.0] {
                 let mut recipe = recipe(ClipPreset::Lead);
                 dial.set(&mut recipe, target);
@@ -441,19 +521,34 @@ mod tests {
         // be a control that does nothing, and no groove picker on one would leave the only dial a
         // kit *does* read unreachable.
         for preset in ClipPreset::ALL {
-            let has_density = dials_for(preset).contains(&Dial::Density);
+            let dials = dials_for(&recipe(preset));
             assert_eq!(
-                has_density,
+                dials.contains(&Dial::Density),
                 !takes_a_groove(preset),
                 "{} offers the wrong dials",
                 preset.name()
             );
+            // The gate goes exactly where the density goes, and for the same reason: a one-shot
+            // drum ignores its note-off, so shortening one changes nothing anybody can hear.
+            assert_eq!(
+                dials.contains(&Dial::Gate),
+                !takes_a_groove(preset),
+                "{} offers the wrong gate row",
+                preset.name()
+            );
+            assert_eq!(
+                takes_a_subdivision(preset),
+                !takes_a_groove(preset),
+                "{} offers the wrong subdivision row",
+                preset.name()
+            );
         }
         assert!(takes_a_groove(ClipPreset::Drums));
+        assert!(!takes_a_subdivision(ClipPreset::Drums));
 
         // Everything reads how hard and how loose it is played, kit included.
         for preset in ClipPreset::ALL {
-            let dials = dials_for(preset);
+            let dials = dials_for(&recipe(preset));
             assert!(dials.contains(&Dial::Intensity), "{}", preset.name());
             assert!(dials.contains(&Dial::Humanize), "{}", preset.name());
             assert!(dials.contains(&Dial::Swing), "{}", preset.name());
@@ -461,10 +556,63 @@ mod tests {
     }
 
     #[test]
+    fn a_part_on_a_triplet_grid_is_not_offered_a_swing_dial() {
+        // Swing pushes a straight offbeat toward the third triplet; a grid already there has
+        // nothing left to be pushed. The composer returns no offset at all for one, so a dial
+        // drawn here would sweep its whole travel and change not one tick.
+        for subdivision in Subdivision::ALL {
+            let mut recipe = recipe(ClipPreset::Chords);
+            recipe.subdivision = subdivision;
+            assert_eq!(
+                dials_for(&recipe).contains(&Dial::Swing),
+                !subdivision.is_triplet(),
+                "{}",
+                subdivision.name()
+            );
+        }
+
+        // The kit is the exception at both ends: it ignores the subdivision, so its swing is
+        // never inert whatever the rest of the recipe says.
+        let mut kit = recipe(ClipPreset::Drums);
+        kit.subdivision = Subdivision::EighthTriplet;
+        assert!(dials_for(&kit).contains(&Dial::Swing));
+    }
+
+    #[test]
+    fn changing_the_preset_keeps_the_dials_somebody_moved_and_replaces_the_ones_they_did_not() {
+        // The stab is the case that forced the rule: its identity is a gate near the floor and a
+        // density near the ceiling, so choosing it from a pad while keeping the pad's dials would
+        // have written a pad under a new name.
+        let pad = recipe(ClipPreset::Pad);
+        let stab = with_preset(&pad, ClipPreset::Stab);
+        assert_eq!(stab.preset, ClipPreset::Stab);
+        assert_eq!(stab.gate, ClipRecipe::new(ClipPreset::Stab, 1).gate);
+        assert!(stab.gate < 1.0, "a stab that is not short is a chord part");
+        assert_eq!(stab.density, ClipRecipe::new(ClipPreset::Stab, 1).density);
+
+        // And a dial that was moved is the person's, not the preset's.
+        let mut deliberate = recipe(ClipPreset::Pad);
+        Dial::Gate.set(&mut deliberate, 0.5);
+        let moved = deliberate.gate;
+        let stab = with_preset(&deliberate, ClipPreset::Stab);
+        assert_eq!(stab.gate, moved, "the preset overwrote a deliberate gate");
+
+        // The seed never moves: another take is the next seed, and changing what the part is
+        // should not also change which take of it you are hearing.
+        assert_eq!(stab.seed, deliberate.seed);
+    }
+
+    #[test]
     fn a_movement_too_small_to_show_moves_nothing() {
         // What `set_dial` recognises to avoid an undo step and a graph rebuild per wheel event.
         // A trackpad emits a stream of fractional notches, and most of them land inside a step.
-        for dial in [Dial::Density, Dial::Intensity, Dial::Humanize, Dial::Swing] {
+        for dial in [
+            Dial::Density,
+            Dial::Gate,
+            Dial::Intensity,
+            Dial::Humanize,
+            Dial::Swing,
+        ] {
             let mut recipe = recipe(ClipPreset::Lead);
             dial.set(&mut recipe, 0.5);
             let settled = recipe.clone();
@@ -506,12 +654,27 @@ mod tests {
         assert_eq!(dial_text(Dial::Swing, &recipe, "straight"), "straight");
         recipe.swing = 66;
         assert_eq!(dial_text(Dial::Swing, &recipe, "straight"), "66%");
+
+        // The gate reads the share of the gap it stores, not the bar's position. At the bottom of
+        // its travel the bar is empty and the note is still a twentieth long; a readout of 0%
+        // there would be describing the control rather than the music.
+        Dial::Gate.set(&mut recipe, 0.0);
+        assert_eq!(Dial::Gate.fraction(&recipe), 0.0);
+        assert_eq!(dial_text(Dial::Gate, &recipe, "straight"), "5%");
+        Dial::Gate.set(&mut recipe, 1.0);
+        assert_eq!(dial_text(Dial::Gate, &recipe, "straight"), "100%");
     }
 
     #[test]
     fn every_dial_gets_its_own_element_key() {
         let mut seen = std::collections::BTreeSet::new();
-        for dial in [Dial::Density, Dial::Intensity, Dial::Swing, Dial::Humanize] {
+        for dial in [
+            Dial::Density,
+            Dial::Gate,
+            Dial::Intensity,
+            Dial::Swing,
+            Dial::Humanize,
+        ] {
             assert!(seen.insert(dial_element_key(dial)), "{dial:?} collided");
         }
     }

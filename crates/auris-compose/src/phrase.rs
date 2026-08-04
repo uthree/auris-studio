@@ -13,7 +13,7 @@
 
 use auris_core::harmony::Harmony;
 use auris_core::time::{Ticks, TimeSignature};
-use auris_core::{ClipPreset, ClipRecipe, Note};
+use auris_core::{ClipPreset, ClipRecipe, Note, Subdivision};
 
 use crate::frame::{Frame, SectionPlan, skeleton};
 use crate::parts::{ScoreSettings, write_parts};
@@ -31,6 +31,7 @@ pub fn roles_of(preset: ClipPreset) -> &'static [Role] {
         ClipPreset::Chords => &[Role::Chords],
         ClipPreset::Pad => &[Role::Pad],
         ClipPreset::Arp => &[Role::Arp],
+        ClipPreset::Stab => &[Role::Stab],
         ClipPreset::Bass => &[Role::Bass],
         ClipPreset::Drums => &[Role::Kick, Role::Snare, Role::Hat],
     }
@@ -59,7 +60,10 @@ pub fn write_phrase(
     meter: TimeSignature,
     recipe: &ClipRecipe,
 ) -> Vec<Note> {
-    let grid = Grid::new(meter, 4);
+    // The reference grid: the meter at the default subdivision. It decides the bar and the drums,
+    // both of which every subdivision agrees on. Which grid a part's own figures land on is the
+    // part's business, and is set on the roster below.
+    let grid = Grid::new(meter, Subdivision::default().steps_per_beat());
     let bar_ticks = grid.bar_ticks().raw().max(1);
     let bars = (length.raw().max(0) / bar_ticks) as usize;
     if bars == 0 {
@@ -117,6 +121,11 @@ pub fn write_phrase(
             // The recipe's dial, not the mood's: a person moving a slider expects that slider to
             // be what decides, rather than to be averaged with something they cannot see.
             part.density = Some(recipe.density.clamp(0.0, 1.0));
+            // Likewise the recipe's, and not the role's default: choosing the stab preset is what
+            // set them, and a dial that snapped back to the role's idea would be one that undid
+            // the choice the moment anything else on the panel was touched.
+            part.subdivision = recipe.subdivision;
+            part.gate = recipe.gate;
             part
         })
         .collect();
@@ -318,6 +327,66 @@ mod tests {
             checked += 1;
         }
         assert!(checked > 4, "only {checked} bass notes to check");
+    }
+
+    #[test]
+    fn a_stab_is_a_short_chord_struck_often() {
+        // The preset exists to be chosen rather than dialled in, so what it writes with nobody
+        // touching a dial is the whole of what it is worth. Two properties, and it is the second
+        // that names it: many strikes, each one released before the next arrives.
+        let stab = phrase(ClipPreset::Stab, 3);
+        let chords = phrase(ClipPreset::Chords, 3);
+        assert!(
+            stab.len() > chords.len(),
+            "a stab wrote {} notes against a comp's {}",
+            stab.len(),
+            chords.len()
+        );
+
+        let mut by_pitch: std::collections::BTreeMap<u8, Vec<&Note>> =
+            std::collections::BTreeMap::new();
+        for note in &stab {
+            by_pitch.entry(note.pitch).or_default().push(note);
+        }
+        let mut checked = 0;
+        for (pitch, notes) in &by_pitch {
+            for pair in notes.windows(2) {
+                assert!(
+                    pair[0].end() <= pair[1].start,
+                    "{pitch} was still sounding at {} when it was struck again",
+                    pair[1].start.raw()
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 8, "only {checked} pairs of notes to check");
+    }
+
+    #[test]
+    fn a_triplet_recipe_writes_notes_a_straight_one_cannot() {
+        // The dial is the reason the grid became a setting: a third of a beat is 320 ticks, and
+        // nothing a sixteenth grid can reach lands between two of them.
+        let triplet = write_phrase(
+            &axis(),
+            Ticks::ZERO,
+            BAR * 4,
+            four_four(),
+            &ClipRecipe {
+                humanize: 0.0,
+                density: 1.0,
+                subdivision: auris_core::Subdivision::EighthTriplet,
+                ..ClipRecipe::new(ClipPreset::Chords, 2)
+            },
+        );
+        assert!(!triplet.is_empty());
+        assert!(
+            triplet.iter().all(|note| note.start.raw() % 320 == 0),
+            "a triplet part landed off its own grid"
+        );
+        assert!(
+            triplet.iter().any(|note| note.start.raw() % 240 != 0),
+            "every note landed somewhere a straight grid could have reached"
+        );
     }
 
     #[test]

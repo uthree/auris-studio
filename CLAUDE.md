@@ -92,8 +92,9 @@ whole thing work is **one folder, one project**: two documents in one folder wou
   written back into the document. Missing assets are reported, never fatal: the project opens
   with that one track silent.
 
-`Project::FORMAT_VERSION` is 2. Bump it whenever an older build could misread a newer file, and
-carry the other direction with `serde(default)`.
+`Project::FORMAT_VERSION` is 3. Bump it whenever an older build could misread a newer file, and
+carry the other direction with `serde(default)`. A new field carries backwards on a default; a new
+*variant* of a stored enum does not, and is a bump.
 
 ## Conventions
 

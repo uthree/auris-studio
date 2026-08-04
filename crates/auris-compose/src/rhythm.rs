@@ -59,6 +59,11 @@ impl Grid {
         (tick.raw().max(0) / step) as usize
     }
 
+    /// `true` when the beat divides in three rather than in two.
+    pub fn is_triplet(self) -> bool {
+        self.steps_per_beat.is_multiple_of(3)
+    }
+
     /// How strong a beat this step is, from 0 for the weakest to 4 for the downbeat.
     ///
     /// This is the metric hierarchy: a note on the downbeat carries more weight than one on the
@@ -82,12 +87,13 @@ impl Grid {
                 2
             };
         }
-        // Inside a beat: halfway is stronger than the sixteenths either side of it.
-        if per_beat.is_multiple_of(2) && position.is_multiple_of(per_beat / 2) {
-            1
-        } else {
-            0
-        }
+        // Inside a beat: a step landing on a simpler division of it is stronger than one that
+        // only exists at the finest level. Both families are asked, because a beat of six divides
+        // in half *and* in thirds and both of those are real positions a player feels.
+        let inside = position % per_beat;
+        let halves = per_beat.is_multiple_of(2) && inside.is_multiple_of(per_beat / 2);
+        let thirds = per_beat.is_multiple_of(3) && inside.is_multiple_of(per_beat / 3);
+        if halves || thirds { 1 } else { 0 }
     }
 }
 
@@ -359,6 +365,13 @@ pub fn groove(name: &str) -> Option<&'static Groove> {
 /// the sixteenths inside it move with it. `percent` says where that eighth lands inside its
 /// beat — 50 is straight, 66.7 puts it on the third triplet.
 pub fn swing_offset(grid: Grid, step: usize, percent: u8) -> Ticks {
+    // A triplet grid is already sitting where swing is trying to push a straight one, so there is
+    // nothing left to delay. It also has no half-beat to measure the delay in: the unit below
+    // would round to a single step and every other triplet would be shoved off the beat, which is
+    // not a swung triplet but a broken one.
+    if grid.is_triplet() {
+        return Ticks::ZERO;
+    }
     // Half a beat, in steps: the unit that gets swung.
     let unit = (grid.steps_per_beat as usize / 2).max(1);
     if (step / unit).is_multiple_of(2) {
@@ -396,6 +409,50 @@ mod tests {
         assert_eq!(grid.weight(0), 4);
         assert_eq!(grid.weight(4), 2, "beat two of three is just a beat");
         assert_eq!(grid.weight(8), 2);
+    }
+
+    #[test]
+    fn a_triplet_beat_divides_exactly_and_keeps_its_hierarchy() {
+        // A triplet is a position, not a rounding error: 960 ticks per quarter divides by three.
+        let grid = Grid::new(TimeSignature::new(4, 4), 3);
+        assert!(grid.is_triplet());
+        assert_eq!(grid.step_ticks(), Ticks(TICKS_PER_QUARTER / 3));
+        assert_eq!(grid.step_ticks() * 3, Ticks(TICKS_PER_QUARTER), "no drift");
+        assert_eq!(grid.steps_per_bar(), 12);
+
+        assert_eq!(grid.weight(0), 4, "the downbeat");
+        assert_eq!(grid.weight(6), 3, "halfway through the bar");
+        assert_eq!(grid.weight(3), 2, "beat two");
+        // The two offbeat triplets are the level immediately below the beat, which is exactly
+        // what an offbeat eighth is on a straight grid — so they carry the same weight.
+        assert_eq!(grid.weight(1), 1);
+        assert_eq!(grid.weight(2), 1);
+    }
+
+    #[test]
+    fn a_beat_of_six_is_felt_in_halves_and_in_thirds_at_once() {
+        // Sixteenth triplets: the halfway point is the offbeat eighth and the thirds are the
+        // eighth triplets. Both are real positions, and only the steps between them are the
+        // finest level. A rule that asked one question would have flattened four of the five.
+        let grid = Grid::new(TimeSignature::new(4, 4), 6);
+        assert_eq!(grid.steps_per_bar(), 24);
+        assert_eq!(grid.weight(0), 4);
+        assert_eq!(grid.weight(12), 3, "halfway through the bar");
+        assert_eq!(grid.weight(6), 2, "beat two");
+        assert_eq!(grid.weight(3), 1, "the offbeat eighth");
+        assert_eq!(grid.weight(2), 1, "an eighth triplet");
+        assert_eq!(grid.weight(4), 1);
+        assert_eq!(grid.weight(1), 0, "only a sixteenth triplet");
+        assert_eq!(grid.weight(5), 0);
+    }
+
+    #[test]
+    fn an_eighth_grid_still_calls_its_offbeat_an_offbeat() {
+        let grid = Grid::new(TimeSignature::new(4, 4), 2);
+        assert!(!grid.is_triplet());
+        assert_eq!(grid.steps_per_bar(), 8);
+        assert_eq!(grid.weight(4), 3, "halfway through the bar");
+        assert_eq!(grid.weight(1), 1, "the offbeat eighth");
     }
 
     #[test]
@@ -570,6 +627,23 @@ mod tests {
             Ticks(154),
             "every offbeat eighth"
         );
+    }
+
+    #[test]
+    fn a_triplet_grid_is_never_swung() {
+        // Swing exists to push a straight offbeat toward the third triplet. On a grid that is
+        // already there it has nothing to do, and the half-beat unit it measures in does not
+        // exist — so it would shove every other triplet off the beat instead.
+        for steps_per_beat in [3, 6] {
+            let grid = Grid::new(TimeSignature::new(4, 4), steps_per_beat);
+            for step in 0..grid.steps_per_bar() {
+                assert_eq!(
+                    swing_offset(grid, step, 66),
+                    Ticks::ZERO,
+                    "step {step} of a grid in {steps_per_beat}s"
+                );
+            }
+        }
     }
 
     #[test]

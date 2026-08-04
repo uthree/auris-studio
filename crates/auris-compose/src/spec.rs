@@ -23,6 +23,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use auris_core::Subdivision;
 use auris_core::time::TimeSignature;
 
 use crate::rhythm::Pattern;
@@ -41,6 +42,8 @@ pub enum Role {
     Pad,
     /// A broken chord.
     Arp,
+    /// Short chords hammered on the subdivision.
+    Stab,
     /// The bass line.
     Bass,
     /// The kick drum.
@@ -53,11 +56,12 @@ pub enum Role {
 
 impl Role {
     /// Every role, in the order a default roster uses them.
-    pub const ALL: [Role; 8] = [
+    pub const ALL: [Role; 9] = [
         Role::Melody,
         Role::Chords,
         Role::Pad,
         Role::Arp,
+        Role::Stab,
         Role::Bass,
         Role::Kick,
         Role::Snare,
@@ -71,6 +75,7 @@ impl Role {
             Role::Chords => "chords",
             Role::Pad => "pad",
             Role::Arp => "arp",
+            Role::Stab => "stab",
             Role::Bass => "bass",
             Role::Kick => "kick",
             Role::Snare => "snare",
@@ -85,6 +90,7 @@ impl Role {
             "chords" | "comp" | "harmony" => Role::Chords,
             "pad" | "strings" => Role::Pad,
             "arp" | "arpeggio" => Role::Arp,
+            "stab" | "stabs" | "release-cut" => Role::Stab,
             "bass" => Role::Bass,
             "kick" | "bd" => Role::Kick,
             "snare" | "sd" => Role::Snare,
@@ -112,11 +118,23 @@ impl Role {
     /// The octave a part of this role sits in by default.
     pub fn default_octave(self) -> i32 {
         match self {
-            Role::Melody | Role::Arp => 5,
+            Role::Melody | Role::Arp | Role::Stab => 5,
             Role::Chords => 4,
             Role::Pad => 3,
             Role::Bass => 2,
             _ => 3,
+        }
+    }
+
+    /// How long a note of this role is held, as a fraction of the gap to the one after it.
+    ///
+    /// Legato everywhere but the stab, which is nothing *but* its gate: cut the release off a
+    /// chord struck on every sixteenth and the rhythm is the sound, leave it on and the sixteen
+    /// chords in the bar overlap into one wash that could have been a single held note.
+    pub fn default_gate(self) -> f32 {
+        match self {
+            Role::Stab => 0.3,
+            _ => 1.0,
         }
     }
 
@@ -130,6 +148,7 @@ impl Role {
             Role::Chords => -14.0,
             Role::Pad => -16.0,
             Role::Arp => -12.0,
+            Role::Stab => -13.0,
             Role::Bass => -10.0,
             Role::Kick => -10.0,
             Role::Snare => -12.0,
@@ -143,6 +162,10 @@ impl Role {
             Role::Melody => (60, 84),
             Role::Arp => (60, 88),
             Role::Chords => (48, 72),
+            // High and narrow, which is where a stab has to sit: it is competing with the tune
+            // for attention rather than filling in underneath it, and a wide voicing struck
+            // sixteen times a bar would bury everything else in the mix.
+            Role::Stab => (60, 84),
             Role::Pad => (36, 64),
             Role::Bass => (28, 52),
             _ => (0, 127),
@@ -293,6 +316,14 @@ pub struct PartSpec {
     pub octave: i32,
     /// How busy it is, as a fraction of the available steps.
     pub density: Option<f32>,
+    /// How finely this part divides the beat.
+    ///
+    /// Per part rather than per song: a stab hammering triplets over a straight kit is a sound
+    /// somebody wants, and the bar is the same length either way, so the parts still line up.
+    /// A drum part ignores it — a groove is written in sixteenths.
+    pub subdivision: Subdivision,
+    /// How long a note is held, as a fraction of the gap to the one after it.
+    pub gate: f32,
     /// A rhythm written out by hand, which overrides the generated one.
     pub rhythm: Option<Pattern>,
     /// Level trim in decibels.
@@ -310,6 +341,8 @@ impl PartSpec {
             instrument: role.default_instrument().to_string(),
             octave: role.default_octave(),
             density: None,
+            subdivision: Subdivision::default(),
+            gate: role.default_gate(),
             rhythm: None,
             gain_db: role.default_gain_db(),
             pan: 0.0,
@@ -717,6 +750,12 @@ impl SongSpec {
             if let Some(density) = part.density {
                 out.push_str(&format!("density:    {density:.2}\n"));
             }
+            if part.subdivision != Subdivision::default() {
+                out.push_str(&format!("subdivision: {}\n", part.subdivision.name()));
+            }
+            if part.gate != part.role.default_gate() {
+                out.push_str(&format!("gate:       {:.2}\n", part.gate));
+            }
             if let Some(rhythm) = &part.rhythm {
                 out.push_str(&format!("rhythm:     {}\n", rhythm.to_text()));
             }
@@ -983,6 +1022,17 @@ fn apply_part_field(part: &mut PartSpec, field: &str, value: &str) -> Result<(),
             part.octave = octave;
         }
         "density" => part.density = Some(fraction(value, "density")?),
+        "subdivision" => {
+            part.subdivision = Subdivision::parse(value)
+                .ok_or_else(|| format!("`{value}` is not a subdivision; use 8, 16, 8t or 16t"))?
+        }
+        "gate" => {
+            let gate = fraction(value, "gate")?;
+            if gate <= 0.0 {
+                return Err("a gate of 0 would write notes nobody can hear".to_string());
+            }
+            part.gate = gate;
+        }
         "rhythm" => {
             part.rhythm = Some(
                 Pattern::parse(value)
@@ -1006,7 +1056,7 @@ fn apply_part_field(part: &mut PartSpec, field: &str, value: &str) -> Result<(),
         other => {
             return Err(format!(
                 "`{other}` is not a part field; expected role, instrument, octave, density, \
-                 rhythm, gain or pan"
+                 subdivision, gate, rhythm, gain or pan"
             ));
         }
     }
@@ -1414,6 +1464,67 @@ mod tests {
         assert_eq!(reparsed.parts, original.parts);
         assert_eq!(reparsed.sections, original.sections);
         assert_eq!(reparsed.total_bars(), original.total_bars());
+    }
+
+    #[test]
+    fn a_subdivision_and_a_gate_survive_the_round_trip() {
+        // Both are written out only when they differ from what the role implies, so that the
+        // ordinary document stays short — which means the round trip has to work from both sides
+        // of that condition rather than only from the side that writes a line.
+        let original = SongSpec::parse(
+            "form: verse\n[part lead]\n[part chords]\nsubdivision: 16t\ngate: 0.25\n[part stab]",
+        )
+        .unwrap();
+        let reparsed = SongSpec::parse(&original.to_text()).unwrap();
+        assert_eq!(reparsed.parts, original.parts);
+
+        let named = |spec: &SongSpec, name: &str| {
+            spec.parts
+                .iter()
+                .find(|part| part.name == name)
+                .expect("the part is in the roster")
+                .clone()
+        };
+        let chords = named(&reparsed, "chords");
+        assert_eq!(chords.subdivision, Subdivision::SixteenthTriplet);
+        assert!((chords.gate - 0.25).abs() < 1e-6);
+
+        // The stab wrote neither line, because a stab's gate is already what a stab's gate is —
+        // and it comes back regardless, because the role is what puts it there.
+        let stab = named(&reparsed, "stab");
+        assert_eq!(stab.gate, Role::Stab.default_gate());
+        assert!(stab.gate < 1.0, "a stab that is not short is a chord part");
+        assert_eq!(
+            named(&reparsed, "lead").gate,
+            1.0,
+            "everything else is legato"
+        );
+    }
+
+    #[test]
+    fn a_subdivision_is_named_the_way_a_musician_would_say_it() {
+        for (text, expected) in [
+            ("16", Subdivision::Sixteenth),
+            ("1/8", Subdivision::Eighth),
+            ("8t", Subdivision::EighthTriplet),
+            ("triplet", Subdivision::EighthTriplet),
+            ("sixteenth-triplet", Subdivision::SixteenthTriplet),
+        ] {
+            assert_eq!(Subdivision::parse(text), Some(expected), "`{text}`");
+        }
+        assert!(Subdivision::parse("fifth").is_none());
+        // And every name it writes is one it reads back.
+        for subdivision in Subdivision::ALL {
+            assert_eq!(Subdivision::parse(subdivision.name()), Some(subdivision));
+        }
+    }
+
+    #[test]
+    fn a_gate_of_nothing_is_refused_rather_than_written() {
+        // Zero would write a note of no length at every onset: a part that is silent but still
+        // costs a voice, which reads as a bug wherever it is met.
+        let errors = SongSpec::parse("[part chords]\ngate: 0").unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("gate")));
     }
 
     #[test]

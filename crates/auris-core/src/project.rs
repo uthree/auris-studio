@@ -188,17 +188,20 @@ pub enum ClipPreset {
     Arp,
     /// The bass line.
     Bass,
+    /// Short chords hammered on the subdivision.
+    Stab,
     /// Kick, snare and hat together.
     Drums,
 }
 
 impl ClipPreset {
     /// Every preset, in the order a picker should offer them.
-    pub const ALL: [ClipPreset; 6] = [
+    pub const ALL: [ClipPreset; 7] = [
         ClipPreset::Lead,
         ClipPreset::Chords,
         ClipPreset::Pad,
         ClipPreset::Arp,
+        ClipPreset::Stab,
         ClipPreset::Bass,
         ClipPreset::Drums,
     ];
@@ -211,6 +214,7 @@ impl ClipPreset {
             ClipPreset::Pad => "pad",
             ClipPreset::Arp => "arp",
             ClipPreset::Bass => "bass",
+            ClipPreset::Stab => "stab",
             ClipPreset::Drums => "drums",
         }
     }
@@ -223,7 +227,77 @@ impl ClipPreset {
             "pad" | "strings" => ClipPreset::Pad,
             "arp" | "arpeggio" => ClipPreset::Arp,
             "bass" => ClipPreset::Bass,
+            "stab" | "stabs" | "release-cut" => ClipPreset::Stab,
             "drums" | "drum" | "kit" => ClipPreset::Drums,
+            _ => return None,
+        })
+    }
+}
+
+/// How finely a beat is divided, which is the grid everything a part plays lands on.
+///
+/// Two families rather than one number: a beat divides in two or it divides in three, and no
+/// amount of a straight grid reaches a triplet. Sixteenths are the default because that is what a
+/// drum pattern is written in and what most music is felt in.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Subdivision {
+    /// Two steps to the beat.
+    Eighth,
+    /// Four steps to the beat.
+    #[default]
+    Sixteenth,
+    /// Three steps to the beat: the triplet.
+    EighthTriplet,
+    /// Six steps to the beat.
+    SixteenthTriplet,
+}
+
+impl Subdivision {
+    /// Every subdivision, in the order a picker should offer them: coarse to fine, straight
+    /// before triplet.
+    pub const ALL: [Subdivision; 4] = [
+        Subdivision::Eighth,
+        Subdivision::Sixteenth,
+        Subdivision::EighthTriplet,
+        Subdivision::SixteenthTriplet,
+    ];
+
+    /// How many steps one beat divides into.
+    ///
+    /// Every one of these divides [`TICKS_PER_QUARTER`](crate::time::TICKS_PER_QUARTER) exactly,
+    /// which is why a triplet here is a position and not a rounding error.
+    pub fn steps_per_beat(self) -> u32 {
+        match self {
+            Subdivision::Eighth => 2,
+            Subdivision::Sixteenth => 4,
+            Subdivision::EighthTriplet => 3,
+            Subdivision::SixteenthTriplet => 6,
+        }
+    }
+
+    /// `true` when the beat divides in three.
+    pub fn is_triplet(self) -> bool {
+        self.steps_per_beat().is_multiple_of(3)
+    }
+
+    /// The name the interface and the command line write.
+    pub fn name(self) -> &'static str {
+        match self {
+            Subdivision::Eighth => "eighth",
+            Subdivision::Sixteenth => "sixteenth",
+            Subdivision::EighthTriplet => "eighth-triplet",
+            Subdivision::SixteenthTriplet => "sixteenth-triplet",
+        }
+    }
+
+    /// Reads a subdivision name, accepting the note values people actually say.
+    pub fn parse(text: &str) -> Option<Self> {
+        Some(match text.trim().to_ascii_lowercase().as_str() {
+            "eighth" | "8" | "1/8" => Subdivision::Eighth,
+            "sixteenth" | "16" | "1/16" => Subdivision::Sixteenth,
+            "eighth-triplet" | "8t" | "1/8t" | "triplet" => Subdivision::EighthTriplet,
+            "sixteenth-triplet" | "16t" | "1/16t" => Subdivision::SixteenthTriplet,
             _ => return None,
         })
     }
@@ -265,10 +339,26 @@ pub struct ClipRecipe {
     /// How far timing and velocity wander, from 0 for a machine to 1 for a sloppy band.
     #[serde(default)]
     pub humanize: f32,
+    /// How finely the beat is divided, which is the grid the part's figures land on.
+    ///
+    /// A drum kit ignores it: a groove is written in sixteenths, and reading one on a triplet
+    /// grid would scatter it rather than swing it.
+    #[serde(default)]
+    pub subdivision: Subdivision,
+    /// How long a note is held, as a fraction of the gap to the one after it.
+    ///
+    /// 1 is legato — each note lasts until the next begins. Turning it down detaches them, and
+    /// far down is the sound of a chord hammered on every sixteenth with the release cut off.
+    #[serde(default = "default_gate")]
+    pub gate: f32,
 }
 
 fn default_swing() -> u8 {
     50
+}
+
+fn default_gate() -> f32 {
+    1.0
 }
 
 fn default_groove() -> String {
@@ -277,8 +367,13 @@ fn default_groove() -> String {
 
 impl ClipRecipe {
     /// A recipe for `preset`, with the dials where a first attempt should start.
+    ///
+    /// Only the stab starts anywhere unusual, and it has to: every other preset is a *part* whose
+    /// identity survives the dials being moved, while a stab is nothing but a position on them —
+    /// short, fast and machine-tight. Landing it on the same middling defaults as a pad would mean
+    /// choosing it and hearing a pad, with the sound it was named for three dials away.
     pub fn new(preset: ClipPreset, seed: u64) -> Self {
-        Self {
+        let mut recipe = Self {
             preset,
             seed,
             density: 0.5,
@@ -286,7 +381,16 @@ impl ClipRecipe {
             groove: default_groove(),
             swing: 50,
             humanize: 0.25,
+            subdivision: Subdivision::default(),
+            gate: default_gate(),
+        };
+        if preset == ClipPreset::Stab {
+            recipe.density = 0.95;
+            recipe.intensity = 0.85;
+            recipe.gate = 0.3;
+            recipe.humanize = 0.1;
         }
+        recipe
     }
 
     /// The same recipe with a different seed, which is what "another take" means.
@@ -768,7 +872,12 @@ impl Project {
     /// 2 since asset references gained the [`AssetPath::Inside`] form. A version 1 document still
     /// opens — its bare paths are exactly what `External` means — but the reverse cannot work, so
     /// the version has to move for an older build to refuse the file instead of losing its audio.
-    pub const FORMAT_VERSION: u32 = 2;
+    ///
+    /// 3 since [`ClipPreset`] gained [`Stab`](ClipPreset::Stab). The recipe's new dials carry
+    /// backwards on a `serde` default, but a variant an older build has never heard of does not:
+    /// it would fail to parse the whole document rather than the one clip, so the version moves to
+    /// turn that into the refusal it is.
+    pub const FORMAT_VERSION: u32 = 3;
 
     /// An empty project.
     pub fn new(name: impl Into<String>, sample_rate: f64) -> Self {
