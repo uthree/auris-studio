@@ -182,6 +182,10 @@ pub enum Question {
         chosen: std::path::PathBuf,
         /// The document that already exists there.
         existing: std::path::PathBuf,
+        /// What the user was doing, carried through this second question the same way it was
+        /// carried through the first: replacing is still on the way to quitting, closing or
+        /// opening, and dropping it here silently un-gave the command.
+        then: Option<PendingAction>,
     },
 }
 
@@ -456,9 +460,16 @@ impl AurisApp {
             // not be the thing that throws the afternoon away.
             (Question::Unsaved(next), Answer::Confirm) => self.save_then(next, window, cx),
             (Question::Unsaved(next), Answer::Deny) => self.run_pending(next, window, cx),
-            (Question::Replace { chosen, .. }, _) => {
+            (Question::Replace { chosen, then, .. }, _) => {
                 match self.session.save_as_replacing(&chosen) {
-                    Ok(report) => self.report_save(&report),
+                    Ok(report) => {
+                        self.report_save(&report);
+                        // The command the user actually gave — quit, close, new, open —
+                        // finishes now, exactly as it would have had the name not collided.
+                        if let Some(next) = then {
+                            self.run_pending(next, window, cx);
+                        }
+                    }
                     Err(error) => self.set_failed_status(self.failure(Key::CmdSave, &error)),
                 }
             }

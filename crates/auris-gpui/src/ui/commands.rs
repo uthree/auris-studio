@@ -386,6 +386,7 @@ impl AurisApp {
                     crate::ui::prompt::Question::Replace {
                         chosen: path.to_path_buf(),
                         existing,
+                        then,
                     },
                 ));
             }
