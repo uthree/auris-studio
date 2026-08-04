@@ -337,7 +337,13 @@ impl AudioBuffer {
         let mut out = AudioBuffer::new(self.channel_count(), frames, self.sample_rate);
         let available = self.frame_count().saturating_sub(start).min(frames);
         for (channel, src) in self.channels.iter().enumerate() {
-            out.channels[channel][..available].copy_from_slice(&src[start..start + available]);
+            // Clamped, not indexed: a start past the end has to mean all padding, and the raw
+            // `&src[start..start]` is a panic once `start` outruns the slice — Rust bounds the
+            // start of a range even when the range is empty. Per channel, so a ragged buffer
+            // pads its short channels instead of taking the whole method down.
+            let from = start.min(src.len());
+            let take = available.min(src.len() - from);
+            out.channels[channel][..take].copy_from_slice(&src[from..from + take]);
         }
         out
     }
@@ -389,5 +395,17 @@ mod tests {
         let buffer = AudioBuffer::from_planar(vec![vec![1.0, 2.0]], 48_000.0).unwrap();
         let tail = buffer.slice(1, 3);
         assert_eq!(tail.channel(0), &[2.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn slice_pads_from_a_start_past_the_end_too() {
+        // The doc promises zero-padding, and the end-overrun case above delivered it — but a
+        // *start* past the end panicked, because Rust bounds the start of a range even when
+        // the range is empty. The documented contract has to hold from either side.
+        let buffer = AudioBuffer::from_planar(vec![vec![1.0, 2.0]], 48_000.0).unwrap();
+        let silence = buffer.slice(3, 2);
+        assert_eq!(silence.channel(0), &[0.0, 0.0]);
+        let boundary = buffer.slice(2, 2);
+        assert_eq!(boundary.channel(0), &[0.0, 0.0]);
     }
 }

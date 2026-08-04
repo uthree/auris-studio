@@ -139,7 +139,12 @@ impl Numeral {
         let (secondary_of, bass_degree) = match tail {
             None => (None, None),
             Some(tail) if tail.chars().all(|c| c.is_ascii_digit()) => {
-                (None, Some(tail.parse::<u8>().ok()?))
+                // Only a degree the scale has: `degree_class` clamps into 1..=7, so `I/8`
+                // accepted here would come out as I over the *leading tone* — a stable wrong
+                // chord, since the symbol round-trips through save and load unchanged. Refused
+                // like a malformed roman target, and for the same reason.
+                let degree = tail.parse::<u8>().ok().filter(|d| (1..=7).contains(d))?;
+                (None, Some(degree))
             }
             Some(tail) => {
                 // The target of a secondary dominant may itself be altered, as in `V/bVI`.
@@ -712,6 +717,17 @@ mod tests {
         assert!(Numeral::parse("X").is_none());
         assert!(Numeral::parse("Iwhat").is_none());
         assert!(Numeral::parse("V/X").is_none());
+    }
+
+    #[test]
+    fn a_bass_degree_the_scale_does_not_have_is_rejected() {
+        // `degree_class` clamps into 1..=7, so `I/8` accepted at the parser would come out as
+        // I over the leading tone — a wrong chord that round-trips stably through the file.
+        assert!(Numeral::parse("I/0").is_none());
+        assert!(Numeral::parse("I/8").is_none());
+        assert!(Numeral::parse("I/9").is_none());
+        assert!(Numeral::parse("IV/255").is_none());
+        assert!(Numeral::parse("IV/7").is_some());
     }
 
     #[test]

@@ -848,9 +848,11 @@ impl Track {
                 .clips
                 .iter()
                 .map(|clip| {
-                    let seconds = clip.length_frames as f64 / sample_rate;
-                    let start_seconds = tempo_map.ticks_to_seconds(clip.start).0;
-                    tempo_map.seconds_to_ticks(crate::time::Seconds(start_seconds + seconds))
+                    // The shared helper, not inline arithmetic: it guards the sample rate, and
+                    // a second copy of the conversion is a second place for the guard to be
+                    // forgotten — which is exactly how this one came to divide by zero.
+                    clip.start
+                        + audio_length_ticks(tempo_map, sample_rate, clip.start, clip.length_frames)
                 })
                 .max()
                 .unwrap_or(Ticks::ZERO),
