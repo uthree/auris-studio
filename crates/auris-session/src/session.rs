@@ -773,7 +773,15 @@ impl Session {
 
     /// Sets the editing grid.
     pub fn set_grid(&mut self, grid: Ticks) {
-        self.project.grid = Ticks(grid.raw().max(1));
+        let grid = Ticks(grid.raw().max(1));
+        if self.project.grid == grid {
+            return;
+        }
+        self.project.grid = grid;
+        // Not recorded — cycling the grid is a view-adjacent tweak nobody wants on the undo
+        // stack — but it is a stored document field and has to reach the file: unmarked, a
+        // grid-only change closed without the unsaved prompt and was quietly lost.
+        self.dirty = true;
     }
 
     // ---------------------------------------------------------------- harmony
@@ -1114,7 +1122,13 @@ impl Session {
     pub fn set_track_height(&mut self, id: TrackId, height: f32) -> Result<(), SessionError> {
         self.require_track(id)?;
         if let Some(track) = self.project.track_mut(id) {
-            track.height = height.clamp(24.0, 400.0);
+            // `clamp` would pass a NaN straight into a stored field; the midpoint is as good
+            // an answer as any to a height that is not a number.
+            track.height = if height.is_finite() {
+                height.clamp(24.0, 400.0)
+            } else {
+                24.0
+            };
         }
         Ok(())
     }
@@ -1123,6 +1137,19 @@ impl Session {
         self.project
             .track_index(id)
             .ok_or(SessionError::UnknownTrack(id.0))
+    }
+
+    /// A unit-range value fit to store: clamped, with non-finite input becoming the floor.
+    ///
+    /// `clamp` passes NaN through, and this layer owns the promise that what goes into the
+    /// document can come back out of it — `serde_json` writes a non-finite float as `null`,
+    /// which no `f32` field will ever deserialise again.
+    fn finite_unit(value: f32) -> f32 {
+        if value.is_finite() {
+            value.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
     }
 
     // ---------------------------------------------------------------- clips
@@ -1628,7 +1655,7 @@ impl Session {
         if let Some(target) = self.project.midi_clip_mut(clip) {
             target.notes.push(Note {
                 pitch: note.pitch.min(127),
-                velocity: note.velocity.clamp(0.0, 1.0),
+                velocity: Self::finite_unit(note.velocity),
                 start: note.start.max_zero(),
                 length: Ticks(note.length.raw().max(1)),
             });
@@ -1766,7 +1793,7 @@ impl Session {
         };
         for (index, velocity) in changes {
             if let Some(note) = target.notes.get_mut(*index) {
-                note.velocity = velocity.clamp(0.0, 1.0);
+                note.velocity = Self::finite_unit(*velocity);
             }
         }
         self.invalidate_graph();
@@ -2050,6 +2077,13 @@ impl Session {
     /// wheel — has no gesture around it and was going unrecorded, which made Undo take back the
     /// edit *before* the parameter change instead.
     pub fn set_param(&mut self, target: ParamTarget, value: f32) {
+        // A value that is not a number is not stored: NaN slips every clamp downstream, and
+        // `serde_json` writes a non-finite float as `null` — a saved project that can never be
+        // opened again. The shipped frontends already sanitise their inputs; this layer is the
+        // one that owns the promise, for whichever caller comes next.
+        if !value.is_finite() {
+            return;
+        }
         // Each arm looks its target up before recording, so a stale id costs nothing — and the
         // record carries the target, because coalescing compares edits: two wheel notches on
         // *different* controls within the window must not fold into one step.
@@ -2398,6 +2432,10 @@ impl Session {
     ///
     /// Returns how many files were copied in. Anything already inside is left alone, so running
     /// this twice costs a directory listing.
+    ///
+    /// A file that cannot be copied is skipped and the first failure reported *after* every
+    /// other file has had its attempt — missing assets are reported, never fatal, and what was
+    /// copied stays copied and marked unsaved. A retry adopts what already landed.
     pub fn collect_assets(&mut self) -> Result<usize, SessionError> {
         let folder = self
             .project_folder()
@@ -2420,24 +2458,37 @@ impl Session {
             .collect();
 
         let mut collected = 0;
+        let mut failed: Option<SessionError> = None;
         for (id, from) in sources {
             let Some(from) = from else { continue };
-            self.collect_source(id, &from)?;
-            collected += 1;
+            match self.collect_source(id, &from) {
+                Ok(()) => collected += 1,
+                // Aborting here used to leave the rest uncopied and — worse — the documents
+                // already rewritten to `Inside` unmarked, so a clean-looking session disagreed
+                // with its own file.
+                Err(error) => failed = failed.or(Some(error)),
+            }
         }
         for (id, from) in fonts {
             let Some(from) = from else { continue };
-            let name = copy_into(&from, &folder.join(AUDIO_DIR))?;
-            if let Some(font) = self.project.soundfonts.get_mut(&id) {
-                font.path = AssetPath::inside(Path::new(AUDIO_DIR).join(name));
+            match copy_into(&from, &folder.join(AUDIO_DIR)) {
+                Ok(name) => {
+                    if let Some(font) = self.project.soundfonts.get_mut(&id) {
+                        font.path = AssetPath::inside(Path::new(AUDIO_DIR).join(name));
+                    }
+                    collected += 1;
+                }
+                Err(error) => failed = failed.or(Some(error.into())),
             }
-            collected += 1;
         }
 
         if collected > 0 {
             self.dirty = true;
         }
-        Ok(collected)
+        match failed {
+            Some(error) => Err(error),
+            None => Ok(collected),
+        }
     }
 
     /// Imports an audio file, adds a track for it and places a clip at `start`.
