@@ -815,7 +815,10 @@ impl AurisApp {
                 }
             }
             MenuCommand::RegenerateClip(clip) => match self.session.regenerate_clip(clip) {
-                Ok(_) => self.report_clip_preset(clip),
+                Ok(_) => {
+                    self.forget_rewritten_notes(clip);
+                    self.report_clip_preset(clip);
+                }
                 Err(error) => self.set_failed_status(self.failure(Key::MenuRegenerateClip, &error)),
             },
             MenuCommand::RerollClip(clip) => self.reroll_clip(clip),
@@ -1221,7 +1224,10 @@ impl AurisApp {
     /// Writes another take of a generated clip, and says what came out.
     pub(crate) fn reroll_clip(&mut self, clip: ClipId) {
         match self.session.reroll_clip(clip) {
-            Ok(_) => self.report_clip_preset(clip),
+            Ok(_) => {
+                self.forget_rewritten_notes(clip);
+                self.report_clip_preset(clip);
+            }
             Err(error) => self.set_failed_status(self.failure(Key::MenuRerollClip, &error)),
         }
     }
@@ -1248,7 +1254,10 @@ impl AurisApp {
         }
         let recipe = crate::ui::part::with_preset(recipe, preset);
         match self.session.set_clip_recipe(clip, recipe) {
-            Ok(_) => self.report_clip(preset, clip),
+            Ok(_) => {
+                self.forget_rewritten_notes(clip);
+                self.report_clip(preset, clip);
+            }
             Err(error) => self.set_failed_status(self.failure(Key::MenuGenerateClip, &error)),
         }
     }
@@ -1263,7 +1272,10 @@ impl AurisApp {
         }
         let recipe = recipe.with_seed(seed);
         match self.session.set_clip_recipe(clip, recipe) {
-            Ok(_) => self.report_clip_preset(clip),
+            Ok(_) => {
+                self.forget_rewritten_notes(clip);
+                self.report_clip_preset(clip);
+            }
             Err(error) => self.set_failed_status(self.failure(Key::MenuGenerateClip, &error)),
         }
     }
@@ -1281,7 +1293,10 @@ impl AurisApp {
             ..recipe.clone()
         };
         match self.session.set_clip_recipe(clip, recipe) {
-            Ok(_) => self.report_clip_preset(clip),
+            Ok(_) => {
+                self.forget_rewritten_notes(clip);
+                self.report_clip_preset(clip);
+            }
             Err(error) => self.set_failed_status(self.failure(Key::MenuGenerateClip, &error)),
         }
     }
@@ -1299,7 +1314,10 @@ impl AurisApp {
             ..recipe.clone()
         };
         match self.session.set_clip_recipe(clip, recipe) {
-            Ok(_) => self.report_clip_preset(clip),
+            Ok(_) => {
+                self.forget_rewritten_notes(clip);
+                self.report_clip_preset(clip);
+            }
             Err(error) => self.set_failed_status(self.failure(Key::MenuGenerateClip, &error)),
         }
     }
@@ -1317,7 +1335,10 @@ impl AurisApp {
             ..recipe.clone()
         };
         match self.session.set_clip_recipe(clip, recipe) {
-            Ok(_) => self.report_clip_preset(clip),
+            Ok(_) => {
+                self.forget_rewritten_notes(clip);
+                self.report_clip_preset(clip);
+            }
             Err(error) => self.set_failed_status(self.failure(Key::MenuGenerateClip, &error)),
         }
     }

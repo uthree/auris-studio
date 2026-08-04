@@ -73,6 +73,19 @@ impl AurisApp {
         self.drag = None;
     }
 
+    /// Drops the note selection when `clip`'s notes have just been rewritten.
+    ///
+    /// The selection is plain indices into the clip's note list, and a regenerated clip has a
+    /// new list — different notes, different order, different length. Kept, the old indices
+    /// name whatever landed at those positions: the roll paints them selected, and Delete,
+    /// Transpose or a velocity drag edits notes the user never chose. Every path that reaches
+    /// `Session::set_clip_recipe` or its relatives calls this on success.
+    pub(crate) fn forget_rewritten_notes(&mut self, clip: ClipId) {
+        if self.selected_clip == Some(clip) {
+            self.selected_notes.clear();
+        }
+    }
+
     /// Toggles a track's mute.
     pub(crate) fn toggle_mute(&mut self, track: TrackId) {
         let muted = self.project().track(track).is_some_and(|t| t.mixer.mute);

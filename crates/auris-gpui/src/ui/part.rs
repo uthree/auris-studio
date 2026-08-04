@@ -527,7 +527,9 @@ impl AurisApp {
         if &recipe == current {
             return;
         }
-        let _ = self.session.set_clip_recipe(clip, recipe);
+        if self.session.set_clip_recipe(clip, recipe).is_ok() {
+            self.forget_rewritten_notes(clip);
+        }
     }
 
     /// Applies a dial drag, measured in pixels from where it began.
