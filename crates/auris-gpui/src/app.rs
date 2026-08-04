@@ -359,7 +359,7 @@ impl Drag {
             Drag::NoteMove { .. } => Some(Edit::MoveNotes),
             Drag::NoteResize { .. } => Some(Edit::ResizeNote),
             Drag::NoteVelocity { .. } => Some(Edit::SetNoteVelocity),
-            Drag::Param { .. } => Some(Edit::AdjustParameter),
+            Drag::Param { target, .. } => Some(Edit::AdjustParameter(*target)),
             // One undo step for the whole sweep, and the same label the right-click menu's
             // "Write It Again" uses — moving a dial is writing the part again with one thing
             // changed, and a stack full of "Adjusted parameter" would say nothing about which.

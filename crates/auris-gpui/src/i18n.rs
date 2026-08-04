@@ -106,7 +106,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::RemoveEffect => Key::EditRemoveEffect,
         Edit::BypassEffect => Key::EditBypassEffect,
         Edit::ReorderEffects => Key::EditReorderEffects,
-        Edit::AdjustParameter => Key::EditAdjustParameter,
+        Edit::AdjustParameter(_) => Key::EditAdjustParameter,
         Edit::ImportAudio => Key::EditImportAudio,
         Edit::ImportSoundFont => Key::EditImportSoundFont,
         Edit::ChoosePreset => Key::EditChoosePreset,

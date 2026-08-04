@@ -7,6 +7,8 @@
 
 use auris_core::Project;
 
+use crate::param::ParamTarget;
+
 /// What one undo step reverses.
 ///
 /// An enum rather than a display string: the session must not decide what words a frontend
@@ -75,7 +77,11 @@ pub enum Edit {
     /// A chain was reordered.
     ReorderEffects,
     /// A parameter value changed.
-    AdjustParameter,
+    ///
+    /// Which parameter travels along, because repeated-edit coalescing compares whole `Edit`
+    /// values: without the target, a cutoff notch and a fader notch made within the window
+    /// folded into a single step, and undo took both back at once.
+    AdjustParameter(ParamTarget),
     /// An audio file was imported onto a track.
     ImportAudio,
     /// A SoundFont was imported into the project.

@@ -564,6 +564,10 @@ impl Session {
     ///
     /// Inside a transaction this does nothing: the snapshot was taken when the transaction
     /// opened, and one gesture is one step.
+    ///
+    /// Validate *before* calling this. Pushing a step clears the redo stack and marks the
+    /// document dirty, so a command that records first and refuses after has already cost the
+    /// user both — a phantom step that undoes nothing, and a redo branch that is simply gone.
     fn record(&mut self, edit: Edit) {
         if self.transaction.is_none() {
             self.history.push(edit, &self.project);
@@ -1533,16 +1537,23 @@ impl Session {
     /// clamped separately — that would pile the leading clips on top of each other and quietly
     /// destroy the spacing the user is dragging.
     pub fn move_clips(&mut self, origins: &[(ClipId, Ticks)], delta: Ticks) {
-        let Some(earliest) = origins.iter().map(|(_, start)| *start).min() else {
+        // Only clips that still exist: a selection can outlive an undo, and a gesture over
+        // nothing must not record a step over nothing.
+        let present: Vec<(ClipId, Ticks)> = origins
+            .iter()
+            .copied()
+            .filter(|(clip, _)| self.require_clip(*clip).is_ok())
+            .collect();
+        let Some(earliest) = present.iter().map(|(_, start)| *start).min() else {
             return;
         };
         let delta = delta.max(-earliest);
         self.record(Edit::MoveClip);
-        for (clip, start) in origins {
-            let start = (*start + delta).max_zero();
-            if let Some(midi) = self.project.midi_clip_mut(*clip) {
+        for (clip, start) in present {
+            let start = (start + delta).max_zero();
+            if let Some(midi) = self.project.midi_clip_mut(clip) {
                 midi.start = start;
-            } else if let Some(audio) = self.project.audio_clip_mut(*clip) {
+            } else if let Some(audio) = self.project.audio_clip_mut(clip) {
                 audio.start = start;
             }
         }
@@ -1551,14 +1562,13 @@ impl Session {
 
     /// Moves a clip of either kind to a new start position.
     pub fn move_clip(&mut self, clip: ClipId, start: Ticks) -> Result<(), SessionError> {
+        self.require_clip(clip)?;
         self.record(Edit::MoveClip);
         let start = start.max_zero();
         if let Some(midi) = self.project.midi_clip_mut(clip) {
             midi.start = start;
         } else if let Some(audio) = self.project.audio_clip_mut(clip) {
             audio.start = start;
-        } else {
-            return Err(SessionError::UnknownClip(clip.0));
         }
         self.invalidate_graph();
         Ok(())
@@ -1566,6 +1576,7 @@ impl Session {
 
     /// Drags a clip's end to `end`.
     pub fn resize_clip(&mut self, clip: ClipId, end: Ticks) -> Result<(), SessionError> {
+        self.require_clip(clip)?;
         self.record(Edit::ResizeClip);
         let grid = self.project.grid;
         if let Some(midi) = self.project.midi_clip_mut(clip) {
@@ -1580,13 +1591,12 @@ impl Session {
         // through the tempo map rather than being stored as ticks.
         let sample_rate = self.project.sample_rate;
         let tempo = self.project.tempo_map.clone();
-        let Some(audio) = self.project.audio_clip_mut(clip) else {
-            return Err(SessionError::UnknownClip(clip.0));
-        };
-        let start_seconds = tempo.ticks_to_seconds(audio.start).0;
-        let end_seconds = tempo.ticks_to_seconds(end).0;
-        audio.length_frames = (((end_seconds - start_seconds).max(0.0)) * sample_rate) as u64;
-        audio.length_frames = audio.length_frames.max(1);
+        if let Some(audio) = self.project.audio_clip_mut(clip) {
+            let start_seconds = tempo.ticks_to_seconds(audio.start).0;
+            let end_seconds = tempo.ticks_to_seconds(end).0;
+            audio.length_frames = (((end_seconds - start_seconds).max(0.0)) * sample_rate) as u64;
+            audio.length_frames = audio.length_frames.max(1);
+        }
         self.invalidate_graph();
         Ok(())
     }
@@ -1609,19 +1619,22 @@ impl Session {
 
     /// Adds a note to a MIDI clip, returning its index.
     pub fn add_note(&mut self, clip: ClipId, note: Note) -> Result<usize, SessionError> {
+        if self.project.midi_clip(clip).is_none() {
+            return Err(SessionError::UnknownClip(clip.0));
+        }
         self.record(Edit::AddNote);
         let grid = self.project.grid;
-        let Some(target) = self.project.midi_clip_mut(clip) else {
-            return Err(SessionError::UnknownClip(clip.0));
-        };
-        target.notes.push(Note {
-            pitch: note.pitch.min(127),
-            velocity: note.velocity.clamp(0.0, 1.0),
-            start: note.start.max_zero(),
-            length: Ticks(note.length.raw().max(1)),
-        });
-        target.fit_length_to_notes(grid);
-        let index = target.notes.len() - 1;
+        let mut index = 0;
+        if let Some(target) = self.project.midi_clip_mut(clip) {
+            target.notes.push(Note {
+                pitch: note.pitch.min(127),
+                velocity: note.velocity.clamp(0.0, 1.0),
+                start: note.start.max_zero(),
+                length: Ticks(note.length.raw().max(1)),
+            });
+            target.fit_length_to_notes(grid);
+            index = target.notes.len() - 1;
+        }
         self.invalidate_graph();
         Ok(index)
     }
@@ -1808,18 +1821,20 @@ impl Session {
         delta_ticks: Ticks,
         delta_pitch: i32,
     ) -> Result<(), SessionError> {
+        if self.project.midi_clip(clip).is_none() {
+            return Err(SessionError::UnknownClip(clip.0));
+        }
         self.record(Edit::MoveNotes);
         let grid = self.project.grid;
-        let Some(target) = self.project.midi_clip_mut(clip) else {
-            return Err(SessionError::UnknownClip(clip.0));
-        };
-        for (index, start, pitch) in origins {
-            if let Some(note) = target.notes.get_mut(*index) {
-                note.start = (*start + delta_ticks).max_zero();
-                note.pitch = (*pitch as i32 + delta_pitch).clamp(0, 127) as u8;
+        if let Some(target) = self.project.midi_clip_mut(clip) {
+            for (index, start, pitch) in origins {
+                if let Some(note) = target.notes.get_mut(*index) {
+                    note.start = (*start + delta_ticks).max_zero();
+                    note.pitch = (*pitch as i32 + delta_pitch).clamp(0, 127) as u8;
+                }
             }
+            target.fit_length_to_notes(grid);
         }
-        target.fit_length_to_notes(grid);
         self.invalidate_graph();
         Ok(())
     }
@@ -1831,15 +1846,17 @@ impl Session {
         index: usize,
         end: Ticks,
     ) -> Result<(), SessionError> {
+        if self.project.midi_clip(clip).is_none() {
+            return Err(SessionError::UnknownClip(clip.0));
+        }
         self.record(Edit::ResizeNote);
         let grid = Ticks(self.project.grid.raw().max(1));
-        let Some(target) = self.project.midi_clip_mut(clip) else {
-            return Err(SessionError::UnknownClip(clip.0));
-        };
-        if let Some(note) = target.notes.get_mut(index) {
-            note.length = (end - note.start).max(grid);
+        if let Some(target) = self.project.midi_clip_mut(clip) {
+            if let Some(note) = target.notes.get_mut(index) {
+                note.length = (end - note.start).max(grid);
+            }
+            target.fit_length_to_notes(grid);
         }
-        target.fit_length_to_notes(grid);
         self.invalidate_graph();
         Ok(())
     }
@@ -1874,6 +1891,14 @@ impl Session {
 
     /// Removes an effect from wherever it is.
     pub fn remove_effect(&mut self, slot: EffectSlotId) {
+        // Look before recording: a slot that is already gone — a double-click, a stale menu —
+        // must not cost a redo stack and a snapshot of nothing.
+        let exists = std::iter::once(&self.project.master)
+            .chain(self.project.tracks.iter().map(|track| &track.mixer))
+            .any(|strip| strip.effects.iter().any(|s| s.id == slot));
+        if !exists {
+            return;
+        }
         self.record(Edit::RemoveEffect);
         self.project.remove_effect(slot);
         self.invalidate_graph();
@@ -1895,6 +1920,9 @@ impl Session {
         slot: EffectSlotId,
         enabled: bool,
     ) {
+        if self.effect_enabled(track, slot).is_none() {
+            return;
+        }
         self.record(Edit::BypassEffect);
         if let Some(strip) = self.strip_mut(track)
             && let Some(effect) = strip.effects.iter_mut().find(|s| s.id == slot)
@@ -1906,6 +1934,12 @@ impl Session {
 
     /// Moves an effect along its chain by `delta` positions.
     pub fn move_effect(&mut self, track: Option<TrackId>, slot: EffectSlotId, delta: isize) {
+        let found = self
+            .strip(track)
+            .and_then(|strip| strip.effects.iter().position(|s| s.id == slot));
+        if found.is_none() {
+            return;
+        }
         self.record(Edit::ReorderEffects);
         if let Some(strip) = self.strip_mut(track)
             && let Some(index) = strip.effects.iter().position(|s| s.id == slot)
@@ -2016,12 +2050,15 @@ impl Session {
     /// wheel — has no gesture around it and was going unrecorded, which made Undo take back the
     /// edit *before* the parameter change instead.
     pub fn set_param(&mut self, target: ParamTarget, value: f32) {
-        self.record_repeating(Edit::AdjustParameter);
+        // Each arm looks its target up before recording, so a stale id costs nothing — and the
+        // record carries the target, because coalescing compares edits: two wheel notches on
+        // *different* controls within the window must not fold into one step.
         match target {
             ParamTarget::TrackGain(id) => {
                 let Ok(index) = self.require_track(id) else {
                     return;
                 };
+                self.record_repeating(Edit::AdjustParameter(target));
                 self.project.tracks[index].mixer.gain_db = value;
                 self.send(EngineCommand::SetTrackGain {
                     index,
@@ -2032,14 +2069,17 @@ impl Session {
                 let Ok(index) = self.require_track(id) else {
                     return;
                 };
+                self.record_repeating(Edit::AdjustParameter(target));
                 self.project.tracks[index].mixer.pan = value;
                 self.send(EngineCommand::SetTrackPan { index, pan: value });
             }
             ParamTarget::MasterGain => {
+                self.record_repeating(Edit::AdjustParameter(target));
                 self.project.master.gain_db = value;
                 self.send(EngineCommand::SetMasterGain(value));
             }
             ParamTarget::MasterPan => {
+                self.record_repeating(Edit::AdjustParameter(target));
                 self.project.master.pan = value;
                 self.send(EngineCommand::SetMasterPan(value));
             }
@@ -2050,6 +2090,10 @@ impl Session {
                 let Some(key) = self.param_key(target, param) else {
                     return;
                 };
+                if self.project.tracks[index].kind.as_instrument().is_none() {
+                    return;
+                }
+                self.record_repeating(Edit::AdjustParameter(target));
                 if let Some(inner) = self.project.tracks[index].kind.as_instrument_mut() {
                     inner.instrument_state.params.insert(key, value);
                 }
@@ -2070,13 +2114,16 @@ impl Session {
                     },
                     None => None,
                 };
-                let Some(strip) = self.strip_mut(track) else {
+                let Some(slot_index) = self
+                    .strip(track)
+                    .and_then(|strip| strip.effects.iter().position(|s| s.id == slot))
+                else {
                     return;
                 };
-                let Some(slot_index) = strip.effects.iter().position(|s| s.id == slot) else {
-                    return;
-                };
-                strip.effects[slot_index].state.params.insert(key, value);
+                self.record_repeating(Edit::AdjustParameter(target));
+                if let Some(strip) = self.strip_mut(track) {
+                    strip.effects[slot_index].state.params.insert(key, value);
+                }
                 self.send(EngineCommand::SetEffectParam {
                     track: track_index,
                     slot: slot_index,
@@ -2441,12 +2488,16 @@ impl Session {
     pub fn import_soundfont(&mut self, path: &Path) -> Result<SoundFontId, SessionError> {
         let font = load_soundfont(path)?;
         let name = font_name(&font, path);
-        self.record(Edit::ImportSoundFont);
         let id = match self.project.soundfont_at(self.project_folder(), path) {
             Some(existing) => existing,
-            None => self
-                .project
-                .add_soundfont(name, AssetPath::external(path), byte_size(path)),
+            None => {
+                // Only a font the document does not know is an edit. Re-importing a known one
+                // reloads its samples — which changes what is heard, not what is saved — and a
+                // step for it would clear the redo stack over a document that did not move.
+                self.record(Edit::ImportSoundFont);
+                self.project
+                    .add_soundfont(name, AssetPath::external(path), byte_size(path))
+            }
         };
         self.fonts.insert(id, font);
         // Fonts the document names but could not find may well be siblings of the one that was
@@ -2911,6 +2962,57 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_edit_leaves_no_step_and_no_dirt_behind_anywhere() {
+        // Every mutator that once recorded before validating, exercised with ids nothing owns.
+        // What this pins: a record clears the redo stack and marks the document dirty, so a
+        // command that refuses must refuse *before* it records — the same invariant the
+        // preset and instrument commands already keep.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        session.forget_history();
+        let ghost = ClipId(9_999);
+        let slot = EffectSlotId(9_999);
+
+        assert!(session.move_clip(ghost, Ticks::ZERO).is_err());
+        assert!(session.resize_clip(ghost, Ticks(960)).is_err());
+        assert!(
+            session
+                .add_note(ghost, Note::new(60, Ticks::ZERO, Ticks(960)))
+                .is_err()
+        );
+        assert!(
+            session
+                .move_notes(ghost, &[(0, Ticks::ZERO, 60)], Ticks::ZERO, 0)
+                .is_err()
+        );
+        assert!(session.resize_note(ghost, 0, Ticks(960)).is_err());
+        session.move_clips(&[(ghost, Ticks::ZERO)], Ticks(960));
+        session.remove_effect(slot);
+        session.set_effect_enabled(Some(track), slot, false);
+        session.move_effect(Some(track), slot, 1);
+        session.set_param(ParamTarget::TrackGain(TrackId(9_999)), -3.0);
+
+        assert!(!session.can_undo(), "a refused edit left a step behind");
+        assert!(
+            !session.is_dirty(),
+            "a refused edit marked the document dirty"
+        );
+
+        // And the redo branch survives a stale gesture, which is where the cost actually
+        // landed: the piano roll can hold a clip id that undo just removed.
+        session
+            .add_midi_clip(track, "A", Ticks::ZERO, Ticks::from_beats(4.0))
+            .unwrap();
+        session.undo();
+        assert!(session.can_redo());
+        assert!(session.move_clip(ghost, Ticks::ZERO).is_err());
+        assert!(
+            session.can_redo(),
+            "a refused edit destroyed the redo stack"
+        );
+    }
+
+    #[test]
     fn a_selection_dragged_across_lanes_moves_together_or_not_at_all() {
         // Dropping half a selection on a new track and leaving the rest behind is not what the
         // gesture meant, so one clip that cannot land refuses the whole move.
@@ -3073,8 +3175,33 @@ mod tests {
         assert_ne!(before, after, "the test needs a parameter it can move");
 
         session.set_param(target, after);
-        assert_eq!(session.undo(), Some(Edit::AdjustParameter));
+        assert_eq!(session.undo(), Some(Edit::AdjustParameter(target)));
         assert_eq!(session.param_value(target, &descriptor), before);
+    }
+
+    #[test]
+    fn notches_on_two_different_controls_are_two_undo_steps() {
+        // Coalescing compares edits, and `AdjustParameter` used to carry no target — so a
+        // cutoff notch and a fader notch within the window folded into one step, and undo
+        // silently took back the first alongside the second.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let cutoff = ParamTarget::Instrument {
+            track,
+            param: ParamId(0),
+        };
+        let fader = ParamTarget::TrackGain(track);
+        session.forget_history();
+
+        let start = Instant::now();
+        session.record_repeating_at(Edit::AdjustParameter(cutoff), start);
+        session.record_repeating_at(Edit::AdjustParameter(fader), start + tick(50));
+        assert_eq!(session.undo(), Some(Edit::AdjustParameter(fader)));
+        assert_eq!(
+            session.undo(),
+            Some(Edit::AdjustParameter(cutoff)),
+            "two controls inside the window folded into one step"
+        );
     }
 
     #[test]
