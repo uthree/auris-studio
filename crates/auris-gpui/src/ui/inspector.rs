@@ -77,7 +77,7 @@ pub(crate) fn panel_header(title: &str, theme: &Theme) -> impl IntoElement + use
     div()
         .flex()
         .items_center()
-        .h(Metrics::EDITOR_HEADER_HEIGHT)
+        .h(Metrics::PANEL_HEADER_HEIGHT)
         .px_2()
         .flex_shrink_0()
         .bg(theme.surface_raised)

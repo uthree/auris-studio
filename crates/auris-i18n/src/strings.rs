@@ -237,7 +237,8 @@ strings! {
     // inspector. These say what the command does either way.
     CmdShowLibrary { en: "Library", ja: "ライブラリ" }
     CmdShowInspector { en: "Inspector", ja: "インスペクタ" }
-    CmdShowEditor { en: "Editor Panel", ja: "エディタパネル" }
+    CmdShowPianoRoll { en: "Piano Roll", ja: "ピアノロール" }
+    CmdShowMixer { en: "Mixer", ja: "ミキサー" }
     CmdZoomIn { en: "Zoom In", ja: "拡大" }
     CmdZoomOut { en: "Zoom Out", ja: "縮小" }
     CmdSettings { en: "Settings", ja: "設定" }
@@ -258,6 +259,14 @@ strings! {
     MenuExportWavItem { en: "Export WAV…", ja: "WAV を書き出す…" }
     MenuExportCycleItem { en: "Export Cycle…", ja: "サイクル範囲を書き出す…" }
     MenuDelete { en: "Delete", ja: "削除" }
+
+    // ------------------------------------------------------------------ panels and their docks
+    // On the menu a right-click on a panel's status-bar icon opens. "Dock" is the verb, so the
+    // Japanese is the instruction rather than the noun: 左に配置 is what the row does.
+    DockLeft { en: "Dock Left", ja: "左に配置" }
+    DockBottom { en: "Dock Bottom", ja: "下に配置" }
+    DockRight { en: "Dock Right", ja: "右に配置" }
+    HidePanel { en: "Hide Panel", ja: "パネルを隠す" }
 
     // ------------------------------------------------------------------ context menus
     MenuArrangement { en: "Arrangement", ja: "アレンジ" }

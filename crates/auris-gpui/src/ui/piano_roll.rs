@@ -9,6 +9,7 @@ use gpui::{
 };
 
 use crate::app::{AurisApp, Drag};
+use crate::dock::Dock;
 use crate::theme::{Metrics, Theme};
 use crate::ui::paint;
 use crate::ui::timeline::{PitchView, TimelineView};
@@ -156,7 +157,7 @@ impl AurisApp {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .h(Metrics::EDITOR_HEADER_HEIGHT)
+                    .h(Metrics::PANEL_HEADER_HEIGHT)
                     .px_2()
                     .bg(theme.surface_raised)
                     .border_b_1()
@@ -342,18 +343,19 @@ impl AurisApp {
 
     /// Window origin of the note grid, taken from where it was last painted.
     ///
-    /// It used to be derived from the window height and `Metrics::EDITOR_HEIGHT`, which was
-    /// correct until the editor panel became resizable — after that, every note the user
-    /// clicked was off by however far they had dragged the divider. The fallback below is only
-    /// reached before the first paint, and uses the panel's *current* height for the same
-    /// reason.
+    /// It used to be derived from the window height and the bottom panel's fixed height, which was
+    /// correct until that panel became resizable — after that, every note the user clicked was off
+    /// by however far they had dragged the divider. The fallback below is only reached before the
+    /// first paint, and reads the dock's *current* height for the same reason. It assumes the roll
+    /// is in the bottom dock, which is where it starts and where it usually is; a roll parked down
+    /// one side is one frame out of place and right from the next paint onwards.
     pub(crate) fn roll_origin(&self) -> Point<Pixels> {
         self.canvas.roll.get().map_or_else(
             || {
                 point(
                     Metrics::KEYBOARD_WIDTH,
-                    self.viewport_height - Metrics::STATUS_HEIGHT - self.panels.editor_height
-                        + Metrics::EDITOR_HEADER_HEIGHT,
+                    self.viewport_height - Metrics::STATUS_HEIGHT - self.panels.size(Dock::Bottom)
+                        + Metrics::PANEL_HEADER_HEIGHT,
                 )
             },
             |bounds| bounds.origin,

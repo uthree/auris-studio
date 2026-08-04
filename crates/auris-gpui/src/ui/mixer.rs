@@ -40,7 +40,7 @@ impl AurisApp {
                 div()
                     .flex()
                     .items_center()
-                    .h(crate::theme::Metrics::EDITOR_HEADER_HEIGHT)
+                    .h(crate::theme::Metrics::PANEL_HEADER_HEIGHT)
                     .px_2()
                     .bg(theme.surface_raised)
                     .border_b_1()

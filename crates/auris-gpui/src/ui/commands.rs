@@ -233,8 +233,7 @@ impl AurisApp {
     pub(crate) fn open_clip_in_editor(&mut self, clip: ClipId) {
         self.select_clip(Some(clip));
         self.selected_notes.clear();
-        self.editor = crate::app::EditorTab::PianoRoll;
-        self.panels.editor_visible = true;
+        self.show_panel(crate::dock::Panel::PianoRoll);
         self.center_roll_on_selection();
     }
 
@@ -707,7 +706,7 @@ impl AurisApp {
                         let sounds = this.session.soundfont_presets(id).len();
                         // Show what just arrived. The library is the only place these sounds can
                         // be chosen from, and importing a font is the act of going to choose one.
-                        this.panels.library_visible = true;
+                        this.show_panel(crate::dock::Panel::Library);
                         this.library
                             .set_open(crate::ui::library::Branch::SoundFonts, true);
                         this.library
@@ -857,7 +856,7 @@ impl AurisApp {
         };
         let middle = ((range.0 as u16 + range.1 as u16) / 2) as u8;
         let body_height =
-            crate::theme::Metrics::EDITOR_HEIGHT - crate::theme::Metrics::EDITOR_HEADER_HEIGHT;
+            crate::theme::Metrics::BOTTOM_DOCK_HEIGHT - crate::theme::Metrics::PANEL_HEADER_HEIGHT;
         self.pitch.center_on(middle, body_height);
     }
 

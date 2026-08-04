@@ -35,6 +35,14 @@ pub enum Icon {
     Cross,
     /// A menu item that is currently on.
     Check,
+    /// The sound library: a list of things to choose from.
+    Library,
+    /// The piano roll: notes lying at different places along a grid.
+    Notes,
+    /// The mixer: a bank of vertical faders.
+    Faders,
+    /// The inspector: horizontal sliders, the controls it is made of.
+    Sliders,
 }
 
 /// An element that draws `icon` at `size`, centred in whatever box it is given.
@@ -71,6 +79,19 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
                 size: size(px((x1 - x0) * side), px((y1 - y0) * side)),
             },
             px(((x1 - x0) * side * 0.35).min(2.0)),
+            color,
+        )
+    };
+    // A control's handle: a capsule centred on a point, rather than measured from a corner, so a
+    // fader's setting is written as the place it sits.
+    let knob = |window: &mut Window, cx: f32, cy: f32, w: f32, h: f32| {
+        rounded(
+            window,
+            Bounds {
+                origin: at(cx - w / 2.0, cy - h / 2.0),
+                size: size(px(w * side), px(h * side)),
+            },
+            px(w.min(h) * side / 2.0),
             color,
         )
     };
@@ -174,6 +195,38 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
                 px(side * 0.11),
                 color,
             );
+        }
+        // The four panel marks. They are drawn at twelve pixels in the status bar, where a picture
+        // of a thing is out of the question and a silhouette is all there is: what tells these
+        // apart is which way their strokes run, so no two of them run the same way.
+        Icon::Library => {
+            // A list with a rail down its left. The rail is the only vertical stroke in the set,
+            // which is what tells the library from the piano roll at that size.
+            bar(window, 0.22, 0.22, 0.31, 0.78);
+            bar(window, 0.40, 0.24, 0.78, 0.34);
+            bar(window, 0.40, 0.45, 0.78, 0.55);
+            bar(window, 0.40, 0.66, 0.78, 0.76);
+        }
+        Icon::Notes => {
+            // Three notes at different places along a grid: the roll from far enough away.
+            bar(window, 0.18, 0.24, 0.50, 0.35);
+            bar(window, 0.38, 0.45, 0.82, 0.56);
+            bar(window, 0.26, 0.66, 0.62, 0.77);
+        }
+        Icon::Faders => {
+            // Two channel faders. Their knobs are at different heights on purpose: level with
+            // each other the pair reads as an equals sign.
+            bar(window, 0.30, 0.16, 0.38, 0.84);
+            bar(window, 0.62, 0.16, 0.70, 0.84);
+            knob(window, 0.34, 0.62, 0.30, 0.15);
+            knob(window, 0.66, 0.38, 0.30, 0.15);
+        }
+        Icon::Sliders => {
+            // The same controls lying down, which is how the inspector arranges them.
+            bar(window, 0.16, 0.30, 0.84, 0.38);
+            bar(window, 0.16, 0.62, 0.84, 0.70);
+            knob(window, 0.62, 0.34, 0.15, 0.30);
+            knob(window, 0.36, 0.66, 0.15, 0.30);
         }
         Icon::Cross => {
             // Two bars rotated 45°, drawn as paths because quads cannot be rotated.

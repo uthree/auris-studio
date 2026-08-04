@@ -20,6 +20,25 @@ them through a built-in synth, shape them with effects, and render the result to
 * **Instrument tracks** — notes on a timeline, played by a software instrument.
 * **Audio tracks** — imported audio, arranged as clips with trim, gain and fades.
 
+### Panels, and where you put them
+
+The arrangement is the middle of the window. Everything else — the library, the piano roll, the
+mixer, the inspector — is a panel, and every panel lives in one of three docks: a column down the
+left, a column down the right, or the strip along the bottom. They start where a DAW puts them,
+library left, inspector right, the two editors sharing the bottom, and none of that is fixed.
+
+The status bar carries a small icon for every panel, grouped by the dock it belongs to: the left
+dock's at the left-hand end, the bottom dock's and then the right dock's at the other. Clicking one
+shows that panel, clicking the one already showing shuts its dock, and right-clicking offers **Dock
+Left**, **Dock Bottom** and **Dock Right** — so the mixer can be a right-hand column with the roll
+still along the bottom, or both editors on the bottom as tabs. A dock shows one panel at a time,
+which is what keeps a 240-pixel column from becoming two half-panels; the panel it is *not* showing
+still has its icon, so nothing can be put away and lost.
+
+Each dock's divider drags to resize it, and no drag can squeeze the arrangement out of existence.
+Where you leave the panels is where they are next launch — the whole arrangement is written to
+`layout.json`.
+
 ### Editing
 
 Right-clicking any component opens its menu: tracks and clips offer duplicate, rename, delete
@@ -252,7 +271,7 @@ Deliberately simple chiptune voices, enough to hear the engine working:
 
 Square and saw are PolyBLEP band-limited, so high notes stay clean instead of aliasing.
 
-The library panel on the left is a tree: instruments, SoundFonts and effects, each opening into
+The library panel is a tree: instruments, SoundFonts and effects, each opening into
 groups rather than a flat list — the plugins by category, a font by the banks it declares. Every
 branch remembers whether it was left open. Clicking an instrument sets it on the selected track,
 clicking an effect appends it to that track's chain.
@@ -363,9 +382,10 @@ rather than `~/Library/Application Support` and `%APPDATA%`:
   settings.json       audio device, sample rate, buffer size, interface language
   keymap.json         key bindings you have changed from the defaults
   appearance.json     the chosen colour scheme
+  layout.json         where each panel is docked, and how large each dock is
 ```
 
-Three small JSON files, readable and hand-editable, in the directory a dotfiles repository is
+Four small JSON files, readable and hand-editable, in the directory a dotfiles repository is
 already checked out over. Set `AURIS_CONFIG_DIR` to name a directory outright, or `XDG_CONFIG_HOME`
 to move the parent. An installation predating the move keeps its settings: the old directory's
 files are copied across on the first run, never over a file already in the new place.

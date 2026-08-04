@@ -535,14 +535,14 @@ impl Metrics {
     pub const KEYBOARD_WIDTH: Pixels = px(56.0);
     /// Height of one piano-roll note row at 100 % zoom.
     pub const NOTE_ROW_HEIGHT: Pixels = px(14.0);
-    /// Width of the left-hand library panel.
-    pub const LIBRARY_WIDTH: Pixels = px(240.0);
-    /// Width of the right-hand inspector panel.
-    pub const INSPECTOR_WIDTH: Pixels = px(300.0);
-    /// Height of the bottom editor panel, including its own header strip.
-    pub const EDITOR_HEIGHT: Pixels = px(280.0);
-    /// Height of the header strip at the top of the bottom editor panel.
-    pub const EDITOR_HEADER_HEIGHT: Pixels = px(22.0);
+    /// Width the left-hand dock opens at.
+    pub const LEFT_DOCK_WIDTH: Pixels = px(240.0);
+    /// Width the right-hand dock opens at.
+    pub const RIGHT_DOCK_WIDTH: Pixels = px(300.0);
+    /// Height the bottom dock opens at, including the panel's own header strip.
+    pub const BOTTOM_DOCK_HEIGHT: Pixels = px(280.0);
+    /// Height of the header strip at the top of a docked panel.
+    pub const PANEL_HEADER_HEIGHT: Pixels = px(22.0);
     /// Height of the status bar along the bottom of the window.
     pub const STATUS_HEIGHT: Pixels = px(22.0);
     /// Height of a control row inside the inspector.

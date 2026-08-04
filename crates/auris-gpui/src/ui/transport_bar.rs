@@ -5,7 +5,7 @@ use auris_session::prelude::*;
 
 use gpui::{Axis, IntoElement, Window, div, prelude::*, px};
 
-use crate::app::{AurisApp, Drag, EditorTab};
+use crate::app::{AurisApp, Drag};
 use crate::theme::Metrics;
 use crate::ui::icons::Icon;
 use crate::ui::prompt::{Prompt, PromptTarget};
@@ -106,10 +106,6 @@ impl AurisApp {
         let grid_label = self.grid_label();
         let master_db = gain_to_db(self.master_level());
         let master_gain_db = self.project().master.gain_db;
-        let editor = self.editor;
-        let editor_open = self.panels.editor_visible;
-        let inspector_open = self.panels.inspector_visible;
-        let library_open = self.panels.library_visible;
 
         // Three columns of equal weight, so the middle one lands on the window's centre line
         // however wide the sides grow. Every hardware transport and every DAW puts the
@@ -276,64 +272,10 @@ impl AurisApp {
                     .items_center()
                     .justify_end()
                     .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .gap_1()
-                            // Clicking the tab you are already on hides the panel, which is
-                            // how every editor's sidebar toggles behave.
-                            .child(button(
-                                "tab-roll",
-                                self.t(Key::PianoRoll),
-                                ButtonStyle::Normal,
-                                editor_open && editor == EditorTab::PianoRoll,
-                                theme.accent,
-                                &theme,
-                                cx.listener(|this, _, _, cx| {
-                                    this.show_editor_tab(EditorTab::PianoRoll);
-                                    cx.notify();
-                                }),
-                            ))
-                            .child(button(
-                                "tab-mixer",
-                                self.t(Key::Mixer),
-                                ButtonStyle::Normal,
-                                editor_open && editor == EditorTab::Mixer,
-                                theme.accent,
-                                &theme,
-                                cx.listener(|this, _, _, cx| {
-                                    this.show_editor_tab(EditorTab::Mixer);
-                                    cx.notify();
-                                }),
-                            ))
-                            .child(button(
-                                "tab-inspector",
-                                self.t(Key::Inspector),
-                                ButtonStyle::Normal,
-                                inspector_open,
-                                theme.accent,
-                                &theme,
-                                cx.listener(|this, _, _, cx| {
-                                    this.toggle_inspector();
-                                    cx.notify();
-                                }),
-                            ))
-                            // The library was the only panel with no button of its own, so
-                            // toggling it off read as having lost it: the way back was a menu
-                            // item or a keystroke, and nothing on screen said either existed.
-                            .child(button(
-                                "tab-library",
-                                self.t(Key::Library),
-                                ButtonStyle::Normal,
-                                library_open,
-                                theme.accent,
-                                &theme,
-                                cx.listener(|this, _, _, cx| {
-                                    this.toggle_library();
-                                    cx.notify();
-                                }),
-                            )),
-                    )
+                    // The panels are switched from the status bar, where every one of them has an
+                    // icon whether it is showing or not. Four buttons up here said the same thing
+                    // for three of the four, and a transport bar is for the transport.
+                    //
                     // Master level, always visible so clipping is never a surprise.
                     .child(
                         div()
@@ -451,16 +393,6 @@ impl AurisApp {
             self.project().time_signature,
         );
         self.open_prompt(Prompt::new(title, PromptTarget::Position, current));
-    }
-
-    /// Shows `tab` in the bottom editor, or hides the panel when that tab is already showing.
-    pub(crate) fn show_editor_tab(&mut self, tab: EditorTab) {
-        if self.panels.editor_visible && self.editor == tab {
-            self.panels.editor_visible = false;
-        } else {
-            self.editor = tab;
-            self.panels.editor_visible = true;
-        }
     }
 
     /// Turns looping on or off.

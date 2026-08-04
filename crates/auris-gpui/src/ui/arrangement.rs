@@ -88,7 +88,7 @@ impl AurisApp {
         div()
             .flex()
             .flex_1()
-            .min_h(crate::app::PanelLayout::MIN_ARRANGEMENT)
+            .min_h(crate::dock::PanelLayout::MIN_ARRANGEMENT)
             .overflow_hidden()
             .bg(theme.surface)
             .child(headers)

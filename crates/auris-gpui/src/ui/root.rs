@@ -4,12 +4,13 @@ use auris_i18n::{Key, messages};
 use auris_session::prelude::*;
 
 use gpui::{
-    Axis, Context, IntoElement, MouseMoveEvent, MouseUpEvent, Render, Window, div, prelude::*, px,
-    relative,
+    AnyElement, Axis, Context, IntoElement, MouseMoveEvent, MouseUpEvent, Render, Window, div,
+    prelude::*, px, relative,
 };
 
 use crate::actions;
-use crate::app::{AurisApp, Drag, EditorTab, Pane};
+use crate::app::{AurisApp, Drag, Pane};
+use crate::dock::{Dock, Panel};
 use crate::gestures::past_drag_threshold;
 use crate::menu::MenuRow;
 use crate::theme::Theme;
@@ -51,70 +52,22 @@ impl Render for AurisApp {
         self.reconcile_focus(window);
 
         let theme = self.theme.clone();
-        let panels = self.panels.clone();
         let menu_bar = self.render_menu_bar(window, cx);
         let transport = self.render_transport(window, cx);
         let arrangement = self.render_arrangement(window, cx);
-        let editor = panels.editor_visible.then(|| match self.editor {
-            EditorTab::PianoRoll => self.render_piano_roll(window, cx),
-            EditorTab::Mixer => self.render_mixer(window, cx).into_any_element(),
-        });
-        let library = panels
-            .library_visible
-            .then(|| self.render_library(window, cx));
-        let library_splitter = panels.library_visible.then(|| {
-            splitter(
-                "split-library",
-                Axis::Vertical,
-                &theme,
-                cx.listener(|this, event: &gpui::MouseDownEvent, _, _| {
-                    let start_width = this.panels.library_width;
-                    this.begin_drag(Drag::ResizeLibrary {
-                        start_x: event.position.x,
-                        start_width,
-                    });
-                }),
-            )
-        });
         let plugin_window = self.render_plugin_window(window.viewport_size(), cx);
-        let inspector = panels
-            .inspector_visible
-            .then(|| self.render_inspector(window, cx));
-        let editor_splitter = panels.editor_visible.then(|| {
-            splitter(
-                "split-editor",
-                Axis::Horizontal,
-                &theme,
-                cx.listener(|this, event: &gpui::MouseDownEvent, _, _| {
-                    let start_height = this.panels.editor_height;
-                    this.begin_drag(Drag::ResizeEditor {
-                        start_y: event.position.y,
-                        start_height,
-                    });
-                }),
-            )
-        });
-        let inspector_splitter = panels.inspector_visible.then(|| {
-            splitter(
-                "split-inspector",
-                Axis::Vertical,
-                &theme,
-                cx.listener(|this, event: &gpui::MouseDownEvent, _, _| {
-                    let start_width = this.panels.inspector_width;
-                    this.begin_drag(Drag::ResizeInspector {
-                        start_x: event.position.x,
-                        start_width,
-                    });
-                }),
-            )
-        });
         // Built before the layout so each one can borrow the window to ask whether it has the
         // keyboard, which the layout below is too deep inside a builder chain to do.
-        let library_pane = self.pane(Pane::Library, window, cx);
+        let left = self.render_dock(Dock::Left, window, cx);
+        let bottom = self.render_dock(Dock::Bottom, window, cx);
+        let right = self.render_dock(Dock::Right, window, cx);
+        let left_divider = left.is_some().then(|| self.dock_divider(Dock::Left, cx));
+        let bottom_divider = bottom
+            .is_some()
+            .then(|| self.dock_divider(Dock::Bottom, cx));
+        let right_divider = right.is_some().then(|| self.dock_divider(Dock::Right, cx));
         let arrangement_pane = self.pane(Pane::Arrangement, window, cx);
-        let editor_pane = self.pane(Pane::Editor, window, cx);
-        let inspector_pane = self.pane(Pane::Inspector, window, cx);
-        let status = self.render_status_bar();
+        let status = self.render_status_bar(cx);
         let export_overlay = self.render_export_overlay(cx);
         let prompt = self.render_prompt(cx);
         let palette = self.render_palette(cx);
@@ -168,7 +121,8 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_zoom_out))
             .on_action(cx.listener(Self::on_toggle_library))
             .on_action(cx.listener(Self::on_toggle_inspector))
-            .on_action(cx.listener(Self::on_toggle_editor))
+            .on_action(cx.listener(Self::on_toggle_piano_roll))
+            .on_action(cx.listener(Self::on_toggle_mixer))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_open_command_palette))
             .on_action(cx.listener(Self::on_open_menu_bar))
@@ -203,18 +157,14 @@ impl Render for AurisApp {
                     .flex()
                     .flex_1()
                     .min_h_0()
-                    // The library leads, then the arrangement, then the inspector. Only the
-                    // middle column carries `flex_1().min_w_0()`, so a narrowing window takes
-                    // the timeline and never a panel — a panel that shrank would move every
-                    // hit test in it out from under the pointer.
-                    .children(library.map(|library| {
-                        library_pane
-                            .w(panels.library_width)
-                            .flex_shrink_0()
-                            .flex()
-                            .child(library)
-                    }))
-                    .children(library_splitter)
+                    // The left dock leads, then the arrangement with the bottom dock under it,
+                    // then the right dock — so the bottom one spans the middle column rather than
+                    // the whole window, which is what leaves the side docks full height. Only the
+                    // middle column carries `flex_1().min_w_0()`, so a narrowing window takes the
+                    // timeline and never a panel: a panel that shrank would move every hit test in
+                    // it out from under the pointer.
+                    .children(left)
+                    .children(left_divider)
                     .child(
                         div()
                             .flex()
@@ -222,26 +172,14 @@ impl Render for AurisApp {
                             .flex_1()
                             .min_w_0()
                             // No `min_h_0` here: the arrangement asserts its own minimum height,
-                            // and a wrapper that allowed shrinking past it would let the editor
-                            // panel push the lanes out of existence.
+                            // and a wrapper that allowed shrinking past it would let the bottom
+                            // dock push the lanes out of existence.
                             .child(arrangement_pane.flex().flex_1().child(arrangement))
-                            .children(editor_splitter)
-                            .children(editor.map(|editor| {
-                                editor_pane
-                                    .h(panels.editor_height)
-                                    .flex_shrink_0()
-                                    .flex()
-                                    .child(editor)
-                            })),
+                            .children(bottom_divider)
+                            .children(bottom),
                     )
-                    .children(inspector_splitter)
-                    .children(inspector.map(|inspector| {
-                        inspector_pane
-                            .w(panels.inspector_width)
-                            .flex_shrink_0()
-                            .flex()
-                            .child(inspector)
-                    })),
+                    .children(right_divider)
+                    .children(right),
             )
             .child(status)
             .children(export_overlay)
@@ -292,10 +230,82 @@ impl AurisApp {
             .border_color(ring)
     }
 
+    /// One dock, as the panel it is showing, or nothing when it is showing none.
+    ///
+    /// A dock is a size and a place; what fills it is whichever of its panels is up, so the
+    /// wrapper is built here and the panel itself has no idea where it has been put.
+    fn render_dock(
+        &mut self,
+        dock: Dock,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Div> {
+        let panel = self.panels.showing(dock)?;
+        let size = self.panels.size(dock);
+        let wrapper = self
+            .pane(panel.pane(), window, cx)
+            .flex_shrink_0()
+            .flex()
+            // Clipped, because a panel can now be given a dock it was never laid out for: the
+            // roll's header strip is wider than a side column, and without this it would paint
+            // its zoom slider across the arrangement next door.
+            .overflow_hidden();
+        let content = self.render_panel(panel, window, cx);
+        Some(
+            match dock.is_side() {
+                true => wrapper.w(size),
+                false => wrapper.h(size),
+            }
+            .child(content),
+        )
+    }
+
+    /// What one panel draws.
+    fn render_panel(
+        &mut self,
+        panel: Panel,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        match panel {
+            Panel::Library => self.render_library(window, cx).into_any_element(),
+            Panel::PianoRoll => self.render_piano_roll(window, cx),
+            Panel::Mixer => self.render_mixer(window, cx).into_any_element(),
+            Panel::Inspector => self.render_inspector(window, cx).into_any_element(),
+        }
+    }
+
+    /// The strip between a dock and the arrangement, which drags to resize it.
+    fn dock_divider(&self, dock: Dock, cx: &mut Context<Self>) -> AnyElement {
+        let axis = match dock.is_side() {
+            true => Axis::Vertical,
+            false => Axis::Horizontal,
+        };
+        splitter(
+            ("split-dock", dock as usize),
+            axis,
+            &self.theme,
+            cx.listener(move |this, event: &gpui::MouseDownEvent, _, _| {
+                let start_size = this.panels.size(dock);
+                // The axis the dock is measured along, which is the one its divider slides on.
+                let start = match dock.is_side() {
+                    true => event.position.x,
+                    false => event.position.y,
+                };
+                this.begin_drag(Drag::ResizeDock {
+                    dock,
+                    start,
+                    start_size,
+                });
+            }),
+        )
+        .into_any_element()
+    }
+
     /// Moves the keyboard to the next panel, or the previous one.
     ///
-    /// gpui walks the tab stops that were actually painted, so a hidden library or a closed
-    /// editor drops out of the cycle without anything here having to know which panels are up.
+    /// gpui walks the tab stops that were actually painted, so a hidden library or a shut dock
+    /// drops out of the cycle without anything here having to know which panels are up.
     fn on_focus_next_pane(
         &mut self,
         _: &actions::FocusNextPane,
@@ -314,38 +324,6 @@ impl AurisApp {
     ) {
         window.focus_prev();
         cx.notify();
-    }
-
-    fn render_status_bar(&self) -> impl IntoElement + use<> {
-        let theme = self.theme.clone();
-        let audio = self.session.audio_status();
-        let engine = if audio.running {
-            format!("{:.0} Hz · {} ch", audio.sample_rate, audio.channels)
-        } else {
-            self.t(Key::EngineSilent).to_string()
-        };
-        div()
-            .flex()
-            .items_center()
-            .gap_3()
-            .h(crate::theme::Metrics::STATUS_HEIGHT)
-            .px_2()
-            .bg(theme.surface_raised)
-            .border_t_1()
-            .border_color(theme.border)
-            .text_xs()
-            .text_color(theme.text_muted)
-            .child(
-                div()
-                    .flex_1()
-                    .truncate()
-                    // A failure was reported in the same pale grey as the sample rate beside it,
-                    // in a row a user has no reason to be looking at.
-                    .when(self.status_failed, |this| this.text_color(theme.danger))
-                    .child(self.status.clone()),
-            )
-            .child(self.window_title())
-            .child(engine)
     }
 
     /// A modal-ish overlay shown while an export runs.
@@ -670,18 +648,17 @@ impl AurisApp {
                     );
                 }
             }
-            Drag::ResizeLibrary {
-                start_x,
-                start_width,
-            } => self.resize_library(start_width, event.position.x - start_x),
-            Drag::ResizeInspector {
-                start_x,
-                start_width,
-            } => self.resize_inspector(start_width, event.position.x - start_x),
-            Drag::ResizeEditor {
-                start_y,
-                start_height,
-            } => self.resize_editor(start_height, event.position.y - start_y),
+            Drag::ResizeDock {
+                dock,
+                start,
+                start_size,
+            } => {
+                let now = match dock.is_side() {
+                    true => event.position.x,
+                    false => event.position.y,
+                };
+                self.resize_dock(dock, start_size, now - start);
+            }
             Drag::ResizeHeaders {
                 start_x,
                 start_width,
@@ -1137,7 +1114,7 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_library();
+        self.toggle_panel(Panel::Library);
         cx.notify();
     }
 
@@ -1147,17 +1124,27 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_inspector();
+        self.toggle_panel(Panel::Inspector);
         cx.notify();
     }
 
-    fn on_toggle_editor(
+    fn on_toggle_piano_roll(
         &mut self,
-        _: &actions::ToggleEditor,
+        _: &actions::TogglePianoRoll,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_editor();
+        self.toggle_panel(Panel::PianoRoll);
+        cx.notify();
+    }
+
+    fn on_toggle_mixer(
+        &mut self,
+        _: &actions::ToggleMixer,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_panel(Panel::Mixer);
         cx.notify();
     }
 

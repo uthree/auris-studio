@@ -86,7 +86,7 @@ impl PluginWindow {
     pub fn height(param_count: usize) -> Pixels {
         let body = Metrics::CONTROL_HEIGHT * param_count as f32;
         // Title bar, the body, and the padding either side of it.
-        let wanted = Metrics::EDITOR_HEADER_HEIGHT + body + px(16.0);
+        let wanted = Metrics::PANEL_HEADER_HEIGHT + body + px(16.0);
         wanted.min(Self::MAX_HEIGHT)
     }
 
@@ -255,7 +255,7 @@ impl AurisApp {
                         .flex()
                         .items_center()
                         .gap_1()
-                        .h(Metrics::EDITOR_HEADER_HEIGHT)
+                        .h(Metrics::PANEL_HEADER_HEIGHT)
                         .px_1p5()
                         .flex_shrink_0()
                         .border_b_1()

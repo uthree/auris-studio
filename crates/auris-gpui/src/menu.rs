@@ -196,7 +196,12 @@ pub fn model(language: Language) -> Vec<MenuSection> {
                 actions::ToggleInspector,
                 "view.inspector",
             ),
-            command(t(Key::CmdShowEditor), actions::ToggleEditor, "view.editor"),
+            command(
+                t(Key::CmdShowPianoRoll),
+                actions::TogglePianoRoll,
+                "view.piano_roll",
+            ),
+            command(t(Key::CmdShowMixer), actions::ToggleMixer, "view.mixer"),
             MenuRow::Separator,
             command(t(Key::CmdZoomIn), actions::ZoomIn, "view.zoom_in"),
             command(t(Key::CmdZoomOut), actions::ZoomOut, "view.zoom_out"),

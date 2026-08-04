@@ -59,12 +59,14 @@ actions!(
         ZoomIn,
         /// Zoom the timeline out.
         ZoomOut,
-        /// Show or hide the left-hand library.
+        /// Show or hide the library panel.
         ToggleLibrary,
-        /// Show or hide the right-hand inspector.
+        /// Show or hide the inspector panel.
         ToggleInspector,
-        /// Show or hide the bottom editor panel.
-        ToggleEditor,
+        /// Show or hide the piano roll.
+        TogglePianoRoll,
+        /// Show or hide the mixer.
+        ToggleMixer,
         /// Open the settings window.
         OpenSettings,
         /// Open the command palette.
@@ -90,15 +92,15 @@ pub mod context {
     /// A sheet or the palette is up. Nothing is bound here, which is how a text field gets its
     /// keystrokes: `i` has to type an `i` rather than toggle the inspector.
     pub const PROMPT: &str = "AurisPrompt";
-    /// The sound library, down the left-hand side.
+    /// The sound library.
     pub const LIBRARY: &str = "AurisLibrary";
     /// The track lanes and the ruler above them.
     pub const ARRANGEMENT: &str = "AurisArrangement";
-    /// The piano roll, when the bottom panel is showing it.
+    /// The piano roll, whichever dock is showing it.
     pub const ROLL: &str = "AurisRoll";
-    /// The mixer, when the bottom panel is showing it.
+    /// The mixer, whichever dock is showing it.
     pub const MIXER: &str = "AurisMixer";
-    /// The inspector, down the right-hand side.
+    /// The inspector.
     pub const INSPECTOR: &str = "AurisInspector";
 }
 
@@ -217,11 +219,12 @@ bindable! {
         // `y` is Logic's own Library key, and it is free here.
         "view.library",         GroupView,      CmdShowLibrary,        "y"           => ToggleLibrary;
         "view.inspector",       GroupView,      CmdShowInspector,      "i"           => ToggleInspector;
-        "view.editor",          GroupView,      CmdShowEditor,         "p"           => ToggleEditor;
+        "view.piano_roll",      GroupView,      CmdShowPianoRoll,      "p"           => TogglePianoRoll;
+        "view.mixer",           GroupView,      CmdShowMixer,          "m"           => ToggleMixer;
         "view.zoom_in",         GroupView,      CmdZoomIn,             "secondary-=" => ZoomIn;
         "view.zoom_out",        GroupView,      CmdZoomOut,            "secondary--" => ZoomOut;
         "view.settings",        GroupView,      CmdSettings,           "secondary-," => OpenSettings;
-        // What VS Code and Zed both use, and free here — `p` alone already shows the editor.
+        // What VS Code and Zed both use, and free here — `p` alone already shows the piano roll.
         "view.palette",         GroupView,      CmdCommandPalette,     "secondary-shift-p" => OpenCommandPalette;
         // F10 is what Windows has reached the menu bar with since there was one. Not the Alt key
         // it also uses: a modifier on its own is not a keystroke gpui can bind, and one that was

@@ -21,6 +21,7 @@ pub mod plugin_window;
 pub mod prompt;
 pub mod root;
 pub mod selection;
+pub mod status_bar;
 pub mod text_field;
 pub mod timeline;
 pub mod transport_bar;

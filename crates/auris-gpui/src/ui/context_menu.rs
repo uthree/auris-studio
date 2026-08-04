@@ -13,6 +13,7 @@ use gpui::{
 };
 
 use crate::app::AurisApp;
+use crate::dock::{Dock, Panel};
 use crate::theme::Metrics;
 use crate::ui::icons::{Icon, icon};
 use crate::ui::prompt::{Prompt, PromptTarget};
@@ -236,6 +237,16 @@ pub enum MenuCommand {
         /// Octaves from where the preset sits.
         octave: i32,
     },
+
+    /// Move a panel to one of the window's edges.
+    DockPanel {
+        /// Panel to move.
+        panel: Panel,
+        /// Where it should live.
+        dock: Dock,
+    },
+    /// Show or hide a panel.
+    TogglePanel(Panel),
 
     /// Put a discrete plugin parameter on one of its named positions.
     ///
@@ -844,6 +855,9 @@ impl AurisApp {
             }
             MenuCommand::SetClipOctave { clip, octave } => self.set_clip_octave(clip, octave),
             MenuCommand::SetParamChoice { target, value } => self.session.set_param(target, value),
+
+            MenuCommand::DockPanel { panel, dock } => self.dock_panel(panel, dock),
+            MenuCommand::TogglePanel(panel) => self.toggle_panel(panel),
 
             MenuCommand::SetKeyAt(tick) => {
                 let current = self.project().harmony.key_at(tick).to_text();

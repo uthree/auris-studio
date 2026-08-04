@@ -27,6 +27,7 @@ use gpui::{
 
 use crate::actions;
 use crate::appearance::Appearance;
+use crate::dock::{Dock, Panel, PanelLayout};
 use crate::gestures::PointerGestures;
 use crate::keymap::{InputSettings, Keymap};
 use crate::settings_window::SettingsWindow;
@@ -82,38 +83,34 @@ pub enum BandSurface {
     Lanes,
 }
 
-/// Which editor occupies the bottom panel.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum EditorTab {
-    /// The piano roll for the selected MIDI clip.
-    PianoRoll,
-    /// The mixer, showing every track's strip side by side.
-    Mixer,
-}
-
 /// A panel the keyboard can be in.
 ///
 /// What a key does depends on where focus is: `t` puts the next tool in the roll's hand and does
-/// nothing at all from the mixer. The variants are in tab order, left to right and then down,
-/// which is the order the eye reads the window in.
+/// nothing at all from the mixer. The variants are in tab order, which is the order they are
+/// declared in — the arrangement second because it is the middle of the window whatever the panels
+/// around it are doing. Tab cannot follow a panel across the window, since the order is fixed when
+/// the handles are made and a panel's dock is not.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Pane {
-    /// The sound library, down the left-hand side.
+    /// The sound library.
     Library,
-    /// The track lanes and the ruler above them.
+    /// The track lanes and the ruler above them, in the middle of the window.
     Arrangement,
-    /// The bottom panel, whichever of the two editors it is showing.
-    Editor,
-    /// The inspector, down the right-hand side.
+    /// The piano roll.
+    PianoRoll,
+    /// The mixer.
+    Mixer,
+    /// The inspector.
     Inspector,
 }
 
 impl Pane {
     /// Every pane, in tab order.
-    pub const ALL: [Pane; 4] = [
+    pub const ALL: [Pane; 5] = [
         Pane::Library,
         Pane::Arrangement,
-        Pane::Editor,
+        Pane::PianoRoll,
+        Pane::Mixer,
         Pane::Inspector,
     ];
 
@@ -137,7 +134,8 @@ impl Pane {
 pub struct PaneFocus {
     library: FocusHandle,
     arrangement: FocusHandle,
-    editor: FocusHandle,
+    piano_roll: FocusHandle,
+    mixer: FocusHandle,
     inspector: FocusHandle,
 }
 
@@ -155,7 +153,8 @@ impl PaneFocus {
         Self {
             library: stop(cx, Pane::Library),
             arrangement: stop(cx, Pane::Arrangement),
-            editor: stop(cx, Pane::Editor),
+            piano_roll: stop(cx, Pane::PianoRoll),
+            mixer: stop(cx, Pane::Mixer),
             inspector: stop(cx, Pane::Inspector),
         }
     }
@@ -165,7 +164,8 @@ impl PaneFocus {
         match pane {
             Pane::Library => &self.library,
             Pane::Arrangement => &self.arrangement,
-            Pane::Editor => &self.editor,
+            Pane::PianoRoll => &self.piano_roll,
+            Pane::Mixer => &self.mixer,
             Pane::Inspector => &self.inspector,
         }
     }
@@ -358,26 +358,14 @@ pub enum Drag {
         /// jump under the pointer.
         grab_offset: Point<Pixels>,
     },
-    /// Dragging the divider between the library and the arrangement.
-    ResizeLibrary {
-        /// Pointer x when the drag began.
-        start_x: Pixels,
-        /// Panel width when the drag began.
-        start_width: Pixels,
-    },
-    /// Dragging the divider between the arrangement and the inspector.
-    ResizeInspector {
-        /// Pointer x when the drag began.
-        start_x: Pixels,
-        /// Panel width when the drag began.
-        start_width: Pixels,
-    },
-    /// Dragging the divider between the arrangement and the bottom editor.
-    ResizeEditor {
-        /// Pointer y when the drag began.
-        start_y: Pixels,
-        /// Panel height when the drag began.
-        start_height: Pixels,
+    /// Dragging the divider between a dock and the arrangement.
+    ResizeDock {
+        /// Which dock is being resized.
+        dock: Dock,
+        /// Where the pointer was when the drag began: x for a side dock, y for the bottom one.
+        start: Pixels,
+        /// How large the dock was then — a width or a height, the same way round.
+        start_size: Pixels,
     },
     /// Dragging the divider between the track headers and the timeline.
     ResizeHeaders {
@@ -417,119 +405,10 @@ impl Drag {
             // Panel and window geometry is a property of the window, not the document: resizing
             // a panel or moving the plugin editor is not an edit and must never land on the undo
             // stack.
-            Drag::ResizeLibrary { .. }
-            | Drag::ResizeInspector { .. }
-            | Drag::ResizeEditor { .. }
+            Drag::ResizeDock { .. }
             | Drag::ResizeHeaders { .. }
             | Drag::MovePluginWindow { .. } => None,
         }
-    }
-}
-
-/// How wide or tall the resizable panels are, and whether they are showing.
-///
-/// Kept together so the layout, the hit tests and the splitters all read one source rather
-/// than each deriving the geometry from constants and drifting apart.
-#[derive(Clone, Debug, PartialEq)]
-pub struct PanelLayout {
-    /// Whether the left-hand library is visible.
-    pub library_visible: bool,
-    /// Width of the library.
-    pub library_width: Pixels,
-    /// Whether the right-hand inspector is visible.
-    pub inspector_visible: bool,
-    /// Width of the inspector.
-    pub inspector_width: Pixels,
-    /// Whether the bottom editor is visible.
-    pub editor_visible: bool,
-    /// Height of the bottom editor.
-    pub editor_height: Pixels,
-    /// Width of the track header column.
-    pub header_width: Pixels,
-}
-
-impl Default for PanelLayout {
-    fn default() -> Self {
-        Self {
-            // Open on first run, unlike Logic, which defaults its Library closed. There, a
-            // channel strip's instrument slot is a second way to load one; here the library is
-            // the only one, so starting closed would leave a new project with no visible way to
-            // choose an instrument at all.
-            library_visible: true,
-            library_width: Metrics::LIBRARY_WIDTH,
-            inspector_visible: true,
-            inspector_width: Metrics::INSPECTOR_WIDTH,
-            editor_visible: true,
-            editor_height: Metrics::EDITOR_HEIGHT,
-            header_width: Metrics::TRACK_HEADER_WIDTH,
-        }
-    }
-}
-
-impl PanelLayout {
-    /// Narrowest the library may be dragged.
-    pub const MIN_LIBRARY: Pixels = px(180.0);
-    /// Widest the library may be dragged.
-    pub const MAX_LIBRARY: Pixels = px(420.0);
-    /// Narrowest the inspector may be dragged.
-    pub const MIN_INSPECTOR: Pixels = px(200.0);
-    /// Widest the inspector may be dragged.
-    pub const MAX_INSPECTOR: Pixels = px(520.0);
-    /// Shortest the bottom editor may be dragged.
-    pub const MIN_EDITOR: Pixels = px(120.0);
-    /// Narrowest the track header column may be dragged.
-    pub const MIN_HEADERS: Pixels = px(140.0);
-    /// Widest the track header column may be dragged.
-    pub const MAX_HEADERS: Pixels = px(360.0);
-
-    /// Height the arrangement must keep, so a dragged editor cannot swallow it.
-    pub const MIN_ARRANGEMENT: Pixels = px(140.0);
-    /// Width the arrangement must keep, for the same reason horizontally.
-    pub const MIN_ARRANGEMENT_WIDTH: Pixels = px(240.0);
-
-    /// Library width after dragging its divider by `delta`.
-    ///
-    /// The divider sits on the panel's *right* edge, so dragging right widens it and the delta
-    /// is added — the opposite of [`Self::resized_inspector`], whose divider is on its left. The
-    /// sign is the whole difference between the two, and getting it wrong makes a panel run away
-    /// from the pointer.
-    ///
-    /// `available` is what is left of the window once the arrangement's own minimum width is
-    /// accounted for, in the shape [`Self::resized_editor`] already uses vertically. It is
-    /// clamped up to the minimum, so a window already narrower than the arrangement needs still
-    /// yields a usable library rather than a negative one.
-    pub fn resized_library(start_width: Pixels, delta: Pixels, available: Pixels) -> Pixels {
-        let ceiling = Self::MAX_LIBRARY.min(available).max(Self::MIN_LIBRARY);
-        (start_width + delta).max(Self::MIN_LIBRARY).min(ceiling)
-    }
-
-    /// Inspector width after dragging its divider by `delta`.
-    ///
-    /// The divider sits on the panel's *left* edge, so dragging left widens it — hence the
-    /// subtraction. Getting that sign wrong makes the panel run away from the pointer.
-    pub fn resized_inspector(start_width: Pixels, delta: Pixels) -> Pixels {
-        (start_width - delta)
-            .max(Self::MIN_INSPECTOR)
-            .min(Self::MAX_INSPECTOR)
-    }
-
-    /// Bottom-editor height after dragging its divider by `delta`.
-    ///
-    /// `available` is what is left of the window once the transport, the status bar and the
-    /// arrangement's own minimum are accounted for. It is clamped up to the minimum height as
-    /// well, so a window too short for both panels still yields a usable editor rather than a
-    /// negative one.
-    pub fn resized_editor(start_height: Pixels, delta: Pixels, available: Pixels) -> Pixels {
-        (start_height - delta)
-            .max(Self::MIN_EDITOR)
-            .min(available.max(Self::MIN_EDITOR))
-    }
-
-    /// Track-header column width after dragging its divider by `delta`.
-    pub fn resized_headers(start_width: Pixels, delta: Pixels) -> Pixels {
-        (start_width + delta)
-            .max(Self::MIN_HEADERS)
-            .min(Self::MAX_HEADERS)
     }
 }
 
@@ -591,110 +470,18 @@ mod tests {
     }
 
     #[test]
-    fn the_library_follows_the_pointer_and_stops_at_its_limits() {
-        // Its divider is on the panel's right edge, so the delta is *added* — the opposite sign
-        // to the inspector's, whose test sits directly below this one so the difference is
-        // written down rather than remembered.
-        let roomy = px(9_000.0);
-        assert_eq!(
-            PanelLayout::resized_library(px(240.0), px(40.0), roomy),
-            px(280.0)
-        );
-        assert_eq!(
-            PanelLayout::resized_library(px(240.0), px(-40.0), roomy),
-            px(200.0)
-        );
-        assert_eq!(
-            PanelLayout::resized_library(px(240.0), px(9_000.0), roomy),
-            PanelLayout::MAX_LIBRARY
-        );
-        assert_eq!(
-            PanelLayout::resized_library(px(240.0), px(-9_000.0), roomy),
-            PanelLayout::MIN_LIBRARY
-        );
-    }
-
-    #[test]
-    fn the_library_cannot_squeeze_the_arrangement_off_the_window() {
-        // A drag with plenty of travel left still stops where the arrangement's minimum begins.
-        assert_eq!(
-            PanelLayout::resized_library(px(240.0), px(9_000.0), px(300.0)),
-            px(300.0)
-        );
-        // And a window already narrower than the arrangement needs gives a usable library rather
-        // than a negative one, the way the editor does when the window is too short for both.
-        assert_eq!(
-            PanelLayout::resized_library(px(240.0), px(9_000.0), px(-500.0)),
-            PanelLayout::MIN_LIBRARY
-        );
-    }
-
-    #[test]
-    fn resizing_the_library_is_never_an_edit() {
+    fn resizing_a_dock_is_never_an_edit() {
         // It belongs in the arm that records nothing. A variant that fell through to a document
         // edit would open a session transaction and land on the undo stack, so pressing undo
         // after dragging a divider would lose the last real change instead.
         assert!(
-            Drag::ResizeLibrary {
-                start_x: px(0.0),
-                start_width: px(0.0)
+            Drag::ResizeDock {
+                dock: Dock::Left,
+                start: px(0.0),
+                start_size: px(0.0)
             }
             .edit()
             .is_none()
-        );
-    }
-
-    #[test]
-    fn the_inspector_follows_the_pointer_and_stops_at_its_limits() {
-        let start = px(300.0);
-        // Dragging the divider left widens the panel it sits in front of.
-        assert_eq!(PanelLayout::resized_inspector(start, px(-40.0)), px(340.0));
-        assert_eq!(PanelLayout::resized_inspector(start, px(40.0)), px(260.0));
-        assert_eq!(
-            PanelLayout::resized_inspector(start, px(9_000.0)),
-            PanelLayout::MIN_INSPECTOR
-        );
-        assert_eq!(
-            PanelLayout::resized_inspector(start, px(-9_000.0)),
-            PanelLayout::MAX_INSPECTOR
-        );
-    }
-
-    #[test]
-    fn the_editor_never_swallows_the_arrangement() {
-        let available = px(400.0);
-        assert_eq!(
-            PanelLayout::resized_editor(px(280.0), px(-60.0), available),
-            px(340.0)
-        );
-        assert_eq!(
-            PanelLayout::resized_editor(px(280.0), px(-9_000.0), available),
-            available
-        );
-        assert_eq!(
-            PanelLayout::resized_editor(px(280.0), px(9_000.0), available),
-            PanelLayout::MIN_EDITOR
-        );
-    }
-
-    #[test]
-    fn a_window_too_short_for_both_panels_still_gives_a_usable_editor() {
-        // `available` goes negative once the window cannot hold the arrangement's minimum.
-        let squeezed = PanelLayout::resized_editor(px(280.0), px(0.0), px(-50.0));
-        assert_eq!(squeezed, PanelLayout::MIN_EDITOR);
-    }
-
-    #[test]
-    fn the_header_column_stops_at_its_limits() {
-        let start = px(200.0);
-        assert_eq!(PanelLayout::resized_headers(start, px(30.0)), px(230.0));
-        assert_eq!(
-            PanelLayout::resized_headers(start, px(-9_000.0)),
-            PanelLayout::MIN_HEADERS
-        );
-        assert_eq!(
-            PanelLayout::resized_headers(start, px(9_000.0)),
-            PanelLayout::MAX_HEADERS
         );
     }
 }
@@ -768,8 +555,7 @@ pub struct AurisApp {
     /// time, and the strip in its header says which one is in hand.
     pub(crate) tool: RollTool,
     pub(crate) drag: Option<Drag>,
-    pub(crate) editor: EditorTab,
-    /// Which panels are showing and how large they are.
+    /// Where each panel is docked, which of them are showing, and how large each dock is.
     pub(crate) panels: PanelLayout,
     pub(crate) status: String,
     pub(crate) export: Option<ExportState>,
@@ -897,8 +683,7 @@ impl AurisApp {
             selected_notes: BTreeSet::new(),
             tool: RollTool::default(),
             drag: None,
-            editor: EditorTab::PianoRoll,
-            panels: PanelLayout::default(),
+            panels: PanelLayout::load(),
             status,
             export: None,
             auditioning: None,
@@ -979,12 +764,8 @@ impl AurisApp {
         Some(match pane {
             Pane::Library => actions::context::LIBRARY,
             Pane::Arrangement => actions::context::ARRANGEMENT,
-            // One handle, two contexts: the bottom panel is one place the keyboard can be, and
-            // which editor is in it decides what the keys there mean.
-            Pane::Editor => match self.editor {
-                EditorTab::PianoRoll => actions::context::ROLL,
-                EditorTab::Mixer => actions::context::MIXER,
-            },
+            Pane::PianoRoll => actions::context::ROLL,
+            Pane::Mixer => actions::context::MIXER,
             Pane::Inspector => actions::context::INSPECTOR,
         })
     }
@@ -1039,11 +820,17 @@ impl AurisApp {
 
     /// Ends any gesture in progress.
     pub(crate) fn end_drag(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
-        if let Some(drag) = self.drag.take()
-            && drag.edit().is_some()
-        {
+        let Some(drag) = self.drag.take() else {
+            return;
+        };
+        if drag.edit().is_some() {
             // A gesture that changed nothing records no undo step and triggers no rebuild.
             self.session.end_transaction();
+        }
+        // Written when the divider is let go rather than on every pointer move: a drag across the
+        // window is a hundred frames, and a hundred writes of the same file.
+        if matches!(drag, Drag::ResizeDock { .. } | Drag::ResizeHeaders { .. }) {
+            self.remember_layout();
         }
     }
 
@@ -1394,42 +1181,50 @@ impl AurisApp {
 
     // ---------------------------------------------------------------- panels
 
-    /// Shows or hides the left-hand library.
-    pub(crate) fn toggle_library(&mut self) {
-        self.panels.library_visible = !self.panels.library_visible;
+    /// Shows `panel` when it is hidden, and hides it when its dock is showing it.
+    pub(crate) fn toggle_panel(&mut self, panel: Panel) {
+        self.panels.toggle(panel);
+        self.remember_layout();
     }
 
-    /// Shows or hides the right-hand inspector.
-    pub(crate) fn toggle_inspector(&mut self) {
-        self.panels.inspector_visible = !self.panels.inspector_visible;
+    /// Shows `panel`, for the commands that open one as a side effect of something else.
+    ///
+    /// Nothing is written unless the arrangement actually changed: opening a clip in the roll is a
+    /// double-click, and the roll is usually already showing.
+    pub(crate) fn show_panel(&mut self, panel: Panel) {
+        let before = self.panels.clone();
+        self.panels.show(panel);
+        if self.panels != before {
+            self.remember_layout();
+        }
     }
 
-    /// Applies a library resize drag.
-    pub(crate) fn resize_library(&mut self, start_width: Pixels, delta: Pixels) {
-        // What the library could grow into before the arrangement stops being usable. Read from
-        // the arrangement's painted width rather than the window's, so the clamp and the hit
-        // tests are measuring the same thing.
-        let available = start_width + self.arrangement_width - PanelLayout::MIN_ARRANGEMENT_WIDTH;
-        self.panels.library_width = PanelLayout::resized_library(start_width, delta, available);
+    /// Moves `panel` into `dock`, and shows it there.
+    pub(crate) fn dock_panel(&mut self, panel: Panel, dock: Dock) {
+        self.panels.move_to(panel, dock);
+        self.remember_layout();
     }
 
-    /// Shows or hides the bottom editor.
-    pub(crate) fn toggle_editor(&mut self) {
-        self.panels.editor_visible = !self.panels.editor_visible;
-    }
-
-    /// Applies an inspector resize drag.
-    pub(crate) fn resize_inspector(&mut self, start_width: Pixels, delta: Pixels) {
-        self.panels.inspector_width = PanelLayout::resized_inspector(start_width, delta);
-    }
-
-    /// Applies a bottom-editor resize drag.
-    pub(crate) fn resize_editor(&mut self, start_height: Pixels, delta: Pixels) {
-        let available = self.viewport_height
-            - Metrics::TRANSPORT_HEIGHT
-            - Metrics::STATUS_HEIGHT
-            - PanelLayout::MIN_ARRANGEMENT;
-        self.panels.editor_height = PanelLayout::resized_editor(start_height, delta, available);
+    /// Applies a dock resize drag.
+    pub(crate) fn resize_dock(&mut self, dock: Dock, start_size: Pixels, delta: Pixels) {
+        // What the dock could grow into before the arrangement stops being usable. A side dock
+        // reads the arrangement's *painted* width rather than the window's, so the clamp and the
+        // hit tests are measuring the same thing.
+        let available = match dock {
+            Dock::Bottom => {
+                self.viewport_height
+                    - Metrics::TRANSPORT_HEIGHT
+                    - Metrics::STATUS_HEIGHT
+                    - PanelLayout::MIN_ARRANGEMENT
+            }
+            Dock::Left | Dock::Right => {
+                start_size + self.arrangement_width - PanelLayout::MIN_ARRANGEMENT_WIDTH
+            }
+        };
+        self.panels.set_size(
+            dock,
+            PanelLayout::resized(dock, start_size, delta, available),
+        );
     }
 
     /// Applies a track-header column resize drag.
@@ -1437,17 +1232,26 @@ impl AurisApp {
         self.panels.header_width = PanelLayout::resized_headers(start_width, delta);
     }
 
+    /// Writes the arrangement down, so the next launch opens the way this one was left.
+    ///
+    /// A failure is logged and nothing else: not being able to write a preference is no reason to
+    /// refuse to move a panel.
+    pub(crate) fn remember_layout(&self) {
+        if let Err(error) = self.panels.save() {
+            log::warn!("could not write {}: {error}", PanelLayout::path().display());
+        }
+    }
+
     // ---------------------------------------------------------------- geometry
 
-    /// How far the library pushes everything to its right.
+    /// How far the left-hand dock pushes everything to its right.
     ///
     /// Only used by the fallbacks below, which answer for the frame before anything has been
     /// painted; every frame after that reads the painted bounds instead.
-    fn library_offset(&self) -> Pixels {
-        if self.panels.library_visible {
-            self.panels.library_width + Metrics::SPLITTER
-        } else {
-            px(0.0)
+    fn left_dock_offset(&self) -> Pixels {
+        match self.panels.showing(Dock::Left) {
+            Some(_) => self.panels.size(Dock::Left) + Metrics::SPLITTER,
+            None => px(0.0),
         }
     }
 
@@ -1456,7 +1260,7 @@ impl AurisApp {
         self.canvas.lanes.get().map_or_else(
             || {
                 point(
-                    self.library_offset() + self.panels.header_width,
+                    self.left_dock_offset() + self.panels.header_width,
                     Metrics::TRANSPORT_HEIGHT + Metrics::RULER_HEIGHT,
                 )
             },
@@ -1469,7 +1273,7 @@ impl AurisApp {
         self.canvas.ruler.get().map_or_else(
             || {
                 point(
-                    self.library_offset() + self.panels.header_width,
+                    self.left_dock_offset() + self.panels.header_width,
                     Metrics::TRANSPORT_HEIGHT,
                 )
             },

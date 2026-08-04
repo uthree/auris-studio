@@ -5,6 +5,7 @@
 mod actions;
 mod app;
 mod appearance;
+mod dock;
 mod gestures;
 mod i18n;
 mod keymap;
