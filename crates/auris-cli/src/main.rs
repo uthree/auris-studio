@@ -426,6 +426,7 @@ fn render(args: &[String], language: Language) -> Result<(), String> {
     let mut output = source.with_extension("wav");
     let mut settings = WavExportSettings::default();
     let mut options = OfflineOptions::whole_project();
+    let mut loop_only = false;
 
     let mut index = 2;
     while index < args.len() {
@@ -453,6 +454,7 @@ fn render(args: &[String], language: Language) -> Result<(), String> {
             }
             "--dither" => settings.dither = true,
             "--no-tail" => options.include_tail = false,
+            "--loop" => loop_only = true,
             other => return Err(messages::unknown_option(language, other)),
         }
         index += 1;
@@ -467,6 +469,13 @@ fn render(args: &[String], language: Language) -> Result<(), String> {
     }
 
     let job = session.render_job();
+    if loop_only {
+        // Resolved through the job so the region is converted exactly as the GUI converts
+        // it; a project without one is an error, not a silent whole-project render.
+        options = job
+            .loop_options(options)
+            .ok_or_else(|| Key::CliNoCycle.get(language).to_string())?;
+    }
     let mut last_percent = -1i32;
     let summary = job
         .render_to_wav(&output, &settings, &options, &mut |fraction| {

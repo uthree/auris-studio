@@ -59,11 +59,25 @@ which is as fine as the document gets. Holding ⌘ (Ctrl on Windows) suspends sn
 length of a drag, for when one thing has to sit off the beat. A double-click on any fader or knob
 puts it back to its default: 0 dB on a volume, centre on a pan.
 
+An audio clip fades in and out by its handles: the pair sits in a band just under the clip's
+name bar, one at each end, and dragging one draws the fade as a dimmed wedge over the waveform
+with the ramp across it. Fades ignore the grid on purpose — they are shaped by ear against the
+waveform, and no grid position has anything to do with where a breath ends. The clip's own gain
+is on its right-click menu, in decibels, applied before the track's effects; while it is not
+0 dB the clip prints the number beside its name, and *Remove Fades* on the same menu takes both
+fades back off.
+
 The tempo and position readouts in the middle of the transport bar are typeable: double-click
 either and the number can be entered directly. A wheel is for finding a tempo by feel and a drag
 for nudging it, but neither is any way to reach 174 from 120, or bar 97 from bar 1. The position
 takes as much of `bar.beat.hundredth` as you care to give it — `97` is the top of bar 97, `97.3`
 is its third beat.
+
+The tempo can change along the timeline. The readout shows — and edits — the tempo of the
+stretch the playhead is in; a change elsewhere is written from the ruler's right-click menu
+(*Tempo from Here…*), lands on the beat, and is marked along the ruler's lower edge with its
+number. The same menu removes the change in force under the pointer. The song's opening tempo
+at the start of the timeline is always there and cannot be removed, exactly like the key.
 
 ### Languages
 
@@ -365,6 +379,11 @@ keeps feeding it for the whole of its own decay — so nothing is cut off.
 
 An export can be written at any sample rate; the sources are converted to it first, so a project
 exported at 96 kHz is the same piece rather than the same samples played faster.
+
+The cycle region exports on its own through *File → Export Cycle…*, or `auris render --loop`
+from the command line. The range ends the way pressing Stop there sounds: the voices are
+released at the boundary and the tail holds the ring-out of what was inside the range, never a
+performance of the material beyond it.
 
 ### GPU acceleration
 

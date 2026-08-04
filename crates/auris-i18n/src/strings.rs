@@ -225,6 +225,7 @@ strings! {
     CmdImportSoundFont { en: "Import SoundFont", ja: "サウンドフォントを読み込む" }
     CmdCollectAssets { en: "Collect Assets", ja: "アセットを集める" }
     CmdExportWav { en: "Export WAV", ja: "WAV を書き出す" }
+    CmdExportCycle { en: "Export Cycle as WAV", ja: "サイクル範囲を WAV に書き出す" }
     CmdQuit { en: "Quit", ja: "終了" }
     CmdUndo { en: "Undo", ja: "取り消す" }
     CmdRedo { en: "Redo", ja: "やり直す" }
@@ -255,6 +256,7 @@ strings! {
     MenuImportSoundFontItem { en: "Import SoundFont…", ja: "サウンドフォントを読み込む…" }
     MenuCollectAssetsItem { en: "Collect Assets into Project", ja: "アセットをプロジェクトにまとめる" }
     MenuExportWavItem { en: "Export WAV…", ja: "WAV を書き出す…" }
+    MenuExportCycleItem { en: "Export Cycle…", ja: "サイクル範囲を書き出す…" }
     MenuDelete { en: "Delete", ja: "削除" }
 
     // ------------------------------------------------------------------ context menus
@@ -433,6 +435,10 @@ strings! {
     NewProjectStatus { en: "New project", ja: "新規プロジェクト" }
     PanicStopped { en: "Panic — all voices stopped", ja: "パニック — すべての発音を停止しました" }
     ExportAlreadyRunning { en: "An export is already running", ja: "すでに書き出しを実行中です" }
+    NoCycleToExport {
+        en: "There is no cycle region to export — alt-drag the ruler to mark one",
+        ja: "書き出すサイクル範囲がありません — ルーラーを option ドラッグして設定してください"
+    }
     AudioClipsComeFromImport {
         en: "Audio clips come from Import Audio, not from an empty lane",
         ja: "オーディオクリップは空のレーンからではなく読み込みで作成します"
@@ -557,6 +563,7 @@ RENDER OPTIONS
         --bit-depth <16|24|32>    Sample format; 32 means 32-bit float (default: 24)
         --dither                  Add TPDF dither, for 16-bit masters
         --no-tail                 Stop at the last clip instead of letting effect tails ring
+        --loop                    Render only the project's cycle region
 
 NEW OPTIONS
         --bpm <tempo>             Tempo of the new project (default: 120)
@@ -591,6 +598,7 @@ render のオプション
         --bit-depth <16|24|32>    量子化ビット数。32 は 32bit float（既定: 24）
         --dither                  TPDF ディザを付加（16bit マスター向け）
         --no-tail                 エフェクトの残響を待たず最後のクリップで終える
+        --loop                    サイクル範囲のみを書き出す
 
 new のオプション
         --bpm <tempo>             新規プロジェクトのテンポ（既定: 120）
@@ -599,6 +607,10 @@ new のオプション
     CliInstruments { en: "INSTRUMENTS", ja: "音源" }
     CliEffects { en: "EFFECTS", ja: "エフェクト" }
     CliExpectedProjectPath { en: "expected a project path", ja: "プロジェクトのパスを指定してください" }
+    CliNoCycle {
+        en: "the project has no cycle region to render",
+        ja: "プロジェクトにサイクル範囲がありません"
+    }
     CliExpectedNewPath {
         en: "expected a path for the new project",
         ja: "作成先のパスを指定してください"

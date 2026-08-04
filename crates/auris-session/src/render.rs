@@ -94,6 +94,25 @@ impl RenderJob {
         &self.project
     }
 
+    /// Restricts `options` to the project's cycle region, converted to frames at the rate the
+    /// render will run at.
+    ///
+    /// `None` when the project has no region, or the region is empty. Whether cycling is
+    /// *enabled* is deliberately not consulted: the region is a marked span of the song, and
+    /// exporting that span is meaningful whether or not playback happens to be looping over it
+    /// right now.
+    pub fn loop_options(&self, options: OfflineOptions) -> Option<OfflineOptions> {
+        let (start, end) = self.project.loop_region?;
+        let (start, end) = (start.max_zero(), end.max_zero());
+        if end <= start {
+            return None;
+        }
+        let rate = options.sample_rate.unwrap_or(self.project.sample_rate);
+        let start_frames = self.project.tempo_map.ticks_to_samples(start, rate).raw();
+        let end_frames = self.project.tempo_map.ticks_to_samples(end, rate).raw();
+        Some(options.with_range(start_frames, end_frames))
+    }
+
     /// Renders to a buffer, reporting progress from 0.0 to 1.0.
     ///
     /// An export can be asked for any rate, including one the sources were never decoded at, so
@@ -168,6 +187,41 @@ mod tests {
             Arc::new(AudioBuffer::from_planar(vec![vec![0.5; frames]; 2], rate).expect("planar")),
         );
         bank
+    }
+
+    #[test]
+    fn the_loop_options_cover_the_region_at_the_render_rate() {
+        // Four beats at 120 BPM is two seconds: 96 000 frames at the project's 48 kHz.
+        let mut project = Project::new("Cycle", 48_000.0);
+        project.loop_region = Some((Ticks::ZERO, Ticks::from_beats(4.0)));
+        let job = RenderJob::new(project, AudioSourceBank::new(), plugin_catalogue());
+
+        let options = job
+            .loop_options(OfflineOptions::whole_project())
+            .expect("a region exists");
+        assert_eq!(options.start_frames, 0);
+        assert_eq!(options.end_frames, Some(96_000));
+
+        // An overridden rate measures the same two seconds in its own frames.
+        let doubled = job
+            .loop_options(OfflineOptions {
+                sample_rate: Some(96_000.0),
+                ..OfflineOptions::whole_project()
+            })
+            .expect("the region does not depend on the rate");
+        assert_eq!(doubled.end_frames, Some(192_000));
+    }
+
+    #[test]
+    fn a_missing_or_empty_region_offers_no_loop_options() {
+        let mut project = Project::new("None", 48_000.0);
+        let job = RenderJob::new(project.clone(), AudioSourceBank::new(), plugin_catalogue());
+        assert!(job.loop_options(OfflineOptions::whole_project()).is_none());
+
+        // A region of no width is nothing to export either.
+        project.loop_region = Some((Ticks::from_beats(2.0), Ticks::from_beats(2.0)));
+        let job = RenderJob::new(project, AudioSourceBank::new(), plugin_catalogue());
+        assert!(job.loop_options(OfflineOptions::whole_project()).is_none());
     }
 
     #[test]

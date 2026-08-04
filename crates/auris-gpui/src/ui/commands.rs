@@ -727,6 +727,16 @@ impl AurisApp {
 
     /// Prompts for a destination and renders the project to a WAV file.
     pub(crate) fn start_export(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.begin_export(false, cx);
+    }
+
+    /// Prompts for a destination and renders only the cycle region.
+    pub(crate) fn start_export_cycle(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.begin_export(true, cx);
+    }
+
+    /// The export flow behind both commands: the whole arrangement, or the cycle region.
+    fn begin_export(&mut self, cycle: bool, cx: &mut Context<Self>) {
         // `export` is not set until a path comes back, so the running check alone let a second
         // Export through while the picker was still up — two renders, and the summary of
         // whichever finished second.
@@ -734,16 +744,41 @@ impl AurisApp {
             self.set_status(self.t(Key::ExportAlreadyRunning));
             return;
         }
-        self.choosing_export = true;
-        let name = self.project().name.clone();
-        let language = self.language();
         // A snapshot, so the render is unaffected by anything edited while it runs.
         let job = self.session.render_job();
+        let options = if cycle {
+            // Refused before the dialog opens: a save sheet for a region that does not exist
+            // would collect a filename for nothing.
+            match job.loop_options(OfflineOptions::whole_project()) {
+                Some(options) => options,
+                None => {
+                    self.set_failed_status(self.t(Key::NoCycleToExport));
+                    return;
+                }
+            }
+        } else {
+            OfflineOptions::whole_project()
+        };
+        // Which command failed, when one does — and a different suggested name, so a cycle
+        // bounced next to a full export does not offer to overwrite it.
+        let command = if cycle {
+            Key::CmdExportCycle
+        } else {
+            Key::CmdExportWav
+        };
+        self.choosing_export = true;
+        let name = self.project().name.clone();
+        let suggested = if cycle {
+            format!("{name} (cycle).wav")
+        } else {
+            format!("{name}.wav")
+        };
+        let language = self.language();
 
         cx.spawn(async move |this, cx| {
             let handle = rfd::AsyncFileDialog::new()
                 .set_title(Key::DialogExportWav.get(language))
-                .set_file_name(format!("{name}.wav"))
+                .set_file_name(suggested)
                 .add_filter(Key::FilterWav.get(language), &["wav"])
                 .save_file()
                 .await;
@@ -771,7 +806,7 @@ impl AurisApp {
                     job.render_to_wav(
                         &render_path,
                         &WavExportSettings::default(),
-                        &OfflineOptions::whole_project(),
+                        &options,
                         &mut |fraction| progress.store(fraction.to_bits(), Ordering::Relaxed),
                     )
                     .map_err(|error| error.to_string())
@@ -792,8 +827,7 @@ impl AurisApp {
                         Ok(text)
                     }
                     Err(error) => {
-                        let text =
-                            messages::failed(language, Key::CmdExportWav.get(language), &error);
+                        let text = messages::failed(language, command.get(language), &error);
                         // The failure colour, like every other Err arm: once the overlay is
                         // dismissed the status line is the only record of the failure, and in
                         // the ordinary grey it read as just another note.

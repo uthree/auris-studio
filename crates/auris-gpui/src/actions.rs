@@ -29,6 +29,8 @@ actions!(
         CollectAssets,
         /// Render the project to a WAV file.
         ExportAudio,
+        /// Render only the cycle region to a WAV file.
+        ExportCycle,
         /// Start or stop playback.
         TogglePlay,
         /// Stop playback and return to the start.
@@ -201,6 +203,7 @@ bindable! {
         "file.import_soundfont", GroupFile,     CmdImportSoundFont,    "secondary-shift-i" => ImportSoundFont;
         "file.collect",         GroupFile,      CmdCollectAssets,      "secondary-shift-a" => CollectAssets;
         "file.export",          GroupFile,      CmdExportWav,          "secondary-e" => ExportAudio;
+        "file.export_cycle",    GroupFile,      CmdExportCycle,        "secondary-shift-e" => ExportCycle;
         "file.quit",            GroupFile,      CmdQuit,               "secondary-q" => Quit;
 
         "edit.undo",            GroupEdit,      CmdUndo,               "secondary-z" => Undo;

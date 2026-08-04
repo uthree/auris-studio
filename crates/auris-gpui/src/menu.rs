@@ -124,6 +124,11 @@ pub fn model(language: Language) -> Vec<MenuSection> {
             actions::ExportAudio,
             "file.export",
         ),
+        command(
+            t(Key::MenuExportCycleItem),
+            actions::ExportCycle,
+            "file.export_cycle",
+        ),
     ];
     if !cfg!(target_os = "macos") {
         file.push(MenuRow::Separator);
