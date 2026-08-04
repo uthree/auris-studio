@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use auris_i18n::Key;
 use gpui::{App, KeyBinding};
 use serde::{Deserialize, Serialize};
 
@@ -32,7 +33,7 @@ pub struct InputSettings {
 #[serde(untagged)]
 enum StoredInput {
     Current(CurrentInput),
-    Legacy(BTreeMap<String, String>),
+    Legacy(Keymap),
 }
 
 /// The current shape.
@@ -95,82 +96,218 @@ impl From<StoredInput> for InputSettings {
                 keys: current.keys,
                 pointer: current.pointer,
             },
-            StoredInput::Legacy(overrides) => Self {
-                keys: Keymap { overrides },
+            StoredInput::Legacy(keys) => Self {
+                keys,
                 pointer: PointerGestures::default(),
             },
         }
     }
 }
 
+/// One command's overridden bindings, as a settings file may spell them.
+///
+/// A single keystroke was the only shape until a command could hold more than one, and files
+/// written then are still on disk. Reading both costs one enum; reading only the list would parse
+/// `"cmd-p"` as a malformed entry and drop a binding the user had chosen.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredBinding {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl From<StoredBinding> for Vec<String> {
+    fn from(stored: StoredBinding) -> Self {
+        match stored {
+            StoredBinding::One(keystroke) => vec![keystroke],
+            StoredBinding::Many(keystrokes) => keystrokes,
+        }
+    }
+}
+
 /// Key bindings, as overrides on top of the defaults.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default, transparent)]
+///
+/// A command absent from the map keeps its default. A command mapped to an empty list is
+/// *deliberately unbound* — the two are different answers, and a map that could only hold
+/// keystrokes had no way to say the second one. Anything longer is a list of alternates, tried
+/// in the order it is written.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(transparent)]
 pub struct Keymap {
-    /// Command id to keystroke, for the commands the user has changed.
-    overrides: BTreeMap<String, String>,
+    /// Command id to keystrokes, for the commands the user has changed.
+    overrides: BTreeMap<String, Vec<String>>,
+}
+
+impl<'de> Deserialize<'de> for Keymap {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let stored = BTreeMap::<String, StoredBinding>::deserialize(deserializer)?;
+        Ok(Self {
+            overrides: stored
+                .into_iter()
+                .map(|(id, binding)| (id, binding.into()))
+                .collect(),
+        })
+    }
 }
 
 impl Keymap {
-    /// Drops overrides that name a command this build does not have, or a keystroke gpui
-    /// cannot parse.
+    /// Drops overrides that name a command this build does not have, and keystrokes gpui cannot
+    /// parse.
     ///
-    /// The file is user-editable text and survives across versions, so both are reachable
-    /// without anyone doing anything wrong — and an unparseable keystroke would otherwise
-    /// panic inside `KeyBinding::new`.
+    /// The file is user-editable text and survives across versions, so both are reachable without
+    /// anyone doing anything wrong — and an unparseable keystroke would otherwise panic inside
+    /// `KeyBinding::new`.
+    ///
+    /// A command whose *every* keystroke is unusable keeps its entry as an empty list rather than
+    /// losing it. Dropping the entry would restore the default, and a user who is looking at a
+    /// command they unbound wants it to stay unbound, not to come back on the next launch.
     fn discard_unusable(&mut self) {
-        self.overrides.retain(|id, keystroke| {
-            let usable = actions::bindable(id).is_some() && actions::is_valid_keystroke(keystroke);
-            if !usable {
-                log::warn!("ignoring key binding `{id}` = `{keystroke}`");
+        self.overrides.retain(|id, keystrokes| {
+            if actions::bindable(id).is_none() {
+                log::warn!("ignoring key bindings for unknown command `{id}`");
+                return false;
             }
-            usable
+            keystrokes.retain(|keystroke| {
+                let usable = actions::is_valid_keystroke(keystroke);
+                if !usable {
+                    log::warn!("ignoring key binding `{id}` = `{keystroke}`");
+                }
+                usable
+            });
+            true
         });
     }
 
-    /// The keystroke bound to `command`, whether default or overridden.
+    /// Every keystroke bound to `command`, whether default or overridden.
     ///
-    /// As stored, which for an untouched command is the `secondary-` spelling. Use
-    /// [`Keymap::display`] for anything a person reads.
-    pub fn keystroke(&self, command: &Bindable) -> &str {
-        self.overrides
-            .get(command.id)
-            .map(String::as_str)
-            .unwrap_or(command.default)
+    /// Empty when the user has deliberately unbound it. As stored, which for an untouched command
+    /// is the `secondary-` spelling — use [`Keymap::display`] for anything a person reads.
+    pub fn keystrokes(&self, command: &Bindable) -> Vec<&str> {
+        match self.overrides.get(command.id) {
+            Some(keystrokes) => keystrokes.iter().map(String::as_str).collect(),
+            None => vec![command.default],
+        }
     }
 
-    /// The keystroke bound to `command`, written the way this platform writes it.
+    /// The keystroke a menu shows beside `command`, or `None` when it is unbound.
     ///
-    /// `secondary-s` is how the default is stored and is not how anyone would say it out loud;
-    /// the settings window shows `cmd-s` or `ctrl-s` depending on the keyboard in front of it.
+    /// The first of them. A menu row has space for one, and the first is the one the user chose
+    /// first — an alternate is an alternate.
+    pub fn keystroke(&self, command: &Bindable) -> Option<&str> {
+        self.keystrokes(command).first().copied()
+    }
+
+    /// Every keystroke bound to `command`, written the way this platform writes it.
+    ///
+    /// `secondary-s` is how a default is stored and is not how anyone would say it out loud; the
+    /// settings window shows `cmd-s` or `ctrl-s` depending on the keyboard in front of it.
+    pub fn displays(&self, command: &Bindable) -> Vec<String> {
+        self.keystrokes(command)
+            .into_iter()
+            .map(actions::normalise_keystroke)
+            .collect()
+    }
+
+    /// The primary keystroke, written the way this platform writes it.
+    ///
+    /// Empty when the command is unbound, which is what a menu and the palette want: a row with
+    /// no keystroke beside it, rather than a row that is missing.
     pub fn display(&self, command: &Bindable) -> String {
-        actions::normalise_keystroke(self.keystroke(command))
+        self.keystroke(command)
+            .map(actions::normalise_keystroke)
+            .unwrap_or_default()
     }
 
-    /// `true` when the user has changed this command's binding.
+    /// `true` when the user has changed this command's bindings.
     pub fn is_overridden(&self, command: &Bindable) -> bool {
         self.overrides.contains_key(command.id)
     }
 
-    /// Binds `command` to `keystroke`, or clears the override when it matches the default.
+    /// `true` when the user has deliberately left this command with no keystroke at all.
+    pub fn is_unbound(&self, command: &Bindable) -> bool {
+        self.overrides
+            .get(command.id)
+            .is_some_and(|keystrokes| keystrokes.is_empty())
+    }
+
+    /// Replaces the keystroke in one slot, leaving the command's other keystrokes alone.
     ///
     /// Returns `false` for a keystroke gpui cannot parse, leaving the binding untouched.
     ///
-    /// "Matches the default" is decided after normalising, because the keyboard reports `cmd-s`
-    /// where the table says `secondary-s`. Comparing them raw would write an override every
-    /// time someone pressed a default back in, freezing today's defaults into their file.
-    pub fn set(&mut self, command: &Bindable, keystroke: &str) -> bool {
+    /// A slot past the end appends, which is what makes [`Keymap::add`] this function with the
+    /// length passed in.
+    pub fn set_at(&mut self, command: &Bindable, index: usize, keystroke: &str) -> bool {
         if !actions::is_valid_keystroke(keystroke) {
             return false;
         }
-        if actions::normalise_keystroke(keystroke) == actions::normalise_keystroke(command.default)
+        let mut keystrokes = self.owned_keystrokes(command);
+        match keystrokes.get_mut(index) {
+            Some(slot) => *slot = keystroke.to_string(),
+            None => keystrokes.push(keystroke.to_string()),
+        }
+        self.store(command, keystrokes);
+        true
+    }
+
+    /// Adds `keystroke` alongside whatever `command` already answers to.
+    ///
+    /// Returns `false` for a keystroke gpui cannot parse or one this command already has. The
+    /// duplicate check is what stops the list growing every time a user presses the same key into
+    /// the same row twice.
+    pub fn add(&mut self, command: &Bindable, keystroke: &str) -> bool {
+        if self
+            .displays(command)
+            .contains(&actions::normalise_keystroke(keystroke))
         {
+            return false;
+        }
+        self.set_at(command, self.keystrokes(command).len(), keystroke)
+    }
+
+    /// Drops the keystroke in one slot. The command is left unbound when it was the last.
+    pub fn remove_at(&mut self, command: &Bindable, index: usize) {
+        let mut keystrokes = self.owned_keystrokes(command);
+        if index >= keystrokes.len() {
+            return;
+        }
+        keystrokes.remove(index);
+        self.store(command, keystrokes);
+    }
+
+    /// This command's keystrokes, owned, so they can be edited without borrowing the map.
+    fn owned_keystrokes(&self, command: &Bindable) -> Vec<String> {
+        self.keystrokes(command)
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Writes a command's keystrokes back, dropping the override when it *is* the default.
+    ///
+    /// Compared after normalising, because the keyboard reports `cmd-s` where the table says
+    /// `secondary-s`. Comparing them raw would write an override every time someone pressed a
+    /// default back in, freezing today's defaults into their file.
+    ///
+    /// An empty list is stored rather than dropped: that is the user saying "no key at all", and
+    /// dropping it would put the default back on the next launch.
+    fn store(&mut self, command: &Bindable, keystrokes: Vec<String>) {
+        let is_default = keystrokes.len() == 1
+            && actions::normalise_keystroke(&keystrokes[0])
+                == actions::normalise_keystroke(command.default);
+        if is_default {
             self.overrides.remove(command.id);
         } else {
-            self.overrides
-                .insert(command.id.to_string(), keystroke.to_string());
+            self.overrides.insert(command.id.to_string(), keystrokes);
         }
-        true
+    }
+
+    /// Leaves `command` with no keystroke at all.
+    ///
+    /// Distinct from [`Keymap::clear`], which puts the default back. Without this there was no way
+    /// to say "not this one" — a user who did not want `space` to start playback could only move
+    /// it somewhere else and hope that somewhere was out of the way.
+    pub fn unbind(&mut self, command: &Bindable) {
+        self.overrides.insert(command.id.to_string(), Vec::new());
     }
 
     /// Restores one command to its default.
@@ -178,23 +315,34 @@ impl Keymap {
         self.overrides.remove(command.id);
     }
 
+    /// Restores every command in `group` to its default.
+    pub fn reset_group(&mut self, group: Key) {
+        for command in BINDABLE.iter().filter(|command| command.group == group) {
+            self.overrides.remove(command.id);
+        }
+    }
+
     /// Restores every command to its default.
     pub fn reset(&mut self) {
         self.overrides.clear();
     }
 
-    /// Commands currently bound to `keystroke`, other than `except`.
+    /// Commands that would answer to `keystroke` at the same time as `except` does.
     ///
-    /// A conflict is shown rather than refused: two commands on one keystroke is a mistake
-    /// worth pointing at, but the user may be in the middle of swapping a pair over.
+    /// A conflict is shown rather than refused: two commands on one keystroke is a mistake worth
+    /// pointing at, but the user may be in the middle of swapping a pair over.
     ///
-    /// Compared after normalising, so a ⌘L the user just pressed is recognised as clashing with
-    /// a default stored as `secondary-l`.
+    /// Scoped as well as compared. Two panes are never focused at once, so the same key may mean
+    /// one thing in the piano roll and another in the mixer without either being wrong — see
+    /// [`Bindable::shares_reach_with`]. Compared after normalising, so a ⌘L the user just pressed
+    /// is recognised as clashing with a default stored as `secondary-l`.
     pub fn conflicts(&self, keystroke: &str, except: &Bindable) -> Vec<&'static Bindable> {
         let wanted = actions::normalise_keystroke(keystroke);
         BINDABLE
             .iter()
-            .filter(|other| other.id != except.id && self.display(other) == wanted)
+            .filter(|other| other.id != except.id)
+            .filter(|other| other.shares_reach_with(except))
+            .filter(|other| self.displays(other).contains(&wanted))
             .collect()
     }
 
@@ -202,7 +350,12 @@ impl Keymap {
     pub fn apply(&self, cx: &mut App) {
         let bindings: Vec<KeyBinding> = BINDABLE
             .iter()
-            .map(|command| command.binding(self.keystroke(command)))
+            .flat_map(|command| {
+                self.keystrokes(command)
+                    .into_iter()
+                    .map(|keystroke| command.binding(keystroke))
+                    .collect::<Vec<_>>()
+            })
             .collect();
         actions::install_bindings(cx, bindings);
     }
@@ -220,7 +373,7 @@ mod tests {
     fn an_empty_keymap_reports_the_defaults() {
         let keymap = Keymap::default();
         let play = command("transport.play");
-        assert_eq!(keymap.keystroke(play), play.default);
+        assert_eq!(keymap.keystroke(play), Some(play.default));
         assert!(!keymap.is_overridden(play));
     }
 
@@ -229,11 +382,11 @@ mod tests {
         let mut keymap = Keymap::default();
         let play = command("transport.play");
 
-        assert!(keymap.set(play, "cmd-p"));
-        assert_eq!(keymap.keystroke(play), "cmd-p");
+        assert!(keymap.set_at(play, 0, "cmd-p"));
+        assert_eq!(keymap.keystroke(play), Some("cmd-p"));
         assert!(keymap.is_overridden(play));
 
-        assert!(keymap.set(play, play.default));
+        assert!(keymap.set_at(play, 0, play.default));
         assert!(
             !keymap.is_overridden(play),
             "an override equal to the default would freeze today's default into the file"
@@ -247,10 +400,10 @@ mod tests {
         // "only overrides are written" rule exists to prevent.
         let mut keymap = Keymap::default();
         let save = command("file.save");
-        assert!(keymap.set(save, "shift-f7"));
+        assert!(keymap.set_at(save, 0, "shift-f7"));
         assert!(keymap.is_overridden(save));
 
-        assert!(keymap.set(save, &actions::normalise_keystroke(save.default)));
+        assert!(keymap.set_at(save, 0, &actions::normalise_keystroke(save.default)));
         assert!(
             !keymap.is_overridden(save),
             "a default pressed on the keyboard was stored as an override"
@@ -280,7 +433,7 @@ mod tests {
         assert_eq!(keymap.display(command("file.save")), expected);
         assert_eq!(
             keymap.keystroke(command("file.save")),
-            "secondary-s",
+            Some("secondary-s"),
             "the stored form stays portable; only the display is localised to the keyboard"
         );
     }
@@ -289,8 +442,8 @@ mod tests {
     fn an_unparseable_keystroke_is_refused_and_changes_nothing() {
         let mut keymap = Keymap::default();
         let play = command("transport.play");
-        assert!(!keymap.set(play, "notakey-x"));
-        assert_eq!(keymap.keystroke(play), play.default);
+        assert!(!keymap.set_at(play, 0, "notakey-x"));
+        assert_eq!(keymap.keystroke(play), Some(play.default));
     }
 
     #[test]
@@ -299,9 +452,9 @@ mod tests {
         let play = command("transport.play");
         let undo = command("edit.undo");
 
-        assert!(keymap.conflicts(keymap.keystroke(play), play).is_empty());
+        assert!(keymap.conflicts(play.default, play).is_empty());
 
-        keymap.set(undo, play.default);
+        keymap.set_at(undo, 0, play.default);
         let clash = keymap.conflicts(play.default, play);
         assert_eq!(clash.len(), 1);
         assert_eq!(clash[0].id, undo.id);
@@ -316,18 +469,30 @@ mod tests {
 
     #[test]
     fn loading_discards_bindings_this_build_cannot_use() {
-        let mut keymap = Keymap {
-            overrides: BTreeMap::from([
-                ("transport.play".to_string(), "cmd-p".to_string()),
-                ("gone.in.a.later.build".to_string(), "cmd-g".to_string()),
-                ("edit.undo".to_string(), "notakey-x".to_string()),
-            ]),
-        };
+        let mut keymap: Keymap = serde_json::from_str(
+            r#"{
+                "transport.play": "cmd-p",
+                "gone.in.a.later.build": "cmd-g",
+                "edit.undo": "notakey-x",
+                "edit.redo": ["cmd-y", "notakey-z"]
+            }"#,
+        )
+        .unwrap();
         keymap.discard_unusable();
 
-        assert_eq!(keymap.keystroke(command("transport.play")), "cmd-p");
-        assert!(!keymap.is_overridden(command("edit.undo")));
-        assert_eq!(keymap.overrides.len(), 1);
+        assert_eq!(keymap.keystroke(command("transport.play")), Some("cmd-p"));
+        assert!(
+            !keymap.overrides.contains_key("gone.in.a.later.build"),
+            "a command this build does not have takes its whole entry with it"
+        );
+        assert_eq!(
+            keymap.displays(command("edit.redo")),
+            vec![actions::normalise_keystroke("cmd-y")],
+            "one bad keystroke out of two loses only itself"
+        );
+        // The one command whose every keystroke was unusable keeps its entry, empty. Dropping it
+        // would restore the default, and a command with nothing left on it reads as unbound.
+        assert!(keymap.is_unbound(command("edit.undo")));
     }
 
     #[test]
@@ -338,10 +503,13 @@ mod tests {
         let stored: StoredInput = serde_json::from_str(legacy).unwrap();
         let settings = InputSettings::from(stored);
 
-        assert_eq!(settings.keys.keystroke(command("transport.play")), "cmd-p");
+        assert_eq!(
+            settings.keys.keystroke(command("transport.play")),
+            Some("cmd-p")
+        );
         assert_eq!(
             settings.keys.keystroke(command("view.zoom_in")),
-            "cmd-shift-="
+            Some("cmd-shift-=")
         );
         assert_eq!(
             settings.pointer,
@@ -351,9 +519,129 @@ mod tests {
     }
 
     #[test]
+    fn a_file_written_before_a_command_could_hold_two_keys_keeps_its_bindings() {
+        // The value was a bare string until a command could answer to more than one keystroke.
+        // Reading only the list would parse `"cmd-p"` as malformed and throw away a binding the
+        // user had chosen — silently, since a malformed entry is dropped by design.
+        let stored = r#"{"keys":{"transport.play":"cmd-p","edit.undo":["cmd-z","f1"]}}"#;
+        let settings = InputSettings::from(serde_json::from_str::<StoredInput>(stored).unwrap());
+
+        assert_eq!(
+            settings.keys.keystrokes(command("transport.play")),
+            vec!["cmd-p"]
+        );
+        assert_eq!(
+            settings.keys.keystrokes(command("edit.undo")),
+            vec!["cmd-z", "f1"]
+        );
+    }
+
+    #[test]
+    fn a_command_can_answer_to_more_than_one_key() {
+        let mut keymap = Keymap::default();
+        let play = command("transport.play");
+
+        assert!(keymap.add(play, "f5"));
+        assert_eq!(keymap.keystrokes(play), vec![play.default, "f5"]);
+        assert_eq!(
+            keymap.keystroke(play),
+            Some(play.default),
+            "the menu shows the first; an alternate is an alternate"
+        );
+
+        assert!(
+            !keymap.add(play, "f5"),
+            "the same key twice would grow the list on every press"
+        );
+        assert!(
+            !keymap.add(play, &actions::normalise_keystroke(play.default)),
+            "and so would the default pressed back in through its platform spelling"
+        );
+        assert!(!keymap.add(play, "notakey-x"));
+        assert_eq!(keymap.keystrokes(play), vec![play.default, "f5"]);
+    }
+
+    #[test]
+    fn one_of_several_keys_can_be_replaced_or_dropped() {
+        let mut keymap = Keymap::default();
+        let play = command("transport.play");
+        keymap.add(play, "f5");
+        keymap.add(play, "f6");
+
+        assert!(keymap.set_at(play, 1, "f7"));
+        assert_eq!(keymap.keystrokes(play), vec![play.default, "f7", "f6"]);
+
+        keymap.remove_at(play, 1);
+        assert_eq!(keymap.keystrokes(play), vec![play.default, "f6"]);
+        keymap.remove_at(play, 9);
+        assert_eq!(
+            keymap.keystrokes(play),
+            vec![play.default, "f6"],
+            "a slot that is not there changes nothing"
+        );
+
+        // Down to the default alone, the override goes with it — an override equal to the
+        // default would freeze today's default into the user's file.
+        keymap.remove_at(play, 1);
+        assert!(!keymap.is_overridden(play));
+        assert_eq!(keymap.keystrokes(play), vec![play.default]);
+
+        // And down from *one* leaves it unbound rather than back on the default, because that is
+        // the only thing removing the last key can mean.
+        keymap.remove_at(play, 0);
+        assert!(keymap.is_unbound(play));
+    }
+
+    #[test]
+    fn a_command_can_be_left_with_no_key_at_all() {
+        // Distinct from restoring the default, and there was no way to say it: a user who did not
+        // want the space bar to start playback could only move it somewhere else and hope.
+        let mut keymap = Keymap::default();
+        let play = command("transport.play");
+
+        keymap.unbind(play);
+        assert!(keymap.is_unbound(play));
+        assert!(keymap.is_overridden(play));
+        assert!(keymap.keystrokes(play).is_empty());
+        assert_eq!(keymap.keystroke(play), None);
+        assert_eq!(keymap.display(play), "");
+
+        assert!(
+            keymap
+                .conflicts(play.default, command("edit.undo"))
+                .is_empty(),
+            "and it stops clashing with anything, because it answers to nothing"
+        );
+
+        keymap.clear(play);
+        assert_eq!(keymap.keystroke(play), Some(play.default));
+    }
+
+    #[test]
+    fn the_same_key_in_two_panes_is_not_a_conflict() {
+        // What the contexts are for. Two panes are never focused at once, so a key may mean one
+        // thing in the roll and another in the mixer; the window's own bindings are on the path
+        // from every pane, so those do clash with all of them.
+        let mut keymap = Keymap::default();
+        let tool = command("edit.next_tool");
+        let undo = command("edit.undo");
+        assert_eq!(tool.context, crate::actions::context::ROLL);
+        assert_eq!(undo.context, crate::actions::context::WINDOW);
+
+        keymap.set_at(undo, 0, tool.default);
+        let clash = keymap.conflicts(tool.default, tool);
+        assert_eq!(
+            clash.len(),
+            1,
+            "a window binding is reachable from the roll, so it clashes"
+        );
+        assert_eq!(clash[0].id, undo.id);
+    }
+
+    #[test]
     fn the_current_shape_round_trips() {
         let mut settings = InputSettings::default();
-        settings.keys.set(command("transport.play"), "cmd-p");
+        settings.keys.set_at(command("transport.play"), 0, "cmd-p");
         settings
             .pointer
             .set_create(crate::gestures::PointerGesture::OptionClick);
@@ -374,20 +662,42 @@ mod tests {
         let mut keymap = Keymap::default();
         assert_eq!(serde_json::to_string(&keymap).unwrap(), "{}");
 
-        keymap.set(command("view.zoom_in"), "cmd-shift-=");
+        keymap.set_at(command("view.zoom_in"), 0, "cmd-shift-=");
         let text = serde_json::to_string(&keymap).unwrap();
-        assert_eq!(text, r#"{"view.zoom_in":"cmd-shift-="}"#);
+        assert_eq!(text, r#"{"view.zoom_in":["cmd-shift-="]}"#);
+        assert_eq!(serde_json::from_str::<Keymap>(&text).unwrap(), keymap);
+
+        // And an unbinding survives the round trip as itself, not as an absent entry — the two
+        // mean opposite things.
+        keymap.unbind(command("transport.play"));
+        let text = serde_json::to_string(&keymap).unwrap();
+        assert!(text.contains(r#""transport.play":[]"#), "{text}");
         assert_eq!(serde_json::from_str::<Keymap>(&text).unwrap(), keymap);
     }
 
     #[test]
     fn reset_restores_every_default() {
         let mut keymap = Keymap::default();
-        keymap.set(command("transport.play"), "cmd-p");
-        keymap.set(command("edit.undo"), "cmd-shift-u");
+        keymap.set_at(command("transport.play"), 0, "cmd-p");
+        keymap.set_at(command("edit.undo"), 0, "cmd-shift-u");
         keymap.reset();
         for entry in BINDABLE {
-            assert_eq!(keymap.keystroke(entry), entry.default);
+            assert_eq!(keymap.keystroke(entry), Some(entry.default));
         }
+    }
+
+    #[test]
+    fn a_group_can_be_put_back_without_touching_the_rest() {
+        // `reset` was all or nothing, which is a poor trade for a user who has rearranged the
+        // transport deliberately and made one mistake in the file menu.
+        let mut keymap = Keymap::default();
+        let play = command("transport.play");
+        let save = command("file.save");
+        keymap.set_at(play, 0, "f5");
+        keymap.set_at(save, 0, "f6");
+
+        keymap.reset_group(save.group);
+        assert_eq!(keymap.keystroke(save), Some(save.default));
+        assert_eq!(keymap.keystroke(play), Some("f5"));
     }
 }

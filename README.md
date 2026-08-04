@@ -214,6 +214,24 @@ recorded size, so a different one wearing the same name is not quietly adopted. 
 written back into the document, so the search happens once rather than on every open. Anything
 genuinely gone is reported, and the project still opens with that one track silent.
 
+### Key bindings
+
+Every command is rebindable, and the settings window is where. Press a key onto a row and it takes
+that key; ＋ gives the same command a second one; — leaves it with no key at all, which is a
+different answer from putting the default back and used to be one nothing could say. Only what you
+change is written to `keymap.json`, so a later change to a default still reaches you.
+
+A binding is captured the way *this* keyboard reported it and stored the way both keyboards spell
+it, so a `keymap.json` kept in a dotfiles repository binds ⌘ on the Mac and Ctrl on the Windows
+machine from the same line.
+
+Bindings are scoped to where the keyboard is. Most of them are the window's and fire wherever you
+are; some belong to one panel, and the row says which — **T** puts the next tool in the piano
+roll's hand and does nothing while you are in the mixer. **Tab** and **⇧Tab** move between panels,
+and the one holding the keyboard is outlined. Two commands on one key in *different* panels is not
+a conflict and is not reported as one; a clash you could actually reach is shown, and allowed —
+you may be halfway through swapping a pair over.
+
 ### Settings, where dotfiles can reach them
 
 Preferences live in `~/.config/auris-studio/` on every platform — macOS and Windows included,

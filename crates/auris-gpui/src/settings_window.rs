@@ -18,6 +18,7 @@ use crate::gestures::{PointerGesture, PointerGestures};
 use crate::keymap::Keymap;
 use crate::theme::{Metrics, SCHEMES, Theme, scheme_or_default};
 use crate::ui::icons::Icon;
+use crate::ui::text_field::{HasTextField, TextField};
 use crate::ui::widgets::{ButtonStyle, button, chain_button, divider};
 
 /// Which page the settings window is showing.
@@ -51,10 +52,25 @@ pub struct SettingsWindow {
     /// Cached rather than read during render: the window is opened from inside the main
     /// view's update, and reading an entity that is already being updated panics.
     live: Option<AudioStatus>,
-    /// Command whose next keystroke is being captured, if any.
-    capturing: Option<&'static Bindable>,
+    /// Which slot the next key press is being captured into, if any.
+    capturing: Option<Capture>,
+    /// What the key list is being filtered by.
+    ///
+    /// A real text field rather than a string built from key events, because the labels are
+    /// translated: a Japanese user filtering on 「トラック」 needs the IME, and a field that reads
+    /// key events never sees a composition at all.
+    search: TextField,
     status: String,
     focus: FocusHandle,
+}
+
+/// A row of the key list, armed and waiting for a key press.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct Capture {
+    /// The command being bound.
+    command: &'static Bindable,
+    /// Which of its keystrokes is being replaced. Past the end appends another.
+    slot: usize,
 }
 
 impl Focusable for SettingsWindow {
@@ -92,6 +108,7 @@ impl SettingsWindow {
             language: Language::resolve(language_preference),
             pointer,
             capturing: None,
+            search: TextField::new(String::new()),
             status: String::new(),
             focus: cx.focus_handle(),
         }
@@ -584,82 +601,43 @@ impl SettingsWindow {
         .into_any_element()
     }
 
+    /// The commands the search box is showing.
+    ///
+    /// Matched on the group and the name together, by the same scoring the command palette uses,
+    /// so a query means the same thing in both lists. Filtered but *not* reordered: this list is
+    /// arranged under section headings, and sorting by score would scatter the sections.
+    fn found_commands(&self) -> Vec<&'static Bindable> {
+        let query = self.search.content();
+        BINDABLE
+            .iter()
+            .filter(|command| {
+                let haystack = format!("{} {}", self.t(command.group), self.t(command.label));
+                crate::ui::palette::match_score(query, &haystack).is_some()
+            })
+            .collect()
+    }
+
     fn render_keys(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
-        let capturing = self.capturing.map(|command| command.id);
+        let found = self.found_commands();
+        let search = self.render_search(cx);
 
         let mut rows: Vec<AnyElement> = Vec::new();
         let mut group: Option<Key> = None;
-        for (index, command) in BINDABLE.iter().enumerate() {
+        for command in found.iter().copied() {
             if group != Some(command.group) {
                 group = Some(command.group);
-                rows.push(section_title(self.t(command.group), &theme));
+                rows.push(self.render_group_heading(command.group, cx));
             }
-
-            let keystroke = self.keymap.display(command);
-            // Shown prettified but matched raw: `⌘S` is what belongs on the button, and
-            // `conflicts` compares against what gpui can parse.
-            let shown = crate::actions::menu_keystroke(&keystroke);
-            let is_capturing = capturing == Some(command.id);
-            let overridden = self.keymap.is_overridden(command);
-            let conflicts = self.keymap.conflicts(&keystroke, command);
-
+            rows.push(self.render_key_row(command, cx));
+        }
+        if rows.is_empty() {
             rows.push(
                 div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
                     .h(px(26.0))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_xs()
-                            .text_color(theme.text)
-                            .truncate()
-                            .child(self.t(command.label)),
-                    )
-                    .children((!conflicts.is_empty() && !is_capturing).then(|| {
-                        div()
-                            .text_xs()
-                            .text_color(theme.mute)
-                            .child(messages::also_bound_to(
-                                self.language,
-                                self.t(conflicts[0].label),
-                            ))
-                    }))
-                    .child(div().w(px(128.0)).child(button(
-                        ("bind", index),
-                        if is_capturing {
-                            self.t(Key::PressAKey).to_string()
-                        } else {
-                            shown
-                        },
-                        ButtonStyle::Normal,
-                        is_capturing,
-                        theme.accent,
-                        &theme,
-                        cx.listener(move |this, _, window, cx| {
-                            this.capturing = Some(command);
-                            // The capture reads key events, so the window must hold focus.
-                            window.focus(&this.focus);
-                            cx.notify();
-                        }),
-                    )))
-                    .child(div().w(px(20.0)).child(if overridden {
-                        chain_button(
-                            ("reset", index),
-                            Icon::Cross,
-                            &theme,
-                            cx.listener(move |this, _, _, cx| {
-                                this.keymap.clear(command);
-                                this.apply_keymap(cx);
-                            }),
-                        )
-                        .into_any_element()
-                    } else {
-                        div().into_any_element()
-                    }))
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(self.t(Key::NothingMatchesSearch))
                     .into_any_element(),
             );
         }
@@ -668,6 +646,7 @@ impl SettingsWindow {
             .flex()
             .flex_col()
             .gap_1()
+            .child(search)
             .children(rows)
             .child(div().flex().justify_end().pt_3().child(button(
                 "reset-all",
@@ -686,9 +665,280 @@ impl SettingsWindow {
             .into_any_element()
     }
 
+    /// The box that narrows the list.
+    ///
+    /// Only editable while no row is armed. The field registers itself as the window's text input
+    /// handler when it paints, and a handler registered while a row was waiting for a key press
+    /// would swallow the press into the search box instead of binding it.
+    fn render_search(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = self.theme.clone();
+        let armed = self.capturing.is_some();
+        let empty = self.search.content().is_empty();
+        div()
+            .flex()
+            .items_center()
+            .h(px(28.0))
+            .px_2()
+            .mb_2()
+            .rounded(Metrics::RADIUS_SM)
+            .bg(theme.surface_sunken)
+            .border_1()
+            .border_color(if armed { theme.border } else { theme.accent })
+            .child(if armed || empty {
+                div()
+                    .flex_1()
+                    .text_xs()
+                    .text_color(if empty { theme.text_faint } else { theme.text })
+                    .child(if empty {
+                        self.t(Key::SearchCommands).to_string()
+                    } else {
+                        self.search.content().to_string()
+                    })
+                    .into_any_element()
+            } else {
+                div()
+                    .flex_1()
+                    .h_full()
+                    .child(crate::ui::prompt::editable_text(
+                        self.search.content().to_string().into(),
+                        self.search.selection(),
+                        self.search.marked(),
+                        self.focus.clone(),
+                        cx.entity(),
+                        theme.clone(),
+                    ))
+                    .into_any_element()
+            })
+            .into_any_element()
+    }
+
+    /// A section heading, with the button that puts its whole group back.
+    fn render_group_heading(&self, group: Key, cx: &mut Context<Self>) -> AnyElement {
+        let theme = self.theme.clone();
+        let changed = BINDABLE
+            .iter()
+            .any(|command| command.group == group && self.keymap.is_overridden(command));
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(section_title(self.t(group), &theme))
+            .child(div().flex_1())
+            // Only once something in the group has been changed: a row of buttons that would all
+            // do nothing is a row of buttons that teaches the user to ignore them.
+            .children(changed.then(|| {
+                chain_button(
+                    ("reset-group", group as usize),
+                    Icon::Cross,
+                    &theme,
+                    cx.listener(move |this, _, _, cx| {
+                        this.keymap.reset_group(group);
+                        this.capturing = None;
+                        this.apply_keymap(cx);
+                    }),
+                )
+            }))
+            .into_any_element()
+    }
+
+    /// One command's row: what it is, where it reaches, and every key that runs it.
+    fn render_key_row(&self, command: &'static Bindable, cx: &mut Context<Self>) -> AnyElement {
+        let theme = self.theme.clone();
+        let id = command.id;
+        let keystrokes = self.keymap.displays(command);
+        let overridden = self.keymap.is_overridden(command);
+        let unbound = self.keymap.is_unbound(command);
+        // Every command a key would also run, not just the first. Two clashes on one keystroke
+        // used to look exactly like one.
+        let clashes: Vec<&'static str> = keystrokes
+            .iter()
+            .flat_map(|keystroke| self.keymap.conflicts(keystroke, command))
+            .map(|other| self.t(other.label))
+            .collect();
+
+        let chips: Vec<AnyElement> = keystrokes
+            .iter()
+            .enumerate()
+            .map(|(slot, keystroke)| {
+                let armed = self.capturing == Some(Capture { command, slot });
+                div()
+                    .flex()
+                    .items_center()
+                    .child(button(
+                        gpui::SharedString::from(format!("bind:{id}:{slot}")),
+                        if armed {
+                            self.t(Key::PressAKey).to_string()
+                        } else {
+                            // Shown prettified but matched raw: `⌘S` is what belongs on the
+                            // button, and `conflicts` compares against what gpui can parse.
+                            crate::actions::menu_keystroke(keystroke)
+                        },
+                        ButtonStyle::Normal,
+                        armed,
+                        theme.accent,
+                        &theme,
+                        cx.listener(move |this, _, window, cx| this.arm(command, slot, window, cx)),
+                    ))
+                    // Only once there is more than one. A cross beside the single key every
+                    // command starts with would be a second way to unbind it, in the row where
+                    // that is least often what anyone means.
+                    .children((keystrokes.len() > 1).then(|| {
+                        chain_button(
+                            gpui::SharedString::from(format!("drop:{id}:{slot}")),
+                            Icon::Cross,
+                            &theme,
+                            cx.listener(move |this, _, _, cx| {
+                                this.keymap.remove_at(command, slot);
+                                this.capturing = None;
+                                this.apply_keymap(cx);
+                            }),
+                        )
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+        // An unbound command still needs somewhere to press, or there would be no way back.
+        let adding = self.capturing
+            == Some(Capture {
+                command,
+                slot: keystrokes.len(),
+            });
+        let placeholder = (keystrokes.is_empty() && !adding).then(|| {
+            button(
+                gpui::SharedString::from(format!("bind:{id}:0")),
+                self.t(Key::NoKeystroke).to_string(),
+                ButtonStyle::Normal,
+                false,
+                theme.accent,
+                &theme,
+                cx.listener(move |this, _, window, cx| this.arm(command, 0, window, cx)),
+            )
+        });
+
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .h(px(26.0))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_xs()
+                    .text_color(theme.text)
+                    .truncate()
+                    .child(self.t(command.label)),
+            )
+            // Where the binding reaches, for the commands that do not reach everywhere.
+            .children(crate::actions::context_label(command.context).map(|scope| {
+                div()
+                    .text_xs()
+                    .text_color(theme.text_faint)
+                    .child(self.t(scope))
+            }))
+            .children((!clashes.is_empty() && self.capturing.is_none()).then(|| {
+                div()
+                    .text_xs()
+                    .text_color(theme.mute)
+                    .child(messages::also_bound_to(self.language, &clashes.join(", ")))
+            }))
+            .children(chips)
+            .children(placeholder)
+            .children(adding.then(|| {
+                button(
+                    gpui::SharedString::from(format!("bind-new:{id}")),
+                    self.t(Key::PressAKey).to_string(),
+                    ButtonStyle::Normal,
+                    true,
+                    theme.accent,
+                    &theme,
+                    |_, _, _| {},
+                )
+            }))
+            .child(chain_button(
+                gpui::SharedString::from(format!("add:{id}")),
+                Icon::Plus,
+                &theme,
+                cx.listener(move |this, _, window, cx| {
+                    let slot = this.keymap.keystrokes(command).len();
+                    this.arm(command, slot, window, cx);
+                }),
+            ))
+            .child(div().w(px(24.0)).child(if unbound {
+                div().into_any_element()
+            } else {
+                button(
+                    gpui::SharedString::from(format!("unbind:{id}")),
+                    self.t(Key::NoKeystroke).to_string(),
+                    ButtonStyle::Ghost,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(move |this, _, _, cx| {
+                        this.keymap.unbind(command);
+                        this.capturing = None;
+                        this.status =
+                            messages::binding_unbound(this.language, this.t(command.label));
+                        this.apply_keymap(cx);
+                    }),
+                )
+                .into_any_element()
+            }))
+            .child(div().w(px(20.0)).child(if overridden {
+                chain_button(
+                    gpui::SharedString::from(format!("reset:{id}")),
+                    Icon::Cross,
+                    &theme,
+                    cx.listener(move |this, _, _, cx| {
+                        this.keymap.clear(command);
+                        this.apply_keymap(cx);
+                    }),
+                )
+                .into_any_element()
+            } else {
+                div().into_any_element()
+            }))
+            .into_any_element()
+    }
+
+    /// Arms one slot of one command for the next key press.
+    fn arm(
+        &mut self,
+        command: &'static Bindable,
+        slot: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.capturing = Some(Capture { command, slot });
+        // The capture reads key events, so the window must hold focus.
+        window.focus(&self.focus);
+        cx.notify();
+    }
+
+    /// Handles a key press, and says whether it was consumed.
+    ///
+    /// Two jobs, and which one it is doing depends on whether a row is armed: filling in a
+    /// binding, or editing the search box. Characters never arrive here — those go through the
+    /// platform's input handler, which is what lets an IME compose into the search box.
+    fn on_key(
+        &mut self,
+        event: &KeyDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.capturing.is_some() {
+            self.capture_key(event, cx);
+            return true;
+        }
+        if self.tab != SettingsTab::Keys {
+            return false;
+        }
+        self.search_key(event, cx)
+    }
+
     /// Turns a captured key press into a binding.
-    fn on_key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(command) = self.capturing else {
+    fn capture_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let Some(Capture { command, slot }) = self.capturing else {
             return;
         };
         // Escape abandons the capture rather than being bound: otherwise there would be no way
@@ -704,7 +954,14 @@ impl SettingsWindow {
         // keymap.json carried to the other platform still binds the modifier a user means.
         let keystroke = crate::actions::portable_keystroke(&event.keystroke.unparse());
         self.capturing = None;
-        if self.keymap.set(command, &keystroke) {
+        // Appending goes through `add`, which refuses a key the command already answers to:
+        // pressing ＋ and then the key that is already there would otherwise list it twice.
+        let bound = if slot >= self.keymap.keystrokes(command).len() {
+            self.keymap.add(command, &keystroke)
+        } else {
+            self.keymap.set_at(command, slot, &keystroke)
+        };
+        if bound {
             let clash = self.keymap.conflicts(&keystroke, command);
             let name = self.t(command.label);
             self.status = match clash.first() {
@@ -722,7 +979,68 @@ impl SettingsWindow {
             cx.notify();
         }
     }
+
+    /// The keys the search box claims: the ones the platform does not deliver as text.
+    fn search_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
+        let shift = event.keystroke.modifiers.shift;
+        let claimed = match event.keystroke.key.as_str() {
+            "backspace" => {
+                self.search.backspace();
+                true
+            }
+            "delete" => {
+                self.search.delete_forward();
+                true
+            }
+            "left" => {
+                self.search.move_left(shift);
+                true
+            }
+            "right" => {
+                self.search.move_right(shift);
+                true
+            }
+            "home" => {
+                self.search.move_home(shift);
+                true
+            }
+            "end" => {
+                self.search.move_end(shift);
+                true
+            }
+            "a" if event.keystroke.modifiers.secondary() => {
+                self.search.select_all();
+                true
+            }
+            // Escape clears the filter rather than closing the window: the list under a query is
+            // a list with most of itself missing, and getting it back should not cost a trip
+            // through the menu.
+            "escape" if !self.search.content().is_empty() => {
+                self.search = TextField::new(String::new());
+                true
+            }
+            _ => false,
+        };
+        if claimed {
+            cx.notify();
+        }
+        claimed
+    }
 }
+
+impl HasTextField for SettingsWindow {
+    fn field(&mut self) -> Option<&mut TextField> {
+        // Only while the list is on screen and no row is waiting for a key press — the same two
+        // conditions under which the box is drawn as an editable one.
+        (self.tab == SettingsTab::Keys && self.capturing.is_none()).then_some(&mut self.search)
+    }
+
+    fn readable_field(&self) -> Option<&TextField> {
+        (self.tab == SettingsTab::Keys && self.capturing.is_none()).then_some(&self.search)
+    }
+}
+
+crate::entity_input_handler!(SettingsWindow);
 
 impl Render for SettingsWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -734,7 +1052,6 @@ impl Render for SettingsWindow {
             SettingsTab::Keys => self.render_keys(cx),
         };
         let status = self.status.clone();
-        let capturing = self.capturing.is_some();
 
         div()
             .id("settings-root")
@@ -747,14 +1064,14 @@ impl Render for SettingsWindow {
             .text_color(theme.text)
             .font(crate::theme::ui_font())
             .text_sm()
-            // While a row is armed, swallow the key so it configures the binding instead of
-            // firing whatever is currently bound to it.
-            .when(capturing, |this| {
-                this.on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+            // Swallowed only when it was wanted: a key that fills in a binding or edits the
+            // search box must not also fire whatever is bound to it, and every other key should
+            // carry on to wherever it was going.
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if this.on_key(event, window, cx) {
                     cx.stop_propagation();
-                    this.on_key(event, window, cx);
-                }))
-            })
+                }
+            }))
             .child(tabs)
             .child(
                 div()

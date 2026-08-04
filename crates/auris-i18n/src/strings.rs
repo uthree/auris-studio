@@ -184,6 +184,20 @@ strings! {
     ToolPointer { en: "Pointer", ja: "ポインタ" }
     ToolVelocity { en: "Velocity", ja: "ベロシティ" }
     CmdNextTool { en: "Next Tool", ja: "次のツール" }
+    CmdFocusNextPane { en: "Focus Next Panel", ja: "次のパネルにフォーカス" }
+    CmdFocusPreviousPane { en: "Focus Previous Panel", ja: "前のパネルにフォーカス" }
+    // Where a key binding reaches. Shown beside the commands that are not reachable everywhere.
+    ScopeLibrary { en: "in the Library", ja: "ライブラリ内" }
+    ScopeArrangement { en: "in the Arrangement", ja: "アレンジ内" }
+    ScopeRoll { en: "in the Piano Roll", ja: "ピアノロール内" }
+    ScopeMixer { en: "in the Mixer", ja: "ミキサー内" }
+    ScopeInspector { en: "in the Inspector", ja: "インスペクタ内" }
+    SearchCommands { en: "Search commands", ja: "コマンドを検索" }
+    AddKeystroke { en: "Add another key", ja: "キーを追加" }
+    UnbindCommand { en: "Use no key", ja: "キーを割り当てない" }
+    NoKeystroke { en: "—", ja: "―" }
+    RestoreGroup { en: "Restore this group", ja: "このグループを既定に戻す" }
+    NothingMatchesSearch { en: "No command matches.", ja: "一致するコマンドがありません。" }
     PointerNote {
         en: "The two cannot share a gesture; picking one that is taken swaps them.",
         ja: "2 つに同じ操作は割り当てられません。使用中のものを選ぶと入れ替わります。"

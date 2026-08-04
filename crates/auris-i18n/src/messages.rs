@@ -68,6 +68,12 @@ messages! {
         ja: "ノートを上下にドラッグ: 強さを変更 · 右クリック: メニュー"
     }
 
+    /// Confirmation that a command has been left with no keystroke at all.
+    fn binding_unbound(command: &str) {
+        en: "“{command}” now has no key.",
+        ja: "「{command}」にキーを割り当てないようにしました。"
+    }
+
     /// Which tool the roll has in hand, for the status line when the roll is not on screen.
     fn tool_in_hand(tool: &str) {
         en: "Piano roll tool: {tool}",

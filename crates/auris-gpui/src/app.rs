@@ -25,6 +25,7 @@ use gpui::{
     Window, WindowBounds, WindowHandle, WindowOptions, point, px, size,
 };
 
+use crate::actions;
 use crate::appearance::Appearance;
 use crate::gestures::PointerGestures;
 use crate::keymap::{InputSettings, Keymap};
@@ -88,6 +89,75 @@ pub enum EditorTab {
     PianoRoll,
     /// The mixer, showing every track's strip side by side.
     Mixer,
+}
+
+/// A panel the keyboard can be in.
+///
+/// What a key does depends on where focus is: `t` puts the next tool in the roll's hand and does
+/// nothing at all from the mixer. The variants are in tab order, left to right and then down,
+/// which is the order the eye reads the window in.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Pane {
+    /// The sound library, down the left-hand side.
+    Library,
+    /// The track lanes and the ruler above them.
+    Arrangement,
+    /// The bottom panel, whichever of the two editors it is showing.
+    Editor,
+    /// The inspector, down the right-hand side.
+    Inspector,
+}
+
+impl Pane {
+    /// Every pane, in tab order.
+    pub const ALL: [Pane; 4] = [
+        Pane::Library,
+        Pane::Arrangement,
+        Pane::Editor,
+        Pane::Inspector,
+    ];
+
+    /// Where this pane sits in the tab order.
+    ///
+    /// Handed to gpui, which walks its tab stops in this order and skips the ones that were not
+    /// painted — so a hidden library drops out of the cycle without anything here saying so.
+    pub fn tab_index(self) -> isize {
+        Self::ALL.iter().position(|pane| *pane == self).unwrap_or(0) as isize
+    }
+}
+
+/// A focus handle for each pane.
+///
+/// One per pane rather than one for the window, which is what lets a binding be scoped: gpui
+/// dispatches an action from whatever holds focus up through its ancestors, so a pane's key
+/// context is only on that path while the pane holds focus.
+pub struct PaneFocus {
+    library: FocusHandle,
+    arrangement: FocusHandle,
+    editor: FocusHandle,
+    inspector: FocusHandle,
+}
+
+impl PaneFocus {
+    /// Makes a handle for every pane.
+    pub fn new(cx: &mut App) -> Self {
+        Self {
+            library: cx.focus_handle(),
+            arrangement: cx.focus_handle(),
+            editor: cx.focus_handle(),
+            inspector: cx.focus_handle(),
+        }
+    }
+
+    /// The handle for one pane.
+    pub fn handle(&self, pane: Pane) -> &FocusHandle {
+        match pane {
+            Pane::Library => &self.library,
+            Pane::Arrangement => &self.arrangement,
+            Pane::Editor => &self.editor,
+            Pane::Inspector => &self.inspector,
+        }
+    }
 }
 
 /// Something the user is currently dragging.
@@ -631,6 +701,8 @@ pub struct AurisApp {
     pub(crate) auditioning: Option<(TrackId, Vec<u8>)>,
     /// Keyboard focus target, so the action bindings reach this view.
     pub(crate) focus: FocusHandle,
+    /// Focus handles for the panels, which is what scopes a binding to one of them.
+    pub(crate) panes: PaneFocus,
     /// Window height as of the last frame, used only as a fallback before the first paint.
     pub(crate) viewport_height: Pixels,
     /// Width of the arrangement body as of the last frame.
@@ -752,6 +824,7 @@ impl AurisApp {
             export: None,
             auditioning: None,
             focus: cx.focus_handle(),
+            panes: PaneFocus::new(cx),
             viewport_height: px(900.0),
             arrangement_width: px(900.0),
             canvas: CanvasBounds::default(),
@@ -795,6 +868,44 @@ impl AurisApp {
                     .map(|peaks| (*id, Arc::clone(peaks)))
             })
             .collect()
+    }
+
+    // ---------------------------------------------------------------- panes
+
+    /// The key context a pane's element should name, or `None` while a sheet is up.
+    ///
+    /// A prompt or the palette puts every binding out of reach so a text field can have the
+    /// keystrokes. The root swaps its own context for one nothing is bound to; a pane has to drop
+    /// its context altogether, because a pane that kept its name would keep matching its own
+    /// bindings — it still holds focus, and `t` would put a tool in hand instead of typing a `t`.
+    pub(crate) fn pane_context(&self, pane: Pane) -> Option<&'static str> {
+        if self.prompt.is_some() || self.palette.is_some() {
+            return None;
+        }
+        Some(match pane {
+            Pane::Library => actions::context::LIBRARY,
+            Pane::Arrangement => actions::context::ARRANGEMENT,
+            // One handle, two contexts: the bottom panel is one place the keyboard can be, and
+            // which editor is in it decides what the keys there mean.
+            Pane::Editor => match self.editor {
+                EditorTab::PianoRoll => actions::context::ROLL,
+                EditorTab::Mixer => actions::context::MIXER,
+            },
+            Pane::Inspector => actions::context::INSPECTOR,
+        })
+    }
+
+    /// Whether `pane` holds the keyboard, for the ring drawn round it.
+    ///
+    /// A scoped binding is invisible machinery unless the window says where focus is. Without the
+    /// ring, `t` working here and not there would read as the key being broken.
+    pub(crate) fn pane_focused(&self, pane: Pane, window: &Window, cx: &App) -> bool {
+        self.panes.handle(pane).contains_focused(window, cx)
+    }
+
+    /// Puts the keyboard in `pane`, which is what clicking one does.
+    pub(crate) fn focus_pane(&mut self, pane: Pane, window: &mut Window) {
+        window.focus(self.panes.handle(pane));
     }
 
     // ---------------------------------------------------------------- gestures

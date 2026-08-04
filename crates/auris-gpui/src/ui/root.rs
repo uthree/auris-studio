@@ -9,7 +9,7 @@ use gpui::{
 };
 
 use crate::actions;
-use crate::app::{AurisApp, Drag, EditorTab};
+use crate::app::{AurisApp, Drag, EditorTab, Pane};
 use crate::gestures::past_drag_threshold;
 use crate::theme::Theme;
 use crate::ui::widgets::splitter;
@@ -102,6 +102,12 @@ impl Render for AurisApp {
                 }),
             )
         });
+        // Built before the layout so each one can borrow the window to ask whether it has the
+        // keyboard, which the layout below is too deep inside a builder chain to do.
+        let library_pane = self.pane(Pane::Library, window, cx);
+        let arrangement_pane = self.pane(Pane::Arrangement, window, cx);
+        let editor_pane = self.pane(Pane::Editor, window, cx);
+        let inspector_pane = self.pane(Pane::Inspector, window, cx);
         let status = self.render_status_bar();
         let export_overlay = self.render_export_overlay(cx);
         let prompt = self.render_prompt(cx);
@@ -110,12 +116,13 @@ impl Render for AurisApp {
 
         div()
             .id("root")
-            // While something is being typed into the application's own bindings must not fire:
-            // `i` has to type an `i`, not toggle the inspector. Every binding is scoped to
-            // `Auris`, so switching the context here disables the lot in one move and lets the
-            // keystrokes through to the text input handler.
+            // While something is being typed into, the application's own bindings must not fire:
+            // `i` has to type an `i`, not toggle the inspector. Swapping the root's context for
+            // one nothing is bound to disables the window's bindings in a single move; the panes
+            // drop their contexts at the same time, in `pane_context`, which is what stops a
+            // pane-scoped binding firing from the pane that still holds focus behind the sheet.
             .key_context(if self.prompt.is_some() || self.palette.is_some() {
-                "AurisPrompt"
+                actions::context::PROMPT
             } else {
                 actions::KEY_CONTEXT
             })
@@ -157,6 +164,8 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_toggle_editor))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_open_command_palette))
+            .on_action(cx.listener(Self::on_focus_next_pane))
+            .on_action(cx.listener(Self::on_focus_previous_pane))
             // A click anywhere else dismisses an open menu-bar menu, the way a native menu bar
             // behaves. Capture phase, so it is seen even where a panel stops the event before it
             // reaches the root — but not over the bar itself, which decides for itself whether a
@@ -191,7 +200,7 @@ impl Render for AurisApp {
                     // the timeline and never a panel — a panel that shrank would move every
                     // hit test in it out from under the pointer.
                     .children(library.map(|library| {
-                        div()
+                        library_pane
                             .w(panels.library_width)
                             .flex_shrink_0()
                             .flex()
@@ -204,10 +213,13 @@ impl Render for AurisApp {
                             .flex_col()
                             .flex_1()
                             .min_w_0()
-                            .child(arrangement)
+                            // No `min_h_0` here: the arrangement asserts its own minimum height,
+                            // and a wrapper that allowed shrinking past it would let the editor
+                            // panel push the lanes out of existence.
+                            .child(arrangement_pane.flex().flex_1().child(arrangement))
                             .children(editor_splitter)
                             .children(editor.map(|editor| {
-                                div()
+                                editor_pane
                                     .h(panels.editor_height)
                                     .flex_shrink_0()
                                     .flex()
@@ -216,7 +228,7 @@ impl Render for AurisApp {
                     )
                     .children(inspector_splitter)
                     .children(inspector.map(|inspector| {
-                        div()
+                        inspector_pane
                             .w(panels.inspector_width)
                             .flex_shrink_0()
                             .flex()
@@ -235,6 +247,66 @@ impl Render for AurisApp {
 }
 
 impl AurisApp {
+    /// The wrapper that makes a panel a place the keyboard can be.
+    ///
+    /// Four things, and a panel missing any one of them is a panel whose bindings sometimes work:
+    /// a focus handle to be focused, a key context so its own bindings are on the dispatch path
+    /// while it is, a tab stop so the keyboard can get there without the mouse, and a ring so the
+    /// user can see where it went.
+    fn pane(&self, pane: Pane, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
+        let focused = self.pane_focused(pane, window, cx);
+        let ring = if focused {
+            self.theme.accent_soft
+        } else {
+            // Painted either way rather than added on focus: a border that appeared would move
+            // every hit test in the panel by a pixel at the moment the user clicked into it.
+            gpui::transparent_black()
+        };
+        div()
+            .track_focus(self.panes.handle(pane))
+            .tab_stop(true)
+            .tab_index(pane.tab_index())
+            .when_some(self.pane_context(pane), |this, context| {
+                this.key_context(context)
+            })
+            // Capture, so the panel takes the keyboard however deep in it the press lands and
+            // whatever that press goes on to do. A click on a fader is still a click on the
+            // mixer, and the handler that moves the fader stops the event before the bubble
+            // phase would ever reach here.
+            .capture_any_mouse_down(cx.listener(
+                move |this, _: &gpui::MouseDownEvent, window, cx| {
+                    this.focus_pane(pane, window);
+                    cx.notify();
+                },
+            ))
+            .border_1()
+            .border_color(ring)
+    }
+
+    /// Moves the keyboard to the next panel, or the previous one.
+    ///
+    /// gpui walks the tab stops that were actually painted, so a hidden library or a closed
+    /// editor drops out of the cycle without anything here having to know which panels are up.
+    fn on_focus_next_pane(
+        &mut self,
+        _: &actions::FocusNextPane,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus_next();
+        cx.notify();
+    }
+
+    fn on_focus_previous_pane(
+        &mut self,
+        _: &actions::FocusPreviousPane,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus_prev();
+        cx.notify();
+    }
+
     fn render_status_bar(&self) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
         let audio = self.session.audio_status();

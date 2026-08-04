@@ -15,8 +15,8 @@ mod ui;
 
 use auris_session::Settings;
 use gpui::{
-    App, AppContext, Application, Bounds, Focusable, Pixels, TitlebarOptions, WindowBounds,
-    WindowOptions, px, size,
+    App, AppContext, Application, Bounds, Pixels, TitlebarOptions, WindowBounds, WindowOptions, px,
+    size,
 };
 
 use app::AurisApp;
@@ -58,10 +58,13 @@ fn main() {
             .expect("could not open the main window");
 
         // The key bindings are dispatched to the focused view, so focus the app up front —
-        // otherwise the space bar would not start playback until something was clicked.
+        // otherwise the space bar would not start playback until something was clicked. The
+        // arrangement rather than the window itself: a binding scoped to a panel is only on the
+        // dispatch path while that panel holds the keyboard, and the arrangement is where the
+        // work starts. Everything bound at the window level is on the path from there too.
         window
             .update(cx, |view, window, cx| {
-                window.focus(&view.focus_handle(cx));
+                view.focus_pane(app::Pane::Arrangement, window);
 
                 // The close button is the last thing standing between an afternoon's work and
                 // nothing. Returning `false` keeps the window open and leaves the sheet asking.

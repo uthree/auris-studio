@@ -1,7 +1,7 @@
 //! The rename sheet, and the platform input plumbing behind it.
 //!
 //! gpui hands typed text to whichever view is registered as the window's input handler, so
-//! [`AurisApp`] implements [`EntityInputHandler`] and forwards to the open prompt's
+//! [`AurisApp`] implements [`gpui::EntityInputHandler`] and forwards to the open prompt's
 //! [`TextField`]. Registering happens inside the field's paint, which is the only place gpui
 //! allows it and conveniently also the only time a prompt is on screen.
 
@@ -11,9 +11,8 @@ use auris_i18n::{Key, messages};
 use auris_session::prelude::*;
 
 use gpui::{
-    Bounds, Context, ElementInputHandler, EntityInputHandler, IntoElement, MouseButton,
-    MouseDownEvent, Pixels, SharedString, UTF16Selection, Window, canvas, div, point, prelude::*,
-    px, size,
+    Bounds, Context, ElementInputHandler, IntoElement, MouseButton, MouseDownEvent, Pixels,
+    SharedString, Window, canvas, div, point, prelude::*, px, size,
 };
 
 use crate::app::AurisApp;
@@ -607,14 +606,19 @@ impl AurisApp {
     ///
     /// The palette first: opening it closes the rename sheet, so the two are never both open, and
     /// asking in this order means the answer does not depend on that staying true.
-    fn field(&mut self) -> Option<&mut TextField> {
+    fn writable_field(&mut self) -> Option<&mut TextField> {
         match self.palette.as_mut() {
             Some(palette) => Some(&mut palette.field),
             None => self.prompt.as_mut().and_then(Prompt::field_mut),
         }
     }
+}
 
-    /// The same field, for the one handler method that only has `&self`.
+impl crate::ui::text_field::HasTextField for AurisApp {
+    fn field(&mut self) -> Option<&mut TextField> {
+        self.writable_field()
+    }
+
     fn readable_field(&self) -> Option<&TextField> {
         match self.palette.as_ref() {
             Some(palette) => Some(&palette.field),
@@ -625,14 +629,16 @@ impl AurisApp {
     /// Puts the palette's highlight back on the first row.
     ///
     /// Typing narrows the list, and the row that inherits the highlight's position is not the row
-    /// that had it. Called from the input handler because that is where typing arrives — the key
-    /// handler never sees a character, which is what lets an IME compose into the field.
-    fn restart_palette_selection(&mut self) {
+    /// that had it. Done here because this is where typing arrives — the key handler never sees a
+    /// character, which is what lets an IME compose into the field.
+    fn text_changed(&mut self) {
         if let Some(palette) = self.palette.as_mut() {
             palette.selected = 0;
         }
     }
 }
+
+crate::entity_input_handler!(AurisApp);
 
 /// A one-line editable text element: the caret, the selection, the IME's pre-edit, and the
 /// registration that makes the platform type into it.
@@ -640,14 +646,14 @@ impl AurisApp {
 /// Everything is copied in rather than borrowed because a paint closure has to capture `'static`.
 /// Shared by the rename sheet and the command palette, which are the same field with different
 /// things underneath it.
-pub(crate) fn editable_text(
+pub(crate) fn editable_text<V: gpui::EntityInputHandler>(
     text: SharedString,
     selection: Range<usize>,
     marked: Option<Range<usize>>,
     focus: gpui::FocusHandle,
-    view: gpui::Entity<AurisApp>,
+    view: gpui::Entity<V>,
     theme: Theme,
-) -> impl IntoElement + use<> {
+) -> impl IntoElement + use<V> {
     canvas(
         |_, _, _| (),
         move |bounds, _, window, cx| {
@@ -760,145 +766,4 @@ fn paint_field(
             );
         }
     });
-}
-
-/// Text input from the platform, including anything an IME composes.
-///
-/// Every offset crossing this boundary is in UTF-16 units, which is what the platform counts in;
-/// [`TextField`] stores byte offsets, so each one is converted rather than passed through.
-impl EntityInputHandler for AurisApp {
-    fn text_for_range(
-        &mut self,
-        range_utf16: Range<usize>,
-        adjusted_range: &mut Option<Range<usize>>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<String> {
-        let field = self.field()?;
-        let range = field.byte_range(&range_utf16);
-        *adjusted_range = Some(field.utf16_range(&range));
-        Some(field.content()[range].to_string())
-    }
-
-    fn selected_text_range(
-        &mut self,
-        _ignore_disabled_input: bool,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<UTF16Selection> {
-        let field = self.field()?;
-        Some(UTF16Selection {
-            range: field.utf16_range(&field.selection()),
-            reversed: field.is_reversed(),
-        })
-    }
-
-    fn marked_text_range(
-        &self,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<Range<usize>> {
-        let field = self.readable_field()?;
-        Some(field.utf16_range(&field.marked()?))
-    }
-
-    fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
-        if let Some(field) = self.field() {
-            field.unmark();
-        }
-    }
-
-    fn replace_text_in_range(
-        &mut self,
-        range_utf16: Option<Range<usize>>,
-        text: &str,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(field) = self.field() else { return };
-        // No range means "whatever is being replaced right now" — the pre-edit if the IME is
-        // composing, the selection otherwise.
-        match range_utf16 {
-            Some(range) => {
-                let range = field.byte_range(&range);
-                field.replace(range, text);
-            }
-            None => field.insert(text),
-        }
-        self.restart_palette_selection();
-        cx.notify();
-    }
-
-    fn replace_and_mark_text_in_range(
-        &mut self,
-        range_utf16: Option<Range<usize>>,
-        new_text: &str,
-        new_selected_range_utf16: Option<Range<usize>>,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(field) = self.field() else { return };
-        let range = match range_utf16 {
-            Some(range) => field.byte_range(&range),
-            None => field.marked().unwrap_or_else(|| field.selection()),
-        };
-        // This selection is relative to `new_text`, so it is measured against that rather than
-        // against the field's own contents.
-        let selected = new_selected_range_utf16.map(|range| {
-            let start = utf16_to_byte(new_text, range.start);
-            start..utf16_to_byte(new_text, range.end).max(start)
-        });
-        field.replace_and_mark(range, new_text, selected);
-        self.restart_palette_selection();
-        cx.notify();
-    }
-
-    fn bounds_for_range(
-        &mut self,
-        _range_utf16: Range<usize>,
-        element_bounds: Bounds<Pixels>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<Bounds<Pixels>> {
-        // Good enough to put the candidate window under the field. Placing it under the
-        // composing characters themselves would need the shaped line, which only exists during
-        // paint, and the difference is a few pixels of horizontal offset.
-        Some(element_bounds)
-    }
-
-    fn character_index_for_point(
-        &mut self,
-        _point: gpui::Point<Pixels>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<usize> {
-        None
-    }
-}
-
-/// Converts a UTF-16 offset into a byte offset within `text`.
-fn utf16_to_byte(text: &str, offset: usize) -> usize {
-    let mut utf16 = 0;
-    for (index, ch) in text.char_indices() {
-        if utf16 >= offset {
-            return index;
-        }
-        utf16 += ch.len_utf16();
-    }
-    text.len()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn utf16_offsets_inside_the_ime_s_own_text_are_converted() {
-        assert_eq!(utf16_to_byte("かな", 0), 0);
-        assert_eq!(utf16_to_byte("かな", 1), 3);
-        assert_eq!(utf16_to_byte("かな", 2), 6);
-        assert_eq!(utf16_to_byte("かな", 9), 6, "past the end is the end");
-        // A surrogate pair is two UTF-16 units and four bytes.
-        assert_eq!(utf16_to_byte("𝄞x", 2), 4);
-    }
 }

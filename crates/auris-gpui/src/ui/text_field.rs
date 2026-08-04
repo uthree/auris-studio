@@ -264,9 +264,182 @@ impl TextField {
     }
 }
 
+/// A view the platform can type into.
+///
+/// One field at a time — whichever sheet, palette or box currently owns the keyboard. Two views
+/// implement it now, and the conversions between the platform's UTF-16 offsets and the field's
+/// byte offsets are fiddly enough that two copies of them would mean one that is subtly wrong.
+pub trait HasTextField {
+    /// The field being typed into, if any.
+    fn field(&mut self) -> Option<&mut TextField>;
+
+    /// The same field, for the one handler method that only has `&self`.
+    fn readable_field(&self) -> Option<&TextField>;
+
+    /// Run after the text changes, for a view with something to keep in step with it.
+    ///
+    /// Typing arrives here rather than at a key handler — that is what lets an IME compose into
+    /// the field — so anything derived from the text has nowhere else to learn that it moved.
+    fn text_changed(&mut self) {}
+}
+
+/// Writes [`gpui::EntityInputHandler`] for a view that implements [`HasTextField`].
+///
+/// A macro rather than a blanket implementation because the orphan rule forbids one: the trait is
+/// gpui's and a blanket impl over a type parameter names no local type.
+#[macro_export]
+macro_rules! entity_input_handler {
+    ($view:ty) => {
+        /// Text input from the platform, including anything an IME composes.
+        ///
+        /// Every offset crossing this boundary is in UTF-16 units, which is what the platform
+        /// counts in; `TextField` stores byte offsets, so each one is converted rather than
+        /// passed through.
+        impl ::gpui::EntityInputHandler for $view {
+            fn text_for_range(
+                &mut self,
+                range_utf16: ::std::ops::Range<usize>,
+                adjusted_range: &mut Option<::std::ops::Range<usize>>,
+                _window: &mut ::gpui::Window,
+                _cx: &mut ::gpui::Context<Self>,
+            ) -> Option<String> {
+                let field = $crate::ui::text_field::HasTextField::field(self)?;
+                let range = field.byte_range(&range_utf16);
+                *adjusted_range = Some(field.utf16_range(&range));
+                Some(field.content()[range].to_string())
+            }
+
+            fn selected_text_range(
+                &mut self,
+                _ignore_disabled_input: bool,
+                _window: &mut ::gpui::Window,
+                _cx: &mut ::gpui::Context<Self>,
+            ) -> Option<::gpui::UTF16Selection> {
+                let field = $crate::ui::text_field::HasTextField::field(self)?;
+                Some(::gpui::UTF16Selection {
+                    range: field.utf16_range(&field.selection()),
+                    reversed: field.is_reversed(),
+                })
+            }
+
+            fn marked_text_range(
+                &self,
+                _window: &mut ::gpui::Window,
+                _cx: &mut ::gpui::Context<Self>,
+            ) -> Option<::std::ops::Range<usize>> {
+                let field = $crate::ui::text_field::HasTextField::readable_field(self)?;
+                Some(field.utf16_range(&field.marked()?))
+            }
+
+            fn unmark_text(
+                &mut self,
+                _window: &mut ::gpui::Window,
+                _cx: &mut ::gpui::Context<Self>,
+            ) {
+                if let Some(field) = $crate::ui::text_field::HasTextField::field(self) {
+                    field.unmark();
+                }
+            }
+
+            fn replace_text_in_range(
+                &mut self,
+                range_utf16: Option<::std::ops::Range<usize>>,
+                text: &str,
+                _window: &mut ::gpui::Window,
+                cx: &mut ::gpui::Context<Self>,
+            ) {
+                let Some(field) = $crate::ui::text_field::HasTextField::field(self) else {
+                    return;
+                };
+                // No range means "whatever is being replaced right now" — the pre-edit if the
+                // IME is composing, the selection otherwise.
+                match range_utf16 {
+                    Some(range) => {
+                        let range = field.byte_range(&range);
+                        field.replace(range, text);
+                    }
+                    None => field.insert(text),
+                }
+                $crate::ui::text_field::HasTextField::text_changed(self);
+                ::gpui::Context::notify(cx);
+            }
+
+            fn replace_and_mark_text_in_range(
+                &mut self,
+                range_utf16: Option<::std::ops::Range<usize>>,
+                new_text: &str,
+                new_selected_range_utf16: Option<::std::ops::Range<usize>>,
+                _window: &mut ::gpui::Window,
+                cx: &mut ::gpui::Context<Self>,
+            ) {
+                let Some(field) = $crate::ui::text_field::HasTextField::field(self) else {
+                    return;
+                };
+                let range = match range_utf16 {
+                    Some(range) => field.byte_range(&range),
+                    None => field.marked().unwrap_or_else(|| field.selection()),
+                };
+                // This selection is relative to `new_text`, so it is measured against that
+                // rather than against the field's own contents.
+                let selected = new_selected_range_utf16.map(|range| {
+                    let start = $crate::ui::text_field::utf16_to_byte(new_text, range.start);
+                    start..$crate::ui::text_field::utf16_to_byte(new_text, range.end).max(start)
+                });
+                field.replace_and_mark(range, new_text, selected);
+                $crate::ui::text_field::HasTextField::text_changed(self);
+                ::gpui::Context::notify(cx);
+            }
+
+            fn bounds_for_range(
+                &mut self,
+                _range_utf16: ::std::ops::Range<usize>,
+                element_bounds: ::gpui::Bounds<::gpui::Pixels>,
+                _window: &mut ::gpui::Window,
+                _cx: &mut ::gpui::Context<Self>,
+            ) -> Option<::gpui::Bounds<::gpui::Pixels>> {
+                // Good enough to put the candidate window under the field. Placing it under the
+                // composing characters themselves would need the shaped line, which only exists
+                // during paint, and the difference is a few pixels of horizontal offset.
+                Some(element_bounds)
+            }
+
+            fn character_index_for_point(
+                &mut self,
+                _point: ::gpui::Point<::gpui::Pixels>,
+                _window: &mut ::gpui::Window,
+                _cx: &mut ::gpui::Context<Self>,
+            ) -> Option<usize> {
+                None
+            }
+        }
+    };
+}
+
+/// Converts a UTF-16 offset into a byte offset within `text`.
+pub fn utf16_to_byte(text: &str, offset: usize) -> usize {
+    let mut utf16 = 0;
+    for (index, ch) in text.char_indices() {
+        if utf16 >= offset {
+            return index;
+        }
+        utf16 += ch.len_utf16();
+    }
+    text.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn utf16_offsets_inside_the_ime_s_own_text_are_converted() {
+        assert_eq!(utf16_to_byte("かな", 0), 0);
+        assert_eq!(utf16_to_byte("かな", 1), 3);
+        assert_eq!(utf16_to_byte("かな", 2), 6);
+        assert_eq!(utf16_to_byte("かな", 9), 6, "past the end is the end");
+        // A surrogate pair is two UTF-16 units and four bytes.
+        assert_eq!(utf16_to_byte("𝄞x", 2), 4);
+    }
 
     /// A range whose end precedes its start, which is nonsense the platform can still hand over.
     ///

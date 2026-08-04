@@ -67,8 +67,36 @@ actions!(
         OpenSettings,
         /// Open the command palette.
         OpenCommandPalette,
+        /// Move keyboard focus to the next panel.
+        FocusNextPane,
+        /// Move keyboard focus to the previous panel.
+        FocusPreviousPane,
     ]
 );
+
+/// The key contexts a binding can be scoped to.
+///
+/// gpui dispatches an action from whatever holds focus up through its ancestors, matching each
+/// binding's context against the names it passes on the way. [`context::WINDOW`] sits at the root and is
+/// therefore always on that path; a pane's name is only on it while that pane holds focus. That
+/// is what lets `t` mean one thing in the piano roll without meaning it everywhere.
+pub mod context {
+    /// The window. A binding here fires wherever focus is.
+    pub const WINDOW: &str = "Auris";
+    /// A sheet or the palette is up. Nothing is bound here, which is how a text field gets its
+    /// keystrokes: `i` has to type an `i` rather than toggle the inspector.
+    pub const PROMPT: &str = "AurisPrompt";
+    /// The sound library, down the left-hand side.
+    pub const LIBRARY: &str = "AurisLibrary";
+    /// The track lanes and the ruler above them.
+    pub const ARRANGEMENT: &str = "AurisArrangement";
+    /// The piano roll, when the bottom panel is showing it.
+    pub const ROLL: &str = "AurisRoll";
+    /// The mixer, when the bottom panel is showing it.
+    pub const MIXER: &str = "AurisMixer";
+    /// The inspector, down the right-hand side.
+    pub const INSPECTOR: &str = "AurisInspector";
+}
 
 /// One command the user can rebind.
 ///
@@ -84,6 +112,8 @@ pub struct Bindable {
     pub group: Key,
     /// Name shown to the user.
     pub label: Key,
+    /// Where the command can be reached from. One of the names in [`context`].
+    pub context: &'static str,
     /// Keystroke used when the user has not chosen one.
     pub default: &'static str,
     bind: fn(&str) -> KeyBinding,
@@ -113,26 +143,39 @@ impl Bindable {
     pub fn action(&self) -> Box<dyn Action> {
         (self.make)()
     }
+
+    /// Whether both commands can be reached from the same place, and so could clash on a key.
+    ///
+    /// Two panes are never focused at once, so the same keystroke may mean one thing in the piano
+    /// roll and another in the mixer without either being wrong — reporting that as a conflict
+    /// would be reporting the point of having contexts at all. A pane's context sits *inside*
+    /// the window's, though, so anything bound at the window level is reachable from every pane
+    /// and does clash with all of them.
+    pub fn shares_reach_with(&self, other: &Bindable) -> bool {
+        self.context == other.context
+            || self.context == context::WINDOW
+            || other.context == context::WINDOW
+    }
 }
 
-/// Key context the bindings are scoped to.
+/// Key context the window itself is in.
 ///
-/// Scoped rather than global so a text field can switch them off wholesale: with `space` bound
-/// everywhere, typing a space into a rename box would start playback instead.
-pub const KEY_CONTEXT: &str = "Auris";
+/// Kept as its own name because the root element names it directly. See [`context`] for the rest.
+pub const KEY_CONTEXT: &str = context::WINDOW;
 
 macro_rules! bindable {
-    ($($id:literal, $group:ident, $label:ident, $default:literal => $action:ident;)*) => {
+    ($($context:path => { $($id:literal, $group:ident, $label:ident, $default:literal => $action:ident;)* })*) => {
         /// Every command the settings window offers to rebind, in display order.
         pub const BINDABLE: &[Bindable] = &[
-            $(Bindable {
+            $($(Bindable {
                 id: $id,
                 group: Key::$group,
                 label: Key::$label,
+                context: $context,
                 default: $default,
-                bind: |keys| KeyBinding::new(keys, $action, Some(KEY_CONTEXT)),
+                bind: |keys| KeyBinding::new(keys, $action, Some($context)),
                 make: || Box::new($action),
-            },)*
+            },)*)*
         ];
     };
 }
@@ -141,47 +184,72 @@ macro_rules! bindable {
 // which is what each platform's users already have in their fingers. Writing `cmd` would bind
 // the Windows key off a Mac, and the shell takes most of those combinations first.
 bindable! {
-    "transport.play",       GroupTransport, CmdPlayStop,           "space"       => TogglePlay;
-    "transport.return",     GroupTransport, CmdReturnToZero,       "enter"       => ReturnToZero;
-    "transport.loop",       GroupTransport, CmdToggleCycle,        "secondary-l" => ToggleLoop;
-    "transport.panic",      GroupTransport, CmdPanic,              "escape"      => PanicStop;
+    context::WINDOW => {
+        "transport.play",       GroupTransport, CmdPlayStop,           "space"       => TogglePlay;
+        "transport.return",     GroupTransport, CmdReturnToZero,       "enter"       => ReturnToZero;
+        "transport.loop",       GroupTransport, CmdToggleCycle,        "secondary-l" => ToggleLoop;
+        "transport.panic",      GroupTransport, CmdPanic,              "escape"      => PanicStop;
 
-    "file.new",             GroupFile,      CmdNewProject,         "secondary-n" => NewProject;
-    "file.open",            GroupFile,      CmdOpenProject,        "secondary-o" => OpenProject;
-    "file.compose",         GroupFile,      CmdComposeSong,        "secondary-shift-c" => ComposeSong;
-    "file.save",            GroupFile,      CmdSave,               "secondary-s" => SaveProject;
-    "file.save_as",         GroupFile,      CmdSaveAs,             "secondary-shift-s" => SaveProjectAs;
-    "file.import",          GroupFile,      CmdImportAudio,        "secondary-i" => ImportAudio;
-    "file.import_soundfont", GroupFile,     CmdImportSoundFont,    "secondary-shift-i" => ImportSoundFont;
-    "file.collect",         GroupFile,      CmdCollectAssets,      "secondary-shift-a" => CollectAssets;
-    "file.export",          GroupFile,      CmdExportWav,          "secondary-e" => ExportAudio;
-    "file.quit",            GroupFile,      CmdQuit,               "secondary-q" => Quit;
+        "file.new",             GroupFile,      CmdNewProject,         "secondary-n" => NewProject;
+        "file.open",            GroupFile,      CmdOpenProject,        "secondary-o" => OpenProject;
+        "file.compose",         GroupFile,      CmdComposeSong,        "secondary-shift-c" => ComposeSong;
+        "file.save",            GroupFile,      CmdSave,               "secondary-s" => SaveProject;
+        "file.save_as",         GroupFile,      CmdSaveAs,             "secondary-shift-s" => SaveProjectAs;
+        "file.import",          GroupFile,      CmdImportAudio,        "secondary-i" => ImportAudio;
+        "file.import_soundfont", GroupFile,     CmdImportSoundFont,    "secondary-shift-i" => ImportSoundFont;
+        "file.collect",         GroupFile,      CmdCollectAssets,      "secondary-shift-a" => CollectAssets;
+        "file.export",          GroupFile,      CmdExportWav,          "secondary-e" => ExportAudio;
+        "file.quit",            GroupFile,      CmdQuit,               "secondary-q" => Quit;
 
-    "edit.undo",            GroupEdit,      CmdUndo,               "secondary-z" => Undo;
-    "edit.redo",            GroupEdit,      CmdRedo,               "secondary-shift-z" => Redo;
-    "edit.delete",          GroupEdit,      CmdDeleteSelection,    "backspace"   => DeleteSelection;
-    // `t` is Logic's own tool key, where pressing it twice swaps back to the tool before. With
-    // two tools that is exactly a cycle, so it is one command rather than one per tool.
-    "edit.next_tool",       GroupEdit,      CmdNextTool,           "t"           => NextTool;
+        "edit.undo",            GroupEdit,      CmdUndo,               "secondary-z" => Undo;
+        "edit.redo",            GroupEdit,      CmdRedo,               "secondary-shift-z" => Redo;
+        "edit.delete",          GroupEdit,      CmdDeleteSelection,    "backspace"   => DeleteSelection;
 
-    "track.add_instrument", GroupTrack,     CmdAddInstrumentTrack, "secondary-t" => AddInstrumentTrack;
-    "track.add_audio",      GroupTrack,     CmdAddAudioTrack,      "secondary-shift-t" => AddAudioTrack;
-    "track.delete",         GroupTrack,     CmdDeleteTrack,        "secondary-backspace" => DeleteTrack;
+        "track.add_instrument", GroupTrack,     CmdAddInstrumentTrack, "secondary-t" => AddInstrumentTrack;
+        "track.add_audio",      GroupTrack,     CmdAddAudioTrack,      "secondary-shift-t" => AddAudioTrack;
+        "track.delete",         GroupTrack,     CmdDeleteTrack,        "secondary-backspace" => DeleteTrack;
 
-    // `y` is Logic's own Library key, and it is free here.
-    "view.library",         GroupView,      CmdShowLibrary,        "y"           => ToggleLibrary;
-    "view.inspector",       GroupView,      CmdShowInspector,      "i"           => ToggleInspector;
-    "view.editor",          GroupView,      CmdShowEditor,         "p"           => ToggleEditor;
-    "view.zoom_in",         GroupView,      CmdZoomIn,             "secondary-=" => ZoomIn;
-    "view.zoom_out",        GroupView,      CmdZoomOut,            "secondary--" => ZoomOut;
-    "view.settings",        GroupView,      CmdSettings,           "secondary-," => OpenSettings;
-    // What VS Code and Zed both use, and free here — `p` alone already shows the editor.
-    "view.palette",         GroupView,      CmdCommandPalette,     "secondary-shift-p" => OpenCommandPalette;
+        // `y` is Logic's own Library key, and it is free here.
+        "view.library",         GroupView,      CmdShowLibrary,        "y"           => ToggleLibrary;
+        "view.inspector",       GroupView,      CmdShowInspector,      "i"           => ToggleInspector;
+        "view.editor",          GroupView,      CmdShowEditor,         "p"           => ToggleEditor;
+        "view.zoom_in",         GroupView,      CmdZoomIn,             "secondary-=" => ZoomIn;
+        "view.zoom_out",        GroupView,      CmdZoomOut,            "secondary--" => ZoomOut;
+        "view.settings",        GroupView,      CmdSettings,           "secondary-," => OpenSettings;
+        // What VS Code and Zed both use, and free here — `p` alone already shows the editor.
+        "view.palette",         GroupView,      CmdCommandPalette,     "secondary-shift-p" => OpenCommandPalette;
+        "view.focus_next",      GroupView,      CmdFocusNextPane,      "tab"         => FocusNextPane;
+        "view.focus_previous",  GroupView,      CmdFocusPreviousPane,  "shift-tab"   => FocusPreviousPane;
+    }
+
+    // Scoped to the roll, which is what having contexts buys: `t` is a bare letter, and a bare
+    // letter that fired everywhere would change a mode the user cannot see while they are looking
+    // at the mixer. It is Logic's own tool key, where pressing it twice swaps back to the tool
+    // before — with two tools that is exactly a cycle, so it is one command rather than one per
+    // tool.
+    context::ROLL => {
+        "edit.next_tool",       GroupEdit,      CmdNextTool,           "t"           => NextTool;
+    }
 }
 
 /// The bindable command with this id.
 pub fn bindable(id: &str) -> Option<&'static Bindable> {
     BINDABLE.iter().find(|entry| entry.id == id)
+}
+
+/// What a key context is called, for the settings window to say where a command lives.
+///
+/// `None` for the window's own context, which is where nearly every command is: a chip on nearly
+/// every row would be a column of noise, and its absence says "everywhere" perfectly well.
+pub fn context_label(context: &str) -> Option<Key> {
+    match context {
+        context::LIBRARY => Some(Key::ScopeLibrary),
+        context::ARRANGEMENT => Some(Key::ScopeArrangement),
+        context::ROLL => Some(Key::ScopeRoll),
+        context::MIXER => Some(Key::ScopeMixer),
+        context::INSPECTOR => Some(Key::ScopeInspector),
+        _ => None,
+    }
 }
 
 /// `keystroke` written the way this platform writes it.
@@ -384,16 +452,76 @@ mod tests {
     }
 
     #[test]
-    fn no_two_commands_share_a_default_keystroke() {
+    fn no_two_commands_that_can_be_reached_together_share_a_default() {
         // Compared as this platform writes them: two defaults spelled differently could still
-        // resolve to the same physical keys.
-        let mut seen: BTreeSet<String> = BTreeSet::new();
+        // resolve to the same physical keys. Scoped as well, because two panes are never focused
+        // at once — the same key meaning one thing in the roll and another in the mixer is the
+        // point of having contexts, not a collision.
+        for (index, entry) in BINDABLE.iter().enumerate() {
+            for other in &BINDABLE[index + 1..] {
+                if !entry.shares_reach_with(other) {
+                    continue;
+                }
+                assert_ne!(
+                    normalise_keystroke(entry.default),
+                    normalise_keystroke(other.default),
+                    "`{}` collides with `{}` on `{}`",
+                    entry.id,
+                    other.id,
+                    entry.default
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_pane_binding_is_shadowed_by_nothing_and_shadows_nothing_across_panes() {
+        let window = BINDABLE
+            .iter()
+            .find(|entry| entry.context == context::WINDOW)
+            .expect("the window holds most of the commands");
+        let roll = BINDABLE
+            .iter()
+            .find(|entry| entry.context == context::ROLL)
+            .expect("the roll has at least the tool key");
+
+        let reason = "the window's context is on the dispatch path to every pane";
+        assert!(window.shares_reach_with(roll), "{reason}");
+        assert!(roll.shares_reach_with(window), "{reason}");
+        assert!(roll.shares_reach_with(roll));
+
+        // The relation is what conflict detection rests on, so it has to be symmetric.
+        for a in BINDABLE {
+            for b in BINDABLE {
+                assert_eq!(a.shares_reach_with(b), b.shares_reach_with(a));
+            }
+        }
+    }
+
+    #[test]
+    fn every_command_names_a_context_that_exists() {
+        // A typo would parse as an identifier gpui never sees on the dispatch path, and the
+        // binding would simply never fire — with nothing anywhere to say why.
+        const CONTEXTS: &[&str] = &[
+            context::WINDOW,
+            context::LIBRARY,
+            context::ARRANGEMENT,
+            context::ROLL,
+            context::MIXER,
+            context::INSPECTOR,
+        ];
         for entry in BINDABLE {
             assert!(
-                seen.insert(normalise_keystroke(entry.default)),
-                "`{}` collides with another default on `{}`",
+                CONTEXTS.contains(&entry.context),
+                "`{}` is scoped to `{}`, which is not a context",
                 entry.id,
-                entry.default
+                entry.context
+            );
+            assert_ne!(
+                entry.context,
+                context::PROMPT,
+                "`{}` is bound where the whole point is that nothing is",
+                entry.id
             );
         }
     }

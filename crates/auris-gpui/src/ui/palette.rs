@@ -195,7 +195,12 @@ impl AurisApp {
     /// Every command the palette offers, with the keystrokes actually bound to them.
     pub(crate) fn palette_entries(&self) -> Vec<PaletteEntry> {
         entries(self.language(), |command| {
-            self.keymap.keystroke(command).to_string()
+            // Empty for a command the user has unbound, which the palette shows as a row with no
+            // keystroke beside it — the command is still there to be run, it just has no key.
+            self.keymap
+                .keystroke(command)
+                .unwrap_or_default()
+                .to_string()
         })
     }
 
