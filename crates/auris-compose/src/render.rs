@@ -254,10 +254,10 @@ mod tests {
     /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
     /// a bug or a decision, and this is what makes anyone look.
     ///
-    /// It last moved when a comp stopped choosing a figure per bar and chose one per section
-    /// instead: 222 notes to 130, because the whole section now gets whichever figure came out of
-    /// one draw rather than an average of eight. Everything that moves it is in the `chords`
-    /// part — the melody, the bass and the kit have been note for note the same throughout.
+    /// It last moved when the held chord was weighted down out of a comp's way and dropping the
+    /// fifth stopped being a no-op on a triad. Everything that has moved it so far is in the
+    /// `chords` part — the melody, the bass and the kit have been note for note the same
+    /// throughout, which is what says the blast radius has been the intended one every time.
     #[test]
     fn the_composer_writes_what_it_wrote_before() {
         // A chart nobody asked for is the composer's own, and so the only kind it colours. In a
@@ -267,7 +267,7 @@ mod tests {
                 "form: verse\nkey: C major\nseed: 7\ntension: 0.95\n[section verse]\nbars: 8"
             ),
             "verse·1 C major | C→Cmaj7 G Am F→Fmaj7 C→Cmaj7 G→Gmaj7 Am→Am9 F |\n\
-             130 notes, digest 2676ceb09a6b2a2b\n"
+             133 notes, digest f8264e14061e3532\n"
         );
 
         // The same in a minor key. `Fm→Gbm` is the borrow that has no spelling: `vi` read in the
@@ -279,7 +279,7 @@ mod tests {
                 "form: verse\nkey: A minor\nseed: 1\nmood: tense\n[section verse]\nbars: 8"
             ),
             "verse·1 A minor | A→Amaj7 E Fm→Fm7 D A→Amaj7 E→Emaj7 Fm→Gbm D→Dmaj7 |\n\
-             215 notes, digest 55e25a444cdfb7d5\n"
+             203 notes, digest 192c401e1bd094a8\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats.
@@ -288,7 +288,7 @@ mod tests {
             "intro·1 C major | C G Am F |\n\
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
-             582 notes, digest a3a87d94b578ff63\n"
+             563 notes, digest 7ead73fafcc0bc34\n"
         );
 
         // A transposed section, which is about to become a key change on the timeline.
@@ -299,7 +299,7 @@ mod tests {
             ),
             "verse·1 C major | Fmaj7 E7 Am7 C7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
-             141 notes, digest a5997b3551e20fd9\n"
+             177 notes, digest 718f97d8deda9866\n"
         );
     }
 

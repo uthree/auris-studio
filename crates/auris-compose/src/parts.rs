@@ -56,6 +56,12 @@ pub struct ScoreSettings {
     pub swing: u8,
     /// How far timing and velocity wander, from 0 for a machine to 1 for a sloppy band.
     pub humanize: f32,
+    /// How far apart the hardest and softest notes are struck, from 0 to 1.
+    ///
+    /// Distinct from how hard the part is played, which is the section's intensity: this is how
+    /// much the playing varies *around* that. It is the one dial the metric hierarchy answers to,
+    /// so it reaches every accent and every phrase shape rather than one writer's idea of them.
+    pub dynamics: f32,
     /// How much a repeat departs from what the section played the first time.
     pub variation: f32,
     /// Which drum groove the rhythm section plays.
@@ -68,6 +74,7 @@ impl From<&SongSpec> for ScoreSettings {
             mood: spec.mood,
             swing: spec.swing,
             humanize: spec.humanize,
+            dynamics: spec.dynamics,
             variation: spec.variation,
             groove: spec.groove.clone(),
         }
@@ -183,7 +190,11 @@ fn pick_figure(rng: &mut Rng, busy: f32) -> CompFigure {
     ];
     FIGURES[rng
         .weighted(&[
-            0.2 + (1.0 - busy) * 2.0,
+            // Weighted far below where it started. Now that a figure lasts a whole section,
+            // drawing the held chord means holding one chord for the whole of it — which is a
+            // pad played by the wrong part, and the pad is the part that does it properly:
+            // it sustains what two chords have in common instead of striking them again.
+            0.1 + (1.0 - busy) * 0.8,
             1.0,
             0.2 + busy,
             0.2 + busy * 1.6,
@@ -260,10 +271,33 @@ fn shorten(part: &PartSpec, notes: &mut [Draft]) {
     }
 }
 
+/// The grid weight the spread opens around.
+///
+/// The offbeat eighth, which is not the middle of the hierarchy but is close to the middle of
+/// what actually gets written: four steps of a sixteen-step bar carry a beat and twelve do not,
+/// and a part that favours the strong steps still puts most of its notes on the weak ones. Taking
+/// the *hierarchy's* midpoint would have made flattening the dynamics audibly louder rather than
+/// audibly flatter, which is the one thing this is meant not to do.
+const MEAN_WEIGHT: f32 = 1.0;
+
 /// A velocity for a note at grid weight `weight` in a section of `intensity`.
-fn velocity(weight: u8, intensity: f32) -> f32 {
-    let base = 0.45 + f32::from(weight) * 0.11;
+///
+/// `dynamics` opens the spread *around* the level rather than raising the top of it, which is why
+/// it is measured from a beat and not from zero. Widening it otherwise would quietly play the
+/// whole part louder, and a control that changes two things is a control nobody can aim.
+fn velocity(weight: u8, intensity: f32, dynamics: f32) -> f32 {
+    let spread = (f32::from(weight) - MEAN_WEIGHT) * 0.11 * dynamics.clamp(0.0, 1.0);
+    let base = 0.45 + MEAN_WEIGHT * 0.11 + spread;
     (base * (0.7 + 0.35 * intensity)).clamp(0.08, 1.0)
+}
+
+/// A multiplier scaled toward 1 by `dynamics`.
+///
+/// Every other source of variation — an accent, the lean across a phrase — arrives as a factor
+/// either side of unity, and flattening the hierarchy while leaving those at full strength would
+/// leave a dial at zero still not flat. This is what makes it mean the same thing everywhere.
+fn dynamic(factor: f32, dynamics: f32) -> f32 {
+    1.0 + (factor - 1.0) * dynamics.clamp(0.0, 1.0)
 }
 
 /// How hard a moment of a section is played, as a multiplier on its notes' velocity.
@@ -274,7 +308,7 @@ fn velocity(weight: u8, intensity: f32) -> f32 {
 /// section as a whole, which is what a player does to a repeated figure without being asked to.
 ///
 /// Every part reads it, so the band leans together rather than one instrument at a time.
-fn phrase_shape(grid: Grid, section: &SectionPlan, at: Ticks) -> f32 {
+fn phrase_shape(grid: Grid, section: &SectionPlan, at: Ticks, dynamics: f32) -> f32 {
     let bar = (at.raw().max(0) / grid.bar_ticks().raw().max(1)) as usize;
     let within = (bar % 4) as f32 / 3.0;
     let through = if section.bars <= 1 {
@@ -282,7 +316,7 @@ fn phrase_shape(grid: Grid, section: &SectionPlan, at: Ticks) -> f32 {
     } else {
         (bar.min(section.bars - 1)) as f32 / (section.bars - 1) as f32
     };
-    0.88 + 0.10 * within + 0.08 * through
+    dynamic(0.88 + 0.10 * within + 0.08 * through, dynamics)
 }
 
 /// The stream one bar of one pass draws its material from.
@@ -555,9 +589,9 @@ fn melody(
             notes.push(Draft {
                 section: index,
                 pitch: pitch.clamp(0, 127) as u8,
-                velocity: (velocity(weight, section.intensity)
-                    * cell.accent.scale()
-                    * phrase_shape(grid, section, at))
+                velocity: (velocity(weight, section.intensity, settings.dynamics)
+                    * dynamic(cell.accent.scale(), settings.dynamics)
+                    * phrase_shape(grid, section, at, settings.dynamics))
                 .clamp(0.05, 1.0),
                 start: section.start + at,
                 length: grid.step_ticks() * cell.length.max(1) as i64,
@@ -608,9 +642,12 @@ fn comp(
 ) -> Vec<Draft> {
     let grid = part_grid(frame, part);
     let (low, high) = part.range();
-    let mut notes = Vec::new();
-    let held = part.role == Role::Pad;
+    let mut notes: Vec<Draft> = Vec::new();
+    let pad = part.role == Role::Pad;
     let mut previous: Vec<i32> = Vec::new();
+    // Which voice of the last chord is still sounding, and where its note is, so that a pad can
+    // let it run on. See the loop below: this is most of what makes a pad a pad.
+    let mut sustaining: Vec<(i32, usize)> = Vec::new();
 
     // How the part sits, decided once for the section. A pad has no rhythm to vary, so this is
     // the whole of what makes one take of it differ from another: which octave it sits in, and
@@ -639,7 +676,7 @@ fn comp(
             RngKey::Word(&section.name),
         ],
     );
-    let chosen_figure = if held {
+    let chosen_figure = if pad {
         CompFigure::Held
     } else {
         pick_figure(&mut invent, busy)
@@ -688,8 +725,12 @@ fn comp(
         // Which notes of the chord actually sound. A player choosing what to leave out is most of
         // what makes one voicing different from another, and for a pad it is nearly all of it.
         match voicing_variant {
-            // Drop the fifth: the note the bass is most likely to be covering anyway.
-            1 if voicing.len() > 3 => {
+            // Drop the fifth: the note the bass is most likely to be covering anyway. A plain
+            // triad comes down to root and third, which is a shell voicing and a real thing to
+            // play — the guard used to be `> 3`, which made this a no-op on every triad and so
+            // on most of what gets written. That left one of the three variants doing nothing,
+            // and the density dial with almost nothing to reach on a part that holds one chord.
+            1 if voicing.len() > 2 => {
                 voicing.remove(2);
             }
             // Double the root an octave up, for a wider chord.
@@ -713,7 +754,7 @@ fn comp(
         // turns over. It is the only bar allowed to depart, and only sometimes: anywhere else a
         // change reads as the part losing its place rather than as a player finishing a thought.
         // `variation` reaches this through `bar_stream`, so a repeat can turn around differently.
-        let figure = if held || bar % 4 != 3 {
+        let figure = if pad || bar % 4 != 3 {
             chosen_figure
         } else {
             let mut rng = bar_stream(settings, frame, part, section, "comp", bar);
@@ -757,8 +798,9 @@ fn comp(
             }
             chosen
         };
-        let held = held || figure == CompFigure::Held;
+        let held = pad || figure == CompFigure::Held;
         let last = onsets.len().saturating_sub(1);
+        let mut still_sounding: Vec<(i32, usize)> = Vec::new();
 
         for (position, onset) in onsets.iter().enumerate() {
             let at = event.start + grid.tick_of(*onset);
@@ -778,18 +820,37 @@ fn comp(
             let length = (next - at).min(event.end() - at).max(Ticks(1));
             let weight = grid.weight(grid.step_of(at));
             for pitch in &voicing {
+                // A pad holds whatever two chords have in common rather than striking it again.
+                // This is most of what makes a pad a pad and not a comp playing whole notes: the
+                // voices with somewhere to go move, and the ones without stay exactly where they
+                // are. A chord part restrikes every voice, which is what a keyboard player does
+                // and what an ear hears as the chord *changing* rather than as it drifting.
+                if let Some((_, sounding)) =
+                    sustaining.iter().copied().find(|(voice, _)| voice == pitch)
+                {
+                    let ends = section.start + event.end();
+                    notes[sounding].length = (ends - notes[sounding].start).max(Ticks(1));
+                    still_sounding.push((*pitch, sounding));
+                    continue;
+                }
                 notes.push(Draft {
                     section: index,
                     pitch: (*pitch).clamp(0, 127) as u8,
-                    velocity: (velocity(weight, section.intensity)
+                    velocity: (velocity(weight, section.intensity, settings.dynamics)
                         * if held { 0.7 } else { 0.9 }
-                        * phrase_shape(grid, section, at))
+                        * phrase_shape(grid, section, at, settings.dynamics))
                     .clamp(0.05, 1.0),
                     start: section.start + at,
                     length,
                 });
+                if pad {
+                    still_sounding.push((*pitch, notes.len() - 1));
+                }
             }
         }
+        // Only a pad carries voices forward; leaving this empty is what makes every other part
+        // strike every note of every chord.
+        sustaining = if pad { still_sounding } else { Vec::new() };
     }
     let _ = settings;
     notes
@@ -866,9 +927,12 @@ fn arp(
             notes.push(Draft {
                 section: index,
                 pitch: pitch.clamp(0, 127) as u8,
-                velocity: (velocity(grid.weight(grid.step_of(at)), section.intensity)
-                    * 0.8
-                    * phrase_shape(grid, section, at))
+                velocity: (velocity(
+                    grid.weight(grid.step_of(at)),
+                    section.intensity,
+                    settings.dynamics,
+                ) * 0.8
+                    * phrase_shape(grid, section, at, settings.dynamics))
                 .clamp(0.05, 1.0),
                 start: section.start + at,
                 length: step_length,
@@ -1025,8 +1089,11 @@ fn bass(
             notes.push(Draft {
                 section: index,
                 pitch: pitch.clamp(0, 127) as u8,
-                velocity: (velocity(grid.weight(grid.step_of(at)), section.intensity)
-                    * phrase_shape(grid, section, at))
+                velocity: (velocity(
+                    grid.weight(grid.step_of(at)),
+                    section.intensity,
+                    settings.dynamics,
+                ) * phrase_shape(grid, section, at, settings.dynamics))
                 .clamp(0.05, 1.0),
                 start: section.start + at,
                 length: length.min(event.end() - at).max(grid.step_ticks()),
@@ -1084,9 +1151,9 @@ fn drums(
             notes.push(Draft {
                 section: index,
                 pitch: voice.pitch(),
-                velocity: (velocity(weight, section.intensity)
-                    * accent.scale()
-                    * phrase_shape(grid, section, at))
+                velocity: (velocity(weight, section.intensity, settings.dynamics)
+                    * dynamic(accent.scale(), settings.dynamics)
+                    * phrase_shape(grid, section, at, settings.dynamics))
                 .clamp(0.08, 1.0),
                 start: section.start + at,
                 // A one-shot drum ignores its note-off, so the length is only there to make the
@@ -1094,7 +1161,17 @@ fn drums(
                 length: Ticks(120),
             });
         }
-        fill(frame, section, index, part, voice, bar, &played, &mut notes);
+        fill(
+            frame,
+            section,
+            index,
+            part,
+            voice,
+            bar,
+            settings.dynamics,
+            &played,
+            &mut notes,
+        );
     }
     notes
 }
@@ -1116,6 +1193,7 @@ fn fill(
     part: &PartSpec,
     voice: DrumVoice,
     bar: usize,
+    dynamics: f32,
     played: &[bool],
     notes: &mut Vec<Draft>,
 ) {
@@ -1137,12 +1215,16 @@ fn fill(
         if played.get(step).copied().unwrap_or(false) {
             continue;
         }
-        // Rising into the downbeat that follows, which is what makes it lead somewhere.
+        // Rising into the downbeat that follows, which is what makes it lead somewhere — and the
+        // rise is a dynamic like any other, so it flattens with the rest of them rather than
+        // being the one crescendo left standing in a part played at one level on purpose.
         let through = (step - from) as f32 / (steps - from).max(1) as f32;
+        let mean = 0.70;
+        let rise = mean + (0.45 + 0.5 * through - mean) * dynamics.clamp(0.0, 1.0);
         notes.push(Draft {
             section: index,
             pitch: voice.pitch(),
-            velocity: (0.45 + 0.5 * through).clamp(0.08, 1.0),
+            velocity: rise.clamp(0.08, 1.0),
             start: section.start + bar_start + grid.tick_of(step),
             length: Ticks(120),
         });
@@ -1923,6 +2005,126 @@ mod tests {
         assert!(
             steady > 0,
             "every closing bar in sixteen phrases departed from its figure"
+        );
+    }
+
+    /// Every velocity a part writes, as whole percent so a spread can be compared.
+    fn levels(draft: &PartDraft) -> Vec<i32> {
+        draft
+            .notes
+            .iter()
+            .map(|note| (note.velocity * 100.0).round() as i32)
+            .collect()
+    }
+
+    #[test]
+    fn dynamics_opens_the_spread_without_moving_where_it_sits() {
+        // Two claims, and the second is why this is not just a quieter intensity: turning the
+        // dial down has to flatten the playing, not turn the part down. A control that changed
+        // both would be a control nobody could aim.
+        let spec = |dynamics: &str| {
+            format!(
+                "form: verse\nchords: @axis\nhumanize: 0\nseed: 4\ndynamics: {dynamics}\n\
+                 [section verse]\nbars: 4\n[part lead]"
+            )
+        };
+        let flat = draft(&spec("0")).2;
+        let wide = draft(&spec("1")).2;
+        let (flat, wide) = (part(&flat, "lead"), part(&wide, "lead"));
+
+        let flat_levels = levels(flat);
+        let wide_levels = levels(wide);
+        assert_eq!(flat_levels.len(), wide_levels.len(), "the notes moved");
+
+        let spread = |levels: &[i32]| {
+            levels.iter().max().copied().unwrap_or(0) - levels.iter().min().copied().unwrap_or(0)
+        };
+        assert_eq!(
+            spread(&flat_levels),
+            0,
+            "at zero every note is struck alike"
+        );
+        assert!(
+            spread(&wide_levels) > 10,
+            "at one the hierarchy is barely audible: {} percent",
+            spread(&wide_levels)
+        );
+
+        // And the level stays roughly where it was. Roughly and not exactly: the spread opens
+        // around a fixed point on the hierarchy, and which weights a part actually writes on
+        // depends on the part. What matters is that flattening is heard as flattening rather
+        // than as a change of level, and a few percent is well under that.
+        let mean = |levels: &[i32]| levels.iter().sum::<i32>() as f32 / levels.len().max(1) as f32;
+        assert!(
+            (mean(&flat_levels) - mean(&wide_levels)).abs() < 8.0,
+            "flattening moved the level: {} against {}",
+            mean(&flat_levels),
+            mean(&wide_levels)
+        );
+    }
+
+    #[test]
+    fn a_pad_holds_what_two_chords_have_in_common_and_a_comp_strikes_it_again() {
+        // The difference the two parts existed to have and did not. Both read the same harmony
+        // through the same writer, so without this a pad was a comp that happened to have drawn
+        // the held figure — which the comp could draw too, and did, four times in ten.
+        let roster = "form: verse\nchords: @axis\nhumanize: 0\nseed: 3\n\
+                      [section verse]\nbars: 4\n[part pad]\nrole: pad\n[part comp]\nrole: chords";
+        let (_, frame, parts) = draft(roster);
+        let section = &frame.sections[0];
+        assert!(section.events.len() >= 4, "a chord per bar to tie across");
+
+        // A pad's note runs past the chord it started under whenever the next chord keeps it.
+        let pad = part(&parts, "pad");
+        let ties = pad
+            .notes
+            .iter()
+            .filter(|note| {
+                let starts = section.chord_at(note.start - section.start);
+                let ends = section.chord_at(note.start + note.length - section.start - Ticks(1));
+                starts.map(|event| event.start) != ends.map(|event| event.start)
+            })
+            .count();
+        assert!(ties > 0, "the pad restruck every voice of every chord");
+
+        // And every one of the pad's notes begins on a chord change: it never strikes inside one.
+        for note in &pad.notes {
+            let at = note.start - section.start;
+            assert!(
+                section.events.iter().any(|event| event.start == at),
+                "the pad struck at {} which is not a chord change",
+                at.raw()
+            );
+        }
+    }
+
+    #[test]
+    fn syncopation_moves_a_part_off_the_beat_without_making_it_busier() {
+        // It lifts the weak steps toward the strong ones rather than adding notes, which is what
+        // makes it a separate dial from the density rather than a second way to spell it.
+        let spec = |syncopation: &str| {
+            format!(
+                "form: verse\nchords: @axis\nhumanize: 0\nseed: 6\nsyncopation: {syncopation}\n\
+                 [section verse]\nbars: 8\n[part lead]"
+            )
+        };
+        let square = draft(&spec("0.0")).2;
+        let awkward = draft(&spec("1.0")).2;
+        let (square, awkward) = (part(&square, "lead"), part(&awkward, "lead"));
+
+        let off_the_beat = |draft: &PartDraft| {
+            draft
+                .notes
+                .iter()
+                .filter(|note| note.start.raw() % 960 != 0)
+                .count() as f32
+                / draft.notes.len().max(1) as f32
+        };
+        assert!(
+            off_the_beat(awkward) > off_the_beat(square),
+            "{:.2} of the awkward take is off the beat against {:.2} of the square one",
+            off_the_beat(awkward),
+            off_the_beat(square)
         );
     }
 

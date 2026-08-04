@@ -149,11 +149,27 @@ the recipe when a take turns out to be the keeper. The dials are in the inspecto
 | | |
 |---|---|
 | **Subdivision** | How finely the beat divides: 1/8, 1/16, or either of them in triplets |
+| **Octave** | Which register, ±2 from where the preset sits |
 | **Density** | How busy the part is — for a comp, which figure it reaches for |
+| **Syncopation** | How far the figure pulls off the beat, without making it busier |
 | **Gate** | How long each note sounds, as a share of the gap to the next |
 | **Intensity** | How hard it is played |
+| **Dynamics** | How far apart the hardest and softest notes are struck |
 | **Swing** | How late the offbeats are |
 | **Humanize** | How far timing and velocity wander |
+
+Intensity and dynamics are the level and the spread, and they are separate because they are two
+questions: a part can be played hard and flat, or softly with everything in it moving. At 0 the
+dynamics leave every note struck alike — a sequencer, which is sometimes exactly the point — and
+the level stays where the intensity put it rather than sagging with the spread. It reaches every
+source of variation at once: the metric hierarchy, the accents, the lean across a phrase and the
+crescendo of a drum fill.
+
+Only the rows a preset can actually hear are drawn. A kit has no density, gate, subdivision,
+octave or syncopation — how busy it is *is* its groove, a one-shot ignores its note-off, its
+pitches are drum numbers rather than notes, and its rhythm is the one somebody chose. A pad has no
+syncopation, because it sounds each chord where the chord is. A part on a triplet grid has no
+swing.
 
 The subdivision is per part, not per song, so a stab hammering triplets over a straight kit is a
 setting rather than a fight. Swing disappears on a triplet grid, because a grid already sitting
@@ -164,6 +180,12 @@ A chord part picks its figure once for the section and restates it, the way a ke
 a feel and keeps it; only the fourth bar of a phrase is allowed to turn it over, and only
 sometimes. At the top of the density dial the figure it reaches for is a rhythm rolled from the
 metric hierarchy — most of the steps, with the holes that make it a rhythm rather than a tremolo.
+
+**Chords** and **pad** read the same harmony through the same writer, and what separates them is
+what a pad does at a chord change: it holds whatever the two chords have in common and moves only
+the voices that have somewhere to go, where a comp restrikes every one of them. That is the
+difference between a chord *changing* and a chord *drifting*, and it is the reason the two presets
+are two presets rather than one with the rhythm turned off.
 
 The **stab** preset is the settings that have to be turned up together: fast, short and hammered,
 which is what most dance music has underneath it. It arrives with its own dials rather than the

@@ -215,6 +215,13 @@ pub enum MenuCommand {
         /// How finely the beat should divide.
         subdivision: Subdivision,
     },
+    /// Move a generated clip's register.
+    SetClipOctave {
+        /// Clip to rewrite.
+        clip: ClipId,
+        /// Octaves from where the preset sits.
+        octave: i32,
+    },
 
     /// Put a discrete plugin parameter on one of its named positions.
     ///
@@ -818,6 +825,7 @@ impl AurisApp {
             MenuCommand::SetClipSubdivision { clip, subdivision } => {
                 self.set_clip_subdivision(clip, subdivision)
             }
+            MenuCommand::SetClipOctave { clip, octave } => self.set_clip_octave(clip, octave),
             MenuCommand::SetParamChoice { target, value } => self.session.set_param(target, value),
 
             MenuCommand::SetKeyAt(tick) => {
@@ -1172,6 +1180,22 @@ impl AurisApp {
         menu
     }
 
+    /// Every register a generated clip can be moved to.
+    pub(crate) fn clip_octave_menu(&self, anchor: Point<Pixels>, clip: ClipId) -> ContextMenu {
+        let current = self.session.clip_recipe(clip).map(|recipe| recipe.octave);
+        let mut menu = ContextMenu::new(anchor, self.t(Key::PartOctave));
+        // Highest first, because that is the way a register reads on a keyboard and on every
+        // stave: going down the menu should go down in pitch.
+        for octave in crate::ui::part::octave_choices().rev() {
+            menu = menu.toggle(
+                crate::ui::part::octave_text(octave),
+                MenuCommand::SetClipOctave { clip, octave },
+                current == Some(octave),
+            );
+        }
+        menu
+    }
+
     /// Every groove the composer knows by name, aimed at one drum clip.
     pub(crate) fn clip_groove_menu(&self, anchor: Point<Pixels>, clip: ClipId) -> ContextMenu {
         let current = self
@@ -1272,6 +1296,24 @@ impl AurisApp {
         }
         let recipe = ClipRecipe {
             subdivision,
+            ..recipe.clone()
+        };
+        match self.session.set_clip_recipe(clip, recipe) {
+            Ok(_) => self.report_clip_preset(clip),
+            Err(error) => self.set_failed_status(self.failure(Key::MenuGenerateClip, &error)),
+        }
+    }
+
+    /// Writes a generated clip in a different register.
+    pub(crate) fn set_clip_octave(&mut self, clip: ClipId, octave: i32) {
+        let Some(recipe) = self.session.clip_recipe(clip) else {
+            return;
+        };
+        if recipe.octave == octave {
+            return;
+        }
+        let recipe = ClipRecipe {
+            octave,
             ..recipe.clone()
         };
         match self.session.set_clip_recipe(clip, recipe) {

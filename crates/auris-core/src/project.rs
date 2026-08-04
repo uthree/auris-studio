@@ -351,6 +351,28 @@ pub struct ClipRecipe {
     /// far down is the sound of a chord hammered on every sixteenth with the release cut off.
     #[serde(default = "default_gate")]
     pub gate: f32,
+    /// How far apart the hardest and softest notes are struck, from 0 to 1.
+    ///
+    /// Not how hard the part is played, which is [`intensity`](Self::intensity), but how much the
+    /// playing varies around that. At 0 every note is struck alike, which is a sequencer and is
+    /// sometimes exactly right; at 1 the metric hierarchy is at full strength and a downbeat is
+    /// half again the weight of the sixteenth before it. The mean stays where the intensity put
+    /// it either way, so widening the spread does not quietly turn the part down.
+    #[serde(default = "default_dynamics")]
+    pub dynamics: f32,
+    /// How far the figures pull off the beat, from 0 for square to 1 for wilfully awkward.
+    ///
+    /// Read by the parts that roll their own rhythm rather than picking a written one: it lifts
+    /// the weak steps toward the strong ones instead of adding notes, so it changes *where* a
+    /// part plays without changing how much.
+    #[serde(default = "default_syncopation")]
+    pub syncopation: f32,
+    /// Octaves to move the part from where its preset sits, from -2 to 2.
+    ///
+    /// The register a part chooses is drawn from its seed, which is right for a take and useless
+    /// when the answer is "the same thing, higher". This is that answer.
+    #[serde(default)]
+    pub octave: i32,
 }
 
 fn default_swing() -> u8 {
@@ -359,6 +381,14 @@ fn default_swing() -> u8 {
 
 fn default_gate() -> f32 {
     1.0
+}
+
+fn default_dynamics() -> f32 {
+    1.0
+}
+
+fn default_syncopation() -> f32 {
+    0.3
 }
 
 fn default_groove() -> String {
@@ -383,12 +413,19 @@ impl ClipRecipe {
             humanize: 0.25,
             subdivision: Subdivision::default(),
             gate: default_gate(),
+            dynamics: default_dynamics(),
+            syncopation: default_syncopation(),
+            octave: 0,
         };
         if preset == ClipPreset::Stab {
             recipe.density = 0.95;
             recipe.intensity = 0.85;
             recipe.gate = 0.3;
             recipe.humanize = 0.1;
+            // Flatter than most parts, on purpose. A stab is a rhythm played by a chord, and a
+            // metric hierarchy at full strength turns the sixteenths between the beats into
+            // ghost notes — which is a groove, and not this one.
+            recipe.dynamics = 0.45;
         }
         recipe
     }

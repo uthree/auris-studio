@@ -419,6 +419,11 @@ pub struct SongSpec {
     pub swing: u8,
     /// How far timing and velocity wander, from 0 for a machine to 1 for a sloppy band.
     pub humanize: f32,
+    /// How far apart the hardest and softest notes are struck, from 0 to 1.
+    ///
+    /// How much the playing varies, where [`Self::mood`]'s energy says how hard it is played at
+    /// all. At 0 every note is struck alike — a sequencer, which is sometimes the point.
+    pub dynamics: f32,
     /// How much a repeat departs from what the section played the first time.
     ///
     /// At 0 a second chorus is note for note the first one, which is what makes it recognisable
@@ -460,6 +465,7 @@ impl Default for SongSpec {
             seed: 0,
             swing: 50,
             humanize: 0.35,
+            dynamics: 1.0,
             variation: 0.25,
             groove: "basic-rock".to_string(),
             charts,
@@ -717,6 +723,7 @@ impl SongSpec {
         out.push_str(&format!("groove:   {}\n", self.groove));
         out.push_str(&format!("swing:    {}\n", self.swing));
         out.push_str(&format!("humanize: {:.2}\n", self.humanize));
+        out.push_str(&format!("dynamics: {:.2}\n", self.dynamics));
         out.push_str(&format!("variation: {:.2}\n", self.variation));
         out.push_str(&format!("brightness: {:.2}\n", self.mood.brightness));
         out.push_str(&format!("energy:     {:.2}\n", self.mood.energy));
@@ -902,6 +909,7 @@ fn apply_song_field(
             spec.swing = swing as u8;
         }
         "humanize" => spec.humanize = fraction(value, "humanize")?,
+        "dynamics" => spec.dynamics = fraction(value, "dynamics")?,
         "variation" => spec.variation = fraction(value, "variation")?,
         "groove" => {
             if crate::rhythm::groove(value).is_none() {
@@ -942,8 +950,8 @@ fn apply_song_field(
         other => {
             return Err(format!(
                 "`{other}` is not a song field; expected one of title, key, scale, tempo, \
-                 meter, seed, swing, humanize, variation, groove, mood, brightness, energy, \
-                 tension, syncopation, form, chords"
+                 meter, seed, swing, humanize, dynamics, variation, groove, mood, brightness, \
+                 energy, tension, syncopation, form, chords"
             ));
         }
     }
@@ -1459,6 +1467,8 @@ mod tests {
         assert_eq!(reparsed.meter, original.meter);
         assert_eq!(reparsed.seed, original.seed);
         assert_eq!(reparsed.mood, original.mood);
+        assert_eq!(reparsed.humanize, original.humanize);
+        assert_eq!(reparsed.dynamics, original.dynamics);
         assert_eq!(reparsed.groove, original.groove);
         assert_eq!(reparsed.form, original.form);
         assert_eq!(reparsed.parts, original.parts);

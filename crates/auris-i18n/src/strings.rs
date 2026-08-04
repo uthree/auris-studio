@@ -324,6 +324,11 @@ strings! {
     // which in a Japanese studio is as likely to mean a noise gate as a note length.
     PartGate { en: "Gate", ja: "音の長さ" }
     PartIntensity { en: "Intensity", ja: "強さ" }
+    // How much the playing varies, as against how hard it is played. The Japanese is spelled out
+    // rather than left as 「ダイナミクス」, which in a studio means the level and not the spread.
+    PartDynamics { en: "Dynamics", ja: "強弱の幅" }
+    PartSyncopation { en: "Syncopation", ja: "シンコペーション" }
+    PartOctave { en: "Octave", ja: "オクターブ" }
     PartSubdivision { en: "Subdivision", ja: "音符の細かさ" }
     PartSwing { en: "Swing", ja: "スウィング" }
     PartHumanize { en: "Humanize", ja: "ゆらぎ" }

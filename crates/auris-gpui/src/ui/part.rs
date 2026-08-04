@@ -39,10 +39,14 @@ pub const GATE_MIN: f32 = 0.05;
 pub enum Dial {
     /// How busy the part is.
     Density,
+    /// How far the figures pull off the beat.
+    Syncopation,
     /// How long each note sounds, against the gap to the next.
     Gate,
     /// How hard it is played.
     Intensity,
+    /// How far apart the hardest and softest notes are struck.
+    Dynamics,
     /// How late the offbeats are.
     Swing,
     /// How far timing and velocity wander.
@@ -54,8 +58,10 @@ impl Dial {
     pub fn label(self) -> Key {
         match self {
             Dial::Density => Key::PartDensity,
+            Dial::Syncopation => Key::PartSyncopation,
             Dial::Gate => Key::PartGate,
             Dial::Intensity => Key::PartIntensity,
+            Dial::Dynamics => Key::PartDynamics,
             Dial::Swing => Key::PartSwing,
             Dial::Humanize => Key::PartHumanize,
         }
@@ -65,7 +71,9 @@ impl Dial {
     pub fn fraction(self, recipe: &ClipRecipe) -> f32 {
         let value = match self {
             Dial::Density => recipe.density,
+            Dial::Syncopation => recipe.syncopation,
             Dial::Intensity => recipe.intensity,
+            Dial::Dynamics => recipe.dynamics,
             Dial::Humanize => recipe.humanize,
             Dial::Gate => (recipe.gate - GATE_MIN) / (1.0 - GATE_MIN),
             Dial::Swing => {
@@ -89,7 +97,9 @@ impl Dial {
         let fraction = fraction.clamp(0.0, 1.0);
         match self {
             Dial::Density => recipe.density = whole_percent(fraction),
+            Dial::Syncopation => recipe.syncopation = whole_percent(fraction),
             Dial::Intensity => recipe.intensity = whole_percent(fraction),
+            Dial::Dynamics => recipe.dynamics = whole_percent(fraction),
             Dial::Humanize => recipe.humanize = whole_percent(fraction),
             Dial::Gate => recipe.gate = GATE_MIN + whole_percent(fraction) * (1.0 - GATE_MIN),
             Dial::Swing => {
@@ -124,24 +134,66 @@ fn whole_percent(fraction: f32) -> f32 {
 /// rule the composer itself keeps, stated where the interface can break it, and it costs a
 /// changing row count in exchange for never lying about what is reachable.
 pub fn dials_for(recipe: &ClipRecipe) -> &'static [Dial] {
-    // A kit reads neither the density nor the gate: how busy it is *is* which groove it plays,
-    // and a one-shot drum ignores its note-off. It ignores the subdivision too, which is why its
-    // swing is the one that is never inert.
+    // A kit reads neither the density, the gate nor the syncopation: how busy it is and where it
+    // plays are both which groove it plays, and a one-shot drum ignores its note-off. It ignores
+    // the subdivision too, which is why its swing is the one that is never inert.
     if recipe.preset == ClipPreset::Drums {
-        return &[Dial::Intensity, Dial::Swing, Dial::Humanize];
+        return &[Dial::Intensity, Dial::Dynamics, Dial::Swing, Dial::Humanize];
+    }
+    // A pad has no figure for the syncopation to pull off the beat: it sounds each chord once,
+    // where the chord is, and a dial that moved that would be moving the harmony rather than the
+    // part. Swing stays, because a chord that begins on an offbeat is swung like anything else.
+    if recipe.preset == ClipPreset::Pad {
+        return &[
+            Dial::Density,
+            Dial::Gate,
+            Dial::Intensity,
+            Dial::Dynamics,
+            Dial::Swing,
+            Dial::Humanize,
+        ];
     }
     // Swing exists to push a straight offbeat toward the third triplet. A part already dividing
     // its beats in three is sitting there, and has nothing left for the dial to do.
     if recipe.subdivision.is_triplet() {
-        return &[Dial::Density, Dial::Gate, Dial::Intensity, Dial::Humanize];
+        return &[
+            Dial::Density,
+            Dial::Syncopation,
+            Dial::Gate,
+            Dial::Intensity,
+            Dial::Dynamics,
+            Dial::Humanize,
+        ];
     }
     &[
         Dial::Density,
+        Dial::Syncopation,
         Dial::Gate,
         Dial::Intensity,
+        Dial::Dynamics,
         Dial::Swing,
         Dial::Humanize,
     ]
+}
+
+/// How far the octave picker reaches either way.
+///
+/// Two is as far as a register offset stays the same part. Past that a bass is a lead and a lead
+/// is out of the range its role was given, which is a different preset rather than a nudge.
+pub const OCTAVE_REACH: i32 = 2;
+
+/// Every octave offset the picker offers, lowest first.
+pub fn octave_choices() -> std::ops::RangeInclusive<i32> {
+    -OCTAVE_REACH..=OCTAVE_REACH
+}
+
+/// How an octave offset reads on its row: signed, because zero is not "no octave" but "the one
+/// the preset chose", and `+1` says which way the other rows go.
+pub fn octave_text(octave: i32) -> String {
+    match octave.clamp(-OCTAVE_REACH, OCTAVE_REACH) {
+        0 => "±0".to_string(),
+        other => format!("{other:+}"),
+    }
 }
 
 /// Whether a preset's groove is worth offering, which is to say whether anything reads it.
@@ -154,6 +206,14 @@ pub fn takes_a_groove(preset: ClipPreset) -> bool {
 /// Everything but the kit, for the reason the composer gives: a groove is sixteen steps read by
 /// index, so a kit on any other grid would scramble it rather than divide it.
 pub fn takes_a_subdivision(preset: ClipPreset) -> bool {
+    !matches!(preset, ClipPreset::Drums)
+}
+
+/// Whether a preset's register is worth offering.
+///
+/// Everything but the kit, whose pitches are General MIDI drum numbers rather than notes: moving
+/// a kick up an octave would not raise it, it would turn it into a different drum.
+pub fn takes_an_octave(preset: ClipPreset) -> bool {
     !matches!(preset, ClipPreset::Drums)
 }
 
@@ -177,7 +237,11 @@ pub fn with_preset(recipe: &ClipRecipe, preset: ClipPreset) -> ClipRecipe {
         density: untouched(recipe.density, was.density, becomes.density),
         gate: untouched(recipe.gate, was.gate, becomes.gate),
         intensity: untouched(recipe.intensity, was.intensity, becomes.intensity),
+        dynamics: untouched(recipe.dynamics, was.dynamics, becomes.dynamics),
+        syncopation: untouched(recipe.syncopation, was.syncopation, becomes.syncopation),
         humanize: untouched(recipe.humanize, was.humanize, becomes.humanize),
+        // The seed and the octave are nobody's default: one is which take this is and the other
+        // is a register somebody asked for, and neither is an opinion a preset holds.
         ..recipe.clone()
     }
 }
@@ -208,6 +272,8 @@ fn dial_element_key(dial: Dial) -> usize {
         Dial::Swing => 2,
         Dial::Humanize => 3,
         Dial::Gate => 4,
+        Dial::Dynamics => 5,
+        Dial::Syncopation => 6,
     }
 }
 
@@ -251,6 +317,22 @@ impl AurisApp {
                         .to_string(),
                     cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
                         let menu = this.clip_subdivision_menu(event.position(), clip);
+                        this.open_menu(menu);
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+            );
+        }
+
+        if takes_an_octave(recipe.preset) {
+            rows.push(
+                self.picker_row(
+                    "part-octave",
+                    Key::PartOctave,
+                    octave_text(recipe.octave),
+                    cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                        let menu = this.clip_octave_menu(event.position(), clip);
                         this.open_menu(menu);
                         cx.notify();
                     }),
@@ -542,17 +624,52 @@ mod tests {
                 "{} offers the wrong subdivision row",
                 preset.name()
             );
+            // A kit's pitches are General MIDI drum numbers rather than notes: moving a kick up
+            // an octave would not raise it, it would make it a different drum.
+            assert_eq!(
+                takes_an_octave(preset),
+                !takes_a_groove(preset),
+                "{} offers the wrong octave row",
+                preset.name()
+            );
         }
         assert!(takes_a_groove(ClipPreset::Drums));
         assert!(!takes_a_subdivision(ClipPreset::Drums));
+        assert!(!takes_an_octave(ClipPreset::Drums));
 
-        // Everything reads how hard and how loose it is played, kit included.
+        // Everything reads how hard and how loose and how evenly it is played, kit included.
         for preset in ClipPreset::ALL {
             let dials = dials_for(&recipe(preset));
             assert!(dials.contains(&Dial::Intensity), "{}", preset.name());
+            assert!(dials.contains(&Dial::Dynamics), "{}", preset.name());
             assert!(dials.contains(&Dial::Humanize), "{}", preset.name());
             assert!(dials.contains(&Dial::Swing), "{}", preset.name());
         }
+
+        // The syncopation reaches a part that rolls its own figure and nothing else. A kit plays
+        // its groove and a pad sounds the chord where the chord is; a dial on either would sweep
+        // its whole travel and move not one note.
+        for preset in ClipPreset::ALL {
+            let rolls_its_own = !matches!(preset, ClipPreset::Drums | ClipPreset::Pad);
+            assert_eq!(
+                dials_for(&recipe(preset)).contains(&Dial::Syncopation),
+                rolls_its_own,
+                "{} offers the wrong syncopation row",
+                preset.name()
+            );
+        }
+    }
+
+    #[test]
+    fn an_octave_offset_reads_with_its_sign() {
+        // Zero is not "no octave" but "the one the preset chose", and a bare `0` between `-1` and
+        // `1` in a menu reads as the absence of a setting rather than as the middle of one.
+        assert_eq!(octave_text(0), "±0");
+        assert_eq!(octave_text(1), "+1");
+        assert_eq!(octave_text(-2), "-2");
+        assert_eq!(octave_text(9), "+2", "clamped to what the picker offers");
+        assert_eq!(octave_choices().count(), 5);
+        assert!(octave_choices().contains(&0));
     }
 
     #[test]

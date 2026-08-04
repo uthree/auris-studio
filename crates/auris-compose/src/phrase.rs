@@ -109,6 +109,7 @@ pub fn write_phrase(
         mood: frame.mood,
         swing: recipe.swing,
         humanize: recipe.humanize.clamp(0.0, 1.0),
+        dynamics: recipe.dynamics.clamp(0.0, 1.0),
         // One clip is one playing of one section, so there is no repeat to depart from.
         variation: 0.0,
         groove: recipe.groove.clone(),
@@ -118,6 +119,10 @@ pub fn write_phrase(
         .iter()
         .map(|role| {
             let mut part = PartSpec::of_role(role.name(), *role);
+            // A register somebody asked for, on top of the one the role implies. The one the
+            // part chooses for itself is drawn from the seed, which is right for a take and no
+            // use at all when the answer wanted is "the same thing, an octave up".
+            part.octave = part.octave + recipe.octave.clamp(-2, 2);
             // The recipe's dial, not the mood's: a person moving a slider expects that slider to
             // be what decides, rather than to be averaged with something they cannot see.
             part.density = Some(recipe.density.clamp(0.0, 1.0));
@@ -152,10 +157,12 @@ pub fn write_phrase(
 /// their head while listening. Density is passed to the parts directly, so what is left for the
 /// mood to carry is how hard and how loose the playing is.
 fn mood_for(recipe: &ClipRecipe) -> Mood {
-    let intensity = recipe.intensity.clamp(0.0, 1.0);
     Mood {
-        energy: intensity,
-        syncopation: 0.15 + intensity * 0.4,
+        energy: recipe.intensity.clamp(0.0, 1.0),
+        // The recipe's own, not a number derived from how hard the part is played. Deriving it
+        // was defensible while only the melody read it; the comping figures read it now, so
+        // "square" and "awkward" is a choice somebody should be able to make on its own.
+        syncopation: recipe.syncopation.clamp(0.0, 1.0),
         ..Mood::default()
     }
 }
