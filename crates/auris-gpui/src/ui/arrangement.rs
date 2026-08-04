@@ -311,7 +311,119 @@ impl AurisApp {
             )
     }
 
-    /// The strip of chords under the ruler.
+    /// The strip of section names under the ruler: イントロ, Aメロ, サビ.
+    ///
+    /// Above the harmony because it is the coarser division — the stack reads ruler, structure,
+    /// harmony, lanes: the song from its largest units down to its notes.
+    fn render_structure_lane(&mut self, cx: &mut gpui::Context<Self>) -> impl IntoElement + use<> {
+        let theme = self.theme.clone();
+        let view = self.timeline.clone();
+
+        let width = self
+            .canvas
+            .structure
+            .get()
+            .map_or(px(1200.0), |b| b.size.width);
+        let (from, to) = view.visible_range(width);
+        let sections = &self.project().sections;
+        let structure = paint::StructurePaint {
+            spans: sections
+                .spans_in(from, to)
+                .into_iter()
+                .map(|span| {
+                    // Numbered only when the label repeats: サビ 1 and サビ 2 need telling
+                    // apart, a lone イントロ does not.
+                    let shown = if sections.repeats(&span.label) > 1 {
+                        format!("{} {}", span.label, span.instance)
+                    } else {
+                        span.label.clone()
+                    };
+                    (span, shown)
+                })
+                .collect(),
+            held: match self.drag {
+                Some(Drag::SectionLabel { at, .. }) => Some(at),
+                _ => None,
+            },
+        };
+
+        div()
+            .id("structure-lane")
+            .h(Metrics::STRUCTURE_LANE_HEIGHT)
+            .w_full()
+            .cursor_pointer()
+            .child({
+                let recorded = self.canvas.structure.clone();
+                canvas(
+                    move |bounds, _, _| recorded.set(Some(bounds)),
+                    move |bounds, _, window, cx| {
+                        paint::clipped(window, bounds, |window| {
+                            paint::structure_lane(window, cx, bounds, &view, &structure, &theme);
+                        });
+                    },
+                )
+                .size_full()
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                    this.press_structure_lane(event);
+                    cx.notify();
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                    let x = event.position.x - this.timeline_origin().x;
+                    let tick = this.timeline.x_to_tick(x).max_zero();
+                    let menu = this.structure_menu(event.position, tick);
+                    this.open_menu(menu);
+                    cx.notify();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
+                this.scroll_timeline(event, cx);
+            }))
+    }
+
+    /// What a left press on the structure lane does: grab a boundary's handle, or — doubled —
+    /// open the naming sheet for the section under the pointer.
+    fn press_structure_lane(&mut self, event: &MouseDownEvent) {
+        let x = event.position.x - self.timeline_origin().x;
+        let tick = self.timeline.x_to_tick(x).max_zero();
+        if event.click_count >= 2 {
+            self.prompt_for_section(tick);
+            return;
+        }
+        if let Some(at) = self.section_handle_at(x) {
+            self.begin_drag(Drag::SectionLabel {
+                at,
+                grab_offset: tick - at,
+            });
+        }
+    }
+
+    /// The section boundary whose handle sits under timeline-relative `x`, if any.
+    fn section_handle_at(&self, x: Pixels) -> Option<Ticks> {
+        let width = self
+            .canvas
+            .structure
+            .get()
+            .map_or(px(1200.0), |bounds| bounds.size.width);
+        let (from, to) = self.timeline.visible_range(width);
+        self.project()
+            .sections
+            .points()
+            .iter()
+            .filter(|point| point.label.is_some() && point.tick >= from && point.tick <= to)
+            .map(|point| point.tick)
+            .find(|at| {
+                let edge = self.timeline.tick_to_x(*at);
+                x >= edge && x <= edge + paint::CHORD_HANDLE
+            })
+    }
+
+    /// The strip of chords under the structure lane.
     ///
     /// It sits above the clip lanes and spans all of them, because that is what harmony is: one
     /// thing the whole arrangement obeys at any one moment, belonging to no track.
@@ -519,6 +631,7 @@ impl AurisApp {
                         this.scroll_timeline(event, cx);
                     })),
             )
+            .child(self.render_structure_lane(cx))
             .child(self.render_harmony_lane(cx))
             .child(
                 div()

@@ -98,8 +98,8 @@ pub mod prelude {
     pub use auris_core::time::{Seconds, TICKS_PER_QUARTER, TempoMap, Ticks, TimeSignature};
     pub use auris_core::{
         AudioBuffer, AudioClip, AudioSource, ClipId, ClipPreset, ClipRecipe, EffectSlotId,
-        MidiClip, MixerStrip, Note, PluginRegistry, PresetRef, Project, SoundFontId, SoundFontRef,
-        SourceId, Subdivision, Track, TrackId, TrackKind,
+        MidiClip, MixerStrip, Note, PluginRegistry, PresetRef, Project, SectionMap, SectionPoint,
+        SectionSpan, SoundFontId, SoundFontRef, SourceId, Subdivision, Track, TrackId, TrackKind,
     };
 
     /// Every chord progression the composer knows by name.

@@ -98,6 +98,24 @@ A chord is stored as a roman numeral, not as `Fmaj7`, so changing the key transp
 progression and a modulation halfway through a section reharmonises the rest of it without a
 single chord being rewritten. What the lane shows is both: `IVmaj7 · Fmaj7`.
 
+### The structure lane
+
+Above the harmony sits the song's own shape: a strip of section names — イントロ, Aメロ, サビ,
+or Intro, Verse, Chorus — each in force until the next, snapping to bar lines because "the
+chorus starts at this bar" is the thing being said. Double-click to name the section under the
+pointer (the field offers the usual vocabulary and completes it with **Tab**; the label is free
+text, so Cメロ and 落ちサビ are as sayable as anything on the list), drag a boundary's leading
+edge to move it, and right-click to rename, remove, or end the structure where an outro stops.
+A label that repeats is numbered where it is drawn — サビ 1, サビ 2 — counted from the start of
+the song rather than stored, so the numbering can never disagree with the timeline.
+
+The labels are more than a map. A clip generated inside a named section draws its figures from
+the *label*: two clips written into stretches both called サビ come out recognisably the same
+idea, and a stretch called Bメロ writes something else — the same rule that makes a repeated
+section recognisable inside the composer, read off the timeline instead of a specification.
+This is the ground the whole-song generator will stand on; today it is already the difference
+between clips that happen to coexist and clips that belong to the same song.
+
 ### Automatic composition
 
 **File → Compose from Specification…**, or `auris compose song.asong`, writes a piece from a text

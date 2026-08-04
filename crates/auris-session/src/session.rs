@@ -909,6 +909,56 @@ impl Session {
         self.project.harmony.stamp(chart, from, bars, signature)
     }
 
+    // ---------------------------------------------------------------- structure
+    //
+    // Like the harmony, none of these touch the engine: the notes already written do not move
+    // when the stretch around them is renamed. What a label changes is what the composer will
+    // write *next* — a clip generated inside a section draws its material from the label, so
+    // two stretches called サビ get recognisably the same figures.
+
+    /// Names the section of the song beginning at the bar `at` falls in.
+    ///
+    /// Sections snap to bar lines rather than to the editing grid: 「サビはこの小節から」 is
+    /// the thing being said, and a section starting mid-bar is not a thing a person means by
+    /// pointing. `None` — or a name of nothing but whitespace — leaves the stretch from there
+    /// deliberately unnamed, which is how a song's structure ends.
+    pub fn set_section(&mut self, at: Ticks, label: Option<String>) {
+        self.record(Edit::SetSection);
+        let at = self.snap_section(at);
+        self.project.sections.set_point(at, label);
+    }
+
+    /// Removes the section change in force at `at`, letting the one before it run through.
+    ///
+    /// *In force at*, not *starting at*, for the reason given on [`Self::remove_key`]: a
+    /// section is a stretch, and pointing anywhere inside it is pointing at it.
+    pub fn remove_section(&mut self, at: Ticks) {
+        let Some(at) = self.project.sections.change_at(at.max_zero()) else {
+            return;
+        };
+        self.record(Edit::SetSection);
+        self.project.sections.remove_point(at);
+    }
+
+    /// Moves the section change in force at `from` to the start of the bar `to` falls in.
+    pub fn move_section(&mut self, from: Ticks, to: Ticks) -> bool {
+        let Some(from) = self.project.sections.change_at(from.max_zero()) else {
+            return false;
+        };
+        let to = self.snap_section(to);
+        if from == to {
+            return false;
+        }
+        self.record(Edit::MoveSection);
+        self.project.sections.move_point(from, to)
+    }
+
+    /// The start of the bar `at` falls in, which is the only place a section may begin.
+    fn snap_section(&self, at: Ticks) -> Ticks {
+        let signature = self.project.time_signature;
+        signature.bar_start(signature.bar_of(at.max_zero()))
+    }
+
     /// Writes the catalogue progression called `name`, such as `axis` or `丸サ`.
     ///
     /// `bars` of zero means the chart's own length, which is what "put this progression here"
@@ -1393,6 +1443,10 @@ impl Session {
     }
 
     /// The notes a recipe writes over a stretch of this document's harmony.
+    ///
+    /// The section under the clip's start travels along as the composer's hint: two clips
+    /// written into stretches with the same label draw the same figures, which is what makes
+    /// the second サビ recognisably the first.
     fn phrase(&self, start: Ticks, length: Ticks, recipe: &ClipRecipe) -> Vec<Note> {
         auris_compose::write_phrase(
             &self.project.harmony,
@@ -1400,6 +1454,7 @@ impl Session {
             length,
             self.project.time_signature,
             recipe,
+            self.project.sections.section_at(start),
         )
     }
 
@@ -3010,6 +3065,71 @@ mod tests {
         let refused = session.set_track_instrument(audio, &instrument);
         assert!(matches!(refused, Err(SessionError::WrongTrackKind { .. })));
         assert!(!session.can_undo(), "a refused edit left a step behind");
+    }
+
+    #[test]
+    fn a_section_is_written_on_a_bar_line_and_found_from_anywhere_inside_it() {
+        let bar = |n: i64| Ticks(3_840 * n);
+        let mut session = session();
+        session.set_section(Ticks(5), Some("イントロ".into()));
+        session.set_section(bar(4) + Ticks(999), Some("サビ".into()));
+
+        let points = session.project().sections.points();
+        assert_eq!(points[0].tick, Ticks::ZERO, "snapped to its bar");
+        assert_eq!(points[1].tick, bar(4));
+        assert_eq!(
+            session.project().sections.section_at(bar(6)),
+            Some(("サビ", 1))
+        );
+
+        // Renaming is writing at the same bar; removing acts through the whole stretch.
+        session.set_section(bar(4), Some("落ちサビ".into()));
+        assert_eq!(
+            session.project().sections.label_at(bar(5)),
+            Some("落ちサビ")
+        );
+        session.remove_section(bar(7));
+        assert_eq!(
+            session.project().sections.label_at(bar(5)),
+            Some("イントロ"),
+            "the section before it runs through"
+        );
+
+        assert!(session.move_section(bar(2), bar(8) + Ticks(1)));
+        assert_eq!(session.project().sections.points()[0].tick, bar(8));
+
+        assert!(session.is_dirty());
+        while session.undo().is_some() {}
+        assert!(session.project().sections.is_empty());
+    }
+
+    #[test]
+    fn a_generated_clip_reads_the_section_it_sits_in() {
+        // The hint the structure exists for: labelling a stretch changes what the composer
+        // writes there next. Same clip, same recipe, same harmony — a label appears under it,
+        // and regenerating draws different material keyed by that label.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").expect("track");
+        session
+            .stamp_named_progression("axis", Ticks::ZERO, 4)
+            .expect("the catalogue knows axis");
+        let recipe = ClipRecipe::new(ClipPreset::Lead, 7);
+        let clip = session
+            .generate_clip(track, Ticks::ZERO, Ticks::from_beats(16.0), recipe)
+            .expect("generated");
+        let unlabelled = session.midi_clip(clip).expect("clip").notes.clone();
+
+        session.set_section(Ticks::ZERO, Some("サビ".into()));
+        session.regenerate_clip(clip).expect("regenerated");
+        let labelled = session.midi_clip(clip).expect("clip").notes.clone();
+        assert_ne!(
+            unlabelled, labelled,
+            "the label should key the clip's material"
+        );
+
+        // And the same label writes the same take again: the hint is deterministic.
+        session.regenerate_clip(clip).expect("regenerated again");
+        assert_eq!(session.midi_clip(clip).expect("clip").notes, labelled);
     }
 
     #[test]

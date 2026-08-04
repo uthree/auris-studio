@@ -114,6 +114,8 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::SetChord => Key::EditSetChord,
         Edit::MoveChord => Key::EditMoveChord,
         Edit::ClearHarmony => Key::EditClearHarmony,
+        Edit::SetSection => Key::EditSetSection,
+        Edit::MoveSection => Key::EditMoveSection,
         Edit::StampProgression => Key::EditStampProgression,
         Edit::GenerateClip => Key::EditGenerateClip,
         Edit::FreezeClip => Key::EditFreezeClip,

@@ -50,6 +50,13 @@ pub fn default_instrument(preset: ClipPreset) -> &'static str {
 /// [`MidiClip`](auris_core::MidiClip) wants them, and sorted so that two runs of the same recipe
 /// compare equal.
 ///
+/// `section` is the label of the timeline stretch the clip sits in, with which occurrence of
+/// that label it is — the composer's hint. Every stream the part draws from is keyed by it, so
+/// two clips written into stretches both called サビ draw the same figures, and a clip in the
+/// *second* サビ varies exactly as a repeated section does under [`compose`](crate::compose):
+/// the motif holds, the details may turn. With no section named, the preset keys the streams as
+/// before, so an unstructured timeline writes what it always wrote.
+///
 /// An empty answer is a real answer: a range with no chords written under it, or one shorter than
 /// a bar, has nothing for a part to play, and inventing something would mean inventing harmony the
 /// person did not ask for.
@@ -59,6 +66,7 @@ pub fn write_phrase(
     length: Ticks,
     meter: TimeSignature,
     recipe: &ClipRecipe,
+    section: Option<(&str, usize)>,
 ) -> Vec<Note> {
     // The reference grid: the meter at the default subdivision. It decides the bar and the drums,
     // both of which every subdivision agrees on. Which grid a part's own figures land on is the
@@ -84,16 +92,21 @@ pub fn write_phrase(
     // any more: the skeleton and the melody's scale walk both read each event's own key, which
     // is what lets a modulation inside the range move the scale at the tick it moves the chords.
     let key = harmony.key_at(start);
-    // Keyed by the preset rather than by a section name, so that changing the preset writes a
-    // different part and changing the seed writes a different take of the same one.
-    let section_key = recipe.preset.name();
-    let skeleton = skeleton(&events, recipe.seed, section_key, 1);
+    // Keyed by the timeline's own section when it names one — the label is the composer's
+    // hint, and what makes two clips in stretches both called サビ recognisably one idea — and
+    // by the preset otherwise, so that changing the preset writes a different part and an
+    // unstructured timeline writes what it always wrote.
+    let (section_key, instance) = match section {
+        Some((label, instance)) => (label, instance.max(1)),
+        None => (recipe.preset.name(), 1),
+    };
+    let skeleton = skeleton(&events, recipe.seed, section_key, instance);
 
     let frame = Frame {
         grid,
         sections: vec![SectionPlan {
             name: section_key.to_string(),
-            instance: 1,
+            instance,
             start: Ticks::ZERO,
             length,
             bars,
@@ -205,6 +218,7 @@ mod tests {
             BAR * 4,
             four_four(),
             &ClipRecipe::new(preset, seed),
+            None,
         )
     }
 
@@ -321,6 +335,7 @@ mod tests {
                 humanize: 0.0,
                 ..ClipRecipe::new(ClipPreset::Bass, 4)
             },
+            None,
         );
         let key = harmony.key_at(Ticks::ZERO);
         let mut checked = 0;
@@ -396,6 +411,7 @@ mod tests {
                     subdivision: auris_core::Subdivision::EighthTriplet,
                     ..ClipRecipe::new(ClipPreset::Chords, seed)
                 },
+                None,
             )
         };
         let mut off_the_straight_grid = 0;
@@ -427,6 +443,7 @@ mod tests {
             BAR * 4,
             four_four(),
             &ClipRecipe::new(ClipPreset::Chords, 1),
+            None,
         );
         assert!(notes.is_empty());
 
@@ -437,8 +454,50 @@ mod tests {
             Ticks(960),
             four_four(),
             &ClipRecipe::new(ClipPreset::Chords, 1),
+            None,
         );
         assert!(short.is_empty());
+    }
+
+    #[test]
+    fn a_section_label_keys_the_material() {
+        // Two stretches with identical harmony: the label decides whether they are the same
+        // idea. Same label and occurrence, same take; different labels, different figures; no
+        // label at all, exactly what the preset alone always wrote.
+        let mut harmony = axis();
+        harmony.stamp(
+            &Chart::parse("| I | V | vi | IV |").unwrap(),
+            BAR * 4,
+            4,
+            four_four(),
+        );
+        let recipe = ClipRecipe {
+            humanize: 0.0,
+            ..ClipRecipe::new(ClipPreset::Lead, 5)
+        };
+        let write = |start: Ticks, section: Option<(&str, usize)>| {
+            write_phrase(&harmony, start, BAR * 4, four_four(), &recipe, section)
+        };
+
+        assert_eq!(
+            write(Ticks::ZERO, Some(("サビ", 1))),
+            write(BAR * 4, Some(("サビ", 1))),
+            "the same label over the same harmony is the same take, wherever it sits"
+        );
+        assert_ne!(
+            write(Ticks::ZERO, Some(("Aメロ", 1))),
+            write(Ticks::ZERO, Some(("サビ", 1))),
+            "a different label is a different idea"
+        );
+        // Nothing is asserted between occurrence 1 and occurrence 2 on purpose: a clip writes
+        // with `variation: 0.0` — one clip is one playing — so the second サビ comes out the
+        // same take, give or take the skeleton's arch, exactly as a compose repeat without
+        // variation would. Which is what 「2番のサビ」 usually means.
+        assert_eq!(
+            write(Ticks::ZERO, None),
+            write(Ticks::ZERO, Some((recipe.preset.name(), 1))),
+            "no label keys by the preset, exactly as before"
+        );
     }
 
     #[test]
@@ -467,6 +526,7 @@ mod tests {
                         humanize: 0.0,
                         ..ClipRecipe::new(ClipPreset::Lead, seed)
                     },
+                    None,
                 );
                 assert!(
                     !notes.is_empty(),
@@ -511,6 +571,7 @@ mod tests {
                     humanize: 0.0,
                     ..ClipRecipe::new(ClipPreset::Lead, seed)
                 },
+                None,
             );
             for note in &notes {
                 let key = harmony.key_at(note.start);
@@ -555,6 +616,7 @@ mod tests {
             BAR * 4,
             four_four(),
             &ClipRecipe::new(ClipPreset::Bass, 4),
+            None,
         );
         assert!(!notes.is_empty());
         let key = harmony.key_at(BAR * 4);
@@ -591,6 +653,7 @@ mod tests {
                         density,
                         ..ClipRecipe::new(preset, seed)
                     },
+                    None,
                 )
                 .len() as f32
             })
@@ -648,6 +711,7 @@ mod tests {
                     density,
                     ..ClipRecipe::new(ClipPreset::Drums, 3)
                 },
+                None,
             )
             .len()
         };
@@ -674,6 +738,7 @@ mod tests {
                 intensity: 0.0,
                 ..ClipRecipe::new(ClipPreset::Drums, 5)
             },
+            None,
         );
         for bar in 0..4 {
             assert!(
@@ -701,6 +766,7 @@ mod tests {
                     groove: "eight-beat".to_string(),
                     ..ClipRecipe::new(ClipPreset::Drums, 2)
                 },
+                None,
             )
         };
         let plain = kit(0.5);
@@ -742,6 +808,7 @@ mod tests {
                     humanize: 0.0,
                     ..ClipRecipe::new(ClipPreset::Drums, 4)
                 },
+                None,
             )
         };
         let last_bar = |notes: &[Note]| notes.iter().filter(|note| note.start >= BAR * 3).count();
@@ -778,6 +845,7 @@ mod tests {
                     groove: groove.to_string(),
                     ..ClipRecipe::new(ClipPreset::Drums, 3)
                 },
+                None,
             )
             .len()
         };

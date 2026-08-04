@@ -37,6 +37,8 @@ pub enum PromptTarget {
     Key(Ticks),
     /// The chord sounding from a position on the timeline.
     Chord(Ticks),
+    /// The name of the song section in force at a position on the timeline.
+    Section(Ticks),
     /// The seed a generated clip is written from.
     ///
     /// Typed for a different reason than the other three: "another take" is the *next* seed, so
@@ -64,6 +66,7 @@ impl PromptTarget {
         Some(match self {
             PromptTarget::Key(_) => Key::HintKey,
             PromptTarget::Chord(_) => Key::HintChord,
+            PromptTarget::Section(_) => Key::HintSection,
             PromptTarget::Seed(_) => Key::HintSeed,
             PromptTarget::Tempo => Key::HintTempo,
             PromptTarget::Position => Key::HintPosition,
@@ -81,6 +84,31 @@ impl PromptTarget {
 const CHORD_VOCABULARY: &[&str] = &[
     "I", "ii", "iii", "IV", "V", "vi", "vii", "Imaj7", "ii7", "iii7", "IVmaj7", "V7", "vi7",
     "bIII", "bVI", "bVII", "iv", "bVII7",
+];
+
+/// The section names a person actually writes, offered under the section field.
+///
+/// The Japanese conventions first — this is the vocabulary a J-pop chart is discussed in — and
+/// the English forms after, so both spellings complete. The point of offering a fixed list is
+/// consistency rather than coverage: the composer matches labels exactly, so a サビ typed two
+/// ways would be two different sections, and the completion is what keeps the spelling in one.
+const SECTION_VOCABULARY: &[&str] = &[
+    "イントロ",
+    "Aメロ",
+    "Bメロ",
+    "サビ",
+    "Cメロ",
+    "間奏",
+    "落ちサビ",
+    "大サビ",
+    "アウトロ",
+    "Intro",
+    "Verse",
+    "Pre-Chorus",
+    "Chorus",
+    "Bridge",
+    "Interlude",
+    "Outro",
 ];
 
 /// The keys offered under the key field.
@@ -121,6 +149,7 @@ pub fn completions(target: PromptTarget, typed: &str) -> Vec<&'static str> {
     let vocabulary = match target {
         PromptTarget::Chord(_) => CHORD_VOCABULARY,
         PromptTarget::Key(_) => KEY_VOCABULARY,
+        PromptTarget::Section(_) => SECTION_VOCABULARY,
         _ => return Vec::new(),
     };
     let needle = typed.trim().to_ascii_lowercase();
@@ -385,6 +414,13 @@ impl AurisApp {
                     return;
                 }
             },
+            // Any text is a name, so there is nothing to parse and nothing to refuse; the
+            // empty case was already turned away above, and removing a section is the menu's
+            // job rather than an empty field's.
+            PromptTarget::Section(at) => {
+                self.session.set_section(at, Some(text));
+                Ok(())
+            }
             PromptTarget::Seed(clip) => match text.parse::<u64>() {
                 Ok(seed) => {
                     self.set_clip_seed(clip, seed);

@@ -880,6 +880,12 @@ pub struct Project {
     /// changes as the song goes on, and at any one moment every track obeys the same one.
     #[serde(default)]
     pub harmony: Harmony,
+    /// The song's structure over the timeline: イントロ, Aメロ, サビ, each in force until the
+    /// next. Beside the harmony because it is the same kind of thing — and the composer reads
+    /// it as a hint, so that material generated inside two stretches with the same label is
+    /// recognisably the same material.
+    #[serde(default)]
+    pub sections: crate::structure::SectionMap,
     /// Tracks, top to bottom.
     pub tracks: Vec<Track>,
     /// Master bus strip.
@@ -949,6 +955,7 @@ impl Project {
             tempo_map: TempoMap::constant(120.0),
             time_signature: TimeSignature::default(),
             harmony: Harmony::default(),
+            sections: crate::structure::SectionMap::default(),
             tracks: Vec::new(),
             master: MixerStrip::default(),
             audio_sources: BTreeMap::new(),

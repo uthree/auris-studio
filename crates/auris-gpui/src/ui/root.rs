@@ -471,6 +471,23 @@ impl AurisApp {
                     *at = landed;
                 }
             }
+            Drag::SectionLabel { at, grab_offset } => {
+                let x = event.position.x - self.timeline_origin().x;
+                let wanted = (self.timeline.x_to_tick(x) - grab_offset).max_zero();
+                // `move_section` snaps to the bar itself; the drag has to follow the boundary
+                // for the same reason the chord drag does.
+                if self.session.move_section(at, wanted) {
+                    let landed = self
+                        .session
+                        .project()
+                        .sections
+                        .change_at(wanted)
+                        .unwrap_or(wanted);
+                    if let Some(Drag::SectionLabel { at, .. }) = &mut self.drag {
+                        *at = landed;
+                    }
+                }
+            }
             Drag::LoopRegion { anchor } => {
                 let x = event.position.x - self.timeline_origin().x;
                 let tick = self

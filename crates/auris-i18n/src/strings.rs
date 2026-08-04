@@ -292,6 +292,9 @@ strings! {
     MenuRemoveKeyHere { en: "Remove Key Change", ja: "転調を取り消す" }
     MenuSetChordHere { en: "Chord Here…", ja: "ここにコードを…" }
     MenuRemoveChordHere { en: "Remove Chord", ja: "コードを削除" }
+    MenuSetSectionHere { en: "Name Section Here…", ja: "ここからのセクション名を…" }
+    MenuRemoveSectionHere { en: "Remove Section", ja: "セクションを削除" }
+    MenuEndSectionsHere { en: "End Sections Here", ja: "ここで構造を終える" }
     MenuWriteProgression { en: "Write a Progression", ja: "コード進行を書き込む" }
     MenuGenerateClip { en: "Write a Part Here…", ja: "ここにパートを自動生成…" }
     MenuRerollClip { en: "Another Take", ja: "別のテイク" }
@@ -354,6 +357,7 @@ strings! {
     RenameClipTitle { en: "Rename clip", ja: "クリップ名の変更" }
     SetKeyTitle { en: "Key from here", ja: "ここからの調" }
     SetChordTitle { en: "Chord from here", ja: "ここからのコード" }
+    SetSectionTitle { en: "Section from here", ja: "ここからのセクション" }
     SetSeedTitle { en: "Seed for this part", ja: "このパートのシード" }
     SetTempoTitle { en: "Tempo", ja: "テンポ" }
     SetPositionTitle { en: "Go to position", ja: "位置へ移動" }
@@ -379,6 +383,10 @@ strings! {
     HintSeed {
         en: "Any whole number. Another take is the next one along.",
         ja: "任意の整数。「別テイク」は次の番号です。"
+    }
+    HintSection {
+        en: "Any name. Clips generated in same-named sections share their material.",
+        ja: "任意の名前。同じ名前のセクションで生成したクリップは素材を共有します。"
     }
 
     // ------------------------------------------------------------------ unsaved changes
@@ -465,6 +473,8 @@ strings! {
     EditSetChord { en: "setting a chord", ja: "コードの変更" }
     EditMoveChord { en: "moving a chord", ja: "コードの移動" }
     EditClearHarmony { en: "clearing the chords", ja: "コードの消去" }
+    EditSetSection { en: "changing a section", ja: "セクションの変更" }
+    EditMoveSection { en: "moving a section", ja: "セクションの移動" }
     EditStampProgression { en: "writing a progression", ja: "コード進行の書き込み" }
     EditGenerateClip { en: "writing a clip", ja: "クリップの自動生成" }
     EditFreezeClip { en: "keeping a clip", ja: "クリップの確定" }

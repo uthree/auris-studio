@@ -265,6 +265,14 @@ pub enum Drag {
         /// Pointer x when the drag began.
         start_x: Pixels,
     },
+    /// Dragging a section boundary along the structure lane.
+    SectionLabel {
+        /// The change being moved, by where it currently sits.
+        at: Ticks,
+        /// How far into the section the pointer took hold, kept so the boundary does not jump
+        /// to the pointer on the first move.
+        grab_offset: Ticks,
+    },
     /// Sweeping along the harmony lane with the button held, hearing each chord in turn.
     ///
     /// Carries nothing: what sounds is whatever is written under the pointer, which the document
@@ -382,6 +390,7 @@ impl Drag {
             // Listening changes nothing at all.
             Drag::AuditionHarmony => None,
             Drag::HarmonyChord { .. } => Some(Edit::MoveChord),
+            Drag::SectionLabel { .. } => Some(Edit::MoveSection),
             // How far in the view is zoomed is a property of the window, like a panel's width.
             Drag::TimeZoom { .. } => None,
             // Panel and window geometry is a property of the window, not the document: resizing
@@ -704,7 +713,9 @@ impl ExportState {
 pub struct CanvasBounds {
     /// The bar ruler above the arrangement.
     pub ruler: Rc<Cell<Option<Bounds<Pixels>>>>,
-    /// The chord strip between the ruler and the lanes.
+    /// The section strip between the ruler and the harmony.
+    pub structure: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The chord strip between the structure lane and the clip lanes.
     pub harmony: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The arrangement's clip lanes.
     pub lanes: Rc<Cell<Option<Bounds<Pixels>>>>,

@@ -162,6 +162,12 @@ pub enum MenuCommand {
     SetChordAt(Ticks),
     /// Remove the chord change at a position.
     RemoveChordAt(Ticks),
+    /// Name the song section in force at a position.
+    SetSectionAt(Ticks),
+    /// Remove the section change in force at a position.
+    RemoveSectionAt(Ticks),
+    /// Leave the song unnamed from a position onwards — how a structure ends.
+    EndSectionsAt(Ticks),
     /// Empty the chords over a range.
     ClearHarmony {
         /// Where the cleared stretch begins.
@@ -849,6 +855,9 @@ impl AurisApp {
             }
             MenuCommand::RemoveChordAt(tick) => self.session.remove_chord(tick),
             MenuCommand::ClearHarmony { from, to } => self.session.clear_harmony(from, to),
+            MenuCommand::SetSectionAt(tick) => self.prompt_for_section(tick),
+            MenuCommand::RemoveSectionAt(tick) => self.session.remove_section(tick),
+            MenuCommand::EndSectionsAt(tick) => self.session.set_section(tick, None),
 
             MenuCommand::SetLoopStart(tick) => {
                 let end = self
@@ -1032,6 +1041,56 @@ impl AurisApp {
                 self.project().loop_region.is_some(),
                 self.t(Key::MenuClearCycle),
                 MenuCommand::ClearLoop,
+            )
+    }
+
+    /// Opens the naming sheet for the section in force at `tick`.
+    ///
+    /// The field comes up holding the current name, so double-clicking a section renames it
+    /// and double-clicking an empty stretch gives it its first one.
+    pub(crate) fn prompt_for_section(&mut self, tick: Ticks) {
+        let current = self
+            .project()
+            .sections
+            .label_at(tick)
+            .map(str::to_string)
+            .unwrap_or_default();
+        let title = self.t(Key::SetSectionTitle);
+        self.open_prompt(Prompt::new(title, PromptTarget::Section(tick), current));
+    }
+
+    /// The menu for the structure lane.
+    ///
+    /// Headed by the section under the pointer when there is one — numbered the way the lane
+    /// draws it — because that is what the items act on, wherever inside it the press landed.
+    pub(crate) fn structure_menu(&self, anchor: Point<Pixels>, tick: Ticks) -> ContextMenu {
+        let sections = &self.project().sections;
+        let named = sections.label_at(tick).is_some();
+        let title = match sections.section_at(tick) {
+            Some((label, instance)) => {
+                if sections.repeats(label) > 1 {
+                    format!("{label} {instance}")
+                } else {
+                    label.to_string()
+                }
+            }
+            None => self.t(Key::SetSectionTitle).to_string(),
+        };
+
+        ContextMenu::new(anchor, title)
+            .item(
+                self.t(Key::MenuSetSectionHere),
+                MenuCommand::SetSectionAt(tick),
+            )
+            .item_if(
+                named,
+                self.t(Key::MenuRemoveSectionHere),
+                MenuCommand::RemoveSectionAt(tick),
+            )
+            .item_if(
+                named,
+                self.t(Key::MenuEndSectionsHere),
+                MenuCommand::EndSectionsAt(tick),
             )
     }
 

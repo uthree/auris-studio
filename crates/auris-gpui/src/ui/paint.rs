@@ -275,6 +275,86 @@ pub fn harmony_rows(bounds: Bounds<Pixels>) -> (Bounds<Pixels>, Bounds<Pixels>) 
     )
 }
 
+/// What the structure lane draws, copied out of the document for the paint closure.
+#[derive(Clone, Debug, Default)]
+pub struct StructurePaint {
+    /// The named stretches crossing the visible range, each with the text it is shown as —
+    /// numbered when its label repeats anywhere in the song, bare when it does not.
+    pub spans: Vec<(SectionSpan, String)>,
+    /// The section being dragged, by the change that starts it, drawn lit.
+    pub held: Option<Ticks>,
+}
+
+/// Draws the section names across `bounds`.
+///
+/// Each named stretch is a block from where it starts to where it ends, labelled サビ 2 when
+/// the label repeats and サビ when it does not. An unnamed stretch draws as bare background,
+/// which is the honest picture of it — exactly as a cleared stretch of harmony does below.
+pub fn structure_lane(
+    window: &mut Window,
+    cx: &mut App,
+    bounds: Bounds<Pixels>,
+    view: &TimelineView,
+    structure: &StructurePaint,
+    theme: &Theme,
+) {
+    // The same sunken shade as the key strip beneath it: the two thin rows bracket the chords,
+    // and giving each its own tone would make the stack read as four unrelated bands.
+    rect(window, bounds, theme.surface_sunken);
+
+    for (span, shown) in &structure.spans {
+        let x = bounds.origin.x + view.tick_to_x(span.start);
+        let width = view.duration_to_width(span.end - span.start);
+        if width <= px(1.0) {
+            continue;
+        }
+        let lit = structure.held == Some(span.change);
+        let block = Bounds {
+            origin: point(x + CHORD_BLOCK_INSET, bounds.origin.y + px(2.0)),
+            size: size(
+                width - CHORD_BLOCK_INSET * 2.0,
+                bounds.size.height - px(4.0),
+            ),
+        };
+        // The selection colour rather than the accent, so the structure reads as a different
+        // kind of thing from the chords two rows down.
+        rounded_rect(
+            window,
+            block,
+            px(3.0),
+            Theme::translucent(theme.selection, if lit { 0.42 } else { 0.18 }),
+        );
+        // A handle only where the change actually sits: a span clipped by the window's left
+        // edge starts somewhere off to the left, and dragging its visible edge would move a
+        // boundary that is not there.
+        let movable = span.start == span.change;
+        if movable {
+            rounded_rect(
+                window,
+                Bounds {
+                    origin: block.origin,
+                    size: size(CHORD_HANDLE.min(block.size.width), block.size.height),
+                },
+                px(3.0),
+                if lit { theme.accent } else { theme.selection },
+            );
+        }
+        clipped(window, block, |window| {
+            label(
+                window,
+                cx,
+                point(
+                    block.origin.x + if movable { CHORD_HANDLE } else { px(0.0) } + px(4.0),
+                    block.origin.y + (block.size.height - px(13.0)) / 2.0,
+                ),
+                shown.clone(),
+                px(10.0),
+                theme.text,
+            );
+        });
+    }
+}
+
 /// What the harmony lane draws, copied out of the document for the paint closure.
 #[derive(Clone, Debug, Default)]
 pub struct HarmonyPaint {

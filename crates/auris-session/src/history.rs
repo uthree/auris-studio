@@ -96,6 +96,10 @@ pub enum Edit {
     MoveChord,
     /// A stretch of the timeline lost its chords.
     ClearHarmony,
+    /// A section label changed somewhere on the timeline — written, renamed or removed.
+    SetSection,
+    /// A section boundary moved along the timeline.
+    MoveSection,
     /// A named progression was written across a range of bars.
     StampProgression,
     /// A clip was written from the harmony under it.

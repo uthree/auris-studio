@@ -14,9 +14,12 @@
 //!   computer.
 //! * [`harmony`] — that theory laid out over the timeline, the way [`time::TempoMap`] lays out
 //!   tempo.
+//! * [`structure`] — the song's sections laid out the same way: イントロ, Aメロ, サビ, and where
+//!   each begins.
 //!
-//! The last two are here rather than in the composer because the document holds a key and a chord
-//! progression of its own, and the document model may not depend on anything above it.
+//! The last three are here rather than in the composer because the document holds a key, a chord
+//! progression and a structure of its own, and the document model may not depend on anything
+//! above it.
 
 #![warn(missing_docs)]
 
@@ -28,6 +31,7 @@ pub mod param;
 pub mod plugin;
 pub mod project;
 pub mod registry;
+pub mod structure;
 pub mod theory;
 pub mod time;
 
@@ -46,6 +50,7 @@ pub use project::{
     SoundFontId, SoundFontRef, SourceId, Subdivision, Track, TrackId, TrackKind,
 };
 pub use registry::{PluginPack, PluginRegistry};
+pub use structure::{SectionMap, SectionPoint, SectionSpan};
 pub use time::{Beats, Samples, Seconds, TICKS_PER_QUARTER, TempoMap, Ticks, TimeSignature};
 
 /// Convenience import for code that implements plugins.
