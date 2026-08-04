@@ -607,4 +607,5 @@ format, and where the two platforms differ.
 
 ## Licence
 
-MIT OR Apache-2.0.
+Apache-2.0. The full text is in [LICENSE](LICENSE), and it is the licence every release archive
+carries.
