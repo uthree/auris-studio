@@ -789,22 +789,37 @@ impl AurisApp {
         })
     }
 
-    /// The fade handle under a press inside a clip, if the clip is audio and has one there.
+    /// The audio clip on `track` whose fade handle is under a press, and which handle it is.
     ///
     /// `x` is in timeline pixels and `y_in_lane` measured from the lane's top; the clip is
     /// drawn two pixels inside its lane, which this subtracts before asking the geometry.
-    fn fade_edge_at(&self, clip: ClipId, x: Pixels, y_in_lane: Pixels) -> Option<FadeEdge> {
-        let (start, length, frames, _, fade_in, fade_out) = self.audio_clip_shape(clip)?;
-        fade_handle_at(
-            &self.timeline,
-            start,
-            length,
-            frames,
-            fade_in,
-            fade_out,
-            x,
-            y_in_lane - px(2.0),
-        )
+    ///
+    /// Every audio clip on the track is asked, not only the one under the pointer's tick: a
+    /// handle is a grab zone around a point on the clip's edge, so with no fades yet half of
+    /// it hangs past the clip — and the fade-out handle sits exactly on the clip's end, the
+    /// first tick `clip_at` counts as outside. Searched backwards like `clip_at`, so where
+    /// two clips meet the handle drawn on top is the one taken hold of.
+    fn fade_grab_at(
+        &self,
+        track: TrackId,
+        x: Pixels,
+        y_in_lane: Pixels,
+    ) -> Option<(ClipId, FadeEdge)> {
+        let track = self.project().track(track)?;
+        let audio = track.kind.as_audio()?;
+        audio.clips.iter().rev().find_map(|clip| {
+            let edge = fade_handle_at(
+                &self.timeline,
+                clip.start,
+                self.audio_clip_length_ticks(clip),
+                clip.length_frames,
+                clip.fade_in_frames,
+                clip.fade_out_frames,
+                x,
+                y_in_lane - px(2.0),
+            )?;
+            Some((clip.id, edge))
+        })
     }
 
     /// Shapes a fade towards the pointer, measured as a fraction of the clip.
@@ -938,6 +953,26 @@ impl AurisApp {
             return;
         }
 
+        // The band under the title belongs to the fades; a press there takes hold of the
+        // nearer handle, and the resize edge keeps everything below the band. Asked before
+        // the clip under the pointer, not from inside its arm: a corner handle's grab zone
+        // hangs past the clip's edge, over ticks where `clip_at` answers nothing — which
+        // used to turn a press on the fade-out handle into an invisible rubber band.
+        if let Some((clip_id, edge)) = self.fade_grab_at(track_id, local.x, local.y - lane_top) {
+            if !self.selected_clips.contains(&clip_id) {
+                self.select_clip(Some(clip_id));
+            } else {
+                self.selected_clip = Some(clip_id);
+            }
+            self.selected_notes.clear();
+            self.begin_drag(Drag::ClipFade {
+                clip: clip_id,
+                edge,
+            });
+            cx.notify();
+            return;
+        }
+
         match under_pointer {
             Some((clip_id, clip_start, clip_length)) => {
                 // Grabbing a clip that is already part of a selection keeps the selection, so a
@@ -948,16 +983,6 @@ impl AurisApp {
                     self.selected_clip = Some(clip_id);
                 }
                 self.selected_notes.clear();
-                // The band under the title belongs to the fades; a press there takes hold of
-                // the nearer handle, and the resize edge keeps everything below the band.
-                if let Some(edge) = self.fade_edge_at(clip_id, local.x, local.y - lane_top) {
-                    self.begin_drag(Drag::ClipFade {
-                        clip: clip_id,
-                        edge,
-                    });
-                    cx.notify();
-                    return;
-                }
                 let clip_start_x = self.timeline.tick_to_x(clip_start);
                 let clip_end_x = self.timeline.tick_to_x(clip_start + clip_length);
                 let grab = resize_grab(clip_end_x - clip_start_x);
@@ -1568,6 +1593,31 @@ mod tests {
             "the corner stopped being the handle once the fade moved it"
         );
         assert_eq!(grab(0, quarter, 144.0, y), Some(FadeEdge::Out));
+    }
+
+    #[test]
+    fn a_corner_handle_answers_on_both_of_its_halves() {
+        // With no fades yet the handles sit on the clip's corners, so half of each grab zone
+        // hangs past the clip — ticks `clip_at` counts as outside, which is why the lane
+        // press asks for fades before it asks what clip is under the pointer. Gated behind
+        // the clip under the tick, the fade-out handle could only be taken by the sliver of
+        // its zone that was still inside the clip.
+        let view = view();
+        let y = TITLE_HEIGHT + px(4.0);
+        let grab = |x: f32| {
+            fade_handle_at(
+                &view,
+                Ticks::ZERO,
+                Ticks::from_beats(4.0),
+                48_000,
+                0,
+                0,
+                px(x),
+                y,
+            )
+        };
+        assert_eq!(grab(-4.0), Some(FadeEdge::In));
+        assert_eq!(grab(196.0), Some(FadeEdge::Out));
     }
 
     #[test]
