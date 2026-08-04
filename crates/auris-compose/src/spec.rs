@@ -424,6 +424,8 @@ pub struct SongSpec {
     /// How much the playing varies, where [`Self::mood`]'s energy says how hard it is played at
     /// all. At 0 every note is struck alike — a sequencer, which is sometimes the point.
     pub dynamics: f32,
+    /// How much of a section's last bar the snare runs as a fill, from 0 to 1.
+    pub fill: f32,
     /// How much a repeat departs from what the section played the first time.
     ///
     /// At 0 a second chorus is note for note the first one, which is what makes it recognisable
@@ -466,6 +468,7 @@ impl Default for SongSpec {
             swing: 50,
             humanize: 0.35,
             dynamics: 1.0,
+            fill: 0.5,
             variation: 0.25,
             groove: "basic-rock".to_string(),
             charts,
@@ -724,6 +727,7 @@ impl SongSpec {
         out.push_str(&format!("swing:    {}\n", self.swing));
         out.push_str(&format!("humanize: {:.2}\n", self.humanize));
         out.push_str(&format!("dynamics: {:.2}\n", self.dynamics));
+        out.push_str(&format!("fill:     {:.2}\n", self.fill));
         out.push_str(&format!("variation: {:.2}\n", self.variation));
         out.push_str(&format!("brightness: {:.2}\n", self.mood.brightness));
         out.push_str(&format!("energy:     {:.2}\n", self.mood.energy));
@@ -910,6 +914,7 @@ fn apply_song_field(
         }
         "humanize" => spec.humanize = fraction(value, "humanize")?,
         "dynamics" => spec.dynamics = fraction(value, "dynamics")?,
+        "fill" => spec.fill = fraction(value, "fill")?,
         "variation" => spec.variation = fraction(value, "variation")?,
         "groove" => {
             if crate::rhythm::groove(value).is_none() {
@@ -950,8 +955,8 @@ fn apply_song_field(
         other => {
             return Err(format!(
                 "`{other}` is not a song field; expected one of title, key, scale, tempo, \
-                 meter, seed, swing, humanize, dynamics, variation, groove, mood, brightness, \
-                 energy, tension, syncopation, form, chords"
+                 meter, seed, swing, humanize, dynamics, fill, variation, groove, mood, \
+                 brightness, energy, tension, syncopation, form, chords"
             ));
         }
     }

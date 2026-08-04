@@ -322,9 +322,11 @@ pub struct ClipRecipe {
     pub seed: u64,
     /// How busy it is, from 0 for sparse to 1 for a wall of notes.
     ///
-    /// Read by the parts that generate their own figures. What a drum kit plays is decided by its
-    /// [`groove`](Self::groove) instead, which is the same choice made in the vocabulary a
-    /// drummer would use.
+    /// A kit reads it too, around the middle: below, the groove thins from its weakest hits
+    /// upward, and above, the steps it left empty start filling in with ghost notes. *Which*
+    /// rhythm a kit plays is still its [`groove`](Self::groove) — that is a choice from a
+    /// drummer's own vocabulary and not a number — and this is how hard the drummer is leaning
+    /// on it.
     pub density: f32,
     /// How hard it is played, from 0 to 1.
     ///
@@ -373,6 +375,12 @@ pub struct ClipRecipe {
     /// when the answer is "the same thing, higher". This is that answer.
     #[serde(default)]
     pub octave: i32,
+    /// How much of the last bar the snare runs as a fill, from 0 for none to 1 for two beats.
+    ///
+    /// Read by the drums alone. A bar that simply stops and is replaced sounds like an edit
+    /// rather than an arrival, and the join is the one moment a listener is certain to notice.
+    #[serde(default = "default_fill")]
+    pub fill: f32,
 }
 
 fn default_swing() -> u8 {
@@ -389,6 +397,10 @@ fn default_dynamics() -> f32 {
 
 fn default_syncopation() -> f32 {
     0.3
+}
+
+fn default_fill() -> f32 {
+    0.5
 }
 
 fn default_groove() -> String {
@@ -416,6 +428,7 @@ impl ClipRecipe {
             dynamics: default_dynamics(),
             syncopation: default_syncopation(),
             octave: 0,
+            fill: default_fill(),
         };
         if preset == ClipPreset::Stab {
             recipe.density = 0.95;

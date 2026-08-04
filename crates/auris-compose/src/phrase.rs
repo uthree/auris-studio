@@ -103,6 +103,9 @@ pub fn write_phrase(
         length,
         seed: recipe.seed,
         mood: mood_for(recipe),
+        // A clip is one bar of an arrangement rather than the end of a piece: whatever follows
+        // it, including another playing of itself, is something for the last bar to lead into.
+        joins_on: true,
     };
 
     let settings = ScoreSettings {
@@ -110,6 +113,7 @@ pub fn write_phrase(
         swing: recipe.swing,
         humanize: recipe.humanize.clamp(0.0, 1.0),
         dynamics: recipe.dynamics.clamp(0.0, 1.0),
+        fill: recipe.fill.clamp(0.0, 1.0),
         // One clip is one playing of one section, so there is no repeat to depart from.
         variation: 0.0,
         groove: recipe.groove.clone(),
@@ -520,13 +524,148 @@ mod tests {
     }
 
     #[test]
-    fn a_drum_kit_takes_its_density_from_its_groove_and_not_from_the_dial() {
-        // Deliberate, and the reason the recipe carries a groove at all. How busy a kit is *is*
-        // which groove it plays — `sparse` against `sixteen-beat` — and a dial that thinned a
-        // groove would be a dial that wrecked it.
-        assert_eq!(
+    fn a_drum_kit_leans_on_its_groove_rather_than_choosing_another_one() {
+        // The dial used to stop short of the kit, on the grounds that thinning a groove would
+        // wreck it. It does not thin arbitrarily: it goes from the weakest hits upward and never
+        // takes a downbeat, and above the middle it fills the free steps with ghost notes, which
+        // is how a drummer gets busier without playing something else.
+        let (sparse, busy) = (
             at_density(ClipPreset::Drums, 0.05),
-            at_density(ClipPreset::Drums, 1.0)
+            at_density(ClipPreset::Drums, 1.0),
+        );
+        assert!(
+            busy > sparse,
+            "the dial does not reach the kit: {busy:.1} against {sparse:.1}"
+        );
+
+        // What it is *not* is a second way to spell the groove. A busier groove is busier than a
+        // sparse one at the same setting, whatever the setting.
+        let kit = |groove: &str, density: f32| {
+            write_phrase(
+                &axis(),
+                Ticks::ZERO,
+                BAR * 4,
+                four_four(),
+                &ClipRecipe {
+                    groove: groove.to_string(),
+                    density,
+                    ..ClipRecipe::new(ClipPreset::Drums, 3)
+                },
+            )
+            .len()
+        };
+        for density in [0.05, 0.5, 1.0] {
+            assert!(
+                kit("sixteen-beat", density) > kit("sparse", density),
+                "the groove stopped deciding the shape at {density}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_quiet_kit_never_loses_its_downbeat() {
+        // Thinning takes the weak hits first and stops before the one the bar stands on. A kit
+        // whose downbeat could be thinned away would be a kit that sometimes lost the bar.
+        let notes = write_phrase(
+            &axis(),
+            Ticks::ZERO,
+            BAR * 4,
+            four_four(),
+            &ClipRecipe {
+                density: 0.0,
+                humanize: 0.0,
+                intensity: 0.0,
+                ..ClipRecipe::new(ClipPreset::Drums, 5)
+            },
+        );
+        for bar in 0..4 {
+            assert!(
+                notes.iter().any(|note| note.start == BAR * bar),
+                "bar {} lost its downbeat at the bottom of every dial",
+                bar + 1
+            );
+        }
+    }
+
+    #[test]
+    fn a_busy_kit_fills_in_with_ghosts_rather_than_with_more_of_the_groove() {
+        // Above the middle, the free steps take quiet hits. Loud ones would not be a busier
+        // groove, they would be a different one — so what arrives has to be softer than what the
+        // groove itself wrote, and that is the whole of the claim.
+        let kit = |density: f32| {
+            write_phrase(
+                &axis(),
+                Ticks::ZERO,
+                BAR * 4,
+                four_four(),
+                &ClipRecipe {
+                    density,
+                    humanize: 0.0,
+                    groove: "eight-beat".to_string(),
+                    ..ClipRecipe::new(ClipPreset::Drums, 2)
+                },
+            )
+        };
+        let plain = kit(0.5);
+        let busy = kit(1.0);
+        assert!(
+            busy.len() > plain.len(),
+            "the top of the dial added nothing: {} against {}",
+            busy.len(),
+            plain.len()
+        );
+
+        // Every step the groove already had is still struck at the level it was.
+        let softest = |notes: &[Note]| {
+            notes
+                .iter()
+                .map(|note| (note.velocity * 1000.0) as i32)
+                .min()
+                .unwrap_or(0)
+        };
+        assert!(
+            softest(&busy) < softest(&plain),
+            "what was added was not quieter than what was there"
+        );
+    }
+
+    #[test]
+    fn a_drum_clip_ends_on_a_fill_and_the_dial_says_how_long() {
+        // A loop's last bar joins another playing of itself, which is exactly the bar a fill
+        // belongs in — and the clip never got one, because the rule was written for the last
+        // section of a piece and a clip is one section.
+        let kit = |fill: f32| {
+            write_phrase(
+                &axis(),
+                Ticks::ZERO,
+                BAR * 4,
+                four_four(),
+                &ClipRecipe {
+                    fill,
+                    humanize: 0.0,
+                    ..ClipRecipe::new(ClipPreset::Drums, 4)
+                },
+            )
+        };
+        let last_bar = |notes: &[Note]| notes.iter().filter(|note| note.start >= BAR * 3).count();
+
+        assert!(
+            last_bar(&kit(1.0)) > last_bar(&kit(0.5)),
+            "a longer fill was not longer"
+        );
+        assert!(
+            last_bar(&kit(0.5)) > last_bar(&kit(0.0)),
+            "the middle of the dial ran no fill at all"
+        );
+
+        // At zero the last bar is the groove and nothing else, which is what a loop that is not
+        // meant to announce its own end wants.
+        let none = kit(0.0);
+        assert!(!none.is_empty(), "turning the fill off silenced the kit");
+        assert_eq!(
+            last_bar(&none),
+            none.iter().filter(|note| note.start < BAR).count(),
+            "the last bar differs from the first with no fill in it"
         );
     }
 

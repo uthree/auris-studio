@@ -71,6 +71,15 @@ pub struct Frame {
     pub seed: u64,
     /// How the piece should feel.
     pub mood: Mood,
+    /// Whether the end of the last section joins something rather than being the end.
+    ///
+    /// A single clip does: whatever the arrangement puts after it, most often another playing of
+    /// itself, which is the bar a drum loop wants its fill in. A piece does not — it stops, and
+    /// a fill running into silence is a drummer who did not know the song had finished.
+    ///
+    /// A property of what is being written rather than of how many sections it has: a song with
+    /// one section in it is still a song.
+    pub joins_on: bool,
 }
 
 /// Builds the frame for a spec.
@@ -125,6 +134,7 @@ pub fn plan(spec: &SongSpec) -> Frame {
         length: start,
         seed: spec.seed,
         mood: spec.mood,
+        joins_on: false,
     }
 }
 

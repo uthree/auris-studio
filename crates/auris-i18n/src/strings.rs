@@ -328,6 +328,7 @@ strings! {
     // rather than left as 「ダイナミクス」, which in a studio means the level and not the spread.
     PartDynamics { en: "Dynamics", ja: "強弱の幅" }
     PartSyncopation { en: "Syncopation", ja: "シンコペーション" }
+    PartFill { en: "Fill", ja: "フィルイン" }
     PartOctave { en: "Octave", ja: "オクターブ" }
     PartSubdivision { en: "Subdivision", ja: "音符の細かさ" }
     PartSwing { en: "Swing", ja: "スウィング" }

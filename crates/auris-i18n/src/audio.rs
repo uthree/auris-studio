@@ -297,6 +297,14 @@ const THEORY_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     ("A swung eight-beat", "スウィングした 8 ビート"),
     (
+        "A broken kick and a snare that lands early, with ghosts around it",
+        "崩したキックと食い気味のスネア、まわりにゴーストノート",
+    ),
+    (
+        "The clave on the rim over a surdo on every beat",
+        "リムのクラーベと全拍のスルド",
+    ),
+    (
         "The backbeat moved to bar's centre, which halves the felt tempo",
         "バックビートを小節の中央へ移し、体感テンポを半分にしたもの",
     ),

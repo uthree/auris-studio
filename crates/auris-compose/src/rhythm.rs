@@ -336,6 +336,22 @@ pub const GROOVES: &[Groove] = &[
         swing: 66,
     },
     Groove {
+        name: "breakbeat",
+        description: "A broken kick and a snare that lands early, with ghosts around it",
+        kick: "x ~ ~ ~ ~ ~ x ~ ~ ~ x ~ ~ ~ ~ ~",
+        snare: "~ ~ ~ ~ X ~ ~ o ~ ~ ~ o X ~ ~ o",
+        hat: "x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~",
+        swing: 50,
+    },
+    Groove {
+        name: "bossa-nova",
+        description: "The clave on the rim over a surdo on every beat",
+        kick: "x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~",
+        snare: "x ~ ~ x ~ ~ x ~ ~ ~ x ~ x ~ ~ ~",
+        hat: "x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~",
+        swing: 50,
+    },
+    Groove {
         name: "half-time",
         description: "The backbeat moved to bar's centre, which halves the felt tempo",
         kick: "x ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~",

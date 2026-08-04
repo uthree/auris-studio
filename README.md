@@ -155,6 +155,7 @@ the recipe when a take turns out to be the keeper. The dials are in the inspecto
 | **Gate** | How long each note sounds, as a share of the gap to the next |
 | **Intensity** | How hard it is played |
 | **Dynamics** | How far apart the hardest and softest notes are struck |
+| **Fill** | How much of the last bar the snare runs into what follows — drums only |
 | **Swing** | How late the offbeats are |
 | **Humanize** | How far timing and velocity wander |
 
@@ -165,11 +166,18 @@ the level stays where the intensity put it rather than sagging with the spread. 
 source of variation at once: the metric hierarchy, the accents, the lean across a phrase and the
 crescendo of a drum fill.
 
-Only the rows a preset can actually hear are drawn. A kit has no density, gate, subdivision,
-octave or syncopation — how busy it is *is* its groove, a one-shot ignores its note-off, its
-pitches are drum numbers rather than notes, and its rhythm is the one somebody chose. A pad has no
-syncopation, because it sounds each chord where the chord is. A part on a triplet grid has no
-swing.
+A kit reads the density around the middle: below it the groove thins from its weakest hits upward
+and never loses a downbeat, and above it the steps the groove left empty start taking ghost notes
+— which is how a drummer gets busier without playing something else. *Which* rhythm it plays is
+still the groove picker, and that is a choice from a drummer's own vocabulary rather than a
+number: `basic-rock`, `eight-beat`, `sixteen-beat`, `four-on-the-floor`, `shuffle`, `breakbeat`,
+`bossa-nova`, `half-time` and `sparse`.
+
+Only the rows a preset can actually hear are drawn. A kit has no gate, subdivision, octave or
+syncopation — a one-shot ignores its note-off, its pitches are drum numbers rather than notes, and
+where it plays is which groove it plays. Nothing but a kit has a fill, because nothing else has a
+last bar to announce. A pad has no syncopation, because it sounds each chord where the chord is. A
+part on a triplet grid has no swing.
 
 The subdivision is per part, not per song, so a stab hammering triplets over a straight kit is a
 setting rather than a fight. Swing disappears on a triplet grid, because a grid already sitting

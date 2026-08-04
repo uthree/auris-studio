@@ -47,6 +47,8 @@ pub enum Dial {
     Intensity,
     /// How far apart the hardest and softest notes are struck.
     Dynamics,
+    /// How much of the last bar the snare runs as a fill.
+    Fill,
     /// How late the offbeats are.
     Swing,
     /// How far timing and velocity wander.
@@ -62,6 +64,7 @@ impl Dial {
             Dial::Gate => Key::PartGate,
             Dial::Intensity => Key::PartIntensity,
             Dial::Dynamics => Key::PartDynamics,
+            Dial::Fill => Key::PartFill,
             Dial::Swing => Key::PartSwing,
             Dial::Humanize => Key::PartHumanize,
         }
@@ -74,6 +77,7 @@ impl Dial {
             Dial::Syncopation => recipe.syncopation,
             Dial::Intensity => recipe.intensity,
             Dial::Dynamics => recipe.dynamics,
+            Dial::Fill => recipe.fill,
             Dial::Humanize => recipe.humanize,
             Dial::Gate => (recipe.gate - GATE_MIN) / (1.0 - GATE_MIN),
             Dial::Swing => {
@@ -100,6 +104,7 @@ impl Dial {
             Dial::Syncopation => recipe.syncopation = whole_percent(fraction),
             Dial::Intensity => recipe.intensity = whole_percent(fraction),
             Dial::Dynamics => recipe.dynamics = whole_percent(fraction),
+            Dial::Fill => recipe.fill = whole_percent(fraction),
             Dial::Humanize => recipe.humanize = whole_percent(fraction),
             Dial::Gate => recipe.gate = GATE_MIN + whole_percent(fraction) * (1.0 - GATE_MIN),
             Dial::Swing => {
@@ -134,11 +139,19 @@ fn whole_percent(fraction: f32) -> f32 {
 /// rule the composer itself keeps, stated where the interface can break it, and it costs a
 /// changing row count in exchange for never lying about what is reachable.
 pub fn dials_for(recipe: &ClipRecipe) -> &'static [Dial] {
-    // A kit reads neither the density, the gate nor the syncopation: how busy it is and where it
-    // plays are both which groove it plays, and a one-shot drum ignores its note-off. It ignores
-    // the subdivision too, which is why its swing is the one that is never inert.
+    // A kit reads neither the gate nor the syncopation: a one-shot drum ignores its note-off,
+    // and where it plays is which groove it plays. It ignores the subdivision too, which is why
+    // its swing is the one that is never inert. The fill is its alone — nothing else has a last
+    // bar to announce.
     if recipe.preset == ClipPreset::Drums {
-        return &[Dial::Intensity, Dial::Dynamics, Dial::Swing, Dial::Humanize];
+        return &[
+            Dial::Density,
+            Dial::Fill,
+            Dial::Intensity,
+            Dial::Dynamics,
+            Dial::Swing,
+            Dial::Humanize,
+        ];
     }
     // A pad has no figure for the syncopation to pull off the beat: it sounds each chord once,
     // where the chord is, and a dial that moved that would be moving the harmony rather than the
@@ -274,6 +287,7 @@ fn dial_element_key(dial: Dial) -> usize {
         Dial::Gate => 4,
         Dial::Dynamics => 5,
         Dial::Syncopation => 6,
+        Dial::Fill => 7,
     }
 }
 
@@ -604,18 +618,23 @@ mod tests {
         // kit *does* read unreachable.
         for preset in ClipPreset::ALL {
             let dials = dials_for(&recipe(preset));
-            assert_eq!(
-                dials.contains(&Dial::Density),
-                !takes_a_groove(preset),
-                "{} offers the wrong dials",
-                preset.name()
-            );
-            // The gate goes exactly where the density goes, and for the same reason: a one-shot
-            // drum ignores its note-off, so shortening one changes nothing anybody can hear.
+            // Every preset reads the density, the kit included: it leans on the groove rather
+            // than replacing it, thinning from the weakest hits and filling the free steps with
+            // ghosts. Which groove is still the groove, which is why the kit has a picker too.
+            assert!(dials.contains(&Dial::Density), "{}", preset.name());
+            // The gate is the kit's exception: a one-shot drum ignores its note-off, so
+            // shortening one changes nothing anybody can hear.
             assert_eq!(
                 dials.contains(&Dial::Gate),
                 !takes_a_groove(preset),
                 "{} offers the wrong gate row",
+                preset.name()
+            );
+            // And the fill is the kit's alone — nothing else has a last bar to announce.
+            assert_eq!(
+                dials.contains(&Dial::Fill),
+                takes_a_groove(preset),
+                "{} offers the wrong fill row",
                 preset.name()
             );
             assert_eq!(
