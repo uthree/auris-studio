@@ -443,6 +443,19 @@ auris collect song.auris                       # gather every file it uses into 
 An MCP server is the next frontend and needs no new backend work — it is the same `Session`
 API with a different transport in front of it.
 
+## Downloads
+
+Built binaries are on the [releases page](https://github.com/uthree/auris-studio/releases):
+`Auris Studio.app` and the `auris` command line tool for macOS, as one universal binary for
+Apple Silicon and Intel; both `.exe`s for Windows; the command line tool alone for Linux.
+
+None of it is code-signed, so the first launch needs a word with the operating system. On macOS,
+open the app from its right-click menu once rather than by double-clicking it, or run `xattr -dr
+com.apple.quarantine "Auris Studio.app"`. On Windows, SmartScreen wants *More info → Run anyway*.
+
+Auris Studio is at `0.x`, and [nothing is stable there](CHANGELOG.md): the project format, the
+configuration files and every public API may change in any release, with no migration path.
+
 ## Building
 
 ```bash

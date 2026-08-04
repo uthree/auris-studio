@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  What makes the built executable an application rather than a command.
+
+  Without a bundle around it, macOS treats `auris-studio` as a tool: double-clicking it opens a
+  Terminal window, it gets no name in the menu bar and no place in the Dock. The release workflow
+  builds `Auris Studio.app` around the binary using this file, and rewrites the two version keys
+  from the tag it is building.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Auris Studio</string>
+    <key>CFBundleDisplayName</key>
+    <string>Auris Studio</string>
+    <!-- github.com/uthree/auris-studio, in the form Apple asks for. -->
+    <key>CFBundleIdentifier</key>
+    <string>io.github.uthree.auris-studio</string>
+    <key>CFBundleExecutable</key>
+    <string>auris-studio</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <!-- Both rewritten at release time; the values here are what a local bundle gets. -->
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>0.1.0</string>
+    <!-- gpui's Metal renderer, and the Apple Silicon half of the universal binary. -->
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSSupportsAutomaticGraphicsSwitching</key>
+    <true/>
+</dict>
+</plist>

@@ -1,0 +1,198 @@
+name: Release
+
+# Tagging is what publishes. `v0.1.0` on a commit that has already been through CI builds the
+# three archives and creates the release from the matching section of CHANGELOG.md.
+#
+# `workflow_dispatch` runs the same builds from a branch and stops before publishing, which is the
+# only way to find out that a release build is broken *before* the tag exists — a tag that has
+# already been pushed cannot be un-pushed politely.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# `gh release create` writes to the repository.
+permissions:
+  contents: write
+
+# Deliberately uncached, unlike CI. This runs a handful of times a year and produces the files
+# other people download; a cold build is worth the twenty minutes.
+jobs:
+  # One universal binary rather than one per architecture: both halves are built on the same
+  # runner and joined with `lipo`, so an Intel Mac and an Apple Silicon one take the same file.
+  # The alternative is a second runner image for x86_64, and those are being retired.
+  macos:
+    name: Build for macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Build both architectures
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --locked --target "$target" -p auris-gpui -p auris-cli
+          done
+
+      # `Auris Studio.app` around the desktop binary, with the command line tool beside it.
+      # Nothing is signed: this is a workflow with no certificate, and the release says what
+      # Gatekeeper will make of that.
+      - name: Assemble the archive
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          stage="auris-studio-${GITHUB_REF_NAME}-macos-universal"
+          app="$stage/Auris Studio.app"
+          mkdir -p "$app/Contents/MacOS"
+
+          cp crates/auris-gpui/macos/Info.plist "$app/Contents/Info.plist"
+          plist="$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "$plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $version" "$plist"
+
+          for binary in auris-studio auris; do
+            lipo -create -output "$stage/$binary" \
+              "target/aarch64-apple-darwin/release/$binary" \
+              "target/x86_64-apple-darwin/release/$binary"
+          done
+          mv "$stage/auris-studio" "$app/Contents/MacOS/auris-studio"
+
+          cp README.md CHANGELOG.md LICENSE "$stage/"
+          tar -czf "$stage.tar.gz" "$stage"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: auris-studio-*-macos-universal.tar.gz
+          if-no-files-found: error
+
+  windows:
+    name: Build for Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Build
+        run: cargo build --release --locked -p auris-gpui -p auris-cli
+
+      - name: Assemble the archive
+        shell: bash
+        run: |
+          stage="auris-studio-${GITHUB_REF_NAME}-windows-x86_64"
+          mkdir -p "$stage"
+          cp target/release/auris-studio.exe target/release/auris.exe "$stage/"
+          cp README.md CHANGELOG.md LICENSE "$stage/"
+          7z a "$stage.zip" "$stage"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: auris-studio-*-windows-x86_64.zip
+          if-no-files-found: error
+
+  # The command line tool only. The desktop application ships for macOS and Windows; CI does not
+  # build the gpui frontend on Linux, and a release is the wrong place to find out whether it
+  # would have.
+  linux:
+    name: Build the command line tool for Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      # cpal builds against ALSA here; nothing else needs a system library.
+      - name: Install ALSA headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libasound2-dev
+
+      - name: Build
+        run: cargo build --release --locked -p auris-cli
+
+      - name: Assemble the archive
+        run: |
+          stage="auris-${GITHUB_REF_NAME}-linux-x86_64"
+          mkdir -p "$stage"
+          cp target/release/auris "$stage/"
+          cp README.md CHANGELOG.md LICENSE "$stage/"
+          tar -czf "$stage.tar.gz" "$stage"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: auris-*-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish the release
+    needs: [macos, windows, linux]
+    # Only from a tag. A dispatched run builds all three and stops here, which is the point of
+    # being able to dispatch it at all.
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # The changelog is the release notes. Taken by heading rather than whole, so a release
+      # describes itself and not every release before it; an empty extract fails the job, because
+      # notes nobody wrote are worse than a release that did not go out.
+      - name: Collect the notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v want="$version" '
+            $0 ~ "^## " want "([ ]|$)" { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > section.md
+          if [ ! -s section.md ]; then
+            echo "CHANGELOG.md has no section for $version" >&2
+            exit 1
+          fi
+          {
+            cat <<'PREAMBLE'
+          ### Downloads
+
+          | File | What it holds |
+          | --- | --- |
+          | `…-macos-universal.tar.gz` | `Auris Studio.app` and the `auris` command line tool — Apple Silicon and Intel in one binary |
+          | `…-windows-x86_64.zip` | `auris-studio.exe` and `auris.exe` |
+          | `…-linux-x86_64.tar.gz` | the `auris` command line tool only |
+
+          None of it is code-signed. macOS will refuse the first launch and say the developer
+          cannot be verified: open it from the right-click menu once, or run
+          `xattr -dr com.apple.quarantine "Auris Studio.app"`. Windows SmartScreen wants
+          *More info → Run anyway*.
+
+          Auris Studio is at `0.x`, where nothing is stable: the project format, the configuration
+          files and every public API may change in any release, with no migration.
+
+          ---
+
+          PREAMBLE
+            cat section.md
+          } > notes.md
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Auris Studio ${GITHUB_REF_NAME}" \
+            --notes-file notes.md \
+            artifacts/*
