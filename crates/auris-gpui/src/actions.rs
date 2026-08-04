@@ -45,6 +45,8 @@ actions!(
         DeleteTrack,
         /// Delete the current selection.
         DeleteSelection,
+        /// Put the next of the piano roll's tools in hand.
+        NextTool,
         /// Undo the last edit.
         Undo,
         /// Redo the last undone edit.
@@ -158,6 +160,9 @@ bindable! {
     "edit.undo",            GroupEdit,      CmdUndo,               "secondary-z" => Undo;
     "edit.redo",            GroupEdit,      CmdRedo,               "secondary-shift-z" => Redo;
     "edit.delete",          GroupEdit,      CmdDeleteSelection,    "backspace"   => DeleteSelection;
+    // `t` is Logic's own tool key, where pressing it twice swaps back to the tool before. With
+    // two tools that is exactly a cycle, so it is one command rather than one per tool.
+    "edit.next_tool",       GroupEdit,      CmdNextTool,           "t"           => NextTool;
 
     "track.add_instrument", GroupTrack,     CmdAddInstrumentTrack, "secondary-t" => AddInstrumentTrack;
     "track.add_audio",      GroupTrack,     CmdAddAudioTrack,      "secondary-shift-t" => AddAudioTrack;

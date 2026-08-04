@@ -146,6 +146,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_add_audio_track))
             .on_action(cx.listener(Self::on_delete_track))
             .on_action(cx.listener(Self::on_delete_selection))
+            .on_action(cx.listener(Self::on_next_tool))
             .on_action(cx.listener(Self::on_undo))
             .on_action(cx.listener(Self::on_redo))
             .on_action(cx.listener(Self::on_panic_stop))
@@ -851,6 +852,30 @@ impl AurisApp {
 
     fn on_zoom_out(&mut self, _: &actions::ZoomOut, _window: &mut Window, cx: &mut Context<Self>) {
         self.timeline.zoom_by(1.0 / 1.3, px(0.0));
+        cx.notify();
+    }
+
+    /// Puts the next of the roll's tools in hand, and says which one that is.
+    ///
+    /// The status line rather than the tool strip alone, because the strip is only on screen when
+    /// the piano roll is: the editor panel can be hidden or showing the mixer, and a mode changed
+    /// where nothing says so is the whole hazard of having tools at all. A gesture in progress
+    /// keeps the tool it started with — swapping tools out from under a drag would leave it half
+    /// one thing and half another.
+    fn on_next_tool(
+        &mut self,
+        _: &actions::NextTool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.drag.is_some() {
+            return;
+        }
+        self.tool = self.tool.next();
+        self.set_status(messages::tool_in_hand(
+            self.language(),
+            self.t(self.tool.label()),
+        ));
         cx.notify();
     }
 

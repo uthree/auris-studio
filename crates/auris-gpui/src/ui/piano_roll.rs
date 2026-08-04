@@ -41,6 +41,20 @@ impl RollTool {
             RollTool::Velocity => Key::ToolVelocity,
         }
     }
+
+    /// The next tool along, wrapping round at the end.
+    ///
+    /// One bindable command rather than one per tool. Logic's tool key swaps back to the tool
+    /// before it when pressed twice, which with two tools is the same gesture as cycling — and
+    /// this way the keymap grows by one entry rather than by one for every tool there will ever
+    /// be.
+    pub fn next(self) -> Self {
+        let at = RollTool::ALL
+            .iter()
+            .position(|tool| *tool == self)
+            .unwrap_or(0);
+        RollTool::ALL[(at + 1) % RollTool::ALL.len()]
+    }
 }
 
 /// Width of the grab zone on a note's right edge, in pixels.
@@ -884,6 +898,21 @@ mod tests {
             RollTool::Velocity.label(),
             "two buttons under one name is a strip nobody can read",
         );
+    }
+
+    #[test]
+    fn the_tool_key_reaches_every_tool_and_comes_back() {
+        // One binding for the lot, so the cycle has to reach all of them and return. A tool the
+        // key could get into and not out of would be a mode with no way back.
+        let mut tool = RollTool::default();
+        let mut seen = vec![tool];
+        for _ in 1..RollTool::ALL.len() {
+            tool = tool.next();
+            assert!(!seen.contains(&tool), "{tool:?} came round twice");
+            seen.push(tool);
+        }
+        assert_eq!(seen.len(), RollTool::ALL.len());
+        assert_eq!(tool.next(), RollTool::default(), "and then it wraps");
     }
 
     #[test]

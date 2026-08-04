@@ -147,6 +147,8 @@ pub fn model(language: Language) -> Vec<MenuSection> {
             command(t(Key::CmdRedo), actions::Redo, "edit.redo"),
             MenuRow::Separator,
             command(t(Key::MenuDelete), actions::DeleteSelection, "edit.delete"),
+            MenuRow::Separator,
+            command(t(Key::CmdNextTool), actions::NextTool, "edit.next_tool"),
         ],
     });
 

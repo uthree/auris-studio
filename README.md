@@ -37,7 +37,10 @@ arrive with should not destroy their work. Dragging across empty space in the pi
 arrangement sweeps a selection rectangle; ⇧-drag adds to what is already selected, and a multiple
 selection moves, duplicates and deletes as one.
 
-The piano roll has two tools, and the strip in its header says which one is in hand. The pointer
+The piano roll has two tools, and the strip in its header says which one is in hand — as does the
+status line, when the key is used and the roll is not on screen to show it. **T** puts the next
+tool in hand, which with two tools is Logic's press-it-twice-to-swap-back; like every other
+binding it can be changed in the settings window. The pointer
 selects, moves, resizes and creates. The velocity tool does one thing: drag a note up or down and
 it is struck harder or softer, with the value shown beside it as it goes. A selection is dragged
 together and keeps its shape — a phrase written soft-loud-soft is still soft-loud-soft once it

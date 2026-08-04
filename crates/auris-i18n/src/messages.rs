@@ -68,6 +68,12 @@ messages! {
         ja: "ノートを上下にドラッグ: 強さを変更 · 右クリック: メニュー"
     }
 
+    /// Which tool the roll has in hand, for the status line when the roll is not on screen.
+    fn tool_in_hand(tool: &str) {
+        en: "Piano roll tool: {tool}",
+        ja: "ピアノロールのツール: {tool}"
+    }
+
     /// What the piano roll says when no clip is selected.
     fn piano_roll_empty(create: &str) {
         en: "Select a MIDI clip to edit its notes ({create} an empty lane to make one)",
