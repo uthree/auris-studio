@@ -136,6 +136,36 @@ pub mod architecture {
     //! Realtime playback calls it from the device callback; [`auris_engine::render_project`] calls
     //! it in a loop as fast as the CPU allows. Because there is only one path, an export matches
     //! what was heard, sample for sample — there is no second implementation that could drift.
+    //!
+    //! # How it gets there: outputs, buses and sends
+    //!
+    //! A track's audio does not necessarily go to the master. Its
+    //! [`Output`](auris_core::Output) is either the master or a **bus**, and it may also carry any
+    //! number of [`AuxSend`](auris_core::AuxSend)s — taps that feed a bus *as well as*, rather
+    //! than instead of, its own output. One reverb shared by six tracks at six different levels is
+    //! six sends; a single fader over a whole drum kit is six outputs.
+    //!
+    //! A bus is a [`TrackKind`](auris_core::TrackKind), not a thing of its own. That is what gives
+    //! it a fader, a pan, a mute, an effect chain, a colour and an automation lane without any of
+    //! them being written a second time, and it is why every command that addresses a strip by
+    //! [`TrackId`](auris_core::TrackId) addresses a bus too. What it has instead of clips is
+    //! whatever is routed into it.
+    //!
+    //! Two consequences are worth knowing before reading the code.
+    //!
+    //! **The order tracks are mixed in is not the order they are stored in.** A bus cannot go
+    //! through its own strip until everything feeding it has arrived, so the renderer walks
+    //! [`Project::routing_order`](auris_core::Project::routing_order) rather than the track list.
+    //!
+    //! **Solo travels both ways along the routing.** Soloing a drum track has to leave the drum
+    //! bus open, or its audio has nowhere to go; soloing the drum *bus* has to leave the drum
+    //! tracks open, or a thing with no material of its own plays silence. A track is audible
+    //! exactly when it lies on a path through something soloed —
+    //! [`Project::solo_resolution`](auris_core::Project::solo_resolution) is that rule.
+    //!
+    //! A loop has no order it can be rendered in, so the session refuses to close one and
+    //! [`Project::repair_routing`](auris_core::Project::repair_routing) breaks any that arrives in
+    //! a file. What routing does to plugin delay compensation is in [`super::realtime`].
 }
 
 pub mod realtime {
@@ -186,14 +216,25 @@ pub mod realtime {
     //! # Latency and tails
     //!
     //! An effect that looks ahead reports it through
-    //! [`Effect::latency_frames`](auris_core::plugin::Effect::latency_frames). The engine holds
-    //! every other track back to the longest chain in the graph so the parts stay in step, and an
-    //! export renders the resulting lead-in and drops it so the file still starts on the timeline.
+    //! [`Effect::latency_frames`](auris_core::plugin::Effect::latency_frames), and the engine
+    //! equalises it over the whole routing. The rule is one sentence: **a signal's whole journey
+    //! to the output must take the same time however it goes.** A track's chain is only part of
+    //! that journey — the bus it feeds has a chain too, and so does the master — so what is
+    //! equalised is the *path*, not the chain. A bus carrying a look-ahead limiter therefore holds
+    //! back the tracks that do *not* pass through it, and an export renders the resulting lead-in
+    //! and drops it so the file still starts on the timeline.
+    //!
+    //! Each outgoing *edge* gets a delay of its own on top, because one track can take two paths
+    //! at once: feeding the master dry while sending to that same limiting bus. With a single
+    //! delay for the whole track the dry and the wet land the lookahead apart and comb-filter each
+    //! other, which no fader can undo. Every copy is taken from an undelayed tap and held back by
+    //! its own amount; in a graph where nothing looks ahead all of them are zero and cost nothing.
     //!
     //! [`Effect::tail_frames`](auris_core::plugin::Effect::tail_frames) says how long the effect
-    //! keeps sounding after its input stops. Tails along a chain **add up** rather than overlap,
-    //! because a delay feeding a reverb keeps feeding it for the whole of its own decay; the
-    //! offline renderer uses the total to decide how far past the last clip to keep going.
+    //! keeps sounding after its input stops. Tails **add up** along a path rather than overlap,
+    //! because a delay feeding a reverb keeps feeding it for the whole of its own decay — and for
+    //! the same reason a track's tail, its bus's and the master's add end to end. The offline
+    //! renderer uses the longest such path to decide how far past the last clip to keep going.
     //!
     //! Both figures come from plugins, so the arithmetic that combines them saturates rather than
     //! wrapping: a plugin reporting an absurd tail should pad an export, not overflow it.

@@ -490,11 +490,17 @@ strings! {
     EditSetClipFade { en: "the fade", ja: "フェードの変更" }
     EditAddInstrumentTrack { en: "adding an instrument track", ja: "ソフト音源トラックの追加" }
     EditAddAudioTrack { en: "adding an audio track", ja: "オーディオトラックの追加" }
+    EditAddBusTrack { en: "adding a bus", ja: "バスの追加" }
     EditDeleteTrack { en: "deleting a track", ja: "トラックの削除" }
     EditDuplicateTrack { en: "duplicating a track", ja: "トラックの複製" }
     EditRenameTrack { en: "renaming a track", ja: "トラック名の変更" }
     EditMuteTrack { en: "muting a track", ja: "トラックのミュート" }
     EditSoloTrack { en: "soloing a track", ja: "トラックのソロ" }
+    EditSetTrackOutput { en: "the routing", ja: "出力先の変更" }
+    EditAddSend { en: "adding a send", ja: "センドの追加" }
+    EditRemoveSend { en: "removing a send", ja: "センドの削除" }
+    EditSetSendLevel { en: "the send level", ja: "センド量の変更" }
+    EditSetSendPreFader { en: "where the send is taken from", ja: "センド位置の変更" }
     EditChangeInstrument { en: "changing the instrument", ja: "音源の変更" }
     EditAddClip { en: "adding a clip", ja: "クリップの追加" }
     EditDeleteClip { en: "deleting a clip", ja: "クリップの削除" }
@@ -542,6 +548,15 @@ strings! {
     // ------------------------------------------------------------------ errors
     ErrorUnknownTrack { en: "that track no longer exists", ja: "そのトラックは存在しません" }
     ErrorUnknownClip { en: "that clip no longer exists", ja: "そのクリップは存在しません" }
+    ErrorUnknownSend { en: "that send no longer exists", ja: "そのセンドは存在しません" }
+    ErrorNotABus {
+        en: "only a bus can be routed into",
+        ja: "ルーティングの送り先にできるのはバスだけです"
+    }
+    ErrorRoutingLoop {
+        en: "that would send the signal back into itself",
+        ja: "信号がループしてしまいます"
+    }
     ErrorUnknownSoundFont {
         en: "that SoundFont is not part of this project",
         ja: "そのサウンドフォントはこのプロジェクトにありません"
@@ -668,6 +683,7 @@ new のオプション
     CliKindInstrument { en: "instrument", ja: "音源" }
     CliKindAudio { en: "audio", ja: "オーディオ" }
     CliKindBus { en: "bus", ja: "バス" }
+    CliFieldRouting { en: "routing", ja: "ルーティング" }
     CliClipCount { en: "clip(s)", ja: "クリップ" }
     CliProgressions { en: "PROGRESSIONS", ja: "コード進行" }
     CliExpectedSpecPath {

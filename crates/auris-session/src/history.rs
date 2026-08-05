@@ -6,6 +6,7 @@
 //! one edit path forgets to record its inverse.
 
 use auris_core::Project;
+use auris_core::project::SendId;
 use auris_core::time::Ticks;
 
 use crate::param::ParamTarget;
@@ -44,6 +45,8 @@ pub enum Edit {
     AddInstrumentTrack,
     /// An audio track was added.
     AddAudioTrack,
+    /// A bus was added.
+    AddBusTrack,
     /// A track was deleted.
     DeleteTrack,
     /// A track was copied.
@@ -56,6 +59,19 @@ pub enum Edit {
     MuteTrack,
     /// A track was soloed or unsoloed.
     SoloTrack,
+    /// A track's output was pointed somewhere else.
+    SetTrackOutput,
+    /// A send was added to a track.
+    AddSend,
+    /// A send was removed from a track.
+    RemoveSend,
+    /// A send's level was turned.
+    ///
+    /// Carries which send, for the reason [`Edit::AdjustParameter`] does: a drag coalesces into
+    /// one step, and two sends turned one after the other must not fold into the same one.
+    SetSendLevel(SendId),
+    /// A send was moved before or after the fader.
+    SetSendPreFader,
     /// A track's instrument was replaced.
     ChangeInstrument,
     /// A clip was created.

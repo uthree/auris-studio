@@ -399,6 +399,34 @@ fn info(path: &Path) -> Result<(), String> {
                     .collect();
                 writeln!(out, "    {:<18} {:<10} {}", "", "fx", chain.join(" -> "))?;
             }
+            // Where the track goes, said only when it is somewhere other than the obvious place.
+            // A line reading "-> master" against every track in a project with no buses at all
+            // would be noise on the one command whose whole job is a short answer.
+            let name_of = |id: TrackId| {
+                project
+                    .track(id)
+                    .map(|bus| bus.name.clone())
+                    .unwrap_or_else(|| format!("#{}", id.0))
+            };
+            let mut routing: Vec<String> = track
+                .output
+                .bus()
+                .map(|bus| format!("-> {}", name_of(bus)))
+                .into_iter()
+                .collect();
+            routing.extend(track.sends.iter().map(|send| {
+                let tap = if send.pre_fader { " pre" } else { "" };
+                format!("=> {} {:+.1} dB{tap}", name_of(send.target), send.level_db)
+            }));
+            if !routing.is_empty() {
+                writeln!(
+                    out,
+                    "    {:<18} {:<10} {}",
+                    "",
+                    field(Key::CliFieldRouting),
+                    routing.join(", ")
+                )?;
+            }
         }
 
         if !project.master.effects.is_empty() {

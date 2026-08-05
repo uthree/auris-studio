@@ -108,9 +108,10 @@ pub mod prelude {
         TempoPoint, Ticks, TimeSignature,
     };
     pub use auris_core::{
-        AudioBuffer, AudioClip, AudioSource, ClipId, ClipPreset, ClipRecipe, Color, EffectSlotId,
-        MidiClip, MixerStrip, Note, PluginRegistry, PresetRef, Project, SectionMap, SectionPoint,
-        SectionSpan, SoundFontId, SoundFontRef, SourceId, Subdivision, Track, TrackId, TrackKind,
+        AudioBuffer, AudioClip, AudioSource, AuxSend, ClipId, ClipPreset, ClipRecipe, Color,
+        EffectSlotId, MidiClip, MixerStrip, Note, Output, PluginRegistry, PresetRef, Project,
+        SectionMap, SectionPoint, SectionSpan, SendId, SoundFontId, SoundFontRef, SourceId,
+        Subdivision, Track, TrackId, TrackKind,
     };
 
     /// Every chord progression the composer knows by name.

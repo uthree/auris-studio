@@ -43,6 +43,33 @@ pub enum SessionError {
     #[error("no clip with id {0}")]
     UnknownClip(u64),
 
+    /// The requested send does not exist on that track.
+    #[error("track {track} has no send with id {send}")]
+    UnknownSend {
+        /// The track that was addressed.
+        track: u64,
+        /// The send that is not on it.
+        send: u64,
+    },
+
+    /// Audio can only be routed into a bus, and this track is not one.
+    #[error("track {0} is not a bus, so nothing can be routed into it")]
+    NotABus(u64),
+
+    /// The routing would have made a signal loop back on itself.
+    ///
+    /// An error rather than something to untangle later: a loop has no order it can be rendered
+    /// in — every bus in it is waiting for itself — so there is nothing sensible to do with a
+    /// document that holds one. The one that arrives in a *file* is repaired instead, because
+    /// refusing to open it would be a worse answer than breaking one edge.
+    #[error("routing track {from} into track {to} would loop back on itself")]
+    RoutingLoop {
+        /// The track being routed.
+        from: u64,
+        /// Where it was aimed.
+        to: u64,
+    },
+
     /// The clip cannot be divided at the requested position.
     #[error("clip {0} cannot be split there")]
     CannotSplit(u64),

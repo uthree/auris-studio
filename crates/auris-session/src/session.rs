@@ -16,8 +16,9 @@ use auris_core::theory::numeral::Numeral;
 use auris_core::theory::pitch::MIDDLE_C;
 use auris_core::time::{Seconds, SignatureMap, Ticks, TimeSignature};
 use auris_core::{
-    AssetPath, AudioBuffer, AudioSourceBank, ClipId, ClipRecipe, Color, EffectSlotId, MidiClip,
-    Note, PluginRegistry, PresetRef, Project, SoundFontId, SoundFontRef, SourceId, TrackId,
+    AssetPath, AudioBuffer, AudioSourceBank, AuxSend, ClipId, ClipRecipe, Color, EffectSlotId,
+    MidiClip, Note, Output, PluginRegistry, PresetRef, Project, SendId, SoundFontId, SoundFontRef,
+    SourceId, Track, TrackId,
 };
 use auris_engine::{
     AudioDevice, AudioSettings, EngineCommand, EngineHandle, MeterBank, OutputDeviceInfo,
@@ -1161,6 +1162,140 @@ impl Session {
         id
     }
 
+    /// Appends a bus: a mixing point that nothing is routed to yet.
+    pub fn add_bus_track(&mut self, name: impl Into<String>) -> TrackId {
+        self.record(Edit::AddBusTrack);
+        let id = self.project.add_bus_track(name);
+        self.invalidate_graph();
+        id
+    }
+
+    /// Points a track's output at a bus, or back at the master.
+    ///
+    /// Refused when the destination is not a bus, or when the route would make a signal loop back
+    /// on itself. Both are checked before anything is recorded: a command that pushes an undo step
+    /// and then fails has cost the user a rung that reverses nothing and a redo branch that is
+    /// simply gone.
+    pub fn set_track_output(&mut self, id: TrackId, output: Output) -> Result<(), SessionError> {
+        self.require_track(id)?;
+        if let Some(bus) = output.bus() {
+            self.require_bus(bus)?;
+            if self.project.routing_would_cycle(id, bus) {
+                return Err(SessionError::RoutingLoop {
+                    from: id.0,
+                    to: bus.0,
+                });
+            }
+        }
+        if self.project.track(id).is_some_and(|t| t.output == output) {
+            return Ok(());
+        }
+        self.record(Edit::SetTrackOutput);
+        if let Some(track) = self.project.track_mut(id) {
+            track.output = output;
+        }
+        self.invalidate_graph();
+        Ok(())
+    }
+
+    /// Adds a post-fader send at unity from `id` to `bus`, returning its new id.
+    ///
+    /// Unity because a send is added in order to be heard: starting it at silence would make the
+    /// first thing every user does be to undo the default.
+    pub fn add_send(&mut self, id: TrackId, bus: TrackId) -> Result<SendId, SessionError> {
+        self.require_track(id)?;
+        self.require_bus(bus)?;
+        if self.project.routing_would_cycle(id, bus) {
+            return Err(SessionError::RoutingLoop {
+                from: id.0,
+                to: bus.0,
+            });
+        }
+        self.record(Edit::AddSend);
+        let send = self.project.next_send_id();
+        if let Some(track) = self.project.track_mut(id) {
+            track.sends.push(AuxSend::new(send, bus));
+        }
+        self.invalidate_graph();
+        Ok(send)
+    }
+
+    /// Removes a send from a track.
+    pub fn remove_send(&mut self, id: TrackId, send: SendId) -> Result<(), SessionError> {
+        self.require_send(id, send)?;
+        self.record(Edit::RemoveSend);
+        if let Some(track) = self.project.track_mut(id) {
+            track.sends.retain(|existing| existing.id != send);
+        }
+        self.invalidate_graph();
+        Ok(())
+    }
+
+    /// Turns a send's level, in decibels.
+    ///
+    /// A knob rather than a structural edit, so the change travels as a command and the graph is
+    /// left where it is. Repeated turns of the *same* send fold into one undo step; turning a
+    /// different one starts a new step, which is what the id in [`Edit::SetSendLevel`] is for.
+    pub fn set_send_level(
+        &mut self,
+        id: TrackId,
+        send: SendId,
+        level_db: f32,
+    ) -> Result<(), SessionError> {
+        let (index, position) = self.require_send(id, send)?;
+        if !level_db.is_finite() {
+            return Err(SessionError::NotFinite(level_db as f64));
+        }
+        self.record_repeating(Edit::SetSendLevel(send));
+        self.project.tracks[index].sends[position].level_db = level_db;
+        self.send(EngineCommand::SetSendLevel {
+            track: index,
+            send: position,
+            level_db,
+        });
+        Ok(())
+    }
+
+    /// Moves a send's tap before or after the track's fader.
+    ///
+    /// Where the copy is taken from is part of the graph's shape rather than a value in it, so
+    /// unlike the level this rebuilds.
+    pub fn set_send_pre_fader(
+        &mut self,
+        id: TrackId,
+        send: SendId,
+        pre_fader: bool,
+    ) -> Result<(), SessionError> {
+        let (index, position) = self.require_send(id, send)?;
+        if self.project.tracks[index].sends[position].pre_fader == pre_fader {
+            return Ok(());
+        }
+        self.record(Edit::SetSendPreFader);
+        self.project.tracks[index].sends[position].pre_fader = pre_fader;
+        self.invalidate_graph();
+        Ok(())
+    }
+
+    /// Every bus in the project, for a routing picker.
+    pub fn buses(&self) -> impl Iterator<Item = &Track> {
+        self.project
+            .tracks
+            .iter()
+            .filter(|track| track.kind.is_bus())
+    }
+
+    /// The buses `id` could be routed into without making a loop.
+    ///
+    /// The list a frontend should offer, worked out here rather than in each of them: which
+    /// destinations are legal is a fact about the document, and a picker that offered an illegal
+    /// one would be offering an error message.
+    pub fn available_buses(&self, id: TrackId) -> Vec<TrackId> {
+        self.buses()
+            .map(|bus| bus.id)
+            .filter(|bus| *bus != id && !self.project.routing_would_cycle(id, *bus))
+            .collect()
+    }
+
     /// Removes a track.
     pub fn remove_track(&mut self, id: TrackId) -> Result<(), SessionError> {
         self.require_track(id)?;
@@ -1349,6 +1484,30 @@ impl Session {
         self.project
             .track_index(id)
             .ok_or(SessionError::UnknownTrack(id.0))
+    }
+
+    /// A track that exists *and* is a mixing point, which is the only thing audio can be sent to.
+    fn require_bus(&self, id: TrackId) -> Result<usize, SessionError> {
+        let index = self.require_track(id)?;
+        match self.project.tracks[index].kind.is_bus() {
+            true => Ok(index),
+            false => Err(SessionError::NotABus(id.0)),
+        }
+    }
+
+    /// The track's index and the send's position in its list, both of which the engine addresses
+    /// things by.
+    fn require_send(&self, id: TrackId, send: SendId) -> Result<(usize, usize), SessionError> {
+        let index = self.require_track(id)?;
+        let position = self.project.tracks[index]
+            .sends
+            .iter()
+            .position(|existing| existing.id == send)
+            .ok_or(SessionError::UnknownSend {
+                track: id.0,
+                send: send.0,
+            })?;
+        Ok((index, position))
     }
 
     /// A unit-range value fit to store: clamped, with non-finite input becoming the floor.
@@ -3525,6 +3684,184 @@ mod tests {
             AssetPath::external(format!("/fonts/{name}.sf2")),
             1024,
         )
+    }
+
+    /// A session holding one instrument track and one bus, with nothing routed yet.
+    fn routed_session() -> (Session, TrackId, TrackId) {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").expect("track");
+        let bus = session.add_bus_track("Reverb");
+        (session, track, bus)
+    }
+
+    #[test]
+    fn a_track_routes_into_a_bus_and_back_out_to_the_master() {
+        let (mut session, track, bus) = routed_session();
+        session
+            .set_track_output(track, Output::Bus(bus))
+            .expect("a bus is a legal destination");
+        assert_eq!(
+            session.project.track(track).unwrap().output,
+            Output::Bus(bus)
+        );
+
+        // And it is one undo step, which puts the track back on the master.
+        session.undo().expect("a step");
+        assert_eq!(session.project.track(track).unwrap().output, Output::Master);
+    }
+
+    #[test]
+    fn only_a_bus_can_be_routed_into() {
+        let (mut session, track, _) = routed_session();
+        let other = session.add_audio_track("Sample");
+        let error = session
+            .set_track_output(track, Output::Bus(other))
+            .expect_err("an audio track is not a mixing point");
+        assert!(matches!(error, SessionError::NotABus(id) if id == other.0));
+        assert!(matches!(
+            session.add_send(track, other),
+            Err(SessionError::NotABus(_))
+        ));
+    }
+
+    #[test]
+    fn a_refused_route_costs_neither_a_step_nor_the_redo_branch() {
+        // Validation before `record`, stated as a test: a command that pushes a step and then
+        // fails leaves a rung that reverses nothing and throws away whatever could be redone.
+        let (mut session, track, bus) = routed_session();
+        session.set_track_output(track, Output::Bus(bus)).unwrap();
+        session.undo().expect("back to the master");
+        // Two steps behind and one ahead: exactly the state a refused command must not disturb.
+
+        let _ = session.set_track_output(track, Output::Bus(TrackId(9_999)));
+        let _ = session.add_send(track, TrackId(9_999));
+
+        assert!(session.redo().is_some(), "the redo branch was thrown away");
+        assert_eq!(
+            session.project.track(track).unwrap().output,
+            Output::Bus(bus)
+        );
+        // And nothing was pushed: one undo is back at the master, with no phantom rung between.
+        session.undo().expect("a step");
+        assert_eq!(session.project.track(track).unwrap().output, Output::Master);
+    }
+
+    #[test]
+    fn routing_that_would_loop_is_refused() {
+        let (mut session, _, first) = routed_session();
+        let second = session.add_bus_track("Delay");
+        session
+            .set_track_output(first, Output::Bus(second))
+            .expect("one bus into another is fine");
+
+        let error = session
+            .set_track_output(second, Output::Bus(first))
+            .expect_err("that closes the circle");
+        assert!(matches!(
+            error,
+            SessionError::RoutingLoop { from, to } if from == second.0 && to == first.0
+        ));
+        // A send round the same circle is refused for the same reason, and so is a bus into
+        // itself — a loop has no order it can be rendered in either way.
+        assert!(matches!(
+            session.add_send(second, first),
+            Err(SessionError::RoutingLoop { .. })
+        ));
+        assert!(matches!(
+            session.set_track_output(first, Output::Bus(first)),
+            Err(SessionError::RoutingLoop { .. })
+        ));
+    }
+
+    #[test]
+    fn the_buses_offered_are_the_ones_that_would_not_loop() {
+        // The list a picker shows is a fact about the document, so it is worked out here rather
+        // than in each frontend — one that offered an illegal destination would be offering an
+        // error message.
+        let (mut session, track, first) = routed_session();
+        let second = session.add_bus_track("Delay");
+        session
+            .set_track_output(first, Output::Bus(second))
+            .unwrap();
+
+        assert_eq!(session.available_buses(track), vec![first, second]);
+        // `first` already feeds `second`, so `second` cannot feed it back — and no bus can feed
+        // itself.
+        assert_eq!(session.available_buses(second), Vec::new());
+        assert_eq!(session.available_buses(first), vec![second]);
+    }
+
+    #[test]
+    fn a_send_starts_at_unity_after_the_fader() {
+        // A send is added in order to be heard. Starting it at silence would make the first thing
+        // every user does be to undo the default.
+        let (mut session, track, bus) = routed_session();
+        let send = session.add_send(track, bus).expect("a send");
+        let added = &session.project.track(track).unwrap().sends[0];
+        assert_eq!(added.id, send);
+        assert_eq!(added.target, bus);
+        assert_eq!(added.level_db, 0.0);
+        assert!(!added.pre_fader);
+    }
+
+    #[test]
+    fn turning_one_send_repeatedly_is_one_step_and_turning_another_is_a_new_one() {
+        let (mut session, track, bus) = routed_session();
+        let first = session.add_send(track, bus).unwrap();
+        let second = session.add_send(track, bus).unwrap();
+        let before = undo_depth(&mut session);
+        while session.redo().is_some() {}
+
+        for level in [-1.0, -2.0, -3.0] {
+            session.set_send_level(track, first, level).unwrap();
+        }
+        session.set_send_level(track, second, -9.0).unwrap();
+        assert_eq!(
+            undo_depth(&mut session),
+            before + 2,
+            "a drag on one send folds; moving to another must not"
+        );
+    }
+
+    #[test]
+    fn a_send_to_a_deleted_bus_leaves_with_it() {
+        let (mut session, track, bus) = routed_session();
+        session.set_track_output(track, Output::Bus(bus)).unwrap();
+        session.add_send(track, bus).unwrap();
+
+        session.remove_track(bus).expect("the bus goes");
+        let track = session.project.track(track).unwrap();
+        assert_eq!(track.output, Output::Master);
+        assert!(track.sends.is_empty());
+    }
+
+    #[test]
+    fn a_send_that_is_not_there_is_named_rather_than_ignored() {
+        let (mut session, track, _) = routed_session();
+        let error = session
+            .set_send_level(track, SendId(1_234), -6.0)
+            .expect_err("no such send");
+        assert!(matches!(
+            error,
+            SessionError::UnknownSend { track: t, send } if t == track.0 && send == 1_234
+        ));
+    }
+
+    #[test]
+    fn a_send_level_that_is_not_a_number_is_refused() {
+        // The same promise every stored float carries: `serde_json` writes a non-finite as
+        // `null`, and no `f32` field will ever read that back.
+        let (mut session, track, bus) = routed_session();
+        let send = session.add_send(track, bus).unwrap();
+        assert!(matches!(
+            session.set_send_level(track, send, f32::NAN),
+            Err(SessionError::NotFinite(_))
+        ));
+        assert_eq!(
+            session.project.track(track).unwrap().sends[0].level_db,
+            0.0,
+            "the refused value must not have landed"
+        );
     }
 
     #[test]
