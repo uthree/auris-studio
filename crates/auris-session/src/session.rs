@@ -1284,15 +1284,25 @@ impl Session {
             .filter(|track| track.kind.is_bus())
     }
 
-    /// The buses `id` could be routed into without making a loop.
+    /// `true` when `id` could be routed into `bus` — as an output or through a send — without the
+    /// signal looping back on itself.
     ///
-    /// The list a frontend should offer, worked out here rather than in each of them: which
-    /// destinations are legal is a fact about the document, and a picker that offered an illegal
-    /// one would be offering an error message.
+    /// The rule a picker should grey a row out by, worked out here rather than in each frontend:
+    /// which destinations are legal is a fact about the document, and a UI that decided it for
+    /// itself would eventually disagree with the command that has to enforce it.
+    pub fn can_route(&self, id: TrackId, bus: TrackId) -> bool {
+        self.project
+            .track(bus)
+            .is_some_and(|track| track.kind.is_bus())
+            && bus != id
+            && !self.project.routing_would_cycle(id, bus)
+    }
+
+    /// The buses `id` could be routed into without making a loop.
     pub fn available_buses(&self, id: TrackId) -> Vec<TrackId> {
         self.buses()
             .map(|bus| bus.id)
-            .filter(|bus| *bus != id && !self.project.routing_would_cycle(id, *bus))
+            .filter(|bus| self.can_route(id, *bus))
             .collect()
     }
 
@@ -3792,6 +3802,39 @@ mod tests {
         assert!(matches!(
             session.set_track_output(first, Output::Bus(first)),
             Err(SessionError::RoutingLoop { .. })
+        ));
+    }
+
+    #[test]
+    fn what_may_be_routed_where_is_one_rule_the_picker_and_the_command_share() {
+        // A frontend greys a row out by this and the command refuses by the same facts, so the
+        // list can never offer something the session would then turn down.
+        let (mut session, track, first) = routed_session();
+        let second = session.add_bus_track("Delay");
+        let audio = session.add_audio_track("Sample");
+        session
+            .set_track_output(first, Output::Bus(second))
+            .unwrap();
+
+        assert!(session.can_route(track, first));
+        assert!(session.can_route(first, second));
+        // Round the circle, into itself, into something that is not a bus, and into a track that
+        // was never made.
+        assert!(!session.can_route(second, first));
+        assert!(!session.can_route(first, first));
+        assert!(!session.can_route(track, audio));
+        assert!(!session.can_route(track, TrackId(9_999)));
+
+        // And every one of those refusals is the error the command gives back.
+        for (from, to) in [(second, first), (first, first)] {
+            assert!(matches!(
+                session.set_track_output(from, Output::Bus(to)),
+                Err(SessionError::RoutingLoop { .. })
+            ));
+        }
+        assert!(matches!(
+            session.set_track_output(track, Output::Bus(audio)),
+            Err(SessionError::NotABus(_))
         ));
     }
 

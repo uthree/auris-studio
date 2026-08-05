@@ -458,6 +458,17 @@ impl ContextMenu {
         })
     }
 
+    /// Adds a row that shows a tick when `checked` and is only usable when `enabled`.
+    pub fn toggle_if(
+        self,
+        enabled: bool,
+        label: impl Into<SharedString>,
+        command: MenuCommand,
+        checked: bool,
+    ) -> Self {
+        self.push(label, command, enabled, checked)
+    }
+
     /// Adds a row that shows a tick when `checked`.
     pub fn toggle(
         self,
@@ -1086,10 +1097,11 @@ impl AurisApp {
                 self.t(Key::MenuRouteTo),
                 MenuCommand::ShowOutputPicker { track, at: anchor },
             )
-            // Only where there is somewhere to send: with no bus in the project the item can do
-            // nothing but open an empty list.
+            // Only where there is a bus at all: with none in the project the item can do nothing
+            // but open an empty list. One that exists and cannot be sent to *is* worth opening,
+            // because the greyed row is the answer to why.
             .item_if(
-                !self.session.available_buses(track).is_empty(),
+                self.session.buses().next().is_some(),
                 self.t(Key::MenuAddSend),
                 MenuCommand::ShowSendPicker { track, at: anchor },
             )
@@ -1944,11 +1956,14 @@ impl AurisApp {
         menu
     }
 
-    /// Where a track's output could go: the master, then every bus that would not make a loop.
+    /// Where a track's output could go: the master, then every bus in the project.
     ///
-    /// The list comes from [`Session::available_buses`](auris_session::Session::available_buses)
-    /// rather than from the track list, because which destinations are legal is a fact about the
-    /// document — and a picker offering an illegal one would be offering an error message.
+    /// *Every* bus, not only the legal ones. A destination that would send a signal back into
+    /// itself is greyed out rather than left out, because the two look identical to a person
+    /// reading the list and mean different things — a bus that is missing reads as a bus that was
+    /// never made. Which of the two a row is comes from
+    /// [`Session::can_route`](auris_session::Session::can_route), the same rule the command that
+    /// enforces it uses, so the list can never offer something the session would refuse.
     pub(crate) fn output_menu(&self, anchor: Point<Pixels>, track: TrackId) -> ContextMenu {
         let current = self
             .project()
@@ -1960,12 +1975,10 @@ impl AurisApp {
             MenuCommand::SetTrackOutput(track, Output::Master),
             current == Output::Master,
         );
-        for bus in self.session.available_buses(track) {
-            let Some(entry) = self.project().track(bus) else {
-                continue;
-            };
-            menu = menu.toggle(
-                entry.name.clone(),
+        for (bus, name) in self.bus_names() {
+            menu = menu.toggle_if(
+                self.session.can_route(track, bus),
+                name,
                 MenuCommand::SetTrackOutput(track, Output::Bus(bus)),
                 current == Output::Bus(bus),
             );
@@ -1973,19 +1986,32 @@ impl AurisApp {
         menu
     }
 
-    /// Every bus a track could send to.
+    /// Every bus a track could send to, with the ones that would loop greyed out for the reason
+    /// [`Self::output_menu`] gives.
     ///
-    /// Buses it already sends to are still offered: a second send to the same bus is unusual but
-    /// not wrong, and hiding it would mean the list changed shape as it was used.
+    /// A bus it already sends to is still offered: a second send to the same bus is unusual rather
+    /// than wrong, and hiding it would mean the list changed shape as it was used.
     pub(crate) fn send_picker_menu(&self, anchor: Point<Pixels>, track: TrackId) -> ContextMenu {
         let mut menu = ContextMenu::new(anchor, self.t(Key::MenuAddSend));
-        for bus in self.session.available_buses(track) {
-            let Some(entry) = self.project().track(bus) else {
-                continue;
-            };
-            menu = menu.item(entry.name.clone(), MenuCommand::AddSend { track, bus });
+        for (bus, name) in self.bus_names() {
+            menu = menu.item_if(
+                self.session.can_route(track, bus),
+                name,
+                MenuCommand::AddSend { track, bus },
+            );
         }
         menu
+    }
+
+    /// Every bus in the project, by id and name.
+    ///
+    /// Collected rather than borrowed: a menu row owns its label, and the walk over the track list
+    /// has to finish before the menu is handed back.
+    fn bus_names(&self) -> Vec<(TrackId, SharedString)> {
+        self.session
+            .buses()
+            .map(|bus| (bus.id, SharedString::from(bus.name.clone())))
+            .collect()
     }
 
     /// The menu for one send row in the mixer.
