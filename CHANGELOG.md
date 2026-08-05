@@ -9,6 +9,18 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### Two things the backend could already do and nothing could ask for
+
+* **A track's colour can be chosen.** It was picked from a palette by the track's position and
+  then fixed there for good — and the order tracks were made in has nothing to do with which of
+  them are drums. The track's right-click menu now offers the palette as swatches. Numbered rather
+  than named, because the set holds two entries a reasonable person would call orange.
+* **A whole track can be frozen.** *Keep Every Take Here* drops every recipe on it, so nothing on
+  that track is written again when the chords underneath change. `Session::freeze_track` had been
+  implemented and tested for some time with no way to reach it; the clip-level command was the only
+  one on a menu. The status line reports how many clips it acted on, because a track reaches
+  further down than the panel shows.
+
 ### Parameters move along the timeline
 
 * The document holds **automation**: a curve per parameter, beside the tempo, the meter, the key

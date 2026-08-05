@@ -19,6 +19,9 @@ them through a built-in synth, shape them with effects, and render the result to
 
 * **Instrument tracks** — notes on a timeline, played by a software instrument.
 * **Audio tracks** — imported audio, arranged as clips with trim, gain and fades.
+* Every track carries a **colour**, tinting its header and its clips. A new one takes the next
+  palette entry; the track's right-click menu offers the other seven as swatches, since the order
+  tracks were made in has nothing to do with which of them are drums.
 
 ### Dragging files in
 
@@ -284,7 +287,9 @@ A single clip can be written from the chords underneath it without a specificati
 song: right-click an empty stretch of an instrument track and choose a preset — lead, chords, pad,
 arpeggio, stab, bass or drums. The clip keeps the recipe that produced it, so **Another Take** is
 the next seed, **Write It Again** follows the chords when they move, and **Keep This One** drops
-the recipe when a take turns out to be the keeper. The dials are in the inspector:
+the recipe when a take turns out to be the keeper. A track's own menu has **Keep Every Take Here**,
+which does that to all of them at once and says how many it acted on. The dials are in the
+inspector:
 
 | | |
 |---|---|

@@ -50,6 +50,8 @@ pub enum Edit {
     DuplicateTrack,
     /// A track was renamed.
     RenameTrack,
+    /// A track was given a different colour.
+    SetTrackColor,
     /// A track was muted or unmuted.
     MuteTrack,
     /// A track was soloed or unsoloed.

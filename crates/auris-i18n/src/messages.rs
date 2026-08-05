@@ -221,6 +221,15 @@ messages! {
         ja: "{count} 個のファイルはいずれも読み込めませんでした"
     }
 
+    /// Confirmation that a track's clips will not be written again, and how many that was.
+    ///
+    /// The count rather than a bare acknowledgement: this acts on clips further down a track than
+    /// the panel is showing, and a number is the difference between believing that and checking.
+    fn track_kept(count: usize) {
+        en: "{count} clip(s) on this track will not be written again",
+        ja: "このトラックの {count} 個のクリップは今後書き換えられません"
+    }
+
     /// A project was dragged in alongside other files, and nothing was done.
     ///
     /// Says why rather than only what: opening a project closes the one that is open, so a drop

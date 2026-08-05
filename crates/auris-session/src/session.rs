@@ -16,8 +16,8 @@ use auris_core::theory::numeral::Numeral;
 use auris_core::theory::pitch::MIDDLE_C;
 use auris_core::time::{Seconds, SignatureMap, Ticks, TimeSignature};
 use auris_core::{
-    AssetPath, AudioBuffer, AudioSourceBank, ClipId, ClipRecipe, EffectSlotId, MidiClip, Note,
-    PluginRegistry, PresetRef, Project, SoundFontId, SoundFontRef, SourceId, TrackId,
+    AssetPath, AudioBuffer, AudioSourceBank, ClipId, ClipRecipe, Color, EffectSlotId, MidiClip,
+    Note, PluginRegistry, PresetRef, Project, SoundFontId, SoundFontRef, SourceId, TrackId,
 };
 use auris_engine::{
     AudioDevice, AudioSettings, EngineCommand, EngineHandle, MeterBank, OutputDeviceInfo,
@@ -1163,6 +1163,27 @@ impl Session {
         self.record(Edit::RenameTrack);
         if let Some(track) = self.project.track_mut(id) {
             track.name = name.into();
+        }
+        Ok(())
+    }
+
+    /// Tints a track, and the clips on it.
+    ///
+    /// A new track picks a palette entry by its position, which is a sensible start and a poor
+    /// finish: the order tracks were made in has nothing to do with which of them are drums. This
+    /// is what makes the colour a choice. Nothing is heard, so the graph is left alone.
+    pub fn set_track_color(&mut self, id: TrackId, color: Color) -> Result<(), SessionError> {
+        self.require_track(id)?;
+        if self
+            .project
+            .track(id)
+            .is_some_and(|track| track.color == color)
+        {
+            return Ok(());
+        }
+        self.record(Edit::SetTrackColor);
+        if let Some(track) = self.project.track_mut(id) {
+            track.color = color;
         }
         Ok(())
     }
@@ -5948,6 +5969,73 @@ mod tests {
             .unwrap();
         assert!(rendered.peak() > 0.01);
         assert!(session.project().tracks.is_empty());
+    }
+
+    #[test]
+    fn a_track_keeps_the_colour_it_is_given_and_it_is_one_undo_step() {
+        let mut session = self::tests::session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let was = session.project().track(track).unwrap().color;
+        let wanted = Color::PALETTE
+            .iter()
+            .copied()
+            .find(|color| *color != was)
+            .expect("the palette has more than one entry");
+        session.forget_history();
+
+        session.set_track_color(track, wanted).unwrap();
+        assert_eq!(session.project().track(track).unwrap().color, wanted);
+        // The same colour again is not an edit; a palette full of them would otherwise fill the
+        // undo stack with steps that undo nothing visible.
+        session.set_track_color(track, wanted).unwrap();
+        assert_eq!(undo_depth(&mut session), 1);
+
+        session.set_track_color(track, was).unwrap();
+        assert_eq!(session.undo(), Some(Edit::SetTrackColor));
+        assert_eq!(session.project().track(track).unwrap().color, wanted);
+    }
+
+    #[test]
+    fn freezing_a_track_stops_every_generated_clip_on_it_and_says_how_many() {
+        let mut session = self::tests::session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        for bar in 0..3 {
+            session
+                .generate_clip(
+                    track,
+                    Ticks::from_beats(bar as f64 * 4.0),
+                    Ticks::from_beats(4.0),
+                    ClipRecipe::new(ClipPreset::Lead, bar),
+                )
+                .unwrap();
+        }
+        // One clip written by hand, which has no recipe to drop.
+        session
+            .add_midi_clip(
+                track,
+                "By hand",
+                Ticks::from_beats(12.0),
+                Ticks::from_beats(4.0),
+            )
+            .unwrap();
+
+        assert_eq!(session.freeze_track(track).unwrap(), 3);
+        let generated = session
+            .project()
+            .track(track)
+            .unwrap()
+            .kind
+            .as_instrument()
+            .unwrap()
+            .clips
+            .iter()
+            .filter(|clip| clip.is_generated())
+            .count();
+        assert_eq!(generated, 0);
+        // Nothing left to freeze, so nothing happens and nothing is recorded.
+        session.forget_history();
+        assert_eq!(session.freeze_track(track).unwrap(), 0);
+        assert!(!session.can_undo());
     }
 
     // ------------------------------------------------------------------ automation

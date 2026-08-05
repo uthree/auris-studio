@@ -510,9 +510,12 @@ strings! {
     EditBypassEffect { en: "bypassing an effect", ja: "エフェクトのバイパス" }
     EditReorderEffects { en: "reordering the effects", ja: "エフェクトの並べ替え" }
     EditAdjustParameter { en: "the parameter change", ja: "パラメーターの変更" }
+    MenuFreezeTrack { en: "Keep Every Take Here", ja: "このトラックをすべて確定" }
+    MenuTrackColor { en: "Colour", ja: "カラー" }
     MenuAutomateVolume { en: "Automate Volume", ja: "ボリュームをオートメーション" }
     MenuAutomatePan { en: "Automate Pan", ja: "パンをオートメーション" }
     MenuClearAutomation { en: "Clear Automation", ja: "オートメーションを消去" }
+    EditSetTrackColor { en: "the track colour", ja: "トラックの色" }
     EditWriteAutomation { en: "the automation point", ja: "オートメーションの点" }
     EditEraseAutomation { en: "erasing the automation point", ja: "オートメーションの点の削除" }
     EditClearAutomation { en: "clearing the automation", ja: "オートメーションの消去" }

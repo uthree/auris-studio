@@ -53,6 +53,10 @@ pub enum MenuCommand {
     ToggleTrackMute(TrackId),
     /// Solo or unsolo a track.
     ToggleTrackSolo(TrackId),
+    /// Tint a track with a palette entry.
+    SetTrackColor(TrackId, Color),
+    /// Drop every recipe on a track, so nothing on it is written again.
+    FreezeTrack(TrackId),
     /// Show a track's automation lane on a parameter, or hide it when it is already showing that
     /// one.
     ///
@@ -290,6 +294,13 @@ pub struct MenuItem {
     pub enabled: bool,
     /// Whether the row shows a tick, for the items that latch.
     pub checked: bool,
+    /// A colour shown at the end of the row, for choices that *are* a colour.
+    ///
+    /// The row still carries text, so the keyboard and the eye have something to land on — but
+    /// the swatch is what the choice actually is, and it is the same in every language. The
+    /// alternative was naming eight palette entries twice over, in a set where two of them are
+    /// both fairly called orange.
+    pub swatch: Option<gpui::Hsla>,
 }
 
 /// A row in a menu.
@@ -440,6 +451,25 @@ impl ContextMenu {
             command,
             enabled,
             checked,
+            swatch: None,
+        }));
+        self
+    }
+
+    /// Adds a row whose choice is a colour, shown as a swatch and ticked when it is the one in use.
+    pub fn colour(
+        mut self,
+        label: impl Into<SharedString>,
+        command: MenuCommand,
+        swatch: gpui::Hsla,
+        checked: bool,
+    ) -> Self {
+        self.entries.push(MenuEntry::Item(MenuItem {
+            label: label.into(),
+            command,
+            enabled: true,
+            checked,
+            swatch: Some(swatch),
         }));
         self
     }
@@ -588,6 +618,15 @@ impl AurisApp {
                                 .truncate()
                                 .child(item.label.clone()),
                         )
+                        .children(item.swatch.map(|colour| {
+                            div()
+                                .flex_shrink_0()
+                                .ml_2()
+                                .w(px(22.0))
+                                .h(px(10.0))
+                                .rounded(Metrics::RADIUS_XS)
+                                .bg(colour)
+                        }))
                         .when(enabled, |this| {
                             this.on_mouse_down(
                                 MouseButton::Left,
@@ -687,6 +726,10 @@ impl AurisApp {
             }
             MenuCommand::ToggleTrackMute(track) => self.toggle_mute(track),
             MenuCommand::ToggleTrackSolo(track) => self.toggle_solo(track),
+            MenuCommand::SetTrackColor(track, color) => {
+                let _ = self.session.set_track_color(track, color);
+            }
+            MenuCommand::FreezeTrack(track) => self.freeze_track(track),
             MenuCommand::ShowAutomation(track, target) => self.show_automation(track, target),
             MenuCommand::ClearAutomation(target) => {
                 self.session.clear_automation(target);
@@ -945,6 +988,20 @@ impl AurisApp {
             return self.arrangement_menu(anchor);
         };
         let showing = self.automation_lanes.get(&track).copied();
+        // Every clip on this track that is still written from a recipe. Freezing is only offered
+        // when there is something to freeze, and the count is what the status line reports back.
+        let generated = entry
+            .kind
+            .as_instrument()
+            .map(|inner| {
+                inner
+                    .clips
+                    .iter()
+                    .filter(|clip| clip.is_generated())
+                    .count()
+            })
+            .unwrap_or(0);
+        let current_color = entry.color;
         let menu = ContextMenu::new(anchor, entry.name.clone())
             .item(
                 self.t(Key::MenuDuplicateTrack),
@@ -992,6 +1049,35 @@ impl AurisApp {
             ),
             None => menu,
         };
+
+        // Only for a track that has something to freeze. On one with no generated clips it is a
+        // row that can only report zero.
+        let menu = match generated > 0 {
+            true => menu.separator().item(
+                self.t(Key::MenuFreezeTrack),
+                MenuCommand::FreezeTrack(track),
+            ),
+            false => menu,
+        };
+
+        // The palette, as swatches. The colours carry the meaning and the rows are numbered
+        // rather than named: the set holds two entries a reasonable person would call orange, and
+        // naming those twice over in two languages is an argument nobody needs to have. The word
+        // is on every row because this menu has no section headings and one row saying what the
+        // run below it is would have to be a disabled item pretending to be a heading.
+        let colour = self.t(Key::MenuTrackColor);
+        let menu =
+            Color::PALETTE
+                .iter()
+                .enumerate()
+                .fold(menu.separator(), |menu, (index, color)| {
+                    menu.colour(
+                        format!("{colour} {}", index + 1),
+                        MenuCommand::SetTrackColor(track, *color),
+                        self.theme.track_color(color.0),
+                        *color == current_color,
+                    )
+                });
 
         menu.separator()
             .item(
@@ -1466,6 +1552,21 @@ impl AurisApp {
         match self.session.freeze_clip(clip) {
             Ok(()) => self.set_status(self.t(Key::ClipKept)),
             Err(error) => self.set_failed_status(self.failure(Key::MenuFreezeClip, &error)),
+        }
+    }
+
+    /// Stops every clip on a track from being written again.
+    ///
+    /// The count is reported rather than a bare confirmation, because this acts on clips the user
+    /// is not necessarily looking at — a track scrolled past the bottom of the panel has clips on
+    /// it too, and "kept 6" is the difference between believing that and checking.
+    pub(crate) fn freeze_track(&mut self, track: TrackId) {
+        match self.session.freeze_track(track) {
+            Ok(count) => {
+                let language = self.language();
+                self.set_status(messages::track_kept(language, count));
+            }
+            Err(error) => self.set_failed_status(self.failure(Key::MenuFreezeTrack, &error)),
         }
     }
 
@@ -2206,6 +2307,7 @@ mod tests {
                     command: MenuCommand::NewAudioTrack,
                     enabled: true,
                     checked: false,
+                    swatch: None,
                 }),
                 MenuEntry::Separator,
                 MenuEntry::Item(MenuItem {
@@ -2213,6 +2315,7 @@ mod tests {
                     command: MenuCommand::NewAudioTrack,
                     enabled: true,
                     checked: false,
+                    swatch: None,
                 }),
             ]
         );
