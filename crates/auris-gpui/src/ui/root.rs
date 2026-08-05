@@ -14,6 +14,7 @@ use crate::dock::{Dock, Panel};
 use crate::gestures::past_drag_threshold;
 use crate::menu::MenuRow;
 use crate::theme::Theme;
+use crate::ui::drop::{lanes_offset, sort_dropped};
 use crate::ui::menu_bar;
 use crate::ui::widgets::splitter;
 
@@ -72,6 +73,7 @@ impl Render for AurisApp {
         let prompt = self.render_prompt(cx);
         let palette = self.render_palette(cx);
         let menu = self.render_context_menu(window, cx);
+        let drop_ring = self.render_drop_ring();
 
         div()
             .id("root")
@@ -153,6 +155,10 @@ impl Render for AurisApp {
             // without this the drag never finishes: the pointer comes back still holding the
             // clip, and the transaction it opened silently eats every edit made afterwards.
             .on_mouse_up_out(gpui::MouseButton::Left, cx.listener(Self::on_mouse_up))
+            // Files dragged in from the desktop, taken by the whole window rather than by one
+            // panel: what a file is, is its extension, and which rectangle it was let go over is
+            // not something a person should have to get right for a drop to be understood.
+            .on_drop(cx.listener(Self::on_files_dropped))
             .on_key_down(cx.listener(Self::on_key_down))
             .children(menu_bar)
             .child(transport)
@@ -187,6 +193,7 @@ impl Render for AurisApp {
             )
             .child(status)
             .children(export_overlay)
+            .child(drop_ring)
             // These come last so they paint — and are hit-tested — above the panels. The plugin
             // editor sits below the menu because a right-click inside it opens one.
             .children(prompt)
@@ -420,6 +427,48 @@ impl AurisApp {
                         }),
                 ),
         )
+    }
+
+    /// The ring that says the window will take what is being dragged over it.
+    ///
+    /// Absolute and always present rather than added when a drag arrives: a border that appeared
+    /// would inset the whole window by two pixels at the moment a file crossed into it, moving
+    /// every lane out from under the pointer that is about to let go.
+    ///
+    /// It only lights up for a drag holding something importable, so a dragged folder or a PDF
+    /// says beforehand that it is not going to be understood.
+    fn render_drop_ring(&self) -> impl IntoElement + use<> {
+        let accent = self.theme.accent;
+        div()
+            .id("drop-ring")
+            .absolute()
+            .inset_0()
+            .border_2()
+            .border_color(gpui::transparent_black())
+            .drag_over::<gpui::ExternalPaths>(move |style, paths, _, _| {
+                match sort_dropped(paths.paths()).accepted.is_empty() {
+                    true => style,
+                    false => style.border_color(accent),
+                }
+            })
+    }
+
+    /// Files dragged onto the window from the desktop.
+    ///
+    /// Audio lands where it was let go when that was over the lanes, snapped to the grid the way
+    /// a clip dragged there would be, and at the playhead otherwise — over a panel, the transport
+    /// or the track headers there is no position under the pointer to read.
+    fn on_files_dropped(
+        &mut self,
+        paths: &gpui::ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let start = match lanes_offset(window.mouse_position(), self.canvas.lanes.get()) {
+            Some(x) => self.snap(self.timeline.x_to_tick(x)).max_zero(),
+            None => self.playhead_ticks(),
+        };
+        self.import_dropped(paths.paths().to_vec(), start, cx);
     }
 
     fn on_mouse_move(

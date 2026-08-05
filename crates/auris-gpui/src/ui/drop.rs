@@ -1,0 +1,253 @@
+//! What the window does with files dragged onto it from the desktop.
+//!
+//! A drop is read by extension rather than by where it landed: a SoundFont is a SoundFont whether
+//! it is let go over the lanes or over the mixer, and making a user aim at the right panel to have
+//! a file understood would be a rule they had to learn before anything worked. Where it landed
+//! decides one thing only — *when* on the timeline dropped audio starts.
+//!
+//! The rules live here as free functions so they can be asserted without a window.
+
+use std::path::{Path, PathBuf};
+
+use auris_i18n::{Language, messages};
+use gpui::{Bounds, Pixels, Point};
+
+/// What the application can do with one dropped file.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DropKind {
+    /// Decode it and put it on a new audio track.
+    Audio,
+    /// Add it to the project's library of SoundFonts.
+    SoundFont,
+}
+
+/// Dropped paths, split into the ones an importer recognises and the ones none does.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Dropped {
+    /// Files to import, in the order they were dropped, each with what to do with it.
+    pub accepted: Vec<(PathBuf, DropKind)>,
+    /// Files no importer here recognises.
+    pub rejected: Vec<PathBuf>,
+}
+
+/// Sorts dropped paths by extension.
+///
+/// Purely lexical. The extension is what the file dialogs already filter on, and being sure of a
+/// file instead would mean reading the header of every path in the drop — including the
+/// hundred-megabyte fonts — before the user has been told that anything is happening at all.
+pub fn sort_dropped(paths: &[PathBuf]) -> Dropped {
+    let mut dropped = Dropped::default();
+    for path in paths {
+        match drop_kind(path) {
+            Some(kind) => dropped.accepted.push((path.clone(), kind)),
+            None => dropped.rejected.push(path.clone()),
+        }
+    }
+    dropped
+}
+
+/// What one path is, by its extension.
+fn drop_kind(path: &Path) -> Option<DropKind> {
+    // Lowercased because a file manager will happily hand over `KICK.WAV`, and the tables are
+    // written the way an extension is usually typed.
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    let listed = |extensions: &[&str]| extensions.contains(&extension.as_str());
+    if listed(auris_session::supported_soundfont_extensions()) {
+        Some(DropKind::SoundFont)
+    } else if listed(auris_session::supported_audio_extensions()) {
+        Some(DropKind::Audio)
+    } else {
+        None
+    }
+}
+
+/// How far along the clip lanes a drop at `pointer` landed, from their left edge.
+///
+/// `None` when it landed anywhere else — a panel, the transport, the track headers — where there
+/// is no position under the pointer to read and the playhead is the answer instead.
+pub fn lanes_offset(pointer: Point<Pixels>, lanes: Option<Bounds<Pixels>>) -> Option<Pixels> {
+    let lanes = lanes?;
+    lanes.contains(&pointer).then(|| pointer.x - lanes.origin.x)
+}
+
+/// What became of the files a drop brought.
+///
+/// Lines rather than counts, because a drop of one file can say something far more useful than a
+/// number: which file arrived, how many sounds a font turned out to hold, or why the one thing
+/// that was dropped could not be read.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DropOutcome {
+    /// The confirmation each imported file produced, in the order they arrived.
+    pub imported: Vec<String>,
+    /// Why each file that did not arrive did not, refusals and read errors alike.
+    pub failed: Vec<String>,
+}
+
+impl DropOutcome {
+    /// The status line to end on, and whether it reads as a success.
+    ///
+    /// `None` for a drop that brought nothing at all, which has nothing to say and must not blank
+    /// a status line that is still reporting the last thing the user did.
+    pub fn summary(&self, language: Language) -> Option<(String, bool)> {
+        match (self.imported.as_slice(), self.failed.as_slice()) {
+            ([], []) => None,
+            // One of anything speaks for itself, and its own line is better than any count: the
+            // file's name on the way in, the reason on the way out.
+            ([only], []) => Some((only.clone(), true)),
+            ([], [only]) => Some((only.clone(), false)),
+            (imported, []) => Some((messages::imported_files(language, imported.len()), true)),
+            ([], failed) => Some((messages::imported_nothing(language, failed.len()), false)),
+            // Partly through. Shown as a failure on purpose: what went in is visible on the
+            // timeline and in the library, and what did not is only ever going to be visible here.
+            (imported, failed) => Some((
+                messages::imported_files_partly(language, imported.len(), failed.len()),
+                false,
+            )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{point, px, size};
+
+    fn paths(names: &[&str]) -> Vec<PathBuf> {
+        names.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn audio_and_a_font_are_told_apart() {
+        let dropped = sort_dropped(&paths(&["/music/kick.wav", "/fonts/piano.sf2"]));
+        assert_eq!(
+            dropped.accepted,
+            vec![
+                (PathBuf::from("/music/kick.wav"), DropKind::Audio),
+                (PathBuf::from("/fonts/piano.sf2"), DropKind::SoundFont),
+            ]
+        );
+        assert!(dropped.rejected.is_empty());
+    }
+
+    #[test]
+    fn the_extension_is_read_whatever_case_it_is_typed_in() {
+        let dropped = sort_dropped(&paths(&["KICK.WAV", "Piano.SF2"]));
+        assert_eq!(
+            dropped
+                .accepted
+                .iter()
+                .map(|(_, kind)| *kind)
+                .collect::<Vec<_>>(),
+            vec![DropKind::Audio, DropKind::SoundFont]
+        );
+    }
+
+    #[test]
+    fn everything_else_is_rejected_rather_than_guessed_at() {
+        let dropped = sort_dropped(&paths(&["notes.txt", "cover.png", "README"]));
+        assert!(dropped.accepted.is_empty());
+        assert_eq!(dropped.rejected.len(), 3);
+    }
+
+    #[test]
+    fn the_order_the_files_were_dropped_in_survives() {
+        // The order files are imported in is the order the tracks end up in, so a drop of a
+        // numbered set of takes has to keep the numbering the user dragged.
+        let dropped = sort_dropped(&paths(&["3.wav", "1.wav", "2.wav"]));
+        let names: Vec<_> = dropped
+            .accepted
+            .iter()
+            .map(|(path, _)| path.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["3.wav", "1.wav", "2.wav"]);
+    }
+
+    fn lanes() -> Bounds<Pixels> {
+        Bounds {
+            origin: point(px(200.0), px(120.0)),
+            size: size(px(800.0), px(400.0)),
+        }
+    }
+
+    #[test]
+    fn a_drop_on_the_lanes_is_measured_from_their_left_edge() {
+        let offset = lanes_offset(point(px(260.0), px(300.0)), Some(lanes()));
+        assert_eq!(offset, Some(px(60.0)));
+    }
+
+    #[test]
+    fn a_drop_anywhere_else_has_no_position_to_read() {
+        // The library, at the left; and the transport, above.
+        assert_eq!(
+            lanes_offset(point(px(80.0), px(300.0)), Some(lanes())),
+            None
+        );
+        assert_eq!(
+            lanes_offset(point(px(260.0), px(40.0)), Some(lanes())),
+            None
+        );
+        // And the frame before the lanes have ever been painted.
+        assert_eq!(lanes_offset(point(px(260.0), px(300.0)), None), None);
+    }
+
+    #[test]
+    fn one_file_keeps_its_own_line() {
+        let outcome = DropOutcome {
+            imported: vec!["Imported kick.wav".into()],
+            failed: Vec::new(),
+        };
+        assert_eq!(
+            outcome.summary(Language::English),
+            Some(("Imported kick.wav".to_string(), true))
+        );
+    }
+
+    #[test]
+    fn one_failure_keeps_its_reason() {
+        let outcome = DropOutcome {
+            imported: Vec::new(),
+            failed: vec!["notes.txt cannot be read".into()],
+        };
+        let (line, ok) = outcome.summary(Language::English).expect("a line");
+        assert_eq!(line, "notes.txt cannot be read");
+        assert!(!ok, "nothing arrived");
+    }
+
+    #[test]
+    fn several_files_are_counted_rather_than_listed() {
+        let outcome = DropOutcome {
+            imported: vec!["a".into(), "b".into(), "c".into()],
+            failed: Vec::new(),
+        };
+        let (line, ok) = outcome.summary(Language::English).expect("a line");
+        assert!(line.contains('3'), "{line}");
+        assert!(ok);
+    }
+
+    #[test]
+    fn a_drop_that_only_partly_arrived_says_both_numbers_and_reads_as_a_failure() {
+        let outcome = DropOutcome {
+            imported: vec!["a".into(), "b".into()],
+            failed: vec!["c".into()],
+        };
+        let (line, ok) = outcome.summary(Language::English).expect("a line");
+        assert!(line.contains('2') && line.contains('1'), "{line}");
+        assert!(!ok, "a file that did not arrive is only ever visible here");
+    }
+
+    #[test]
+    fn a_drop_that_brought_nothing_says_nothing() {
+        assert_eq!(DropOutcome::default().summary(Language::English), None);
+    }
+
+    #[test]
+    fn every_summary_is_written_in_the_language_it_was_asked_for() {
+        let outcome = DropOutcome {
+            imported: vec!["a".into(), "b".into()],
+            failed: vec!["c".into()],
+        };
+        let english = outcome.summary(Language::English).expect("a line");
+        let japanese = outcome.summary(Language::Japanese).expect("a line");
+        assert_ne!(english.0, japanese.0);
+    }
+}

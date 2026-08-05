@@ -20,6 +20,21 @@ them through a built-in synth, shape them with effects, and render the result to
 * **Instrument tracks** — notes on a timeline, played by a software instrument.
 * **Audio tracks** — imported audio, arranged as clips with trim, gain and fades.
 
+### Dragging files in
+
+Drop an audio file on the window and it arrives on a **new audio track**. Drop an `.sf2` and it
+goes on the library's shelf, with the font opened where its sounds are chosen. Drop a handful and
+each is read in turn, in the order they were dragged, with the status line naming the one being
+read — decoding is slow enough that a folder of takes would otherwise be several seconds of a
+window with nothing to say.
+
+A drop is understood by **what the file is, not where it was let go**: the window takes it whether
+the pointer is over the lanes, the mixer or the library, so there is no target to aim at and no
+rule to learn first. Where it landed decides one thing — audio dropped on the lanes starts *there*,
+snapped to the grid the way a dragged clip would be, and audio dropped anywhere else starts at the
+playhead. A border lights up while a drag holding something readable is over the window, so a
+folder or a PDF says beforehand that it will not be understood.
+
 ### Panels, and where you put them
 
 The arrangement is the middle of the window. Everything else — the library, the piano roll, the
@@ -315,10 +330,11 @@ clicking an effect appends it to that track's chain.
 
 ### SoundFonts
 
-**File → Import SoundFont…** reads an `.sf2` file and puts its sounds on the shelf. The library
-panel lists every imported font; opening one shows the banks it declares and opening a bank shows
-its sounds, and clicking a sound points the selected track at it — switching that track to the
-sampler in the same edit, so it is one click and one undo step rather than two.
+**File → Import SoundFont…** — or dropping the file on the window — reads an `.sf2` and puts its
+sounds on the shelf. The library panel lists every imported font; opening one shows the banks it
+declares and opening a bank shows its sounds, and clicking a sound points the selected track at
+it — switching that track to the sampler in the same edit, so it is one click and one undo step
+rather than two.
 
 A project stores the font's *path* and names each sound by bank and patch, never by position in
 the list. That is what makes a piece saved last week open playing the same instrument: a position

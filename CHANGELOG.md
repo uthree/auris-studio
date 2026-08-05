@@ -9,6 +9,22 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### Files can be dragged into the window
+
+* An audio file dropped on the window arrives on a **new audio track**; an `.sf2` goes on the
+  library's shelf with the font opened where its sounds are chosen. Both were reachable only
+  through a File menu that a person has to already know is there.
+* A drop is understood by what the file is rather than by where it was let go, so there is no
+  target to aim at — the window takes it over the lanes, the mixer or the library alike. What the
+  position decides is when: audio dropped on the lanes starts there, snapped to the grid the way a
+  dragged clip is, and audio dropped anywhere else starts at the playhead.
+* Several files at once are read in the order they were dragged, one at a time with the status
+  line naming each, and a drop that only partly arrives says how many did and how many did not. A
+  border lights up while a drag holding something readable is over the window, so a folder or a
+  PDF says beforehand that it will not be understood.
+* Importing audio now scrolls to the track it made, from the File menu as well as from a drop. On
+  an arrangement taller than the window it was landing out of sight.
+
 ### Both edges of a clip are handles
 
 * The pointer becomes a ↔ over one, so the grab can be seen before it is tried. Nothing on screen

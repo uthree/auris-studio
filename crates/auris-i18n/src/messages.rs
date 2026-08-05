@@ -194,6 +194,33 @@ messages! {
         ja: "{name} — 音色 {sounds} 件から選べます"
     }
 
+    /// A file dragged onto the window that no importer here recognises.
+    fn cannot_import(path: &str) {
+        en: "{path} is not a kind of file Auris can import",
+        ja: "{path} は Auris が読み込める種類のファイルではありません"
+    }
+
+    /// Confirmation that a drop of several files was read.
+    ///
+    /// A count rather than a list: the names are already on the tracks the drop just made, and a
+    /// status line is one line.
+    fn imported_files(count: usize) {
+        en: "Imported {count} files",
+        ja: "{count} 個のファイルを読み込みました"
+    }
+
+    /// A drop where some of the files arrived and some did not.
+    fn imported_files_partly(imported: usize, failed: usize) {
+        en: "Imported {imported} file(s) · {failed} could not be read",
+        ja: "{imported} 個のファイルを読み込みました · {failed} 個は読み込めませんでした"
+    }
+
+    /// A drop where nothing at all could be read.
+    fn imported_nothing(count: usize) {
+        en: "None of the {count} files could be imported",
+        ja: "{count} 個のファイルはいずれも読み込めませんでした"
+    }
+
     /// Confirmation that everything a project refers to now lives in its folder.
     fn assets_collected(count: usize) {
         en: "Collected {count} file(s) into the project folder",

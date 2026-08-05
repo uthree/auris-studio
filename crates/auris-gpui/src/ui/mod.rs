@@ -7,6 +7,7 @@
 pub mod arrangement;
 pub mod commands;
 pub mod context_menu;
+pub mod drop;
 pub mod icons;
 pub mod inspector;
 pub mod library;

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 use auris_i18n::{Key, messages};
 use auris_session::prelude::*;
@@ -15,6 +16,7 @@ use gpui::{Context, Window};
 
 use crate::app::{AurisApp, Drag, ExportState};
 use crate::i18n::{edit_key, error_text};
+use crate::ui::drop::{DropKind, DropOutcome, sort_dropped};
 
 impl AurisApp {
     /// Selects a track and points the piano roll at a clip that belongs to it.
@@ -651,19 +653,32 @@ impl AurisApp {
 
             let _ = this.update(cx, |this, cx| {
                 let start = this.playhead_ticks();
-                match this.session.import_audio(&path, start) {
-                    Ok(_) => {
-                        this.selected_track = this.project().tracks.last().map(|t| t.id);
-                        this.select_clip(None);
-                        let text = messages::imported(this.language(), &path.display().to_string());
-                        this.set_status(text);
-                    }
+                match this.take_audio(&path, start) {
+                    Ok(line) => this.set_status(line),
                     Err(error) => this.set_failed_status(this.failure(Key::CmdImportAudio, &error)),
                 }
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// Reads one audio file onto a new track, and says so.
+    ///
+    /// The file dialog and a drop both land here, which is what stops the two from drifting apart
+    /// — a gesture that imported a file without selecting the track it made would be a gesture
+    /// whose result the user has to go and find.
+    fn take_audio(&mut self, path: &Path, start: Ticks) -> Result<String, SessionError> {
+        self.session.import_audio(path, start)?;
+        // The track it made is the last one, and it is scrolled to rather than merely selected:
+        // an import onto an arrangement taller than the window otherwise lands out of sight.
+        if let Some(track) = self.project().tracks.last().map(|track| track.id) {
+            self.select_track(track);
+        }
+        Ok(messages::imported(
+            self.language(),
+            &path.display().to_string(),
+        ))
     }
 
     /// Prompts for a SoundFont and adds it to the project's library.
@@ -699,25 +714,8 @@ impl AurisApp {
                 .await;
 
             let _ = this.update(cx, |this, cx| {
-                match this.session.import_soundfont(&path) {
-                    Ok(id) => {
-                        let name = this
-                            .session
-                            .soundfonts()
-                            .find(|font| font.id == id)
-                            .map(|font| font.name.clone())
-                            .unwrap_or_default();
-                        let sounds = this.session.soundfont_presets(id).len();
-                        // Show what just arrived. The library is the only place these sounds can
-                        // be chosen from, and importing a font is the act of going to choose one.
-                        this.show_panel(crate::dock::Panel::Library);
-                        this.library
-                            .set_open(crate::ui::library::Branch::SoundFonts, true);
-                        this.library
-                            .set_open(crate::ui::library::Branch::Font(id), true);
-                        let language = this.language();
-                        this.set_status(messages::soundfont_imported(language, &name, sounds));
-                    }
+                match this.take_soundfont(&path) {
+                    Ok(line) => this.set_status(line),
                     Err(error) => {
                         this.set_failed_status(this.failure(Key::CmdImportSoundFont, &error))
                     }
@@ -726,6 +724,110 @@ impl AurisApp {
             });
         })
         .detach();
+    }
+
+    /// Reads one SoundFont into the library, opens it there, and says what it holds.
+    fn take_soundfont(&mut self, path: &Path) -> Result<String, SessionError> {
+        let id = self.session.import_soundfont(path)?;
+        let name = self
+            .session
+            .soundfonts()
+            .find(|font| font.id == id)
+            .map(|font| font.name.clone())
+            .unwrap_or_default();
+        let sounds = self.session.soundfont_presets(id).len();
+        // Show what just arrived. The library is the only place these sounds can be chosen from,
+        // and importing a font is the act of going to choose one.
+        self.show_panel(crate::dock::Panel::Library);
+        self.library
+            .set_open(crate::ui::library::Branch::SoundFonts, true);
+        self.library
+            .set_open(crate::ui::library::Branch::Font(id), true);
+        Ok(messages::soundfont_imported(self.language(), &name, sounds))
+    }
+
+    /// Imports files dragged onto the window, in the order they were dropped.
+    ///
+    /// `start` is where dropped audio lands on the timeline. A font ignores it: a font goes on a
+    /// shelf rather than onto a track, and where on the timeline it was let go means nothing.
+    ///
+    /// One file at a time, on this thread, with the status line repainted between each. Decoding
+    /// is slow enough that a drop of a folder of takes would otherwise be several seconds of a
+    /// frozen window with nothing to say what was happening.
+    pub(crate) fn import_dropped(
+        &mut self,
+        paths: Vec<PathBuf>,
+        start: Ticks,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        let dropped = sort_dropped(&paths);
+        let mut outcome = DropOutcome::default();
+        for path in &dropped.rejected {
+            outcome.failed.push(messages::cannot_import(
+                language,
+                &path.display().to_string(),
+            ));
+        }
+        if dropped.accepted.is_empty() {
+            // Nothing to read, so nothing to wait for: say so now rather than a frame later.
+            self.report(outcome.summary(language));
+            cx.notify();
+            return;
+        }
+
+        cx.spawn(async move |this, cx| {
+            for (path, kind) in dropped.accepted {
+                let shown = this.update(cx, |this, cx| {
+                    let text = messages::importing(this.language(), &path.display().to_string());
+                    this.set_status(text);
+                    cx.notify();
+                });
+                if shown.is_err() {
+                    return;
+                }
+
+                // A font can be hundreds of megabytes and an audio file is decoded and resampled,
+                // so both are far too slow to start without having painted that line first.
+                cx.background_executor()
+                    .timer(std::time::Duration::ZERO)
+                    .await;
+
+                let done = this.update(cx, |this, cx| {
+                    let done = match kind {
+                        DropKind::Audio => this.take_audio(&path, start),
+                        DropKind::SoundFont => this.take_soundfont(&path),
+                    };
+                    cx.notify();
+                    // Turned into a line here, while the view that knows the language is in hand.
+                    done.map_err(|error| this.failure(import_key(kind), &error))
+                });
+                match done {
+                    Ok(Ok(line)) => outcome.imported.push(line),
+                    Ok(Err(line)) => outcome.failed.push(line),
+                    // The window has gone; there is nobody left to report to.
+                    Err(_) => return,
+                }
+            }
+
+            let _ = this.update(cx, |this, cx| {
+                let language = this.language();
+                this.report(outcome.summary(language));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Puts a summary on the status line, in the colour its outcome deserves.
+    fn report(&mut self, summary: Option<(String, bool)>) {
+        let Some((line, succeeded)) = summary else {
+            return;
+        };
+        match succeeded {
+            true => self.set_status(line),
+            false => self.set_failed_status(line),
+        }
     }
 
     /// Prompts for a destination and renders the project to a WAV file.
@@ -876,6 +978,14 @@ impl AurisApp {
     /// Length of an audio clip on the musical timeline.
     pub(crate) fn audio_clip_length_ticks(&self, clip: &AudioClip) -> Ticks {
         self.session.audio_clip_length_ticks(clip)
+    }
+}
+
+/// The command a dropped file would have been, so a failure names the same thing the menu does.
+fn import_key(kind: DropKind) -> Key {
+    match kind {
+        DropKind::Audio => Key::CmdImportAudio,
+        DropKind::SoundFont => Key::CmdImportSoundFont,
     }
 }
 
