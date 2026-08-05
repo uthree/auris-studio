@@ -222,6 +222,23 @@ pub enum Drag {
         /// back towards the starting point still moves the clip rather than freezing it.
         pressed_at: Option<Point<Pixels>>,
     },
+    /// Carrying a track header up or down the list.
+    ///
+    /// The list is reordered as the pointer moves rather than on the drop, so what follows the
+    /// pointer is the arrangement itself instead of a line predicting where it will end up. The
+    /// whole gesture is one transaction, which is what makes that affordable: a reorder is a
+    /// structural edit, and rebuilding the render graph on every pointer move would mean
+    /// instantiating every plugin in the project a hundred times across one drag.
+    TrackReorder {
+        /// Track in hand. Its *index* moves during the gesture, so the id is what is held.
+        track: TrackId,
+        /// Where the button went down, until the pointer has travelled far enough to mean it.
+        ///
+        /// Without it a click on a header to select a track would reorder the list whenever the
+        /// pointer wobbled across a neighbour's midpoint. Cleared once the gesture is past
+        /// [`crate::gestures::DRAG_THRESHOLD`].
+        pressed_at: Option<Point<Pixels>>,
+    },
     /// Dragging one of a clip's edges.
     ClipResize {
         /// Clip being resized.
@@ -403,6 +420,7 @@ impl Drag {
             Drag::Playhead => None,
             Drag::LoopRegion { .. } => Some(Edit::SetLoopRegion),
             Drag::ClipMove { .. } => Some(Edit::MoveClip),
+            Drag::TrackReorder { .. } => Some(Edit::MoveTrack),
             Drag::ClipResize { .. } => Some(Edit::ResizeClip),
             Drag::ClipFade { .. } => Some(Edit::SetClipFade),
             Drag::AutomationPoint { target, .. } => Some(Edit::WriteAutomation(*target)),

@@ -50,6 +50,8 @@ pub enum Edit {
     DeleteTrack,
     /// A track was copied.
     DuplicateTrack,
+    /// A track was moved up or down the list.
+    MoveTrack,
     /// A track was renamed.
     RenameTrack,
     /// A track was given a different colour.

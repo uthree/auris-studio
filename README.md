@@ -19,9 +19,19 @@ them through a built-in synth, shape them with effects, and render the result to
 
 * **Instrument tracks** — notes on a timeline, played by a software instrument.
 * **Audio tracks** — imported audio, arranged as clips with trim, gain and fades.
+* **Buses** — mixing points with no clips of their own; see [Buses and sends](#buses-and-sends).
 * Every track carries a **colour**, tinting its header and its clips. A new one takes the next
   palette entry; the track's right-click menu offers the other seven as swatches, since the order
   tracks were made in has nothing to do with which of them are drums.
+
+**Drag a track header up or down** to move it in the list. The arrangement reorders as the pointer
+moves rather than showing a line and jumping on release, so what follows the hand is the thing
+itself; the whole drag is one undo step. A press that does not travel is a selection, as before, and
+a press that lands on the header's fader, pan or mute keeps its own gesture.
+
+Only the list moves. Everything the document holds names a track by id — automation lanes, a
+routing output, a send — so a bus can end up above the tracks feeding it without changing a note of
+what is heard.
 
 ### Dragging files in
 

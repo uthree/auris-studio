@@ -513,6 +513,7 @@ strings! {
     EditAddBusTrack { en: "adding a bus", ja: "バスの追加" }
     EditDeleteTrack { en: "deleting a track", ja: "トラックの削除" }
     EditDuplicateTrack { en: "duplicating a track", ja: "トラックの複製" }
+    EditMoveTrack { en: "moving a track", ja: "トラックの並べ替え" }
     EditRenameTrack { en: "renaming a track", ja: "トラック名の変更" }
     EditMuteTrack { en: "muting a track", ja: "トラックのミュート" }
     EditSoloTrack { en: "soloing a track", ja: "トラックのソロ" }

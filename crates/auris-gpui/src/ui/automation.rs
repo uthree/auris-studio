@@ -118,6 +118,45 @@ pub fn track_span(rows: &[LaneRow], track: TrackId) -> Option<(Pixels, Pixels)> 
     span
 }
 
+/// Each track's block of rows, in the order they are drawn.
+///
+/// A track's clips and the automation lane under them are one block, because a person dragging a
+/// header is carrying the whole thing and lets go of it somewhere among the others.
+pub fn track_blocks(rows: &[LaneRow]) -> Vec<(TrackId, Pixels, Pixels)> {
+    let mut blocks: Vec<(TrackId, Pixels, Pixels)> = Vec::new();
+    for row in rows {
+        match blocks.last_mut() {
+            Some(block) if block.0 == row.track => block.2 += row.height,
+            _ => blocks.push((row.track, row.top, row.height)),
+        }
+    }
+    blocks
+}
+
+/// Where a track being dragged up or down the list should land.
+///
+/// Returns the index [`Session::move_track`](auris_session::Session::move_track) should be given,
+/// or `None` when the drop would leave the order as it is.
+///
+/// The rule is the gap nearest the pointer: above a track while the pointer is in its top half,
+/// below it once past the middle. Measuring against the *neighbour's* midpoint rather than the
+/// dragged track's own edges is what gives the gesture its hysteresis — a track that has just
+/// swapped places does not swap back until the pointer crosses the same line again — so a hand
+/// resting on a boundary cannot make the list flicker between two orders.
+pub fn reorder_target(rows: &[LaneRow], dragged: TrackId, y: Pixels) -> Option<usize> {
+    let blocks = track_blocks(rows);
+    let from = blocks.iter().position(|(track, ..)| *track == dragged)?;
+    // Gaps run 0..=len: one before the first track, one after the last, and one between each pair.
+    let gap = blocks
+        .iter()
+        .position(|(_, top, height)| y < *top + *height * 0.5)
+        .unwrap_or(blocks.len());
+    // `Project::move_track` removes before it inserts, so a gap below the track's own position has
+    // already closed up by one frame by the time the insert happens.
+    let to = if gap > from { gap - 1 } else { gap };
+    (to != from).then_some(to)
+}
+
 /// Where `value` sits vertically inside a row spanning `min` to `max`.
 ///
 /// The maximum is at the top, the way a fader reads and the way every automation lane in every
@@ -287,6 +326,58 @@ mod tests {
             Some(TrackId(2))
         );
         assert_eq!(row_at(&rows, px(10_000.0)), None);
+    }
+
+    #[test]
+    fn a_dragged_track_lands_in_the_gap_the_pointer_is_nearest() {
+        // Tracks at 0..72, 72..172, 172..244; the midpoints are 36, 122 and 208.
+        let rows = lane_rows(&tracks(), &BTreeMap::new());
+        let target = |dragged: u64, y: f32| reorder_target(&rows, TrackId(dragged), px(y));
+
+        // Carrying the first track down: nothing happens until the pointer passes the *second*
+        // track's midpoint, and passing the third's puts it at the end.
+        assert_eq!(target(1, 100.0), None);
+        assert_eq!(target(1, 130.0), Some(1));
+        assert_eq!(target(1, 220.0), Some(2));
+        // And carrying the last one up, the same rule read the other way.
+        assert_eq!(target(3, 190.0), None);
+        assert_eq!(target(3, 100.0), Some(1));
+        assert_eq!(target(3, 10.0), Some(0));
+        // Past either end of the column the answer is the end of the list, not nothing: a hand
+        // that overshoots means the top or the bottom.
+        assert_eq!(target(2, -500.0), Some(0));
+        assert_eq!(target(2, 5_000.0), Some(2));
+    }
+
+    #[test]
+    fn a_reorder_that_has_just_happened_does_not_happen_back() {
+        // The gesture's hysteresis, as numbers. A pointer resting where a swap was decided must
+        // read as "already there" once the swap has been made, or the list flickers between two
+        // orders for as long as the hand is still.
+        let before = lane_rows(&tracks(), &BTreeMap::new());
+        assert_eq!(reorder_target(&before, TrackId(1), px(130.0)), Some(1));
+
+        // The same pointer against the list that move produced: 2 at 0..100, 1 at 100..172.
+        let after = lane_rows(
+            &[(TrackId(2), 100.0), (TrackId(1), 72.0), (TrackId(3), 72.0)],
+            &BTreeMap::new(),
+        );
+        assert_eq!(reorder_target(&after, TrackId(1), px(130.0)), None);
+    }
+
+    #[test]
+    fn a_track_is_carried_with_the_lane_it_has_open() {
+        // An open automation lane belongs to the track above it, so the two move as one block and
+        // the gaps are between *tracks* rather than between rows.
+        let rows = lane_rows(&tracks(), &opened(1));
+        let blocks = track_blocks(&rows);
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0], (TrackId(1), px(0.0), px(72.0) + ROW_HEIGHT));
+        assert_eq!(blocks[1].0, TrackId(2));
+        // The second track's midpoint has moved down by the open row, and the drop follows it.
+        let middle = px(72.0) + ROW_HEIGHT + px(50.0);
+        assert_eq!(reorder_target(&rows, TrackId(1), middle - px(1.0)), None);
+        assert_eq!(reorder_target(&rows, TrackId(1), middle + px(1.0)), Some(1));
     }
 
     #[test]

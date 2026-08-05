@@ -1315,6 +1315,24 @@ impl Session {
         Ok(())
     }
 
+    /// Moves a track to a new position in the list, clamping into range.
+    ///
+    /// Structural, so the graph is rebuilt: the engine addresses tracks by *position*, and every
+    /// index in flight would otherwise point one track away from what it named. Nothing the
+    /// document holds is addressed that way — automation lanes, a routing output and a send all
+    /// name a track by id — so the mix survives the move unchanged.
+    pub fn move_track(&mut self, id: TrackId, to_index: usize) -> Result<(), SessionError> {
+        let from = self.require_track(id)?;
+        let to = to_index.min(self.project.tracks.len().saturating_sub(1));
+        if from == to {
+            return Ok(());
+        }
+        self.record(Edit::MoveTrack);
+        self.project.move_track(id, to);
+        self.invalidate_graph();
+        Ok(())
+    }
+
     /// Renames a track.
     pub fn rename_track(
         &mut self,
@@ -3724,6 +3742,60 @@ mod tests {
         let track = session.add_default_instrument_track("Lead").expect("track");
         let bus = session.add_bus_track("Reverb");
         (session, track, bus)
+    }
+
+    #[test]
+    fn a_track_moves_up_and_down_the_list_in_one_step() {
+        let mut session = session();
+        let first = session.add_default_instrument_track("A").expect("track");
+        let second = session.add_default_instrument_track("B").expect("track");
+        let third = session.add_default_instrument_track("C").expect("track");
+        let order = |session: &Session| -> Vec<TrackId> {
+            session
+                .project
+                .tracks
+                .iter()
+                .map(|track| track.id)
+                .collect()
+        };
+
+        session.move_track(first, 2).expect("to the end");
+        assert_eq!(order(&session), vec![second, third, first]);
+        session.undo().expect("a step");
+        assert_eq!(order(&session), vec![first, second, third]);
+
+        // Past the end is the end rather than an error: a hand that overshoots means the bottom.
+        session.move_track(first, 99).expect("clamped");
+        assert_eq!(order(&session), vec![second, third, first]);
+        // And a move to where it already is changes nothing and records nothing.
+        let before = undo_depth(&mut session);
+        session.move_track(first, 2).expect("already there");
+        assert_eq!(undo_depth(&mut session), before);
+    }
+
+    #[test]
+    fn reordering_tracks_leaves_the_routing_alone() {
+        // Everything in the document names a track by id, so a bus may end up *above* the tracks
+        // feeding it — which is only a fact about the list, not about the mix. The renderer walks
+        // the routing order rather than the list, so what is heard does not change.
+        let (mut session, kick, bus) = routed_session();
+        session.set_track_output(kick, Output::Bus(bus)).unwrap();
+        session.set_param(ParamTarget::TrackGain(bus), -6.0);
+
+        session.move_track(bus, 0).expect("the bus goes first");
+        assert_eq!(session.project.tracks[0].id, bus);
+        assert_eq!(
+            session.project.track(kick).unwrap().output,
+            Output::Bus(bus)
+        );
+        assert_eq!(session.project.track(bus).unwrap().mixer.gain_db, -6.0);
+        // A bus above its feeders is still rendered after them.
+        let order = session.project.routing_order();
+        let at = |id: TrackId| {
+            let index = session.project.track_index(id).unwrap();
+            order.iter().position(|slot| *slot == index).unwrap()
+        };
+        assert!(at(kick) < at(bus));
     }
 
     #[test]

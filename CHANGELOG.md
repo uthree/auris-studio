@@ -9,6 +9,22 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### Tracks can be dragged into order
+
+* **Drag a track header up or down** to move it in the list. The arrangement reorders as the
+  pointer moves rather than drawing a line and jumping on release, so what follows the hand is the
+  arrangement itself. The whole drag is one undo step and one graph rebuild — a reorder is
+  structural, and rebuilding on every pointer move would instantiate every plugin in the project a
+  hundred times across one gesture.
+* A press that does not travel is still a selection, and a press that lands on the header's fader,
+  pan or mute keeps its own gesture: the header is the fallback grab, not the first claim.
+* Only the list moves. Automation lanes, a routing output and a send all name a track by id, so a
+  bus can end up above the tracks feeding it and nothing about the mix changes.
+* **Fixed: an open automation lane pushed every header below it out of register with its track.**
+  The lane column grew a row and the header column did not. The headers are now built from the same
+  row walk the canvas uses, so the two cannot disagree, and the band beside an open lane carries
+  the automated parameter's name.
+
 ### Buses and sends
 
 * **A track no longer has to go to the master.** Its output is the master or a **bus**, and it can

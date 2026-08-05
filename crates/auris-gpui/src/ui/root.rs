@@ -608,6 +608,23 @@ impl AurisApp {
                     *at = landed;
                 }
             }
+            Drag::TrackReorder { track, pressed_at } => {
+                // The same wobble guard the clips and the notes have: a click on a header to
+                // select a track must not reorder the list because the hand moved a pixel.
+                if let Some(from) = pressed_at {
+                    if !past_drag_threshold(from, event.position) {
+                        return;
+                    }
+                    if let Some(Drag::TrackReorder { pressed_at, .. }) = &mut self.drag {
+                        *pressed_at = None;
+                    }
+                }
+                let y = self.lane_y(event.position.y);
+                if let Some(to) = crate::ui::automation::reorder_target(&self.lane_rows(), track, y)
+                {
+                    let _ = self.session.move_track(track, to);
+                }
+            }
             Drag::ClipFade { clip, edge } => {
                 // Unsnapped on purpose: a fade is shaped by ear against the waveform, and no
                 // grid position has anything to do with where a breath ends.

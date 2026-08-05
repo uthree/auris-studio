@@ -89,6 +89,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::AddBusTrack => Key::EditAddBusTrack,
         Edit::DeleteTrack => Key::EditDeleteTrack,
         Edit::DuplicateTrack => Key::EditDuplicateTrack,
+        Edit::MoveTrack => Key::EditMoveTrack,
         Edit::RenameTrack => Key::EditRenameTrack,
         Edit::SetTrackColor => Key::EditSetTrackColor,
         Edit::MuteTrack => Key::EditMuteTrack,
