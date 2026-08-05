@@ -73,6 +73,12 @@ fn render_segment(
     frames: usize,
     offline: bool,
 ) {
+    // Before anything is rendered, so the whole segment hears the values in force at its start.
+    // A segment is bounded by the prepared block size and by the loop end, which means a wrap
+    // re-reads the lanes at the loop start rather than carrying the values from its end across —
+    // and, because that is a jump rather than a step, arrives at them outright.
+    graph.apply_automation(transport.position_frames, frames);
+
     let ctx = ProcessContext {
         sample_rate: graph.sample_rate(),
         block_frames: frames,
@@ -317,7 +323,8 @@ mod tests {
     use crate::graph::RENDER_CHANNELS;
     use crate::testkit::{self, TONE_AMPLITUDE};
     use auris_core::ParamId;
-    use auris_core::param::db_to_gain;
+    use auris_core::automation::AutomationCurve;
+    use auris_core::param::{ParamTarget, db_to_gain};
     use auris_core::project::{AudioSourceBank, Note, Project};
     use auris_core::time::Ticks;
     use std::sync::Arc;
@@ -1153,12 +1160,155 @@ mod tests {
         assert_eq!(long_out.channel(1), short_out.channel(1));
     }
 
+    /// A held note under a fader automated from `from` dB at tick 0 to `to` dB at `over`.
+    fn faded_project(from: f32, to: f32, over: Ticks) -> Project {
+        let mut project = one_note_project(Ticks::ZERO, Ticks::from_beats(8.0));
+        let track = project.tracks[0].id;
+        let target = ParamTarget::TrackGain(track);
+        project
+            .automation
+            .set_point(target, AutomationCurve::Linear, Ticks::ZERO, from);
+        project
+            .automation
+            .set_point(target, AutomationCurve::Linear, over, to);
+        project
+    }
+
+    /// Peak of the loudest channel over a rendered range.
+    fn peak(buffer: &AudioBuffer, from: usize, to: usize) -> f32 {
+        (0..RENDER_CHANNELS)
+            .flat_map(|channel| buffer.channel(channel)[from..to].iter())
+            .fold(0.0f32, |most, sample| most.max(sample.abs()))
+    }
+
+    #[test]
+    fn an_automated_fader_is_at_its_written_value_where_the_lane_says() {
+        // The numbers, not "it moved". The lane is written in decibels and climbs linearly, so
+        // what comes out at each fraction of the way along is a value this test can name in
+        // advance rather than compare against itself.
+        let project = faded_project(-60.0, 0.0, Ticks::from_beats(4.0));
+        let mut graph = build(&project, 64);
+        // Four beats at 120 bpm is two seconds.
+        let frames = (SAMPLE_RATE * 2.0) as usize;
+        let out = render_range(&mut graph, &mut Transport::playing_from(0), frames, 64);
+
+        // Narrow, because the lane sweeps 60 dB across the render: a window a thousandth of the
+        // way along still climbs 0.06 dB, and the peak inside it lands at its end.
+        const WINDOW: usize = 256;
+        for fraction in [0.25, 0.5, 0.75] {
+            let at = (frames as f32 * fraction) as usize;
+            let heard = peak(&out, at, at + WINDOW);
+            let expected = TONE_AMPLITUDE * db_to_gain(-60.0 + 60.0 * fraction);
+            assert!(
+                (heard - expected).abs() < expected * 0.1,
+                "{fraction} of the way along the lane reads {heard}, expected about {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn arriving_in_the_middle_of_a_fade_does_not_swell_into_it() {
+        // A seek is not a fader move. Landing at the half way point of a 60 dB climb used to slide
+        // up from wherever the strip had been left — at its stored 0 dB — which is a swell nobody
+        // wrote, at the loudest possible moment.
+        let project = faded_project(-60.0, 0.0, Ticks::from_beats(4.0));
+        let mut graph = build(&project, 512);
+        let half = (SAMPLE_RATE) as u64;
+        let out = render_range(&mut graph, &mut Transport::playing_from(half), 512, 512);
+        let expected = TONE_AMPLITUDE * db_to_gain(-30.0);
+        let heard = peak(&out, 0, 512);
+        assert!(
+            heard < expected * 1.5,
+            "the first block after a seek peaked at {heard}, four times {expected} would be the \
+             old ramp from 0 dB"
+        );
+    }
+
+    #[test]
+    fn a_lane_holds_its_last_value_past_its_end() {
+        // The lane's own rule, heard rather than asserted on the map: past the last point the
+        // fader stays where it was left instead of sliding back to the strip's stored value.
+        let project = faded_project(-60.0, 0.0, Ticks::from_beats(1.0));
+        let mut graph = build(&project, 64);
+        let frames = (SAMPLE_RATE * 2.0) as usize;
+        let out = render_range(&mut graph, &mut Transport::playing_from(0), frames, 64);
+        let tail = peak(&out, frames - 4_800, frames);
+        assert!(
+            (tail - TONE_AMPLITUDE).abs() < TONE_AMPLITUDE * 0.05,
+            "past the lane's end the fader should sit at 0 dB, peaked at {tail}"
+        );
+    }
+
+    #[test]
+    fn a_lane_is_resolved_to_the_block_size_and_no_finer() {
+        // Everything else in this renderer lands on the same samples at any block size, and
+        // automation is the one thing that does not: a lane is read once per segment and the
+        // strip ramps to it across that segment, so a coarser block is a coarser staircase.
+        //
+        // The difference is bounded rather than absent, and this says by how much: a 40 dB climb
+        // over four beats, rendered at 512 frames against 64, stays within a per-cent of full
+        // scale. What is worth knowing is that it is small and that it is *here* rather than
+        // somewhere nobody looked — a per-sample lane read would remove it, at the cost of
+        // reading every lane 48 000 times a second to move a fader that is ramped anyway.
+        let project = faded_project(-40.0, 0.0, Ticks::from_beats(4.0));
+        let render = |block: usize| {
+            let mut graph = build(&project, block);
+            render_range(&mut graph, &mut Transport::playing_from(0), 8_192, block)
+        };
+        let coarse = render(512);
+        let fine = render(64);
+        let worst = coarse
+            .channel(0)
+            .iter()
+            .zip(fine.channel(0).iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(worst < 0.01, "block size moved a sample by {worst}");
+    }
+
+    #[test]
+    fn a_project_nobody_automated_carries_no_lanes_at_all() {
+        // The cost of the feature when it is not in use, asserted rather than assumed: the
+        // per-segment call returns on its first line because there is nothing to walk.
+        let graph = build(&one_note_project(Ticks::ZERO, Ticks::from_beats(4.0)), 512);
+        assert_eq!(graph.automated_count(), 0);
+    }
+
+    #[test]
+    fn a_lane_pointing_at_a_track_that_is_gone_drives_nothing() {
+        // It should not be reachable — the document drops a lane with its track — so this is the
+        // second lock: what a wrongly resolved lane would do is drive whatever now sits at that
+        // position, which is worse than silence.
+        let mut project = one_note_project(Ticks::ZERO, Ticks::from_beats(4.0));
+        project.automation.set_point(
+            ParamTarget::TrackGain(auris_core::TrackId(9_999)),
+            AutomationCurve::Linear,
+            Ticks::ZERO,
+            -6.0,
+        );
+        assert_eq!(build(&project, 512).automated_count(), 0);
+    }
+
     #[test]
     fn render_block_never_allocates() {
         let mut project = one_note_project(Ticks::ZERO, Ticks::from_beats(8.0));
         let track_id = project.tracks[0].id;
         project.add_effect(Some(track_id), testkit::TAIL_ID);
         project.add_effect(None, testkit::GAIN_ID);
+        // Automated too, so the per-segment pass is inside the watched region: it runs on the
+        // audio thread and is bound by the same rule as everything else there.
+        project.automation.set_point(
+            ParamTarget::TrackGain(track_id),
+            AutomationCurve::Linear,
+            Ticks::ZERO,
+            -3.0,
+        );
+        project.automation.set_point(
+            ParamTarget::TrackGain(track_id),
+            AutomationCurve::Linear,
+            Ticks::from_beats(8.0),
+            0.0,
+        );
         let mut graph = build(&project, 512);
         let mut transport = Transport::playing_from(0);
         let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);

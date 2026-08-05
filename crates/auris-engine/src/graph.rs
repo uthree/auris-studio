@@ -17,13 +17,14 @@
 
 use std::sync::Arc;
 
-use auris_core::param::{ParamDescriptor, db_to_gain, pan_gains};
+use auris_core::automation::AutomationLane;
+use auris_core::param::{ParamDescriptor, ParamTarget, db_to_gain, pan_gains};
 use auris_core::plugin::{
     Effect, Instrument, NoteEvent, Parameterized, PluginCategory, PluginDescriptor, PrepareContext,
     ProcessContext,
 };
 use auris_core::project::{
-    AudioClip, AudioSourceBank, MidiClip, MixerStrip, Project, TrackId, TrackKind,
+    AudioClip, AudioSourceBank, EffectSlotId, MidiClip, MixerStrip, Project, TrackId, TrackKind,
 };
 use auris_core::registry::PluginRegistry;
 use auris_core::time::{Samples, TempoMap, Ticks};
@@ -536,6 +537,21 @@ impl RenderStrip {
         self.pan = sane_pan(pan);
     }
 
+    /// Puts the fader at `gain_db` with no ramp at all.
+    ///
+    /// For arriving somewhere rather than moving: the playhead has jumped, and the value the lane
+    /// holds *there* is the value that stretch of the song sounds like. Ramping to it would slide
+    /// up from wherever the fader happened to be left, which is a swell nobody wrote.
+    pub fn jump_gain_db(&mut self, gain_db: f32) {
+        self.gain.jump_to(db_to_gain(gain_db));
+    }
+
+    /// Puts the pan control at `pan` with no ramp, for the same reason.
+    pub fn jump_pan(&mut self, pan: f32) {
+        self.pan = sane_pan(pan);
+        self.pan_current = self.pan;
+    }
+
     /// Sets the strip's own mute switch. The change is faded in or out, not stepped.
     pub fn set_mute(&mut self, mute: bool) {
         self.mute = mute;
@@ -809,6 +825,19 @@ pub struct RenderGraph {
     /// disagreeing, and that disagreement is the signal to rebuild.
     compensation: usize,
     tempo_map: TempoMap,
+    /// The document's automation, resolved to positions in this graph.
+    ///
+    /// Empty for a project nobody has automated, which is what makes the whole feature free when
+    /// it is not in use: the renderer's per-segment call returns on the first line.
+    automation: Vec<RenderAutomation>,
+    /// Frame the next segment has to begin on for the automation to be *continuing* rather than
+    /// arriving.
+    ///
+    /// The same idea as [`RenderTrack::continued_from`] and for the same reason: a playhead that
+    /// jumped is not a parameter that moved. A seek into the middle of a fade should sound like
+    /// that part of the fade at once, and ramping there from wherever the fader was left is a
+    /// swell nobody wrote. `None` on a fresh graph, so the first segment always arrives.
+    automation_from: Option<u64>,
     pub(crate) master_scratch: AudioBuffer,
     pub(crate) master_peak: [f32; 2],
     /// Where a spectrum display, if one is open, gets its samples.
@@ -963,6 +992,8 @@ impl RenderGraph {
             max_block,
             compensation,
             tempo_map: project.tempo_map.clone(),
+            automation: resolve_automation(project),
+            automation_from: None,
             master_scratch,
             master_peak: [0.0, 0.0],
             scope: Arc::new(crate::scope::Scope::new()),
@@ -1041,6 +1072,44 @@ impl RenderGraph {
             .tempo_map
             .samples_to_ticks(Samples(frame), self.sample_rate);
         self.tempo_map.bpm_at(tick)
+    }
+
+    /// How many parameters this graph is driving from a lane.
+    pub fn automated_count(&self) -> usize {
+        self.automation.len()
+    }
+
+    /// Drives every automated parameter to the value its lane holds at `frame`.
+    ///
+    /// Called once per rendered segment rather than once per sample. That is not a compromise for
+    /// the faders — a gain and a pan are both *targets* that the strip ramps across the block it
+    /// is given, so a segment-rate write comes out as a continuous slope. It is the honest rate
+    /// for a plugin parameter, which has nowhere finer to put one.
+    ///
+    /// `frames` is how long the segment about to be rendered is, which is how the next call knows
+    /// whether the playhead carried on or jumped. Arriving somewhere puts the values there
+    /// outright; carrying on ramps to them.
+    ///
+    /// Allocation-free and lock-free: the lanes were resolved to positions when the graph was
+    /// built, and what happens here is a binary search per lane and a store.
+    pub(crate) fn apply_automation(&mut self, frame: u64, frames: usize) {
+        if self.automation.is_empty() {
+            return;
+        }
+        let continuing = self.automation_from == Some(frame);
+        self.automation_from = Some(frame + frames as u64);
+        let tick = self
+            .tempo_map
+            .samples_to_ticks(Samples(frame), self.sample_rate);
+        // Destructured rather than walked through `self`, so the lanes can be read while the
+        // tracks they point at are written.
+        let Self {
+            tracks,
+            master,
+            automation,
+            ..
+        } = self;
+        drive_automation(automation, tracks, master, tick, continuing);
     }
 
     /// Post-fader peak of a track's last rendered block.
@@ -1375,6 +1444,153 @@ fn max_events_in_window(events: &[ScheduledEvent], window: u64) -> usize {
         best = best.max(high - low + 1);
     }
     best
+}
+
+/// Where an automated value goes, in this graph's own coordinates.
+///
+/// The document addresses a parameter by id; the graph addresses it by position, exactly as every
+/// [`EngineCommand`](crate::EngineCommand) does. Translating once when the graph is built rather
+/// than once per block is what keeps the audio thread free of lookups — and it turns a lane
+/// pointing at something this graph does not have into an absence rather than a miss on every
+/// block for the life of the project.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum AutomationSlot {
+    /// A track's fader, by track index.
+    TrackGain(usize),
+    /// A track's pan, by track index.
+    TrackPan(usize),
+    /// The master fader.
+    MasterGain,
+    /// The master pan.
+    MasterPan,
+    /// A parameter on a track's instrument.
+    Instrument { track: usize, param: ParamId },
+    /// A parameter on an effect, on a track or on the master bus.
+    Effect {
+        track: Option<usize>,
+        slot: usize,
+        param: ParamId,
+    },
+}
+
+/// One document lane, resolved to where it lands.
+struct RenderAutomation {
+    lane: AutomationLane,
+    slot: AutomationSlot,
+}
+
+/// Translates every lane in `project` into a graph position, dropping the ones that resolve to
+/// nothing.
+///
+/// A lane can fail to resolve when the thing it names is gone — and it should not be possible,
+/// because the document removes a lane along with the track or effect slot it points at. Dropping
+/// it here is the second lock on that door: what a lane resolved wrongly would do is drive a
+/// parameter on whatever now occupies that position, which is worse than silence.
+fn resolve_automation(project: &Project) -> Vec<RenderAutomation> {
+    project
+        .automation
+        .lanes()
+        .iter()
+        .filter_map(|lane| {
+            Some(RenderAutomation {
+                lane: lane.clone(),
+                slot: resolve_slot(project, lane.target)?,
+            })
+        })
+        .collect()
+}
+
+/// Where one target lands in a graph built from `project`, if it lands anywhere.
+fn resolve_slot(project: &Project, target: ParamTarget) -> Option<AutomationSlot> {
+    let chain_position = |track: Option<TrackId>, slot: EffectSlotId| {
+        let effects = match track {
+            Some(id) => &project.track(id)?.mixer.effects,
+            None => &project.master.effects,
+        };
+        effects.iter().position(|effect| effect.id == slot)
+    };
+    match target {
+        ParamTarget::TrackGain(id) => project.track_index(id).map(AutomationSlot::TrackGain),
+        ParamTarget::TrackPan(id) => project.track_index(id).map(AutomationSlot::TrackPan),
+        ParamTarget::MasterGain => Some(AutomationSlot::MasterGain),
+        ParamTarget::MasterPan => Some(AutomationSlot::MasterPan),
+        ParamTarget::Instrument { track, param } => Some(AutomationSlot::Instrument {
+            track: project.track_index(track)?,
+            param,
+        }),
+        ParamTarget::Effect { track, slot, param } => Some(AutomationSlot::Effect {
+            track: match track {
+                Some(id) => Some(project.track_index(id)?),
+                None => None,
+            },
+            slot: chain_position(track, slot)?,
+            param,
+        }),
+    }
+}
+
+/// Writes every lane's value at `tick` into the strip or plugin it drives.
+///
+/// Free rather than a method so it can be given the tracks and the lanes as separate borrows, and
+/// so the rule can be asserted on a handful of structs instead of a whole graph.
+///
+/// Every value goes in through the same setter a moved fader or a turned knob uses. That is the
+/// point: there is no second path into a parameter that could clamp differently, skip the ramp, or
+/// forget to tell the pan law.
+///
+/// `continuing` is false when the playhead arrived rather than advanced — the first segment of a
+/// graph, a seek, a loop wrap — and the faders are then put where the lane says instead of sliding
+/// there. Only the mixer's own controls have a ramp to skip; a plugin parameter is written the
+/// same way either way, because there is nothing between two values of it.
+fn drive_automation(
+    automation: &[RenderAutomation],
+    tracks: &mut [RenderTrack],
+    master: &mut RenderStrip,
+    tick: Ticks,
+    continuing: bool,
+) {
+    for entry in automation {
+        let value = entry.lane.value_at(tick);
+        match entry.slot {
+            AutomationSlot::TrackGain(index) => {
+                if let Some(track) = tracks.get_mut(index) {
+                    match continuing {
+                        true => track.strip.set_gain_db(value),
+                        false => track.strip.jump_gain_db(value),
+                    }
+                }
+            }
+            AutomationSlot::TrackPan(index) => {
+                if let Some(track) = tracks.get_mut(index) {
+                    match continuing {
+                        true => track.strip.set_pan(value),
+                        false => track.strip.jump_pan(value),
+                    }
+                }
+            }
+            AutomationSlot::MasterGain => match continuing {
+                true => master.set_gain_db(value),
+                false => master.jump_gain_db(value),
+            },
+            AutomationSlot::MasterPan => match continuing {
+                true => master.set_pan(value),
+                false => master.jump_pan(value),
+            },
+            AutomationSlot::Instrument { track, param } => {
+                if let Some(track) = tracks.get_mut(track) {
+                    track.set_instrument_param(param, value);
+                }
+            }
+            AutomationSlot::Effect { track, slot, param } => match track {
+                Some(index) => {
+                    if let Some(track) = tracks.get_mut(index) {
+                        track.strip.set_effect_param(slot, param, value);
+                    }
+                }
+                None => master.set_effect_param(slot, param, value),
+            },
+        }
+    }
 }
 
 #[cfg(test)]
