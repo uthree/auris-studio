@@ -10,7 +10,7 @@
 //! still in its own file.
 
 use std::cell::Cell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -607,6 +607,12 @@ pub struct AurisApp {
     pub(crate) choosing_export: bool,
     /// Whether [`Self::status`] is reporting a failure, so it can be shown as one.
     pub(crate) status_failed: bool,
+    /// Which tracks have an automation lane showing, and on which parameter.
+    ///
+    /// Presentation rather than document: what a lane *holds* is saved, but which one you happen
+    /// to have open is a view of it, and the rule is that presentation stays in the frontend. A
+    /// track with no entry has its lane closed, which is also what a freshly opened project gets.
+    pub(crate) automation_lanes: BTreeMap<TrackId, ParamTarget>,
     /// How far the arrangement's lanes are scrolled down, in pixels.
     ///
     /// The headers and the clip canvas both read it, so the two columns cannot slide apart —
@@ -714,6 +720,7 @@ impl AurisApp {
             titled: String::new(),
             choosing_export: false,
             status_failed: false,
+            automation_lanes: BTreeMap::new(),
             lane_scroll: px(0.0),
             settings,
             language,

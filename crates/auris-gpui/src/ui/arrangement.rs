@@ -11,6 +11,7 @@ use gpui::{
 use crate::app::{AurisApp, ClipEdge, Drag, FadeEdge};
 use crate::i18n::track_kind_key;
 use crate::theme::{Metrics, Theme};
+use crate::ui::automation::{self, LaneRow};
 use crate::ui::icons::Icon;
 use crate::ui::paint;
 use crate::ui::widgets::{
@@ -1172,8 +1173,24 @@ impl AurisApp {
     }
 
     /// Combined height of every track's lane.
+    /// Every row of the lane column, clips and open automation lanes alike.
+    ///
+    /// The one walk over the tracks. Five places used to do this arithmetic separately and agreed
+    /// only by doing it identically; a sub-lane under a track turned that into five chances to
+    /// put a press one row away from the thing it looks like it landed on.
+    pub(crate) fn lane_rows(&self) -> Vec<LaneRow> {
+        let tracks: Vec<(TrackId, f32)> = self
+            .project()
+            .tracks
+            .iter()
+            .map(|track| (track.id, track.height))
+            .collect();
+        automation::lane_rows(&tracks, &self.automation_lanes)
+    }
+
+    /// Combined height of every lane, the automation rows included.
     pub(crate) fn lanes_height(&self) -> Pixels {
-        px(self.project().tracks.iter().map(|track| track.height).sum())
+        automation::rows_height(&self.lane_rows())
     }
 
     /// How far the lanes may be scrolled before the last one is flush with the bottom.
@@ -1206,15 +1223,7 @@ impl AurisApp {
 
     /// Where a track's lane starts in the column, and how tall it is.
     fn lane_span(&self, track: TrackId) -> Option<(Pixels, Pixels)> {
-        let mut top = px(0.0);
-        for candidate in &self.project().tracks {
-            let height = px(candidate.height);
-            if candidate.id == track {
-                return Some((top, height));
-            }
-            top += height;
-        }
-        None
+        automation::track_span(&self.lane_rows(), track)
     }
 
     /// Where a window position falls in the lane column's own coordinates.
@@ -1225,32 +1234,36 @@ impl AurisApp {
         window_y - self.lanes_origin().y + self.lane_scroll
     }
 
-    /// Track whose lane contains `y`, with the lane's top offset.
+    /// Track whose *clip* lane contains `y`, with the lane's top offset.
+    ///
+    /// An automation row answers `None`, because everything asking this — a clip drag, a clip
+    /// menu, the lane a selection moves to — means the row clips live on. What is under the
+    /// pointer in an automation row is [`Self::automation_row_at`]'s business.
     pub(crate) fn track_at_y(&self, y: Pixels) -> Option<(TrackId, Pixels)> {
-        let mut top = px(0.0);
-        for track in &self.project().tracks {
-            let bottom = top + px(track.height);
-            if y >= top && y < bottom {
-                return Some((track.id, top));
-            }
-            top = bottom;
-        }
-        None
+        let row = automation::row_at(&self.lane_rows(), y)?;
+        matches!(row.kind, automation::RowKind::Clips).then_some((row.track, row.top))
     }
 
-    /// Tracks whose lanes intersect the vertical span, in lane-local pixels.
+    /// The automation row containing `y`, if `y` is in one.
+    pub(crate) fn automation_row_at(&self, y: Pixels) -> Option<LaneRow> {
+        automation::row_at(&self.lane_rows(), y).filter(|row| row.target().is_some())
+    }
+
+    /// Tracks whose *clip* lanes intersect the vertical span, in lane-local pixels.
+    ///
+    /// Clip rows only: this is what a rubber band sweeps, and a band that dipped into an open
+    /// automation lane would otherwise select the clips of the track above it a second time.
     pub(crate) fn tracks_in_rows(&self, top: Pixels, bottom: Pixels) -> Vec<TrackId> {
         let (top, bottom) = (top.min(bottom), top.max(bottom));
-        let mut found = Vec::new();
-        let mut lane_top = px(0.0);
-        for track in &self.project().tracks {
-            let lane_bottom = lane_top + px(track.height);
-            if lane_bottom > top && lane_top < bottom {
-                found.push(track.id);
-            }
-            lane_top = lane_bottom;
-        }
-        found
+        self.lane_rows()
+            .iter()
+            .filter(|row| {
+                matches!(row.kind, automation::RowKind::Clips)
+                    && row.top + row.height > top
+                    && row.top < bottom
+            })
+            .map(|row| row.track)
+            .collect()
     }
 
     /// Clip on `track` covering `tick`, with its start and length.

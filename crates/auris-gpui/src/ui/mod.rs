@@ -5,6 +5,7 @@
 //! of that state is simpler than synchronising several.
 
 pub mod arrangement;
+pub mod automation;
 pub mod commands;
 pub mod context_menu;
 pub mod drop;
