@@ -61,6 +61,14 @@ fn drop_kind(path: &Path) -> Option<DropKind> {
     }
 }
 
+/// Whether a drag holding these paths is carrying anything the window can take.
+///
+/// The border lights up by this and the drop acts on it, so the promise the window makes while a
+/// file is still in the air cannot come apart from what happens when it lands.
+pub fn holds_something_importable(paths: &[PathBuf]) -> bool {
+    !sort_dropped(paths).accepted.is_empty()
+}
+
 /// How far along the clip lanes a drop at `pointer` landed, from their left edge.
 ///
 /// `None` when it landed anywhere else — a panel, the transport, the track headers — where there
@@ -147,6 +155,28 @@ mod tests {
         let dropped = sort_dropped(&paths(&["notes.txt", "cover.png", "README"]));
         assert!(dropped.accepted.is_empty());
         assert_eq!(dropped.rejected.len(), 3);
+    }
+
+    #[test]
+    fn the_border_lights_up_for_exactly_what_the_drop_would_take() {
+        // The pointer rule and the paint rule, side by side, so they cannot drift: a border that
+        // lit up for a drag nothing would import promises an import that never happens, and one
+        // that stayed dark for a readable file hides the gesture the same way it was hidden
+        // before this existed.
+        for names in [
+            vec!["kick.wav"],
+            vec!["piano.sf2"],
+            vec!["notes.txt", "take.aiff"],
+            vec!["notes.txt"],
+            vec![],
+        ] {
+            let paths = paths(&names);
+            assert_eq!(
+                holds_something_importable(&paths),
+                !sort_dropped(&paths).accepted.is_empty(),
+                "{names:?}"
+            );
+        }
     }
 
     #[test]

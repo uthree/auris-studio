@@ -14,7 +14,7 @@ use crate::dock::{Dock, Panel};
 use crate::gestures::past_drag_threshold;
 use crate::menu::MenuRow;
 use crate::theme::Theme;
-use crate::ui::drop::{lanes_offset, sort_dropped};
+use crate::ui::drop::{holds_something_importable, lanes_offset};
 use crate::ui::menu_bar;
 use crate::ui::widgets::splitter;
 
@@ -73,7 +73,10 @@ impl Render for AurisApp {
         let prompt = self.render_prompt(cx);
         let palette = self.render_palette(cx);
         let menu = self.render_context_menu(window, cx);
-        let drop_ring = self.render_drop_ring();
+        // Files dragged in from the desktop, taken by the whole window rather than by one panel:
+        // what a file is, is its extension, and which rectangle it was let go over is not
+        // something a person should have to get right for a drop to be understood.
+        let drop_ring = self.render_drop_ring(cx);
 
         div()
             .id("root")
@@ -155,10 +158,6 @@ impl Render for AurisApp {
             // without this the drag never finishes: the pointer comes back still holding the
             // clip, and the transaction it opened silently eats every edit made afterwards.
             .on_mouse_up_out(gpui::MouseButton::Left, cx.listener(Self::on_mouse_up))
-            // Files dragged in from the desktop, taken by the whole window rather than by one
-            // panel: what a file is, is its extension, and which rectangle it was let go over is
-            // not something a person should have to get right for a drop to be understood.
-            .on_drop(cx.listener(Self::on_files_dropped))
             .on_key_down(cx.listener(Self::on_key_down))
             .children(menu_bar)
             .child(transport)
@@ -429,15 +428,20 @@ impl AurisApp {
         )
     }
 
-    /// The ring that says the window will take what is being dragged over it.
+    /// The window's drop target: it takes the file, and says so before the file is let go.
     ///
     /// Absolute and always present rather than added when a drag arrives: a border that appeared
     /// would inset the whole window by two pixels at the moment a file crossed into it, moving
     /// every lane out from under the pointer that is about to let go.
     ///
-    /// It only lights up for a drag holding something importable, so a dragged folder or a PDF
-    /// says beforehand that it is not going to be understood.
-    fn render_drop_ring(&self) -> impl IntoElement + use<> {
+    /// The drop is taken *here* rather than on the root, and not only so that the rectangle which
+    /// lights up is the rectangle that acts. A `drag_over` style is applied to a hitbox, and gpui
+    /// gives an element a hitbox for a drop listener but not for a drag-over style alone — with
+    /// the listener on the root this element had none, and the border never lit up at all.
+    ///
+    /// It stays dark for a drag holding nothing readable, so a folder or a PDF says beforehand
+    /// that it is not going to be understood.
+    fn render_drop_ring(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let accent = self.theme.accent;
         div()
             .id("drop-ring")
@@ -445,10 +449,11 @@ impl AurisApp {
             .inset_0()
             .border_2()
             .border_color(gpui::transparent_black())
+            .on_drop(cx.listener(Self::on_files_dropped))
             .drag_over::<gpui::ExternalPaths>(move |style, paths, _, _| {
-                match sort_dropped(paths.paths()).accepted.is_empty() {
-                    true => style,
-                    false => style.border_color(accent),
+                match holds_something_importable(paths.paths()) {
+                    true => style.border_color(accent),
+                    false => style,
                 }
             })
     }
