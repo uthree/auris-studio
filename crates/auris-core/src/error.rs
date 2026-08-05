@@ -40,6 +40,10 @@ pub enum CoreError {
     /// A tempo map was built without any tempo points, or with an invalid one.
     #[error("invalid tempo map: {0}")]
     InvalidTempoMap(String),
+
+    /// Text that was meant to be a time signature was not one.
+    #[error("`{0}` is not a time signature like 4/4")]
+    InvalidTimeSignature(String),
 }
 
 /// Result alias used throughout the core crate.

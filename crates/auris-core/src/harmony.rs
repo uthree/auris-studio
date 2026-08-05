@@ -22,11 +22,10 @@
 //! # Ticks, not bars
 //!
 //! Positions are [`Ticks`], like every other position in the document. A chord chart is written in
-//! bars, so [`TimeSignature::position`] is how one is *built* — but what is *stored* is the tick,
+//! bars, so [`SignatureMap::position`] is how one is *built* — but what is *stored* is the tick,
 //! because a stored bar number silently changes meaning the moment the time signature is edited.
 //! Notes would stay where they sound while chords slid somewhere else. Storing ticks means editing
-//! the signature moves the bar lines under a fixed harmony, which is the behaviour a person
-//! expects.
+//! the meter moves the bar lines under a fixed harmony, which is the behaviour a person expects.
 
 use serde::{Deserialize, Serialize};
 
@@ -36,7 +35,7 @@ use crate::theory::key::Key;
 use crate::theory::numeral::Numeral;
 use crate::theory::pitch::PitchClass;
 use crate::theory::scale::ScaleId;
-use crate::time::{Ticks, TimeSignature};
+use crate::time::{SignatureMap, Ticks, TimeSignature};
 
 /// A key change at a musical position.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -448,7 +447,7 @@ impl Harmony {
         &self,
         from: Ticks,
         to: Ticks,
-        signature: TimeSignature,
+        signatures: &SignatureMap,
     ) -> Vec<HarmonicEvent> {
         let (from, to) = ordered(from.max_zero(), to.max_zero());
         if from == to {
@@ -487,7 +486,7 @@ impl Harmony {
                 key,
                 start,
                 length: end - start,
-                bar: (signature.bar_of(start) - 1) as usize,
+                bar: (signatures.bar_of(start) - 1) as usize,
             });
         }
         events
@@ -499,6 +498,11 @@ impl Harmony {
     /// musically, and a three-chord bar in 4/4 is three lots of 1280 ticks — not a multiple of any
     /// sensible editing grid, and rounding it would lose the bar line. A stamp is a division of a
     /// bar; a drag is an edit on the grid.
+    ///
+    /// One `signature` rather than the whole [`SignatureMap`], because that is what a chord chart
+    /// is: `| I | V | vi | IV |` was written in a meter, and a meter change part way through the
+    /// stamped range does not reinterpret the bars before it. The caller passes the signature in
+    /// force at `from`.
     ///
     /// Whatever sounded at the end of the stamped range keeps sounding there, so laying a
     /// progression over the first eight bars of a song does not silence the ninth.
@@ -549,6 +553,11 @@ mod tests {
     /// 4/4, so one bar is 3840 ticks.
     fn four_four() -> TimeSignature {
         TimeSignature::new(4, 4)
+    }
+
+    /// 4/4 for the whole timeline, which is what the bar numbers here are counted in.
+    fn meters() -> SignatureMap {
+        SignatureMap::constant(four_four())
     }
 
     fn bar(n: i64) -> Ticks {
@@ -732,7 +741,7 @@ mod tests {
         let chart = Chart::parse("| I | V | vi | IV |").unwrap();
         harmony.stamp(&chart, Ticks::ZERO, 8, four_four());
 
-        let events = harmony.events_in(Ticks::ZERO, bar(8), four_four());
+        let events = harmony.events_in(Ticks::ZERO, bar(8), &meters());
         assert_eq!(events.len(), 8);
         let mut cursor = Ticks::ZERO;
         for event in &events {
@@ -755,7 +764,7 @@ mod tests {
         // Half of bar 3 to half of bar 5, counting bars from one.
         let from = bar(2) + Ticks(1920);
         let to = bar(4) + Ticks(1920);
-        let events = harmony.events_in(from, to, four_four());
+        let events = harmony.events_in(from, to, &meters());
         assert_eq!(events.first().unwrap().start, from);
         assert_eq!(events.last().unwrap().end(), to);
     }
@@ -789,7 +798,7 @@ mod tests {
         harmony.chords.set_point(Ticks::ZERO, Some(numeral("I")));
         harmony.keys.set_point(bar(1), key("D major"));
 
-        let events = harmony.events_in(Ticks::ZERO, bar(2), four_four());
+        let events = harmony.events_in(Ticks::ZERO, bar(2), &meters());
         assert_eq!(events.len(), 2, "one chord, two keys, two events");
         assert_eq!(events[0].chord.to_string(), "C");
         assert_eq!(events[1].chord.to_string(), "D");
@@ -809,7 +818,7 @@ mod tests {
         );
         assert_eq!(written, 3);
 
-        let events = harmony.events_in(Ticks::ZERO, bar(1), four_four());
+        let events = harmony.events_in(Ticks::ZERO, bar(1), &meters());
         let total: i64 = events.iter().map(|event| event.length.raw()).sum();
         assert_eq!(total, 3840, "the bar adds up exactly");
         assert_eq!(events[0].length.raw(), 1280);
@@ -840,7 +849,7 @@ mod tests {
             four_four(),
         );
         let before: Vec<String> = harmony
-            .events_in(Ticks::ZERO, bar(4), four_four())
+            .events_in(Ticks::ZERO, bar(4), &meters())
             .iter()
             .map(|event| event.chord.to_string())
             .collect();
@@ -850,7 +859,7 @@ mod tests {
             .keys
             .set_initial(harmony.keys.initial().transposed(2));
         let after: Vec<String> = harmony
-            .events_in(Ticks::ZERO, bar(4), four_four())
+            .events_in(Ticks::ZERO, bar(4), &meters())
             .iter()
             .map(|event| event.chord.to_string())
             .collect();

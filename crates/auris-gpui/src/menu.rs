@@ -154,6 +154,16 @@ pub fn model(language: Language) -> Vec<MenuSection> {
             command(t(Key::MenuDelete), actions::DeleteSelection, "edit.delete"),
             MenuRow::Separator,
             command(t(Key::CmdNextTool), actions::NextTool, "edit.next_tool"),
+            MenuRow::Separator,
+            // The three things about the song itself that a person otherwise changes by reaching
+            // for a readout with the mouse.
+            command(t(Key::CmdSetTempo), actions::SetTempo, "edit.tempo"),
+            command(
+                t(Key::CmdSetSignature),
+                actions::SetTimeSignature,
+                "edit.signature",
+            ),
+            command(t(Key::CmdCycleGrid), actions::CycleGrid, "edit.grid"),
         ],
     });
 
@@ -221,6 +231,12 @@ pub fn model(language: Language) -> Vec<MenuSection> {
                 t(Key::CmdToggleCycle),
                 actions::ToggleLoop,
                 "transport.loop",
+            ),
+            MenuRow::Separator,
+            command(
+                t(Key::CmdGoToPosition),
+                actions::GoToPosition,
+                "transport.go_to",
             ),
             MenuRow::Separator,
             command(t(Key::CmdPanic), actions::PanicStop, "transport.panic"),

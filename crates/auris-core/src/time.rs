@@ -202,9 +202,59 @@ impl Default for TimeSignature {
 }
 
 impl TimeSignature {
+    /// Beat counts a bar may have.
+    ///
+    /// Bounded above because [`Self::ticks_per_bar`] is multiplied by a bar number all over the
+    /// document, and a numerator in the millions overflows every position derived from it long
+    /// before it means anything musically.
+    pub const NUMERATORS: std::ops::RangeInclusive<u32> = 1..=32;
+
+    /// Note values that may take the beat: whole through sixteenth.
+    pub const DENOMINATORS: [u32; 5] = [1, 2, 4, 8, 16];
+
+    /// The meters offered wherever one is picked from a list rather than typed.
+    ///
+    /// Simple, compound and the odd ones people actually write in, in the order a musician would
+    /// think of them. Not exhaustive — [`FromStr`](std::str::FromStr) takes anything inside the
+    /// bounds above — but a menu of every meter in the range would be four hundred rows.
+    pub const COMMON: [Self; 8] = [
+        Self {
+            numerator: 4,
+            denominator: 4,
+        },
+        Self {
+            numerator: 3,
+            denominator: 4,
+        },
+        Self {
+            numerator: 2,
+            denominator: 4,
+        },
+        Self {
+            numerator: 6,
+            denominator: 8,
+        },
+        Self {
+            numerator: 12,
+            denominator: 8,
+        },
+        Self {
+            numerator: 5,
+            denominator: 4,
+        },
+        Self {
+            numerator: 7,
+            denominator: 8,
+        },
+        Self {
+            numerator: 9,
+            denominator: 8,
+        },
+    ];
+
     /// Creates a signature, falling back to 4/4 for degenerate input.
     pub fn new(numerator: u32, denominator: u32) -> Self {
-        if numerator == 0 || denominator == 0 {
+        if !Self::NUMERATORS.contains(&numerator) || !Self::DENOMINATORS.contains(&denominator) {
             Self::default()
         } else {
             Self {
@@ -251,6 +301,352 @@ impl TimeSignature {
     pub fn bar_of(&self, tick: Ticks) -> u32 {
         let per_bar = self.ticks_per_bar().raw().max(1);
         (tick.raw().max(0) / per_bar) as u32 + 1
+    }
+}
+
+impl std::fmt::Display for TimeSignature {
+    /// `4/4`, which is how a signature is written everywhere it is written at all.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.numerator, self.denominator)
+    }
+}
+
+impl std::str::FromStr for TimeSignature {
+    type Err = CoreError;
+
+    /// Reads `4/4`, and refuses anything that is not a meter this can count.
+    ///
+    /// The bounds are the same ones the song specification parser applies, and for the same
+    /// reason: a numerator in the millions makes [`Self::ticks_per_bar`] overflow every position
+    /// computed from it, and a denominator that is not a note value does not name a beat.
+    fn from_str(text: &str) -> Result<Self> {
+        let complaint = || CoreError::InvalidTimeSignature(text.to_string());
+        let (top, bottom) = text.trim().split_once('/').ok_or_else(complaint)?;
+        let numerator: u32 = top.trim().parse().map_err(|_| complaint())?;
+        let denominator: u32 = bottom.trim().parse().map_err(|_| complaint())?;
+        if !Self::NUMERATORS.contains(&numerator) || !Self::DENOMINATORS.contains(&denominator) {
+            return Err(complaint());
+        }
+        Ok(Self::new(numerator, denominator))
+    }
+}
+
+/// A signature change at a musical position.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignaturePoint {
+    /// Where the new signature takes effect. Always the start of a bar.
+    pub tick: Ticks,
+    /// The signature from this point onwards.
+    pub signature: TimeSignature,
+}
+
+/// One stretch of the timeline governed by a single signature.
+///
+/// What a painter walks. The bar number is carried because it cannot be recovered from the
+/// position alone once the meter has changed: bar 9 is 30720 ticks in through four bars of 4/4
+/// and four of 3/4, and nothing but the accumulation says so.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct SignatureSpan {
+    /// Where the stretch begins.
+    pub start: Ticks,
+    /// Where the next one begins, or `None` for the stretch that runs to the end of time.
+    pub end: Option<Ticks>,
+    /// The signature in force across it.
+    pub signature: TimeSignature,
+    /// 1-based number of the bar at [`Self::start`].
+    pub first_bar: u32,
+}
+
+/// Piecewise-constant time signature over the timeline.
+///
+/// The third of the document's timelines, built to the same shape as
+/// [`TempoMap`] and [`KeyMap`](crate::harmony::KeyMap): a sorted list of points, each in force
+/// until the next, anchored at tick 0 so that every position has an answer.
+///
+/// # Bar lines, and the invariant that makes them mean something
+///
+/// A meter change carries one thing the other two do not: it moves the bar lines after it. That
+/// only works if every change *is* a bar line — a 3/4 beginning half way through a bar of 4/4
+/// leaves the bar it interrupts with no length, and the bar numbers after it stop being
+/// countable. So the fourth invariant, upheld by every constructor and mutator, is that each
+/// point sits a whole number of the previous signature's bars past the point before it.
+///
+/// Normalisation is what upholds it: a change written anywhere is moved to the nearest bar line,
+/// and a change written *before* one already there pushes the later ones onto the new grid. That
+/// is a real edit to the later positions, and it is the honest one — the alternative is storing
+/// bar numbers, and a stored bar number moves the notes underneath it every time an earlier bar
+/// changes length.
+///
+/// # Nothing here reaches the audio
+///
+/// A signature is notation. Positions are ticks, the tempo map turns ticks into samples, and
+/// neither of them asks how many beats are in a bar. Editing this changes where the bar lines are
+/// drawn and nothing about what is heard, which is why the session does not rebuild the graph
+/// for it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "SignatureMapRepr")]
+pub struct SignatureMap {
+    points: Vec<SignaturePoint>,
+}
+
+/// On-disk shape of a [`SignatureMap`].
+///
+/// Infallible on the way in, like [`KeyMap`](crate::harmony::KeyMap) and unlike [`TempoMap`]: a
+/// degenerate signature is answered by [`TimeSignature::new`] with 4/4, and no arithmetic
+/// anywhere divides by a numerator. An empty list is the default map rather than an error.
+#[derive(Deserialize)]
+struct SignatureMapRepr {
+    #[serde(default)]
+    points: Vec<SignaturePoint>,
+}
+
+impl From<SignatureMapRepr> for SignatureMap {
+    fn from(repr: SignatureMapRepr) -> Self {
+        Self::from_points(repr.points)
+    }
+}
+
+impl Default for SignatureMap {
+    /// 4/4 for the whole timeline.
+    fn default() -> Self {
+        Self::constant(TimeSignature::default())
+    }
+}
+
+impl SignatureMap {
+    /// A map with one signature for the whole timeline.
+    pub fn constant(signature: TimeSignature) -> Self {
+        Self {
+            points: vec![SignaturePoint {
+                tick: Ticks::ZERO,
+                signature,
+            }],
+        }
+    }
+
+    /// Builds a map from arbitrary points, normalising order, duplicates and the bar lines.
+    pub fn from_points(mut points: Vec<SignaturePoint>) -> Self {
+        if points.is_empty() {
+            return Self::default();
+        }
+        for point in &mut points {
+            point.tick = point.tick.max_zero();
+            // A signature that would not have parsed still has to come out usable, because the
+            // file it arrived in is user-editable text.
+            point.signature =
+                TimeSignature::new(point.signature.numerator, point.signature.denominator);
+        }
+        points.sort_by_key(|point| point.tick);
+        points[0].tick = Ticks::ZERO;
+        align_to_bars(&mut points);
+        Self { points }
+    }
+
+    /// The signature changes, ordered by position.
+    pub fn points(&self) -> &[SignaturePoint] {
+        &self.points
+    }
+
+    /// The signature of the first segment — the "project signature" for a map that never changes.
+    pub fn initial(&self) -> TimeSignature {
+        self.points[0].signature
+    }
+
+    /// Replaces the signature of the first segment.
+    ///
+    /// The changes after it keep their bar-line invariant, which means the ones that no longer
+    /// land on a bar of the new opening meter are moved onto the nearest one.
+    pub fn set_initial(&mut self, signature: TimeSignature) {
+        self.points[0].signature = signature;
+        align_to_bars(&mut self.points);
+    }
+
+    /// `true` when one signature holds for the whole song.
+    pub fn is_constant(&self) -> bool {
+        self.points.len() == 1
+    }
+
+    /// Inserts or replaces a signature change, at the bar line `tick` is nearest.
+    pub fn set_point(&mut self, tick: Ticks, signature: TimeSignature) {
+        let tick = self.snap_bar(tick);
+        match self.points.binary_search_by_key(&tick, |point| point.tick) {
+            Ok(index) => self.points[index].signature = signature,
+            Err(index) => self
+                .points
+                .insert(index, SignaturePoint { tick, signature }),
+        }
+        align_to_bars(&mut self.points);
+    }
+
+    /// Removes the signature change at `tick`. The anchor at tick 0 cannot be removed.
+    pub fn remove_point(&mut self, tick: Ticks) {
+        if tick == Ticks::ZERO {
+            return;
+        }
+        if let Ok(index) = self.points.binary_search_by_key(&tick, |point| point.tick) {
+            self.points.remove(index);
+            align_to_bars(&mut self.points);
+        }
+    }
+
+    /// Index of the segment containing `tick`.
+    fn segment_index(&self, tick: Ticks) -> usize {
+        match self.points.binary_search_by_key(&tick, |point| point.tick) {
+            Ok(index) => index,
+            // `tick` precedes every point only when it is negative; clamp into segment 0.
+            Err(index) => index.saturating_sub(1),
+        }
+    }
+
+    /// The signature in force at `tick`.
+    ///
+    /// Total, like [`TempoMap::bpm_at`]: there is always a signature, and a negative tick reads
+    /// the first segment.
+    pub fn signature_at(&self, tick: Ticks) -> TimeSignature {
+        self.points[self.segment_index(tick)].signature
+    }
+
+    /// Where the signature change in force at `tick` sits.
+    ///
+    /// Total, for the reason given on [`TempoMap::change_at`]: this is what an editor acts
+    /// *through*, and "remove the signature change here" means the one the bar lines are being
+    /// drawn from rather than one that happens to start under the pointer.
+    pub fn change_at(&self, tick: Ticks) -> Ticks {
+        self.points[self.segment_index(tick)].tick
+    }
+
+    /// Every stretch of the timeline, each with the bar number it opens on.
+    ///
+    /// Owned and whole rather than a range query: the list is a handful of points, a paint
+    /// closure has to capture `'static`, and the bar numbers only exist by accumulating from the
+    /// start anyway.
+    pub fn spans(&self) -> Vec<SignatureSpan> {
+        let mut spans = Vec::with_capacity(self.points.len());
+        let mut bar = 1u32;
+        for (index, point) in self.points.iter().enumerate() {
+            let end = self.points.get(index + 1).map(|next| next.tick);
+            spans.push(SignatureSpan {
+                start: point.tick,
+                end,
+                signature: point.signature,
+                first_bar: bar,
+            });
+            if let Some(end) = end {
+                bar = bar.saturating_add(bars_between(point.tick, end, point.signature));
+            }
+        }
+        spans
+    }
+
+    /// The 1-based bar containing `tick`. Anything before the timeline starts is bar 1.
+    pub fn bar_of(&self, tick: Ticks) -> u32 {
+        let tick = tick.max_zero();
+        let index = self.segment_index(tick);
+        let span = &self.points[index];
+        let mut bar = 1u32;
+        for (previous, next) in self.points[..=index]
+            .iter()
+            .zip(self.points[1..=index].iter())
+        {
+            bar = bar.saturating_add(bars_between(previous.tick, next.tick, previous.signature));
+        }
+        bar.saturating_add(bars_between(span.tick, tick, span.signature))
+    }
+
+    /// Where 1-based `bar` begins. Bar 1 is [`Ticks::ZERO`].
+    pub fn bar_start(&self, bar: u32) -> Ticks {
+        let wanted = bar.max(1);
+        // The last span opening at or before the wanted bar is the one it falls in — every span
+        // after it opens later, and the final span runs on forever. There is always one: the
+        // anchor's span opens on bar 1, and `wanted` is at least 1.
+        let span = self
+            .spans()
+            .into_iter()
+            .take_while(|span| span.first_bar <= wanted)
+            .last()
+            .expect("the anchor's span opens on bar one");
+        span.start + span.signature.ticks_per_bar() * i64::from(wanted - span.first_bar)
+    }
+
+    /// Where 1-based `beat` of 1-based `bar` begins.
+    ///
+    /// The beat is fractional, so that a chord landing on the second half of beat two — `2.5` —
+    /// is sayable. This is the constructor that keeps meaningless positions out of the harmony
+    /// timeline: nothing hands out a bare tick.
+    pub fn position(&self, bar: u32, beat: f64) -> Ticks {
+        let start = self.bar_start(bar);
+        let per_beat = self.signature_at(start).ticks_per_beat().raw() as f64;
+        start + Ticks(((beat.max(1.0) - 1.0) * per_beat).round() as i64)
+    }
+
+    /// Start of the bar containing `tick`.
+    pub fn bar_floor(&self, tick: Ticks) -> Ticks {
+        let tick = tick.max_zero();
+        let span = &self.points[self.segment_index(tick)];
+        let per_bar = span.signature.ticks_per_bar().raw().max(1);
+        span.tick + Ticks((tick.raw() - span.tick.raw()) / per_bar * per_bar)
+    }
+
+    /// The bar line `tick` is nearest — where a signature change written there lands.
+    ///
+    /// Nearest rather than the bar it falls in, because this rounds a *pointer*: aiming just
+    /// short of bar nine means bar nine, and answering with bar eight would put the change a
+    /// whole bar from where it was asked for.
+    pub fn snap_bar(&self, tick: Ticks) -> Ticks {
+        let floor = self.bar_floor(tick);
+        let per_bar = self.signature_at(floor).ticks_per_bar();
+        if tick.raw() - floor.raw() >= per_bar.raw() / 2 {
+            floor + per_bar
+        } else {
+            floor
+        }
+    }
+
+    /// Bar and beat (both 1-based) plus the tick offset inside that beat.
+    pub fn bar_beat_at(&self, tick: Ticks) -> (u32, u32, i64) {
+        let tick = tick.max_zero();
+        let bar_start = self.bar_floor(tick);
+        let signature = self.signature_at(bar_start);
+        let per_beat = signature.ticks_per_beat().raw().max(1);
+        let in_bar = tick.raw() - bar_start.raw();
+        (
+            self.bar_of(tick),
+            (in_bar / per_beat) as u32 + 1,
+            in_bar % per_beat,
+        )
+    }
+}
+
+/// Whole bars of `signature` between two positions, rounded down.
+fn bars_between(from: Ticks, to: Ticks, signature: TimeSignature) -> u32 {
+    let per_bar = signature.ticks_per_bar().raw().max(1);
+    ((to.raw() - from.raw()).max(0) / per_bar).min(i64::from(u32::MAX)) as u32
+}
+
+/// Moves every change onto a bar line of the stretch before it.
+///
+/// Forward, so each point is measured against a predecessor that is already correct, and by at
+/// least one bar, so the result stays strictly increasing however the points arrived. A change
+/// that would land on top of its predecessor is dropped rather than moved: it named the same bar,
+/// and the later signature is the one the user asked for last.
+fn align_to_bars(points: &mut Vec<SignaturePoint>) {
+    let mut index = 1;
+    while index < points.len() {
+        let previous = points[index - 1];
+        let per_bar = previous.signature.ticks_per_bar().raw().max(1);
+        let offset = points[index].tick.raw() - previous.tick.raw();
+        let bars = (offset as f64 / per_bar as f64).round() as i64;
+        if bars < 1 {
+            // The same bar as the change before it. Two signatures cannot both begin there, and
+            // the one written later is the one that was meant.
+            points[index - 1].signature = points[index].signature;
+            points.remove(index);
+            // The cursor stays put rather than advancing: the predecessor's signature has just
+            // changed, so whatever follows has to be measured against a new bar length.
+            continue;
+        }
+        points[index].tick = previous.tick + Ticks(bars * per_bar);
+        index += 1;
     }
 }
 
@@ -485,17 +881,6 @@ impl TempoMap {
     pub fn samples_to_ticks(&self, samples: Samples, sample_rate: f64) -> Ticks {
         self.seconds_to_ticks(samples.as_seconds(sample_rate))
     }
-
-    /// Bar and beat (both 1-based) plus the tick offset inside that beat.
-    pub fn bar_beat_at(&self, tick: Ticks, signature: TimeSignature) -> (u32, u32, i64) {
-        let ticks_per_bar = signature.ticks_per_bar().0.max(1);
-        let ticks_per_beat = signature.ticks_per_beat().0.max(1);
-        let position = tick.0.max(0);
-        let bar = position / ticks_per_bar;
-        let in_bar = position % ticks_per_bar;
-        let beat = in_bar / ticks_per_beat;
-        (bar as u32 + 1, beat as u32 + 1, in_bar % ticks_per_beat)
-    }
 }
 
 #[cfg(test)]
@@ -575,17 +960,223 @@ mod tests {
 
     #[test]
     fn bar_beat_counts_from_one() {
-        let map = TempoMap::constant(120.0);
-        let signature = TimeSignature::default();
-        assert_eq!(map.bar_beat_at(Ticks::ZERO, signature), (1, 1, 0));
+        let map = SignatureMap::default();
+        assert_eq!(map.bar_beat_at(Ticks::ZERO), (1, 1, 0));
+        assert_eq!(map.bar_beat_at(Ticks::from_beats(4.0)), (2, 1, 0));
         assert_eq!(
-            map.bar_beat_at(Ticks::from_beats(4.0), signature),
-            (2, 1, 0)
-        );
-        assert_eq!(
-            map.bar_beat_at(Ticks::from_beats(5.5), signature),
+            map.bar_beat_at(Ticks::from_beats(5.5)),
             (2, 2, TICKS_PER_QUARTER / 2)
         );
+    }
+
+    /// Four bars of 4/4, then 3/4 from bar 5.
+    fn four_then_three() -> SignatureMap {
+        let mut map = SignatureMap::default();
+        map.set_point(Ticks::from_beats(16.0), TimeSignature::new(3, 4));
+        map
+    }
+
+    #[test]
+    fn bars_are_counted_through_a_change_of_meter() {
+        let map = four_then_three();
+        // Bar 5 is where the 3/4 begins: four bars of four quarters.
+        assert_eq!(map.bar_of(Ticks::from_beats(16.0)), 5);
+        assert_eq!(map.bar_start(5), Ticks::from_beats(16.0));
+        // And the bars after it are three quarters long, not four.
+        assert_eq!(map.bar_start(6), Ticks::from_beats(19.0));
+        assert_eq!(map.bar_of(Ticks::from_beats(19.0)), 6);
+        assert_eq!(
+            map.bar_of(Ticks::from_beats(21.9)),
+            6,
+            "still inside bar six"
+        );
+        assert_eq!(map.bar_of(Ticks::from_beats(22.0)), 7);
+        // The beat inside the bar follows the new meter too.
+        assert_eq!(map.bar_beat_at(Ticks::from_beats(20.0)), (6, 2, 0));
+        // Bar and position invert each other on both sides of the change.
+        for bar in 1..12 {
+            assert_eq!(map.bar_of(map.bar_start(bar)), bar);
+            assert_eq!(map.position(bar, 1.0), map.bar_start(bar));
+        }
+    }
+
+    #[test]
+    fn a_change_lands_on_the_bar_line_it_was_aimed_at() {
+        // A pointer never lands on a bar line exactly, and a signature that began half way
+        // through a bar would leave that bar with no length and the numbering after it
+        // uncountable.
+        let mut map = SignatureMap::default();
+        map.set_point(Ticks::from_beats(9.0), TimeSignature::new(7, 8));
+        assert_eq!(map.points()[1].tick, Ticks::from_beats(8.0));
+
+        // Nearest, not the bar it fell in: aiming just short of bar four means bar four.
+        let mut map = SignatureMap::default();
+        map.set_point(Ticks::from_beats(11.5), TimeSignature::new(7, 8));
+        assert_eq!(map.points()[1].tick, Ticks::from_beats(12.0));
+    }
+
+    #[test]
+    fn a_change_written_earlier_pushes_the_later_ones_onto_the_new_grid() {
+        // The invariant is that every change sits on a bar line of the stretch before it, so
+        // shortening the opening bars has to move whatever came after. Bar numbers are derived
+        // from the accumulation, and one point off the grid makes every bar after it a fraction.
+        let mut map = four_then_three();
+        map.set_point(Ticks::ZERO, TimeSignature::new(7, 8));
+        let bar = TimeSignature::new(7, 8).ticks_per_bar().raw();
+        assert_eq!(
+            map.points()[1].tick.raw() % bar,
+            0,
+            "the 3/4 no longer starts on a bar line: {:?}",
+            map.points()
+        );
+        for bar in 1..8 {
+            assert_eq!(map.bar_of(map.bar_start(bar)), bar);
+        }
+    }
+
+    #[test]
+    fn two_signatures_cannot_share_a_bar() {
+        // Normalisation moves a change onto the nearest bar line, which can land it on top of
+        // one already there. The later signature wins, because it is the one asked for last.
+        let map = SignatureMap::from_points(vec![
+            SignaturePoint {
+                tick: Ticks::ZERO,
+                signature: TimeSignature::new(4, 4),
+            },
+            SignaturePoint {
+                tick: Ticks(200),
+                signature: TimeSignature::new(3, 4),
+            },
+        ]);
+        assert_eq!(map.points().len(), 1);
+        assert_eq!(map.initial(), TimeSignature::new(3, 4));
+    }
+
+    #[test]
+    fn the_spans_tile_the_timeline_and_number_their_own_bars() {
+        let spans = four_then_three().spans();
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].start, Ticks::ZERO);
+        assert_eq!(spans[0].end, Some(Ticks::from_beats(16.0)));
+        assert_eq!(spans[0].first_bar, 1);
+        assert_eq!(spans[1].start, Ticks::from_beats(16.0));
+        assert_eq!(spans[1].end, None, "the last span runs to the end of time");
+        assert_eq!(spans[1].first_bar, 5);
+    }
+
+    #[test]
+    fn removing_a_change_lets_the_meter_before_it_run_through() {
+        let mut map = four_then_three();
+        map.remove_point(Ticks::from_beats(16.0));
+        assert!(map.is_constant());
+        assert_eq!(map.signature_at(Ticks::from_beats(100.0)), map.initial());
+
+        // The anchor is not a change, and a song is always in some meter.
+        map.remove_point(Ticks::ZERO);
+        assert_eq!(map.points().len(), 1);
+    }
+
+    #[test]
+    fn the_meter_in_force_is_found_from_anywhere_inside_its_stretch() {
+        let map = four_then_three();
+        assert_eq!(map.change_at(Ticks::ZERO), Ticks::ZERO);
+        assert_eq!(map.change_at(Ticks::from_beats(15.0)), Ticks::ZERO);
+        assert_eq!(
+            map.change_at(Ticks::from_beats(16.0)),
+            Ticks::from_beats(16.0)
+        );
+        assert_eq!(
+            map.change_at(Ticks::from_beats(900.0)),
+            Ticks::from_beats(16.0)
+        );
+        assert_eq!(map.change_at(Ticks(-5)), Ticks::ZERO);
+    }
+
+    #[test]
+    fn signature_points_always_uphold_the_invariant() {
+        // The only gate in front of deserialization, so every accepted input has to come out
+        // satisfying what the readers assume: ordered, anchored, and every change on a bar line
+        // of the stretch before it. Sweep the awkward mixes of negative, duplicate and
+        // out-of-order positions against meters of different bar lengths.
+        let positions = [-5000i64, -1, 0, 1, 960, 3840, 5000, 20_000];
+        let meters = [(4, 4), (3, 4), (7, 8), (12, 8)];
+        for a in positions {
+            for b in positions {
+                for (numerator, denominator) in meters {
+                    let map = SignatureMap::from_points(vec![
+                        SignaturePoint {
+                            tick: Ticks(a),
+                            signature: TimeSignature::new(numerator, denominator),
+                        },
+                        SignaturePoint {
+                            tick: Ticks(b),
+                            signature: TimeSignature::new(3, 4),
+                        },
+                    ]);
+                    let points = map.points();
+                    assert_eq!(points[0].tick, Ticks::ZERO, "{a} {b} -> {points:?}");
+                    for pair in points.windows(2) {
+                        assert!(pair[0].tick < pair[1].tick, "{a} {b} -> {points:?}");
+                        let per_bar = pair[0].signature.ticks_per_bar().raw();
+                        assert_eq!(
+                            (pair[1].tick.raw() - pair[0].tick.raw()) % per_bar,
+                            0,
+                            "{a} {b} -> {points:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_signature_map_round_trips_and_survives_a_hand_edit() {
+        let map = four_then_three();
+        let json = serde_json::to_string(&map).unwrap();
+        assert_eq!(serde_json::from_str::<SignatureMap>(&json).unwrap(), map);
+
+        // A file is user-editable text. Nothing here can fail the load: a nonsense meter becomes
+        // 4/4 and a position off the bar line is moved onto one.
+        let hand_edited: SignatureMap = serde_json::from_str(
+            r#"{"points":[{"tick":0,"signature":{"numerator":0,"denominator":0}},
+                          {"tick":-40,"signature":{"numerator":3,"denominator":4}},
+                          {"tick":7000,"signature":{"numerator":5,"denominator":4}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(hand_edited.points()[0].tick, Ticks::ZERO);
+        for pair in hand_edited.points().windows(2) {
+            assert!(pair[0].tick < pair[1].tick);
+        }
+        // And an empty list is the default rather than a document that will not open.
+        let empty: SignatureMap = serde_json::from_str(r#"{"points":[]}"#).unwrap();
+        assert_eq!(empty, SignatureMap::default());
+    }
+
+    #[test]
+    fn a_signature_is_read_and_written_the_way_it_is_spoken() {
+        assert_eq!(TimeSignature::new(6, 8).to_string(), "6/8");
+        assert_eq!(
+            "6/8".parse::<TimeSignature>().unwrap(),
+            TimeSignature::new(6, 8)
+        );
+        assert_eq!(
+            " 3 / 4 ".parse::<TimeSignature>().unwrap(),
+            TimeSignature::new(3, 4)
+        );
+        // Every common meter reads back as itself.
+        for signature in TimeSignature::COMMON {
+            assert_eq!(
+                signature.to_string().parse::<TimeSignature>().unwrap(),
+                signature
+            );
+        }
+        // A bar of four million quarter notes overflows every position derived from it.
+        for bad in ["", "4", "4/4/4", "0/4", "4/0", "4000000/4", "4/3", "x/y"] {
+            assert!(
+                bad.parse::<TimeSignature>().is_err(),
+                "`{bad}` parsed as a signature"
+            );
+        }
     }
 
     #[test]

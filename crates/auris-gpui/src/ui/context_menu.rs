@@ -163,6 +163,14 @@ pub enum MenuCommand {
     SetTempoAt(Ticks),
     /// Remove the tempo change in force at a position.
     RemoveTempoAt(Ticks),
+    /// Turn the meter of the stretch a position falls in.
+    SetSignature(Ticks, TimeSignature),
+    /// Type a meter the list does not offer, for the stretch a position falls in.
+    TypeSignature,
+    /// Write a signature change at the bar a position falls in.
+    SetSignatureAt(Ticks),
+    /// Remove the signature change in force at a position.
+    RemoveSignatureAt(Ticks),
     /// Type an audio clip's own gain.
     ClipGain(ClipId),
     /// Remove an audio clip's fades.
@@ -795,12 +803,9 @@ impl AurisApp {
                 self.open_menu(menu);
             }
             MenuCommand::StampProgression { name, at } => {
-                let bars = progression_target(
-                    self.project().loop_region,
-                    at,
-                    self.project().time_signature,
-                )
-                .1;
+                let bars =
+                    progression_target(self.project().loop_region, at, &self.project().signatures)
+                        .1;
                 match self.session.stamp_named_progression(name, at, bars) {
                     Ok(chords) => self.set_status(messages::progression_written(
                         self.language(),
@@ -826,7 +831,7 @@ impl AurisApp {
                 let (start, length) = generation_range(
                     self.project().loop_region,
                     start,
-                    self.project().time_signature,
+                    &self.project().signatures,
                 );
                 let recipe = ClipRecipe::new(preset, self.next_seed());
                 match self.session.generate_clip(track, start, length, recipe) {
@@ -867,6 +872,12 @@ impl AurisApp {
             MenuCommand::RemoveKeyAt(tick) => self.session.remove_key(tick),
             MenuCommand::SetTempoAt(tick) => self.prompt_for_tempo_from(tick),
             MenuCommand::RemoveTempoAt(tick) => self.session.remove_tempo_point(tick),
+            MenuCommand::SetSignature(tick, signature) => {
+                self.session.set_signature_at(tick, signature)
+            }
+            MenuCommand::TypeSignature => self.prompt_for_signature(),
+            MenuCommand::SetSignatureAt(tick) => self.prompt_for_signature_from(tick),
+            MenuCommand::RemoveSignatureAt(tick) => self.session.remove_signature_point(tick),
             MenuCommand::ClipGain(clip) => self.prompt_for_clip_gain(clip),
             MenuCommand::ClearFades(clip) => {
                 let _ = self.session.set_clip_fades(clip, 0, 0);
@@ -1091,6 +1102,53 @@ impl AurisApp {
                 self.t(Key::MenuRemoveTempoHere),
                 MenuCommand::RemoveTempoAt(tick),
             )
+            .separator()
+            .item(
+                self.t(Key::MenuSetSignatureHere),
+                MenuCommand::SetSignatureAt(tick),
+            )
+            .item_if(
+                self.project().signatures.change_at(tick) != Ticks::ZERO,
+                self.t(Key::MenuRemoveSignatureHere),
+                MenuCommand::RemoveSignatureAt(tick),
+            )
+    }
+
+    /// The list of meters the transport's signature field drops.
+    ///
+    /// The common ones with a tick beside whichever is in force, then a way to type one the list
+    /// does not hold, then — where a change governs rather than the song's own meter — a way to
+    /// take it away. Turning one of these *replaces* the meter of the stretch the playhead is in;
+    /// writing a new change part way through a song is the ruler's job, which is where a person
+    /// can see the bar they are aiming at.
+    pub(crate) fn signature_menu(&self, anchor: Point<Pixels>, at: Ticks) -> ContextMenu {
+        let current = self.session.signature_at(at);
+        let mut menu = ContextMenu::new(anchor, self.t(Key::Signature));
+        for signature in TimeSignature::COMMON {
+            menu = menu.toggle(
+                signature.to_string(),
+                MenuCommand::SetSignature(at, signature),
+                signature == current,
+            );
+        }
+        menu.separator()
+            .item(self.t(Key::MenuOtherSignature), MenuCommand::TypeSignature)
+            .item_if(
+                self.project().signatures.change_at(at) != Ticks::ZERO,
+                self.t(Key::MenuRemoveSignatureHere),
+                MenuCommand::RemoveSignatureAt(at),
+            )
+    }
+
+    /// Opens the signature sheet aimed at the bar `at` rounds to.
+    ///
+    /// The ruler's counterpart to [`Self::prompt_for_signature`], and the same shape as
+    /// [`Self::prompt_for_tempo_from`]: the field comes up holding the meter already in force
+    /// there, so the sheet reads as "the meter from here is —".
+    pub(crate) fn prompt_for_signature_from(&mut self, at: Ticks) {
+        let title = self.t(Key::SetSignatureTitle);
+        let current = self.session.signature_at(at).to_string();
+        self.open_prompt(Prompt::new(title, PromptTarget::SignatureFrom(at), current));
     }
 
     /// Opens the tempo sheet aimed at the beat `at` rounds to.
@@ -1179,9 +1237,9 @@ impl AurisApp {
     /// cycle over the chorus, then act on it — and it saves inventing a "how many bars" field
     /// nothing else would use.
     pub(crate) fn harmony_menu(&self, anchor: Point<Pixels>, tick: Ticks) -> ContextMenu {
-        let signature = self.project().time_signature;
+        let signatures = &self.project().signatures;
         let placed = self.session.snap_harmony(tick);
-        let (from, bars) = progression_target(self.project().loop_region, placed, signature);
+        let (from, bars) = progression_target(self.project().loop_region, placed, signatures);
         let harmony = &self.project().harmony;
         let target = harmony_target(harmony, tick, placed);
 
@@ -1197,7 +1255,7 @@ impl AurisApp {
                     .unwrap_or_default(),
                 &chord.to_string(),
             ),
-            None => messages::harmony_at_bar(self.language(), signature.bar_of(placed)),
+            None => messages::harmony_at_bar(self.language(), signatures.bar_of(placed)),
         };
 
         ContextMenu::new(anchor, title)
@@ -1226,7 +1284,9 @@ impl AurisApp {
                 self.t(Key::MenuClearHarmony),
                 MenuCommand::ClearHarmony {
                     from,
-                    to: from + signature.ticks_per_bar() * bars.max(1) as i64,
+                    // Counted off the ruler, so clearing "four bars from here" clears the four
+                    // the ruler shows even where one of them is in a different meter.
+                    to: signatures.bar_start(signatures.bar_of(from) + bars.max(1) as u32),
                 },
             )
     }
@@ -1800,12 +1860,18 @@ fn next_seed(project: &Project) -> u64 {
 fn generation_range(
     loop_region: Option<(Ticks, Ticks)>,
     tick: Ticks,
-    signature: TimeSignature,
+    signatures: &SignatureMap,
 ) -> (Ticks, Ticks) {
-    let bar = signature.ticks_per_bar();
     match loop_region {
         Some((from, to)) if to > from => (from.max_zero(), to - from),
-        _ => (tick.max_zero(), bar * 4),
+        _ => {
+            // Four *bars*, not four bar lengths: across a meter change those differ, and what
+            // "four bars" means is the four the ruler counts.
+            let tick = tick.max_zero();
+            let first = signatures.bar_of(tick);
+            let length = signatures.bar_start(first + 4) - signatures.bar_start(first);
+            (tick, length)
+        }
     }
 }
 
@@ -1818,11 +1884,13 @@ fn generation_range(
 fn progression_target(
     loop_region: Option<(Ticks, Ticks)>,
     tick: Ticks,
-    signature: TimeSignature,
+    signatures: &SignatureMap,
 ) -> (Ticks, usize) {
     match loop_region {
         Some((start, end)) if end > start => {
-            let bars = (end - start).raw() / signature.ticks_per_bar().raw().max(1);
+            // Counted off the ruler rather than divided out of a length, so a cycle spanning a
+            // meter change reports the bars a person would count across it.
+            let bars = signatures.bar_of(end) - signatures.bar_of(start.max_zero());
             // A cycle shorter than a bar still means one bar: the user asked for *there*, and
             // writing nothing would look like the command had failed.
             (start.max_zero(), bars.max(1) as usize)
@@ -1869,6 +1937,11 @@ fn harmony_target(harmony: &Harmony, tick: Ticks, placed: Ticks) -> HarmonyTarge
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 4/4 for the whole timeline, which is what the bar arithmetic below is counted in.
+    fn meters() -> SignatureMap {
+        SignatureMap::default()
+    }
 
     /// The commands a menu offers, ignoring its labels and its separators.
     fn commands(menu: &ContextMenu) -> Vec<MenuCommand> {
@@ -1931,56 +2004,54 @@ mod tests {
 
     #[test]
     fn a_generated_clip_goes_where_the_cycle_is_when_there_is_one() {
-        let four_four = TimeSignature::new(4, 4);
-        let bar = four_four.ticks_per_bar();
+        let bar = TimeSignature::new(4, 4).ticks_per_bar();
 
         // No cycle: four bars from where the pointer was — enough of a phrase to judge, and
         // short enough to throw away.
         assert_eq!(
-            generation_range(None, bar * 2, four_four),
+            generation_range(None, bar * 2, &meters()),
             (bar * 2, bar * 4)
         );
 
         // A cycle wins, and the clip is exactly as long as it.
         assert_eq!(
-            generation_range(Some((bar * 8, bar * 16)), bar, four_four),
+            generation_range(Some((bar * 8, bar * 16)), bar, &meters()),
             (bar * 8, bar * 8)
         );
 
         // An empty cycle is not a range, so the pointer decides again.
         assert_eq!(
-            generation_range(Some((bar * 4, bar * 4)), Ticks::ZERO, four_four),
+            generation_range(Some((bar * 4, bar * 4)), Ticks::ZERO, &meters()),
             (Ticks::ZERO, bar * 4)
         );
     }
 
     #[test]
     fn a_progression_goes_where_the_cycle_is_when_there_is_one() {
-        let four_four = TimeSignature::new(4, 4);
-        let bar = four_four.ticks_per_bar();
+        let bar = TimeSignature::new(4, 4).ticks_per_bar();
 
         // No cycle: it starts where the pointer was, for the chart's own length.
         assert_eq!(
-            progression_target(None, bar * 3, four_four),
+            progression_target(None, bar * 3, &meters()),
             (bar * 3, 0),
             "zero bars means the chart decides"
         );
 
         // A cycle over bars 5..9 wins over wherever the pointer happened to be.
         assert_eq!(
-            progression_target(Some((bar * 4, bar * 8)), bar * 99, four_four),
+            progression_target(Some((bar * 4, bar * 8)), bar * 99, &meters()),
             (bar * 4, 4)
         );
 
         // A cycle shorter than a bar still writes something.
         assert_eq!(
-            progression_target(Some((Ticks::ZERO, Ticks(480))), bar, four_four),
+            progression_target(Some((Ticks::ZERO, Ticks(480))), bar, &meters()),
             (Ticks::ZERO, 1)
         );
 
         // An empty or inverted cycle is not a range, so the pointer decides again.
         assert_eq!(
-            progression_target(Some((bar * 4, bar * 4)), bar, four_four),
+            progression_target(Some((bar * 4, bar * 4)), bar, &meters()),
             (bar, 0)
         );
     }

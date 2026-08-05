@@ -114,6 +114,10 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_delete_track))
             .on_action(cx.listener(Self::on_delete_selection))
             .on_action(cx.listener(Self::on_next_tool))
+            .on_action(cx.listener(Self::on_set_tempo))
+            .on_action(cx.listener(Self::on_set_time_signature))
+            .on_action(cx.listener(Self::on_cycle_grid))
+            .on_action(cx.listener(Self::on_go_to_position))
             .on_action(cx.listener(Self::on_undo))
             .on_action(cx.listener(Self::on_redo))
             .on_action(cx.listener(Self::on_panic_stop))
@@ -1105,6 +1109,55 @@ impl AurisApp {
             self.language(),
             self.t(self.tool.label()),
         ));
+        cx.notify();
+    }
+
+    /// Opens the tempo sheet, aimed where the readout is.
+    ///
+    /// These four reach the readouts in the middle of the transport bar, which until now answered
+    /// to the mouse and to nothing else — which meant they were absent from the command palette,
+    /// from the settings window's list of keys, and from the reach of anybody who works from the
+    /// keyboard.
+    fn on_set_tempo(
+        &mut self,
+        _: &actions::SetTempo,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.prompt_for_tempo();
+        cx.notify();
+    }
+
+    fn on_set_time_signature(
+        &mut self,
+        _: &actions::SetTimeSignature,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.prompt_for_signature();
+        cx.notify();
+    }
+
+    fn on_cycle_grid(
+        &mut self,
+        _: &actions::CycleGrid,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_grid();
+        // The grid button is in the corner of the transport bar and a keystroke does not point at
+        // it, so the status line is what says the division changed.
+        self.set_status(messages::grid_set(self.language(), self.grid_label()));
+        cx.notify();
+    }
+
+    fn on_go_to_position(
+        &mut self,
+        _: &actions::GoToPosition,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.prompt_for_position();
         cx.notify();
     }
 

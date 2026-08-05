@@ -86,17 +86,37 @@ is on its right-click menu, in decibels, applied before the track's effects; whi
 0 dB the clip prints the number beside its name, and *Remove Fades* on the same menu takes both
 fades back off.
 
-The tempo and position readouts in the middle of the transport bar are typeable: double-click
-either and the number can be entered directly. A wheel is for finding a tempo by feel and a drag
-for nudging it, but neither is any way to reach 174 from 120, or bar 97 from bar 1. The position
-takes as much of `bar.beat.hundredth` as you care to give it — `97` is the top of bar 97, `97.3`
-is its third beat.
+The middle of the transport bar holds three readouts: the position, the tempo and the time
+signature. The first two are typeable — double-click either and the number can be entered
+directly. A wheel is for finding a tempo by feel and a drag for nudging it, but neither is any
+way to reach 174 from 120, or bar 97 from bar 1. The position takes as much of
+`bar.beat.hundredth` as you care to give it — `97` is the top of bar 97, `97.3` is its third
+beat. All three are on the command palette too, so none of them needs the mouse.
 
 The tempo can change along the timeline. The readout shows — and edits — the tempo of the
 stretch the playhead is in; a change elsewhere is written from the ruler's right-click menu
 (*Tempo from Here…*), lands on the beat, and is marked along the ruler's lower edge with its
 number. The same menu removes the change in force under the pointer. The song's opening tempo
 at the start of the timeline is always there and cannot be removed, exactly like the key.
+
+### The time signature
+
+So can the meter. The signature readout shows the one the playhead is in, and clicking it drops
+the common meters — 4/4, 3/4, 6/8, 7/8 and the rest — with *Other…* for anything else the
+notation can hold, up to 32 beats over a whole, half, quarter, eighth or sixteenth note. Choosing
+one turns the stretch the playhead is in.
+
+A change further along is written from the ruler's right-click menu (*Time Signature from Here…*).
+It **lands on a bar line**, always: a 3/4 beginning half way through a bar of 4/4 would leave that
+bar with no length and every bar number after it uncountable. The bar it starts on is numbered on
+the ruler whatever the zoom, with the new signature printed beside the number, and the bar lines
+and the grid follow it from there — a bar of 7/8 is seven eighths wide and the next bar number is
+the next bar number.
+
+Writing a change *before* one already there moves the later ones onto the new bar grid, because
+that invariant has to hold across the whole song. Nothing else moves: notes, clips, chords and
+sections are stored in ticks, so changing the meter moves the bar lines over them and not one
+sample of what you hear. Undo takes it back in one step.
 
 ### Languages
 
@@ -377,6 +397,19 @@ and Linux; ← and → walk the menus, ↑ and ↓ the rows, Return runs one and
 right-click menu answers to the same keys. While either is open every binding is out of reach, so
 walking a menu cannot also run the command a letter is bound to.
 
+### The command palette
+
+**⌘⇧P** — Ctrl+Shift+P on Windows — opens a box that finds any command by typing a few letters of
+it. `nit` reaches New Instrument Track; a match at the start of a word counts for more than one in
+the middle, so `save` puts Save above Add Audio Track. Every rebindable command is there with its
+keystroke beside it, which is also how you find out a command *has* one.
+
+It also sets values, which is the part that would otherwise mean a trip to a window or to a corner
+of the transport bar: type `1/16` for the editing grid, `6/8` for the meter of the stretch the
+playhead is in, a colour scheme's name to repaint the window, or `日本語` to switch language — the
+languages are listed in themselves, since the person opening that list is the one who cannot read
+what is currently on screen.
+
 ### Settings, where dotfiles can reach them
 
 Preferences live in `~/.config/auris-studio/` on every platform — macOS and Windows included,
@@ -581,6 +614,9 @@ Effects work identically through the `Effect` trait.
 Honest list of what is not there yet, so nobody discovers these the hard way:
 
 * **No recording.** Audio tracks hold imported material only.
+* **What writes itself writes in one meter.** The timeline holds as many signature changes as you
+  like, but a specification says `meter:` once, and a generated clip is built on the grid of the
+  meter it starts in. A part written across a change keeps the bars it began with.
 * **Muting a track stops its effects.** The master bus keeps processing while muted, so its
   reverb rings out and un-muting does not pop; a track is skipped once its mute has faded, which
   is cheaper but cuts its tail off at the fade rather than letting it decay.

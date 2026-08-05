@@ -338,13 +338,20 @@ fn info(path: &Path) -> Result<(), String> {
             label(Key::CliFieldTempo),
             project.bpm()
         )?;
-        writeln!(
-            out,
-            "  {} {}/{}",
-            label(Key::CliFieldSignature),
-            project.time_signature.numerator,
-            project.time_signature.denominator
-        )?;
+        // The meter, and where it changes if it does. A song in one meter reads as it always
+        // did; one that changes says so, because a bare `4/4` over a piece that spends its
+        // second half in 7/8 is the field lying about the document.
+        let meters = project
+            .signatures
+            .points()
+            .iter()
+            .map(|point| match point.tick {
+                Ticks::ZERO => point.signature.to_string(),
+                tick => format!("{} @ {}", point.signature, project.signatures.bar_of(tick)),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(out, "  {} {meters}", label(Key::CliFieldSignature))?;
         writeln!(
             out,
             "  {} {:.0} Hz",

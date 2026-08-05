@@ -51,7 +51,10 @@ pub use project::{
 };
 pub use registry::{PluginPack, PluginRegistry};
 pub use structure::{SectionMap, SectionPoint, SectionSpan};
-pub use time::{Beats, Samples, Seconds, TICKS_PER_QUARTER, TempoMap, Ticks, TimeSignature};
+pub use time::{
+    Beats, Samples, Seconds, SignatureMap, SignaturePoint, SignatureSpan, TICKS_PER_QUARTER,
+    TempoMap, Ticks, TimeSignature,
+};
 
 /// Convenience import for code that implements plugins.
 pub mod prelude {

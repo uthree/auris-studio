@@ -148,6 +148,39 @@ pub fn selection_band(window: &mut Window, band: Bounds<Pixels>, theme: &Theme) 
     rounded_outline(window, band, px(0.0), px(1.0), theme.selection);
 }
 
+/// The stretches of `signatures` that overlap `from..to`, clipped to it.
+///
+/// Both painters below walk the timeline a stretch at a time rather than straight through, and
+/// for the same reason: a step counted from tick zero misses every bar line after a meter change,
+/// because a bar of 7/8 is 3360 ticks and nothing about that divides the ones before it. Inside a
+/// stretch the arithmetic is the uniform arithmetic it always was — the phase just starts at the
+/// change rather than at the origin.
+/// The second element is the position to stop *before*. A stretch with a successor stops short of
+/// the bar line that ends it, because that line is the successor's own opening bar and is drawn —
+/// brighter, and with the new signature beside it — by the pass that owns it. The last stretch has
+/// no successor, so it goes one tick past the right edge and lets [`vline`] cull the overhang.
+fn visible_spans(
+    signatures: &[SignatureSpan],
+    from: Ticks,
+    to: Ticks,
+) -> Vec<(SignatureSpan, Ticks)> {
+    // A window with no width holds nothing, and would otherwise pick up the stretch the left edge
+    // happens to sit in through the one tick of overhang below.
+    if to <= from {
+        return Vec::new();
+    }
+    signatures
+        .iter()
+        .filter_map(|span| {
+            let end = match span.end {
+                Some(end) if end <= to => end,
+                _ => to + Ticks(1),
+            };
+            (end > from && span.start < to).then_some((*span, end))
+        })
+        .collect()
+}
+
 /// Draws the bar/beat/subdivision grid across `bounds`.
 ///
 /// Lines get progressively brighter from subdivision to beat to bar so the eye can find the
@@ -156,28 +189,33 @@ pub fn time_grid(
     window: &mut Window,
     bounds: Bounds<Pixels>,
     view: &TimelineView,
-    signature: TimeSignature,
+    signatures: &[SignatureSpan],
     theme: &Theme,
 ) {
-    let step = view.grid_step(signature, px(7.0));
-    let ticks_per_bar = signature.ticks_per_bar().0.max(1);
-    let ticks_per_beat = signature.ticks_per_beat().0.max(1);
-
     let (start, end) = view.visible_range(bounds.size.width);
-    // Begin at the last gridline at or before the left edge so partially scrolled views still
-    // show a line flush with the edge.
-    let mut tick = start.snap_floor(step);
-    while tick <= end {
-        let x = bounds.origin.x + view.tick_to_x(tick);
-        let (color, width) = if tick.0.rem_euclid(ticks_per_bar) == 0 {
-            (theme.grid_bar, px(1.0))
-        } else if tick.0.rem_euclid(ticks_per_beat) == 0 {
-            (theme.grid_beat, px(1.0))
-        } else {
-            (theme.grid_subdivision, px(1.0))
-        };
-        vline(window, bounds, x, width, color);
-        tick += step;
+    for (span, stop) in visible_spans(signatures, start, end) {
+        let step = view.grid_step(span.signature, px(7.0)).raw().max(1);
+        let ticks_per_bar = span.signature.ticks_per_bar().0.max(1);
+        let ticks_per_beat = span.signature.ticks_per_beat().0.max(1);
+
+        // Begin at the last gridline at or before the left edge so partially scrolled views
+        // still show a line flush with the edge — counted from the change, so the first line of
+        // the stretch is the bar line the meter starts on.
+        let from = start.max(span.start).raw() - span.start.raw();
+        let mut offset = from.div_euclid(step) * step;
+        while span.start.raw() + offset < stop.raw() {
+            let tick = Ticks(span.start.raw() + offset);
+            let x = bounds.origin.x + view.tick_to_x(tick);
+            let color = if offset.rem_euclid(ticks_per_bar) == 0 {
+                theme.grid_bar
+            } else if offset.rem_euclid(ticks_per_beat) == 0 {
+                theme.grid_beat
+            } else {
+                theme.grid_subdivision
+            };
+            vline(window, bounds, x, px(1.0), color);
+            offset += step;
+        }
     }
 }
 
@@ -187,54 +225,78 @@ pub fn ruler(
     cx: &mut App,
     bounds: Bounds<Pixels>,
     view: &TimelineView,
-    signature: TimeSignature,
+    signatures: &[SignatureSpan],
     tempo: &[TempoPoint],
     theme: &Theme,
 ) {
     rect(window, bounds, theme.surface_raised);
 
-    let ticks_per_bar = signature.ticks_per_bar().0.max(1);
-    // Label every bar only while bars are wide enough to hold the text.
-    let bar_width = ticks_per_bar as f32 * view.pixels_per_tick();
-    let label_every = if bar_width >= 44.0 {
-        1
-    } else if bar_width >= 12.0 {
-        4
-    } else {
-        16
-    };
-
     let (start, end) = view.visible_range(bounds.size.width);
-    let first_bar = (start.0.div_euclid(ticks_per_bar)).max(0);
-    let last_bar = end.0.div_euclid(ticks_per_bar) + 1;
+    for (span, stop) in visible_spans(signatures, start, end) {
+        let ticks_per_bar = span.signature.ticks_per_bar().0.max(1);
+        // Label every bar only while bars are wide enough to hold the text. Per stretch, because
+        // a bar of 12/8 is three times the width of a bar of 2/4 at the same zoom.
+        let bar_width = ticks_per_bar as f32 * view.pixels_per_tick();
+        let label_every = if bar_width >= 44.0 {
+            1
+        } else if bar_width >= 12.0 {
+            4
+        } else {
+            16
+        };
 
-    for bar in first_bar..=last_bar {
-        let tick = Ticks(bar * ticks_per_bar);
-        let x = bounds.origin.x + view.tick_to_x(tick);
-        if x < bounds.origin.x - px(40.0) || x > bounds.origin.x + bounds.size.width {
-            continue;
-        }
-        let labelled = bar % label_every == 0;
-        vline(
-            window,
-            bounds,
-            x,
-            px(1.0),
-            if labelled {
-                theme.grid_bar
-            } else {
-                theme.border_subtle
-            },
-        );
-        if labelled {
-            label(
+        let first = (start.max(span.start).raw() - span.start.raw()).div_euclid(ticks_per_bar);
+        let last = (stop.raw() - span.start.raw()).div_euclid(ticks_per_bar);
+        for index in first..=last {
+            let tick = Ticks(span.start.raw() + index * ticks_per_bar);
+            if tick >= stop {
+                break;
+            }
+            let x = bounds.origin.x + view.tick_to_x(tick);
+            if x < bounds.origin.x - px(40.0) || x > bounds.origin.x + bounds.size.width {
+                continue;
+            }
+            let bar = span.first_bar.saturating_add(index.max(0) as u32);
+            // The bar a meter starts on is always numbered, whatever the zoom: it carries the new
+            // signature beside it, and that is the one label on the ruler a reader is looking for.
+            let opens_a_meter = index == 0 && span.first_bar > 1;
+            let labelled = opens_a_meter || (bar - span.first_bar) % label_every == 0;
+            vline(
+                window,
+                bounds,
+                x,
+                px(1.0),
+                if labelled {
+                    theme.grid_bar
+                } else {
+                    theme.border_subtle
+                },
+            );
+            if !labelled {
+                continue;
+            }
+            let text = format!("{bar}");
+            let width = label(
                 window,
                 cx,
                 point(x + px(4.0), bounds.origin.y + px(6.0)),
-                format!("{}", bar + 1),
+                text,
                 px(10.0),
                 theme.text_muted,
             );
+            // Cubase and Studio One both print the new meter next to the bar number rather than
+            // giving it a row of its own, and a ruler this shallow has no row to give. The accent
+            // is what everything on the ruler that is *data* rather than chrome is drawn in.
+            if opens_a_meter {
+                label(
+                    window,
+                    cx,
+                    point(x + px(8.0) + width, bounds.origin.y + px(6.0)),
+                    span.signature.to_string(),
+                    px(10.0),
+                    theme.accent,
+                );
+            }
         }
     }
 
@@ -878,6 +940,44 @@ pub fn keyboard(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_stretches_on_screen_are_walked_and_they_stop_at_the_edge() {
+        // Both painters iterate a stretch at a time, and the loop bound is whatever this hands
+        // back. A stretch that came out running to `Ticks` beyond the right edge would draw a
+        // gridline per bar for the rest of the song on every frame.
+        let mut map = SignatureMap::default();
+        let bar = TimeSignature::default().ticks_per_bar();
+        map.set_point(bar * 4, TimeSignature::new(3, 4));
+        map.set_point(
+            bar * 4 + TimeSignature::new(3, 4).ticks_per_bar() * 4,
+            TimeSignature::new(7, 8),
+        );
+        let spans = map.spans();
+
+        // A window inside the first stretch sees only it, and stops a tick past the right edge —
+        // one gridline of overhang, so a partially scrolled view is not missing its last line.
+        let found = visible_spans(&spans, bar, bar * 2);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0.first_bar, 1);
+        assert_eq!(found[0].1, bar * 2 + Ticks(1));
+
+        // A window spanning a change sees both, and the first stops *before* the bar line the
+        // second opens on, so that line is drawn once and by the stretch it belongs to.
+        let found = visible_spans(&spans, bar * 3, bar * 5);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].1, bar * 4);
+        assert_eq!(found[1].0.start, bar * 4);
+        assert_eq!(found[1].0.first_bar, 5);
+
+        // A window entirely past the last change sees only that one.
+        let found = visible_spans(&spans, bar * 40, bar * 41);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0.signature, TimeSignature::new(7, 8));
+
+        // And a window with nothing in it walks nothing at all.
+        assert!(visible_spans(&spans, bar, bar).is_empty());
+    }
 
     #[test]
     fn a_tempo_marker_says_the_number_a_musician_would() {

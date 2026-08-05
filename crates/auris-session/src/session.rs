@@ -13,7 +13,7 @@ use auris_core::theory::chord::Chord;
 use auris_core::theory::key::Key as MusicalKey;
 use auris_core::theory::numeral::Numeral;
 use auris_core::theory::pitch::MIDDLE_C;
-use auris_core::time::{Seconds, Ticks};
+use auris_core::time::{Seconds, SignatureMap, Ticks, TimeSignature};
 use auris_core::{
     AssetPath, AudioBuffer, AudioSourceBank, ClipId, ClipRecipe, EffectSlotId, MidiClip, Note,
     PluginRegistry, PresetRef, Project, SoundFontId, SoundFontRef, SourceId, TrackId,
@@ -716,8 +716,10 @@ impl Session {
         self.dirty = true;
         self.project.loop_enabled = enabled;
         if enabled && self.project.loop_region.is_none() {
-            let bars = self.project.time_signature.ticks_per_bar() * 2;
-            self.project.loop_region = Some((Ticks::ZERO, bars));
+            // Bars one and two, asked for as bars rather than as twice a bar length: with a meter
+            // change in the second bar those are not the same span, and the one a person means by
+            // "the first two bars" is this one.
+            self.project.loop_region = Some((Ticks::ZERO, self.project.signatures.bar_start(3)));
         }
         self.publish_loop();
     }
@@ -819,6 +821,67 @@ impl Session {
         self.publish_loop();
     }
 
+    // ------------------------------------------------------------- time signature
+    //
+    // The tempo trio again, and deliberately shaped the same way, but none of these touch the
+    // engine. A meter is notation: the notes are written in ticks, the tempo map turns ticks
+    // into samples, and neither asks how many beats are in a bar. Editing this moves the bar
+    // lines and not one sample.
+    //
+    // Where the tempo commands take any position, these land on bar lines — see
+    // [`SignatureMap`](auris_core::time::SignatureMap) for why a change that did not would leave
+    // the bars after it uncountable.
+
+    /// The signature in force at `at`.
+    pub fn signature_at(&self, at: Ticks) -> TimeSignature {
+        self.project.signatures.signature_at(at)
+    }
+
+    /// Replaces the signature of the stretch `at` falls in.
+    ///
+    /// The counterpart of [`Self::set_tempo_at`], and coalescing for the same reason: the wheel
+    /// over the transport readout arrives as a stream of steps, and a meter that has not moved is
+    /// not a change. The recorded edit carries the position of the change being turned, so
+    /// nudging one stretch and then another stays two undo steps.
+    pub fn set_signature_at(&mut self, at: Ticks, signature: TimeSignature) {
+        let at = self.project.signatures.change_at(at.max_zero());
+        let mut probe = self.project.signatures.clone();
+        probe.set_point(at, signature);
+        if probe == self.project.signatures {
+            return;
+        }
+        self.record_repeating(Edit::ChangeSignature(at));
+        self.project.signatures = probe;
+    }
+
+    /// Sets the signature from `at` onwards, writing a change on the bar `at` rounds to.
+    ///
+    /// The ruler's counterpart to [`Self::set_signature_at`]. Writing at tick zero turns the
+    /// song's opening meter rather than adding a change to it, exactly as [`Self::set_key`] and
+    /// [`Self::set_tempo_point`] treat the anchor.
+    pub fn set_signature_point(&mut self, at: Ticks, signature: TimeSignature) {
+        let mut probe = self.project.signatures.clone();
+        probe.set_point(at.max_zero(), signature);
+        if probe == self.project.signatures {
+            return;
+        }
+        self.record(Edit::SetSignaturePoint);
+        self.project.signatures = probe;
+    }
+
+    /// Removes the signature change in force at `at`, letting the meter before it run through.
+    ///
+    /// *In force at*, not *starting at*, for the reason given on [`Self::remove_key`]. The anchor
+    /// at tick zero is not a change and cannot be removed: a song is always in some meter.
+    pub fn remove_signature_point(&mut self, at: Ticks) {
+        let at = self.project.signatures.change_at(at.max_zero());
+        if at == Ticks::ZERO {
+            return;
+        }
+        self.record(Edit::RemoveSignaturePoint);
+        self.project.signatures.remove_point(at);
+    }
+
     /// Sets the editing grid.
     pub fn set_grid(&mut self, grid: Ticks) {
         let grid = Ticks(grid.raw().max(1));
@@ -844,28 +907,39 @@ impl Session {
         &self.project.harmony
     }
 
-    /// The grid a chord or a key change lands on: the beat, or the editing grid where that is
-    /// coarser.
+    /// The grid a chord or a key change lands on at `at`: the beat, or the editing grid where that
+    /// is coarser.
     ///
     /// Harmony is written coarser than notes are. A sixteenth-note editing grid is the right
     /// resolution for placing a hi-hat and the wrong one for placing a chord — nobody aiming at
     /// bar five means bar five and a sixteenth, and at a normal zoom the two are three pixels
     /// apart. The editing grid still wins when it is the coarser of the two, because somebody who
     /// set the grid to a bar asked for whole bars and should get them.
-    pub fn harmony_grid(&self) -> Ticks {
+    ///
+    /// Which beat, and so which grid, depends on where: an eighth is the beat in 7/8 and half of
+    /// one in 3/4.
+    pub fn harmony_grid_at(&self, at: Ticks) -> Ticks {
         self.project
-            .time_signature
+            .signatures
+            .signature_at(at)
             .ticks_per_beat()
             .max(self.project.grid)
     }
 
-    /// Rounds a position onto [`Self::harmony_grid`]. What every harmony command writes through.
+    /// Rounds a position onto [`Self::harmony_grid_at`]. What every harmony command writes through.
     ///
     /// Public because a frontend has to agree with it: a menu that offers "remove the chord here"
     /// only where one exists has to round the pointer the same way the command that writes them
     /// does, or the two disagree by a sixteenth and the item is never offered.
+    ///
+    /// Counted from the start of the stretch the meter is in force over rather than from tick
+    /// zero. A bar line after a meter change need not be a multiple of the new beat — a 7/8 bar
+    /// is 3360 ticks and a quarter note is 960 — so a grid counted from the origin would sit a
+    /// fraction off every bar line for the rest of the song.
     pub fn snap_harmony(&self, at: Ticks) -> Ticks {
-        at.max_zero().snap_nearest(self.harmony_grid())
+        let at = at.max_zero();
+        let origin = self.project.signatures.change_at(at);
+        origin + (at - origin).snap_nearest(self.harmony_grid_at(at))
     }
 
     /// Sets the key from `at` onwards.
@@ -952,8 +1026,10 @@ impl Session {
     /// A stamp is a division of a bar; a drag is an edit on the grid.
     pub fn stamp_progression(&mut self, chart: &Chart, from: Ticks, bars: usize) -> usize {
         self.record(Edit::StampProgression);
-        let signature = self.project.time_signature;
         let from = self.snap_harmony(from);
+        // The meter the chart begins in: a progression was written in bars of one meter, and a
+        // change part way through the stamped range does not re-bar the chart behind it.
+        let signature = self.project.signatures.signature_at(from);
         self.project.harmony.stamp(chart, from, bars, signature)
     }
 
@@ -1003,8 +1079,7 @@ impl Session {
 
     /// The start of the bar `at` falls in, which is the only place a section may begin.
     fn snap_section(&self, at: Ticks) -> Ticks {
-        let signature = self.project.time_signature;
-        signature.bar_start(signature.bar_of(at.max_zero()))
+        self.project.signatures.bar_floor(at)
     }
 
     /// Writes the catalogue progression called `name`, such as `axis` or `丸サ`.
@@ -1272,7 +1347,10 @@ impl Session {
 
         let mut project = Project::new(&composition.title, self.project.sample_rate);
         project.set_bpm(composition.tempo);
-        project.time_signature = composition.meter;
+        // One meter for the whole piece: a specification says `meter: 6/8` once, and the composer
+        // has no vocabulary for changing it part way through. Nothing stops the meter being
+        // edited afterwards — the document holds a map either way.
+        project.signatures = SignatureMap::constant(composition.meter);
 
         let mut report = ComposeReport {
             tracks: 0,
@@ -1500,7 +1578,9 @@ impl Session {
             &self.project.harmony,
             start,
             length,
-            self.project.time_signature,
+            // The meter the clip begins in. `write_phrase` builds every figure on one grid, so a
+            // clip is written in one meter however many the timeline holds.
+            self.project.signatures.signature_at(start),
             recipe,
             self.project.sections.section_at(start),
         )
@@ -3627,6 +3707,130 @@ mod tests {
         assert_eq!(session.project().tempo_map.points().len(), 2);
     }
 
+    #[test]
+    fn a_signature_change_lands_on_a_bar_and_comes_back_off_it() {
+        let mut session = session();
+        session.forget_history();
+        let three_four = TimeSignature::new(3, 4);
+
+        // A pointer lands mid-bar; the change lands on the bar line it was aimed at.
+        session.set_signature_point(Ticks(BAR.raw() * 2 + 400), three_four);
+        let points = session.project().signatures.points();
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[1].tick, BAR * 2);
+        assert_eq!(session.signature_at(BAR * 2), three_four);
+        assert_eq!(
+            session.signature_at(BAR * 2 - Ticks(1)),
+            TimeSignature::default(),
+            "the bars before it are what they were"
+        );
+        // And the bar numbering follows: bar 3 is where the 3/4 starts, bar 4 three beats later.
+        assert_eq!(session.project().signatures.bar_of(BAR * 2), 3);
+        assert_eq!(
+            session.project().signatures.bar_start(4),
+            BAR * 2 + three_four.ticks_per_bar()
+        );
+
+        assert_eq!(session.undo(), Some(Edit::SetSignaturePoint));
+        assert!(session.project().signatures.is_constant());
+    }
+
+    #[test]
+    fn editing_the_signature_edits_the_stretch_it_is_aimed_at() {
+        let mut session = session();
+        session.set_signature_point(BAR * 4, TimeSignature::new(3, 4));
+        session.forget_history();
+
+        // Aimed mid-stretch, the edit turns the change governing that stretch rather than
+        // writing a new one.
+        session.set_signature_at(BAR * 6, TimeSignature::new(7, 8));
+        assert_eq!(session.project().signatures.points().len(), 2);
+        assert_eq!(session.signature_at(BAR * 4), TimeSignature::new(7, 8));
+        assert_eq!(
+            session.project().signatures.initial(),
+            TimeSignature::default(),
+            "the opening stretch kept its own"
+        );
+
+        // Turning the opening stretch straight afterwards is its own undo step: the recorded
+        // edits carry different positions, so they can never coalesce however fast they come.
+        session.set_signature_at(Ticks::ZERO, TimeSignature::new(5, 4));
+        assert_eq!(session.undo(), Some(Edit::ChangeSignature(Ticks::ZERO)));
+        assert_eq!(session.undo(), Some(Edit::ChangeSignature(BAR * 4)));
+        assert_eq!(session.signature_at(BAR * 4), TimeSignature::new(3, 4));
+    }
+
+    #[test]
+    fn removing_a_signature_change_is_aimed_from_anywhere_inside_it() {
+        let mut session = session();
+        session.set_signature_point(BAR * 4, TimeSignature::new(3, 4));
+        session.forget_history();
+
+        // The anchor is not a change: pointing inside the opening stretch removes nothing.
+        session.remove_signature_point(Ticks(100));
+        assert_eq!(session.project().signatures.points().len(), 2);
+        assert!(
+            !session.can_undo(),
+            "refusing to remove the anchor is not an edit"
+        );
+
+        // Pointing far past the change still removes the change in force there.
+        session.remove_signature_point(Ticks(500_000));
+        assert!(session.project().signatures.is_constant());
+        assert_eq!(session.undo(), Some(Edit::RemoveSignaturePoint));
+        assert_eq!(session.project().signatures.points().len(), 2);
+    }
+
+    #[test]
+    fn a_meter_change_moves_the_bar_lines_and_not_one_note() {
+        // The whole reason this is not on the audio path. A note is a tick position; the tempo
+        // map turns ticks into samples; neither asks how many beats are in a bar.
+        let mut session = session();
+        let track = session
+            .add_default_instrument_track("Lead")
+            .expect("the registry has an instrument");
+        let clip = session
+            .add_midi_clip(track, "Part", Ticks::ZERO, BAR * 4)
+            .expect("an instrument track takes a midi clip");
+        session
+            .add_note(clip, Note::new(60, BAR * 2, BAR))
+            .expect("the note fits the clip");
+        let before = session.project().midi_clip(clip).unwrap().1.notes.clone();
+        let seconds = session.project().duration_seconds();
+
+        session.set_signature_point(BAR, TimeSignature::new(7, 8));
+
+        assert_eq!(
+            session.project().midi_clip(clip).unwrap().1.notes,
+            before,
+            "a note moved when the meter changed"
+        );
+        assert_eq!(
+            session.project().duration_seconds(),
+            seconds,
+            "the song got longer or shorter when the meter changed"
+        );
+    }
+
+    #[test]
+    fn harmony_snaps_to_the_beat_of_the_meter_it_is_written_in() {
+        let mut session = session();
+        // Seven eight: a bar is 3360 ticks, and the beat is an eighth rather than a quarter.
+        session.set_signature_point(BAR, TimeSignature::new(7, 8));
+        let seven_eight_bar = TimeSignature::new(7, 8).ticks_per_bar();
+
+        // Counted from the change, not from tick zero. The second bar of 7/8 starts 3360 ticks
+        // past a 3840-tick bar, which is not a multiple of anything the grid would offer — a
+        // snap measured from the origin would sit a fraction off it.
+        let second = BAR + seven_eight_bar;
+        assert_eq!(session.snap_harmony(second + Ticks(20)), second);
+        assert_eq!(
+            session.harmony_grid_at(second),
+            Ticks(auris_core::TICKS_PER_QUARTER / 2),
+            "an eighth is the beat in seven eight"
+        );
+    }
+
     /// An audio clip of `frames` frames on its own track, with no samples behind it.
     ///
     /// Enough to exercise every command that shapes the clip; what it *sounds* like needs
@@ -4584,7 +4788,11 @@ mod tests {
         // The editing grid is a sixteenth — 240 ticks — and harmony is written coarser than
         // that: a third of a beat past the bar line means the bar line.
         assert_eq!(session.project().grid, Ticks(240));
-        assert_eq!(session.harmony_grid(), Ticks(960), "one beat of 4/4");
+        assert_eq!(
+            session.harmony_grid_at(Ticks::ZERO),
+            Ticks(960),
+            "one beat of 4/4"
+        );
 
         session.set_chord(BAR + Ticks(300), numeral("V"));
         assert_eq!(session.harmony().chords.points()[0].tick, BAR);
@@ -4605,7 +4813,7 @@ mod tests {
         // quietly offer them something finer than they chose.
         let mut session = self::tests::session();
         session.set_grid(BAR);
-        assert_eq!(session.harmony_grid(), BAR);
+        assert_eq!(session.harmony_grid_at(Ticks::ZERO), BAR);
         session.set_chord(BAR + Ticks(960), numeral("V"));
         assert_eq!(session.harmony().chords.points()[0].tick, BAR);
     }

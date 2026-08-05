@@ -47,6 +47,7 @@ strings! {
     GridFree { en: "free", ja: "自由" }
     Position { en: "Position", ja: "位置" }
     Tempo { en: "Tempo", ja: "テンポ" }
+    Signature { en: "Signature", ja: "拍子" }
     PianoRoll { en: "Piano Roll", ja: "ピアノロール" }
     Mixer { en: "Mixer", ja: "ミキサー" }
     Inspector { en: "Inspector", ja: "インスペクタ" }
@@ -184,6 +185,10 @@ strings! {
     ToolPointer { en: "Pointer", ja: "ポインタ" }
     ToolVelocity { en: "Velocity", ja: "ベロシティ" }
     CmdNextTool { en: "Next Tool", ja: "次のツール" }
+    CmdSetTempo { en: "Tempo…", ja: "テンポ…" }
+    CmdSetSignature { en: "Time Signature…", ja: "拍子…" }
+    CmdCycleGrid { en: "Next Grid Division", ja: "次のグリッド分割" }
+    CmdGoToPosition { en: "Go to Position…", ja: "位置へ移動…" }
     CmdOpenMenuBar { en: "Open Menu Bar", ja: "メニューバーを開く" }
     CmdFocusNextPane { en: "Focus Next Panel", ja: "次のパネルにフォーカス" }
     CmdFocusPreviousPane { en: "Focus Previous Panel", ja: "前のパネルにフォーカス" }
@@ -305,6 +310,9 @@ strings! {
     MenuRemoveChordHere { en: "Remove Chord", ja: "コードを削除" }
     MenuSetTempoHere { en: "Tempo from Here…", ja: "ここからのテンポ…" }
     MenuRemoveTempoHere { en: "Remove Tempo Change", ja: "テンポチェンジを削除" }
+    MenuSetSignatureHere { en: "Time Signature from Here…", ja: "ここからの拍子…" }
+    MenuRemoveSignatureHere { en: "Remove Signature Change", ja: "拍子記号を削除" }
+    MenuOtherSignature { en: "Other…", ja: "その他…" }
     MenuClipGain { en: "Clip Gain…", ja: "クリップゲイン…" }
     MenuClearFades { en: "Remove Fades", ja: "フェードを削除" }
     MenuSetSectionHere { en: "Name Section Here…", ja: "ここからのセクション名を…" }
@@ -375,6 +383,7 @@ strings! {
     SetSectionTitle { en: "Section from here", ja: "ここからのセクション" }
     SetSeedTitle { en: "Seed for this part", ja: "このパートのシード" }
     SetTempoTitle { en: "Tempo", ja: "テンポ" }
+    SetSignatureTitle { en: "Time signature", ja: "拍子" }
     SetClipGainTitle { en: "Clip gain", ja: "クリップゲイン" }
     SetPositionTitle { en: "Go to position", ja: "位置へ移動" }
     Cancel { en: "Cancel", ja: "キャンセル" }
@@ -392,6 +401,10 @@ strings! {
         ja: "度数のローマ数字。大文字がメジャー、小文字がマイナー: IV、vi、bVII7"
     }
     HintTempo { en: "Beats per minute", ja: "1分あたりの拍数" }
+    HintSignature {
+        en: "Beats per bar over the note that takes the beat: 4/4, 6/8, 7/8",
+        ja: "1小節の拍数と1拍の音価: 4/4、6/8、7/8 のように"
+    }
     HintClipGain {
         en: "In decibels. 0 plays the clip as recorded; negative is quieter",
         ja: "デシベル単位。0で元の音量、負の値で小さく"
@@ -464,6 +477,9 @@ strings! {
     EditChangeTempo { en: "the tempo change", ja: "テンポの変更" }
     EditSetTempoPoint { en: "writing a tempo change", ja: "テンポチェンジの追加" }
     EditRemoveTempoPoint { en: "removing a tempo change", ja: "テンポチェンジの削除" }
+    EditChangeSignature { en: "the time signature", ja: "拍子の変更" }
+    EditSetSignaturePoint { en: "writing a signature change", ja: "拍子記号の追加" }
+    EditRemoveSignaturePoint { en: "removing a signature change", ja: "拍子記号の削除" }
     EditSetClipGain { en: "the clip gain", ja: "クリップゲインの変更" }
     EditSetClipFade { en: "the fade", ja: "フェードの変更" }
     EditAddInstrumentTrack { en: "adding an instrument track", ja: "ソフト音源トラックの追加" }

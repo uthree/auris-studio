@@ -445,7 +445,6 @@ impl AurisApp {
     fn render_harmony_lane(&mut self, cx: &mut gpui::Context<Self>) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
         let view = self.timeline.clone();
-        let signature = self.project().time_signature;
 
         // Only what is on screen is painted, and it is copied out because a paint closure has to
         // capture `'static`.
@@ -456,7 +455,10 @@ impl AurisApp {
             .map_or(px(1200.0), |b| b.size.width);
         let (from, to) = view.visible_range(width);
         let harmony = paint::HarmonyPaint {
-            events: self.project().harmony.events_in(from, to, signature),
+            events: self
+                .project()
+                .harmony
+                .events_in(from, to, &self.project().signatures),
             keys: self.project().harmony.keys.points().to_vec(),
             handles: self.chord_handles(),
             held: match self.drag {
@@ -571,7 +573,11 @@ impl AurisApp {
     fn render_timeline(&mut self, cx: &mut gpui::Context<Self>) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
         let view = self.timeline.clone();
-        let signature = self.project().time_signature;
+        // The bar lines, as stretches of one meter each. Both painters walk them, and a song that
+        // never changes meter is one stretch, which is the arithmetic they always did. Two
+        // copies because the ruler and the lanes are two canvases, each capturing `'static`.
+        let signatures = self.project().signatures.spans();
+        let lane_signatures = signatures.clone();
         let playhead = self.playhead_ticks();
         // The whole map, cheaply: the painter draws nothing for a constant-tempo song.
         let tempo: Vec<TempoPoint> = self.project().tempo_map.points().to_vec();
@@ -611,7 +617,13 @@ impl AurisApp {
                             move |bounds, _, window, cx| {
                                 paint::clipped(window, bounds, |window| {
                                     paint::ruler(
-                                        window, cx, bounds, &view, signature, &tempo, &theme,
+                                        window,
+                                        cx,
+                                        bounds,
+                                        &view,
+                                        &signatures,
+                                        &tempo,
+                                        &theme,
                                     );
                                     if let Some(region) = loop_region {
                                         paint::loop_region(window, bounds, &view, region, &theme);
@@ -667,7 +679,13 @@ impl AurisApp {
                             move |bounds, _, window, cx| {
                                 paint::clipped(window, bounds, |window| {
                                     paint::rect(window, bounds, theme.surface_sunken);
-                                    paint::time_grid(window, bounds, &view, signature, &theme);
+                                    paint::time_grid(
+                                        window,
+                                        bounds,
+                                        &view,
+                                        &lane_signatures,
+                                        &theme,
+                                    );
                                     if let Some(region) = loop_region {
                                         paint::loop_region(window, bounds, &view, region, &theme);
                                     }

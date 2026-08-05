@@ -383,6 +383,18 @@ messages! {
         ja: "`{text}` はテンポではありません — `128` や `174.5` のように"
     }
 
+    /// The editing grid was stepped to another division.
+    fn grid_set(division: &str) {
+        en: "Grid: {division}",
+        ja: "グリッド: {division}"
+    }
+
+    /// The text typed into the time signature prompt is not a meter.
+    fn not_a_signature(text: &str) {
+        en: "`{text}` is not a time signature — try `4/4` or `6/8`",
+        ja: "`{text}` は拍子ではありません — `4/4` や `6/8` のように"
+    }
+
     /// The text typed into the clip gain prompt is not a number of decibels.
     fn not_a_gain(text: &str) {
         en: "`{text}` is not a gain — try `-3` or `2.5`",

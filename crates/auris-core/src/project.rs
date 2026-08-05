@@ -22,7 +22,7 @@ use crate::asset::AssetPath;
 use crate::buffer::AudioBuffer;
 use crate::harmony::Harmony;
 use crate::plugin::PluginState;
-use crate::time::{TempoMap, Ticks, TimeSignature};
+use crate::time::{SignatureMap, TempoMap, Ticks};
 
 /// Identifies a track within a project.
 #[derive(
@@ -872,8 +872,20 @@ pub struct Project {
     pub sample_rate: f64,
     /// Tempo over the timeline.
     pub tempo_map: TempoMap,
-    /// Bar/beat grid.
-    pub time_signature: TimeSignature,
+    /// The bar/beat grid, over the timeline.
+    ///
+    /// A map rather than one signature, and beside the tempo map for the same reason the harmony
+    /// is: it changes as the song goes on, and at any one moment every track obeys the same one.
+    /// Unlike the tempo it reaches nothing that is heard — a meter is notation, and moving the
+    /// bar lines moves no note.
+    ///
+    /// Defaulted rather than required, so a document written before the field existed opens in
+    /// 4/4 instead of failing on a missing key. That is not a migration — a version 3 file
+    /// written in 3/4 comes up in 4/4, and the version number is why that is allowed to happen —
+    /// but every note, clip and chord in it survives, and an honest 4/4 beats a sentence about
+    /// serde.
+    #[serde(default)]
+    pub signatures: SignatureMap,
     /// The key and the chords, over the timeline.
     ///
     /// Beside the tempo map rather than inside a track, because it is the same kind of thing: it
@@ -935,7 +947,13 @@ impl Project {
     /// backwards on a `serde` default, but a variant an older build has never heard of does not:
     /// it would fail to parse the whole document rather than the one clip, so the version moves to
     /// turn that into the refusal it is.
-    pub const FORMAT_VERSION: u32 = 3;
+    ///
+    /// 4 since the one `time_signature` became a [`SignatureMap`] over the timeline. The field
+    /// changed shape rather than gaining a sibling, so there is nothing for a `serde` default to
+    /// carry in either direction: an older build reading a 4/4-throughout document would find an
+    /// object where it wanted a signature and give up on the whole file. The version turns that
+    /// into a sentence about updating.
+    pub const FORMAT_VERSION: u32 = 4;
 
     /// An empty project.
     ///
@@ -953,7 +971,7 @@ impl Project {
             name: name.into(),
             sample_rate,
             tempo_map: TempoMap::constant(120.0),
-            time_signature: TimeSignature::default(),
+            signatures: SignatureMap::default(),
             harmony: Harmony::default(),
             sections: crate::structure::SectionMap::default(),
             tracks: Vec::new(),
@@ -1760,6 +1778,10 @@ mod tests {
         }"#;
         let project: Project = serde_json::from_str(json).expect("an older document still parses");
         assert!(project.soundfonts.is_empty());
+        // The same document is from before the meter could change, and its lone `time_signature`
+        // is a field nothing reads any more. It opens in 4/4 rather than refusing over a key that
+        // is not there — every note in it survives, which is the whole of what the default buys.
+        assert_eq!(project.signatures, crate::time::SignatureMap::default());
     }
 
     #[test]

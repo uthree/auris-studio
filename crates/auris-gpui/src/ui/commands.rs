@@ -141,7 +141,11 @@ impl AurisApp {
 
     /// Creates an empty MIDI clip at `start` on an instrument track.
     pub(crate) fn create_clip_at(&mut self, track: TrackId, start: Ticks) {
-        let length = self.project().time_signature.ticks_per_bar();
+        let length = self
+            .project()
+            .signatures
+            .signature_at(start)
+            .ticks_per_bar();
         let count = self.project().tracks.len();
         let name = messages::new_clip_name(self.language(), count);
         match self.session.add_midi_clip(track, name, start, length) {

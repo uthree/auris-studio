@@ -31,6 +31,15 @@ pub enum Edit {
     SetTempoPoint,
     /// A tempo change was removed, letting the tempo before it run through.
     RemoveTempoPoint,
+    /// The time signature of one stretch of the timeline was changed.
+    ///
+    /// Carries the position of the change being turned, for the reason [`Edit::ChangeTempo`]
+    /// does: the readout's wheel coalesces, and two stretches must not fold into one step.
+    ChangeSignature(Ticks),
+    /// A signature change was written somewhere on the timeline.
+    SetSignaturePoint,
+    /// A signature change was removed, letting the meter before it run through.
+    RemoveSignaturePoint,
     /// An instrument track was added.
     AddInstrumentTrack,
     /// An audio track was added.

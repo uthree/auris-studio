@@ -58,6 +58,14 @@ pub enum PromptTarget {
     /// The ruler's counterpart to [`PromptTarget::Tempo`]: the same number, but written *here*,
     /// the way [`PromptTarget::Key`] writes a key change here.
     TempoFrom(Ticks),
+    /// The meter of the stretch a position falls in, written `6/8`.
+    ///
+    /// The transport's own list holds the meters nearly everybody wants. This is the way to the
+    /// ones it does not — 11/8, 15/16 — and, like [`PromptTarget::Tempo`], it turns the stretch
+    /// already in force rather than writing a new change.
+    Signature(Ticks),
+    /// The meter from a position on the timeline onwards — a new signature change.
+    SignatureFrom(Ticks),
     /// An audio clip's own gain, in decibels.
     ClipGain(ClipId),
     /// Where the playhead sits, as bar, beat and hundredth.
@@ -78,6 +86,7 @@ impl PromptTarget {
             PromptTarget::Section(_) => Key::HintSection,
             PromptTarget::Seed(_) => Key::HintSeed,
             PromptTarget::Tempo(_) | PromptTarget::TempoFrom(_) => Key::HintTempo,
+            PromptTarget::Signature(_) | PromptTarget::SignatureFrom(_) => Key::HintSignature,
             PromptTarget::ClipGain(_) => Key::HintClipGain,
             PromptTarget::Position => Key::HintPosition,
             PromptTarget::Track(_) | PromptTarget::Clip(_) => return None,
@@ -143,6 +152,14 @@ const KEY_VOCABULARY: &[&str] = &[
     "F lydian",
 ];
 
+/// The meters offered under the signature field.
+///
+/// The transport's own list, written out here because the sheet takes text and a completion has
+/// to be text. It is the escape hatch from that list, so the list still belongs under it: somebody
+/// who opened this to type 11/8 loses nothing by seeing 6/8 offered, and somebody who opened it by
+/// accident finds the ordinary answer without cancelling.
+const SIGNATURE_VOCABULARY: &[&str] = &["4/4", "3/4", "2/4", "6/8", "12/8", "5/4", "7/8", "9/8"];
+
 /// How many completions the sheet offers at once.
 ///
 /// A row that wraps to three lines is a table, and a table is something to read rather than
@@ -160,6 +177,7 @@ pub fn completions(target: PromptTarget, typed: &str) -> Vec<&'static str> {
         PromptTarget::Chord(_) => CHORD_VOCABULARY,
         PromptTarget::Key(_) => KEY_VOCABULARY,
         PromptTarget::Section(_) => SECTION_VOCABULARY,
+        PromptTarget::Signature(_) | PromptTarget::SignatureFrom(_) => SIGNATURE_VOCABULARY,
         _ => return Vec::new(),
     };
     let needle = typed.trim().to_ascii_lowercase();
@@ -473,9 +491,31 @@ impl AurisApp {
                     return;
                 }
             },
+            // A meter is refused rather than clamped, unlike a tempo: there is no nearest
+            // signature to land on, and `TimeSignature::new` answering 5/3 with a silent 4/4
+            // would be a box that changed the subject.
+            PromptTarget::Signature(at) => match text.parse::<TimeSignature>() {
+                Ok(signature) => {
+                    self.session.set_signature_at(at, signature);
+                    Ok(())
+                }
+                Err(_) => {
+                    self.set_failed_status(messages::not_a_signature(self.language(), &text));
+                    return;
+                }
+            },
+            PromptTarget::SignatureFrom(at) => match text.parse::<TimeSignature>() {
+                Ok(signature) => {
+                    self.session.set_signature_point(at, signature);
+                    Ok(())
+                }
+                Err(_) => {
+                    self.set_failed_status(messages::not_a_signature(self.language(), &text));
+                    return;
+                }
+            },
             PromptTarget::Position => {
-                let signature = self.project().time_signature;
-                match crate::ui::transport_bar::parse_position(&text, signature) {
+                match crate::ui::transport_bar::parse_position(&text, &self.project().signatures) {
                     Some(at) => {
                         self.seek(at);
                         Ok(())
@@ -1137,6 +1177,8 @@ mod tests {
             PromptTarget::Seed(ClipId(1)),
             PromptTarget::Tempo(AT),
             PromptTarget::TempoFrom(AT),
+            PromptTarget::Signature(AT),
+            PromptTarget::SignatureFrom(AT),
             PromptTarget::ClipGain(ClipId(1)),
             PromptTarget::Position,
         ]
@@ -1172,6 +1214,22 @@ mod tests {
                 MusicalKey::parse(entry).is_some(),
                 "`{entry}` is offered under the key field and is not a key"
             );
+        }
+        for entry in SIGNATURE_VOCABULARY {
+            assert!(
+                entry.parse::<TimeSignature>().is_ok(),
+                "`{entry}` is offered under the signature field and is not a meter"
+            );
+        }
+        // And the list under the field is the list on the transport's own button, so the two
+        // cannot come to offer different meters.
+        assert_eq!(
+            SIGNATURE_VOCABULARY.len(),
+            TimeSignature::COMMON.len(),
+            "the sheet and the transport disagree about the common meters"
+        );
+        for (offered, common) in SIGNATURE_VOCABULARY.iter().zip(TimeSignature::COMMON) {
+            assert_eq!(*offered, common.to_string());
         }
     }
 

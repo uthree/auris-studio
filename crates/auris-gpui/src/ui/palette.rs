@@ -9,9 +9,12 @@
 
 use std::ops::Range;
 
-use auris_i18n::Key;
+use auris_i18n::{Key, Language};
+use auris_session::prelude::{Ticks, TimeSignature};
 
-use gpui::{Context, IntoElement, MouseButton, MouseDownEvent, Pixels, div, prelude::*, px};
+use gpui::{
+    Context, IntoElement, MouseButton, MouseDownEvent, Pixels, SharedString, div, prelude::*, px,
+};
 
 use crate::actions::{BINDABLE, Bindable, menu_keystroke};
 use crate::app::AurisApp;
@@ -19,12 +22,24 @@ use crate::theme::{Metrics, SCHEMES, Scheme, Theme};
 use crate::ui::text_field::TextField;
 
 /// What running one row of the palette does.
+///
+/// Most rows are actions, and those are the palette's reason for existing: one table, and a
+/// command added to it is reachable by name for free. The rest are rows that carry a *value* —
+/// a colour scheme, a grid division, a meter, a language. An action per value would mean four
+/// entries in a rebindable table for four things nobody binds a key to, and a settings window is
+/// a long way to go to set the grid to a sixteenth.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum PaletteCommand {
     /// One of the bindable actions, dispatched exactly as its keystroke would be.
     Action(&'static Bindable),
     /// Repaint the window in a colour scheme.
     Scheme(&'static Scheme),
+    /// Set the editing grid to a division.
+    Grid(Ticks),
+    /// Set the meter of the stretch the playhead is in.
+    Signature(TimeSignature),
+    /// Draw the interface in a language.
+    Language(Language),
 }
 
 /// One row of the palette, with everything it needs to be matched and drawn.
@@ -35,7 +50,10 @@ pub struct PaletteEntry {
     /// Section the command belongs to, shown before its name.
     pub group: &'static str,
     /// The command's name, in the interface language.
-    pub label: &'static str,
+    ///
+    /// Owned, because the rows that carry a value name that value — `1/16`, `6/8` — and those
+    /// are built rather than looked up in a table of translations.
+    pub label: SharedString,
     /// The keystroke that also runs it, written the way this platform writes it.
     pub keystroke: Option<String>,
 }
@@ -53,11 +71,15 @@ impl PaletteEntry {
 
 /// Every command the palette offers, in the language the window is drawn in.
 ///
-/// The bindable actions first, in the order the settings window lists them, then the colour
-/// schemes — which are not actions because each one carries a value, and an action per scheme
-/// would be four more entries in a table that exists to be rebound.
+/// The bindable actions first, in the order the settings window lists them, then the rows that
+/// carry a value: the grid divisions, the common meters, the colour schemes and the languages.
+///
+/// The value rows are grouped under the heading of the thing they set rather than all together,
+/// so `grid 16` and `view 1/16` both find the grid — the group is half of what a query is matched
+/// against, and it is the word people reach for when they cannot remember what something is
+/// called.
 pub fn entries(
-    language: auris_i18n::Language,
+    language: Language,
     keystroke_of: impl Fn(&Bindable) -> String,
 ) -> Vec<PaletteEntry> {
     let mut rows: Vec<PaletteEntry> = BINDABLE
@@ -65,14 +87,45 @@ pub fn entries(
         .map(|command| PaletteEntry {
             command: PaletteCommand::Action(command),
             group: command.group.get(language),
-            label: command.label.get(language),
+            label: command.label.get(language).into(),
             keystroke: Some(menu_keystroke(&keystroke_of(command))),
         })
         .collect();
+    rows.extend(
+        crate::ui::transport_bar::GRID_CHOICES
+            .iter()
+            .map(|(label, ticks)| PaletteEntry {
+                command: PaletteCommand::Grid(Ticks(*ticks)),
+                group: Key::Grid.get(language),
+                // The one entry whose label is a word rather than a fraction is the one that
+                // turns snapping off, and the button on the transport bar says the same thing.
+                label: if label.is_empty() {
+                    Key::GridFree.get(language).into()
+                } else {
+                    SharedString::new_static(label)
+                },
+                keystroke: None,
+            }),
+    );
+    rows.extend(TimeSignature::COMMON.iter().map(|signature| PaletteEntry {
+        command: PaletteCommand::Signature(*signature),
+        group: Key::Signature.get(language),
+        label: signature.to_string().into(),
+        keystroke: None,
+    }));
     rows.extend(SCHEMES.iter().map(|scheme| PaletteEntry {
         command: PaletteCommand::Scheme(scheme),
         group: Key::AppearanceHeading.get(language),
-        label: scheme.name,
+        label: scheme.name.into(),
+        keystroke: None,
+    }));
+    // Each named in itself, and under a heading in itself: the two rows read `Language · English`
+    // and `言語 · 日本語`. A list of languages written in the language currently on screen is of
+    // no use to the one person who opens it, who cannot read that one.
+    rows.extend(Language::ALL.iter().map(|choice| PaletteEntry {
+        command: PaletteCommand::Language(*choice),
+        group: Key::LanguageHeading.get(*choice),
+        label: choice.endonym().into(),
         keystroke: None,
     }));
     rows
@@ -219,6 +272,19 @@ impl AurisApp {
         match command {
             PaletteCommand::Action(action) => window.dispatch_action(action.action(), cx),
             PaletteCommand::Scheme(scheme) => self.apply_scheme(scheme.id),
+            PaletteCommand::Grid(ticks) => self.session.set_grid(ticks),
+            // The stretch the playhead is in, which is what the transport's own field shows and
+            // what its list turns. Writing a change somewhere else needs a bar to aim at, and the
+            // palette has nowhere to show one.
+            PaletteCommand::Signature(signature) => {
+                let at = self.playhead_ticks();
+                self.session.set_signature_at(at, signature);
+            }
+            // A language named explicitly, never "follow the system": the palette row said
+            // English, so the answer is English whatever the machine is set to. Following the
+            // system is a preference to be expressed once, in the settings window, where the
+            // choice is visible as a choice.
+            PaletteCommand::Language(language) => self.apply_language(Some(language), cx),
         }
     }
 
@@ -354,7 +420,7 @@ impl AurisApp {
                             .text_sm()
                             .text_color(theme.text)
                             .truncate()
-                            .child(entry.label),
+                            .child(entry.label.clone()),
                     )
                     .children(entry.keystroke.clone().map(|keystroke| {
                         div()
@@ -512,6 +578,57 @@ mod tests {
         }
         // And an untyped palette lists them in the order everything else does.
         assert_eq!(matches(&all, "")[..3], [0, 1, 2]);
+    }
+
+    #[test]
+    fn the_palette_can_set_a_value_and_not_only_fire_a_command() {
+        // Four things reachable only through a window or a corner of the transport bar until the
+        // palette learned to carry a value. Each list has to be the whole list, or the palette
+        // becomes a place where some of the grid divisions live.
+        let all = entries(Language::English, |command| command.default.to_string());
+        let commands: Vec<PaletteCommand> = all.iter().map(|entry| entry.command).collect();
+
+        for (_, ticks) in crate::ui::transport_bar::GRID_CHOICES {
+            assert!(
+                commands.contains(&PaletteCommand::Grid(Ticks(ticks))),
+                "the grid division {ticks} is on the transport button and not in the palette"
+            );
+        }
+        for signature in TimeSignature::COMMON {
+            assert!(commands.contains(&PaletteCommand::Signature(signature)));
+        }
+        for language in Language::ALL {
+            assert!(commands.contains(&PaletteCommand::Language(language)));
+        }
+        for scheme in SCHEMES {
+            assert!(commands.contains(&PaletteCommand::Scheme(scheme)));
+        }
+    }
+
+    #[test]
+    fn a_value_is_found_by_typing_the_value() {
+        // The point of putting them here: `6/8` reaches the meter without anybody knowing that
+        // the meter is set from a field in the middle of the transport bar.
+        let all = entries(Language::English, |command| command.default.to_string());
+        let first = |query: &str| all[matches(&all, query)[0]].command;
+
+        assert_eq!(
+            first("6/8"),
+            PaletteCommand::Signature(TimeSignature::new(6, 8))
+        );
+        assert_eq!(first("1/16"), PaletteCommand::Grid(Ticks(240)));
+        assert_eq!(
+            first("日本語"),
+            PaletteCommand::Language(Language::Japanese)
+        );
+        // And a language names itself under a heading in itself, since the one person who opens
+        // this list cannot read the language currently on screen.
+        let japanese = all
+            .iter()
+            .find(|entry| entry.command == PaletteCommand::Language(Language::Japanese))
+            .expect("Japanese is offered");
+        assert_eq!(japanese.label, "日本語");
+        assert_eq!(japanese.group, Key::LanguageHeading.get(Language::Japanese));
     }
 
     #[test]

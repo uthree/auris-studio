@@ -12,7 +12,7 @@
 //! kept in step.
 
 use auris_core::harmony::Harmony;
-use auris_core::time::{Ticks, TimeSignature};
+use auris_core::time::{SignatureMap, Ticks, TimeSignature};
 use auris_core::{ClipPreset, ClipRecipe, Note, Subdivision};
 
 use crate::frame::{Frame, SectionPlan, skeleton};
@@ -80,7 +80,12 @@ pub fn write_phrase(
 
     // The harmony under the range, moved so the range's start is zero — which is the frame of
     // reference a `SectionPlan` uses and, conveniently, the one a clip uses too.
-    let mut events = harmony.events_in(start, start + length, meter);
+    //
+    // One meter for the whole range rather than the document's map: `Grid` above has already
+    // baked this meter into every figure the parts will play, so a clip is written in the meter
+    // it begins in and a change part way through it does not reshape the bars behind it. The
+    // caller passes the signature in force at `start`.
+    let mut events = harmony.events_in(start, start + length, &SignatureMap::constant(meter));
     for event in &mut events {
         event.start -= start;
     }

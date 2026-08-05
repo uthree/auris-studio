@@ -28,6 +28,7 @@
 //! * [`realtime`] — what may and may not happen on the audio callback thread.
 //! * [`plugins`] — writing an instrument or an effect, with a worked example.
 //! * [`composition`] — the song specification and how a piece is written from it.
+//! * [`timelines`] — the four maps laid along the song, and what the meter has that they lack.
 //! * [`harmony`] — the key and the chords, and why they belong to the timeline.
 //! * [`documents`] — what a project is on disk, and how it refers to files it does not contain.
 //! * [`platforms`] — where macOS and Windows differ, and the rules that keep both alive.
@@ -519,6 +520,66 @@ pub mod documents {
     //! meaning.
 }
 
+pub mod timelines {
+    //! The four maps laid along the song, and what the meter has that they lack.
+    //!
+    //! Four things about a song change as it goes on, and at any one moment every track obeys the
+    //! same one of each. None belongs to a track, because a track that could disagree with its
+    //! neighbour about where bar nine is would be a bug with no home to fix it in. So all four
+    //! sit on the [`Project`](auris_core::Project) beside one another:
+    //!
+    //! | Map | Says | Anchored at tick 0 with |
+    //! |---|---|---|
+    //! | [`TempoMap`](auris_core::time::TempoMap) | how fast | the song's tempo |
+    //! | [`SignatureMap`](auris_core::time::SignatureMap) | how the bars are counted | the song's meter |
+    //! | [`KeyMap`](auris_core::harmony::KeyMap) | what key | the song's key |
+    //! | [`ChordMap`](auris_core::harmony::ChordMap) | what chord | nothing — a song may have none |
+    //!
+    //! They are deliberately the same shape — a sorted list of points, each in force until the
+    //! next, deserialised through a repr rather than a plain derive so a hand-edited file cannot
+    //! produce a list the binary search will misread — so that a reader who knows one knows the
+    //! rest. Each answers `…_at(tick)` for the value and `change_at(tick)` for where the change
+    //! governing that stretch sits. That second one is what an editor acts *through*: "remove the
+    //! tempo change here" means the one driving the clock, not one that happens to begin under the
+    //! pixel the pointer landed on.
+    //!
+    //! # The meter is the one that moves the ruler
+    //!
+    //! Three of the four can change anywhere. A tempo may turn on an off-beat, a key may change
+    //! mid-bar, and the notes underneath neither move nor care.
+    //!
+    //! A meter cannot. It decides where the bar lines *are*, so a 3/4 beginning half way through a
+    //! bar of 4/4 leaves that bar with no length and the bars after it uncountable — and bar
+    //! numbers are how a person says where anything is. So [`SignatureMap`] carries a fourth
+    //! invariant beside the three the others keep: every change sits a whole number of the
+    //! previous meter's bars past the change before it. A change written anywhere is moved onto
+    //! the nearest bar line, and a change written *before* one already there pushes the later ones
+    //! onto the new grid — which is a real edit to their positions, and the honest one. The
+    //! alternative is storing bar numbers, and a stored bar number moves the notes underneath it
+    //! every time an earlier bar changes length.
+    //!
+    //! Because bar numbering is an accumulation rather than a division,
+    //! [`SignatureMap::spans`] hands out each stretch with the bar it opens on. That is what the
+    //! ruler and the grid painter walk: within a stretch the arithmetic is the uniform arithmetic
+    //! it always was, and only the phase changes.
+    //!
+    //! # None of it reaches the audio, except the tempo
+    //!
+    //! [`Session::set_tempo_at`](crate::Session::set_tempo_at) re-flattens the render graph and
+    //! republishes the loop region, because notes are scheduled in frames and the mapping from
+    //! ticks to frames has just moved.
+    //!
+    //! The other three touch nothing. A meter is notation — positions are ticks, the tempo map
+    //! turns ticks into samples, and neither asks how many beats are in a bar. Harmony is already
+    //! written into the notes that were generated from it. Changing any of the three moves bar
+    //! lines and words on screen and not one sample, which is why
+    //! [`set_signature_at`](crate::Session::set_signature_at) and its neighbours record an undo
+    //! step and stop.
+    //!
+    //! [`SignatureMap`]: auris_core::time::SignatureMap
+    //! [`SignatureMap::spans`]: auris_core::time::SignatureMap::spans
+}
+
 pub mod harmony {
     //! The key and the chords, and why they belong to the timeline.
     //!
@@ -574,7 +635,7 @@ pub mod harmony {
     //! Positions are [`Ticks`](auris_core::time::Ticks), like every other position in the
     //! document, because a stored bar number changes meaning the moment the time signature is
     //! edited — notes would stay where they sound while chords slid elsewhere. Bars are how a
-    //! position is *built*: [`TimeSignature::position`](auris_core::time::TimeSignature::position)
+    //! position is *built*: [`SignatureMap::position`](auris_core::time::SignatureMap::position)
     //! takes a bar and a fractional beat, so several chords in one bar and a chord on an off-beat
     //! are both sayable, and nothing hands out a bare tick.
     //!

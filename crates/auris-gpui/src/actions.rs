@@ -49,6 +49,14 @@ actions!(
         DeleteSelection,
         /// Put the next of the piano roll's tools in hand.
         NextTool,
+        /// Type the tempo of the stretch the playhead is in.
+        SetTempo,
+        /// Type the time signature of the stretch the playhead is in.
+        SetTimeSignature,
+        /// Step the editing grid to the next division.
+        CycleGrid,
+        /// Type a bar and beat to move the playhead to.
+        GoToPosition,
         /// Undo the last edit.
         Undo,
         /// Redo the last undone edit.
@@ -195,6 +203,9 @@ bindable! {
         "transport.return",     GroupTransport, CmdReturnToZero,       "enter"       => ReturnToZero;
         "transport.loop",       GroupTransport, CmdToggleCycle,        "secondary-l" => ToggleLoop;
         "transport.panic",      GroupTransport, CmdPanic,              "escape"      => PanicStop;
+        // The readouts in the middle of the transport bar answer to the mouse and, until now, to
+        // nothing else. `g` for go, which is what every editor calls this.
+        "transport.go_to",      GroupTransport, CmdGoToPosition,       "secondary-g" => GoToPosition;
 
         "file.new",             GroupFile,      CmdNewProject,         "secondary-n" => NewProject;
         "file.open",            GroupFile,      CmdOpenProject,        "secondary-o" => OpenProject;
@@ -211,6 +222,11 @@ bindable! {
         "edit.undo",            GroupEdit,      CmdUndo,               "secondary-z" => Undo;
         "edit.redo",            GroupEdit,      CmdRedo,               "secondary-shift-z" => Redo;
         "edit.delete",          GroupEdit,      CmdDeleteSelection,    "backspace"   => DeleteSelection;
+        // The three things about the song a person changes by reaching for a readout with the
+        // mouse. B for beats per minute, M for meter, G for grid.
+        "edit.tempo",           GroupEdit,      CmdSetTempo,           "secondary-shift-b" => SetTempo;
+        "edit.signature",       GroupEdit,      CmdSetSignature,       "secondary-shift-m" => SetTimeSignature;
+        "edit.grid",            GroupEdit,      CmdCycleGrid,          "secondary-shift-g" => CycleGrid;
 
         "track.add_instrument", GroupTrack,     CmdAddInstrumentTrack, "secondary-t" => AddInstrumentTrack;
         "track.add_audio",      GroupTrack,     CmdAddAudioTrack,      "secondary-shift-t" => AddAudioTrack;

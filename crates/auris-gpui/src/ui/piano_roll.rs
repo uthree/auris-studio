@@ -119,7 +119,7 @@ impl AurisApp {
         let theme = self.theme.clone();
         let pitch_view = self.pitch.clone();
         let view = self.timeline.clone();
-        let signature = self.project().time_signature;
+        let signatures = self.project().signatures.spans();
         let playhead = self.playhead_ticks();
 
         let Some(clip) = self.selected_midi_clip() else {
@@ -254,7 +254,11 @@ impl AurisApp {
                                             paint::rect(window, bounds, theme.surface_sunken);
                                             paint::pitch_rows(window, bounds, &pitch_view, &theme);
                                             paint::time_grid(
-                                                window, bounds, &view, signature, &theme,
+                                                window,
+                                                bounds,
+                                                &view,
+                                                &signatures,
+                                                &theme,
                                             );
                                             paint_clip_extent(
                                                 window,

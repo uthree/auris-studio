@@ -7,6 +7,40 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
+## Unreleased
+
+### The time signature changes along the song
+
+* The document's one time signature is now a map over the timeline, beside the tempo map, the
+  harmony and the structure. A change is written from the ruler's right-click menu and lands on a
+  bar line — a meter beginning mid-bar would leave that bar with no length and every bar number
+  after it uncountable — and the ruler, the grid, the piano roll, the position readout and every
+  command that counts bars follow it.
+* The transport bar's centre now holds three readouts rather than two: position, tempo and
+  signature. The signature shows the meter the playhead is in; clicking it drops the common
+  meters, with *Other…* for anything else the notation holds.
+* Editing the meter moves the bar lines and not one sample. Notes, clips, chords and sections are
+  stored in ticks, so nothing under the ruler moves when the ruler is renumbered.
+
+### The command palette does more
+
+* Four commands that only the mouse could reach are now bindable, on the menus and in the palette:
+  Tempo…, Time Signature…, Next Grid Division and Go to Position…
+* The palette can set a value and not only fire a command. Type `1/16` for the editing grid, `6/8`
+  for the meter, a colour scheme's name, or `日本語` to switch language — the languages listed in
+  themselves, since the person opening that list is the one who cannot read the current one.
+
+### Compatibility
+
+* `Project::FORMAT_VERSION` is 4. A version 3 document opens with every note, clip and chord
+  intact and comes up in 4/4, because the field changed shape rather than gaining a sibling. A
+  document written in 3/4 by `auris compose` under 0.1.0 opens in 4/4 and wants its meter set
+  again.
+* `TempoMap::bar_beat_at` is gone; the arithmetic lives on `SignatureMap`, which is where bars
+  were always decided. `Project::time_signature` is now `Project::signatures`, and
+  `Session::harmony_grid` is now `Session::harmony_grid_at`, since which note takes the beat
+  depends on where you are.
+
 ## 0.1.0 — 2026-08-05
 
 The first release. What is here works end to end: write notes, play them through a built-in
