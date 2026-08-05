@@ -11,6 +11,12 @@ format rather than a convention: `## <version> — <date>`.
 
 ### Both edges of a clip are handles
 
+* The pointer becomes a ↔ over one, so the grab can be seen before it is tried. Nothing on screen
+  said the edges could be taken hold of, which made the whole gesture something you had to already
+  know about. The zone the arrow lights up is the zone the press acts on, tested rather than
+  trusted — including the band an audio clip gives to its fade handles, which the arrow stays out
+  of because a press there takes a fade instead.
+
 * Dragging a clip's **left** edge trims its front instead of moving it. An audio clip's window
   walks into its source, so the material stays where it sounds and dragging back out uncovers what
   was hidden; a played clip's notes are rebased, keeping the sounding half of anything the cut runs

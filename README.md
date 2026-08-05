@@ -78,8 +78,9 @@ which is as fine as the document gets. Holding ⌘ (Ctrl on Windows) suspends sn
 length of a drag, for when one thing has to sit off the beat. A double-click on any fader or knob
 puts it back to its default: 0 dB on a volume, centre on a pan.
 
-Either edge of a clip is a handle: dragging one changes the clip's length, and what that means
-depends on what the clip is. An **audio** clip is trimmed, and the trim stops where the material
+Either edge of a clip is a handle, and the pointer turns into a ↔ over one so you can see that
+before you press. Dragging one changes the clip's length, and what that means depends on what the
+clip is. An **audio** clip is trimmed, and the trim stops where the material
 does — the front walks the clip's window into the source rather than sliding the take along the
 timeline, so dragging it back out uncovers what was hidden instead of repeating what is left. A
 clip somebody **played** keeps every note exactly where it is. A clip that **wrote itself** is

@@ -57,6 +57,13 @@ fn resize_grab(width: Pixels) -> f32 {
     RESIZE_HANDLE.min(f32::from(width) / 3.0)
 }
 
+/// How far a clip is drawn inside its lane, top and bottom.
+///
+/// Read by the cursor zones as well as the painter: the edges the pointer is offered are the
+/// edges that were drawn, and a zone measured from the lane instead of the clip would light up
+/// two pixels of the gap between two tracks.
+const CLIP_INSET: Pixels = px(2.0);
+
 /// Height of a clip's name bar.
 const TITLE_HEIGHT: Pixels = px(14.0);
 
@@ -594,6 +601,7 @@ impl AurisApp {
 
         // Everything the paint closure needs, copied out so it does not borrow `self`.
         let lanes: Vec<LanePaint> = self.lane_paint_data();
+        let edge_zones = self.clip_edge_zones(&lanes);
         let peaks = self.waveform_map();
         let band = self.rubber_band(crate::app::BandSurface::Lanes);
 
@@ -675,8 +683,32 @@ impl AurisApp {
                         let view = view.clone();
                         let recorded = self.canvas.lanes.clone();
                         canvas(
-                            move |bounds, _, _| recorded.set(Some(bounds)),
-                            move |bounds, _, window, cx| {
+                            move |bounds, window, _| {
+                                recorded.set(Some(bounds));
+                                // A hitbox each rather than a hovered-thing on the view: a cursor
+                                // driven from app state would repaint the whole arrangement on
+                                // every pointer move across it, and gpui already knows which
+                                // rectangle the pointer is in.
+                                edge_zones
+                                    .iter()
+                                    .map(|zone| {
+                                        window.insert_hitbox(
+                                            Bounds {
+                                                origin: bounds.origin + zone.origin,
+                                                size: zone.size,
+                                            },
+                                            gpui::HitboxBehavior::Normal,
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                            },
+                            move |bounds, edges: Vec<gpui::Hitbox>, window, cx| {
+                                // Nothing on screen said the edges could be taken hold of, so the
+                                // only way to find out was to try. The arrow says it now.
+                                for edge in &edges {
+                                    window
+                                        .set_cursor_style(gpui::CursorStyle::ResizeLeftRight, edge);
+                                }
                                 paint::clipped(window, bounds, |window| {
                                     paint::rect(window, bounds, theme.surface_sunken);
                                     paint::time_grid(
@@ -834,7 +866,7 @@ impl AurisApp {
                 clip.fade_in_frames,
                 clip.fade_out_frames,
                 x,
-                y_in_lane - px(2.0),
+                y_in_lane - CLIP_INSET,
             )?;
             Some((clip.id, edge))
         })
@@ -857,6 +889,43 @@ impl AurisApp {
             FadeEdge::Out => (fade_in, frames.saturating_sub(at_frame)),
         };
         let _ = self.session.set_clip_fades(clip, fade_in, fade_out);
+    }
+
+    /// Where the pointer would take hold of a clip's edge, relative to the lanes canvas.
+    ///
+    /// The cursor and the press have to agree about this. An arrow promising a grab the button
+    /// does not deliver is worse than no arrow at all, so both are built from the same three
+    /// numbers: [`resize_grab`] off the clip's drawn width, the lane it sits in, and the band an
+    /// audio clip gives to its fade handles.
+    ///
+    /// Only the *inner* half of each grab zone is offered. [`Self::begin_lane_drag`] reaches the
+    /// resize check only once [`Self::clip_at`] has found a clip under the pointer's tick, so the
+    /// half hanging past the edge is a zone no press can ever land in.
+    fn clip_edge_zones(&self, lanes: &[LanePaint]) -> Vec<Bounds<Pixels>> {
+        let mut zones = Vec::new();
+        let mut lane_top = -self.lane_scroll;
+        for lane in lanes {
+            let height = px(lane.height);
+            for clip in &lane.clips {
+                let left = self.timeline.tick_to_x(clip.start);
+                let right = self.timeline.tick_to_x(clip.start + clip.length);
+                let grab = px(resize_grab(right - left));
+                if grab <= px(0.0) {
+                    continue;
+                }
+                let top = lane_top + CLIP_INSET;
+                let bottom = lane_top + height - CLIP_INSET;
+                // An audio clip wide enough to draw its fade handles gives them the band under
+                // its name bar, and a press there takes a fade rather than the edge.
+                let fades = matches!(clip.content, ClipContent::Waveform { .. })
+                    && f32::from(right - left) > FADE_HANDLE_MIN_WIDTH;
+                for x in [left, right - grab] {
+                    zones.extend(edge_zone_rows(x, grab, top, bottom, fades));
+                }
+            }
+            lane_top += height;
+        }
+        zones
     }
 
     /// Snapshot of what each lane draws, taken while `self` is still borrowable.
@@ -1266,6 +1335,34 @@ fn chord_handle_at(
     })
 }
 
+/// One edge's grab zone, split around the band an audio clip gives to its fade handles.
+///
+/// Two rectangles rather than one when the band applies, because the name bar above it resizes
+/// too — a press there falls past the fade check, which wants a `y` inside the band. Free rather
+/// than a method so the split can be checked without a window.
+fn edge_zone_rows(
+    x: Pixels,
+    width: Pixels,
+    top: Pixels,
+    bottom: Pixels,
+    fade_band: bool,
+) -> Vec<Bounds<Pixels>> {
+    let row = |from: Pixels, to: Pixels| {
+        (to > from).then(|| Bounds {
+            origin: point(x, from),
+            size: size(width, to - from),
+        })
+    };
+    if !fade_band {
+        return row(top, bottom).into_iter().collect();
+    }
+    let band = top + TITLE_HEIGHT;
+    [row(top, band), row(band + FADE_BAND, bottom)]
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
 /// The fade handle a press at `x`, `y_in_clip` takes hold of, on an audio clip drawn from
 /// `start` for `length` whose fades cover `fade_in` and `fade_out` of its `frames` frames.
 ///
@@ -1364,8 +1461,8 @@ fn paint_lane(
             continue;
         }
         let clip_bounds = Bounds {
-            origin: point(x, bounds.origin.y + px(2.0)),
-            size: size(width.max(px(3.0)), bounds.size.height - px(4.0)),
+            origin: point(x, bounds.origin.y + CLIP_INSET),
+            size: size(width.max(px(3.0)), bounds.size.height - CLIP_INSET * 2.0),
         };
         let selected = lane.selected.contains(&clip.id);
         let body = if clip.muted {
@@ -1666,6 +1763,53 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn the_resize_cursor_covers_what_a_press_would_actually_grab() {
+        // The zone the arrow lights up and the zone the button acts on are the same three
+        // numbers, and this is the assertion that keeps them so: an arrow promising a grab the
+        // press does not deliver is worse than no arrow at all.
+        let top = px(0.0);
+        let bottom = px(68.0);
+        let rows = edge_zone_rows(px(100.0), px(6.0), top, bottom, false);
+        assert_eq!(rows.len(), 1, "a clip with no fade handles is one zone");
+        assert_eq!(rows[0].origin, point(px(100.0), top));
+        assert_eq!(rows[0].size, size(px(6.0), bottom - top));
+
+        // An audio clip's band belongs to its fades, so the zone parts around it — and the name
+        // bar above the band still resizes, because a press there falls past the fade check.
+        let rows = edge_zone_rows(px(100.0), px(6.0), top, bottom, true);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].size.height, TITLE_HEIGHT);
+        assert_eq!(rows[1].origin.y, TITLE_HEIGHT + FADE_BAND);
+        assert_eq!(rows[1].size.height, bottom - TITLE_HEIGHT - FADE_BAND);
+        // Nothing offered inside the band, which is where `fade_handle_at` answers.
+        let inside_band = TITLE_HEIGHT + px(4.0);
+        assert!(
+            !rows
+                .iter()
+                .any(|row| (row.origin.y..row.origin.y + row.size.height).contains(&inside_band)),
+            "the cursor claimed a band the fades own: {rows:?}"
+        );
+
+        // A lane too short to hold the band drops the rows that would come out inside out.
+        assert!(edge_zone_rows(px(0.0), px(6.0), px(0.0), px(10.0), true).len() <= 1);
+        assert!(edge_zone_rows(px(0.0), px(6.0), px(0.0), px(0.0), false).is_empty());
+    }
+
+    #[test]
+    fn the_two_edges_of_a_clip_never_reach_each_other() {
+        // `resize_grab` caps each zone at a third of the clip, which is what leaves the middle
+        // third to moving it. Without that a clip zoomed far enough out could be stretched from
+        // either end and never dragged anywhere.
+        for width in [3.0f32, 12.0, 40.0, 96.0, 400.0] {
+            let grab = resize_grab(px(width));
+            assert!(
+                grab * 2.0 <= width,
+                "a {width}px clip offered {grab}px of grab at each end"
+            );
+        }
     }
 
     #[test]
