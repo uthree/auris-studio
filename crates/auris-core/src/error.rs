@@ -44,6 +44,11 @@ pub enum CoreError {
     /// Text that was meant to be a time signature was not one.
     #[error("`{0}` is not a time signature like 4/4")]
     InvalidTimeSignature(String),
+
+    /// An automation lane was built with no points, or with one that is not a real value at a
+    /// real position.
+    #[error("invalid automation lane: {0}")]
+    InvalidAutomationLane(String),
 }
 
 /// Result alias used throughout the core crate.

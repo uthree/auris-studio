@@ -24,6 +24,7 @@
 #![warn(missing_docs)]
 
 pub mod asset;
+pub mod automation;
 pub mod buffer;
 pub mod error;
 pub mod harmony;
@@ -36,10 +37,11 @@ pub mod theory;
 pub mod time;
 
 pub use asset::AssetPath;
+pub use automation::{Automation, AutomationCurve, AutomationLane, AutomationPoint};
 pub use buffer::AudioBuffer;
 pub use error::{CoreError, Result};
 pub use harmony::{ChordMap, ChordPoint, Harmony, KeyMap, KeyPoint};
-pub use param::{ParamDescriptor, ParamId, ParamUnit, ParamValueCurve};
+pub use param::{ParamDescriptor, ParamId, ParamTarget, ParamUnit, ParamValueCurve};
 pub use plugin::{
     Effect, Instrument, NoteEvent, Parameterized, PluginCategory, PluginDescriptor, PluginKind,
     PluginState, PrepareContext, ProcessContext,

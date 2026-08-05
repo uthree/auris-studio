@@ -898,6 +898,14 @@ pub struct Project {
     /// recognisably the same material.
     #[serde(default)]
     pub sections: crate::structure::SectionMap,
+    /// Parameter values that move along the timeline, one lane per automated parameter.
+    ///
+    /// The fifth timeline map, and the only one that is a collection: there is a curve per
+    /// parameter rather than one per project. A parameter with no lane here is not automated at
+    /// all and keeps the static value on its strip or in its plugin state, which is what lets a
+    /// mix be automated one control at a time.
+    #[serde(default)]
+    pub automation: crate::automation::Automation,
     /// Tracks, top to bottom.
     pub tracks: Vec<Track>,
     /// Master bus strip.
@@ -953,7 +961,13 @@ impl Project {
     /// carry in either direction: an older build reading a 4/4-throughout document would find an
     /// object where it wanted a signature and give up on the whole file. The version turns that
     /// into a sentence about updating.
-    pub const FORMAT_VERSION: u32 = 4;
+    /// 5 since the document gained automation. This one *is* a plain new field with a default,
+    /// which normally does not move the version — but the direction that matters here is the
+    /// other one. An older build ignores a field it does not know, so it would open an automated
+    /// mix, play it at the wrong levels, and write those levels back on the next save, silently
+    /// destroying every curve in it. Refusing to open is the only honest answer, and the version
+    /// is what produces it.
+    pub const FORMAT_VERSION: u32 = 5;
 
     /// An empty project.
     ///
@@ -974,6 +988,7 @@ impl Project {
             signatures: SignatureMap::default(),
             harmony: Harmony::default(),
             sections: crate::structure::SectionMap::default(),
+            automation: crate::automation::Automation::new(),
             tracks: Vec::new(),
             master: MixerStrip::default(),
             audio_sources: BTreeMap::new(),
@@ -1208,7 +1223,14 @@ impl Project {
     pub fn remove_track(&mut self, id: TrackId) -> bool {
         let before = self.tracks.len();
         self.tracks.retain(|track| track.id != id);
-        self.tracks.len() != before
+        let removed = self.tracks.len() != before;
+        if removed {
+            // Its automation leaves with it. A lane left behind names a track that is not there,
+            // and ids are handed out again — so it would come back to life driving a parameter on
+            // whichever track was created next.
+            self.automation.remove_track(id);
+        }
+        removed
     }
 
     /// Moves a track to a new index, clamping into range.
@@ -1367,6 +1389,14 @@ impl Project {
             let before = strip.effects.len();
             strip.effects.retain(|slot| slot.id != slot_id);
             removed |= strip.effects.len() != before;
+        }
+        if removed {
+            // Same reason a deleted track drops its lanes: the slot id outlives nothing, and a
+            // curve addressed to a chain position that no longer exists is a curve that will
+            // eventually be applied to whatever lands there.
+            self.automation.remove_lanes_where(|target| {
+                matches!(target, crate::param::ParamTarget::Effect { slot, .. } if slot == slot_id)
+            });
         }
         removed
     }
