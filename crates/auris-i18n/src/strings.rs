@@ -510,6 +510,9 @@ strings! {
     EditBypassEffect { en: "bypassing an effect", ja: "エフェクトのバイパス" }
     EditReorderEffects { en: "reordering the effects", ja: "エフェクトの並べ替え" }
     EditAdjustParameter { en: "the parameter change", ja: "パラメーターの変更" }
+    EditWriteAutomation { en: "the automation point", ja: "オートメーションの点" }
+    EditEraseAutomation { en: "erasing the automation point", ja: "オートメーションの点の削除" }
+    EditClearAutomation { en: "clearing the automation", ja: "オートメーションの消去" }
     EditImportAudio { en: "importing audio", ja: "オーディオの読み込み" }
     EditImportSoundFont { en: "importing a SoundFont", ja: "サウンドフォントの読み込み" }
     EditChoosePreset { en: "choosing a sound", ja: "音色の選択" }

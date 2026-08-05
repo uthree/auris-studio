@@ -104,6 +104,15 @@ pub enum Edit {
     /// values: without the target, a cutoff notch and a fader notch made within the window
     /// folded into a single step, and undo took both back at once.
     AdjustParameter(ParamTarget),
+    /// A point was written on a parameter's automation lane, or moved along it.
+    ///
+    /// Which parameter travels along for the reason [`Edit::AdjustParameter`]'s does: a point
+    /// dragged on one lane and then a point dragged on another must not fold into one step.
+    WriteAutomation(ParamTarget),
+    /// A point was taken off a lane.
+    EraseAutomation,
+    /// A whole lane was removed, giving the parameter its stored value back.
+    ClearAutomation,
     /// An audio file was imported onto a track.
     ImportAudio,
     /// A SoundFont was imported into the project.

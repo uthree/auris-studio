@@ -521,7 +521,7 @@ pub mod documents {
 }
 
 pub mod timelines {
-    //! The four maps laid along the song, and what the meter has that they lack.
+    //! The maps laid along the song, and what the meter has that they lack.
     //!
     //! Four things about a song change as it goes on, and at any one moment every track obeys the
     //! same one of each. None belongs to a track, because a track that could disagree with its
@@ -534,6 +534,19 @@ pub mod timelines {
     //! | [`SignatureMap`](auris_core::time::SignatureMap) | how the bars are counted | the song's meter |
     //! | [`KeyMap`](auris_core::harmony::KeyMap) | what key | the song's key |
     //! | [`ChordMap`](auris_core::harmony::ChordMap) | what chord | nothing — a song may have none |
+    //!
+    //! A fifth sits beside them and is the odd one out twice over.
+    //! [`Automation`](auris_core::automation::Automation) is a *set* of maps — one lane per
+    //! automated parameter — rather than one map for the project, because a fader and a cutoff
+    //! have nothing to say to each other. And a lane is **not anchored at tick 0**: it holds its
+    //! nearest value flat outside the stretch it was written over, because it made a claim about
+    //! that stretch and none about the rest of the song. A tempo has to be defined from the first
+    //! sample; a filter cutoff does not.
+    //!
+    //! The contract that lets a mix be automated one control at a time is that
+    //! [`Automation::value_at`](auris_core::automation::Automation::value_at) returns an
+    //! `Option`. No lane is not "a lane at the default" — it is no answer, and the parameter
+    //! keeps the static value on its strip or in its plugin state.
     //!
     //! They are deliberately the same shape — a sorted list of points, each in force until the
     //! next, deserialised through a repr rather than a plain derive so a hand-edited file cannot
@@ -563,18 +576,27 @@ pub mod timelines {
     //! ruler and the grid painter walk: within a stretch the arithmetic is the uniform arithmetic
     //! it always was, and only the phase changes.
     //!
-    //! # None of it reaches the audio, except the tempo
+    //! # What reaches the audio, and what does not
     //!
     //! [`Session::set_tempo_at`](crate::Session::set_tempo_at) re-flattens the render graph and
     //! republishes the loop region, because notes are scheduled in frames and the mapping from
-    //! ticks to frames has just moved.
+    //! ticks to frames has just moved. Every automation command rebuilds it too, for a different
+    //! reason: the lanes are resolved to graph positions when the graph is built, so a lane the
+    //! graph has not seen is a lane nothing is driving.
     //!
-    //! The other three touch nothing. A meter is notation — positions are ticks, the tempo map
-    //! turns ticks into samples, and neither asks how many beats are in a bar. Harmony is already
-    //! written into the notes that were generated from it. Changing any of the three moves bar
+    //! The meter and the harmony touch nothing. A meter is notation — positions are ticks, the
+    //! tempo map turns ticks into samples, and neither asks how many beats are in a bar. Harmony
+    //! is already written into the notes that were generated from it. Changing either moves bar
     //! lines and words on screen and not one sample, which is why
     //! [`set_signature_at`](crate::Session::set_signature_at) and its neighbours record an undo
     //! step and stop.
+    //!
+    //! Automation is read once per rendered segment rather than once per sample. For a fader that
+    //! is not an approximation — a gain and a pan are targets the strip ramps across the block it
+    //! is given, so a segment-rate write comes out as a slope — and for a plugin parameter there
+    //! is nowhere finer to put one. A seek or a loop wrap *arrives* at its values rather than
+    //! sliding to them, the same distinction a track draws with `continued_from` when it chases
+    //! notes: a playhead that jumped is not a fader that moved.
     //!
     //! [`SignatureMap`]: auris_core::time::SignatureMap
     //! [`SignatureMap::spans`]: auris_core::time::SignatureMap::spans

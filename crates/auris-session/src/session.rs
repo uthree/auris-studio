@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use auris_core::automation::{Automation, AutomationCurve};
 use auris_core::harmony::Harmony;
 use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
 use auris_core::plugin::{PluginKind, PluginState};
@@ -2562,6 +2563,144 @@ impl Session {
         }
     }
 
+    // ------------------------------------------------------------------ automation
+    //
+    // A parameter's value over the timeline, beside the value it is set to. The two do not
+    // compete: a target with no lane keeps its static value and only an existing lane takes over,
+    // which is what lets a mix be automated one control at a time.
+    //
+    // Unlike the tempo and the meter, none of these snap. A tempo change is aimed at a place in
+    // the song; an automation point is aimed at a moment in the sound, and a filter sweep that
+    // could only begin on a sixteenth is a filter sweep with a stutter in it. The frontend is
+    // where a grid is offered, through the modifier every other drag already answers to.
+
+    /// Every automated parameter in the document.
+    pub fn automation(&self) -> &Automation {
+        &self.project.automation
+    }
+
+    /// Whether `target` is driven by a lane rather than by its stored value.
+    ///
+    /// A frontend asks before letting a fader be dragged: moving one that automation is about to
+    /// overwrite looks like a control that does not work.
+    pub fn is_automated(&self, target: ParamTarget) -> bool {
+        self.project.automation.lane(target).is_some()
+    }
+
+    /// The value driving `target` at `at`, or `None` when it is not automated.
+    pub fn automated_value(&self, target: ParamTarget, at: Ticks) -> Option<f32> {
+        self.project.automation.value_at(target, at.max_zero())
+    }
+
+    /// Writes a point on `target`'s lane, starting the lane if it had none.
+    ///
+    /// The value is clamped by the parameter's own descriptor, which is also what snaps a
+    /// discrete one onto a step: a lane is written in the parameter's units, so a point outside
+    /// its range is a point the plugin would refuse anyway.
+    ///
+    /// Returns whether anything changed, which is `false` for a target this document does not
+    /// have and for a point identical to the one already there.
+    pub fn set_automation_point(&mut self, target: ParamTarget, at: Ticks, value: f32) -> bool {
+        let Some(descriptor) = self.automatable(target) else {
+            return false;
+        };
+        let value = descriptor.clamp(value);
+        let curve = curve_for(&descriptor);
+        let at = at.max_zero();
+        let mut probe = self.project.automation.clone();
+        if !probe.set_point(target, curve, at, value) || probe == self.project.automation {
+            return false;
+        }
+        self.record(Edit::WriteAutomation(target));
+        self.project.automation = probe;
+        self.invalidate_graph();
+        true
+    }
+
+    /// Moves a point along its lane, taking a new value with it.
+    ///
+    /// Returns where it landed, which is not always where it was asked to go: dropped onto
+    /// another point it replaces that one, since one instant cannot hold two values. A drag wants
+    /// [`Self::begin_transaction`] around the whole gesture, the way every other drag does.
+    pub fn move_automation_point(
+        &mut self,
+        target: ParamTarget,
+        from: Ticks,
+        to: Ticks,
+        value: f32,
+    ) -> Option<Ticks> {
+        let descriptor = self.automatable(target)?;
+        let value = descriptor.clamp(value);
+        let mut probe = self.project.automation.clone();
+        let landed = probe.move_point(target, from, to.max_zero(), value)?;
+        if probe == self.project.automation {
+            return Some(landed);
+        }
+        self.record(Edit::WriteAutomation(target));
+        self.project.automation = probe;
+        self.invalidate_graph();
+        Some(landed)
+    }
+
+    /// Removes one point, and the lane with it when that was the last one.
+    ///
+    /// A lane holding nothing is not an empty lane, it is no lane: the parameter goes back to
+    /// the value stored on its strip or in its plugin state.
+    pub fn remove_automation_point(&mut self, target: ParamTarget, at: Ticks) -> bool {
+        let mut probe = self.project.automation.clone();
+        if !probe.remove_point(target, at) {
+            return false;
+        }
+        self.record(Edit::EraseAutomation);
+        self.project.automation = probe;
+        self.invalidate_graph();
+        true
+    }
+
+    /// Removes a whole lane, giving the parameter its stored value back.
+    pub fn clear_automation(&mut self, target: ParamTarget) -> bool {
+        let mut probe = self.project.automation.clone();
+        if !probe.remove_lane(target) {
+            return false;
+        }
+        self.record(Edit::ClearAutomation);
+        self.project.automation = probe;
+        self.invalidate_graph();
+        true
+    }
+
+    /// Changes how an existing lane gets between its points.
+    pub fn set_automation_curve(&mut self, target: ParamTarget, curve: AutomationCurve) -> bool {
+        let mut probe = self.project.automation.clone();
+        if !probe.set_curve(target, curve) || probe == self.project.automation {
+            return false;
+        }
+        self.record(Edit::WriteAutomation(target));
+        self.project.automation = probe;
+        self.invalidate_graph();
+        true
+    }
+
+    /// The descriptor for a target this document can actually automate.
+    ///
+    /// `None` for one it does not have. [`Self::descriptor_for`] answers for a track id nobody
+    /// ever created, because a fader's descriptor is synthesised rather than looked up — so the
+    /// existence check has to be made here, or a lane could be written into thin air and then
+    /// dropped again by the graph builder without anyone being told.
+    fn automatable(&mut self, target: ParamTarget) -> Option<ParamDescriptor> {
+        let present = match target {
+            ParamTarget::MasterGain | ParamTarget::MasterPan => true,
+            ParamTarget::TrackGain(id) | ParamTarget::TrackPan(id) => {
+                self.project.track(id).is_some()
+            }
+            ParamTarget::Instrument { track, .. } => self.project.track(track).is_some(),
+            ParamTarget::Effect { track, slot, .. } => self
+                .strip(track)
+                .is_some_and(|strip| strip.effects.iter().any(|effect| effect.id == slot)),
+        };
+        present.then(|| self.descriptor_for(target)).flatten()
+    }
+
     fn strip(&self, track: Option<TrackId>) -> Option<&auris_core::MixerStrip> {
         match track {
             Some(id) => self.project.track(id).map(|t| &t.mixer),
@@ -3180,6 +3319,21 @@ fn locate(
         return Some(direct);
     }
     find_named(stored.file_name()?, search, expected_size)
+}
+
+/// How a new lane over a parameter should get between its points.
+///
+/// A parameter with discrete positions holds; everything else runs in a straight line.
+/// Interpolating a chooser would sweep through every option between two settings and sound all of
+/// them on the way — a filter opening is a gesture, a waveform changing is not.
+///
+/// Only consulted when a lane is created. Changing an existing one is
+/// [`Session::set_automation_curve`], so writing a point cannot restyle a curve somebody shaped.
+fn curve_for(descriptor: &ParamDescriptor) -> AutomationCurve {
+    match descriptor.steps {
+        Some(_) => AutomationCurve::Hold,
+        None => AutomationCurve::Linear,
+    }
 }
 
 /// Adds the directory holding `found` to the places later searches will look.
@@ -5794,5 +5948,184 @@ mod tests {
             .unwrap();
         assert!(rendered.peak() > 0.01);
         assert!(session.project().tracks.is_empty());
+    }
+
+    // ------------------------------------------------------------------ automation
+
+    #[test]
+    fn a_lane_takes_over_a_parameter_and_giving_it_up_hands_it_back() {
+        // The whole contract in one test: no lane means no answer and the stored value stands,
+        // a lane answers, and removing the last point is removing the lane.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let fader = ParamTarget::TrackGain(track);
+        assert_eq!(session.automated_value(fader, Ticks::ZERO), None);
+        assert!(!session.is_automated(fader));
+
+        assert!(session.set_automation_point(fader, Ticks::ZERO, -6.0));
+        assert!(session.is_automated(fader));
+        assert_eq!(
+            session.automated_value(fader, Ticks::from_beats(9.0)),
+            Some(-6.0)
+        );
+
+        assert!(session.remove_automation_point(fader, Ticks::ZERO));
+        assert!(!session.is_automated(fader));
+        assert_eq!(session.automated_value(fader, Ticks::ZERO), None);
+    }
+
+    #[test]
+    fn a_lane_reads_between_its_points() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let fader = ParamTarget::TrackGain(track);
+        session.set_automation_point(fader, Ticks::ZERO, -12.0);
+        session.set_automation_point(fader, Ticks::from_beats(8.0), 0.0);
+        assert_eq!(
+            session.automated_value(fader, Ticks::from_beats(4.0)),
+            Some(-6.0)
+        );
+    }
+
+    #[test]
+    fn a_written_value_is_clamped_by_the_parameter_it_drives() {
+        // A lane is written in the parameter's own units, so a point outside its range is a point
+        // the plugin would refuse anyway — better stored as what will actually be heard.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let fader = ParamTarget::TrackGain(track);
+        session.set_automation_point(fader, Ticks::ZERO, 500.0);
+        let written = session.automated_value(fader, Ticks::ZERO).expect("a lane");
+        assert!(
+            written <= 12.0,
+            "the fader tops out at +12 dB, wrote {written}"
+        );
+    }
+
+    #[test]
+    fn a_discrete_parameter_gets_a_lane_that_holds() {
+        // Interpolating a chooser would sweep through every option between two settings and sound
+        // all of them. Which curve a lane gets is decided where the descriptor is legible.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let waveform = session
+            .param_descriptors(
+                &session.project().tracks[0]
+                    .kind
+                    .as_instrument()
+                    .unwrap()
+                    .instrument_id
+                    .clone(),
+            )
+            .iter()
+            .position(|descriptor| descriptor.steps.is_some())
+            .map(|index| ParamTarget::Instrument {
+                track,
+                param: ParamId(index as u32),
+            });
+        let Some(chooser) = waveform else {
+            panic!("the default instrument has no discrete parameter to test with");
+        };
+        session.set_automation_point(chooser, Ticks::ZERO, 0.0);
+        session.set_automation_point(chooser, Ticks::from_beats(8.0), 2.0);
+        assert_eq!(
+            session.automation().lane(chooser).map(|lane| lane.curve),
+            Some(AutomationCurve::Hold)
+        );
+        assert_eq!(
+            session.automated_value(chooser, Ticks::from_beats(4.0)),
+            Some(0.0),
+            "a chooser holds rather than passing through what is between"
+        );
+    }
+
+    #[test]
+    fn a_lane_cannot_be_written_into_thin_air() {
+        // A fader's descriptor is synthesised rather than looked up, so it answers for a track id
+        // nobody ever created; without an existence check a lane would be written and then
+        // silently dropped by the graph builder.
+        let mut session = session();
+        assert!(!session.set_automation_point(
+            ParamTarget::TrackGain(TrackId(9_999)),
+            Ticks::ZERO,
+            -6.0
+        ));
+        assert!(session.automation().is_empty());
+    }
+
+    #[test]
+    fn every_automation_command_is_one_undo_step_and_only_when_it_changed_something() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let fader = ParamTarget::TrackGain(track);
+        session.forget_history();
+
+        session.set_automation_point(fader, Ticks::ZERO, -6.0);
+        assert_eq!(undo_depth(&mut session), 1);
+        // The same point again is not an edit.
+        session.set_automation_point(fader, Ticks::ZERO, -6.0);
+        assert_eq!(undo_depth(&mut session), 1);
+        // Nor is removing a point that was never there.
+        assert!(!session.remove_automation_point(fader, Ticks::from_beats(4.0)));
+        assert_eq!(undo_depth(&mut session), 1);
+
+        session.set_automation_point(fader, Ticks::from_beats(4.0), 0.0);
+        assert_eq!(session.undo(), Some(Edit::WriteAutomation(fader)));
+        assert_eq!(
+            session.automation().lane(fader).map(|l| l.points().len()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn a_drag_across_a_lane_is_one_undo_step() {
+        // The mechanism every other drag uses: the transaction is opened by the gesture, so the
+        // fifty points a pointer writes on the way collapse into the one it landed on.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let fader = ParamTarget::TrackGain(track);
+        session.set_automation_point(fader, Ticks::ZERO, -6.0);
+        session.forget_history();
+
+        session.begin_transaction(Edit::WriteAutomation(fader));
+        let mut at = Ticks::ZERO;
+        for step in 1..=20 {
+            at = session
+                .move_automation_point(fader, at, Ticks(step * 48), -6.0 + step as f32 * 0.1)
+                .expect("the point is there to move");
+        }
+        session.end_transaction();
+        assert_eq!(undo_depth(&mut session), 1);
+    }
+
+    #[test]
+    fn deleting_a_track_takes_its_lanes_with_it() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        session.set_automation_point(ParamTarget::TrackGain(track), Ticks::ZERO, -6.0);
+        session.set_automation_point(ParamTarget::MasterGain, Ticks::ZERO, -3.0);
+        session.remove_track(track).unwrap();
+        assert_eq!(session.automation().len(), 1);
+        assert!(session.automation().lane(ParamTarget::MasterGain).is_some());
+    }
+
+    #[test]
+    fn a_lane_survives_a_save_and_an_open() {
+        let scratch = Scratch::new("automation-round-trip");
+        let mut session = self::tests::session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let fader = ParamTarget::TrackGain(track);
+        session.set_automation_point(fader, Ticks::ZERO, -12.0);
+        session.set_automation_point(fader, Ticks::from_beats(8.0), 0.0);
+        let report = session.save_as(&scratch.join("Automated.auris")).unwrap();
+
+        let mut reopened = self::tests::session();
+        reopened.open(&report.document).unwrap();
+        let fader = ParamTarget::TrackGain(reopened.project().tracks[0].id);
+        assert_eq!(
+            reopened.automated_value(fader, Ticks::from_beats(4.0)),
+            Some(-6.0),
+            "the curve has to survive the round trip, not just the points"
+        );
     }
 }
