@@ -75,6 +75,11 @@ pub fn supported_soundfont_extensions() -> &'static [&'static str] {
     auris_io::soundfont_extensions()
 }
 
+/// Standard MIDI File extensions, for a file-picker filter.
+pub fn midi_extensions() -> &'static [&'static str] {
+    auris_io::midi_extensions()
+}
+
 /// Re-exports of the backend types that appear in [`Session`]'s signatures, so a frontend can
 /// depend on this crate alone.
 ///

@@ -25,6 +25,8 @@ actions!(
         ImportAudio,
         /// Import a SoundFont, making its sounds available to every track.
         ImportSoundFont,
+        ImportMidi,
+        ExportMidi,
         /// Copy every file the project refers to into its folder.
         CollectAssets,
         /// Render the project to a WAV file.
@@ -214,6 +216,11 @@ bindable! {
         "file.save_as",         GroupFile,      CmdSaveAs,             "secondary-shift-s" => SaveProjectAs;
         "file.import",          GroupFile,      CmdImportAudio,        "secondary-i" => ImportAudio;
         "file.import_soundfont", GroupFile,     CmdImportSoundFont,    "secondary-shift-i" => ImportSoundFont;
+        // M for MIDI, in and out. The table wants a keystroke per command rather than an empty
+        // one, and these are the letters left that mean anything — the I and E pairs both went to
+        // audio, which is imported and exported far more often.
+        "file.import_midi",     GroupFile,      CmdImportMidi,         "secondary-m" => ImportMidi;
+        "file.export_midi",     GroupFile,      CmdExportMidi,         "secondary-alt-m" => ExportMidi;
         "file.collect",         GroupFile,      CmdCollectAssets,      "secondary-shift-a" => CollectAssets;
         "file.export",          GroupFile,      CmdExportWav,          "secondary-e" => ExportAudio;
         "file.export_cycle",    GroupFile,      CmdExportCycle,        "secondary-shift-e" => ExportCycle;

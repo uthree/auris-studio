@@ -228,6 +228,8 @@ strings! {
     CmdSaveAs { en: "Save As", ja: "名前を付けて保存" }
     CmdImportAudio { en: "Import Audio", ja: "オーディオを読み込む" }
     CmdImportSoundFont { en: "Import SoundFont", ja: "サウンドフォントを読み込む" }
+    CmdImportMidi { en: "Import MIDI File…", ja: "MIDI ファイルを読み込む…" }
+    CmdExportMidi { en: "Export MIDI File…", ja: "MIDI ファイルを書き出す…" }
     CmdCollectAssets { en: "Collect Assets", ja: "アセットを集める" }
     CmdExportWav { en: "Export WAV", ja: "WAV を書き出す" }
     CmdExportCycle { en: "Export Cycle as WAV", ja: "サイクル範囲を WAV に書き出す" }
@@ -443,11 +445,14 @@ strings! {
     DialogComposeSpec { en: "Compose from specification", ja: "仕様書から作曲" }
     DialogImportAudio { en: "Import audio", ja: "オーディオを読み込む" }
     DialogImportSoundFont { en: "Import SoundFont", ja: "サウンドフォントを読み込む" }
+    DialogImportMidi { en: "Import a MIDI file", ja: "MIDI ファイルを読み込む" }
+    DialogExportMidi { en: "Export a MIDI file", ja: "MIDI ファイルを書き出す" }
     DialogExportWav { en: "Export WAV", ja: "WAV を書き出す" }
     FilterProject { en: "Auris project", ja: "Auris プロジェクト" }
     FilterSpec { en: "Song specification", ja: "楽曲仕様書" }
     FilterAudio { en: "Audio", ja: "オーディオ" }
     FilterSoundFont { en: "SoundFont", ja: "サウンドフォント" }
+    FilterMidi { en: "MIDI file", ja: "MIDI ファイル" }
     FilterWav { en: "WAV audio", ja: "WAV オーディオ" }
     SpecRejectedTitle { en: "The specification was not accepted", ja: "仕様書を読み取れませんでした" }
 

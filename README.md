@@ -31,6 +31,9 @@ each is read in turn, in the order they were dragged, with the status line namin
 read — decoding is slow enough that a folder of takes would otherwise be several seconds of a
 window with nothing to say.
 
+Drop a **`.mid`** and it opens as a new piece, tempo and meter and all — see
+[MIDI files](#midi-files).
+
 Drop a **`.auris` project** and it opens, the same way **File → Open** would: unsaved work in the
 document you have open is asked about first, and answering *Save* saves it and then opens the one
 you dropped. A project has to arrive **on its own**, though — it is a document rather than
@@ -134,6 +137,32 @@ stretch the playhead is in; a change elsewhere is written from the ruler's right
 (*Tempo from Here…*), lands on the beat, and is marked along the ruler's lower edge with its
 number. The same menu removes the change in force under the pointer. The song's opening tempo
 at the start of the timeline is always there and cannot be removed, exactly like the key.
+
+### MIDI files
+
+**File → Import MIDI File…**, or dropping a `.mid` on the window, reads it as a **new piece**: its
+tempo map, its meter, and one track per part with the notes where the file put them. A new document
+rather than tracks added to the open one, because a MIDI file brings its own clock — its notes
+dropped into a piece running at a different speed would be the right notes at the wrong lengths,
+with nothing on screen to say why. Unsaved work is asked about first, exactly as it is for **Open**.
+
+A part that played on **channel 10** gets the noise-drum instrument. That is the only thing a bare
+MIDI file says about what a track is *for*, and a General MIDI drum part played on a lead synth is
+not something anyone would keep.
+
+**File → Export MIDI File…** writes the other direction, at the application's own resolution — 960
+ticks to the quarter note, which an SMF header holds — so a piece that leaves and comes back has
+every note in the same place. Tempo is the one thing that does not survive exactly: a MIDI file
+stores whole microseconds per quarter note, so 144 bpm goes out as 416 667 and comes back as
+143.999 88. A thousandth of a beat per minute, and 96 or 120 divide evenly and return exact.
+
+What a `.mid` has nowhere to put, in either direction: audio tracks, every mixer setting including
+mute and solo, which instrument each track plays, and the automation. A MIDI file is the notes and
+the clock.
+
+A file counted in **SMPTE frames** rather than beats is refused rather than guessed at. It has no
+beats, so it has no bars, and laying it on a musical timeline would mean choosing a tempo on the
+file's behalf and writing it down as though the file had said so.
 
 ### Automation
 

@@ -531,6 +531,124 @@ impl AurisApp {
         .detach();
     }
 
+    /// Prompts for a MIDI file and reads it as a new document, asking first if that would lose
+    /// work.
+    ///
+    /// Guarded before the picker rather than after a file has been chosen, the same way opening a
+    /// project is: the document on screen has to be dealt with before a dialog goes up, or the
+    /// user answers a question about work they have already stopped thinking about.
+    pub(crate) fn import_midi(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.confirm_discard(crate::ui::prompt::PendingAction::ImportMidiPicked) {
+            return;
+        }
+        self.pick_and_import_midi(cx);
+    }
+
+    /// Prompts for a MIDI file, with the document already dealt with.
+    pub(crate) fn pick_and_import_midi(&mut self, cx: &mut Context<Self>) {
+        let extensions: Vec<String> = auris_session::midi_extensions()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let language = self.language();
+        cx.spawn(async move |this, cx| {
+            let extension_refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
+            let handle = rfd::AsyncFileDialog::new()
+                .set_title(Key::DialogImportMidi.get(language))
+                .add_filter(Key::FilterMidi.get(language), &extension_refs)
+                .pick_file()
+                .await;
+            let Some(handle) = handle else { return };
+            let _ = this.update(cx, |this, cx| {
+                this.import_midi_at(handle.path().to_path_buf(), cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Reads the MIDI file at `path` as a new document, with the old one already dealt with.
+    ///
+    /// The end of both ways in: the file dialog picks a path and lands here, and a dropped `.mid`
+    /// arrives here already knowing one.
+    pub(crate) fn import_midi_at(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let shown = this.update(cx, |this, cx| {
+                let text = messages::opening(this.language(), &path.display().to_string());
+                this.set_status(text);
+                cx.notify();
+            });
+            if shown.is_err() {
+                return;
+            }
+            // A large MIDI file is tens of thousands of events, and the tracks it makes are built
+            // on this thread — so let the status line paint before any of that starts.
+            cx.background_executor()
+                .timer(std::time::Duration::ZERO)
+                .await;
+
+            let _ = this.update(cx, |this, cx| {
+                match this.session.import_midi(&path) {
+                    Ok(report) => {
+                        this.resync_selection();
+                        this.reset_view();
+                        let first = this.project().tracks.first().map(|track| track.id);
+                        this.selected_track = None;
+                        if let Some(track) = first {
+                            this.select_track(track);
+                        }
+                        let language = this.language();
+                        this.set_status(messages::midi_imported(
+                            language,
+                            report.tracks,
+                            report.notes,
+                        ));
+                    }
+                    Err(error) => {
+                        this.set_failed_status(this.failure(Key::CmdImportMidi, &error));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Prompts for a destination and writes the document out as a MIDI file.
+    pub(crate) fn export_midi(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = self.project().name.clone();
+        let language = self.language();
+        let view = cx.entity().downgrade();
+        window
+            .spawn(cx, async move |cx| {
+                let handle = rfd::AsyncFileDialog::new()
+                    .set_title(Key::DialogExportMidi.get(language))
+                    .set_file_name(format!("{name}.mid"))
+                    .add_filter(Key::FilterMidi.get(language), &["mid"])
+                    .save_file()
+                    .await;
+                let Some(handle) = handle else { return };
+                let path = handle.path().to_path_buf();
+                let _ = view.update(cx, |this, cx| {
+                    match this.session.export_midi(&path) {
+                        Ok(notes) => {
+                            let language = this.language();
+                            this.set_status(messages::midi_exported(
+                                language,
+                                &path.display().to_string(),
+                                notes,
+                            ));
+                        }
+                        Err(error) => {
+                            this.set_failed_status(this.failure(Key::CmdExportMidi, &error));
+                        }
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+    }
+
     /// Prompts for a song specification and replaces the document with what it describes.
     ///
     /// The whole piece is one undo step, so a composition that is not what was wanted is one
@@ -775,6 +893,12 @@ impl AurisApp {
                     self.open_project_at(path, cx);
                 }
             }
+            DropAction::OpenMidi(path) => {
+                if self.confirm_discard(crate::ui::prompt::PendingAction::ImportMidi(path.clone()))
+                {
+                    self.import_midi_at(path, cx);
+                }
+            }
             DropAction::Import(dropped) => self.import_dropped(dropped, start, cx),
             DropAction::Confused => {
                 self.set_failed_status(messages::project_wants_to_be_alone(self.language()))
@@ -828,9 +952,12 @@ impl AurisApp {
                     let done = match kind {
                         DropKind::Audio => this.take_audio(&path, start),
                         DropKind::SoundFont => this.take_soundfont(&path),
-                        // `drop_action` sent every project down the other branch, and one that
-                        // reached here would be a document quietly not opened.
-                        DropKind::Project => unreachable!("a project is opened, not imported"),
+                        // `drop_action` sent everything that replaces the document down the other
+                        // branch, and one that reached here would be a document quietly not
+                        // opened.
+                        DropKind::Project | DropKind::Midi => {
+                            unreachable!("a whole document is opened, not imported into one")
+                        }
                     };
                     cx.notify();
                     // Turned into a line here, while the view that knows the language is in hand.
@@ -1041,6 +1168,7 @@ fn import_key(kind: DropKind) -> Key {
         DropKind::Audio => Key::CmdImportAudio,
         DropKind::SoundFont => Key::CmdImportSoundFont,
         DropKind::Project => Key::CmdOpenProject,
+        DropKind::Midi => Key::CmdImportMidi,
     }
 }
 

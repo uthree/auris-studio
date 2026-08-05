@@ -179,6 +179,23 @@ pub struct SaveReport {
     pub uncollected: Vec<PathBuf>,
 }
 
+/// What reading a Standard MIDI File produced.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct MidiReport {
+    /// How many tracks the file turned into.
+    pub tracks: usize,
+    /// How many notes, across all of them.
+    pub notes: usize,
+    /// Position just past the last note.
+    pub length: Ticks,
+}
+
+/// The instrument a track that played on the drum channel is given.
+const DRUM_INSTRUMENT: &str = "auris.synth.noisedrum";
+
+/// MIDI's drum channel, 0-based. Channel 10, counting the way a musician does.
+const DRUM_CHANNEL: u8 = 9;
+
 /// What composing produced.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ComposeReport {
@@ -2861,6 +2878,103 @@ impl Session {
         // decoded buffers would hold them for the rest of the process.
         self.clear_sources();
         self.replace_project(project);
+    }
+
+    /// Reads a Standard MIDI File as a new document.
+    ///
+    /// A new document rather than tracks added to this one, because a MIDI file carries its own
+    /// tempo and meter: dropping its notes into a piece running at a different speed would give
+    /// you the right notes at the wrong lengths, and there would be no way to tell from looking.
+    /// The caller deals with unsaved work first, exactly as it does for an opened project — this
+    /// clears the history and the path, so the imported piece has to be saved somewhere new
+    /// rather than over the `.auris` that happened to be open.
+    ///
+    /// A track that played on **channel 10** gets the noise-drum instrument where the registry has
+    /// one. It is the only thing a bare MIDI file says about what a track is *for*, and a General
+    /// MIDI drum part played on a lead synth is not something anyone would keep.
+    pub fn import_midi(&mut self, path: &Path) -> Result<MidiReport, SessionError> {
+        let imported = auris_io::read_midi_file(path)?;
+        let name = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Untitled".to_string());
+
+        let fallback = self
+            .registry
+            .default_instrument_id()
+            .ok_or_else(|| SessionError::UnknownPlugin("<any instrument>".into()))?
+            .to_string();
+        let drums = match self.registry.has_instrument(DRUM_INSTRUMENT) {
+            true => DRUM_INSTRUMENT.to_string(),
+            false => fallback.clone(),
+        };
+
+        let mut project = Project::new(name, self.project.sample_rate);
+        project.tempo_map = imported.tempo_map.clone();
+        project.signatures = imported.signatures.clone();
+        let mut report = MidiReport {
+            tracks: 0,
+            notes: 0,
+            length: imported.end(),
+        };
+
+        for track in &imported.tracks {
+            let instrument = match track.channel {
+                DRUM_CHANNEL => drums.clone(),
+                _ => fallback.clone(),
+            };
+            let track_id = project.add_instrument_track(&track.name, instrument);
+            // One clip per track, spanning the material rather than the song: a part that does not
+            // start until bar forty gets a clip at bar forty, not forty bars of empty clip with
+            // its notes at the far end.
+            let (Some(first), Some(last)) = (
+                track.notes.iter().map(|note| note.start).min(),
+                track.notes.iter().map(|note| note.end()).max(),
+            ) else {
+                continue;
+            };
+            let Some(clip_id) = project.add_midi_clip(
+                track_id,
+                &track.name,
+                first,
+                Ticks((last - first).raw().max(1)),
+            ) else {
+                continue;
+            };
+            if let Some(clip) = project.midi_clip_mut(clip_id) {
+                clip.notes = track
+                    .notes
+                    .iter()
+                    .map(|note| Note {
+                        start: note.start - first,
+                        ..*note
+                    })
+                    .collect();
+                // The file said where the notes are; nothing should grow the clip past them on the
+                // next edit and quietly change what it holds.
+                clip.length_is_explicit = true;
+                report.notes += clip.notes.len();
+            }
+            report.tracks += 1;
+        }
+
+        self.history.clear();
+        self.path = None;
+        self.clear_sources();
+        self.replace_project(project);
+        // Dirty from the first frame: nothing on disk holds this document, and the `.mid` it came
+        // from cannot hold it either.
+        self.dirty = true;
+        Ok(report)
+    }
+
+    /// Writes the open document's instrument tracks as a Standard MIDI File.
+    ///
+    /// Returns how many notes were written. What a `.mid` has nowhere to put — audio tracks, the
+    /// mixer, which instrument each track plays, the automation — is left behind; see
+    /// [`auris_io::midi`] for the whole list.
+    pub fn export_midi(&self, path: &Path) -> Result<usize, SessionError> {
+        Ok(auris_io::write_midi_file(path, &self.project)?)
     }
 
     /// The folder holding the current document, which relative asset paths resolve against.

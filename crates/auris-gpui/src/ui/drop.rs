@@ -26,6 +26,12 @@ pub enum DropKind {
     SoundFont,
     /// Open it, in place of the document that is open.
     Project,
+    /// Read it as a new document, in place of the one that is open.
+    ///
+    /// A MIDI file carries its own tempo and meter, so it makes a document rather than joining
+    /// one: its notes dropped into a piece running at a different speed would be the right notes
+    /// at the wrong lengths, with nothing on screen to say why.
+    Midi,
 }
 
 /// Dropped paths, split into the ones an importer recognises and the ones none does.
@@ -61,6 +67,8 @@ fn drop_kind(path: &Path) -> Option<DropKind> {
     let listed = |extensions: &[&str]| extensions.contains(&extension.as_str());
     if extension == auris_session::PROJECT_EXTENSION {
         Some(DropKind::Project)
+    } else if listed(auris_session::midi_extensions()) {
+        Some(DropKind::Midi)
     } else if listed(auris_session::supported_soundfont_extensions()) {
         Some(DropKind::SoundFont)
     } else if listed(auris_session::supported_audio_extensions()) {
@@ -70,11 +78,23 @@ fn drop_kind(path: &Path) -> Option<DropKind> {
     }
 }
 
+impl DropKind {
+    /// Whether this kind of file *becomes* the document rather than joining it.
+    ///
+    /// The two that do are the two that carry a whole piece's clock. Everything else is material
+    /// to put into whatever is already open.
+    pub fn replaces_the_document(self) -> bool {
+        matches!(self, DropKind::Project | DropKind::Midi)
+    }
+}
+
 /// What a drop is asking the window to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DropAction {
     /// Open this project, in place of the document that is open.
     Open(PathBuf),
+    /// Read this MIDI file as a new document, in place of the one that is open.
+    OpenMidi(PathBuf),
     /// Read what can be read into the open document, and say what could not.
     Import(Dropped),
     /// Refuse the whole drop, because a project did not arrive alone.
@@ -88,7 +108,7 @@ impl DropAction {
     /// landing does, so the promise and the act cannot come apart.
     pub fn takes_anything(&self) -> bool {
         match self {
-            Self::Open(_) => true,
+            Self::Open(_) | Self::OpenMidi(_) => true,
             Self::Import(dropped) => !dropped.accepted.is_empty(),
             Self::Confused => false,
         }
@@ -97,24 +117,28 @@ impl DropAction {
 
 /// What to do with a set of dropped paths.
 ///
-/// A project is a document rather than something that goes *into* one: opening it closes what is
-/// open. So it has to arrive on its own. A drop holding a project and three takes is not a drop
-/// anyone made on purpose, and there is no reading of it that does not risk the work on screen —
-/// import into a document about to be replaced, or replace a document the takes were meant for.
-/// Two projects have the same problem and no tie-break at all.
+/// A project — or a MIDI file, which brings a whole piece's clock with it — is a document rather
+/// than something that goes *into* one: opening it closes what is open. So it has to arrive on its
+/// own. A drop holding one and three takes is not a drop anyone made on purpose, and there is no
+/// reading of it that does not risk the work on screen — import into a document about to be
+/// replaced, or replace a document the takes were meant for. Two of them have the same problem and
+/// no tie-break at all.
 pub fn drop_action(paths: &[PathBuf]) -> DropAction {
     let dropped = sort_dropped(paths);
-    let projects: Vec<&PathBuf> = dropped
+    let replacements: Vec<(&PathBuf, DropKind)> = dropped
         .accepted
         .iter()
-        .filter(|(_, kind)| *kind == DropKind::Project)
-        .map(|(path, _)| path)
+        .filter(|(_, kind)| kind.replaces_the_document())
+        .map(|(path, kind)| (path, *kind))
         .collect();
-    match projects.as_slice() {
+    match replacements.as_slice() {
         [] => DropAction::Import(dropped),
-        // Alone means alone, refusals included: a project dragged with a stray file is a hand
+        // Alone means alone, refusals included: one of these dragged with a stray file is a hand
         // that grabbed more than it meant to, and this is the one drop that cannot be taken back.
-        [only] if paths.len() == 1 => DropAction::Open((*only).clone()),
+        [(path, kind)] if paths.len() == 1 => match kind {
+            DropKind::Midi => DropAction::OpenMidi((*path).clone()),
+            _ => DropAction::Open((*path).clone()),
+        },
         _ => DropAction::Confused,
     }
 }

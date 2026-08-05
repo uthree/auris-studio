@@ -9,6 +9,30 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### MIDI files go in and out
+
+* **File → Import MIDI File…**, or dropping a `.mid` on the window, reads it as a new piece: its
+  tempo map, its meter, and one track per part. A new document rather than tracks added to the open
+  one, because a MIDI file brings its own clock — its notes in a piece running at a different speed
+  would be the right notes at the wrong lengths, with nothing on screen to say why. Unsaved work is
+  asked about first, exactly as it is for Open.
+* **File → Export MIDI File…** writes the other direction, at 960 ticks to the quarter note, so a
+  piece that leaves and comes back has every note in the same place. A tempo does not survive
+  exactly: MIDI stores whole microseconds per quarter, so 144 bpm returns as 143.999 88, while 96
+  and 120 divide evenly and return exact.
+* Four things real files do that a naive reader gets wrong are handled and tested: a note-on at
+  zero velocity is a note-off; the same pitch struck twice before either release is two notes; a
+  note nobody released is closed where its track ends; and two channels in one track are two
+  instruments, which is what a format 0 file always is. A part on **channel 10** gets the
+  noise-drum instrument.
+* A file counted in **SMPTE frames** is refused rather than guessed at. It has no beats, so it has
+  no bars, and putting it on a musical timeline would mean choosing a tempo on its behalf.
+* What a `.mid` has nowhere to put, in either direction: audio tracks, the mixer, which instrument
+  each track plays, and the automation.
+* `MidiClip::playable_notes` is new, and the renderer now asks it too. Which notes a clip actually
+  plays was written inline in the scheduler; a second copy in the exporter would have drifted into
+  a file that is not the piece you can hear.
+
 ### Two things the backend could already do and nothing could ask for
 
 * **A track's colour can be chosen.** It was picked from a palette by the track's position and

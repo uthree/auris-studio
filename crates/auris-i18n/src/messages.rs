@@ -194,6 +194,21 @@ messages! {
         ja: "{name} — 音色 {sounds} 件から選べます"
     }
 
+    /// Confirmation that a MIDI file was read, and what came out of it.
+    ///
+    /// Both numbers, because a MIDI file gives no other sign of having worked: a file whose tracks
+    /// were all empty and one that was read wrong look identical on an empty timeline.
+    fn midi_imported(tracks: usize, notes: usize) {
+        en: "Imported {tracks} track(s), {notes} note(s)",
+        ja: "{tracks} トラック・{notes} ノートを読み込みました"
+    }
+
+    /// Confirmation that a piece left as a MIDI file.
+    fn midi_exported(path: &str, notes: usize) {
+        en: "Wrote {notes} note(s) to {path}",
+        ja: "{notes} 個のノートを {path} に書き出しました"
+    }
+
     /// A file dragged onto the window that no importer here recognises.
     fn cannot_import(path: &str) {
         en: "{path} is not a kind of file Auris can import",

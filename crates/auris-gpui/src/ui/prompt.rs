@@ -213,6 +213,10 @@ pub enum PendingAction {
     /// path is also what makes a dropped project answer the sheet — Save first, then open the one
     /// that was dropped, not the one a second dialog would ask for.
     OpenDropped(std::path::PathBuf),
+    /// Read a MIDI file as a new document, having already been told which by a drop.
+    ImportMidi(std::path::PathBuf),
+    /// Ask which MIDI file to read, and read it as a new document.
+    ImportMidiPicked,
     /// Shut the window.
     CloseWindow,
     /// Leave.
@@ -617,6 +621,8 @@ impl AurisApp {
             PendingAction::NewProject => self.new_project(),
             PendingAction::OpenProject => self.pick_and_open_project(cx),
             PendingAction::OpenDropped(path) => self.open_project_at(path, cx),
+            PendingAction::ImportMidi(path) => self.import_midi_at(path, cx),
+            PendingAction::ImportMidiPicked => self.pick_and_import_midi(cx),
             PendingAction::CloseWindow => window.remove_window(),
             PendingAction::Quit => cx.quit(),
         }

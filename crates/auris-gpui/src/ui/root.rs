@@ -111,6 +111,8 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_save_project_as))
             .on_action(cx.listener(Self::on_import_audio))
             .on_action(cx.listener(Self::on_import_soundfont))
+            .on_action(cx.listener(Self::on_import_midi))
+            .on_action(cx.listener(Self::on_export_midi))
             .on_action(cx.listener(Self::on_collect_assets))
             .on_action(cx.listener(Self::on_export_audio))
             .on_action(cx.listener(Self::on_export_cycle))
@@ -1030,6 +1032,24 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.import_soundfont(window, cx);
+    }
+
+    fn on_import_midi(
+        &mut self,
+        _: &actions::ImportMidi,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.import_midi(window, cx);
+    }
+
+    fn on_export_midi(
+        &mut self,
+        _: &actions::ExportMidi,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.export_midi(window, cx);
     }
 
     fn on_collect_assets(
