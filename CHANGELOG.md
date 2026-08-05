@@ -9,6 +9,32 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### Parameters move along the timeline
+
+* The document holds **automation**: a curve per parameter, beside the tempo, the meter, the key
+  and the chords. Right-click a track header for *Automate Volume* or *Automate Pan* and a lane
+  opens under it; a press on empty lane writes a point and starts dragging it, the delete gesture
+  takes one off, and a drag is one undo step.
+* A parameter with no lane is **not automated at all** and keeps its stored value. Only an existing
+  lane takes over, which is what lets a mix be automated one control at a time — and taking the
+  last point off gives the parameter back.
+* A lane is **not anchored at the start of the song**. It holds its nearest value flat outside the
+  stretch it was written over, because it makes a claim about that stretch and none about the rest.
+  A tempo has to be defined from the first sample; a filter cutoff does not.
+* A lane carries how to get between its points. A fader runs in a straight line; a parameter with
+  discrete positions **holds**, because interpolating a waveform chooser would sweep through every
+  option between two settings and sound all of them on the way.
+* Playback and export take the same path. Seeking or looping arrives at the values under the
+  playhead rather than sliding to them — landing in the middle of a fade used to swell up to it
+  from wherever the fader had been left.
+* `Project::FORMAT_VERSION` is 5. This is a new field with a default, which normally does not move
+  the version, but the direction that matters is the other one: an older build ignores a field it
+  does not know, so it would open an automated mix, play it at the wrong levels, and write those
+  levels back on the next save. Refusing to open is the only honest answer.
+* `ParamTarget` moved from `auris-session` to `auris_core::param`, because a lane is a target and
+  a shape and the document may not name a crate above it. `auris_session::param` re-exports it, so
+  the old path still resolves.
+
 ### Files can be dragged into the window
 
 * An audio file dropped on the window arrives on a **new audio track**; an `.sf2` goes on the

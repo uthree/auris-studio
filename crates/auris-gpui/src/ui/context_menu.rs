@@ -53,6 +53,16 @@ pub enum MenuCommand {
     ToggleTrackMute(TrackId),
     /// Solo or unsolo a track.
     ToggleTrackSolo(TrackId),
+    /// Show a track's automation lane on a parameter, or hide it when it is already showing that
+    /// one.
+    ///
+    /// One lane per track rather than a stack of them: choosing a second parameter swaps what the
+    /// row draws. That is the whole difference between this and Logic, and it is the difference
+    /// between a row and a panel — the room a stack needs is room the arrangement does not have
+    /// until a track can be folded.
+    ShowAutomation(TrackId, ParamTarget),
+    /// Take a parameter's lane away, giving it back its stored value.
+    ClearAutomation(ParamTarget),
     /// Append an instrument track.
     NewInstrumentTrack,
     /// Append an audio track.
@@ -677,6 +687,10 @@ impl AurisApp {
             }
             MenuCommand::ToggleTrackMute(track) => self.toggle_mute(track),
             MenuCommand::ToggleTrackSolo(track) => self.toggle_solo(track),
+            MenuCommand::ShowAutomation(track, target) => self.show_automation(track, target),
+            MenuCommand::ClearAutomation(target) => {
+                self.session.clear_automation(target);
+            }
             MenuCommand::NewInstrumentTrack => self.add_instrument_track(),
             MenuCommand::NewAudioTrack => self.add_audio_track(),
 
@@ -930,7 +944,8 @@ impl AurisApp {
         let Some(entry) = self.project().track(track) else {
             return self.arrangement_menu(anchor);
         };
-        ContextMenu::new(anchor, entry.name.clone())
+        let showing = self.automation_lanes.get(&track).copied();
+        let menu = ContextMenu::new(anchor, entry.name.clone())
             .item(
                 self.t(Key::MenuDuplicateTrack),
                 MenuCommand::DuplicateTrack(track),
@@ -956,6 +971,29 @@ impl AurisApp {
                 },
             )
             .separator()
+            .toggle(
+                self.t(Key::MenuAutomateVolume),
+                MenuCommand::ShowAutomation(track, ParamTarget::TrackGain(track)),
+                showing == Some(ParamTarget::TrackGain(track)),
+            )
+            .toggle(
+                self.t(Key::MenuAutomatePan),
+                MenuCommand::ShowAutomation(track, ParamTarget::TrackPan(track)),
+                showing == Some(ParamTarget::TrackPan(track)),
+            );
+
+        // Clearing is offered only for a lane that exists: on a parameter nobody has automated it
+        // is an item that can only do nothing, and a menu full of those is a menu people stop
+        // reading.
+        let menu = match showing.filter(|target| self.session.is_automated(*target)) {
+            Some(target) => menu.item(
+                self.t(Key::MenuClearAutomation),
+                MenuCommand::ClearAutomation(target),
+            ),
+            None => menu,
+        };
+
+        menu.separator()
             .item(
                 self.t(Key::MenuNewInstrumentTrack),
                 MenuCommand::NewInstrumentTrack,

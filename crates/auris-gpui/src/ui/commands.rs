@@ -853,6 +853,26 @@ impl AurisApp {
         .detach();
     }
 
+    /// Shows a track's automation lane on `target`, or hides it when it is already on that one.
+    ///
+    /// One lane per track: choosing a different parameter swaps what the row draws rather than
+    /// stacking a second row. Clicking the parameter that is already showing closes it, which is
+    /// what makes the same menu item both the way in and the way out.
+    pub(crate) fn show_automation(&mut self, track: TrackId, target: ParamTarget) {
+        match self.automation_lanes.get(&track) {
+            Some(showing) if *showing == target => {
+                self.automation_lanes.remove(&track);
+            }
+            _ => {
+                self.automation_lanes.insert(track, target);
+                // The row appears under the track, which on a full arrangement is past the bottom
+                // of the panel — a command that opened something out of sight reads as one that
+                // did nothing.
+                self.reveal_track(track);
+            }
+        }
+    }
+
     /// Puts a summary on the status line, in the colour its outcome deserves.
     fn report(&mut self, summary: Option<(String, bool)>) {
         let Some((line, succeeded)) = summary else {

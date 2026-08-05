@@ -237,6 +237,14 @@ pub enum Drag {
         /// Which end of the clip the fade belongs to.
         edge: FadeEdge,
     },
+    /// Dragging a point along an automation lane.
+    AutomationPoint {
+        /// The parameter whose lane is being shaped.
+        target: ParamTarget,
+        /// Where the point currently is. It moves as the drag does, because the next pointer
+        /// move has to find the point where it now is rather than where it started.
+        at: Ticks,
+    },
     /// Moving one or more notes in the piano roll.
     NoteMove {
         /// Clip the notes live in.
@@ -397,6 +405,7 @@ impl Drag {
             Drag::ClipMove { .. } => Some(Edit::MoveClip),
             Drag::ClipResize { .. } => Some(Edit::ResizeClip),
             Drag::ClipFade { .. } => Some(Edit::SetClipFade),
+            Drag::AutomationPoint { target, .. } => Some(Edit::WriteAutomation(*target)),
             Drag::NoteMove { .. } => Some(Edit::MoveNotes),
             Drag::NoteResize { .. } => Some(Edit::ResizeNote),
             Drag::NoteVelocity { .. } => Some(Edit::SetNoteVelocity),

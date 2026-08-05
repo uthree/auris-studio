@@ -510,6 +510,9 @@ strings! {
     EditBypassEffect { en: "bypassing an effect", ja: "エフェクトのバイパス" }
     EditReorderEffects { en: "reordering the effects", ja: "エフェクトの並べ替え" }
     EditAdjustParameter { en: "the parameter change", ja: "パラメーターの変更" }
+    MenuAutomateVolume { en: "Automate Volume", ja: "ボリュームをオートメーション" }
+    MenuAutomatePan { en: "Automate Pan", ja: "パンをオートメーション" }
+    MenuClearAutomation { en: "Clear Automation", ja: "オートメーションを消去" }
     EditWriteAutomation { en: "the automation point", ja: "オートメーションの点" }
     EditEraseAutomation { en: "erasing the automation point", ja: "オートメーションの点の削除" }
     EditClearAutomation { en: "clearing the automation", ja: "オートメーションの消去" }

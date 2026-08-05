@@ -132,6 +132,37 @@ stretch the playhead is in; a change elsewhere is written from the ruler's right
 number. The same menu removes the change in force under the pointer. The song's opening tempo
 at the start of the timeline is always there and cannot be removed, exactly like the key.
 
+### Automation
+
+Right-click a track header and choose **Automate Volume** or **Automate Pan**: a lane opens under
+that track showing the parameter's curve over the same timeline the clips sit on. Choosing the
+other parameter swaps what the lane draws; choosing the same one again closes it.
+
+A press on empty lane writes a point and starts dragging it, so placing a value and shaping it is
+one gesture. Dragging a point moves it in both directions at once — along the timeline and up or
+down through the parameter's range — snapped to the grid unless the platform's command modifier is
+held, exactly like a clip. The delete gesture takes a point off. A drag is one undo step.
+
+**A parameter with no lane is not automated at all**, and keeps whatever its fader or knob is set
+to. Only once a point exists does the lane take over, which is what lets a mix be automated one
+control at a time. Taking the last point off — or **Clear Automation** — hands the parameter back
+to its stored value.
+
+A lane holds its nearest value flat outside the stretch it was written over: it makes a claim
+about that stretch and none about the rest of the song. So a single point at bar 40 sets the level
+for the whole piece, and a fade written across bars 40 to 44 leaves everything before bar 40 at
+where the fade begins.
+
+Playback and export take the same path, so what you hear is what is written. The lane is read once
+per processing block rather than once per sample — for a fader that is not an approximation, since
+a gain is a target the mixer ramps across the block it is given, and for a plugin parameter there
+is nowhere finer to put one. Seeking or looping *arrives* at the values under the playhead rather
+than sliding to them: a playhead that jumped is not a fader that moved.
+
+Volume and pan are what the lane offers today. The document, the engine and the commands underneath
+already address every parameter a plugin has — see
+[`ParamTarget`](https://docs.rs/auris-core) — so widening the menu is a menu change.
+
 ### The time signature
 
 So can the meter. The signature readout shows the one the playhead is in, and clicking it drops

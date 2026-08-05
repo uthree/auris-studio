@@ -596,6 +596,16 @@ impl AurisApp {
                     self.forget_rewritten_notes(clip);
                 }
             }
+            Drag::AutomationPoint { target, at } => {
+                // The point has to be followed rather than remembered: it lands where the lane
+                // put it, which is not always where it was asked to go — dropped onto another
+                // point it absorbs that one, and the next move must look for it there.
+                if let Some(landed) = self.drag_automation_point(target, at, event)
+                    && let Some(Drag::AutomationPoint { at, .. }) = &mut self.drag
+                {
+                    *at = landed;
+                }
+            }
             Drag::ClipFade { clip, edge } => {
                 // Unsnapped on purpose: a fade is shaped by ear against the waveform, and no
                 // grid position has anything to do with where a breath ends.

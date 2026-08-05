@@ -113,6 +113,28 @@ pub fn hline(window: &mut Window, bounds: Bounds<Pixels>, y: Pixels, color: Hsla
 ///
 /// The caller gets the width back so labels can be laid out left to right without a second
 /// shaping pass.
+/// Strokes a connected run of points.
+///
+/// Nothing is drawn for fewer than two points, and a path that fails to build is dropped rather
+/// than panicked on — a curve is a picture of something the document already holds, so failing to
+/// draw it must never be worse than the picture being missing.
+pub fn polyline(window: &mut Window, points: &[Point<Pixels>], width: Pixels, color: Hsla) {
+    let Some((first, rest)) = points.split_first() else {
+        return;
+    };
+    if rest.is_empty() {
+        return;
+    }
+    let mut path = gpui::PathBuilder::stroke(width);
+    path.move_to(*first);
+    for at in rest {
+        path.line_to(*at);
+    }
+    if let Ok(built) = path.build() {
+        window.paint_path(built, color);
+    }
+}
+
 pub fn label(
     window: &mut Window,
     cx: &mut App,

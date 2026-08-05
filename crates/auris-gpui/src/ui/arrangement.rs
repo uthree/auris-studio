@@ -601,6 +601,7 @@ impl AurisApp {
         let language = self.language();
 
         // Everything the paint closure needs, copied out so it does not borrow `self`.
+        let automation_rows = self.automation_paint_data();
         let lanes: Vec<LanePaint> = self.lane_paint_data();
         let edge_zones = self.clip_edge_zones(&lanes);
         let peaks = self.waveform_map();
@@ -723,13 +724,17 @@ impl AurisApp {
                                         paint::loop_region(window, bounds, &view, region, &theme);
                                     }
 
-                                    // Every lane is painted and the mask throws away what is off
+                                    // Every row is painted and the mask throws away what is off
                                     // the top or the bottom. A project is tens of tracks, not
                                     // thousands, so culling would cost more to read than to run.
-                                    let mut y = bounds.origin.y - lane_scroll;
+                                    //
+                                    // Each row is placed by the top it was given rather than by
+                                    // adding up what came before it, so the clips and the curves
+                                    // cannot walk apart from each other or from the hit tests.
+                                    let top_of = |top: Pixels| bounds.origin.y - lane_scroll + top;
                                     for lane in &lanes {
                                         let lane_bounds = Bounds {
-                                            origin: point(bounds.origin.x, y),
+                                            origin: point(bounds.origin.x, top_of(lane.top)),
                                             size: size(bounds.size.width, px(lane.height)),
                                         };
                                         paint_lane(
@@ -742,8 +747,30 @@ impl AurisApp {
                                             &theme,
                                             language,
                                         );
-                                        y += px(lane.height);
-                                        paint::hline(window, bounds, y, theme.border_subtle);
+                                        paint::hline(
+                                            window,
+                                            bounds,
+                                            lane_bounds.origin.y + lane_bounds.size.height,
+                                            theme.border_subtle,
+                                        );
+                                    }
+                                    for row in &automation_rows {
+                                        let row_bounds = Bounds {
+                                            origin: point(bounds.origin.x, top_of(row.top)),
+                                            size: size(
+                                                bounds.size.width,
+                                                crate::ui::automation::ROW_HEIGHT,
+                                            ),
+                                        };
+                                        paint_automation(
+                                            window, cx, row_bounds, row, &view, &theme,
+                                        );
+                                        paint::hline(
+                                            window,
+                                            bounds,
+                                            row_bounds.origin.y + row_bounds.size.height,
+                                            theme.border_subtle,
+                                        );
                                     }
 
                                     paint::playhead(
@@ -904,8 +931,8 @@ impl AurisApp {
     /// half hanging past the edge is a zone no press can ever land in.
     fn clip_edge_zones(&self, lanes: &[LanePaint]) -> Vec<Bounds<Pixels>> {
         let mut zones = Vec::new();
-        let mut lane_top = -self.lane_scroll;
         for lane in lanes {
+            let lane_top = lane.top - self.lane_scroll;
             let height = px(lane.height);
             for clip in &lane.clips {
                 let left = self.timeline.tick_to_x(clip.start);
@@ -924,17 +951,55 @@ impl AurisApp {
                     zones.extend(edge_zone_rows(x, grab, top, bottom, fades));
                 }
             }
-            lane_top += height;
         }
         zones
     }
 
+    /// Snapshot of what each automation row draws, taken while `self` is still borrowable.
+    ///
+    /// `&mut self` because a plugin parameter's descriptor comes out of a cache the session fills
+    /// on demand; the mixer's own controls need none, but the row is meant to widen to everything
+    /// [`ParamTarget`] can name and taking the borrow now costs nothing.
+    fn automation_paint_data(&mut self) -> Vec<AutomationPaint> {
+        let rows = self.lane_rows();
+        let mut painted = Vec::new();
+        for row in rows {
+            let Some(target) = row.target() else {
+                continue;
+            };
+            let Some(descriptor) = self.session.descriptor_for(target) else {
+                continue;
+            };
+            let color = self
+                .project()
+                .track(row.track)
+                .map(|track| self.theme.track_color(track.color.0))
+                .unwrap_or(self.theme.accent);
+            painted.push(AutomationPaint {
+                top: row.top,
+                name: self.param_label(&descriptor.name),
+                color,
+                range: (descriptor.min, descriptor.max),
+                lane: self.session.automation().lane(target).cloned(),
+                resting: self.session.param_value(target, &descriptor),
+            });
+        }
+        painted
+    }
+
     /// Snapshot of what each lane draws, taken while `self` is still borrowable.
     fn lane_paint_data(&self) -> Vec<LanePaint> {
+        let tops: Vec<Pixels> = self
+            .lane_rows()
+            .iter()
+            .filter(|row| matches!(row.kind, automation::RowKind::Clips))
+            .map(|row| row.top)
+            .collect();
         self.project()
             .tracks
             .iter()
-            .map(|track| {
+            .zip(tops)
+            .map(|(track, top)| {
                 let color = self.theme.track_color(track.color.0);
                 let clips = match &track.kind {
                     TrackKind::Instrument(inner) => inner
@@ -976,6 +1041,7 @@ impl AurisApp {
                         .collect(),
                 };
                 LanePaint {
+                    top,
                     height: track.height,
                     color,
                     clips,
@@ -1002,11 +1068,131 @@ impl AurisApp {
         cx.notify();
     }
 
+    /// A press inside an automation row: take a point, delete one, or write a new one.
+    ///
+    /// The three cases in the order a hand expects them. Delete first, so the gesture bound to
+    /// deleting takes a point off rather than adding one on top of it; then the point under the
+    /// pointer, which is a drag; and anything else is empty lane, where a press writes a point
+    /// and immediately begins dragging it — so placing a value and shaping it is one gesture
+    /// rather than click, look, click again.
+    fn press_automation(
+        &mut self,
+        row: LaneRow,
+        event: &MouseDownEvent,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(target) = row.target() else {
+            return;
+        };
+        let Some(descriptor) = self.session.descriptor_for(target) else {
+            return;
+        };
+        // The row in window coordinates, which is what the painter drew into and therefore what
+        // the pointer has to be compared against.
+        let origin = self.lanes_origin();
+        let bounds = Bounds {
+            origin: point(origin.x, origin.y + row.top - self.lane_scroll),
+            size: size(self.arrangement_width, row.height),
+        };
+        let range = (descriptor.min, descriptor.max);
+        let value = automation::y_to_value(
+            event.position.y,
+            range.0,
+            range.1,
+            bounds.origin.y,
+            bounds.size.height,
+        );
+        let at = self
+            .snap_unless_held(
+                self.timeline.x_to_tick(event.position.x - origin.x),
+                event.modifiers,
+            )
+            .max_zero();
+
+        let grabbed = self
+            .session
+            .automation()
+            .lane(target)
+            .map(|lane| {
+                let positions = automation::point_positions(lane, range, &self.timeline, bounds);
+                (
+                    lane.clone(),
+                    automation::point_at(&positions, lane, event.position),
+                )
+            })
+            .and_then(|(_, tick)| tick);
+
+        self.select_track(row.track);
+        if let Some(tick) = grabbed
+            && self.pointer.delete.matches(event)
+        {
+            self.session.remove_automation_point(target, tick);
+            cx.notify();
+            return;
+        }
+
+        let from = match grabbed {
+            Some(tick) => tick,
+            None => {
+                // A press on empty lane writes the point it is about to drag, so one gesture both
+                // places a value and shapes it.
+                if !self.session.set_automation_point(target, at, value) {
+                    return;
+                }
+                at
+            }
+        };
+        self.begin_drag(Drag::AutomationPoint { target, at: from });
+        cx.notify();
+    }
+
+    /// Moves the point in hand to where the pointer is, and says where it landed.
+    ///
+    /// The row is looked up by the target rather than by where the pointer currently is, so a
+    /// drag that wanders out of its own row still shapes the lane it took hold of — pulled above
+    /// the top or below the bottom the value clamps, which is what a fader does too.
+    pub(crate) fn drag_automation_point(
+        &mut self,
+        target: ParamTarget,
+        at: Ticks,
+        event: &gpui::MouseMoveEvent,
+    ) -> Option<Ticks> {
+        let row = self
+            .lane_rows()
+            .into_iter()
+            .find(|row| row.target() == Some(target))?;
+        let descriptor = self.session.descriptor_for(target)?;
+        let origin = self.lanes_origin();
+        let top = origin.y + row.top - self.lane_scroll;
+        let value = automation::y_to_value(
+            event.position.y,
+            descriptor.min,
+            descriptor.max,
+            top,
+            row.height,
+        );
+        let to = self
+            .snap_unless_held(
+                self.timeline.x_to_tick(event.position.x - origin.x),
+                event.modifiers,
+            )
+            .max_zero();
+        self.session.move_automation_point(target, at, to, value)
+    }
+
     /// Starts a drag in the clip lanes.
     fn begin_lane_drag(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
         let origin = self.lanes_origin();
         let local = point(event.position.x - origin.x, self.lane_y(event.position.y));
         let tick = self.timeline.x_to_tick(local.x);
+
+        // An automation row is its own surface: what is in it is points, and a press there must
+        // never reach the clip logic below — a rubber band swept across a curve would select the
+        // clips of a track the pointer is not even over.
+        if let Some(row) = self.automation_row_at(local.y) {
+            self.press_automation(row, event, cx);
+            return;
+        }
 
         let Some((track_id, lane_top)) = self.track_at_y(local.y) else {
             // Below the last track there is nothing to grab, so the press can only be the start
@@ -1423,11 +1609,34 @@ fn fade_handle_at(
 
 /// What one lane draws.
 struct LanePaint {
+    /// Top of the row in the lane column's own coordinates, from [`AurisApp::lane_rows`].
+    ///
+    /// Carried rather than accumulated by whoever is walking the list: an automation row between
+    /// two tracks makes "add up the heights so far" wrong in a way that is invisible until a
+    /// press lands on the clip above the one it looks like.
+    top: Pixels,
     height: f32,
     color: gpui::Hsla,
     clips: Vec<ClipPaint>,
     /// Every selected clip, so a rubber band can light up more than one at a time.
     selected: std::collections::BTreeSet<ClipId>,
+}
+
+/// What one automation row draws.
+struct AutomationPaint {
+    /// Top of the row in the lane column's own coordinates.
+    top: Pixels,
+    /// The parameter's name, in the interface language.
+    name: String,
+    /// The track's colour, so a curve is matched to its track at a glance.
+    color: gpui::Hsla,
+    /// Lowest and highest the parameter goes, which is what the row's height spans.
+    range: (f32, f32),
+    /// The curve, or `None` while the parameter has no lane yet.
+    lane: Option<AutomationLane>,
+    /// Where the parameter sits with no lane driving it, so an empty row still shows the value a
+    /// first point would be written near rather than an empty box.
+    resting: f32,
 }
 
 /// Waveform peaks keyed by audio source, shared by every lane in a frame.
@@ -1455,6 +1664,71 @@ enum ClipContent {
         fade_out_frames: u64,
     },
 }
+
+/// Draws one automation row: the curve, its points, and the parameter it drives.
+///
+/// A row with no lane yet still draws a line — flat, at the value the parameter is resting on —
+/// because an empty box says nothing about where a first point would land, and the answer is
+/// "near that line".
+fn paint_automation(
+    window: &mut Window,
+    cx: &mut gpui::App,
+    bounds: Bounds<Pixels>,
+    row: &AutomationPaint,
+    view: &crate::ui::timeline::TimelineView,
+    theme: &Theme,
+) {
+    use crate::ui::automation::{curve_polyline, point_positions, value_to_y};
+
+    paint::rect(window, bounds, theme.surface_sunken);
+    // Where the parameter rests with nothing written, so the eye has a datum to read the curve
+    // against — a fader's 0 dB, a pan's centre.
+    let datum = value_to_y(
+        row.resting,
+        row.range.0,
+        row.range.1,
+        bounds.origin.y,
+        bounds.size.height,
+    );
+    paint::hline(window, bounds, datum, theme.border_subtle);
+
+    match &row.lane {
+        None => paint::hline(window, bounds, datum, theme.text_faint),
+        Some(lane) => {
+            paint::polyline(
+                window,
+                &curve_polyline(lane, row.range, view, bounds),
+                px(1.5),
+                row.color,
+            );
+            for at in point_positions(lane, row.range, view, bounds) {
+                paint::rect(
+                    window,
+                    Bounds {
+                        origin: point(at.x - POINT_RADIUS, at.y - POINT_RADIUS),
+                        size: size(POINT_RADIUS * 2.0, POINT_RADIUS * 2.0),
+                    },
+                    row.color,
+                );
+            }
+        }
+    }
+
+    paint::label(
+        window,
+        cx,
+        point(bounds.origin.x + px(4.0), bounds.origin.y + px(2.0)),
+        row.name.clone(),
+        px(9.0),
+        theme.text_faint,
+    );
+}
+
+/// Half the side of the square drawn at each automation point.
+///
+/// Smaller than the grab: a handle that filled its own tolerance would leave no lane between two
+/// points to add a third one in.
+const POINT_RADIUS: Pixels = px(3.0);
 
 #[allow(clippy::too_many_arguments)]
 fn paint_lane(
