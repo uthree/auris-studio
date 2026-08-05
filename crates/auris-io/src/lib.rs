@@ -27,7 +27,10 @@ pub use export::{WavBitDepth, WavExportSettings, write_wav};
 pub use import::{
     DecodedAudio, decode_audio_file, import_audio_file, resample_buffer, supported_extensions,
 };
-pub use midi::{MidiImport, MidiTrack, midi_extensions, read_midi_bytes, read_midi_file};
+pub use midi::{
+    MidiImport, MidiTrack, midi_extensions, read_midi_bytes, read_midi_file, write_midi_bytes,
+    write_midi_file,
+};
 pub use project_file::{
     AUDIO_DIR, PROJECT_EXTENSION, document_in_folder, load_project, project_folder, save_project,
 };

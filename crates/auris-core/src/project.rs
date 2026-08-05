@@ -507,6 +507,28 @@ impl MidiClip {
         self.recipe.is_some()
     }
 
+    /// The notes this clip actually plays, each trimmed to the clip's length.
+    ///
+    /// A clip is a window onto its notes rather than a container of them: one starting at or past
+    /// the end never sounds, and one running past the end is cut off there. Dragging an edge in is
+    /// how a clip comes to hold notes it does not play, and dragging it back out brings them back.
+    ///
+    /// Both the renderer and the MIDI writer ask this, which is why it is here rather than in
+    /// either of them. "Which notes are heard" is one rule, and a second copy of it is a file that
+    /// exports something other than what plays.
+    ///
+    /// Positions stay relative to the clip. The caller knows whether it wants them on the
+    /// timeline, and only it knows what to add.
+    pub fn playable_notes(&self) -> impl Iterator<Item = Note> + '_ {
+        self.notes
+            .iter()
+            .filter(move |note| note.start >= Ticks::ZERO && note.start < self.length)
+            .map(move |note| Note {
+                length: note.end().min(self.length) - note.start,
+                ..*note
+            })
+    }
+
     /// Position just past the end of the clip.
     pub fn end(&self) -> Ticks {
         self.start + self.length

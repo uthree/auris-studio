@@ -1,7 +1,7 @@
 //! Reading Standard MIDI Files.
 //!
 //! A `.mid` file is the one format every other piece of music software can hand over, so this is
-//! the door material comes in through. What comes out is not a [`Project`](auris_core::Project) —
+//! the door material comes in through. What comes out is not a [`Project`] —
 //! that would mean this crate deciding which instrument each track plays, which is the session's
 //! business — but everything a project needs: the tempo and meter along the timeline, and a set of
 //! named tracks holding notes at absolute positions.
@@ -18,13 +18,28 @@
 //! a different kind of thing: it has no beats, so it has no bars, and laying it on a musical
 //! timeline would mean choosing a tempo on the file's behalf and writing it down as though the
 //! file had said so. Those are refused by name rather than guessed at.
+//!
+//! # What survives a round trip, and what does not
+//!
+//! Writing happens at *our* division, because [`TICKS_PER_QUARTER`] is 960 and an SMF header holds
+//! up to 32767. So every note position and length written here reads back exactly.
+//!
+//! A tempo does not, quite. The file stores whole microseconds per quarter note, so 144 bpm is
+//! 416 666.67 written as 416 667 and read back as 143.999 88 — a thousandth of a beat per minute,
+//! inaudible over any length of piece, and a property of the format rather than of this code. A
+//! tempo whose period *is* a whole number of microseconds, 96 or 120, comes back exact.
+//!
+//! What has nowhere to go in a `.mid` at all: audio tracks, every mixer setting including mute and
+//! solo, which instrument a track plays, and the automation. A MIDI file is the notes and the
+//! clock.
 
 use std::collections::HashMap;
 use std::path::Path;
 
-use auris_core::project::Note;
+use auris_core::project::{Note, Project};
 use auris_core::time::{SignatureMap, TICKS_PER_QUARTER, TempoMap, Ticks, TimeSignature};
-use midly::{Format, MetaMessage, MidiMessage, Smf, Timing, TrackEventKind};
+use midly::num::{u4, u7, u15, u24, u28};
+use midly::{Format, Header, MetaMessage, MidiMessage, Smf, Timing, TrackEvent, TrackEventKind};
 
 use crate::error::{IoError, Result};
 
@@ -251,6 +266,174 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
         tracks,
     })
 }
+
+/// Writes the project's instrument tracks as a Standard MIDI File.
+///
+/// Format 1, at this application's own division — [`TICKS_PER_QUARTER`] is 960 and an SMF header
+/// holds up to 32767, so nothing is scaled on the way out and a file written here reads back as
+/// exactly the notes that went into it.
+///
+/// What does not travel, because a MIDI file has nowhere to put it: audio tracks, which have no
+/// notes; every mixer setting, including mute and solo; the instrument each track plays; and the
+/// automation. A `.mid` is the notes and the clock, and saying so here is better than a reader
+/// discovering it by comparing two files.
+pub fn write_midi_file(path: &Path, project: &Project) -> Result<usize> {
+    let (smf_tracks, count) = build_tracks(project);
+    let smf = Smf {
+        header: Header::new(
+            Format::Parallel,
+            Timing::Metrical(u15::new(TICKS_PER_QUARTER as u16)),
+        ),
+        tracks: smf_tracks,
+    };
+    smf.save(path).map_err(|error| IoError::Filesystem {
+        path: path.to_path_buf(),
+        source: std::io::Error::other(error.to_string()),
+    })?;
+    Ok(count)
+}
+
+/// [`write_midi_file`] into memory, so a round trip can be tested without a filesystem.
+pub fn write_midi_bytes(project: &Project) -> Result<Vec<u8>> {
+    let (tracks, _) = build_tracks(project);
+    let smf = Smf {
+        header: Header::new(
+            Format::Parallel,
+            Timing::Metrical(u15::new(TICKS_PER_QUARTER as u16)),
+        ),
+        tracks,
+    };
+    let mut bytes = Vec::new();
+    smf.write(&mut bytes)
+        .map_err(|error| IoError::MidiParse(error.to_string()))?;
+    Ok(bytes)
+}
+
+/// The file's tracks, and how many notes went into them.
+fn build_tracks(project: &Project) -> (Vec<Vec<TrackEvent<'static>>>, usize) {
+    let mut tracks = vec![conductor_track(project)];
+    let mut count = 0;
+    for (index, track) in project.tracks.iter().enumerate() {
+        let Some(instrument) = track.kind.as_instrument() else {
+            continue;
+        };
+        // Channel 16 is not a limit anybody hits here, but wrapping keeps a seventeenth track
+        // playing rather than dropping it, and format 1 puts each track in its own chunk anyway.
+        let channel = u4::new((index % 16) as u8);
+        let mut events: Vec<(Ticks, TrackEventKind<'static>)> = Vec::new();
+        for clip in &instrument.clips {
+            if clip.muted {
+                continue;
+            }
+            for note in clip.playable_notes() {
+                count += 1;
+                let start = clip.start + note.start;
+                events.push((start, message(channel, note.pitch, velocity(note.velocity))));
+                events.push((
+                    start + note.length,
+                    message(channel, note.pitch, u7::new(0)),
+                ));
+            }
+        }
+        // Sorted by position, and at one position the releases go first: a note struck again at
+        // the instant the last one ended must not have its release land on the new one.
+        events.sort_by_key(|(at, kind)| (*at, !is_release(kind)));
+        tracks.push(delta_encode(track.name.clone(), events));
+    }
+    (tracks, count)
+}
+
+/// The first track of a format 1 file: the clock, and nothing that makes a sound.
+fn conductor_track(project: &Project) -> Vec<TrackEvent<'static>> {
+    let mut events: Vec<(Ticks, TrackEventKind<'static>)> = Vec::new();
+    for point in project.tempo_map.points() {
+        let micros = (60_000_000.0 / point.bpm).round().clamp(1.0, MAX_MICROS) as u32;
+        events.push((
+            point.tick,
+            TrackEventKind::Meta(MetaMessage::Tempo(u24::new(micros))),
+        ));
+    }
+    for point in project.signatures.points() {
+        // Back to the power of two the file wants. Every denominator this application holds is
+        // one, so the count of trailing zeros is exact rather than rounded.
+        let power = point.signature.denominator.trailing_zeros().min(255) as u8;
+        events.push((
+            point.tick,
+            TrackEventKind::Meta(MetaMessage::TimeSignature(
+                point.signature.numerator.min(255) as u8,
+                power,
+                24,
+                8,
+            )),
+        ));
+    }
+    events.sort_by_key(|(at, _)| *at);
+    delta_encode(project.name.clone(), events)
+}
+
+/// Turns absolute positions into the deltas a file stores, with a name and an end marker.
+fn delta_encode(
+    name: String,
+    events: Vec<(Ticks, TrackEventKind<'static>)>,
+) -> Vec<TrackEvent<'static>> {
+    let mut out = Vec::with_capacity(events.len() + 2);
+    out.push(TrackEvent {
+        delta: u28::new(0),
+        kind: TrackEventKind::Meta(MetaMessage::TrackName(
+            // Leaked on purpose and once per track: `midly` borrows the bytes of a meta event for
+            // the file's lifetime, and a name is a handful of bytes written once per export.
+            Box::leak(name.into_bytes().into_boxed_slice()),
+        )),
+    });
+    let mut previous = Ticks::ZERO;
+    for (at, kind) in events {
+        let delta = (at - previous).raw().max(0) as u32;
+        previous = at;
+        out.push(TrackEvent {
+            delta: u28::new(delta),
+            kind,
+        });
+    }
+    out.push(TrackEvent {
+        delta: u28::new(0),
+        kind: TrackEventKind::Meta(MetaMessage::EndOfTrack),
+    });
+    out
+}
+
+/// A note-on, or a note-off when the velocity is zero.
+fn message(channel: u4, pitch: u8, vel: u7) -> TrackEventKind<'static> {
+    TrackEventKind::Midi {
+        channel,
+        message: MidiMessage::NoteOn {
+            key: u7::new(pitch.min(127)),
+            vel,
+        },
+    }
+}
+
+/// Whether an event releases a note rather than starting one.
+fn is_release(kind: &TrackEventKind<'static>) -> bool {
+    matches!(
+        kind,
+        TrackEventKind::Midi {
+            message: MidiMessage::NoteOn { vel, .. },
+            ..
+        } if vel.as_int() == 0
+    )
+}
+
+/// Our 0.0..=1.0 as MIDI's 1..=127.
+///
+/// Never zero: a note-on at zero velocity *is* a note-off, so a note played that softly would
+/// release itself the instant it started.
+fn velocity(value: f32) -> u7 {
+    let scaled = (value.clamp(0.0, 1.0) * 127.0).round() as u8;
+    u7::new(scaled.clamp(1, 127))
+}
+
+/// Largest tempo a file can name, in microseconds per quarter: `u24`'s ceiling.
+const MAX_MICROS: f64 = 16_777_215.0;
 
 /// What a file says when it says nothing: the tempo every sequencer assumes.
 const DEFAULT_BPM: f64 = 120.0;
@@ -572,5 +755,178 @@ mod tests {
     #[test]
     fn rubbish_is_refused_rather_than_read_as_an_empty_song() {
         assert!(read_midi_bytes(b"this is not a MIDI file").is_err());
+    }
+
+    // ------------------------------------------------------------------- writing
+
+    /// A project with one instrument track holding one clip of `notes`.
+    fn project_with(notes: Vec<Note>, clip_length: Ticks) -> Project {
+        let mut project = Project::new("Round Trip", 48_000.0);
+        let track = project.add_instrument_track("Lead", "auris.synth.chiptune");
+        let clip = project
+            .add_midi_clip(track, "Riff", Ticks::ZERO, clip_length)
+            .expect("an instrument track takes a clip");
+        project.midi_clip_mut(clip).expect("the clip").notes = notes;
+        project
+    }
+
+    fn round_trip(project: &Project) -> MidiImport {
+        let bytes = write_midi_bytes(project).expect("writable");
+        read_midi_bytes(&bytes).expect("readable")
+    }
+
+    #[test]
+    fn what_goes_out_comes_back_as_the_same_notes() {
+        // Written at our own division, so this is exact rather than approximate: nothing is
+        // scaled in either direction.
+        let notes = vec![
+            Note::new(60, Ticks::ZERO, Ticks::QUARTER),
+            Note::new(64, Ticks::QUARTER, Ticks::QUARTER),
+            Note::new(
+                67,
+                Ticks(TICKS_PER_QUARTER * 2),
+                Ticks(TICKS_PER_QUARTER * 2),
+            ),
+        ];
+        let imported = round_trip(&project_with(notes.clone(), Ticks(TICKS_PER_QUARTER * 4)));
+        assert_eq!(imported.tracks.len(), 1);
+        let back = &imported.tracks[0].notes;
+        assert_eq!(back.len(), notes.len());
+        for (was, now) in notes.iter().zip(back) {
+            assert_eq!(
+                (now.pitch, now.start, now.length),
+                (was.pitch, was.start, was.length)
+            );
+        }
+    }
+
+    #[test]
+    fn the_tempo_and_the_meter_come_back() {
+        let mut project = project_with(
+            vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)],
+            Ticks(TICKS_PER_QUARTER * 8),
+        );
+        project.tempo_map.set_point(Ticks::ZERO, 96.0);
+        project
+            .tempo_map
+            .set_point(Ticks(TICKS_PER_QUARTER * 4), 144.0);
+        project.signatures = SignatureMap::constant(TimeSignature::new(3, 4));
+
+        let imported = round_trip(&project);
+        // 96 bpm is 625 000 microseconds exactly and comes back exact; 144 does not divide, and
+        // is why the comparison below has a tolerance at all. See the test after this one.
+        assert_eq!(imported.tempo_map.bpm_at(Ticks::ZERO), 96.0);
+        assert!((imported.tempo_map.bpm_at(Ticks(TICKS_PER_QUARTER * 4)) - 144.0).abs() < 0.001);
+        assert_eq!(
+            imported.signatures.signature_at(Ticks::ZERO),
+            TimeSignature::new(3, 4)
+        );
+    }
+
+    #[test]
+    fn a_tempo_survives_the_trip_to_within_what_the_format_can_say() {
+        // A MIDI file stores tempo as whole microseconds per quarter note, so a tempo whose
+        // period is not a whole number of them cannot come back exactly — 144 bpm is 416 666.67,
+        // written as 416 667, read back as 143.999 88.
+        //
+        // Pinned rather than papered over: the error is a thousandth of a beat per minute, which
+        // is inaudible over any length of piece, and knowing that is better than a round number
+        // that quietly is not one.
+        for bpm in [60.0, 96.0, 120.0, 128.0, 140.0, 144.0, 174.0, 200.0] {
+            let mut project = project_with(
+                vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)],
+                Ticks::QUARTER,
+            );
+            project.tempo_map.set_point(Ticks::ZERO, bpm);
+            let back = round_trip(&project).tempo_map.bpm_at(Ticks::ZERO);
+            assert!((back - bpm).abs() < 0.001, "{bpm} bpm came back as {back}");
+        }
+    }
+
+    #[test]
+    fn a_track_keeps_its_name_through_the_trip() {
+        let imported = round_trip(&project_with(
+            vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)],
+            Ticks::QUARTER,
+        ));
+        assert_eq!(imported.tracks[0].name, "Lead");
+    }
+
+    #[test]
+    fn only_the_notes_a_clip_plays_are_written() {
+        // A clip is a window onto its notes, and the exporter asks the same question the renderer
+        // does — otherwise the file would be a piece nobody can hear by pressing play.
+        let notes = vec![
+            Note::new(60, Ticks::ZERO, Ticks::QUARTER),
+            // Runs past the clip's end, so it is cut off there.
+            Note::new(62, Ticks::QUARTER, Ticks(TICKS_PER_QUARTER * 4)),
+            // Starts past the end, so it never sounds at all.
+            Note::new(64, Ticks(TICKS_PER_QUARTER * 3), Ticks::QUARTER),
+        ];
+        let imported = round_trip(&project_with(notes, Ticks(TICKS_PER_QUARTER * 2)));
+        let back = &imported.tracks[0].notes;
+        assert_eq!(back.len(), 2, "the one past the end is not written");
+        assert_eq!(back[1].pitch, 62);
+        assert_eq!(
+            back[1].end(),
+            Ticks(TICKS_PER_QUARTER * 2),
+            "cut at the clip's end"
+        );
+    }
+
+    #[test]
+    fn a_muted_clip_is_not_written() {
+        let mut project = project_with(
+            vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)],
+            Ticks::QUARTER,
+        );
+        let clip = project.tracks[0]
+            .kind
+            .as_instrument()
+            .expect("an instrument track")
+            .clips[0]
+            .id;
+        project.midi_clip_mut(clip).expect("the clip").muted = true;
+        assert_eq!(round_trip(&project).note_count(), 0);
+    }
+
+    #[test]
+    fn a_note_played_as_softly_as_possible_does_not_release_itself() {
+        // A note-on at zero velocity *is* a note-off, so the floor is 1 rather than 0 — otherwise
+        // the quietest note in a piece would vanish on the way out.
+        let mut notes = vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)];
+        notes[0].velocity = 0.0;
+        let imported = round_trip(&project_with(notes, Ticks::QUARTER));
+        assert_eq!(imported.note_count(), 1);
+        assert!(imported.tracks[0].notes[0].velocity > 0.0);
+    }
+
+    #[test]
+    fn a_note_struck_again_the_instant_the_last_one_ended_keeps_both() {
+        // At one position the releases have to be written first, or the release of the first note
+        // lands on the second and cuts it to nothing.
+        let notes = vec![
+            Note::new(60, Ticks::ZERO, Ticks::QUARTER),
+            Note::new(60, Ticks::QUARTER, Ticks::QUARTER),
+        ];
+        let imported = round_trip(&project_with(notes, Ticks(TICKS_PER_QUARTER * 2)));
+        assert_eq!(imported.note_count(), 2);
+        assert!(
+            imported.tracks[0]
+                .notes
+                .iter()
+                .all(|note| note.length == Ticks::QUARTER),
+            "neither note was cut short by the other's release"
+        );
+    }
+
+    #[test]
+    fn an_audio_track_has_no_notes_to_write_and_makes_no_track() {
+        let mut project = project_with(
+            vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)],
+            Ticks::QUARTER,
+        );
+        project.add_audio_track("Vocals");
+        assert_eq!(round_trip(&project).tracks.len(), 1);
     }
 }

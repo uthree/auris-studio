@@ -1299,12 +1299,12 @@ fn schedule_clip(
     if clip.muted || clip.length <= Ticks::ZERO {
         return;
     }
-    for note in &clip.notes {
-        if note.start < Ticks::ZERO || note.start >= clip.length {
-            continue;
-        }
+    // Which notes a clip actually plays is `MidiClip`'s own rule, asked rather than repeated: the
+    // MIDI writer asks the same question, and an export that answered it differently from the
+    // renderer would write a file that is not the piece you can hear.
+    for note in clip.playable_notes() {
         let start_tick = clip.start + note.start;
-        let end_tick = clip.start + note.end().min(clip.length);
+        let end_tick = clip.start + note.end();
         let start = tempo_map.ticks_to_samples(start_tick, sample_rate).raw();
         // A note must occupy at least one frame or the instrument would see the release before
         // it ever produced a sample.
