@@ -9,6 +9,35 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### Buses and sends
+
+* **A track no longer has to go to the master.** Its output is the master or a **bus**, and it can
+  carry any number of **sends** — taps that feed a bus *as well as* wherever it goes itself. One
+  reverb shared by six tracks is six sends; one fader over a whole drum kit is six outputs.
+* A bus is a track kind rather than a thing of its own, so it has a fader, a pan, a mute, an effect
+  chain, a colour and an automation lane without any of them being written twice, and every command
+  that addresses a strip by track id addresses it too. What it has instead of clips is whatever is
+  routed into it.
+* Every mixer strip says where it goes; clicking that name offers the legal destinations, and the
+  **+** beside it adds a send. A send's level is a mixer control like a fader — it drags, takes the
+  wheel, resets on a double click and can be automated. Right-clicking one moves its tap before the
+  fader or takes it away.
+* **Solo travels both ways along the routing.** Soloing a drum track leaves the drum bus open, or
+  its audio has nowhere to go; soloing the drum bus leaves the drum tracks open, or a thing with no
+  material of its own plays silence.
+* A route that would loop back on itself is refused, and the picker only ever offers destinations
+  that would not. A file that holds one — nothing here can write one — is repaired on open with a
+  line in the log, rather than refused.
+* **Plugin delay compensation now follows the routing rather than the track list.** A limiter on a
+  bus holds back the tracks that do *not* pass through it. Each outgoing copy of a track gets a
+  delay of its own on top, so a track feeding the master dry while sending to that same bus has the
+  dry and the wet arrive together instead of comb-filtering each other. Effect tails add up along a
+  path the same way, so an export of a track ringing into a bus ringing into the master keeps going
+  for all three.
+* `Project::FORMAT_VERSION` is 6. A version 5 file opens; a version 6 file does not open in an
+  older build, which is the point — the fields would be *ignored* rather than rejected, and a mix
+  where six tracks feed one reverb would come up with all six routed dry and be saved back that way.
+
 ### MIDI files go in and out
 
 * **File → Import MIDI File…**, or dropping a `.mid` on the window, reads it as a new piece: its

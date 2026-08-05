@@ -1552,6 +1552,26 @@ impl Project {
         removed
     }
 
+    /// Removes a send from a track, returning `true` when it was there.
+    ///
+    /// Its automation goes with it, for the reason a deleted track's and a deleted effect slot's
+    /// do: a lane addressed to a send that no longer exists would come back to life driving
+    /// whichever send is created next.
+    pub fn remove_send(&mut self, track: TrackId, send: SendId) -> bool {
+        let Some(entry) = self.track_mut(track) else {
+            return false;
+        };
+        let before = entry.sends.len();
+        entry.sends.retain(|existing| existing.id != send);
+        let removed = entry.sends.len() != before;
+        if removed {
+            self.automation.remove_lanes_where(|target| {
+                matches!(target, crate::param::ParamTarget::Send { send: id, .. } if id == send)
+            });
+        }
+        removed
+    }
+
     /// A MIDI clip anywhere in the project.
     pub fn midi_clip(&self, clip_id: ClipId) -> Option<(TrackId, &MidiClip)> {
         self.tracks.iter().find_map(|track| {

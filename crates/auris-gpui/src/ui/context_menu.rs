@@ -71,6 +71,45 @@ pub enum MenuCommand {
     NewInstrumentTrack,
     /// Append an audio track.
     NewAudioTrack,
+    /// Append a bus.
+    NewBusTrack,
+    /// Open the list of places a track's output could go.
+    ShowOutputPicker {
+        /// Track being routed.
+        track: TrackId,
+        /// Where the list is dropped.
+        at: Point<Pixels>,
+    },
+    /// Point a track's output at a bus, or back at the master.
+    SetTrackOutput(TrackId, Output),
+    /// Open the list of buses a track could send to.
+    ShowSendPicker {
+        /// Track the send would come from.
+        track: TrackId,
+        /// Where the list is dropped.
+        at: Point<Pixels>,
+    },
+    /// Add a send from a track to a bus.
+    AddSend {
+        /// Track the copy is taken from.
+        track: TrackId,
+        /// Bus it feeds.
+        bus: TrackId,
+    },
+    /// Remove a send from a track.
+    RemoveSend {
+        /// Track the send is on.
+        track: TrackId,
+        /// Which send.
+        send: SendId,
+    },
+    /// Move a send's tap before or after the fader.
+    ToggleSendPreFader {
+        /// Track the send is on.
+        track: TrackId,
+        /// Which send.
+        send: SendId,
+    },
 
     /// Copy a clip, immediately after the original.
     DuplicateClip(ClipId),
@@ -736,6 +775,21 @@ impl AurisApp {
             }
             MenuCommand::NewInstrumentTrack => self.add_instrument_track(),
             MenuCommand::NewAudioTrack => self.add_audio_track(),
+            MenuCommand::NewBusTrack => self.add_bus_track(),
+            MenuCommand::ShowOutputPicker { track, at } => {
+                let menu = self.output_menu(at, track);
+                self.open_menu(menu);
+            }
+            MenuCommand::SetTrackOutput(track, output) => self.set_track_output(track, output),
+            MenuCommand::ShowSendPicker { track, at } => {
+                let menu = self.send_picker_menu(at, track);
+                self.open_menu(menu);
+            }
+            MenuCommand::AddSend { track, bus } => self.add_send(track, bus),
+            MenuCommand::RemoveSend { track, send } => self.remove_send(track, send),
+            MenuCommand::ToggleSendPreFader { track, send } => {
+                self.toggle_send_pre_fader(track, send)
+            }
 
             MenuCommand::DuplicateClip(clip) => {
                 let mut copies = std::collections::BTreeSet::new();
@@ -1028,6 +1082,18 @@ impl AurisApp {
                 },
             )
             .separator()
+            .item(
+                self.t(Key::MenuRouteTo),
+                MenuCommand::ShowOutputPicker { track, at: anchor },
+            )
+            // Only where there is somewhere to send: with no bus in the project the item can do
+            // nothing but open an empty list.
+            .item_if(
+                !self.session.available_buses(track).is_empty(),
+                self.t(Key::MenuAddSend),
+                MenuCommand::ShowSendPicker { track, at: anchor },
+            )
+            .separator()
             .toggle(
                 self.t(Key::MenuAutomateVolume),
                 MenuCommand::ShowAutomation(track, ParamTarget::TrackGain(track)),
@@ -1085,6 +1151,7 @@ impl AurisApp {
                 MenuCommand::NewInstrumentTrack,
             )
             .item(self.t(Key::MenuNewAudioTrack), MenuCommand::NewAudioTrack)
+            .item(self.t(Key::MenuNewBusTrack), MenuCommand::NewBusTrack)
     }
 
     /// The menu for a clip in the arrangement.
@@ -1186,6 +1253,7 @@ impl AurisApp {
                 MenuCommand::NewInstrumentTrack,
             )
             .item(self.t(Key::MenuNewAudioTrack), MenuCommand::NewAudioTrack)
+            .item(self.t(Key::MenuNewBusTrack), MenuCommand::NewBusTrack)
     }
 
     /// The menu for the arrangement below the last track.
@@ -1196,6 +1264,7 @@ impl AurisApp {
                 MenuCommand::NewInstrumentTrack,
             )
             .item(self.t(Key::MenuNewAudioTrack), MenuCommand::NewAudioTrack)
+            .item(self.t(Key::MenuNewBusTrack), MenuCommand::NewBusTrack)
     }
 
     /// The menu for the bar ruler: the cycle above, the tempo below.
@@ -1873,6 +1942,79 @@ impl AurisApp {
             );
         }
         menu
+    }
+
+    /// Where a track's output could go: the master, then every bus that would not make a loop.
+    ///
+    /// The list comes from [`Session::available_buses`](auris_session::Session::available_buses)
+    /// rather than from the track list, because which destinations are legal is a fact about the
+    /// document — and a picker offering an illegal one would be offering an error message.
+    pub(crate) fn output_menu(&self, anchor: Point<Pixels>, track: TrackId) -> ContextMenu {
+        let current = self
+            .project()
+            .track(track)
+            .map(|track| track.output)
+            .unwrap_or_default();
+        let mut menu = ContextMenu::new(anchor, self.t(Key::MenuRouteTo)).toggle(
+            self.t(Key::Master),
+            MenuCommand::SetTrackOutput(track, Output::Master),
+            current == Output::Master,
+        );
+        for bus in self.session.available_buses(track) {
+            let Some(entry) = self.project().track(bus) else {
+                continue;
+            };
+            menu = menu.toggle(
+                entry.name.clone(),
+                MenuCommand::SetTrackOutput(track, Output::Bus(bus)),
+                current == Output::Bus(bus),
+            );
+        }
+        menu
+    }
+
+    /// Every bus a track could send to.
+    ///
+    /// Buses it already sends to are still offered: a second send to the same bus is unusual but
+    /// not wrong, and hiding it would mean the list changed shape as it was used.
+    pub(crate) fn send_picker_menu(&self, anchor: Point<Pixels>, track: TrackId) -> ContextMenu {
+        let mut menu = ContextMenu::new(anchor, self.t(Key::MenuAddSend));
+        for bus in self.session.available_buses(track) {
+            let Some(entry) = self.project().track(bus) else {
+                continue;
+            };
+            menu = menu.item(entry.name.clone(), MenuCommand::AddSend { track, bus });
+        }
+        menu
+    }
+
+    /// The menu for one send row in the mixer.
+    pub(crate) fn send_menu(
+        &self,
+        anchor: Point<Pixels>,
+        track: TrackId,
+        send: SendId,
+    ) -> ContextMenu {
+        let pre_fader = self
+            .project()
+            .track(track)
+            .and_then(|track| track.sends.iter().find(|existing| existing.id == send))
+            .is_some_and(|send| send.pre_fader);
+        ContextMenu::new(anchor, self.t(Key::Sends))
+            .toggle(
+                self.t(Key::MenuSendPreFader),
+                MenuCommand::ToggleSendPreFader { track, send },
+                pre_fader,
+            )
+            .item(
+                self.t(Key::MenuRemoveSend),
+                MenuCommand::RemoveSend { track, send },
+            )
+            .separator()
+            .item(
+                self.t(Key::MenuAddSend),
+                MenuCommand::ShowSendPicker { track, at: anchor },
+            )
     }
 
     /// The clips a menu command should act on.

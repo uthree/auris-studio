@@ -1224,9 +1224,7 @@ impl Session {
     pub fn remove_send(&mut self, id: TrackId, send: SendId) -> Result<(), SessionError> {
         self.require_send(id, send)?;
         self.record(Edit::RemoveSend);
-        if let Some(track) = self.project.track_mut(id) {
-            track.sends.retain(|existing| existing.id != send);
-        }
+        self.project.remove_send(id, send);
         self.invalidate_graph();
         Ok(())
     }
@@ -1234,8 +1232,10 @@ impl Session {
     /// Turns a send's level, in decibels.
     ///
     /// A knob rather than a structural edit, so the change travels as a command and the graph is
-    /// left where it is. Repeated turns of the *same* send fold into one undo step; turning a
-    /// different one starts a new step, which is what the id in [`Edit::SetSendLevel`] is for.
+    /// left where it is. The undo step is [`Edit::AdjustParameter`] over
+    /// [`ParamTarget::Send`], the same one [`Self::set_param`] records — so a drag on one send
+    /// folds into a single step whichever of the two paths the frontend reached it by, and
+    /// turning a *different* send starts a new one.
     pub fn set_send_level(
         &mut self,
         id: TrackId,
@@ -1246,7 +1246,7 @@ impl Session {
         if !level_db.is_finite() {
             return Err(SessionError::NotFinite(level_db as f64));
         }
-        self.record_repeating(Edit::SetSendLevel(send));
+        self.record_repeating(Edit::AdjustParameter(ParamTarget::Send { track: id, send }));
         self.project.tracks[index].sends[position].level_db = level_db;
         self.send(EngineCommand::SetSendLevel {
             track: index,
@@ -1611,7 +1611,9 @@ impl Session {
         if self.project.tracks[index].kind.as_instrument().is_none() {
             return Err(SessionError::WrongTrackKind {
                 id: track.0,
-                actual: "an audio track",
+                // The track's own word for itself, rather than "an audio track" — which was true
+                // of the only other kind there used to be, and is a lie about a bus.
+                actual: self.project.tracks[index].kind.label(),
                 expected: "an instrument track",
             });
         }
@@ -2630,6 +2632,11 @@ impl Session {
             ParamTarget::TrackGain(_) | ParamTarget::MasterGain => Some(ParamDescriptor::decibels(
                 0u32, "gain", "Volume", -60.0, 12.0, 0.0,
             )),
+            // A send has no headroom above unity: it is how much of a track goes somewhere, and
+            // more of it than there is would be a gain stage wearing a send's name.
+            ParamTarget::Send { .. } => Some(ParamDescriptor::decibels(
+                0u32, "send", "Send", -60.0, 0.0, 0.0,
+            )),
             _ => None,
         }
     }
@@ -2648,6 +2655,11 @@ impl Session {
             ParamTarget::TrackPan(id) => self.project.track(id).map_or(0.0, |t| t.mixer.pan),
             ParamTarget::MasterGain => self.project.master.gain_db,
             ParamTarget::MasterPan => self.project.master.pan,
+            ParamTarget::Send { track, send } => self
+                .project
+                .track(track)
+                .and_then(|track| track.sends.iter().find(|existing| existing.id == send))
+                .map_or(descriptor.default, |send| send.level_db),
             ParamTarget::Instrument { track, .. } => self
                 .project
                 .track(track)
@@ -2708,6 +2720,12 @@ impl Session {
                 self.record_repeating(Edit::AdjustParameter(target));
                 self.project.master.pan = value;
                 self.send(EngineCommand::SetMasterPan(value));
+            }
+            // Through the typed command rather than repeating its body: a send that has gone is
+            // an error there and a silent no-op here, and only one of the two knows how to write
+            // the value.
+            ParamTarget::Send { track, send } => {
+                let _ = self.set_send_level(track, send, value);
             }
             ParamTarget::Instrument { track, param } => {
                 let Ok(index) = self.require_track(track) else {
@@ -2890,6 +2908,10 @@ impl Session {
             ParamTarget::TrackGain(id) | ParamTarget::TrackPan(id) => {
                 self.project.track(id).is_some()
             }
+            ParamTarget::Send { track, send } => self
+                .project
+                .track(track)
+                .is_some_and(|track| track.sends.iter().any(|existing| existing.id == send)),
             ParamTarget::Instrument { track, .. } => self.project.track(track).is_some(),
             ParamTarget::Effect { track, slot, .. } => self
                 .strip(track)

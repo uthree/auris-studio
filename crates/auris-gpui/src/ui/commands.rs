@@ -129,6 +129,48 @@ impl AurisApp {
         self.reveal_track(id);
     }
 
+    /// Appends a bus, which nothing is routed to yet.
+    pub(crate) fn add_bus_track(&mut self) {
+        let count = self.project().tracks.len() + 1;
+        let name = messages::new_bus_name(self.language(), count);
+        let id = self.session.add_bus_track(name);
+        self.selected_track = Some(id);
+        self.select_clip(None);
+        self.selected_notes.clear();
+        self.reveal_track(id);
+    }
+
+    /// Points a track's output at a bus, or back at the master.
+    pub(crate) fn set_track_output(&mut self, track: TrackId, output: Output) {
+        if let Err(error) = self.session.set_track_output(track, output) {
+            self.set_failed_status(self.failure(Key::CmdSetTrackOutput, &error));
+        }
+    }
+
+    /// Adds a send from a track to a bus.
+    pub(crate) fn add_send(&mut self, track: TrackId, bus: TrackId) {
+        if let Err(error) = self.session.add_send(track, bus) {
+            self.set_failed_status(self.failure(Key::CmdAddSend, &error));
+        }
+    }
+
+    /// Removes a send from a track.
+    pub(crate) fn remove_send(&mut self, track: TrackId, send: SendId) {
+        if let Err(error) = self.session.remove_send(track, send) {
+            self.set_failed_status(self.failure(Key::CmdRemoveSend, &error));
+        }
+    }
+
+    /// Moves a send's tap before or after the fader.
+    pub(crate) fn toggle_send_pre_fader(&mut self, track: TrackId, send: SendId) {
+        let pre_fader = self
+            .project()
+            .track(track)
+            .and_then(|track| track.sends.iter().find(|existing| existing.id == send))
+            .is_some_and(|send| send.pre_fader);
+        let _ = self.session.set_send_pre_fader(track, send, !pre_fader);
+    }
+
     /// Deletes the selected track.
     pub(crate) fn delete_selected_track(&mut self) {
         let Some(id) = self.selected_track else {
@@ -155,8 +197,17 @@ impl AurisApp {
                 self.select_clip(Some(id));
                 self.selected_notes.clear();
             }
+            // Which of the two kinds refused says which sentence is true: an audio track has
+            // clips and they arrive by import, and a bus has none at all.
             Err(_) => {
-                self.set_status(self.t(Key::AudioClipsComeFromImport));
+                let is_bus = self
+                    .project()
+                    .track(track)
+                    .is_some_and(|track| track.kind.is_bus());
+                self.set_status(self.t(match is_bus {
+                    true => Key::BusHoldsNoClips,
+                    false => Key::AudioClipsComeFromImport,
+                }));
             }
         }
     }

@@ -195,6 +195,34 @@ Volume and pan are what the lane offers today. The document, the engine and the 
 already address every parameter a plugin has — see
 [`ParamTarget`](https://docs.rs/auris-core) — so widening the menu is a menu change.
 
+### Buses and sends
+
+**Bus** on the arrangement's header, or **New Bus** in any track menu, adds a mixing point: a track
+with no clips, whose material is whatever is routed into it. It has a fader, a pan, a mute, an
+effect chain and an automation lane, because it is a track.
+
+Every strip in the mixer says where it goes. Clicking that name offers the master and every bus,
+and the **+** beside it adds a **send** — a copy of the track fed to a bus at a level of its own,
+*as well as* wherever the track's own output goes. Six tracks sending to one reverb is six sends;
+one fader over a whole drum kit is six outputs. A send row's slider is a mixer control like any
+other, so it drags, takes the wheel, resets on a double click and can be automated. Right-clicking
+one moves its tap before the fader — where a reverb wants to follow the fader down, a headphone mix
+does not — or takes it away.
+
+Solo travels both ways along the routing. Soloing a drum track leaves the drum bus open, because
+its audio has nowhere else to go; soloing the drum *bus* leaves the drum tracks open, because a bus
+has nothing of its own to play. A track is heard exactly when it lies on a path through something
+soloed.
+
+A route that would send a signal back into itself is refused, in the mixer and in the picker both:
+the list of destinations only ever holds the legal ones. A project file that somehow holds a loop —
+nothing here can write one — is repaired on open rather than refused, with a line in the log.
+
+Plugin delay compensation follows the routing rather than the track list. A limiter on a bus holds
+back the tracks that *do not* pass through it, so the mix stays in step; and a track feeding the
+master dry while sending to that same bus has each copy delayed on its own, so the dry and the wet
+still arrive together instead of comb-filtering each other.
+
 ### The time signature
 
 So can the meter. The signature readout shows the one the playhead is in, and clicking it drops

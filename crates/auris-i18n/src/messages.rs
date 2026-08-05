@@ -110,6 +110,12 @@ messages! {
         ja: "オーディオ {number}"
     }
 
+    /// Name given to a bus the user just created.
+    fn new_bus_name(number: usize) {
+        en: "Bus {number}",
+        ja: "バス {number}"
+    }
+
     /// Name given to a clip the user just created.
     fn new_clip_name(number: usize) {
         en: "Clip {number}",

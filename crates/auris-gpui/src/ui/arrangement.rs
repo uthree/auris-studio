@@ -303,6 +303,16 @@ impl AurisApp {
                             this.add_audio_track();
                             cx.notify();
                         }),
+                    )))
+                    .child(div().flex_1().child(icon_label(
+                        "add-bus",
+                        Icon::Plus,
+                        self.t(Key::AddBusShort),
+                        &theme,
+                        cx.listener(|this, _, _, cx| {
+                            this.add_bus_track();
+                            cx.notify();
+                        }),
                     ))),
             )
             .child(

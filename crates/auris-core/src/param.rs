@@ -11,7 +11,7 @@
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
-use crate::project::{EffectSlotId, TrackId};
+use crate::project::{EffectSlotId, SendId, TrackId};
 
 /// Identifies a parameter within one plugin instance.
 #[derive(
@@ -376,6 +376,13 @@ pub enum ParamTarget {
     MasterGain,
     /// The master bus stereo position.
     MasterPan,
+    /// How much of a track one of its sends carries, in decibels.
+    Send {
+        /// Track the send is taken from.
+        track: TrackId,
+        /// Which send on that track.
+        send: SendId,
+    },
     /// A parameter of a track's instrument.
     Instrument {
         /// Track whose instrument is addressed.
@@ -401,6 +408,7 @@ impl ParamTarget {
     pub fn track(self) -> Option<TrackId> {
         match self {
             ParamTarget::TrackGain(id) | ParamTarget::TrackPan(id) => Some(id),
+            ParamTarget::Send { track, .. } => Some(track),
             ParamTarget::Instrument { track, .. } => Some(track),
             ParamTarget::Effect { track, .. } => track,
             ParamTarget::MasterGain | ParamTarget::MasterPan => None,
@@ -418,6 +426,7 @@ impl ParamTarget {
                 | ParamTarget::TrackPan(_)
                 | ParamTarget::MasterGain
                 | ParamTarget::MasterPan
+                | ParamTarget::Send { .. }
         )
     }
 
@@ -554,6 +563,10 @@ mod tests {
                 track: None,
                 slot: EffectSlotId(2),
                 param: ParamId(0),
+            },
+            ParamTarget::Send {
+                track: TrackId(3),
+                send: SendId(8),
             },
         ] {
             let json = serde_json::to_string(&target).expect("serialises");

@@ -63,6 +63,13 @@ strings! {
     TrackKindInstrument { en: "Instrument", ja: "ソフト音源" }
     TrackKindAudio { en: "Audio", ja: "オーディオ" }
     TrackKindBus { en: "Bus", ja: "バス" }
+    // A strip is 128 px wide and every label on it is an abbreviation for that reason.
+    OutputShort { en: "Out", ja: "出力" }
+    Sends { en: "Sends", ja: "センド" }
+    AddBusShort { en: "Bus", ja: "バス" }
+    // Marks a send taken before the fader, in the room a send row has beside the bus name. Not an
+    // initial like Mute's and Solo's, because "P" says nothing at all in Japanese.
+    SendPreFaderMark { en: "Pre", ja: "プリ" }
 
     // The piano roll's own hints name the gesture that is actually bound, so they are in
     // `messages` and take it as an argument. Fixed strings naming a modifier used to live here
@@ -240,6 +247,10 @@ strings! {
     CmdDeleteSelection { en: "Delete Selection", ja: "選択範囲を削除" }
     CmdAddInstrumentTrack { en: "Add Instrument Track", ja: "ソフト音源トラックを追加" }
     CmdAddAudioTrack { en: "Add Audio Track", ja: "オーディオトラックを追加" }
+    CmdAddBusTrack { en: "Add Bus", ja: "バスを追加" }
+    CmdSetTrackOutput { en: "Route Track", ja: "出力先を変更" }
+    CmdAddSend { en: "Add Send", ja: "センドを追加" }
+    CmdRemoveSend { en: "Remove Send", ja: "センドを削除" }
     CmdDeleteTrack { en: "Delete Track", ja: "トラックを削除" }
     // "Show" was a lie on a toggle with no state beside it: choosing Show Inspector hid the
     // inspector. These say what the command does either way.
@@ -287,6 +298,11 @@ strings! {
     MenuAddEffect { en: "Add Effect…", ja: "エフェクトを追加…" }
     MenuNewInstrumentTrack { en: "New Instrument Track", ja: "新規ソフト音源トラック" }
     MenuNewAudioTrack { en: "New Audio Track", ja: "新規オーディオトラック" }
+    MenuNewBusTrack { en: "New Bus", ja: "新規バス" }
+    MenuRouteTo { en: "Output", ja: "出力先" }
+    MenuAddSend { en: "Add Send", ja: "センドを追加" }
+    MenuRemoveSend { en: "Remove Send", ja: "センドを削除" }
+    MenuSendPreFader { en: "Take Before the Fader", ja: "フェーダー前から取る" }
     MenuDuplicate { en: "Duplicate", ja: "複製" }
     MenuSplitAtPlayhead { en: "Split at Playhead", ja: "再生位置で分割" }
     MenuMuteClip { en: "Mute Clip", ja: "クリップをミュート" }
@@ -470,6 +486,10 @@ strings! {
     AudioClipsComeFromImport {
         en: "Audio clips come from Import Audio, not from an empty lane",
         ja: "オーディオクリップは空のレーンからではなく読み込みで作成します"
+    }
+    BusHoldsNoClips {
+        en: "A bus holds no clips; its material is whatever is routed into it",
+        ja: "バスにクリップは置けません — 音は他のトラックからのルーティングで届きます"
     }
     DuplicatedTrack { en: "Duplicated track", ja: "トラックを複製しました" }
     DuplicatedClip { en: "Duplicated clip", ja: "クリップを複製しました" }

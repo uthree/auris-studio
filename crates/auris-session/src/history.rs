@@ -6,7 +6,6 @@
 //! one edit path forgets to record its inverse.
 
 use auris_core::Project;
-use auris_core::project::SendId;
 use auris_core::time::Ticks;
 
 use crate::param::ParamTarget;
@@ -64,12 +63,10 @@ pub enum Edit {
     /// A send was added to a track.
     AddSend,
     /// A send was removed from a track.
-    RemoveSend,
-    /// A send's level was turned.
     ///
-    /// Carries which send, for the reason [`Edit::AdjustParameter`] does: a drag coalesces into
-    /// one step, and two sends turned one after the other must not fold into the same one.
-    SetSendLevel(SendId),
+    /// A send's *level* has no variant of its own: it is a mixer control like a fader, so turning
+    /// one records [`Edit::AdjustParameter`] over [`ParamTarget::Send`] and coalesces the same way.
+    RemoveSend,
     /// A send was moved before or after the fader.
     SetSendPreFader,
     /// A track's instrument was replaced.

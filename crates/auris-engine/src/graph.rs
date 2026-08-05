@@ -1742,6 +1742,8 @@ enum AutomationSlot {
     MasterGain,
     /// The master pan.
     MasterPan,
+    /// One of a track's send levels, by track index and position in its send list.
+    Send { track: usize, send: usize },
     /// A parameter on a track's instrument.
     Instrument { track: usize, param: ParamId },
     /// A parameter on an effect, on a track or on the master bus.
@@ -1793,6 +1795,14 @@ fn resolve_slot(project: &Project, target: ParamTarget) -> Option<AutomationSlot
         ParamTarget::TrackPan(id) => project.track_index(id).map(AutomationSlot::TrackPan),
         ParamTarget::MasterGain => Some(AutomationSlot::MasterGain),
         ParamTarget::MasterPan => Some(AutomationSlot::MasterPan),
+        ParamTarget::Send { track, send } => Some(AutomationSlot::Send {
+            track: project.track_index(track)?,
+            send: project
+                .track(track)?
+                .sends
+                .iter()
+                .position(|existing| existing.id == send)?,
+        }),
         ParamTarget::Instrument { track, param } => Some(AutomationSlot::Instrument {
             track: project.track_index(track)?,
             param,
@@ -1855,6 +1865,17 @@ fn drive_automation(
                 true => master.set_pan(value),
                 false => master.jump_pan(value),
             },
+            AutomationSlot::Send { track, send } => {
+                if let Some(send) = tracks
+                    .get_mut(track)
+                    .and_then(|track| track.sends.get_mut(send))
+                {
+                    match continuing {
+                        true => send.gain.set_target(db_to_gain(value)),
+                        false => send.gain.jump_to(db_to_gain(value)),
+                    }
+                }
+            }
             AutomationSlot::Instrument { track, param } => {
                 if let Some(track) = tracks.get_mut(track) {
                     track.set_instrument_param(param, value);

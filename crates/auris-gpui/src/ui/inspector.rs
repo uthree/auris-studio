@@ -592,6 +592,9 @@ fn target_element_key(target: ParamTarget, param: ParamId) -> usize {
         ParamTarget::MasterPan => 3,
         ParamTarget::Instrument { track, .. } => track.0 as usize * 4096,
         ParamTarget::Effect { slot, .. } => slot.0 as usize * 4096,
+        // A send id comes from the same counter as a slot id, so the same stride keeps it clear
+        // of everything else.
+        ParamTarget::Send { send, .. } => send.0 as usize * 4096,
     };
     base + param.index()
 }

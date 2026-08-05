@@ -95,6 +95,20 @@ impl AurisApp {
             .collect();
         let level_db = gain_to_db(self.track_level(index));
         let selected = self.selected_track == Some(track_id);
+        let output = track.output;
+        let sends: Vec<(SendId, TrackId, f32, bool)> = track
+            .sends
+            .iter()
+            .map(|send| (send.id, send.target, send.level_db, send.pre_fader))
+            .collect();
+        let destination = match output {
+            Output::Master => self.t(Key::Master).to_string(),
+            Output::Bus(bus) => self
+                .project()
+                .track(bus)
+                .map(|bus| bus.name.clone())
+                .unwrap_or_else(|| self.t(Key::Master).to_string()),
+        };
 
         let effect_rows: Vec<AnyElement> = effects
             .into_iter()
@@ -205,6 +219,14 @@ impl AurisApp {
                 pan,
                 cx,
             ))
+            .child(self.output_row(index, track_id, destination, cx))
+            .children(sends.into_iter().enumerate().map(
+                |(position, (send, bus, level_db, pre_fader))| {
+                    self.send_row(
+                        index, position, track_id, send, bus, level_db, pre_fader, cx,
+                    )
+                },
+            ))
             .child(
                 div()
                     .flex()
@@ -227,6 +249,132 @@ impl AurisApp {
                         theme.meter_color(level_db),
                         &theme,
                     ))),
+            )
+            .into_any_element()
+    }
+
+    /// Where the strip's output goes, and the way to point it somewhere else.
+    ///
+    /// Shown on every strip rather than only on routed ones. A control that appears once a track
+    /// has been routed is a control nobody can find in order to route one — and where a track goes
+    /// is worth reading at a glance even when the answer is the obvious one.
+    fn output_row(
+        &self,
+        index: usize,
+        track_id: TrackId,
+        destination: String,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let theme = self.theme.clone();
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(self.t(Key::OutputShort)),
+            )
+            .child(div().flex_1().min_w_0().child(button(
+                ("mixer-out", index),
+                destination,
+                ButtonStyle::Ghost,
+                false,
+                theme.accent_soft,
+                &theme,
+                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                    let menu = this.output_menu(event.position(), track_id);
+                    this.open_menu(menu);
+                    cx.notify();
+                }),
+            )))
+            .child(button(
+                ("mixer-add-send", index),
+                "+",
+                ButtonStyle::Ghost,
+                false,
+                theme.accent_soft,
+                &theme,
+                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                    let menu = this.send_picker_menu(event.position(), track_id);
+                    this.open_menu(menu);
+                    cx.notify();
+                }),
+            ))
+            .into_any_element()
+    }
+
+    /// One send: where it goes, and how much of the track goes there.
+    ///
+    /// The level is a [`ParamTarget`] like a fader, so it drags, takes the wheel, resets on a
+    /// double click and can be automated — all of that comes from being a mixer control rather
+    /// than a number with a slider drawn next to it.
+    #[allow(clippy::too_many_arguments)]
+    fn send_row(
+        &self,
+        index: usize,
+        position: usize,
+        track_id: TrackId,
+        send: SendId,
+        bus: TrackId,
+        level_db: f32,
+        pre_fader: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let theme = self.theme.clone();
+        let name = self
+            .project()
+            .track(bus)
+            .map(|bus| bus.name.clone())
+            .unwrap_or_default();
+        div()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .truncate()
+                            .child(name),
+                    )
+                    // The tap point, in the one character there is room for. A send taken before
+                    // the fader behaves differently enough from one taken after it that a strip
+                    // which did not say which is which would be lying by omission.
+                    .when(pre_fader, |row| {
+                        row.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.accent)
+                                .child(self.t(Key::SendPreFaderMark)),
+                        )
+                    }),
+            )
+            .child(self.fader(
+                ("mixer-send", index * 64 + position),
+                self.t(Key::Sends),
+                ParamTarget::Send {
+                    track: track_id,
+                    send,
+                },
+                level_db,
+                cx,
+            ))
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                    let menu = this.send_menu(event.position, track_id, send);
+                    this.open_menu(menu);
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
             )
             .into_any_element()
     }

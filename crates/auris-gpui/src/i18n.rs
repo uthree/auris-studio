@@ -96,7 +96,6 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::SetTrackOutput => Key::EditSetTrackOutput,
         Edit::AddSend => Key::EditAddSend,
         Edit::RemoveSend => Key::EditRemoveSend,
-        Edit::SetSendLevel(_) => Key::EditSetSendLevel,
         Edit::SetSendPreFader => Key::EditSetSendPreFader,
         Edit::ChangeInstrument => Key::EditChangeInstrument,
         Edit::AddClip => Key::EditAddClip,
