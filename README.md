@@ -101,8 +101,13 @@ at the start of the timeline is always there and cannot be removed, exactly like
 ### Languages
 
 The interface is available in English and Japanese, chosen under Settings → General or followed
-from the system locale. Both frontends read the same preference, so the desktop application and
-the command line tool answer in the same language.
+from the system locale.
+
+That is the window. `auris` prints English whatever the setting says, because a terminal is not a
+surface that can promise to render anything else: a Windows console on a code page other than
+UTF-8 turns Japanese into mojibake, and a pipe into a tool that assumes ASCII does worse. Names
+that came out of a document — a project's, a track's — are still whatever you typed, because
+those are your words rather than the program's.
 
 Plugin names and parameters are translated where the term is known and left in the plugin
 author's own wording where it is not, so a third-party plugin degrades to English rather than to

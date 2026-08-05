@@ -16,39 +16,46 @@ use auris_session::{Session, SessionOptions};
 
 /// The language every message is printed in.
 ///
-/// Read from the same settings file the desktop application writes, so choosing Japanese in one
-/// place answers in Japanese in both. With no file yet, the environment decides.
-fn language() -> Language {
-    Settings::load().language()
-}
+/// English, whatever the system says and whatever the desktop application has been set to. This
+/// used to follow [`Settings::language`](auris_session::Settings::language) so that choosing
+/// Japanese in one place answered in Japanese in both, and a terminal is not a place that holds
+/// up its end of that bargain: a Windows console on a code page other than UTF-8 turns Japanese
+/// into mojibake, and a pipe into a tool that assumes ASCII does worse. A window draws its own
+/// glyphs and can promise to render what it is given; here the last word belongs to whatever the
+/// output happens to land in.
+///
+/// A constant rather than a parameter, so there is no per-command language to accidentally take
+/// from somewhere else. Text that came out of a *document* — a project's name, a track's — is
+/// still whatever the user typed, because that is their data and not this program's voice.
+const LANGUAGE: Language = Language::English;
 
 fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
-    // Before the first `Settings::load`: the configuration moved to `~/.config/auris-studio`, and
-    // whichever frontend runs first is the one that carries an older installation's across.
+    // Nothing here reads the configuration, but this is still the frontend that may run first on
+    // a machine, and an installation predating the move to `~/.config/auris-studio` only has its
+    // settings carried across by whichever one does.
     auris_session::migrate_legacy_config();
 
-    let language = language();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(command) = args.first().map(String::as_str) else {
-        print_usage(language);
+        print_usage();
         return ExitCode::FAILURE;
     };
 
     let result = match command {
-        "plugins" => list_plugins(language),
-        "progressions" => list_progressions(language),
-        "compose" => compose(&args, language),
-        "info" => with_path(&args, language, info),
-        "render" => render(&args, language),
-        "new" => new_project(&args, language),
-        "collect" => with_path(&args, language, collect),
+        "plugins" => list_plugins(),
+        "progressions" => list_progressions(),
+        "compose" => compose(&args),
+        "info" => with_path(&args, info),
+        "render" => render(&args),
+        "new" => new_project(&args),
+        "collect" => with_path(&args, collect),
         "help" | "-h" | "--help" => {
-            print_usage(language);
+            print_usage();
             Ok(())
         }
-        other => Err(messages::unknown_command(language, other)),
+        other => Err(messages::unknown_command(LANGUAGE, other)),
     };
 
     match result {
@@ -62,9 +69,13 @@ fn main() -> ExitCode {
 
 /// How many terminal columns `text` occupies.
 ///
-/// `{:<12}` pads by counting *characters*, which lines a table up in English and ruins it in
-/// Japanese, where one character is two columns wide. The ranges below are the East Asian Wide
-/// and Fullwidth blocks — an approximation, but an exact one for every script this ships in.
+/// `{:<12}` pads by counting *characters*, which lines a table up in English and ruins it the
+/// moment a column holds anything wider. [`LANGUAGE`] took the interface's own text out of that
+/// question and not the rest of it: `auris info` prints a project's name and its tracks' names,
+/// and those are whatever the person who wrote the music called them.
+///
+/// The ranges below are the East Asian Wide and Fullwidth blocks — an approximation, and an exact
+/// one for the scripts a name is most likely to be in.
 fn display_width(text: &str) -> usize {
     text.chars()
         .map(|c| match c as u32 {
@@ -91,10 +102,10 @@ fn pad(text: &str, columns: usize) -> String {
     format!("{text}{}", " ".repeat(columns.saturating_sub(width)))
 }
 
-fn print_usage(language: Language) {
+fn print_usage() {
     // Ignored on purpose: usage goes to whoever is still listening, and a reader that has
     // gone away is not a failure worth reporting over the top of the one being explained.
-    let _ = writeln!(std::io::stdout(), "{}", Key::CliUsage.get(language));
+    let _ = writeln!(std::io::stdout(), "{}", Key::CliUsage.get(LANGUAGE));
 }
 
 /// Turns a listing's write errors into the command's verdict.
@@ -111,15 +122,11 @@ fn printed(result: std::io::Result<()>) -> Result<(), String> {
     }
 }
 
-fn with_path(
-    args: &[String],
-    language: Language,
-    run: impl Fn(&Path, Language) -> Result<(), String>,
-) -> Result<(), String> {
+fn with_path(args: &[String], run: impl Fn(&Path) -> Result<(), String>) -> Result<(), String> {
     let path = args
         .get(1)
-        .ok_or_else(|| Key::CliExpectedProjectPath.get(language).to_string())?;
-    run(Path::new(path), language)
+        .ok_or_else(|| Key::CliExpectedProjectPath.get(LANGUAGE).to_string())?;
+    run(Path::new(path))
 }
 
 /// A session with no audio device and no GPU, which is all a batch tool needs.
@@ -128,11 +135,11 @@ fn headless() -> Result<Session, String> {
 }
 
 /// Lists the chord progressions the composer knows by name.
-fn list_progressions(language: Language) -> Result<(), String> {
+fn list_progressions() -> Result<(), String> {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     let print = (|| {
-        writeln!(out, "{}", Key::CliProgressions.get(language))?;
+        writeln!(out, "{}", Key::CliProgressions.get(LANGUAGE))?;
         for entry in auris_session::prelude::progression_catalog() {
             // Through the same lookup the desktop's menu uses: the descriptions all have
             // Japanese translations, pinned complete by a test, and this listing printed the
@@ -141,7 +148,7 @@ fn list_progressions(language: Language) -> Result<(), String> {
                 out,
                 "  @{:<14} {}",
                 entry.name,
-                auris_i18n::audio::theory_description(entry.description, language)
+                auris_i18n::audio::theory_description(entry.description, LANGUAGE)
             )?;
             writeln!(out, "  {:<15} {}", "", entry.chart)?;
         }
@@ -151,11 +158,11 @@ fn list_progressions(language: Language) -> Result<(), String> {
 }
 
 /// Writes a piece from a specification and saves it as a project.
-fn compose(args: &[String], language: Language) -> Result<(), String> {
+fn compose(args: &[String]) -> Result<(), String> {
     let source = args
         .get(1)
         .filter(|arg| !arg.starts_with('-'))
-        .ok_or_else(|| Key::CliExpectedSpecPath.get(language).to_string())?;
+        .ok_or_else(|| Key::CliExpectedSpecPath.get(LANGUAGE).to_string())?;
     let source = PathBuf::from(source);
 
     let mut output = source.with_extension(auris_session::PROJECT_EXTENSION);
@@ -169,9 +176,9 @@ fn compose(args: &[String], language: Language) -> Result<(), String> {
                 index += 1;
                 output = PathBuf::from(args.get(index).ok_or_else(|| {
                     messages::option_needs_value(
-                        language,
+                        LANGUAGE,
                         "--output",
-                        Key::CliNeedsPath.get(language),
+                        Key::CliNeedsPath.get(LANGUAGE),
                     )
                 })?);
             }
@@ -182,7 +189,7 @@ fn compose(args: &[String], language: Language) -> Result<(), String> {
                 overrides.push(
                     args.get(index)
                         .ok_or_else(|| {
-                            messages::option_needs_value(language, "--set", "field: value")
+                            messages::option_needs_value(LANGUAGE, "--set", "field: value")
                         })?
                         .clone(),
                 );
@@ -193,12 +200,12 @@ fn compose(args: &[String], language: Language) -> Result<(), String> {
                 let value = args.get(index).ok_or_else(|| {
                     // Through the table, like every sibling arm: a literal here was English
                     // interpolated verbatim into the middle of the Japanese message.
-                    messages::option_needs_value(language, &field, Key::CliNeedsValue.get(language))
+                    messages::option_needs_value(LANGUAGE, &field, Key::CliNeedsValue.get(LANGUAGE))
                 })?;
                 overrides.push(format!("{field}: {value}"));
             }
             "--print" => print_only = true,
-            other => return Err(messages::unknown_option(language, other)),
+            other => return Err(messages::unknown_option(LANGUAGE, other)),
         }
         index += 1;
     }
@@ -213,7 +220,7 @@ fn compose(args: &[String], language: Language) -> Result<(), String> {
         format!("{text}\n[song]\n{}", overrides.join("\n"))
     };
     let spec = auris_session::prelude::SongSpec::parse(&combined).map_err(|errors| {
-        let mut message = messages::spec_rejected(language, &source.display().to_string());
+        let mut message = messages::spec_rejected(LANGUAGE, &source.display().to_string());
         for error in errors {
             message.push_str(&format!("\n  {error}"));
         }
@@ -228,7 +235,7 @@ fn compose(args: &[String], language: Language) -> Result<(), String> {
     let mut session = headless()?;
     let report = session.compose(&piece).map_err(|error| error.to_string())?;
     for missing in &report.substituted {
-        eprintln!("{}", messages::instrument_substituted(language, missing));
+        eprintln!("{}", messages::instrument_substituted(LANGUAGE, missing));
     }
     session.save(&output).map_err(|error| error.to_string())?;
 
@@ -236,7 +243,7 @@ fn compose(args: &[String], language: Language) -> Result<(), String> {
         std::io::stdout(),
         "{}",
         messages::composed(
-            language,
+            LANGUAGE,
             &output.display().to_string(),
             report.tracks,
             report.notes,
@@ -247,45 +254,41 @@ fn compose(args: &[String], language: Language) -> Result<(), String> {
     Ok(())
 }
 
-fn list_plugins(language: Language) -> Result<(), String> {
+fn list_plugins() -> Result<(), String> {
     let session = headless()?;
     let registry = session.registry();
 
     // The registry id stays as it is: it is what a project file stores and what a script types.
-    fn describe(
-        out: &mut impl Write,
-        descriptor: &PluginDescriptor,
-        language: Language,
-    ) -> std::io::Result<()> {
+    fn describe(out: &mut impl Write, descriptor: &PluginDescriptor) -> std::io::Result<()> {
         writeln!(
             out,
             "  {:<26} {} {}",
             descriptor.id,
             pad(
-                auris_i18n::audio::category(descriptor.category.label(), language),
+                auris_i18n::audio::category(descriptor.category.label(), LANGUAGE),
                 14
             ),
-            auris_i18n::audio::plugin_name(&descriptor.name, language)
+            auris_i18n::audio::plugin_name(&descriptor.name, LANGUAGE)
         )?;
         writeln!(
             out,
             "  {:<26} {:<14} {}",
             "",
             "",
-            auris_i18n::audio::plugin_description(&descriptor.description, language)
+            auris_i18n::audio::plugin_description(&descriptor.description, LANGUAGE)
         )
     }
 
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     let print = (|| {
-        writeln!(out, "{}", Key::CliInstruments.get(language))?;
+        writeln!(out, "{}", Key::CliInstruments.get(LANGUAGE))?;
         for descriptor in registry.instruments() {
-            describe(&mut out, descriptor, language)?;
+            describe(&mut out, descriptor)?;
         }
-        writeln!(out, "\n{}", Key::CliEffects.get(language))?;
+        writeln!(out, "\n{}", Key::CliEffects.get(LANGUAGE))?;
         for descriptor in registry.effects() {
-            describe(&mut out, descriptor, language)?;
+            describe(&mut out, descriptor)?;
         }
         Ok(())
     })();
@@ -297,12 +300,12 @@ fn list_plugins(language: Language) -> Result<(), String> {
 /// The command for archiving a project or handing it to someone else, from a script. Audio is
 /// already collected as a matter of course; what this adds is the SoundFonts, which are left in
 /// place on an ordinary save because one font is shared by every project that uses it.
-fn collect(path: &Path, language: Language) -> Result<(), String> {
+fn collect(path: &Path) -> Result<(), String> {
     let mut session = headless()?;
     for missing in session.open(path).map_err(|error| error.to_string())? {
         eprintln!(
             "{}",
-            messages::warning_missing_audio(language, &missing.display().to_string())
+            messages::warning_missing_audio(LANGUAGE, &missing.display().to_string())
         );
     }
     let collected = session
@@ -312,16 +315,16 @@ fn collect(path: &Path, language: Language) -> Result<(), String> {
     printed(writeln!(
         std::io::stdout(),
         "{}",
-        messages::assets_collected(language, collected)
+        messages::assets_collected(LANGUAGE, collected)
     ))?;
     Ok(())
 }
 
-fn info(path: &Path, language: Language) -> Result<(), String> {
+fn info(path: &Path) -> Result<(), String> {
     let mut session = headless()?;
     let missing = session.open(path).map_err(|error| error.to_string())?;
     let project = session.project();
-    let field = |key: Key| Key::get(key, language);
+    let field = |key: Key| Key::get(key, LANGUAGE);
 
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
@@ -410,17 +413,17 @@ fn info(path: &Path, language: Language) -> Result<(), String> {
     for path in &missing {
         eprintln!(
             "{}",
-            messages::warning_missing_audio(language, &path.display().to_string())
+            messages::warning_missing_audio(LANGUAGE, &path.display().to_string())
         );
     }
     printed(print)
 }
 
-fn render(args: &[String], language: Language) -> Result<(), String> {
+fn render(args: &[String]) -> Result<(), String> {
     let source = args
         .get(1)
         .filter(|arg| !arg.starts_with('-'))
-        .ok_or_else(|| Key::CliExpectedProjectPath.get(language).to_string())?;
+        .ok_or_else(|| Key::CliExpectedProjectPath.get(LANGUAGE).to_string())?;
     let source = PathBuf::from(source);
 
     let mut output = source.with_extension("wav");
@@ -435,9 +438,9 @@ fn render(args: &[String], language: Language) -> Result<(), String> {
                 index += 1;
                 output = PathBuf::from(args.get(index).ok_or_else(|| {
                     messages::option_needs_value(
-                        language,
+                        LANGUAGE,
                         "--output",
-                        Key::CliNeedsPath.get(language),
+                        Key::CliNeedsPath.get(LANGUAGE),
                     )
                 })?);
             }
@@ -448,14 +451,14 @@ fn render(args: &[String], language: Language) -> Result<(), String> {
                     Some("24") => WavBitDepth::Int24,
                     Some("32") => WavBitDepth::Float32,
                     other => {
-                        return Err(messages::bad_bit_depth(language, other.unwrap_or_default()));
+                        return Err(messages::bad_bit_depth(LANGUAGE, other.unwrap_or_default()));
                     }
                 };
             }
             "--dither" => settings.dither = true,
             "--no-tail" => options.include_tail = false,
             "--loop" => loop_only = true,
-            other => return Err(messages::unknown_option(language, other)),
+            other => return Err(messages::unknown_option(LANGUAGE, other)),
         }
         index += 1;
     }
@@ -464,7 +467,7 @@ fn render(args: &[String], language: Language) -> Result<(), String> {
     for path in session.open(&source).map_err(|error| error.to_string())? {
         eprintln!(
             "{}",
-            messages::warning_missing_audio(language, &path.display().to_string())
+            messages::warning_missing_audio(LANGUAGE, &path.display().to_string())
         );
     }
 
@@ -474,7 +477,7 @@ fn render(args: &[String], language: Language) -> Result<(), String> {
         // it; a project without one is an error, not a silent whole-project render.
         options = job
             .loop_options(options)
-            .ok_or_else(|| Key::CliNoCycle.get(language).to_string())?;
+            .ok_or_else(|| Key::CliNoCycle.get(LANGUAGE).to_string())?;
     }
     let mut last_percent = -1i32;
     let summary = job
@@ -484,7 +487,7 @@ fn render(args: &[String], language: Language) -> Result<(), String> {
             let percent = (fraction * 100.0) as i32;
             if percent != last_percent {
                 last_percent = percent;
-                eprint!("\r{}", messages::render_progress(language, percent));
+                eprint!("\r{}", messages::render_progress(LANGUAGE, percent));
             }
         })
         .map_err(|error| error.to_string())?;
@@ -494,7 +497,7 @@ fn render(args: &[String], language: Language) -> Result<(), String> {
         std::io::stdout(),
         "{}",
         messages::wrote_file(
-            language,
+            LANGUAGE,
             &output.display().to_string(),
             &Seconds(summary.seconds).format_clock(),
             summary.channels,
@@ -505,11 +508,11 @@ fn render(args: &[String], language: Language) -> Result<(), String> {
     Ok(())
 }
 
-fn new_project(args: &[String], language: Language) -> Result<(), String> {
+fn new_project(args: &[String]) -> Result<(), String> {
     let target = args
         .get(1)
         .filter(|arg| !arg.starts_with('-'))
-        .ok_or_else(|| Key::CliExpectedNewPath.get(language).to_string())?;
+        .ok_or_else(|| Key::CliExpectedNewPath.get(LANGUAGE).to_string())?;
     let target = PathBuf::from(target);
 
     let mut bpm = 120.0;
@@ -524,9 +527,9 @@ fn new_project(args: &[String], language: Language) -> Result<(), String> {
                     .and_then(|value| value.parse().ok())
                     .ok_or_else(|| {
                         messages::option_needs_value(
-                            language,
+                            LANGUAGE,
                             "--bpm",
-                            Key::CliNeedsNumber.get(language),
+                            Key::CliNeedsNumber.get(LANGUAGE),
                         )
                     })?;
             }
@@ -542,13 +545,13 @@ fn new_project(args: &[String], language: Language) -> Result<(), String> {
                     .filter(|rate: &f64| rate.is_finite() && *rate > 0.0)
                     .ok_or_else(|| {
                         messages::option_needs_value(
-                            language,
+                            LANGUAGE,
                             "--sample-rate",
-                            Key::CliNeedsNumber.get(language),
+                            Key::CliNeedsNumber.get(LANGUAGE),
                         )
                     })?;
             }
-            other => return Err(messages::unknown_option(language, other)),
+            other => return Err(messages::unknown_option(LANGUAGE, other)),
         }
         index += 1;
     }
@@ -557,7 +560,7 @@ fn new_project(args: &[String], language: Language) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     session.set_bpm(bpm);
     session
-        .add_default_instrument_track(messages::new_track_name(language, 1))
+        .add_default_instrument_track(messages::new_track_name(LANGUAGE, 1))
         .map_err(|error| error.to_string())?;
     session.save(&target).map_err(|error| error.to_string())?;
 
@@ -565,7 +568,7 @@ fn new_project(args: &[String], language: Language) -> Result<(), String> {
         std::io::stdout(),
         "{}",
         messages::created_project(
-            language,
+            LANGUAGE,
             &target.display().to_string(),
             session.project().bpm(),
             session.project().sample_rate,

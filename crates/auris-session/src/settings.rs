@@ -72,8 +72,11 @@ pub struct Settings {
     pub audio: AudioPreferences,
     /// Interface language. `None` follows the system.
     ///
-    /// Kept here rather than in a frontend so the desktop application and the command line tool
-    /// answer in the same language without being told twice.
+    /// The *window's* language, and no other frontend's: `auris` prints English whatever this
+    /// says, because a terminal cannot promise to render anything else. It stays down here rather
+    /// than in `auris-gpui` because it is a preference like the sample rate — a fact about the
+    /// installation, kept where every frontend can read it — and because a second frontend with a
+    /// window of its own should find it already answered.
     pub language: Option<Language>,
 }
 
