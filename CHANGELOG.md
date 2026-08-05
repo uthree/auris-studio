@@ -9,6 +9,18 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### Both edges of a clip are handles
+
+* Dragging a clip's **left** edge trims its front instead of moving it. An audio clip's window
+  walks into its source, so the material stays where it sounds and dragging back out uncovers what
+  was hidden; a played clip's notes are rebased, keeping the sounding half of anything the cut runs
+  through.
+* A clip that **wrote itself** is written again at its new length, from either edge. It used to
+  gain a tail of silence when pulled out and keep notes hanging past its own end when pulled in.
+* An audio clip's edge now stops where its material does. Past the last frame it drew — and
+  saved — a stretch of silence with the waveform ending part way, which the renderer clamped
+  anyway: the picture and the sound disagreed.
+
 ### The time signature changes along the song
 
 * The document's one time signature is now a map over the timeline, beside the tempo map, the

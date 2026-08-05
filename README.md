@@ -78,6 +78,15 @@ which is as fine as the document gets. Holding ⌘ (Ctrl on Windows) suspends sn
 length of a drag, for when one thing has to sit off the beat. A double-click on any fader or knob
 puts it back to its default: 0 dB on a volume, centre on a pan.
 
+Either edge of a clip is a handle: dragging one changes the clip's length, and what that means
+depends on what the clip is. An **audio** clip is trimmed, and the trim stops where the material
+does — the front walks the clip's window into the source rather than sliding the take along the
+timeline, so dragging it back out uncovers what was hidden instead of repeating what is left. A
+clip somebody **played** keeps every note exactly where it is. A clip that **wrote itself** is
+written again over the stretch it now covers, since it is its recipe rather than its notes: pull
+it out and it fills the bars it gained, pull it in and it stops where it stops. Nothing is lost
+by that — the recipe still says what the clip is, so dragging back out writes the material back.
+
 An audio clip fades in and out by its handles: the pair sits in a band just under the clip's
 name bar, one at each end, and dragging one draws the fade as a dimmed wedge over the waveform
 with the ramp across it. Fades ignore the grid on purpose — they are shaped by ear against the

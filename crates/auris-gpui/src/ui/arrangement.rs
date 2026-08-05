@@ -8,7 +8,7 @@ use gpui::{
     point, prelude::*, px, size,
 };
 
-use crate::app::{AurisApp, Drag, FadeEdge};
+use crate::app::{AurisApp, ClipEdge, Drag, FadeEdge};
 use crate::i18n::track_kind_key;
 use crate::theme::{Metrics, Theme};
 use crate::ui::icons::Icon;
@@ -1004,8 +1004,18 @@ impl AurisApp {
                 let clip_start_x = self.timeline.tick_to_x(clip_start);
                 let clip_end_x = self.timeline.tick_to_x(clip_start + clip_length);
                 let grab = resize_grab(clip_end_x - clip_start_x);
+                // The end is asked about first: a clip narrow enough for both zones to reach the
+                // middle would otherwise be all front-trim, and the end is the edge people drag.
                 if f32::from(clip_end_x - local.x).abs() <= grab {
-                    self.begin_drag(Drag::ClipResize { clip: clip_id });
+                    self.begin_drag(Drag::ClipResize {
+                        clip: clip_id,
+                        edge: ClipEdge::End,
+                    });
+                } else if f32::from(local.x - clip_start_x).abs() <= grab {
+                    self.begin_drag(Drag::ClipResize {
+                        clip: clip_id,
+                        edge: ClipEdge::Start,
+                    });
                 } else {
                     let origins = self.selected_clip_origins();
                     let origin_lanes = self.selected_clip_lanes();

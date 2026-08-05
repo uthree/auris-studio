@@ -1396,6 +1396,18 @@ impl Project {
         })
     }
 
+    /// An audio clip anywhere in the project.
+    pub fn audio_clip(&self, clip_id: ClipId) -> Option<&AudioClip> {
+        self.tracks.iter().find_map(|track| {
+            track
+                .kind
+                .as_audio()?
+                .clips
+                .iter()
+                .find(|clip| clip.id == clip_id)
+        })
+    }
+
     /// An audio clip anywhere in the project, mutably.
     pub fn audio_clip_mut(&mut self, clip_id: ClipId) -> Option<&mut AudioClip> {
         self.tracks.iter_mut().find_map(|track| {
@@ -1598,6 +1610,16 @@ fn split_notes_left(notes: &[Note], offset: Ticks) -> Vec<Note> {
             ..*note
         })
         .collect()
+}
+
+/// The notes of a clip whose front has been trimmed by `by`, rebased onto the new start.
+///
+/// The same rule a split's right half follows, and the same function would do — this one exists
+/// so the name says what the caller means. A note the trim runs through keeps its sounding half
+/// rather than vanishing, and one entirely before the new start is gone: that is what trimming
+/// the front of a region is, and undo is what puts it back.
+pub fn notes_trimmed_from_front(notes: &[Note], by: Ticks) -> Vec<Note> {
+    split_notes_right(notes, by)
 }
 
 /// The notes right of a split at `offset`, rebased so they are relative to the new clip.

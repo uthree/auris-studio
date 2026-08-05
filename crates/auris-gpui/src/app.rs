@@ -180,6 +180,15 @@ pub enum FadeEdge {
     Out,
 }
 
+/// Which end of a clip a resize drag has hold of.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ClipEdge {
+    /// The left edge: trims the front, leaving the end where it is.
+    Start,
+    /// The right edge: sets the length.
+    End,
+}
+
 /// Something the user is currently dragging.
 #[derive(Clone, Debug)]
 pub enum Drag {
@@ -213,10 +222,13 @@ pub enum Drag {
         /// back towards the starting point still moves the clip rather than freezing it.
         pressed_at: Option<Point<Pixels>>,
     },
-    /// Dragging a clip's right edge.
+    /// Dragging one of a clip's edges.
     ClipResize {
         /// Clip being resized.
         clip: ClipId,
+        /// Which edge is in hand. The end moves the clip's length; the start trims its front and
+        /// leaves the end where it is.
+        edge: ClipEdge,
     },
     /// Shaping an audio clip's fade by its handle.
     ClipFade {

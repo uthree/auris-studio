@@ -1785,30 +1785,170 @@ impl Session {
     }
 
     /// Drags a clip's end to `end`.
+    ///
+    /// The three cases answer differently, because a length means a different thing to each.
+    ///
+    /// A **generated** clip is its recipe rather than its notes: the notes were written to fill a
+    /// length, so a new length gets them written again. Dragged out it fills the bars it gained
+    /// instead of trailing silence; dragged in it stops where it stops instead of keeping notes
+    /// hanging past its own end. Nothing is lost by it, because the recipe still says what the
+    /// clip is and dragging back out writes the material back. Dragged shorter than a bar it has
+    /// no bars to write and comes out empty, which is the honest reading of "this part, this
+    /// long".
+    ///
+    /// A clip somebody **played** keeps every note exactly where it is. Its notes are derived
+    /// from nothing, so there is nothing to derive them from again, and inventing or discarding
+    /// one would be editing work the resize was not aimed at.
+    ///
+    /// An **audio** clip is a trim, and a trim stops where the material does.
     pub fn resize_clip(&mut self, clip: ClipId, end: Ticks) -> Result<(), SessionError> {
         self.require_clip(clip)?;
-        self.record(Edit::ResizeClip);
         let grid = self.project.grid;
-        if let Some(midi) = self.project.midi_clip_mut(clip) {
-            midi.length = (end - midi.start).max(grid);
-            // The length is now the user's, so nothing grows it back. A clip dragged shorter to
-            // hide a tail used to reappear at full length on the next note edit.
-            midi.length_is_explicit = true;
+
+        if let Some((start, recipe)) = self
+            .project
+            .midi_clip(clip)
+            .map(|(_, midi)| (midi.start, midi.recipe.clone()))
+        {
+            let length = (end - start).max(grid);
+            // Written before anything is recorded, so the length and the notes land in the one
+            // undo step the drag opened rather than in two.
+            let notes = recipe
+                .as_ref()
+                .map(|recipe| self.phrase(start, length, recipe));
+            self.record(Edit::ResizeClip);
+            if let Some(midi) = self.project.midi_clip_mut(clip) {
+                midi.length = length;
+                // The length is now the user's, so nothing grows it back. A clip dragged shorter
+                // to hide a tail used to reappear at full length on the next note edit.
+                midi.length_is_explicit = true;
+                if let Some(notes) = notes {
+                    midi.notes = notes;
+                }
+            }
             self.invalidate_graph();
             return Ok(());
         }
+
         // An audio clip's length lives in source frames, so the dragged tick has to go back
         // through the tempo map rather than being stored as ticks.
         let sample_rate = self.project.sample_rate;
         let tempo = self.project.tempo_map.clone();
+        let Some(audio) = self.project.audio_clip(clip) else {
+            return Ok(());
+        };
+        // What the source has left past the clip's own offset into it. Unbounded, the edge
+        // dragged into a stretch of silence that the clip drew and saved with its waveform
+        // stopping part way — and that the renderer clamped on the way to the speakers anyway,
+        // so the picture and the sound disagreed.
+        let available = self
+            .project
+            .audio_sources
+            .get(&audio.source)
+            .map_or(u64::MAX, |source| {
+                source.frame_count.saturating_sub(audio.offset_frames)
+            });
+        let start_seconds = tempo.ticks_to_seconds(audio.start).0;
+        let end_seconds = tempo.ticks_to_seconds(end).0;
+        let asked = ((end_seconds - start_seconds).max(0.0) * sample_rate) as u64;
+        let length = asked.clamp(1, available.max(1));
+        if length == audio.length_frames {
+            // A drag that has run out of material still moves the pointer, and every frame of it
+            // arrives here saying the same thing. Not an edit.
+            return Ok(());
+        }
+        self.record(Edit::ResizeClip);
         if let Some(audio) = self.project.audio_clip_mut(clip) {
-            let start_seconds = tempo.ticks_to_seconds(audio.start).0;
-            let end_seconds = tempo.ticks_to_seconds(end).0;
-            audio.length_frames = (((end_seconds - start_seconds).max(0.0)) * sample_rate) as u64;
-            audio.length_frames = audio.length_frames.max(1);
+            audio.length_frames = length;
             // The fades keep fitting inside the clip as it shrinks, under the same rule
             // `set_clip_fades` writes them by: the fade-in keeps its place and the fade-out
             // takes what is left.
+            audio.fade_in_frames = audio.fade_in_frames.min(audio.length_frames);
+            audio.fade_out_frames = audio
+                .fade_out_frames
+                .min(audio.length_frames - audio.fade_in_frames);
+        }
+        self.invalidate_graph();
+        Ok(())
+    }
+
+    /// Drags a clip's *start* to `start`, keeping its end where it is.
+    ///
+    /// The other half of [`Self::resize_clip`], and it answers the three cases the same way. A
+    /// generated clip is written again over the stretch it now covers. An audio clip walks its
+    /// offset into the source along with its start, which is what makes this a trim rather than
+    /// a move: the material under the clip stays where it sounds, and dragging the edge back out
+    /// uncovers what was hidden rather than repeating what is left. A played clip's notes are
+    /// rebased onto the new start, keeping the sounding half of anything the trim runs through —
+    /// the rule a split already follows.
+    ///
+    /// Both ends are bounded by what there is. An audio clip's front stops at the first frame of
+    /// its source, and neither kind may be dragged past its own end.
+    pub fn trim_clip_start(&mut self, clip: ClipId, start: Ticks) -> Result<(), SessionError> {
+        self.require_clip(clip)?;
+        let grid = self.project.grid;
+
+        if let Some((was, length, recipe)) = self
+            .project
+            .midi_clip(clip)
+            .map(|(_, midi)| (midi.start, midi.length, midi.recipe.clone()))
+        {
+            // Never past its own end: the clip keeps at least a grid division, which is the same
+            // floor the other edge stops at.
+            let now = start.max_zero().min(was + length - grid);
+            let by = now - was;
+            if by == Ticks::ZERO {
+                return Ok(());
+            }
+            let length = length - by;
+            let notes = match &recipe {
+                Some(recipe) => self.phrase(now, length, recipe),
+                None => self
+                    .project
+                    .midi_clip(clip)
+                    .map(|(_, midi)| auris_core::notes_trimmed_from_front(&midi.notes, by))
+                    .unwrap_or_default(),
+            };
+            self.record(Edit::ResizeClip);
+            if let Some(midi) = self.project.midi_clip_mut(clip) {
+                midi.start = now;
+                midi.length = length;
+                midi.length_is_explicit = true;
+                midi.notes = notes;
+            }
+            self.invalidate_graph();
+            return Ok(());
+        }
+
+        let sample_rate = self.project.sample_rate;
+        let tempo = self.project.tempo_map.clone();
+        let Some(audio) = self.project.audio_clip(clip) else {
+            return Ok(());
+        };
+        let (was, offset, length) = (audio.start, audio.offset_frames, audio.length_frames);
+        let was_seconds = tempo.ticks_to_seconds(was).0;
+        let asked = ((tempo.ticks_to_seconds(start.max_zero()).0 - was_seconds) * sample_rate)
+            .round() as i64;
+        // How far back the edge can go: to the source's first frame, or to the start of the
+        // timeline, whichever it meets first. The second bound matters for a clip that was
+        // trimmed and then moved left — its window still has material behind it, but there is
+        // nowhere on the timeline to put it, and clamping the *tick* alone would leave the start
+        // at bar one while the window kept walking and the far end slid right.
+        let head_room = (was_seconds * sample_rate).round() as i64;
+        let back = (offset as i64).min(head_room.max(0));
+        // Forward, to one frame short of the clip's own end. The *clamped* delta is what moves the
+        // start, so an edge that has run out of material stops instead of sliding on with the
+        // pointer and leaving the sound behind.
+        let by = asked.clamp(-back, length as i64 - 1);
+        if by == 0 {
+            return Ok(());
+        }
+        let now = tempo.seconds_to_ticks(Seconds(was_seconds + by as f64 / sample_rate.max(1.0)));
+        self.record(Edit::ResizeClip);
+        if let Some(audio) = self.project.audio_clip_mut(clip) {
+            audio.start = now.max_zero();
+            audio.offset_frames = (offset as i64 + by) as u64;
+            audio.length_frames = (length as i64 - by) as u64;
             audio.fade_in_frames = audio.fade_in_frames.min(audio.length_frames);
             audio.fade_out_frames = audio
                 .fade_out_frames
@@ -3862,6 +4002,15 @@ mod tests {
         (audio.gain_db, audio.fade_in_frames, audio.fade_out_frames)
     }
 
+    /// How many source frames an audio clip plays.
+    fn audio_frames(session: &Session, clip: ClipId) -> u64 {
+        session
+            .project()
+            .audio_clip(clip)
+            .expect("the clip exists")
+            .length_frames
+    }
+
     #[test]
     fn clip_gain_belongs_to_audio_and_comes_back_on_undo() {
         let mut session = session();
@@ -3932,6 +4081,230 @@ mod tests {
         assert_eq!(audio_shape(&session, clip), (0.0, 24_000, 0));
         assert_eq!(session.undo(), Some(Edit::ResizeClip));
         assert_eq!(audio_shape(&session, clip), (0.0, 30_000, 18_000));
+    }
+
+    #[test]
+    fn an_audio_clip_cannot_be_dragged_past_the_end_of_its_material() {
+        // The right edge is a trim, and there is nothing past the last frame to trim to. Left
+        // unbounded the clip drew — and saved — a block of silence with the waveform stopping
+        // part way, which the renderer then clamped anyway: the picture and the sound disagreed.
+        let mut session = session();
+        let clip = audio_clip(&mut session, 48_000);
+        session.forget_history();
+
+        // 48 000 frames at 120 BPM and 48 kHz is two beats. Dragging the end to bar three asks
+        // for four beats and gets the two that exist.
+        session.resize_clip(clip, Ticks::QUARTER * 4).unwrap();
+        assert_eq!(audio_shape(&session, clip).1, 0, "fades were not touched");
+        assert_eq!(audio_frames(&session, clip), 48_000);
+        assert!(
+            !session.can_undo(),
+            "a drag that could not lengthen the clip is not an edit"
+        );
+
+        // Shortening still works, and lengthening afterwards comes back to the whole source.
+        session.resize_clip(clip, Ticks::QUARTER).unwrap();
+        assert_eq!(audio_frames(&session, clip), 24_000);
+        session.resize_clip(clip, Ticks::QUARTER * 8).unwrap();
+        assert_eq!(audio_frames(&session, clip), 48_000);
+    }
+
+    #[test]
+    fn dragging_a_generated_clip_longer_writes_the_part_again_to_fill_it() {
+        // A generated clip is its recipe, not its notes: the notes were written to fill a
+        // length, so a new length wants them written again. Dragged out it used to gain a tail
+        // of silence, and dragged in it kept notes hanging past its own end.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        session.set_chord(Ticks::ZERO, numeral("I"));
+        let recipe = ClipRecipe::new(ClipPreset::Chords, 7);
+        let clip = session
+            .generate_clip(track, Ticks::ZERO, BAR * 2, recipe)
+            .unwrap();
+        let two_bars = session.midi_clip(clip).unwrap().notes.len();
+        assert!(two_bars > 0, "the fixture wrote nothing to begin with");
+        session.forget_history();
+
+        session.resize_clip(clip, BAR * 4).unwrap();
+        let four_bars = session.midi_clip(clip).unwrap().notes.len();
+        assert!(
+            four_bars > two_bars,
+            "four bars of the same part wrote {four_bars} notes against {two_bars}"
+        );
+        assert!(
+            session
+                .midi_clip(clip)
+                .unwrap()
+                .notes
+                .iter()
+                .any(|note| note.start >= BAR * 2),
+            "the new bars are empty"
+        );
+
+        // One drag, one undo step — and it puts back both the length and the notes.
+        assert_eq!(session.undo(), Some(Edit::ResizeClip));
+        assert_eq!(session.midi_clip(clip).unwrap().length, BAR * 2);
+        assert_eq!(session.midi_clip(clip).unwrap().notes.len(), two_bars);
+    }
+
+    #[test]
+    fn dragging_a_played_clip_leaves_its_notes_exactly_where_they_are() {
+        // The other half of the rule: a clip with no recipe is notes somebody put there, and
+        // resizing it must not invent or discard any of them.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, BAR)
+            .unwrap();
+        session
+            .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        let before = session.midi_clip(clip).unwrap().notes.clone();
+
+        session.resize_clip(clip, BAR * 3).unwrap();
+        assert_eq!(session.midi_clip(clip).unwrap().notes, before);
+        assert_eq!(session.midi_clip(clip).unwrap().length, BAR * 3);
+    }
+
+    #[test]
+    fn trimming_an_audio_clip_from_the_front_moves_its_window_into_the_source() {
+        // The difference between a trim and a move: the material under the clip has to stay
+        // where it sounds. Walking `start` without walking `offset_frames` would slide the whole
+        // take along the timeline and call it a trim.
+        let mut session = session();
+        let clip = audio_clip(&mut session, 48_000);
+        session.forget_history();
+
+        // 48 000 frames at 120 BPM and 48 kHz is two beats. Trimming to beat two hides the first
+        // 24 000 frames and leaves the end where it was.
+        session.trim_clip_start(clip, Ticks::QUARTER).unwrap();
+        let audio = session.project().audio_clip(clip).unwrap();
+        assert_eq!(audio.start, Ticks::QUARTER);
+        assert_eq!(audio.offset_frames, 24_000);
+        assert_eq!(audio.length_frames, 24_000);
+
+        // Dragging back out uncovers what was hidden rather than repeating what is left.
+        session.trim_clip_start(clip, Ticks::ZERO).unwrap();
+        let audio = session.project().audio_clip(clip).unwrap();
+        assert_eq!(audio.offset_frames, 0);
+        assert_eq!(audio.length_frames, 48_000);
+
+        // And it stops at the source's first frame: there is nothing before it to uncover.
+        session.trim_clip_start(clip, -Ticks::QUARTER * 4).unwrap();
+        let audio = session.project().audio_clip(clip).unwrap();
+        assert_eq!(audio.offset_frames, 0);
+        assert_eq!(audio.length_frames, 48_000);
+        assert_eq!(audio.start, Ticks::ZERO);
+    }
+
+    #[test]
+    fn a_trimmed_clip_moved_to_the_start_cannot_uncover_what_will_not_fit() {
+        // Its window still has material behind it, and there is nowhere on the timeline to put
+        // it. Clamping the tick alone would leave the start pinned at bar one while the window
+        // kept walking backwards — and the far end would slide right, off a drag aimed at the
+        // left edge.
+        let mut session = session();
+        let clip = audio_clip(&mut session, 48_000);
+        session.trim_clip_start(clip, Ticks::QUARTER).unwrap();
+        session.move_clip(clip, Ticks::ZERO).unwrap();
+        session.forget_history();
+
+        let before = session.project().audio_clip(clip).unwrap().clone();
+        session.trim_clip_start(clip, -Ticks::QUARTER * 4).unwrap();
+        let after = session.project().audio_clip(clip).unwrap();
+        assert_eq!(after.start, Ticks::ZERO);
+        assert_eq!(after.offset_frames, before.offset_frames);
+        assert_eq!(after.length_frames, before.length_frames);
+        assert!(
+            !session.can_undo(),
+            "an edge with nowhere to go is not an edit"
+        );
+    }
+
+    #[test]
+    fn trimming_a_generated_clip_from_the_front_writes_it_again_over_what_is_left() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        session.set_chord(Ticks::ZERO, numeral("I"));
+        let clip = session
+            .generate_clip(
+                track,
+                Ticks::ZERO,
+                BAR * 4,
+                ClipRecipe::new(ClipPreset::Chords, 7),
+            )
+            .unwrap();
+        session.forget_history();
+
+        session.trim_clip_start(clip, BAR * 2).unwrap();
+        let midi = session.midi_clip(clip).unwrap();
+        assert_eq!(midi.start, BAR * 2);
+        assert_eq!(midi.length, BAR * 2);
+        assert!(!midi.notes.is_empty(), "the two bars left are empty");
+        assert!(
+            midi.notes.iter().all(|note| note.end() <= BAR * 2),
+            "a note hangs past the clip it was written into"
+        );
+        assert_eq!(session.undo(), Some(Edit::ResizeClip));
+        assert_eq!(session.midi_clip(clip).unwrap().start, Ticks::ZERO);
+    }
+
+    #[test]
+    fn trimming_a_played_clip_from_the_front_rebases_the_notes_it_keeps() {
+        // A played clip's notes are nobody's to reinvent, so they move with the edge. The rule is
+        // the one a split already follows: a note the cut runs through keeps its sounding half.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, BAR * 2)
+            .unwrap();
+        session
+            .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        session
+            .add_note(clip, Note::new(64, Ticks::QUARTER, Ticks::QUARTER * 3))
+            .unwrap();
+        session
+            .add_note(clip, Note::new(67, BAR, Ticks::QUARTER))
+            .unwrap();
+
+        session.trim_clip_start(clip, Ticks::QUARTER * 2).unwrap();
+        let midi = session.midi_clip(clip).unwrap();
+        assert_eq!(midi.start, Ticks::QUARTER * 2);
+        assert_eq!(midi.length, BAR * 2 - Ticks::QUARTER * 2);
+        // The first note is gone, the second keeps the half the cut left it, the third moved.
+        let kept: Vec<(u8, i64, i64)> = midi
+            .notes
+            .iter()
+            .map(|note| (note.pitch, note.start.raw(), note.length.raw()))
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                (64, 0, Ticks::QUARTER.raw() * 2),
+                (67, Ticks::QUARTER.raw() * 2, Ticks::QUARTER.raw()),
+            ]
+        );
+    }
+
+    #[test]
+    fn neither_edge_may_be_dragged_past_the_other() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session.add_midi_clip(track, "Riff", BAR, BAR * 2).unwrap();
+
+        // The front stops a grid division short of the end rather than turning the clip inside
+        // out, which is the same floor the other edge keeps.
+        session.trim_clip_start(clip, BAR * 9).unwrap();
+        let midi = session.midi_clip(clip).unwrap();
+        assert_eq!(midi.length, session.project().grid);
+        assert_eq!(midi.start + midi.length, BAR * 3, "the end moved");
+
+        session.resize_clip(clip, Ticks::ZERO).unwrap();
+        assert_eq!(
+            session.midi_clip(clip).unwrap().length,
+            session.project().grid
+        );
     }
 
     #[test]

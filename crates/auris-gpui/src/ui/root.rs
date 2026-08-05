@@ -523,10 +523,23 @@ impl AurisApp {
                     self.move_clips_by_lane(&lanes, grab_lane, under);
                 }
             }
-            Drag::ClipResize { clip } => {
+            Drag::ClipResize { clip, edge } => {
                 let x = event.position.x - self.lanes_origin().x;
                 let tick = self.snap_unless_held(self.timeline.x_to_tick(x), event.modifiers);
-                let _ = self.session.resize_clip(clip, tick);
+                // Either edge rewrites the notes of a clip that has a recipe, and trimming the
+                // front rebases the notes of one that has not — so the selected indices no longer
+                // name the notes the user chose. Asked before the drag rather than after, since a
+                // clip dragged down to nothing has nothing left to ask.
+                let rewritten = self.project().midi_clip(clip).is_some_and(|(_, midi)| {
+                    midi.is_generated() || edge == crate::app::ClipEdge::Start
+                });
+                let done = match edge {
+                    crate::app::ClipEdge::End => self.session.resize_clip(clip, tick),
+                    crate::app::ClipEdge::Start => self.session.trim_clip_start(clip, tick),
+                };
+                if done.is_ok() && rewritten {
+                    self.forget_rewritten_notes(clip);
+                }
             }
             Drag::ClipFade { clip, edge } => {
                 // Unsnapped on purpose: a fade is shaped by ear against the waveform, and no

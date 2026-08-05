@@ -48,6 +48,7 @@ pub use project::{
     AudioClip, AudioSource, AudioSourceBank, AudioTrack, ClipId, ClipPreset, ClipRecipe, Color,
     EffectSlot, EffectSlotId, InstrumentTrack, MidiClip, MixerStrip, Note, PresetRef, Project,
     SoundFontId, SoundFontRef, SourceId, Subdivision, Track, TrackId, TrackKind,
+    notes_trimmed_from_front,
 };
 pub use registry::{PluginPack, PluginRegistry};
 pub use structure::{SectionMap, SectionPoint, SectionSpan};
