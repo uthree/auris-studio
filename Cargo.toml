@@ -33,6 +33,9 @@ crossbeam-channel = "0.5"
 hound = "3.5"
 log = "0.4"
 env_logger = "0.11"
+# Standard MIDI Files, read and written. `parallel` is off: it pulls in rayon to decode tracks
+# on a thread pool, and a MIDI file is kilobytes — the pool costs more to start than the parse.
+midly = { version = "0.5", default-features = false, features = ["std", "alloc"] }
 pollster = "1.0"
 rubato = "4.0"
 # Reads SoundFont files *and* plays them. Named once here because two crates share the type:

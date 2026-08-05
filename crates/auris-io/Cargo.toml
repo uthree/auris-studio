@@ -11,6 +11,7 @@ rust-version.workspace = true
 auris-core.workspace = true
 hound.workspace = true
 log.workspace = true
+midly.workspace = true
 rubato.workspace = true
 rustysynth.workspace = true
 serde.workspace = true

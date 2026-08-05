@@ -31,6 +31,26 @@ pub enum IoError {
     #[error("failed to write WAV file: {0}")]
     WavWrite(String),
 
+    /// A file was offered as a Standard MIDI File and would not parse as one.
+    #[error("failed to read MIDI file: {0}")]
+    MidiParse(String),
+
+    /// The file counts time in SMPTE frames rather than in beats.
+    ///
+    /// Not a defect in the file — it is a legal division — but a different kind of thing. Frames
+    /// of real time have no beats, so they have no bars, and putting one on a musical timeline
+    /// would mean choosing a tempo on the file's behalf.
+    #[error(
+        "this MIDI file counts time in SMPTE frames ({fps} fps, {subframe} subframes) rather \
+         than in beats, so it has no musical positions to import"
+    )]
+    MidiTimecode {
+        /// Frames per second the file counts in.
+        fps: f32,
+        /// Subdivisions of each frame.
+        subframe: u8,
+    },
+
     /// A project file could not be parsed as JSON, or a project could not be serialised.
     #[error("project JSON error: {0}")]
     Json(#[from] serde_json::Error),
