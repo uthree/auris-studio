@@ -16,6 +16,8 @@ format rather than a convention: `## <version> — <date>`.
   know about. The zone the arrow lights up is the zone the press acts on, tested rather than
   trusted — including the band an audio clip gives to its fade handles, which the arrow stays out
   of because a press there takes a fade instead.
+* A note's end in the piano roll gets the same arrow, and holds it back while the velocity tool is
+  in hand, since that tool drags a note's velocity rather than its length.
 
 * Dragging a clip's **left** edge trims its front instead of moving it. An audio clip's window
   walks into its source, so the material stays where it sounds and dragging back out uncovers what

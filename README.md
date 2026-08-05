@@ -60,7 +60,9 @@ The piano roll has two tools, and the strip in its header says which one is in h
 status line, when the key is used and the roll is not on screen to show it. **T** puts the next
 tool in hand, which with two tools is Logic's press-it-twice-to-swap-back; like every other
 binding it can be changed in the settings window. The pointer
-selects, moves, resizes and creates. The velocity tool does one thing: drag a note up or down and
+selects, moves, resizes and creates — a note's end is a handle, and the pointer turns into a ↔
+over one, the same way a clip's edges do in the arrangement. The velocity tool does one thing:
+drag a note up or down and
 it is struck harder or softer, with the value shown beside it as it goes. A selection is dragged
 together and keeps its shape — a phrase written soft-loud-soft is still soft-loud-soft once it
 has been played harder — and running off either end and coming back restores that shape rather

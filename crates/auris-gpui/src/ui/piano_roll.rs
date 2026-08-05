@@ -104,6 +104,17 @@ fn resize_grab(width: Pixels) -> f32 {
     RESIZE_HANDLE.min(f32::from(width) / 3.0)
 }
 
+/// The horizontal span of a note's resize grab, as an origin and a width.
+///
+/// The inner half of the zone the press measures, which is the half a press can reach: the
+/// resize check is only arrived at once [`AurisApp::note_at`] has found a note under the
+/// pointer's tick, and the outer half is past the note's end. `None` for a note too narrow to
+/// grab, which is one drawn in less than three pixels.
+fn note_end_span(start_x: Pixels, end_x: Pixels) -> Option<(Pixels, Pixels)> {
+    let grab = px(resize_grab(end_x - start_x));
+    (grab > px(0.0)).then_some((end_x - grab, grab))
+}
+
 /// Length given to a note drawn with a single click.
 fn default_note_length(grid: Ticks) -> Ticks {
     Ticks(grid.raw().max(1))
@@ -141,6 +152,7 @@ impl AurisApp {
         let clip_start = clip.start;
         let clip_length = clip.length;
         let notes = clip.notes.clone();
+        let note_ends = self.note_end_zones(clip_start, &notes);
         let selected: Vec<usize> = self.selected_notes.iter().copied().collect();
         let clip_name = clip.name.clone();
         let band = self.rubber_band(crate::app::BandSurface::Roll);
@@ -248,8 +260,31 @@ impl AurisApp {
                                 let pitch_view = pitch_view.clone();
                                 let recorded = self.canvas.roll.clone();
                                 canvas(
-                                    move |bounds, _, _| recorded.set(Some(bounds)),
-                                    move |bounds, _, window, cx| {
+                                    move |bounds, window, _| {
+                                        recorded.set(Some(bounds));
+                                        note_ends
+                                            .iter()
+                                            .map(|zone| {
+                                                window.insert_hitbox(
+                                                    Bounds {
+                                                        origin: bounds.origin + zone.origin,
+                                                        size: zone.size,
+                                                    },
+                                                    gpui::HitboxBehavior::Normal,
+                                                )
+                                            })
+                                            .collect::<Vec<_>>()
+                                    },
+                                    move |bounds, ends: Vec<gpui::Hitbox>, window, cx| {
+                                        // What the lanes do for a clip's edges: the grab is a few
+                                        // pixels of a canvas with nothing behind it, so the arrow
+                                        // is the only thing that can say it is there.
+                                        for end in &ends {
+                                            window.set_cursor_style(
+                                                gpui::CursorStyle::ResizeLeftRight,
+                                                end,
+                                            );
+                                        }
                                         paint::clipped(window, bounds, |window| {
                                             paint::rect(window, bounds, theme.surface_sunken);
                                             paint::pitch_rows(window, bounds, &pitch_view, &theme);
@@ -587,6 +622,37 @@ impl AurisApp {
             .collect()
     }
 
+    /// Where the pointer would take hold of a note's end, relative to the note grid.
+    ///
+    /// The arrangement's [`clip_edge_zones`](super::arrangement) for notes, and the same rule
+    /// keeps it honest: the cursor lights up exactly what the press acts on. Only the *inner*
+    /// half of the grab, because [`Self::note_at`] has to find a note under the pointer's tick
+    /// before the resize check is reached — the half hanging past the end is a zone no press can
+    /// land in. Only the end, too, because a note has no front trim.
+    ///
+    /// Empty while the velocity tool is in hand. That tool drags a note's velocity rather than
+    /// its length, and the grid already says so with a cursor of its own.
+    fn note_end_zones(&self, clip_start: Ticks, notes: &[Note]) -> Vec<Bounds<Pixels>> {
+        if self.tool != RollTool::Pointer {
+            return Vec::new();
+        }
+        let row = px(self.pitch.row_height);
+        notes
+            .iter()
+            .filter_map(|note| {
+                let start_x = self.timeline.tick_to_x(clip_start + note.start);
+                let end_x = self.timeline.tick_to_x(clip_start + note.end());
+                let (x, width) = note_end_span(start_x, end_x)?;
+                // The rows the note is drawn in, not the row it is binned into: a pixel inside at
+                // the top and bottom, which is where the note the eye sees actually is.
+                Some(Bounds {
+                    origin: point(x, self.pitch.pitch_to_y(note.pitch) + px(1.0)),
+                    size: size(width, (row - px(2.0)).max(px(2.0))),
+                })
+            })
+            .collect()
+    }
+
     /// Index of the note at a clip-relative position.
     fn note_at(&self, clip: ClipId, tick: Ticks, pitch: u8) -> Option<usize> {
         let clip = self.session.midi_clip(clip)?;
@@ -894,6 +960,38 @@ mod tests {
             short * 2.0 < 8.0,
             "there is a middle left over to take hold of",
         );
+    }
+
+    #[test]
+    fn the_resize_cursor_covers_what_a_press_would_actually_grab() {
+        // The arrow and the press read the same number, and this is what keeps them reading it
+        // the same way: every pixel the arrow lights up has to be one where the press takes the
+        // resize branch *and* one where `note_at` still finds the note. A zone that ran past the
+        // end would promise a grab on empty grid.
+        for width in [3.0f32, 8.0, 24.0, 96.0, 400.0] {
+            let (start_x, end_x) = (px(200.0), px(200.0 + width));
+            let Some((x, zone)) = note_end_span(start_x, end_x) else {
+                continue;
+            };
+            let grab = resize_grab(end_x - start_x);
+            assert!(x >= start_x, "a {width}px note lit up grid to its left");
+            assert_eq!(x + zone, end_x, "the zone stops at the note's end");
+            for step in 0..=10 {
+                let at = x + zone * (step as f32 / 10.0);
+                // A thousandth of a pixel of slack, and only at the boundary: `end_x - grab`
+                // and then `end_x` minus that do not round-trip exactly in `f32`, so the zone's
+                // own left edge can miss the press rule by an ulp. No pointer position lands
+                // there, and widening the zone to hide it would be arithmetic dressed as design.
+                assert!(
+                    f32::from(end_x - at).abs() <= grab + 1e-3,
+                    "{at:?} on a {width}px note is lit but would not resize",
+                );
+                assert!(at <= end_x, "{at:?} is past the note");
+            }
+        }
+        // A note drawn thinner than three pixels has no room for a zone that is not the whole
+        // note, and offers none — it can still be moved, which is the gesture left.
+        assert_eq!(note_end_span(px(100.0), px(100.0)), None);
     }
 
     #[test]
