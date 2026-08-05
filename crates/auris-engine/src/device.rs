@@ -701,6 +701,15 @@ impl AudioEngine {
                     graph.set_track_mute(index, mute);
                 }
             }
+            EngineCommand::SetSendLevel {
+                track,
+                send,
+                level_db,
+            } => {
+                if let Some(graph) = &mut self.graph {
+                    graph.set_send_level_db(track, send, level_db);
+                }
+            }
             EngineCommand::SetMasterGain(gain_db) => {
                 if let Some(graph) = &mut self.graph {
                     graph.set_master_gain_db(gain_db);

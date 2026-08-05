@@ -55,6 +55,15 @@ pub enum EngineCommand {
         /// Whether the track is silenced.
         mute: bool,
     },
+    /// Moves one of a track's send levels.
+    SetSendLevel {
+        /// Track position in the project.
+        track: usize,
+        /// Position of the send in that track's send list.
+        send: usize,
+        /// New send level in decibels.
+        level_db: f32,
+    },
     /// Moves the master fader, in decibels.
     SetMasterGain(f32),
     /// Sets the master bus stereo position, -1.0 (left) to 1.0 (right).
@@ -134,6 +143,16 @@ impl std::fmt::Debug for EngineCommand {
                 .debug_struct("SetTrackMute")
                 .field("index", index)
                 .field("mute", mute)
+                .finish(),
+            Self::SetSendLevel {
+                track,
+                send,
+                level_db,
+            } => f
+                .debug_struct("SetSendLevel")
+                .field("track", track)
+                .field("send", send)
+                .field("level_db", level_db)
                 .finish(),
             Self::SetMasterGain(gain_db) => f.debug_tuple("SetMasterGain").field(gain_db).finish(),
             Self::SetMasterPan(pan) => f.debug_tuple("SetMasterPan").field(pan).finish(),

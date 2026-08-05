@@ -139,6 +139,7 @@ pub fn track_kind_key(kind: &TrackKind) -> Key {
     match kind {
         TrackKind::Instrument(_) => Key::TrackKindInstrument,
         TrackKind::Audio(_) => Key::TrackKindAudio,
+        TrackKind::Bus => Key::TrackKindBus,
     }
 }
 

@@ -174,6 +174,7 @@ impl AurisApp {
                         })
                         .map(|clip| clip.id),
                 ),
+                TrackKind::Bus => {}
             }
         }
         selected

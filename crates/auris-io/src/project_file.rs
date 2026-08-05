@@ -133,7 +133,8 @@ pub fn save_project(path: &Path, project: &Project) -> Result<()> {
 /// A file written by a newer build is rejected before parsing, so the user gets "update Auris
 /// Studio" rather than a confusing message about an unknown field. After a successful parse the
 /// id counter is repaired, which is what stops freshly created tracks and clips from colliding
-/// with ids already in the document.
+/// with ids already in the document, and so is the routing — a file whose buses feed each other
+/// in a circle has no order it can be rendered in, and repairing it beats refusing to open it.
 pub fn load_project(path: &Path) -> Result<Project> {
     let text = std::fs::read_to_string(path).map_err(|e| IoError::from_fs(path, e))?;
 
@@ -147,6 +148,13 @@ pub fn load_project(path: &Path) -> Result<Project> {
 
     let mut project: Project = serde_json::from_str(&text)?;
     project.repair_id_counter();
+    if project.repair_routing() {
+        log::warn!(
+            "{}: the routing named a bus that is not there, or looped back on itself; \
+             the tracks involved now go straight to the master",
+            path.display()
+        );
+    }
     Ok(project)
 }
 
@@ -294,7 +302,9 @@ mod tests {
                 auris_core::TrackKind::Audio(inner) => {
                     used.extend(inner.clips.iter().map(|clip| clip.id.0))
                 }
+                auris_core::TrackKind::Bus => {}
             }
+            used.extend(track.sends.iter().map(|send| send.id.0));
         }
         used.extend(loaded.master.effects.iter().map(|slot| slot.id.0));
         used.extend(loaded.audio_sources.keys().map(|id| id.0));

@@ -1039,6 +1039,10 @@ impl AurisApp {
                             }
                         })
                         .collect(),
+                    // A bus is a mixing point rather than a place material sits. Its lane stays
+                    // in the arrangement — the track list and the mixer have to agree on what is
+                    // where — and stays empty, because there is nothing on it to draw.
+                    TrackKind::Bus => Vec::new(),
                 };
                 LanePaint {
                     top,
@@ -1473,6 +1477,7 @@ impl AurisApp {
                 .rev()
                 .map(|clip| (clip.id, clip.start, self.audio_clip_length_ticks(clip)))
                 .find(|(_, start, length)| tick >= *start && tick < *start + *length),
+            TrackKind::Bus => None,
         }
     }
 

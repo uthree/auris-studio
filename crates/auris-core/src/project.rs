@@ -52,6 +52,13 @@ pub struct SourceId(pub u64);
 #[serde(transparent)]
 pub struct EffectSlotId(pub u64);
 
+/// Identifies one send within a project.
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct SendId(pub u64);
+
 /// Identifies an imported SoundFont within a project.
 #[derive(
     Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
@@ -727,6 +734,70 @@ impl EffectSlot {
     }
 }
 
+/// Where a track's output goes once its own strip has finished with it.
+///
+/// Two destinations rather than one field of [`Option<TrackId>`], because "no bus" is not an
+/// absence: every track feeds *something*, and the master bus is a real place. A track whose
+/// output is a bus is not routed to the master at all — the bus is, on its behalf.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Output {
+    /// Straight to the master bus, which is where a track starts.
+    #[default]
+    Master,
+    /// Into a bus track, mixed with everything else routed there.
+    Bus(TrackId),
+}
+
+impl Output {
+    /// The bus this names, or `None` for the master.
+    pub fn bus(self) -> Option<TrackId> {
+        match self {
+            Output::Master => None,
+            Output::Bus(id) => Some(id),
+        }
+    }
+}
+
+/// A copy of a track's signal, fed to a bus at a level of its own.
+///
+/// The difference between a send and an [`Output`] is that a send is a *tap*: the track carries on
+/// to its own destination as well. That is what makes one reverb shared — six tracks send to it at
+/// six different levels and all six are still heard dry.
+///
+/// A mixing desk calls this an *aux send*, and so does this type, for a reason that has nothing to
+/// do with consoles: a document type called `Send` would shadow [`std::marker::Send`] in every file
+/// that glob-imports the session's prelude, which is every file in both frontends. The error that
+/// produces names a trait nobody mentioned, in a file that never touched the mixer.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AuxSend {
+    /// Unique within the project.
+    pub id: SendId,
+    /// The bus this feeds.
+    pub target: TrackId,
+    /// How much of the signal is sent, in decibels.
+    pub level_db: f32,
+    /// Whether the copy is taken before the track's fader rather than after it.
+    ///
+    /// After it is the default and is what a reverb wants: pulling a track down should take its
+    /// reverb with it. Before it is what a headphone mix wants, where the point is a balance that
+    /// does not follow the one in the room.
+    #[serde(default)]
+    pub pre_fader: bool,
+}
+
+impl AuxSend {
+    /// A post-fader send at unity.
+    pub fn new(id: SendId, target: TrackId) -> Self {
+        Self {
+            id,
+            target,
+            level_db: 0.0,
+            pre_fader: false,
+        }
+    }
+}
+
 /// Volume, pan, mute/solo and the effect chain for a track or the master bus.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MixerStrip {
@@ -780,6 +851,13 @@ pub enum TrackKind {
     Instrument(InstrumentTrack),
     /// Recorded or imported audio.
     Audio(AudioTrack),
+    /// A mixing point: whatever is routed here, summed, and put through one strip.
+    ///
+    /// A bus holds no clips of its own — its material arrives from the tracks that name it, as an
+    /// [`Output`] or through a [`AuxSend`]. It is a track rather than a thing of its own so that it
+    /// gets a fader, a pan, a mute, an effect chain, a colour and an automation lane without any
+    /// of them being written twice.
+    Bus,
 }
 
 impl TrackKind {
@@ -788,6 +866,7 @@ impl TrackKind {
         match self {
             TrackKind::Instrument(_) => "Instrument",
             TrackKind::Audio(_) => "Audio",
+            TrackKind::Bus => "Bus",
         }
     }
 
@@ -799,11 +878,16 @@ impl TrackKind {
         matches!(self, TrackKind::Instrument(_))
     }
 
+    /// `true` when this track is a mixing point rather than a source of material.
+    pub fn is_bus(&self) -> bool {
+        matches!(self, TrackKind::Bus)
+    }
+
     /// The instrument track data, when this is one.
     pub fn as_instrument(&self) -> Option<&InstrumentTrack> {
         match self {
             TrackKind::Instrument(track) => Some(track),
-            TrackKind::Audio(_) => None,
+            _ => None,
         }
     }
 
@@ -811,7 +895,7 @@ impl TrackKind {
     pub fn as_instrument_mut(&mut self) -> Option<&mut InstrumentTrack> {
         match self {
             TrackKind::Instrument(track) => Some(track),
-            TrackKind::Audio(_) => None,
+            _ => None,
         }
     }
 
@@ -819,7 +903,7 @@ impl TrackKind {
     pub fn as_audio(&self) -> Option<&AudioTrack> {
         match self {
             TrackKind::Audio(track) => Some(track),
-            TrackKind::Instrument(_) => None,
+            _ => None,
         }
     }
 
@@ -827,7 +911,7 @@ impl TrackKind {
     pub fn as_audio_mut(&mut self) -> Option<&mut AudioTrack> {
         match self {
             TrackKind::Audio(track) => Some(track),
-            TrackKind::Instrument(_) => None,
+            _ => None,
         }
     }
 }
@@ -848,6 +932,12 @@ pub struct Track {
     pub kind: TrackKind,
     /// Volume, pan and effects.
     pub mixer: MixerStrip,
+    /// Where this track's output goes.
+    #[serde(default)]
+    pub output: Output,
+    /// Copies of this track's signal, fed to buses alongside its own output.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sends: Vec<AuxSend>,
 }
 
 fn default_track_height() -> f32 {
@@ -878,7 +968,21 @@ impl Track {
                 })
                 .max()
                 .unwrap_or(Ticks::ZERO),
+            // A bus holds nothing of its own; what it plays ends when its feeders do.
+            TrackKind::Bus => Ticks::ZERO,
         }
+    }
+
+    /// Every bus this track feeds: its output when that is one, then each send's target.
+    ///
+    /// The routing graph's out-edges for one node, in one place, because every question about the
+    /// routing — the order to render in, whether an edit would make a loop, how far behind a chain
+    /// runs — is a walk over exactly these.
+    pub fn feeds(&self) -> impl Iterator<Item = TrackId> + '_ {
+        self.output
+            .bus()
+            .into_iter()
+            .chain(self.sends.iter().map(|send| send.target))
     }
 }
 
@@ -989,7 +1093,13 @@ impl Project {
     /// mix, play it at the wrong levels, and write those levels back on the next save, silently
     /// destroying every curve in it. Refusing to open is the only honest answer, and the version
     /// is what produces it.
-    pub const FORMAT_VERSION: u32 = 5;
+    ///
+    /// 6 since [`TrackKind`] gained [`Bus`](TrackKind::Bus) and a track gained an [`Output`] and
+    /// its [`AuxSend`]s. A new variant of a stored enum never carries backwards — an older build
+    /// would fail on the whole document rather than the one track — and the fields are worse than
+    /// that: they *would* be ignored, so a mix where six tracks feed one reverb would open with
+    /// all six routed dry to the master and be saved back that way.
+    pub const FORMAT_VERSION: u32 = 6;
 
     /// An empty project.
     ///
@@ -1038,42 +1148,47 @@ impl Project {
         self.tempo_map.set_initial_bpm(bpm);
     }
 
+    /// Appends a track of any kind, routed to the master with no sends.
+    fn push_track(&mut self, name: impl Into<String>, kind: TrackKind) -> TrackId {
+        let id = TrackId(self.allocate_id());
+        let color = Color::from_palette(self.tracks.len());
+        self.tracks.push(Track {
+            id,
+            name: name.into(),
+            color,
+            height: default_track_height(),
+            kind,
+            mixer: MixerStrip::default(),
+            output: Output::Master,
+            sends: Vec::new(),
+        });
+        id
+    }
+
     /// Appends an instrument track playing `instrument_id`.
     pub fn add_instrument_track(
         &mut self,
         name: impl Into<String>,
         instrument_id: impl Into<String>,
     ) -> TrackId {
-        let id = TrackId(self.allocate_id());
-        let color = Color::from_palette(self.tracks.len());
-        self.tracks.push(Track {
-            id,
-            name: name.into(),
-            color,
-            height: default_track_height(),
-            kind: TrackKind::Instrument(InstrumentTrack {
+        self.push_track(
+            name,
+            TrackKind::Instrument(InstrumentTrack {
                 instrument_id: instrument_id.into(),
                 instrument_state: PluginState::empty(),
                 clips: Vec::new(),
             }),
-            mixer: MixerStrip::default(),
-        });
-        id
+        )
     }
 
     /// Appends an empty audio track.
     pub fn add_audio_track(&mut self, name: impl Into<String>) -> TrackId {
-        let id = TrackId(self.allocate_id());
-        let color = Color::from_palette(self.tracks.len());
-        self.tracks.push(Track {
-            id,
-            name: name.into(),
-            color,
-            height: default_track_height(),
-            kind: TrackKind::Audio(AudioTrack::default()),
-            mixer: MixerStrip::default(),
-        });
-        id
+        self.push_track(name, TrackKind::Audio(AudioTrack::default()))
+    }
+
+    /// Appends a bus, which nothing is routed to yet.
+    pub fn add_bus_track(&mut self, name: impl Into<String>) -> TrackId {
+        self.push_track(name, TrackKind::Bus)
     }
 
     /// Copies a track, inserting the copy directly below the original.
@@ -1091,6 +1206,9 @@ impl Project {
         for slot in &mut copy.mixer.effects {
             slot.id = EffectSlotId(self.allocate_id());
         }
+        for send in &mut copy.sends {
+            send.id = SendId(self.allocate_id());
+        }
         match &mut copy.kind {
             TrackKind::Instrument(inner) => {
                 for clip in &mut inner.clips {
@@ -1102,6 +1220,7 @@ impl Project {
                     clip.id = ClipId(self.allocate_id());
                 }
             }
+            TrackKind::Bus => {}
         }
 
         let new_id = copy.id;
@@ -1145,6 +1264,7 @@ impl Project {
                         return Some(new_id);
                     }
                 }
+                TrackKind::Bus => {}
             }
         }
         // Nothing was inserted, so the reserved id is simply never used; ids are only required
@@ -1251,6 +1371,15 @@ impl Project {
             // and ids are handed out again — so it would come back to life driving a parameter on
             // whichever track was created next.
             self.automation.remove_track(id);
+            // And so does everything that fed it. A deleted bus takes the *routing* with it, not
+            // the tracks: what was going through it goes straight to the master instead, which is
+            // where it would have been had the bus never existed.
+            for track in &mut self.tracks {
+                if track.output == Output::Bus(id) {
+                    track.output = Output::Master;
+                }
+                track.sends.retain(|send| send.target != id);
+            }
         }
         removed
     }
@@ -1490,6 +1619,7 @@ impl Project {
                         return true;
                     }
                 }
+                TrackKind::Bus => {}
             }
         }
         false
@@ -1502,6 +1632,7 @@ impl Project {
             .find(|track| match &track.kind {
                 TrackKind::Instrument(inner) => inner.clips.iter().any(|clip| clip.id == clip_id),
                 TrackKind::Audio(inner) => inner.clips.iter().any(|clip| clip.id == clip_id),
+                TrackKind::Bus => false,
             })
             .map(|track| track.id)
     }
@@ -1528,6 +1659,14 @@ impl Project {
         let Some(origin) = self.track_index(source) else {
             return false;
         };
+
+        // A bus holds no clips, so it is neither a source nor a destination for one. Asked here
+        // rather than left to the arms below, where "not an instrument" would have counted a bus
+        // as an audio track: the clip would have been taken off its own track and then found
+        // nowhere to land.
+        if self.tracks[origin].kind.is_bus() || self.tracks[destination].kind.is_bus() {
+            return false;
+        }
 
         // Taken out only once the destination is known to accept it, so a refused move leaves the
         // document exactly as it was rather than losing the clip.
@@ -1573,8 +1712,205 @@ impl Project {
     }
 
     /// `true` when this track should be audible given the current mute/solo state.
+    ///
+    /// A convenience over [`Self::solo_resolution`] for a caller asking about one track; anything
+    /// asking about all of them should call that instead and read the answers out of the vector,
+    /// because a bus's answer depends on every track feeding it.
     pub fn track_is_audible(&self, track: &Track) -> bool {
-        !track.mixer.mute && (!self.has_solo() || track.mixer.solo)
+        match self.track_index(track.id) {
+            Some(index) => !track.mixer.mute && self.solo_resolution()[index],
+            None => !track.mixer.mute && (!self.has_solo() || track.mixer.solo),
+        }
+    }
+
+    /// Track indices ordered so that everything feeding a bus comes before the bus.
+    ///
+    /// This is the order audio has to be mixed in: a bus cannot be put through its own strip until
+    /// everything routed into it has arrived. Every track appears exactly once even if the routing
+    /// somehow holds a loop — see [`Self::repair_routing`] for why it should not — so a caller can
+    /// walk this instead of the track list and know it has covered the project.
+    pub fn routing_order(&self) -> Vec<usize> {
+        // A depth-first post-order over the out-edges puts each node after everything it feeds;
+        // reversing that puts it before them, which is the order wanted. A back edge is stepped
+        // over rather than followed, so a loop costs an arbitrary starting point and not a hang.
+        #[derive(Copy, Clone, PartialEq)]
+        enum Mark {
+            Unseen,
+            Walking,
+            Done,
+        }
+        let mut mark = vec![Mark::Unseen; self.tracks.len()];
+        let mut order = Vec::with_capacity(self.tracks.len());
+        // An explicit stack rather than recursion: the depth is the length of a routing chain,
+        // which a document is free to make as long as it has tracks.
+        let mut stack: Vec<(usize, usize)> = Vec::new();
+        for start in 0..self.tracks.len() {
+            if mark[start] != Mark::Unseen {
+                continue;
+            }
+            mark[start] = Mark::Walking;
+            stack.push((start, 0));
+            while let Some((node, edge)) = stack.pop() {
+                match self.tracks[node].feeds().nth(edge) {
+                    Some(target) => {
+                        stack.push((node, edge + 1));
+                        if let Some(next) = self.track_index(target)
+                            && mark[next] == Mark::Unseen
+                        {
+                            mark[next] = Mark::Walking;
+                            stack.push((next, 0));
+                        }
+                    }
+                    None => {
+                        mark[node] = Mark::Done;
+                        order.push(node);
+                    }
+                }
+            }
+        }
+        order.reverse();
+        order
+    }
+
+    /// `true` when routing `from` into `to` would make a signal loop back on itself.
+    ///
+    /// Asked before an output is changed or a send is added, because a loop is not a strange mix —
+    /// it is a bus waiting for itself, and there is no order to render it in.
+    pub fn routing_would_cycle(&self, from: TrackId, to: TrackId) -> bool {
+        if from == to {
+            return true;
+        }
+        // The new edge closes a loop exactly when `from` is already downstream of `to`.
+        let mut seen = vec![to];
+        let mut queue = vec![to];
+        while let Some(node) = queue.pop() {
+            let Some(track) = self.track(node) else {
+                continue;
+            };
+            for next in track.feeds() {
+                if next == from {
+                    return true;
+                }
+                if !seen.contains(&next) {
+                    seen.push(next);
+                    queue.push(next);
+                }
+            }
+        }
+        false
+    }
+
+    /// Points every output and every send at a bus that exists, breaking any loop it finds.
+    ///
+    /// Called when a document is loaded, for the same reason [`Self::repair_id_counter`] is: the
+    /// editing commands refuse to create either fault, so a file carrying one was either written
+    /// by another tool or edited by hand, and the alternative to repairing it is a project that
+    /// cannot be rendered at all. Returns `true` when anything had to be changed.
+    pub fn repair_routing(&mut self) -> bool {
+        let is_bus: Vec<(TrackId, bool)> = self
+            .tracks
+            .iter()
+            .map(|track| (track.id, track.kind.is_bus()))
+            .collect();
+        let usable = |id: TrackId, owner: TrackId| {
+            id != owner && is_bus.iter().any(|(bus, yes)| *bus == id && *yes)
+        };
+
+        let mut repaired = false;
+        for index in 0..self.tracks.len() {
+            let owner = self.tracks[index].id;
+            if let Output::Bus(target) = self.tracks[index].output
+                && !usable(target, owner)
+            {
+                self.tracks[index].output = Output::Master;
+                repaired = true;
+            }
+            let before = self.tracks[index].sends.len();
+            self.tracks[index]
+                .sends
+                .retain(|send| usable(send.target, owner));
+            repaired |= self.tracks[index].sends.len() != before;
+        }
+
+        // Now every edge points at a real bus, so what is left is loops. Each edge is put back one
+        // at a time and dropped if it closes one, which terminates and does not depend on where in
+        // the document the loop happened to start.
+        let edges: Vec<(usize, Output, Vec<AuxSend>)> = self
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(index, track)| (index, track.output, track.sends.clone()))
+            .collect();
+        for track in &mut self.tracks {
+            track.output = Output::Master;
+            track.sends.clear();
+        }
+        for (index, output, sends) in edges {
+            let owner = self.tracks[index].id;
+            if let Output::Bus(target) = output {
+                if self.routing_would_cycle(owner, target) {
+                    repaired = true;
+                } else {
+                    self.tracks[index].output = output;
+                }
+            }
+            for send in sends {
+                if self.routing_would_cycle(owner, send.target) {
+                    repaired = true;
+                } else {
+                    self.tracks[index].sends.push(send);
+                }
+            }
+        }
+        repaired
+    }
+
+    /// Which tracks the solo switches leave audible, in project order.
+    ///
+    /// This is the solo resolution alone; a track's own mute is separate, because the engine keeps
+    /// the two apart so that toggling a mute is a command rather than a rebuild.
+    ///
+    /// A bus is what makes this more than one line. Solo has to travel **both ways along the
+    /// routing**, or half of what a person means by it produces silence:
+    ///
+    /// * *Downstream*, because soloing a drum track routed through a drum bus must leave the bus
+    ///   open — the track's audio has nowhere else to go.
+    /// * *Upstream*, because soloing the drum bus must leave the drum tracks open — a bus has
+    ///   nothing of its own to play, so a soloed bus with silenced feeders is silence.
+    ///
+    /// So a track is audible exactly when it lies on a path through something soloed. Two passes
+    /// over [`Self::routing_order`] decide it: one forward for what a soloed track feeds, one
+    /// backward for what feeds a soloed track. They stay separate on purpose — merging them would
+    /// let a bus made audible from below drag in its *other* feeders, and soloing one drum track
+    /// would quietly play the whole kit.
+    pub fn solo_resolution(&self) -> Vec<bool> {
+        if !self.has_solo() {
+            return vec![true; self.tracks.len()];
+        }
+        let order = self.routing_order();
+        let index_of = |id: TrackId| self.track_index(id);
+
+        // Backward: `reaches[t]` is true when something soloed sits downstream of `t`.
+        let mut reaches = vec![false; self.tracks.len()];
+        for &index in order.iter().rev() {
+            reaches[index] = self.tracks[index].feeds().any(|target| {
+                index_of(target)
+                    .is_some_and(|target| self.tracks[target].mixer.solo || reaches[target])
+            });
+        }
+
+        // Forward: `fed[t]` is true when something soloed sits upstream of `t`.
+        let mut fed = vec![false; self.tracks.len()];
+        for &index in &order {
+            let id = self.tracks[index].id;
+            fed[index] = self.tracks.iter().enumerate().any(|(feeder, other)| {
+                (other.mixer.solo || fed[feeder]) && other.feeds().any(|target| target == id)
+            });
+        }
+
+        (0..self.tracks.len())
+            .map(|index| self.tracks[index].mixer.solo || reaches[index] || fed[index])
+            .collect()
     }
 
     /// Position just past the last clip in the project.
@@ -1601,6 +1937,11 @@ impl Project {
         EffectSlotId(self.allocate_id())
     }
 
+    /// Reserves a send id.
+    pub fn next_send_id(&mut self) -> SendId {
+        SendId(self.allocate_id())
+    }
+
     /// Repairs a project loaded from disk: makes sure the id counter is past every id in use,
     /// so ids handed out later cannot collide with existing ones.
     pub fn repair_id_counter(&mut self) {
@@ -1609,6 +1950,9 @@ impl Project {
             highest = highest.max(track.id.0);
             for slot in &track.mixer.effects {
                 highest = highest.max(slot.id.0);
+            }
+            for send in &track.sends {
+                highest = highest.max(send.id.0);
             }
             match &track.kind {
                 TrackKind::Instrument(inner) => {
@@ -1621,6 +1965,7 @@ impl Project {
                         highest = highest.max(clip.id.0);
                     }
                 }
+                TrackKind::Bus => {}
             }
         }
         for slot in &self.master.effects {
@@ -1801,6 +2146,201 @@ mod tests {
             .map(|clip| clip.start)
             .collect();
         assert_eq!(starts, vec![Ticks::ZERO, Ticks::from_beats(8.0)]);
+    }
+
+    /// Two instrument tracks routed into one bus, which goes to the master.
+    fn bussed_project() -> (Project, TrackId, TrackId, TrackId) {
+        let mut project = Project::new("Routing", 48_000.0);
+        let kick = project.add_instrument_track("Kick", "auris.synth.pulse");
+        let snare = project.add_instrument_track("Snare", "auris.synth.pulse");
+        let bus = project.add_bus_track("Drums");
+        project.track_mut(kick).unwrap().output = Output::Bus(bus);
+        project.track_mut(snare).unwrap().output = Output::Bus(bus);
+        (project, kick, snare, bus)
+    }
+
+    #[test]
+    fn a_bus_is_ordered_after_everything_that_feeds_it() {
+        // The order audio has to be mixed in: a bus cannot go through its own strip until every
+        // track routed into it has arrived.
+        let (mut project, kick, snare, bus) = bussed_project();
+        let reverb = project.add_bus_track("Reverb");
+        let send = project.next_send_id();
+        project
+            .track_mut(bus)
+            .unwrap()
+            .sends
+            .push(AuxSend::new(send, reverb));
+
+        let order = project.routing_order();
+        assert_eq!(order.len(), project.tracks.len());
+        let at = |id: TrackId| {
+            let index = project.track_index(id).unwrap();
+            order.iter().position(|slot| *slot == index).unwrap()
+        };
+        assert!(at(kick) < at(bus));
+        assert!(at(snare) < at(bus));
+        assert!(at(bus) < at(reverb), "a send is a routing edge too");
+    }
+
+    #[test]
+    fn routing_refuses_to_close_a_loop() {
+        let (mut project, kick, _, bus) = bussed_project();
+        let reverb = project.add_bus_track("Reverb");
+        project
+            .track_mut(bus)
+            .unwrap()
+            .sends
+            .push(AuxSend::new(SendId(500), reverb));
+
+        // A bus into itself, and the two ways round the existing chain.
+        assert!(project.routing_would_cycle(bus, bus));
+        assert!(
+            project.routing_would_cycle(reverb, bus),
+            "reverb -> drums -> reverb"
+        );
+        assert!(
+            project.routing_would_cycle(reverb, kick),
+            "kick is upstream"
+        );
+        // And the edges that are simply new.
+        assert!(!project.routing_would_cycle(kick, reverb));
+    }
+
+    #[test]
+    fn a_document_carrying_a_loop_is_repaired_rather_than_refused() {
+        // The editing commands cannot make one, so a file with a loop came from somewhere else.
+        // The alternative to repairing it is a project that can never be rendered at all.
+        let (mut project, _, _, bus) = bussed_project();
+        let reverb = project.add_bus_track("Reverb");
+        project.track_mut(bus).unwrap().output = Output::Bus(reverb);
+        project.track_mut(reverb).unwrap().output = Output::Bus(bus);
+
+        assert!(project.repair_routing());
+        // One of the two edges survives — which one does not matter, only that no track can now
+        // reach itself, which is what makes an order to render in exist.
+        for track in &project.tracks {
+            for target in track.feeds() {
+                assert!(
+                    !project.routing_would_cycle(track.id, target),
+                    "{} still lies on a loop",
+                    track.name
+                );
+            }
+        }
+        assert!(!project.repair_routing(), "the repair is idempotent");
+        // And the bus is still reachable at all: repairing must not detach the whole chain.
+        assert!(project.track(bus).unwrap().feeds().count() <= 1);
+    }
+
+    #[test]
+    fn a_route_to_something_that_is_not_a_bus_is_dropped_on_load() {
+        let (mut project, kick, snare, _) = bussed_project();
+        // An instrument track is not a mixing point, and neither is a track that is not there.
+        project.track_mut(kick).unwrap().output = Output::Bus(snare);
+        project
+            .track_mut(snare)
+            .unwrap()
+            .sends
+            .push(AuxSend::new(SendId(9), TrackId(9_999)));
+
+        assert!(project.repair_routing());
+        assert_eq!(project.track(kick).unwrap().output, Output::Master);
+        assert!(project.track(snare).unwrap().sends.is_empty());
+    }
+
+    #[test]
+    fn solo_travels_both_ways_along_the_routing() {
+        let (mut project, kick, snare, bus) = bussed_project();
+
+        // Downstream: soloing a track has to leave the bus it feeds open, or its audio has
+        // nowhere to go and the solo is silence.
+        project.track_mut(kick).unwrap().mixer.solo = true;
+        let audible = project.solo_resolution();
+        let at = |id: TrackId| audible[project.track_index(id).unwrap()];
+        assert!(at(kick));
+        assert!(at(bus), "the soloed track's own bus was silenced");
+        assert!(!at(snare));
+
+        // Upstream: soloing the bus has to leave its feeders open, because a bus has nothing of
+        // its own to play.
+        project.track_mut(kick).unwrap().mixer.solo = false;
+        project.track_mut(bus).unwrap().mixer.solo = true;
+        let audible = project.solo_resolution();
+        let at = |id: TrackId| audible[project.track_index(id).unwrap()];
+        assert!(at(kick) && at(snare) && at(bus));
+    }
+
+    #[test]
+    fn nothing_soloed_leaves_everything_audible() {
+        let (project, _, _, _) = bussed_project();
+        assert_eq!(project.solo_resolution(), vec![true; project.tracks.len()]);
+    }
+
+    #[test]
+    fn deleting_a_bus_sends_what_fed_it_straight_to_the_master() {
+        // The routing goes, not the tracks: what was going through the bus goes where it would
+        // have gone had the bus never existed.
+        let (mut project, kick, snare, bus) = bussed_project();
+        project
+            .track_mut(snare)
+            .unwrap()
+            .sends
+            .push(AuxSend::new(SendId(77), bus));
+
+        assert!(project.remove_track(bus));
+        assert_eq!(project.track(kick).unwrap().output, Output::Master);
+        assert!(project.track(snare).unwrap().sends.is_empty());
+    }
+
+    #[test]
+    fn a_clip_cannot_be_moved_onto_a_bus() {
+        // A bus holds no clips. Refusing has to happen before the clip leaves its own track:
+        // "not an instrument track" once counted a bus as an audio track, and the clip was taken
+        // off one track and then found nowhere to land.
+        let mut project = Project::new("Bus", 48_000.0);
+        let audio = project.add_audio_track("Sample");
+        let source =
+            project.add_audio_source("s", AssetPath::inside("Audio/s.wav"), 1_000, 48_000.0, 1);
+        let clip = project.add_audio_clip(audio, source, Ticks::ZERO).unwrap();
+        let bus = project.add_bus_track("Bus");
+
+        assert!(!project.move_clip_to_track(clip, bus));
+        assert_eq!(project.track_of_clip(clip), Some(audio));
+    }
+
+    #[test]
+    fn a_duplicated_track_gets_send_ids_of_its_own() {
+        // Every id in a copy is reissued for the same reason a clip's is: two sends answering to
+        // one id would send an edit aimed at the copy to the original.
+        let (mut project, kick, _, bus) = bussed_project();
+        let send = project.next_send_id();
+        project
+            .track_mut(kick)
+            .unwrap()
+            .sends
+            .push(AuxSend::new(send, bus));
+
+        let copy = project.duplicate_track(kick).unwrap();
+        assert_ne!(project.track(copy).unwrap().sends[0].id, send);
+        // The routing itself is copied as it was: the copy feeds the same bus.
+        assert_eq!(project.track(copy).unwrap().output, Output::Bus(bus));
+        assert_eq!(project.track(copy).unwrap().sends[0].target, bus);
+    }
+
+    #[test]
+    fn routing_survives_a_round_trip_through_json() {
+        let (mut project, kick, _, bus) = bussed_project();
+        project.track_mut(kick).unwrap().sends.push(AuxSend {
+            id: SendId(42),
+            target: bus,
+            level_db: -7.5,
+            pre_fader: true,
+        });
+
+        let json = serde_json::to_string(&project).expect("serialises");
+        let back: Project = serde_json::from_str(&json).expect("deserialises");
+        assert_eq!(back, project, "{json}");
     }
 
     #[test]

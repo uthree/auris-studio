@@ -62,6 +62,7 @@ strings! {
     Pan { en: "Pan", ja: "パン" }
     TrackKindInstrument { en: "Instrument", ja: "ソフト音源" }
     TrackKindAudio { en: "Audio", ja: "オーディオ" }
+    TrackKindBus { en: "Bus", ja: "バス" }
 
     // The piano roll's own hints name the gesture that is actually bound, so they are in
     // `messages` and take it as an argument. Fixed strings naming a modifier used to live here
@@ -666,6 +667,7 @@ new のオプション
     CliFieldTracks { en: "tracks", ja: "トラック数" }
     CliKindInstrument { en: "instrument", ja: "音源" }
     CliKindAudio { en: "audio", ja: "オーディオ" }
+    CliKindBus { en: "bus", ja: "バス" }
     CliClipCount { en: "clip(s)", ja: "クリップ" }
     CliProgressions { en: "PROGRESSIONS", ja: "コード進行" }
     CliExpectedSpecPath {

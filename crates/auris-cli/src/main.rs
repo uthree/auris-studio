@@ -386,6 +386,8 @@ fn info(path: &Path) -> Result<(), String> {
                     "",
                     inner.clips.len()
                 ),
+                // A bus holds no clips at all, so the count would be a nought that means nothing.
+                TrackKind::Bus => format!("{} {:<24}", pad(field(Key::CliKindBus), 12), ""),
             };
             writeln!(out, "    {} {detail}", pad(&track.name, 18))?;
             if !track.mixer.effects.is_empty() {

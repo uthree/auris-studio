@@ -14,7 +14,8 @@ use auris_core::AudioBuffer;
 use auris_core::plugin::{NoteEvent, ProcessContext};
 
 use crate::graph::{
-    PITCH_COUNT, RenderAudioClip, RenderGraph, RenderSource, RenderTrack, ScheduledEvent,
+    PITCH_COUNT, RenderAudioClip, RenderGraph, RenderSend, RenderSource, RenderTrack,
+    ScheduledEvent,
 };
 use crate::transport::Transport;
 
@@ -92,19 +93,33 @@ fn render_segment(
     master_scratch.set_frame_count(frames);
     master_scratch.clear();
 
+    // Emptied before anything is rendered, so a bus sums this segment alone rather than whatever
+    // the last one left in it.
+    let bus_inputs = &mut graph.bus_inputs;
+    for input in bus_inputs.iter_mut() {
+        input.set_frame_count(frames);
+        input.clear();
+    }
+
     // A separate field borrow, the same way `master_scratch` is one, so the scope stays reachable
     // while the tracks are being walked mutably.
     let scope = &graph.scope;
     let watching = scope.watching();
 
-    for (index, track) in graph.tracks.iter_mut().enumerate() {
+    // The routing order rather than the track list: a bus cannot go through its own strip until
+    // everything routed into it has been mixed in, and only this order guarantees that.
+    let tracks = &mut graph.tracks;
+    for &index in &graph.order {
+        let Some(track) = tracks.get_mut(index) else {
+            continue;
+        };
         // A track muted long enough to have finished fading out contributes nothing, so skip it
         // entirely. One muted a moment ago still has a fade to slide down and must be rendered.
         if track.strip.is_silent() {
             continue;
         }
         track.scratch.set_frame_count(frames);
-        render_source(track, transport, &ctx);
+        render_source(track, bus_inputs, transport, &ctx);
         for (effect, enabled) in track.strip.effects.iter_mut().zip(&track.strip.enabled) {
             if *enabled {
                 effect.process(&mut track.scratch, &ctx);
@@ -112,10 +127,21 @@ fn render_segment(
         }
         // Delay compensation sits between the chain and the fader: the chain is what runs late,
         // and putting it here keeps the fader and the mute acting when they are moved rather
-        // than a few milliseconds afterwards.
+        // than a few milliseconds afterwards. Every copy the track goes on to produce is taken
+        // after this, because this part of the delay belongs to all of them.
         track.delay.process(&mut track.scratch);
-        track.strip.apply_gain_and_pan(&mut track.scratch);
-        track.strip.apply_mute(&mut track.scratch);
+
+        let RenderTrack {
+            scratch,
+            sends,
+            strip,
+            ..
+        } = track;
+        deliver_sends(sends, scratch, bus_inputs, true);
+        strip.apply_gain_and_pan(scratch);
+        strip.apply_mute(scratch);
+        deliver_sends(sends, scratch, bus_inputs, false);
+
         track.peak = track.peak.max(track.scratch.peak());
         // A spectrum display, if one is open on this strip, reads what the strip actually sends
         // to the bus — the chain applied, the fader applied. The check is one relaxed load per
@@ -123,7 +149,14 @@ fn render_segment(
         if watching == crate::scope::ScopeSource::Track(index) {
             scope.publish(track.scratch.channel(0), ctx.sample_rate);
         }
-        master_scratch.mix_from(&track.scratch, 1.0);
+        // The output edge's own delay, after both taps so that each copy carries its own: zero in
+        // any graph where nothing looks ahead, which is why this is normally a return on the
+        // first line.
+        track.output_delay.process(&mut track.scratch);
+        match track.output.and_then(|slot| bus_inputs.get_mut(slot)) {
+            Some(input) => input.mix_from(&track.scratch, 1.0),
+            None => master_scratch.mix_from(&track.scratch, 1.0),
+        }
     }
 
     for (effect, enabled) in graph.master.effects.iter_mut().zip(&graph.master.enabled) {
@@ -148,8 +181,73 @@ fn render_segment(
     write_segment(out, offset, master_scratch, frames);
 }
 
+/// Feeds one tap of a track into the buses its sends name.
+///
+/// Called twice per track — once before the fader and once after — and each send is only touched
+/// by the pass matching its own tap point, so every send's ramp advances exactly once per segment.
+fn deliver_sends(
+    sends: &mut [RenderSend],
+    source: &AudioBuffer,
+    bus_inputs: &mut [AudioBuffer],
+    pre_fader: bool,
+) {
+    for send in sends.iter_mut() {
+        if send.pre_fader != pre_fader {
+            continue;
+        }
+        let Some(input) = bus_inputs.get_mut(send.target) else {
+            continue;
+        };
+        let (from, to) = send.gain.advance();
+        // A send with no delay to apply is mixed straight from the tap. Only one that is actually
+        // held back — because the bus it feeds looks ahead — needs a copy to hold.
+        if send.delay.frames() == 0 {
+            mix_ramped(input, source, from, to);
+            continue;
+        }
+        send.scratch.set_frame_count(source.frame_count());
+        send.scratch.copy_from(source);
+        send.delay.process(&mut send.scratch);
+        mix_ramped(input, &send.scratch, from, to);
+    }
+}
+
+/// Adds `source` into `out` through a gain sweeping linearly from `from` to `to`.
+///
+/// The mixing counterpart of the strip's own ramp, and there for the same reason: a send level
+/// that jumped between blocks would click.
+fn mix_ramped(out: &mut AudioBuffer, source: &AudioBuffer, from: f32, to: f32) {
+    let channels = out.channel_count().min(source.channel_count());
+    let frames = out.frame_count().min(source.frame_count());
+    if frames == 0 {
+        return;
+    }
+    let step = (to - from) / frames as f32;
+    let flat = (to - from).abs() <= f32::EPSILON;
+    for channel in 0..channels {
+        let input = &source.channel(channel)[..frames];
+        let destination = &mut out.channel_mut(channel)[..frames];
+        if flat {
+            for (sample, value) in destination.iter_mut().zip(input) {
+                *sample += *value * from;
+            }
+            continue;
+        }
+        let mut gain = from;
+        for (sample, value) in destination.iter_mut().zip(input) {
+            *sample += *value * gain;
+            gain += step;
+        }
+    }
+}
+
 /// Fills a track's scratch buffer with whatever it plays for this segment.
-fn render_source(track: &mut RenderTrack, transport: &Transport, ctx: &ProcessContext) {
+fn render_source(
+    track: &mut RenderTrack,
+    bus_inputs: &[AudioBuffer],
+    transport: &Transport,
+    ctx: &ProcessContext,
+) {
     let RenderTrack {
         source,
         scratch,
@@ -207,6 +305,12 @@ fn render_source(track: &mut RenderTrack, transport: &Transport, ctx: &ProcessCo
                 }
             }
         }
+        // Whatever the tracks feeding this bus have already put there. They come first in the
+        // routing order, so by now the sum is complete.
+        RenderSource::Bus { input } => match bus_inputs.get(*input) {
+            Some(mixed) => scratch.copy_from(mixed),
+            None => scratch.clear(),
+        },
         RenderSource::Silence => scratch.clear(),
     }
 }
@@ -325,7 +429,7 @@ mod tests {
     use auris_core::ParamId;
     use auris_core::automation::AutomationCurve;
     use auris_core::param::{ParamTarget, db_to_gain};
-    use auris_core::project::{AudioSourceBank, Note, Project};
+    use auris_core::project::{AudioSourceBank, AuxSend, Note, Output, Project};
     use auris_core::time::Ticks;
     use std::sync::Arc;
 
@@ -1287,6 +1391,285 @@ mod tests {
             -6.0,
         );
         assert_eq!(build(&project, 512).automated_count(), 0);
+    }
+
+    /// Two tone tracks holding a note throughout, both routed into one bus.
+    ///
+    /// The bus is last in the track list, so a renderer that walked the list instead of the
+    /// routing order would still get this right — which is why the tests below that care about
+    /// the order put the bus first.
+    fn bussed_project() -> Project {
+        let mut project = Project::new("Bus", SAMPLE_RATE);
+        for name in ["A", "B"] {
+            let track = project.add_instrument_track(name, testkit::TONE_ID);
+            let clip = project
+                .add_midi_clip(track, "c", Ticks::ZERO, Ticks::from_beats(8.0))
+                .unwrap();
+            project.midi_clip_mut(clip).unwrap().notes.push(Note::new(
+                60,
+                Ticks::ZERO,
+                Ticks::from_beats(8.0),
+            ));
+        }
+        let bus = project.add_bus_track("Drums");
+        project.tracks[0].output = Output::Bus(bus);
+        project.tracks[1].output = Output::Bus(bus);
+        project
+    }
+
+    /// One tone track sending to one bus, with the bus placed *before* it in the track list.
+    ///
+    /// The order the tracks are stored in is the user's; the order they are mixed in is the
+    /// routing's. Putting the bus first is what makes the difference between the two observable.
+    fn sent_project(level_db: f32, pre_fader: bool) -> Project {
+        let mut project = Project::new("Send", SAMPLE_RATE);
+        let bus = project.add_bus_track("Reverb");
+        let track = project.add_instrument_track("Lead", testkit::TONE_ID);
+        let clip = project
+            .add_midi_clip(track, "c", Ticks::ZERO, Ticks::from_beats(8.0))
+            .unwrap();
+        project.midi_clip_mut(clip).unwrap().notes.push(Note::new(
+            60,
+            Ticks::ZERO,
+            Ticks::from_beats(8.0),
+        ));
+        let id = project.next_send_id();
+        project.track_mut(track).unwrap().sends.push(AuxSend {
+            id,
+            target: bus,
+            level_db,
+            pre_fader,
+        });
+        project
+    }
+
+    #[test]
+    fn a_bus_sums_what_is_routed_to_it_and_its_fader_moves_all_of_it() {
+        let plain = build(&bussed_project(), 512);
+        let mut plain = plain;
+        let summed = render_range(&mut plain, &mut Transport::playing_from(0), 4_096, 512);
+        assert!((peak(&summed, 0, 4_096) - 2.0 * TONE_AMPLITUDE).abs() < 1e-5);
+
+        // -6.0206 dB is exactly a factor of two in amplitude, and one fader on the bus has to
+        // move both tracks — which is the whole reason a bus exists.
+        let mut project = bussed_project();
+        project.tracks[2].mixer.gain_db = -6.020_6;
+        let mut graph = build(&project, 512);
+        let halved = render_range(&mut graph, &mut Transport::playing_from(0), 4_096, 512);
+        let heard = peak(&halved, 0, 4_096);
+        assert!((heard - TONE_AMPLITUDE).abs() < 1e-4, "got {heard}");
+    }
+
+    #[test]
+    fn a_bus_chain_runs_once_on_the_sum_rather_than_on_each_track() {
+        let mut project = bussed_project();
+        let bus = project.tracks[2].id;
+        project.add_effect(Some(bus), testkit::COUNTER_ID);
+        let mut graph = build(&project, 512);
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+
+        testkit::take_process_calls();
+        render_block(&mut graph, &mut Transport::playing_from(0), &mut out, false);
+        assert_eq!(
+            testkit::take_process_calls(),
+            1,
+            "two tracks share one bus chain, so it must run once"
+        );
+        assert!((out.channel(0)[100] - 2.0 * TONE_AMPLITUDE).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_send_feeds_a_bus_without_taking_the_track_off_the_master() {
+        // The difference between a send and an output: the track is still heard dry.
+        let mut graph = build(&sent_project(0.0, false), 512);
+        let out = render_range(&mut graph, &mut Transport::playing_from(0), 4_096, 512);
+        let heard = peak(&out, 0, 4_096);
+        assert!(
+            (heard - 2.0 * TONE_AMPLITUDE).abs() < 1e-5,
+            "dry plus a unity send should be twice the tone, got {heard}"
+        );
+
+        // And the send has a level of its own: -6.0206 dB is half.
+        let mut graph = build(&sent_project(-6.020_6, false), 512);
+        let out = render_range(&mut graph, &mut Transport::playing_from(0), 4_096, 512);
+        let heard = peak(&out, 0, 4_096);
+        assert!((heard - 1.5 * TONE_AMPLITUDE).abs() < 1e-4, "got {heard}");
+    }
+
+    #[test]
+    fn a_pre_fader_send_ignores_the_fader_and_a_post_fader_one_follows_it() {
+        let heard = |pre_fader: bool| {
+            let mut project = sent_project(0.0, pre_fader);
+            // The track itself pulled all the way down, so the only thing that can still be
+            // heard is whatever the send took a copy of.
+            project.tracks[1].mixer.gain_db = -120.0;
+            let mut graph = build(&project, 512);
+            let out = render_range(&mut graph, &mut Transport::playing_from(0), 4_096, 512);
+            peak(&out, 0, 4_096)
+        };
+        let before = heard(true);
+        assert!(
+            (before - TONE_AMPLITUDE).abs() < 1e-5,
+            "a pre-fader send is taken before the fader, so it survives it: got {before}"
+        );
+        let after = heard(false);
+        assert!(
+            after < 1e-5,
+            "a post-fader send follows the fader down to silence: got {after}"
+        );
+    }
+
+    #[test]
+    fn soloing_a_track_leaves_the_bus_it_feeds_audible() {
+        // Solo travels along the routing. Without that, soloing a track routed through a bus
+        // silences the bus it has to pass through, and the solo produces nothing at all.
+        let mut project = bussed_project();
+        project.tracks[0].mixer.solo = true;
+        let mut graph = build(&project, 512);
+        let out = render_range(&mut graph, &mut Transport::playing_from(0), 4_096, 512);
+        let heard = peak(&out, 0, 4_096);
+        assert!(
+            (heard - TONE_AMPLITUDE).abs() < 1e-5,
+            "the soloed track was silenced by its own bus: got {heard}"
+        );
+    }
+
+    #[test]
+    fn a_bus_that_looks_ahead_does_not_drag_what_goes_through_it_behind_the_rest() {
+        // The bus's own latency belongs to the *path*, not to the chain, so the track that does
+        // not pass through it is the one that has to be held back. Per-track compensation could
+        // not express that at all: neither track has a look-ahead effect on it.
+        let mut project = Project::new("PDC", SAMPLE_RATE);
+        for name in ["Bussed", "Plain"] {
+            let track = project.add_instrument_track(name, testkit::TONE_ID);
+            let clip = project
+                .add_midi_clip(track, "c", Ticks::ZERO, Ticks::from_beats(8.0))
+                .unwrap();
+            project.midi_clip_mut(clip).unwrap().notes.push(Note::new(
+                60,
+                Ticks::ZERO,
+                Ticks::from_beats(8.0),
+            ));
+        }
+        let bus = project.add_bus_track("Late");
+        project.tracks[0].output = Output::Bus(bus);
+        project.add_effect(Some(bus), testkit::LOOKAHEAD_ID);
+
+        let mut graph = build(&project, 512);
+        assert_eq!(graph.latency_frames(), testkit::LOOKAHEAD_FRAMES);
+        let out = render_range(&mut graph, &mut Transport::playing_from(0), 2_048, 512);
+
+        let lead_in = testkit::LOOKAHEAD_FRAMES;
+        assert_eq!(out.slice(0, lead_in).peak(), 0.0);
+        for frame in [lead_in, lead_in + 1, 1_000, 2_047] {
+            let sample = out.channel(0)[frame];
+            assert!(
+                (sample - 2.0 * TONE_AMPLITUDE).abs() < 1e-5,
+                "frame {frame} was {sample}: the two tracks are not in step"
+            );
+        }
+    }
+
+    #[test]
+    fn a_send_into_a_bus_that_looks_ahead_stays_in_step_with_the_dry_signal() {
+        // One track, two paths of different lengths: dry to the master and a copy through a bus
+        // that hands its audio back late. Only a delay on each *edge* can make both arrive
+        // together — with one delay for the whole track they land 64 frames apart and comb-filter
+        // each other, which is a sound nobody asked for and no fader can undo.
+        let mut project = sent_project(0.0, false);
+        let bus = project.tracks[0].id;
+        project.add_effect(Some(bus), testkit::LOOKAHEAD_ID);
+
+        let mut graph = build(&project, 512);
+        assert_eq!(graph.latency_frames(), testkit::LOOKAHEAD_FRAMES);
+        let out = render_range(&mut graph, &mut Transport::playing_from(0), 2_048, 512);
+
+        let lead_in = testkit::LOOKAHEAD_FRAMES;
+        assert_eq!(
+            out.slice(0, lead_in).peak(),
+            0.0,
+            "the dry path has to wait for the wet one"
+        );
+        for frame in [lead_in, 1_000, 2_047] {
+            let sample = out.channel(0)[frame];
+            assert!(
+                (sample - 2.0 * TONE_AMPLITUDE).abs() < 1e-5,
+                "frame {frame} was {sample}: dry and wet are not in step"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tail_adds_up_along_the_routing() {
+        // Three ringing effects, one on a track, one on the bus it feeds and one on the master.
+        // They run in series, so an export has to keep going for all three end to end.
+        let mut project = bussed_project();
+        let track = project.tracks[0].id;
+        let bus = project.tracks[2].id;
+        project.add_effect(Some(track), testkit::TAIL_ID);
+        project.add_effect(Some(bus), testkit::TAIL_ID);
+        project.add_effect(None, testkit::TAIL_ID);
+
+        let graph = build(&project, 512);
+        assert_eq!(graph.tail_frames(), 3 * testkit::TAIL_FRAMES);
+    }
+
+    #[test]
+    fn the_block_size_does_not_change_a_routed_mix() {
+        // The guarantee every other path in this renderer keeps, kept by the routing too: a bus
+        // with a chain and a pan, a pre-fader send at a level of its own, and a stateful effect
+        // in the middle of it.
+        let mut project = bussed_project();
+        let bus = project.tracks[2].id;
+        project.tracks[2].mixer.pan = 0.3;
+        project.add_effect(Some(bus), testkit::TAIL_ID);
+        let id = project.next_send_id();
+        project.tracks[0].sends.push(AuxSend {
+            id,
+            target: bus,
+            level_db: -4.0,
+            pre_fader: true,
+        });
+
+        let render = |block: usize| {
+            let mut graph = build(&project, block);
+            render_range(&mut graph, &mut Transport::playing_from(0), 20_000, block)
+        };
+        assert_eq!(render(512).channel(0), render(97).channel(0));
+        assert_eq!(render(512).channel(1), render(4_096).channel(1));
+    }
+
+    #[test]
+    fn a_routed_graph_never_allocates_either() {
+        // The routing's own hot path, under the same rule as everything else on the audio thread:
+        // bus inputs to clear and sum, a pre-fader send, and a send whose copy has to be held back
+        // — the one case that touches a buffer of its own.
+        let mut project = bussed_project();
+        let bus = project.tracks[2].id;
+        project.add_effect(Some(bus), testkit::LOOKAHEAD_ID);
+        for (level_db, pre_fader) in [(-3.0, true), (-9.0, false)] {
+            let id = project.next_send_id();
+            project.tracks[1].sends.push(AuxSend {
+                id,
+                target: bus,
+                level_db,
+                pre_fader,
+            });
+        }
+
+        let mut graph = build(&project, 512);
+        let mut transport = Transport::playing_from(0);
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+        // Warm up outside the watched region so first-touch growth is not counted.
+        render_block(&mut graph, &mut transport, &mut out, false);
+
+        let allocations = testkit::count_allocations(|| {
+            for step in 0..100 {
+                graph.set_send_level_db(1, 0, -3.0 - step as f32 * 0.1);
+                render_block(&mut graph, &mut transport, &mut out, false);
+            }
+        });
+        assert_eq!(allocations, 0, "the routing allocated on the audio thread");
     }
 
     #[test]

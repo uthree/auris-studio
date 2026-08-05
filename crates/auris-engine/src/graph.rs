@@ -123,6 +123,15 @@ pub enum RenderSource {
         /// Clips in timeline order.
         clips: Vec<RenderAudioClip>,
     },
+    /// Whatever the rest of the graph has routed here.
+    ///
+    /// A bus plays nothing of its own; its material is the sum sitting in the graph's bus input
+    /// buffer at this slot, which every track feeding it has already written into by the time the
+    /// routing order reaches the bus.
+    Bus {
+        /// Which of the graph's bus input buffers this reads.
+        input: usize,
+    },
     /// Nothing to play.
     ///
     /// Used when a track's instrument id is missing from the registry: the track keeps its slot
@@ -342,7 +351,7 @@ impl LatencyDelay {
     }
 
     /// Frames this delay holds back.
-    fn frames(&self) -> usize {
+    pub(crate) fn frames(&self) -> usize {
         self.frames
     }
 
@@ -701,6 +710,24 @@ fn ramp(samples: &mut [f32], start: f32, end: f32) {
     }
 }
 
+/// A copy of a track's signal, on its way to a bus.
+///
+/// The gain is smoothed for the same reason a fader is: a send level moved during playback would
+/// otherwise step, and a step is a click.
+pub(crate) struct RenderSend {
+    /// Which of the graph's bus input buffers this feeds.
+    pub(crate) target: usize,
+    /// Send level as a linear gain, ramped across the block it changes in.
+    pub(crate) gain: SmoothedGain,
+    /// Whether the copy is taken before the fader rather than after it.
+    pub(crate) pre_fader: bool,
+    /// Holds this copy back so it reaches the bus in step with everything else feeding it.
+    pub(crate) delay: LatencyDelay,
+    /// Somewhere to hold the delayed copy. Empty, and never touched, when the delay is zero —
+    /// which it is for every send in a graph where nothing looks ahead.
+    pub(crate) scratch: AudioBuffer,
+}
+
 /// One track, ready to render.
 pub struct RenderTrack {
     /// Project id of the track this came from.
@@ -709,8 +736,21 @@ pub struct RenderTrack {
     pub name: String,
     pub(crate) source: RenderSource,
     pub(crate) strip: RenderStrip,
-    /// Holds this track back to the longest chain in the graph, so the tracks line up.
+    /// Which bus input this track's output is mixed into; `None` for the master.
+    pub(crate) output: Option<usize>,
+    /// Copies of this track's signal, on their way to buses.
+    pub(crate) sends: Vec<RenderSend>,
+    /// Holds this track back to the longest path through the graph, so the sources line up.
     pub(crate) delay: LatencyDelay,
+    /// Holds this track's *output* back so it reaches its destination in step with everything
+    /// else arriving there.
+    ///
+    /// Distinct from [`Self::delay`], and applied after the fader rather than before it, because
+    /// every one of a track's outgoing edges needs a delay of its own: a track feeding the master
+    /// dry while sending to a bus that looks ahead has two paths of different lengths, and only a
+    /// delay per edge can make both arrive together. Zero unless a send makes it otherwise, which
+    /// is why the fader still acts immediately in every ordinary graph.
+    pub(crate) output_delay: LatencyDelay,
     pub(crate) scratch: AudioBuffer,
     /// Events handed to the instrument for the current block, block-relative and sorted.
     pub(crate) block_events: Vec<NoteEvent>,
@@ -818,12 +858,27 @@ pub struct RenderGraph {
     pub(crate) master: RenderStrip,
     sample_rate: f64,
     max_block: usize,
-    /// Track latency the delay lines were sized against, in frames.
+    /// Where every track's signal is summed on the way to the master, one buffer per bus.
     ///
-    /// Kept rather than recomputed so it can be compared with [`Self::required_latency`]: a
+    /// Cleared at the start of every segment and filled as the routing order is walked, so a bus
+    /// finds its whole input waiting by the time its own turn comes.
+    pub(crate) bus_inputs: Vec<AudioBuffer>,
+    /// Which track each bus input belongs to, so the latency plan can be written in track indices
+    /// while the render loop addresses buffers directly.
+    bus_tracks: Vec<usize>,
+    /// Track indices ordered so that everything feeding a bus comes before it.
+    pub(crate) order: Vec<usize>,
+    /// Total latency the delay lines were laid out for: playhead to output, in frames.
+    latency: usize,
+    /// Every strip's own latency as it was when the delays were laid out — each track's, then the
+    /// master's last.
+    ///
+    /// Kept rather than recomputed so it can be compared with what the strips report now: a
     /// parameter that moves a plugin's latency after the graph was built leaves the two
-    /// disagreeing, and that disagreement is the signal to rebuild.
-    compensation: usize,
+    /// disagreeing, and that disagreement is the signal to rebuild. Compared entry by entry rather
+    /// than as a total, because two plugins can trade latency between them and leave the total
+    /// alone while the tracks fall out of step with each other.
+    built_latencies: Vec<usize>,
     tempo_map: TempoMap,
     /// The document's automation, resolved to positions in this graph.
     ///
@@ -882,13 +937,24 @@ impl RenderGraph {
             .find(|rate| rate.is_finite() && *rate > 0.0)
             .unwrap_or(DEFAULT_SAMPLE_RATE);
         let prepare = PrepareContext::new(sample_rate, max_block, RENDER_CHANNELS);
-        let has_solo = project.has_solo();
+        // The solo resolution travels along the routing, so it is worked out for the whole project
+        // at once rather than per track: soloing a drum track has to leave the drum bus open.
+        let solo = project.solo_resolution();
+        // One input buffer per bus, and the slot each bus track owns. Resolved before the tracks
+        // are built so that an output or a send can name a bus that appears later in the list.
+        let bus_tracks: Vec<usize> = (0..project.tracks.len())
+            .filter(|index| project.tracks[*index].kind.is_bus())
+            .collect();
+        let bus_slot = |id: TrackId| {
+            let index = project.track_index(id)?;
+            bus_tracks.iter().position(|track| *track == index)
+        };
 
         let mut tracks = Vec::with_capacity(project.tracks.len());
-        for track in &project.tracks {
+        for (index, track) in project.tracks.iter().enumerate() {
             // `audible` carries only the solo resolution; the strip keeps its own mute so a
             // mute toggle is a command rather than a rebuild.
-            let audible = !has_solo || track.mixer.solo;
+            let audible = solo.get(index).copied().unwrap_or(true);
             let strip = RenderStrip::from_mixer(&track.mixer, audible, registry, &prepare);
             let source = match &track.kind {
                 TrackKind::Instrument(instrument_track) => {
@@ -934,6 +1000,12 @@ impl RenderGraph {
                     clips.sort_by_key(|clip| clip.start_frame);
                     RenderSource::Audio { clips }
                 }
+                // A bus that somehow has no slot cannot happen — the slots are made from exactly
+                // the tracks that are buses — but silence is the right answer if it ever did.
+                TrackKind::Bus => match bus_slot(track.id) {
+                    Some(input) => RenderSource::Bus { input },
+                    None => RenderSource::Silence,
+                },
             };
 
             // Two independent bounds on the per-block event buffer: how many scheduled events
@@ -948,13 +1020,44 @@ impl RenderGraph {
             let mut scratch = AudioBuffer::new(RENDER_CHANNELS, max_block, sample_rate);
             scratch.reserve_frames(max_block);
 
+            // A route to a bus that is not there was already repaired when the document was
+            // loaded; dropping it to the master here is the second lock on that door, and it is
+            // what keeps the render loop free of a check on every block.
+            let output = match track.output.bus() {
+                Some(id) => match bus_slot(id) {
+                    Some(slot) => Some(slot),
+                    None => {
+                        log::warn!("track `{}` names a bus that is not there", track.name);
+                        None
+                    }
+                },
+                None => None,
+            };
+            let sends = track
+                .sends
+                .iter()
+                .filter_map(|send| {
+                    Some(RenderSend {
+                        target: bus_slot(send.target)?,
+                        gain: SmoothedGain::new(db_to_gain(send.level_db)),
+                        pre_fader: send.pre_fader,
+                        // Both sized below, once every chain's latency is known.
+                        delay: LatencyDelay::new(0, RENDER_CHANNELS),
+                        scratch: AudioBuffer::new(RENDER_CHANNELS, 0, sample_rate),
+                    })
+                })
+                .collect();
+
             tracks.push(RenderTrack {
                 id: track.id,
                 name: track.name.clone(),
                 source,
                 strip,
+                output,
+                sends,
                 // Sized below, once every chain's latency is known.
                 delay: LatencyDelay::new(0, RENDER_CHANNELS),
+                output_delay: LatencyDelay::new(0, RENDER_CHANNELS),
                 scratch,
                 block_events: Vec::with_capacity(
                     event_headroom + AUDITION_HEADROOM + chase_headroom,
@@ -967,30 +1070,55 @@ impl RenderGraph {
             });
         }
 
-        // Plugin delay compensation. The tracks run in parallel into one bus, so they can only
-        // stay in step if each is held back to the longest chain among them; the difference is
-        // what each track's delay line is for, and a graph where nothing looks ahead allocates
-        // nothing here because every difference is zero.
-        let compensation = tracks
-            .iter()
-            .map(|track| track.strip.latency_frames())
-            .max()
-            .unwrap_or(0);
-        for track in &mut tracks {
-            let behind = compensation - track.strip.latency_frames();
-            track.delay = LatencyDelay::new(behind, RENDER_CHANNELS);
-        }
-
         let master = RenderStrip::from_mixer(&project.master, true, registry, &prepare);
         let mut master_scratch = AudioBuffer::new(RENDER_CHANNELS, max_block, sample_rate);
         master_scratch.reserve_frames(max_block);
+
+        // Plugin delay compensation, laid out over the whole routing rather than over one row of
+        // tracks: the sources run in parallel into a graph of buses, and they can only stay in
+        // step if each is held back to the longest path through it. A graph where nothing looks
+        // ahead allocates nothing here, because every delay comes out zero.
+        let order = project.routing_order();
+        let plan = plan_latency(&tracks, &bus_tracks, &order, master.latency_frames());
+        for (index, track) in tracks.iter_mut().enumerate() {
+            track.delay = LatencyDelay::new(plan.node[index], RENDER_CHANNELS);
+            let mut edges = plan.edges[index].iter().copied();
+            track.output_delay = LatencyDelay::new(edges.next().unwrap_or(0), RENDER_CHANNELS);
+            for send in &mut track.sends {
+                let frames = edges.next().unwrap_or(0);
+                send.delay = LatencyDelay::new(frames, RENDER_CHANNELS);
+                if frames > 0 {
+                    // Only a send that is actually held back needs somewhere to be held, which is
+                    // why an ordinary send costs one extra buffer of nothing at all.
+                    send.scratch = AudioBuffer::new(RENDER_CHANNELS, max_block, sample_rate);
+                    send.scratch.reserve_frames(max_block);
+                }
+            }
+        }
+
+        let mut bus_inputs = Vec::with_capacity(bus_tracks.len());
+        for _ in &bus_tracks {
+            let mut buffer = AudioBuffer::new(RENDER_CHANNELS, max_block, sample_rate);
+            buffer.reserve_frames(max_block);
+            bus_inputs.push(buffer);
+        }
+
+        let built_latencies = tracks
+            .iter()
+            .map(|track| track.strip.latency_frames())
+            .chain(std::iter::once(master.latency_frames()))
+            .collect();
 
         RenderGraph {
             tracks,
             master,
             sample_rate,
             max_block,
-            compensation,
+            bus_inputs,
+            bus_tracks,
+            order,
+            latency: plan.total,
+            built_latencies,
             tempo_map: project.tempo_map.clone(),
             automation: resolve_automation(project),
             automation_from: None,
@@ -1129,47 +1257,56 @@ impl RenderGraph {
 
     /// How long the graph keeps producing sound after its last event, in frames.
     ///
-    /// Tracks run in parallel, so the longest of them decides when the mix bus stops being fed.
-    /// The master chain runs *after* that, so its own tail begins only once the last track has
-    /// finished decaying and adds on the end rather than overlapping.
+    /// The longest path through the routing decides it. Tracks run in parallel, so the longest of
+    /// them wins; a chain runs in series with whatever it feeds, so a track's tail, its bus's tail
+    /// and the master's tail add up rather than overlapping — the bus is still being fed for the
+    /// whole of the track's decay, and the master for the whole of the bus's.
     ///
     /// The offline renderer keeps going for this long past the end of the arrangement so that
     /// reverbs and delays are not chopped off in the exported file.
     pub fn tail_frames(&self) -> usize {
+        let master = self.master.tail_frames();
+        let through = longest_paths(
+            &self.tracks,
+            &self.bus_tracks,
+            &self.order,
+            RenderStrip::tail_frames,
+            master,
+        );
         self.tracks
             .iter()
-            .map(|track| track.strip.tail_frames())
+            .enumerate()
+            .filter(|(_, track)| !matches!(track.source, RenderSource::Bus { .. }))
+            .map(|(index, _)| through[index])
             .max()
-            .unwrap_or(0)
-            .saturating_add(self.master.tail_frames())
+            .unwrap_or(master)
     }
 
     /// How far behind the playhead this graph's output runs, in frames.
     ///
-    /// The tracks are all held back to the longest chain among them, and the master chain adds
-    /// its own on top of that. Playback simply arrives this late; an export renders the extra
-    /// frames and drops them, so the file still lines up with the timeline.
+    /// Every source is held back to the longest path through the routing, and that path's own
+    /// length is this. Playback simply arrives this late; an export renders the extra frames and
+    /// drops them, so the file still lines up with the timeline.
     pub fn latency_frames(&self) -> usize {
-        self.compensation
-            .saturating_add(self.master.latency_frames())
-    }
-
-    /// Track latency the graph would be built for if it were built now.
-    ///
-    /// Equal to what it *was* built for until a parameter moves a plugin's latency — nothing but
-    /// the limiter's lookahead does today — because every other way of changing a chain rebuilds
-    /// the graph outright. A caller that sees these two disagree should rebuild.
-    pub fn required_latency(&self) -> usize {
-        self.tracks
-            .iter()
-            .map(|track| track.strip.latency_frames())
-            .max()
-            .unwrap_or(0)
+        self.latency
     }
 
     /// `true` when the delay lines no longer match what the chains need.
+    ///
+    /// Compared strip by strip rather than as one total, because two plugins can trade latency
+    /// between them and leave the total where it was while the tracks fall out of step with each
+    /// other. Nothing but a parameter moving a plugin's latency — the limiter's lookahead is the
+    /// only one that ships — can cause this, since every other way of changing a chain rebuilds
+    /// the graph outright.
+    ///
+    /// Allocation-free, because the audio thread asks it once per callback.
     pub fn latency_is_stale(&self) -> bool {
-        self.required_latency() != self.compensation
+        let now = self
+            .tracks
+            .iter()
+            .map(|track| track.strip.latency_frames())
+            .chain(std::iter::once(self.master.latency_frames()));
+        self.built_latencies.iter().copied().ne(now)
     }
 
     /// Last frame any scheduled event or audio clip touches.
@@ -1185,7 +1322,8 @@ impl RenderGraph {
                     .map(|clip| clip.start_frame + clip.length)
                     .max()
                     .unwrap_or(0),
-                RenderSource::Silence => 0,
+                // A bus has nothing of its own, so it can never be what makes a project longer.
+                RenderSource::Bus { .. } | RenderSource::Silence => 0,
             })
             .max()
             .unwrap_or(0)
@@ -1209,6 +1347,22 @@ impl RenderGraph {
     pub fn set_track_mute(&mut self, index: usize, mute: bool) {
         if let Some(track) = self.tracks.get_mut(index) {
             track.strip.set_mute(mute);
+        }
+    }
+
+    /// Moves one of a track's send levels. Out-of-range indices are ignored.
+    ///
+    /// Addressed by position in the track's send list, the same way an effect is addressed by
+    /// position in its chain: a send the graph could not resolve keeps no slot, so this is the one
+    /// place where a document position and a graph position can disagree — which is why adding or
+    /// removing a send rebuilds the graph rather than sending a command.
+    pub fn set_send_level_db(&mut self, track: usize, send: usize, level_db: f32) {
+        if let Some(send) = self
+            .tracks
+            .get_mut(track)
+            .and_then(|track| track.sends.get_mut(send))
+        {
+            send.gain.set_target(db_to_gain(level_db));
         }
     }
 
@@ -1279,11 +1433,136 @@ impl RenderGraph {
             track.silence_voices();
             track.strip.reset();
             track.delay.reset();
+            track.output_delay.reset();
+            for send in &mut track.sends {
+                send.delay.reset();
+            }
             track.peak = 0.0;
+        }
+        for input in &mut self.bus_inputs {
+            input.clear();
         }
         self.master.reset();
         self.master_peak = [0.0, 0.0];
     }
+}
+
+/// Where every delay line in the graph goes, in frames.
+struct LatencyPlan {
+    /// Total latency from the playhead to the output.
+    total: usize,
+    /// What each track is held back by so that every source lines up, by track index.
+    node: Vec<usize>,
+    /// What each of a track's outgoing edges is held back by so that everything arriving at a bus
+    /// lines up: the output edge first, then one per send, by track index.
+    edges: Vec<Vec<usize>>,
+}
+
+/// What each of a track's outgoing edges costs downstream of the track itself, output edge first.
+///
+/// Written into `out` rather than returned so the caller can reuse one allocation across a whole
+/// graph — this runs once per node per pass and none of it happens on the audio thread, but a
+/// `Vec` per node for a number that is almost always zero is still waste.
+fn edge_costs(
+    track: &RenderTrack,
+    bus_tracks: &[usize],
+    through: &[usize],
+    master_cost: usize,
+    out: &mut Vec<usize>,
+) {
+    let resolve = |slot: Option<usize>| match slot {
+        None => master_cost,
+        Some(slot) => bus_tracks
+            .get(slot)
+            .and_then(|index| through.get(*index))
+            .copied()
+            .unwrap_or(master_cost),
+    };
+    out.clear();
+    out.push(resolve(track.output));
+    out.extend(track.sends.iter().map(|send| resolve(Some(send.target))));
+}
+
+/// The longest path from every track to the output, adding each strip's own `cost` along the way.
+///
+/// One walk in reverse routing order is enough: the order puts a bus after everything feeding it,
+/// so walking it backwards reaches every destination before the tracks that name it.
+fn longest_paths(
+    tracks: &[RenderTrack],
+    bus_tracks: &[usize],
+    order: &[usize],
+    cost: impl Fn(&RenderStrip) -> usize,
+    master_cost: usize,
+) -> Vec<usize> {
+    let mut through = vec![0usize; tracks.len()];
+    let mut edges = Vec::new();
+    for &index in order.iter().rev() {
+        let Some(track) = tracks.get(index) else {
+            continue;
+        };
+        edge_costs(track, bus_tracks, &through, master_cost, &mut edges);
+        let downstream = edges.iter().copied().max().unwrap_or(master_cost);
+        through[index] = cost(&track.strip).saturating_add(downstream);
+    }
+    through
+}
+
+/// Works out every delay the graph needs so that nothing arrives anywhere out of step.
+///
+/// The rule is one sentence long: **a signal's whole journey to the output must take the same
+/// time however it goes.** A track's chain is only part of that journey — the bus it feeds has a
+/// chain too, and so does the master — so what has to be equalised is the *path*, not the chain.
+///
+/// So each track is held back by the difference between the longest path in the graph and its own,
+/// which is what puts the sources in step; and each outgoing *edge* is held back by the difference
+/// between the track's longest onward path and that edge's, which is what puts the copies of one
+/// track in step with each other. A track feeding the master dry while sending to a bus that looks
+/// ahead is exactly the case the second one exists for: without it the dry and the wet arrive at
+/// different times and comb-filter each other.
+///
+/// A bus is never held back itself: everything reaching it was lined up on the way in.
+fn plan_latency(
+    tracks: &[RenderTrack],
+    bus_tracks: &[usize],
+    order: &[usize],
+    master_latency: usize,
+) -> LatencyPlan {
+    let through = longest_paths(
+        tracks,
+        bus_tracks,
+        order,
+        RenderStrip::latency_frames,
+        master_latency,
+    );
+
+    let mut edges = Vec::with_capacity(tracks.len());
+    let mut costs = Vec::new();
+    for track in tracks {
+        edge_costs(track, bus_tracks, &through, master_latency, &mut costs);
+        let longest = costs.iter().copied().max().unwrap_or(0);
+        edges.push(costs.iter().map(|cost| longest - cost).collect());
+    }
+
+    // Only a track with material of its own is a source to be lined up. A bus has none, and is
+    // already in step with whatever reached it.
+    let is_source = |track: &RenderTrack| !matches!(track.source, RenderSource::Bus { .. });
+    let total = tracks
+        .iter()
+        .enumerate()
+        .filter(|(_, track)| is_source(track))
+        .map(|(index, _)| through[index])
+        .max()
+        .unwrap_or(master_latency);
+    let node = tracks
+        .iter()
+        .enumerate()
+        .map(|(index, track)| match is_source(track) {
+            true => total.saturating_sub(through[index]),
+            false => 0,
+        })
+        .collect();
+
+    LatencyPlan { total, node, edges }
 }
 
 /// Flattens one MIDI clip's notes into absolute timeline events.
