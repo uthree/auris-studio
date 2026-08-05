@@ -1,6 +1,8 @@
 //! Turning the parts into clips a document can hold.
 
 use auris_core::Note;
+use auris_core::harmony::{ChordMap, ChordPoint, Harmony, KeyMap, KeyPoint};
+use auris_core::structure::{SectionMap, SectionPoint};
 use auris_core::time::{Ticks, TimeSignature};
 
 use crate::frame::{Frame, plan};
@@ -48,6 +50,18 @@ pub struct Composition {
     pub length: Ticks,
     /// The seed it was written from, so it can be written again.
     pub seed: u64,
+    /// The key and the chords, on the song's own timeline.
+    ///
+    /// The same harmony every part was written against, handed over rather than thrown away: it
+    /// is what the harmony lane draws, and what a clip generated later reads so that a part added
+    /// by hand agrees with the ones the composer wrote.
+    pub harmony: Harmony,
+    /// The sections, on the song's own timeline.
+    ///
+    /// A composed piece knows what its stretches are called, and a clip written into a stretch
+    /// draws its figures from that label — so a part added to a finished song comes out belonging
+    /// to the same サビ as the rest of it.
+    pub sections: SectionMap,
     /// The tracks, in the order the parts were declared.
     pub tracks: Vec<TrackDraft>,
 }
@@ -167,8 +181,75 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
         meter: spec.meter,
         length: frame.length,
         seed: spec.seed,
+        harmony: harmony_of(frame),
+        sections: sections_of(frame),
         tracks,
     }
+}
+
+/// The frame's harmony, moved onto the song's own timeline.
+///
+/// A [`SectionPlan`](crate::frame::SectionPlan) positions its chords from its *own* start, which
+/// is the frame of reference a clip wants; a document wants them where they sound. This is the one
+/// place the two meet, and it is why the offset is added exactly once.
+fn harmony_of(frame: &Frame) -> Harmony {
+    let mut keys: Vec<KeyPoint> = Vec::new();
+    let mut chords: Vec<ChordPoint> = Vec::new();
+
+    for section in &frame.sections {
+        // Only where it changes. Every section carries a key, and most songs are in one
+        // throughout — a point per section would fill the lane with changes that change nothing.
+        if keys.last().is_none_or(|last| last.key != section.key) {
+            keys.push(KeyPoint {
+                tick: section.start,
+                key: section.key,
+            });
+        }
+        for event in &section.events {
+            chords.push(ChordPoint {
+                tick: section.start + event.start,
+                chord: Some(event.numeral),
+            });
+        }
+    }
+
+    // Past the last bar there is no harmony, rather than the final chord ringing on for ever.
+    // That is what a `None` point is for, and without it a clip written after the song's end
+    // would be given chords the piece does not have.
+    if !chords.is_empty() {
+        chords.push(ChordPoint {
+            tick: frame.length,
+            chord: None,
+        });
+    }
+
+    Harmony {
+        keys: KeyMap::from_points(keys),
+        chords: ChordMap::new(chords),
+    }
+}
+
+/// The frame's sections, as the labels a timeline carries.
+///
+/// The instance numbers are not stored: [`SectionMap`] counts them from the start of the song, so
+/// writing them down would be a second copy of a fact that can only disagree with the first.
+fn sections_of(frame: &Frame) -> SectionMap {
+    let mut points: Vec<SectionPoint> = frame
+        .sections
+        .iter()
+        .map(|section| SectionPoint {
+            tick: section.start,
+            label: Some(section.name.clone()),
+        })
+        .collect();
+    // The stretch after the last section is a real thing, not an absence: the song has ended.
+    if !points.is_empty() {
+        points.push(SectionPoint {
+            tick: frame.length,
+            label: None,
+        });
+    }
+    SectionMap::new(points)
 }
 
 #[cfg(test)]
@@ -191,6 +272,67 @@ mod tests {
         [section chorus]
         bars: 8
     ";
+
+    #[test]
+    fn a_piece_carries_the_harmony_its_parts_were_written_against() {
+        // It was computed and then thrown away: the document had an empty harmony lane over a
+        // song that plainly has chords, and a clip generated afterwards had nothing to read.
+        let piece = compose_text(BASE);
+        let frame = plan(&SongSpec::parse(BASE).expect("the fixture parses"));
+
+        // Every chord in the frame is on the song's timeline exactly once, plus the point that
+        // ends the harmony where the piece does.
+        let written: usize = frame.sections.iter().map(|s| s.events.len()).sum();
+        assert_eq!(piece.harmony.chords.points().len(), written + 1);
+        assert!(!piece.harmony.chords.is_empty());
+
+        // And they are where they sound, not where they sat inside their own section.
+        let second = &frame.sections[1];
+        let first_of_second = second.events.first().expect("the section has chords");
+        assert_eq!(
+            piece
+                .harmony
+                .chords
+                .numeral_at(second.start + first_of_second.start),
+            Some(first_of_second.numeral),
+        );
+
+        // Past the last bar there is no harmony rather than a final chord ringing for ever.
+        assert_eq!(piece.harmony.chords.numeral_at(piece.length), None);
+        assert_eq!(
+            piece.harmony.keys.key_at(Ticks::ZERO),
+            frame.sections[0].key
+        );
+    }
+
+    #[test]
+    fn a_piece_carries_its_own_structure() {
+        let piece = compose_text(BASE);
+        assert_eq!(
+            piece.sections.section_at(Ticks::ZERO).map(|(name, _)| name),
+            Some("intro")
+        );
+        // Four bars of intro at 4/4: the verse starts there.
+        let bar = piece.meter.ticks_per_bar();
+        assert_eq!(
+            piece.sections.section_at(bar * 4).map(|(name, _)| name),
+            Some("verse")
+        );
+        // The song ends rather than the outro running on for ever.
+        assert_eq!(piece.sections.section_at(piece.length), None);
+    }
+
+    #[test]
+    fn one_key_throughout_writes_one_key_point() {
+        // A point per section would fill the lane with changes that change nothing.
+        let piece = compose_text(BASE);
+        assert_eq!(piece.harmony.keys.points().len(), 1);
+
+        // A section that transposes is a change, and gets one.
+        let modulating = format!("{BASE}\n[section chorus]\ntranspose: 2\n");
+        let piece = compose_text(&modulating);
+        assert_eq!(piece.harmony.keys.points().len(), 2);
+    }
 
     /// Everything a piece is, as one line per section and one number for the notes.
     ///

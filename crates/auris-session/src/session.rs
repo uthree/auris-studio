@@ -1577,6 +1577,12 @@ impl Session {
         // has no vocabulary for changing it part way through. Nothing stops the meter being
         // edited afterwards — the document holds a map either way.
         project.signatures = SignatureMap::constant(composition.meter);
+        // The harmony and the structure the composer wrote the parts against, rather than an
+        // empty lane over a song that plainly has chords. It is not decoration: a clip generated
+        // afterwards reads the label and the chords under it, so a part added by hand to a
+        // composed song comes out belonging to the same song.
+        project.harmony = composition.harmony.clone();
+        project.sections = composition.sections.clone();
 
         let mut report = ComposeReport {
             tracks: 0,
@@ -6502,6 +6508,60 @@ mod tests {
         assert_eq!(session.undo(), Some(Edit::Compose));
         assert_eq!(session.project().tracks.len(), 1);
         assert_eq!(session.project().tracks[0].name, "Old");
+    }
+
+    #[test]
+    fn a_composed_document_carries_its_harmony_and_its_structure() {
+        // Both were computed by the composer and then dropped on the floor here: a composed song
+        // opened with an empty harmony lane and an empty structure lane over a piece that plainly
+        // had chords and sections. What made it worse than cosmetic is that `generate_clip` reads
+        // both — so a part added to a composed song by hand had nothing to agree with.
+        let mut session = session();
+        let spec = auris_compose::SongSpec::parse(
+            "title: Whole\nkey: C minor\nform: intro verse chorus\nchords: @marusa\n\
+             [section intro]\nbars: 4\n[section verse]\nbars: 8\n[section chorus]\nbars: 8",
+        )
+        .unwrap();
+        let piece = auris_compose::compose(&spec);
+        session.compose(&piece).unwrap();
+
+        let project = session.project();
+        assert!(!project.harmony.chords.is_empty(), "no chords were carried");
+        assert_eq!(project.harmony.keys.initial(), piece.harmony.keys.initial());
+        assert_eq!(
+            project.harmony.chords.points().len(),
+            piece.harmony.chords.points().len()
+        );
+
+        // The labels the clips were named after are the labels on the timeline.
+        assert_eq!(
+            project
+                .sections
+                .section_at(Ticks::ZERO)
+                .map(|(name, _)| name),
+            Some("intro")
+        );
+        let bar = project.signatures.signature_at(Ticks::ZERO).ticks_per_bar();
+        assert_eq!(
+            project.sections.section_at(bar * 4).map(|(name, _)| name),
+            Some("verse")
+        );
+
+        // And a clip generated afterwards finds them: the same question the piano roll asks.
+        let track = project.tracks[0].id;
+        let clip = session
+            .generate_clip(
+                track,
+                bar * 4,
+                bar * 4,
+                ClipRecipe::new(ClipPreset::Lead, 7),
+            )
+            .expect("a clip over the composed song");
+        let notes = session.project().midi_clip(clip).unwrap().1.notes.len();
+        assert!(
+            notes > 0,
+            "a clip written over a composed song came out empty"
+        );
     }
 
     #[test]
