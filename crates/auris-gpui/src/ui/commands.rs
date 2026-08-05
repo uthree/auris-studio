@@ -16,7 +16,7 @@ use gpui::{Context, Window};
 
 use crate::app::{AurisApp, Drag, ExportState};
 use crate::i18n::{edit_key, error_text};
-use crate::ui::drop::{DropKind, DropOutcome, sort_dropped};
+use crate::ui::drop::{DropAction, DropKind, DropOutcome, Dropped, drop_action};
 
 impl AurisApp {
     /// Selects a track and points the piano roll at a clip that belongs to it.
@@ -471,8 +471,20 @@ impl AurisApp {
                 .pick_file()
                 .await;
             let Some(handle) = handle else { return };
-            let path = handle.path().to_path_buf();
+            let _ = this.update(cx, |this, cx| {
+                this.open_project_at(handle.path().to_path_buf(), cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
 
+    /// Opens the project at `path`, with the document already dealt with.
+    ///
+    /// The end of both ways in: the file dialog picks a path and lands here, and a dropped
+    /// project arrives here already knowing one.
+    pub(crate) fn open_project_at(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
             let _ = this.update(cx, |this, cx| {
                 let text = messages::opening(this.language(), &path.display().to_string());
                 this.set_status(text);
@@ -746,7 +758,32 @@ impl AurisApp {
         Ok(messages::soundfont_imported(self.language(), &name, sounds))
     }
 
-    /// Imports files dragged onto the window, in the order they were dropped.
+    /// Does what a drop is asking for: opens a project, or reads files into the open one.
+    ///
+    /// The one destructive answer goes through the same guard the Open command does, so a drop
+    /// that would throw away unsaved work asks first and can be answered with Save.
+    pub(crate) fn accept_drop(
+        &mut self,
+        paths: Vec<PathBuf>,
+        start: Ticks,
+        cx: &mut Context<Self>,
+    ) {
+        match drop_action(&paths) {
+            DropAction::Open(path) => {
+                if self.confirm_discard(crate::ui::prompt::PendingAction::OpenDropped(path.clone()))
+                {
+                    self.open_project_at(path, cx);
+                }
+            }
+            DropAction::Import(dropped) => self.import_dropped(dropped, start, cx),
+            DropAction::Confused => {
+                self.set_failed_status(messages::project_wants_to_be_alone(self.language()))
+            }
+        }
+        cx.notify();
+    }
+
+    /// Imports dropped files, in the order they were dropped.
     ///
     /// `start` is where dropped audio lands on the timeline. A font ignores it: a font goes on a
     /// shelf rather than onto a track, and where on the timeline it was let go means nothing.
@@ -754,14 +791,8 @@ impl AurisApp {
     /// One file at a time, on this thread, with the status line repainted between each. Decoding
     /// is slow enough that a drop of a folder of takes would otherwise be several seconds of a
     /// frozen window with nothing to say what was happening.
-    pub(crate) fn import_dropped(
-        &mut self,
-        paths: Vec<PathBuf>,
-        start: Ticks,
-        cx: &mut Context<Self>,
-    ) {
+    fn import_dropped(&mut self, dropped: Dropped, start: Ticks, cx: &mut Context<Self>) {
         let language = self.language();
-        let dropped = sort_dropped(&paths);
         let mut outcome = DropOutcome::default();
         for path in &dropped.rejected {
             outcome.failed.push(messages::cannot_import(
@@ -797,6 +828,9 @@ impl AurisApp {
                     let done = match kind {
                         DropKind::Audio => this.take_audio(&path, start),
                         DropKind::SoundFont => this.take_soundfont(&path),
+                        // `drop_action` sent every project down the other branch, and one that
+                        // reached here would be a document quietly not opened.
+                        DropKind::Project => unreachable!("a project is opened, not imported"),
                     };
                     cx.notify();
                     // Turned into a line here, while the view that knows the language is in hand.
@@ -986,6 +1020,7 @@ fn import_key(kind: DropKind) -> Key {
     match kind {
         DropKind::Audio => Key::CmdImportAudio,
         DropKind::SoundFont => Key::CmdImportSoundFont,
+        DropKind::Project => Key::CmdOpenProject,
     }
 }
 

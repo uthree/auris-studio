@@ -5,6 +5,11 @@
 //! a file understood would be a rule they had to learn before anything worked. Where it landed
 //! decides one thing only — *when* on the timeline dropped audio starts.
 //!
+//! Two kinds of thing can arrive, and they are not the same kind of thing. Audio and fonts go
+//! *into* the open document. A project **is** a document, so opening one closes what is open —
+//! which is why [`drop_action`] insists it arrive alone rather than reading a mixed drop as a
+//! guess about which document the user meant to keep.
+//!
 //! The rules live here as free functions so they can be asserted without a window.
 
 use std::path::{Path, PathBuf};
@@ -19,6 +24,8 @@ pub enum DropKind {
     Audio,
     /// Add it to the project's library of SoundFonts.
     SoundFont,
+    /// Open it, in place of the document that is open.
+    Project,
 }
 
 /// Dropped paths, split into the ones an importer recognises and the ones none does.
@@ -52,7 +59,9 @@ fn drop_kind(path: &Path) -> Option<DropKind> {
     // written the way an extension is usually typed.
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     let listed = |extensions: &[&str]| extensions.contains(&extension.as_str());
-    if listed(auris_session::supported_soundfont_extensions()) {
+    if extension == auris_session::PROJECT_EXTENSION {
+        Some(DropKind::Project)
+    } else if listed(auris_session::supported_soundfont_extensions()) {
         Some(DropKind::SoundFont)
     } else if listed(auris_session::supported_audio_extensions()) {
         Some(DropKind::Audio)
@@ -61,12 +70,53 @@ fn drop_kind(path: &Path) -> Option<DropKind> {
     }
 }
 
-/// Whether a drag holding these paths is carrying anything the window can take.
+/// What a drop is asking the window to do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DropAction {
+    /// Open this project, in place of the document that is open.
+    Open(PathBuf),
+    /// Read what can be read into the open document, and say what could not.
+    Import(Dropped),
+    /// Refuse the whole drop, because a project did not arrive alone.
+    Confused,
+}
+
+impl DropAction {
+    /// Whether the drop is going to do anything at all.
+    ///
+    /// What the border promises while the file is still in the air. It asks the same function the
+    /// landing does, so the promise and the act cannot come apart.
+    pub fn takes_anything(&self) -> bool {
+        match self {
+            Self::Open(_) => true,
+            Self::Import(dropped) => !dropped.accepted.is_empty(),
+            Self::Confused => false,
+        }
+    }
+}
+
+/// What to do with a set of dropped paths.
 ///
-/// The border lights up by this and the drop acts on it, so the promise the window makes while a
-/// file is still in the air cannot come apart from what happens when it lands.
-pub fn holds_something_importable(paths: &[PathBuf]) -> bool {
-    !sort_dropped(paths).accepted.is_empty()
+/// A project is a document rather than something that goes *into* one: opening it closes what is
+/// open. So it has to arrive on its own. A drop holding a project and three takes is not a drop
+/// anyone made on purpose, and there is no reading of it that does not risk the work on screen —
+/// import into a document about to be replaced, or replace a document the takes were meant for.
+/// Two projects have the same problem and no tie-break at all.
+pub fn drop_action(paths: &[PathBuf]) -> DropAction {
+    let dropped = sort_dropped(paths);
+    let projects: Vec<&PathBuf> = dropped
+        .accepted
+        .iter()
+        .filter(|(_, kind)| *kind == DropKind::Project)
+        .map(|(path, _)| path)
+        .collect();
+    match projects.as_slice() {
+        [] => DropAction::Import(dropped),
+        // Alone means alone, refusals included: a project dragged with a stray file is a hand
+        // that grabbed more than it meant to, and this is the one drop that cannot be taken back.
+        [only] if paths.len() == 1 => DropAction::Open((*only).clone()),
+        _ => DropAction::Confused,
+    }
 }
 
 /// How far along the clip lanes a drop at `pointer` landed, from their left edge.
@@ -158,22 +208,59 @@ mod tests {
     }
 
     #[test]
-    fn the_border_lights_up_for_exactly_what_the_drop_would_take() {
-        // The pointer rule and the paint rule, side by side, so they cannot drift: a border that
-        // lit up for a drag nothing would import promises an import that never happens, and one
-        // that stayed dark for a readable file hides the gesture the same way it was hidden
-        // before this existed.
+    fn a_project_on_its_own_is_opened() {
+        assert_eq!(
+            drop_action(&paths(&["/songs/MySong/MySong.auris"])),
+            DropAction::Open(PathBuf::from("/songs/MySong/MySong.auris"))
+        );
+    }
+
+    #[test]
+    fn a_project_that_did_not_arrive_alone_is_refused_whole() {
+        // Every one of these has a reading, and none of them has a reading worth guessing at
+        // when getting it wrong closes a document with unsaved work in it.
         for names in [
-            vec!["kick.wav"],
-            vec!["piano.sf2"],
-            vec!["notes.txt", "take.aiff"],
-            vec!["notes.txt"],
-            vec![],
+            vec!["MySong.auris", "kick.wav"],
+            vec!["MySong.auris", "notes.txt"],
+            vec!["MySong.auris", "Other.auris"],
+            vec!["kick.wav", "MySong.auris", "piano.sf2"],
         ] {
-            let paths = paths(&names);
             assert_eq!(
-                holds_something_importable(&paths),
-                !sort_dropped(&paths).accepted.is_empty(),
+                drop_action(&paths(&names)),
+                DropAction::Confused,
+                "{names:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_drop_with_no_project_in_it_is_an_import() {
+        let action = drop_action(&paths(&["kick.wav", "piano.sf2", "notes.txt"]));
+        let DropAction::Import(dropped) = action else {
+            panic!("nothing here replaces the document");
+        };
+        assert_eq!(dropped.accepted.len(), 2);
+        assert_eq!(dropped.rejected.len(), 1);
+    }
+
+    #[test]
+    fn the_border_lights_up_for_exactly_what_the_drop_would_take() {
+        // A border that lit up for a drag nothing would take promises something that never
+        // happens; one that stayed dark for a readable file hides the gesture the same way it was
+        // hidden before any of this existed. Both halves ask `drop_action`, so what this pins is
+        // the table itself.
+        for (names, lit) in [
+            (vec!["kick.wav"], true),
+            (vec!["piano.sf2"], true),
+            (vec!["MySong.auris"], true),
+            (vec!["notes.txt", "take.aiff"], true),
+            (vec!["MySong.auris", "take.aiff"], false),
+            (vec!["notes.txt"], false),
+            (vec![], false),
+        ] {
+            assert_eq!(
+                drop_action(&paths(&names)).takes_anything(),
+                lit,
                 "{names:?}"
             );
         }

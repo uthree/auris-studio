@@ -221,6 +221,15 @@ messages! {
         ja: "{count} 個のファイルはいずれも読み込めませんでした"
     }
 
+    /// A project was dragged in alongside other files, and nothing was done.
+    ///
+    /// Says why rather than only what: opening a project closes the one that is open, so a drop
+    /// there is no single reading of is refused whole rather than half-guessed at.
+    fn project_wants_to_be_alone() {
+        en: "Drop a project on its own — opening one closes the document you have open",
+        ja: "プロジェクトは単独でドロップしてください — 開くと今の書類は閉じられます"
+    }
+
     /// Confirmation that everything a project refers to now lives in its folder.
     fn assets_collected(count: usize) {
         en: "Collected {count} file(s) into the project folder",

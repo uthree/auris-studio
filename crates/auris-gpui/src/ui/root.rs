@@ -14,7 +14,7 @@ use crate::dock::{Dock, Panel};
 use crate::gestures::past_drag_threshold;
 use crate::menu::MenuRow;
 use crate::theme::Theme;
-use crate::ui::drop::{holds_something_importable, lanes_offset};
+use crate::ui::drop::{drop_action, lanes_offset};
 use crate::ui::menu_bar;
 use crate::ui::widgets::splitter;
 
@@ -451,7 +451,7 @@ impl AurisApp {
             .border_color(gpui::transparent_black())
             .on_drop(cx.listener(Self::on_files_dropped))
             .drag_over::<gpui::ExternalPaths>(move |style, paths, _, _| {
-                match holds_something_importable(paths.paths()) {
+                match drop_action(paths.paths()).takes_anything() {
                     true => style.border_color(accent),
                     false => style,
                 }
@@ -460,9 +460,10 @@ impl AurisApp {
 
     /// Files dragged onto the window from the desktop.
     ///
-    /// Audio lands where it was let go when that was over the lanes, snapped to the grid the way
-    /// a clip dragged there would be, and at the playhead otherwise — over a panel, the transport
-    /// or the track headers there is no position under the pointer to read.
+    /// Only *where* is decided here; what a drop means is [`crate::ui::drop::drop_action`]'s. Audio
+    /// lands where it was let go when that was over the lanes, snapped to the grid the way a clip
+    /// dragged there would be, and at the playhead otherwise — over a panel, the transport or the
+    /// track headers there is no position under the pointer to read.
     fn on_files_dropped(
         &mut self,
         paths: &gpui::ExternalPaths,
@@ -473,7 +474,7 @@ impl AurisApp {
             Some(x) => self.snap(self.timeline.x_to_tick(x)).max_zero(),
             None => self.playhead_ticks(),
         };
-        self.import_dropped(paths.paths().to_vec(), start, cx);
+        self.accept_drop(paths.paths().to_vec(), start, cx);
     }
 
     fn on_mouse_move(

@@ -28,6 +28,12 @@ each is read in turn, in the order they were dragged, with the status line namin
 read — decoding is slow enough that a folder of takes would otherwise be several seconds of a
 window with nothing to say.
 
+Drop a **`.auris` project** and it opens, the same way **File → Open** would: unsaved work in the
+document you have open is asked about first, and answering *Save* saves it and then opens the one
+you dropped. A project has to arrive **on its own**, though — it is a document rather than
+something that goes into one, so a drop holding a project and three takes has no reading that does
+not risk the work on screen, and the whole drop is refused with a line saying why.
+
 A drop is understood by **what the file is, not where it was let go**: the window takes it whether
 the pointer is over the lanes, the mixer or the library, so there is no target to aim at and no
 rule to learn first. Where it landed decides one thing — audio dropped on the lanes starts *there*,

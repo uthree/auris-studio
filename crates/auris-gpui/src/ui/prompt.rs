@@ -200,12 +200,19 @@ pub fn completions(target: PromptTarget, typed: &str) -> Vec<&'static str> {
 ///
 /// Carried through the sheet so that answering it finishes the command the user actually gave,
 /// rather than dismissing a box and leaving them to give it again.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PendingAction {
     /// Empty the document.
     NewProject,
-    /// Read another document over this one.
+    /// Read another document over this one, asking which.
     OpenProject,
+    /// Read *this* document over this one, having already been told which by a drop.
+    ///
+    /// A separate variant rather than a path on [`Self::OpenProject`], because the two differ in
+    /// what happens after Save: one opens a file dialog and the other opens a file. Carrying the
+    /// path is also what makes a dropped project answer the sheet — Save first, then open the one
+    /// that was dropped, not the one a second dialog would ask for.
+    OpenDropped(std::path::PathBuf),
     /// Shut the window.
     CloseWindow,
     /// Leave.
@@ -609,6 +616,7 @@ impl AurisApp {
         match next {
             PendingAction::NewProject => self.new_project(),
             PendingAction::OpenProject => self.pick_and_open_project(cx),
+            PendingAction::OpenDropped(path) => self.open_project_at(path, cx),
             PendingAction::CloseWindow => window.remove_window(),
             PendingAction::Quit => cx.quit(),
         }

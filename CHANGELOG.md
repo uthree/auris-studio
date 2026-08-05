@@ -12,8 +12,16 @@ format rather than a convention: `## <version> — <date>`.
 ### Files can be dragged into the window
 
 * An audio file dropped on the window arrives on a **new audio track**; an `.sf2` goes on the
-  library's shelf with the font opened where its sounds are chosen. Both were reachable only
-  through a File menu that a person has to already know is there.
+  library's shelf with the font opened where its sounds are chosen; a `.auris` project **opens**.
+  All three were reachable only through a File menu that a person has to already know is there.
+* A dropped project goes through the same unsaved-work guard the Open command does, and the guard
+  carries the dropped path — answering *Save* saves what is open and then opens the one that was
+  dropped, rather than saving and then asking again which file was meant.
+* A project has to be dropped on its own. It is a document rather than something that goes into
+  one, so a drop holding a project and three takes has no reading that does not risk the work on
+  screen — import into a document about to be replaced, or replace the document the takes were
+  meant for. Two projects have the same problem and no tie-break at all, so the whole drop is
+  refused with a line saying why, and the border stays dark while it is still in the air.
 * A drop is understood by what the file is rather than by where it was let go, so there is no
   target to aim at — the window takes it over the lanes, the mixer or the library alike. What the
   position decides is when: audio dropped on the lanes starts there, snapped to the grid the way a
