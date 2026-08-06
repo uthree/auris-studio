@@ -9,6 +9,57 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### What a review of the whole thing found
+
+Nineteen defects, from an adversarial read of every crate. The pattern worth naming is
+that most of them are *asymmetries* — one branch of a pair doing the right thing while
+its sibling does not, with a test on the correct half and none on the other.
+
+* **A tempo change no longer erases the ones before it.** A tempo event at tick 0 in a
+  later track — which format 1 files write routinely — threw away every change already
+  read, and a file whose first tempo arrived partway in played its opening bars at that
+  tempo instead of the default. The time-signature branch beside it had both cases right.
+* **Stopping the transport lets go of the vibrato.** `Fm2::reset` zeroed the modulation
+  wheel without re-deriving the depth it feeds, so a Stop, a Seek or a Panic taken mid
+  curve left every later note swinging about fifty cents from a wheel nobody was holding.
+  The chiptune never had this.
+* **The composer writes down the chord it actually played.** Colouring rewrote the chord
+  and left the numeral, and the numeral is what gets stored — so the harmony lane painted
+  `Fm` over parts playing F♯ minor, and a generated Chords clip wrote the lane's version.
+  Not one note moves; what changes is what the document says about them. The ambient
+  preset was the same fault written by hand: `IVmaj7` in C lydian is F♯maj7, a tritone
+  from the tonic, and it now uses the mode's own chords.
+* **Trimming the front of a short clip does nothing instead of the wrong thing.** A clip
+  shorter than the editing grid had its own floor applied as a ceiling, so touching the
+  front edge moved it left, made it longer, and in the first bar drove its start negative.
+* **An instrument takes its automation with it.** Swapping a track's instrument cleared
+  the saved parameters and left the lanes, which bind by track and raw parameter id — so a
+  curve drawn for one plugin swept an unrelated control on the next, in the exported file
+  as well as in playback. An audition of a second SoundFont preset still keeps its curves.
+* **A missing sample is no longer replaced by any file wearing its name.** The search
+  passed no expected size, so the first match on name alone was adopted and written into
+  the document. `AudioSource` now carries the fingerprint the SoundFont reference always had.
+* **Save As takes a collected SoundFont with it.** A font stored inside the project folder
+  was carried across as a reference to a file that was not there, and the copy opened
+  elsewhere silent — with Collect Assets then answering "nothing to do".
+* **A saved file carries the version of the build that wrote it**, rather than the version
+  it was loaded with.
+* **A muted track lets go of what was played into it.** Auditioning into a muted track
+  filled a queue nothing drained, discarding note-offs once full and leaving voices
+  sounding after the unmute.
+* **The curve lane's grab zone is seven pixels at any scroll.** It was measured as a
+  position rather than a length, so five bars along it had swollen to most of a bar: a
+  press on empty strip seized a distant point, and a second point could never be added.
+* **The arrangement lets go of a deleted clip and takes hold of what is drawn.**
+  Alt-clicking a clip out of a swept selection left a dead id behind, which surfaced later
+  as a failed Duplicate; and the rightmost column of a section's grab bar did nothing.
+* **⌃⌘ chords can be bound on macOS**, and Ctrl+Win chords off it — both dropped a modifier
+  and stored a chord the user had not pressed. The settings footer now shows ⌘S where it
+  used to print `secondary-s`.
+* **An "inside" asset path cannot escape the project folder on Windows.** A drive prefix in
+  a hand-edited or shared document walked out of the folder the way a leading slash does.
+* Counts in the README, the guide and `CLAUDE.md` that the code contradicted.
+
 ### A slash bass keeps its accidental
 
 * A numeral's slash bass now carries an accidental of its own, so `v/b7` is a symbol a chord can
