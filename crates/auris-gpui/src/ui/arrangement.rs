@@ -1427,22 +1427,26 @@ impl AurisApp {
         cx.notify();
     }
 
-    /// Wheel handling: plain moves down the tracks, Shift moves along the song, Alt zooms.
+    /// Wheel handling: plain moves down the tracks, Shift moves along the song, Ctrl or Alt zooms.
     fn scroll_timeline(&mut self, event: &gpui::ScrollWheelEvent, cx: &mut gpui::Context<Self>) {
         let delta = event.delta.pixel_delta(px(24.0));
-        if event.modifiers.alt {
-            let anchor = event.position.x - self.timeline_origin().x;
-            let factor = if delta.y > px(0.0) { 1.12 } else { 1.0 / 1.12 };
-            self.timeline.zoom_by(factor, anchor);
-        } else if event.modifiers.shift {
-            self.timeline.scroll_by(-delta.y - delta.x);
-        } else {
-            // Plain wheel moves down the track list, the way it does in every other panel and
-            // every other DAW; Shift is what turns it sideways. It used to scroll the timeline
-            // horizontally, which was the only thing it could do while the lanes had no scroll
-            // of their own — and left every track past the sixth unreachable.
-            self.scroll_lanes_by(-delta.y);
-            self.timeline.scroll_by(-delta.x);
+        match crate::gestures::wheel_action(event.modifiers) {
+            crate::gestures::Wheel::Zoom => {
+                // About the pointer, so the bar under it stays under it: zooming towards a
+                // fixed left edge walks the thing being looked at off the screen.
+                let anchor = event.position.x - self.timeline_origin().x;
+                let factor = if delta.y > px(0.0) { 1.12 } else { 1.0 / 1.12 };
+                self.timeline.zoom_by(factor, anchor);
+            }
+            crate::gestures::Wheel::AlongTheSong => self.timeline.scroll_by(-delta.y - delta.x),
+            crate::gestures::Wheel::DownTheTracks => {
+                // Plain wheel moves down the track list, the way it does in every other panel and
+                // every other DAW; Shift is what turns it sideways. It used to scroll the timeline
+                // horizontally, which was the only thing it could do while the lanes had no scroll
+                // of their own — and left every track past the sixth unreachable.
+                self.scroll_lanes_by(-delta.y);
+                self.timeline.scroll_by(-delta.x);
+            }
         }
         cx.notify();
     }

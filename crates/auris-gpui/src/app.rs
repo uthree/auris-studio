@@ -898,6 +898,22 @@ impl AurisApp {
             // A gesture that changed nothing records no undo step and triggers no rebuild.
             self.session.end_transaction();
         }
+        // A press on empty arrangement begins a sweep, and a sweep that never travelled was a
+        // click — which on a timeline means "play from here". Decided on release rather than on
+        // press so that reaching for a rubber band does not drag the playhead along with it, and
+        // only for the lanes: the same gesture in the piano roll is over pitches, not over time.
+        if let Drag::RubberBand {
+            surface: BandSurface::Lanes,
+            anchor,
+            current,
+            ..
+        } = &drag
+            && !crate::gestures::past_drag_threshold(*anchor, *current)
+        {
+            let x = anchor.x - self.lanes_origin().x;
+            let tick = self.snap(self.timeline.x_to_tick(x)).max_zero();
+            self.seek(tick);
+        }
         // Written when the divider is let go rather than on every pointer move: a drag across the
         // window is a hundred frames, and a hundred writes of the same file.
         if matches!(drag, Drag::ResizeDock { .. } | Drag::ResizeHeaders { .. }) {

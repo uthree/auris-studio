@@ -91,7 +91,12 @@ pointer — with the double-click available for either, though nothing destructi
 by default: a double-click opens a clip in every editor that has clips, and the gesture people
 arrive with should not destroy their work. Dragging across empty space in the piano roll or the
 arrangement sweeps a selection rectangle; ⇧-drag adds to what is already selected, and a multiple
-selection moves, duplicates and deletes as one.
+selection moves, duplicates and deletes as one. A press on empty arrangement that never travelled
+was a *click* rather than a sweep, and moves the playhead there — the ruler is no longer the only
+place that will take one.
+
+The wheel over the arrangement moves down the tracks; ⇧ turns it sideways along the song, and
+**Ctrl or ⌥** zooms the time axis about the pointer, so the bar being looked at stays where it is.
 
 The piano roll has two tools, and the strip in its header says which one is in hand — as does the
 status line, when the key is used and the roll is not on screen to show it. **T** puts the next

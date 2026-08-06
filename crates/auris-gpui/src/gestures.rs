@@ -10,7 +10,7 @@
 //! gpui's `platform` modifier is the Windows key off a Mac and no application gets to use it.
 
 use auris_i18n::Key;
-use gpui::{MouseDownEvent, Pixels, Point, px};
+use gpui::{Modifiers, MouseDownEvent, Pixels, Point, px};
 
 /// How far the pointer must travel before a press counts as a drag.
 ///
@@ -28,6 +28,37 @@ pub fn past_drag_threshold(from: Point<Pixels>, to: Point<Pixels>) -> bool {
     let dy = f32::from(to.y - from.y);
     let limit = f32::from(DRAG_THRESHOLD);
     dx * dx + dy * dy >= limit * limit
+}
+
+/// What a turn of the wheel over the arrangement means.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Wheel {
+    /// Zoom the time axis about the pointer.
+    Zoom,
+    /// Travel along the song.
+    AlongTheSong,
+    /// Travel down the track list.
+    DownTheTracks,
+}
+
+/// Which of the three a wheel event is asking for.
+///
+/// Ctrl zooms because that is what a wheel does in every application on every platform, and Alt
+/// keeps zooming because that is what it does in Logic. The two do not collide, and dropping
+/// either would be picking a fight with somebody's hands. Read as `control` rather than through
+/// [`gpui::Modifiers::secondary`] deliberately: this is the *zoom* modifier, which is ⌃ on a Mac
+/// as well, and not the command one.
+///
+/// Free rather than decided in the handler because it is the one gesture where being wrong is
+/// invisible — the view scrolls when the user asked it to zoom, and nothing says which was meant.
+pub fn wheel_action(modifiers: Modifiers) -> Wheel {
+    if modifiers.control || modifiers.alt {
+        Wheel::Zoom
+    } else if modifiers.shift {
+        Wheel::AlongTheSong
+    } else {
+        Wheel::DownTheTracks
+    }
 }
 use serde::{Deserialize, Serialize};
 
@@ -160,6 +191,20 @@ mod tests {
             past_drag_threshold(from, point(px(100.0), px(103.0))),
             "vertically too — a clip crosses tracks that way",
         );
+    }
+
+    #[test]
+    fn the_wheel_zooms_under_either_key_the_hand_reaches_for() {
+        // Ctrl is what a wheel zooms with everywhere else; Alt is what it zooms with in Logic.
+        // Whichever a person arrives with has to work, and the two never mean anything else here.
+        assert_eq!(wheel_action(Modifiers::control()), Wheel::Zoom);
+        assert_eq!(wheel_action(Modifiers::alt()), Wheel::Zoom);
+        assert_eq!(wheel_action(Modifiers::shift()), Wheel::AlongTheSong);
+        assert_eq!(wheel_action(Modifiers::none()), Wheel::DownTheTracks);
+        // Zoom outranks travel, so a hand holding both does the one it can see happening.
+        let mut both = Modifiers::control();
+        both.shift = true;
+        assert_eq!(wheel_action(both), Wheel::Zoom);
     }
 
     fn click(modifiers: Modifiers, count: usize) -> MouseDownEvent {
