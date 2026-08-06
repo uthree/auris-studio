@@ -234,12 +234,6 @@ impl AurisApp {
                     start_x: event.position.x,
                 });
             }),
-            cx.listener(move |this, event: &gpui::ScrollWheelEvent, _, cx| {
-                let notches = f32::from(event.delta.pixel_delta(gpui::px(16.0)).y) / 16.0;
-                let fraction = this.timeline.zoom_fraction() + notches * 0.04;
-                this.timeline.set_zoom_fraction(fraction);
-                cx.notify();
-            }),
         ))
     }
 

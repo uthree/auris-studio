@@ -16,7 +16,6 @@ use crate::theme::Theme;
 use crate::ui::icons::Icon;
 use crate::ui::plugin_editor::{
     ParamControl, button_row, control_for, next_discrete_value, slider_row, value_after_drag,
-    value_after_scroll,
 };
 use crate::ui::plugin_window::PluginSubject;
 use crate::ui::widgets::{chain_button, divider};
@@ -392,16 +391,6 @@ impl AurisApp {
                                 start_x: event.position.x,
                             });
                         }),
-                        {
-                            let descriptor = descriptor.clone();
-                            cx.listener(move |this, event: &gpui::ScrollWheelEvent, _, cx| {
-                                let notches = f32::from(event.delta.pixel_delta(px(16.0)).y) / 16.0;
-                                let current = this.session.param_value(target, &descriptor);
-                                let next = value_after_scroll(&descriptor, current, notches);
-                                this.session.set_param(target, next);
-                                cx.notify();
-                            })
-                        },
                     )
                     .into_any_element(),
                     // A toggle flips on the press, because two positions are a switch. A choice
@@ -481,16 +470,6 @@ impl AurisApp {
                     start_value: value,
                     start_x: event.position.x,
                 });
-            }),
-            cx.listener(move |this, event: &gpui::ScrollWheelEvent, _, cx| {
-                let notches = f32::from(event.delta.pixel_delta(px(16.0)).y) / 16.0;
-                let Some(descriptor) = Session::mixer_descriptor(target) else {
-                    return;
-                };
-                let current = this.session.param_value(target, &descriptor);
-                this.session
-                    .set_param(target, value_after_scroll(&descriptor, current, notches));
-                cx.notify();
             }),
         )
         .into_any_element()

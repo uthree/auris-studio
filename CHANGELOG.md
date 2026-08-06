@@ -9,6 +9,23 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### No bar takes the wheel
+
+* **Sliders no longer answer a scroll.** Faders, sends, plugin parameters, clip dials, the song
+  sheet's dials and the zoom sliders all took one. Every one of them sits inside a panel that
+  scrolls, so rolling down a column of tracks changed the level of whichever fader the pointer
+  crossed on the way — silently, with no drag to remember having started, and nothing on screen
+  saying which one moved. A bar is swept with the pointer, and that is now the whole of how it is
+  edited.
+* The handler is gone from `value_slider` and `zoom_slider` themselves rather than from their
+  callers, so there is no parameter left to pass one to and it cannot come back one control at a
+  time. Scrolling still means scrolling everywhere it used to — the arrangement, the roll, the
+  keyboard, the automation strips — and zooming by wheel still works over the timeline and the
+  roll, which is where it was always reached for.
+* The transport bar's tempo and signature readouts keep theirs. They are typed fields in window
+  chrome rather than bars, nothing behind them scrolls, and the wheel there is a documented way to
+  reach a near neighbour.
+
 ### A section can play at a tempo of its own
 
 * **`[section.chorus] tempo = 132`.** A composed piece ran at one speed from the first bar to the

@@ -98,6 +98,12 @@ place that will take one.
 The wheel over the arrangement moves down the tracks; ⇧ turns it sideways along the song, and
 **Ctrl or ⌥** zooms the time axis about the pointer, so the bar being looked at stays where it is.
 
+**No bar takes the wheel.** A fader, a plugin parameter, a dial on the song sheet — every one of
+them is swept with the pointer and none of them answers a scroll. They all sit inside panels that
+scroll, and rolling down a column of tracks used to change the level of whichever fader the pointer
+crossed on the way: silently, with no drag to remember having started, and nothing on screen saying
+which one moved. The wheel belongs to the thing being scrolled.
+
 The piano roll has two tools, and the strip in its header says which one is in hand — as does the
 status line, when the key is used and the roll is not on screen to show it. **T** puts the next
 tool in hand, which with two tools is Logic's press-it-twice-to-swap-back; like every other
@@ -241,7 +247,7 @@ Every strip in the mixer says where it goes. Clicking that name offers the maste
 and the **+** beside it adds a **send** — a copy of the track fed to a bus at a level of its own,
 *as well as* wherever the track's own output goes. Six tracks sending to one reverb is six sends;
 one fader over a whole drum kit is six outputs. A send row's slider is a mixer control like any
-other, so it drags, takes the wheel, resets on a double click and can be automated. Right-clicking
+other, so it drags, resets on a double click and can be automated. Right-clicking
 one moves its tap before the fader — where a reverb wants to follow the fader down, a headphone mix
 does not — or takes it away.
 

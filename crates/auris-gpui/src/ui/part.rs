@@ -113,19 +113,6 @@ impl Dial {
             }
         }
     }
-
-    /// How far one notch of the wheel moves the bar: one of whatever this dial stores.
-    ///
-    /// Exactly one step, not two. A notch coarser than the stored unit would let a fraction of a
-    /// notch still cross a boundary, and the sub-notch events a trackpad emits by the dozen would
-    /// each be a real edit again — which is the whole thing [`Self::set`] rounds to avoid. A drag
-    /// is where a dial is swept; the wheel is where it is nudged.
-    pub fn step(self) -> f32 {
-        match self {
-            Dial::Swing => 1.0 / f32::from(SWING_MAX - SWING_MIN),
-            _ => 0.01,
-        }
-    }
 }
 
 /// A fraction rounded to the nearest whole percent, which is the resolution the readout has.
@@ -272,11 +259,6 @@ pub fn dial_text(dial: Dial, recipe: &ClipRecipe, straight: &str) -> String {
     }
 }
 
-/// The value a dial takes after `notches` of the wheel.
-pub fn value_after_scroll(dial: Dial, recipe: &ClipRecipe, notches: f32) -> f32 {
-    dial.fraction(recipe) + notches * dial.step()
-}
-
 /// A stable per-dial element key, so gpui can track hover state across frames.
 fn dial_element_key(dial: Dial) -> usize {
     match dial {
@@ -374,18 +356,6 @@ impl AurisApp {
                             start_fraction: fraction,
                             start_x: event.position.x,
                         });
-                    }),
-                    cx.listener(move |this, event: &gpui::ScrollWheelEvent, _, cx| {
-                        let notches = f32::from(event.delta.pixel_delta(px(16.0)).y) / 16.0;
-                        let Some(recipe) = this.session.clip_recipe(clip) else {
-                            return;
-                        };
-                        let next = value_after_scroll(dial, recipe, notches);
-                        this.set_dial(clip, dial, next);
-                        // The panel behind these rows scrolls, and a wheel that both turned the
-                        // dial and scrolled it out from under the pointer would be unusable.
-                        cx.stop_propagation();
-                        cx.notify();
                     }),
                 )
                 .into_any_element(),
@@ -599,17 +569,15 @@ mod tests {
     }
 
     #[test]
-    fn one_notch_of_the_wheel_moves_the_swing_dial_one_percent() {
-        // A step finer than the stored unit would round back to where it started, and the wheel
-        // would look broken on the one dial that is not a float.
+    fn the_swing_dial_reaches_every_whole_percent_of_its_range() {
+        // The one dial that is not a float: it stores a `u8` of percent, over a range narrow
+        // enough that a bar rounding to hundredths would skip values the readout can show.
         let mut recipe = recipe(ClipPreset::Drums);
-        let next = value_after_scroll(Dial::Swing, &recipe, 1.0);
-        Dial::Swing.set(&mut recipe, next);
-        assert_eq!(recipe.swing, SWING_MIN + 1);
-
-        let next = value_after_scroll(Dial::Swing, &recipe, -1.0);
-        Dial::Swing.set(&mut recipe, next);
-        assert_eq!(recipe.swing, SWING_MIN);
+        let span = f32::from(SWING_MAX - SWING_MIN);
+        for percent in 0..=(SWING_MAX - SWING_MIN) {
+            Dial::Swing.set(&mut recipe, f32::from(percent) / span);
+            assert_eq!(recipe.swing, SWING_MIN + percent);
+        }
     }
 
     #[test]
@@ -742,8 +710,14 @@ mod tests {
 
     #[test]
     fn a_movement_too_small_to_show_moves_nothing() {
-        // What `set_dial` recognises to avoid an undo step and a graph rebuild per wheel event.
-        // A trackpad emits a stream of fractional notches, and most of them land inside a step.
+        // What `set_dial` recognises to avoid an undo step and a graph rebuild per pointer event.
+        // Sweeping a bar is hundreds of them, so a dial that acted on every one would fill the
+        // history with a drag nobody could take back in a single press.
+        //
+        // The two numbers are either side of the coarsest resolution any of these has: a swing is
+        // a whole percent of a 25-point range, so it moves in fortieths, and everything else is a
+        // hundredth. Three thousandths is inside all of them and a twentieth is outside all of
+        // them, which is what makes one set of numbers do for the whole list.
         for dial in [
             Dial::Density,
             Dial::Gate,
@@ -755,14 +729,12 @@ mod tests {
             dial.set(&mut recipe, 0.5);
             let settled = recipe.clone();
 
-            let nudged = value_after_scroll(dial, &recipe, 0.3);
-            dial.set(&mut recipe, nudged);
-            assert_eq!(recipe, settled, "{dial:?} moved on a third of a notch");
+            dial.set(&mut recipe, 0.503);
+            assert_eq!(recipe, settled, "{dial:?} moved on three thousandths");
 
-            // A whole notch does move it, or the wheel would be dead rather than steady.
-            let notch = value_after_scroll(dial, &recipe, 1.0);
-            dial.set(&mut recipe, notch);
-            assert_ne!(recipe, settled, "{dial:?} did not move on a full notch");
+            // And it is steady rather than dead: a movement it can show does show.
+            dial.set(&mut recipe, 0.55);
+            assert_ne!(recipe, settled, "{dial:?} did not move on a twentieth");
         }
     }
 

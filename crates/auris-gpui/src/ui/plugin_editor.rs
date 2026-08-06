@@ -6,8 +6,8 @@
 
 use auris_session::prelude::*;
 use gpui::{
-    App, ClickEvent, ElementId, Hsla, IntoElement, MouseDownEvent, ScrollWheelEvent, SharedString,
-    Window, div, prelude::*, px,
+    App, ClickEvent, ElementId, Hsla, IntoElement, MouseDownEvent, SharedString, Window, div,
+    prelude::*, px,
 };
 
 use crate::theme::{Metrics, Theme};
@@ -39,15 +39,12 @@ pub fn control_for(descriptor: &ParamDescriptor) -> ParamControl {
 /// end to end does not need two swipes.
 pub const DRAG_RANGE_PIXELS: f32 = 220.0;
 
-/// How much one wheel notch moves a parameter, as a fraction of its full range.
-pub const SCROLL_STEP: f32 = 0.02;
-
 /// A drag-to-edit row for a continuous parameter.
 ///
 /// `label` and `value_text` arrive already translated: this module knows how a control behaves,
 /// not what language it speaks.
 #[allow(clippy::too_many_arguments)]
-pub fn slider_row<I, D, S>(
+pub fn slider_row<I, D>(
     id: I,
     descriptor: &ParamDescriptor,
     label: String,
@@ -56,12 +53,10 @@ pub fn slider_row<I, D, S>(
     fill: Hsla,
     theme: &Theme,
     on_drag_start: D,
-    on_scroll: S,
-) -> impl IntoElement + use<I, D, S>
+) -> impl IntoElement + use<I, D>
 where
     I: Into<ElementId>,
     D: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
-    S: Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
 {
     value_slider(
         id,
@@ -72,7 +67,6 @@ where
         slider_fill_for(descriptor),
         theme,
         on_drag_start,
-        on_scroll,
     )
 }
 
@@ -174,12 +168,6 @@ pub fn value_after_drag(descriptor: &ParamDescriptor, start_value: f32, delta_pi
     descriptor.denormalize(start + delta_pixels / DRAG_RANGE_PIXELS)
 }
 
-/// The value after one wheel notch.
-pub fn value_after_scroll(descriptor: &ParamDescriptor, current: f32, notches: f32) -> f32 {
-    let position = descriptor.normalize(current);
-    descriptor.denormalize(position + notches * SCROLL_STEP)
-}
-
 /// A compact heading for a plugin in the inspector, with a bypass button.
 #[allow(clippy::too_many_arguments)]
 pub fn plugin_header<I, N, L, F>(
@@ -225,7 +213,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use auris_session::prelude::ParamValueCurve;
 
     fn frequency() -> ParamDescriptor {
         ParamDescriptor::hertz(0u32, "freq", "Frequency", 20.0, 20_000.0, 1_000.0)
@@ -319,13 +306,5 @@ mod tests {
         assert_eq!(discrete_value(&toggle, 1), 1.0);
         // Past the end is clamped rather than running off the top of the range.
         assert_eq!(discrete_value(&toggle, 9), 1.0);
-    }
-
-    #[test]
-    fn scrolling_steps_a_linear_parameter_by_a_fixed_fraction() {
-        let descriptor = ParamDescriptor::new(0u32, "gain", "Gain", -60.0, 12.0, 0.0)
-            .with_curve(ParamValueCurve::Linear);
-        let stepped = value_after_scroll(&descriptor, 0.0, 1.0);
-        assert!((stepped - (0.0 + 72.0 * SCROLL_STEP)).abs() < 1e-3);
     }
 }

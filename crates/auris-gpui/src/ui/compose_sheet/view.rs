@@ -341,12 +341,6 @@ impl AurisApp {
                             start_x: event.position.x,
                         });
                     }),
-                    cx.listener(move |this, event: &gpui::ScrollWheelEvent, _, cx| {
-                        let notches = f32::from(event.delta.pixel_delta(px(16.0)).y) / 16.0;
-                        this.nudge_song_dial(target, notches);
-                        cx.stop_propagation();
-                        cx.notify();
-                    }),
                 )
                 .into_any_element(),
             );
@@ -430,12 +424,6 @@ impl AurisApp {
                             start_fraction: fraction,
                             start_x: event.position.x,
                         });
-                    }),
-                    cx.listener(move |this, event: &gpui::ScrollWheelEvent, _, cx| {
-                        let notches = f32::from(event.delta.pixel_delta(px(16.0)).y) / 16.0;
-                        this.nudge_song_dial(target, notches);
-                        cx.stop_propagation();
-                        cx.notify();
                     }),
                 )));
             }
@@ -648,12 +636,6 @@ impl AurisApp {
                             start_x: event.position.x,
                         });
                     }),
-                    cx.listener(move |this, event: &gpui::ScrollWheelEvent, _, cx| {
-                        let notches = f32::from(event.delta.pixel_delta(px(16.0)).y) / 16.0;
-                        this.nudge_song_dial(target, notches);
-                        cx.stop_propagation();
-                        cx.notify();
-                    }),
                 )));
             }
 
@@ -819,15 +801,6 @@ impl AurisApp {
             return;
         };
         target.set(dials, dragged(start_fraction, delta));
-    }
-
-    /// Moves one of the sheet's dials by `notches` of a wheel.
-    fn nudge_song_dial(&mut self, target: DialTarget, notches: f32) {
-        let Some(dials) = self.song_sheet.as_mut() else {
-            return;
-        };
-        let next = (target.fraction(dials) + notches * 0.02).clamp(0.0, 1.0);
-        target.set(dials, next);
     }
 
     /// Writes the piece the sheet describes, replacing the document.

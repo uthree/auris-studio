@@ -895,21 +895,6 @@ pub enum DialTarget {
 }
 
 impl DialTarget {
-    /// Where the bar sits, from 0 to 1.
-    pub fn fraction(self, dials: &SongDials) -> f32 {
-        match self {
-            DialTarget::Song(dial) => dial.fraction(dials),
-            DialTarget::Section(index, dial) => dials
-                .sections
-                .get(index)
-                .map_or(0.0, |section| dial.fraction(section)),
-            DialTarget::Part(index, dial) => dials
-                .parts
-                .get(index)
-                .map_or(0.0, |part| dial.fraction(part)),
-        }
-    }
-
     /// Puts the bar at `fraction`.
     pub fn set(self, dials: &mut SongDials, fraction: f32) {
         match self {

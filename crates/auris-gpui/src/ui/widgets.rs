@@ -5,8 +5,8 @@
 //! leaving all state in the view that owns it.
 
 use gpui::{
-    App, Axis, ClickEvent, ElementId, Hsla, IntoElement, MouseDownEvent, Pixels, ScrollWheelEvent,
-    SharedString, Window, div, prelude::*, px, relative,
+    App, Axis, ClickEvent, ElementId, Hsla, IntoElement, MouseDownEvent, Pixels, SharedString,
+    Window, div, prelude::*, px, relative,
 };
 
 use crate::theme::{Metrics, Theme};
@@ -297,8 +297,20 @@ pub enum SliderFill {
 ///
 /// The widget only reports *where a drag began*; the owning view tracks the pointer from there,
 /// which is what lets a drag continue after the pointer leaves the bar.
+///
+/// # Why there is no wheel
+///
+/// A bar is dragged, and that is the whole of how it is edited. It used to take a scroll handler
+/// too, and every one of these lives inside a panel that scrolls — the mixer strips, the
+/// inspector, the song sheet. Rolling the wheel to get down a column of tracks changed the level
+/// of whichever fader the pointer happened to cross on the way, silently, with no drag to
+/// remember having started and nothing on the screen saying which of them moved.
+///
+/// The handler is gone from the widget rather than from its callers so that it cannot come back
+/// one control at a time: there is no parameter to pass one to. A view that wants the wheel to
+/// mean something puts it on the region being scrolled, which is where a wheel belongs.
 #[allow(clippy::too_many_arguments)]
-pub fn value_slider<I, L, V, D, S>(
+pub fn value_slider<I, L, V, D>(
     id: I,
     label: L,
     value_text: V,
@@ -307,14 +319,12 @@ pub fn value_slider<I, L, V, D, S>(
     origin: SliderFill,
     theme: &Theme,
     on_drag_start: D,
-    on_scroll: S,
-) -> impl IntoElement + use<I, L, V, D, S>
+) -> impl IntoElement + use<I, L, V, D>
 where
     I: Into<ElementId>,
     L: Into<SharedString>,
     V: Into<SharedString>,
     D: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
-    S: Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
 {
     let fraction = fraction.clamp(0.0, 1.0);
     let (fill_start, fill_width) = match origin {
@@ -413,7 +423,6 @@ where
                 ),
         )
         .on_mouse_down(gpui::MouseButton::Left, on_drag_start)
-        .on_scroll_wheel(on_scroll)
 }
 
 /// A compact slider for a view setting, with no label and no readout.
@@ -421,17 +430,21 @@ where
 /// Deliberately not [`value_slider`]: that one names a parameter and prints its value, which is
 /// what a plugin control needs and what a strip of window chrome has no room for. This is a bare
 /// track and a thumb, sized so a full sweep of it covers the whole range it drives.
-pub fn zoom_slider<I, D, S>(
+///
+/// No wheel, for the reason [`value_slider`] has none. This one sits in window chrome rather than
+/// in anything that scrolls, so it was never the control the accident happened on — but a rule
+/// with one bar exempted is a rule the next bar gets exempted from too, and the wheel over a zoom
+/// slider is the same unasked-for change as the wheel over a fader. Zooming by wheel still works
+/// where it always did, over the timeline and the roll.
+pub fn zoom_slider<I, D>(
     id: I,
     fraction: f32,
     theme: &Theme,
     on_drag_start: D,
-    on_scroll: S,
-) -> impl IntoElement + use<I, D, S>
+) -> impl IntoElement + use<I, D>
 where
     I: Into<ElementId>,
     D: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
-    S: Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
 {
     let fraction = fraction.clamp(0.0, 1.0);
     div()
@@ -473,7 +486,6 @@ where
                 ),
         )
         .on_mouse_down(gpui::MouseButton::Left, on_drag_start)
-        .on_scroll_wheel(on_scroll)
 }
 
 /// A read-only level meter.
