@@ -492,6 +492,19 @@ which is what most dance music has underneath it. It arrives with its own dials 
 middling defaults, and moving one of them keeps it moved when the preset changes — a dial somebody
 set is theirs, a dial still where the last preset left it is not.
 
+**A drum part says which note it strikes.** General MIDI is the only agreement there is about
+which number is a kick, and a SoundFont is under no obligation to keep it — a kit that puts its
+snare somewhere else came out silent or playing a cowbell, and nothing could say otherwise. The
+song sheet shows the note where a pitched part shows its octave, which costs no room because a kit
+has no octave: its pitches *are* drum numbers. The picker offers the General MIDI kit by name, and
+`note = 12` in the specification reaches anything at all.
+
+```toml
+[[part]]
+name = "kick"
+note = 24     # this font puts its kick on C1
+```
+
 `auris` compose specifications reach the same settings, per part:
 
 ```toml

@@ -54,7 +54,7 @@ use serde::{Deserialize, Serialize};
 use auris_core::Subdivision;
 use auris_core::time::TimeSignature;
 
-use crate::rhythm::Pattern;
+use crate::rhythm::{DrumVoice, Pattern};
 use crate::theory::chart::{Chart, ChartOrigin};
 use crate::theory::key::Key;
 use crate::theory::scale::ScaleId;
@@ -129,7 +129,20 @@ impl Role {
 
     /// `true` when the part plays a drum rather than a pitch.
     pub fn is_drum(self) -> bool {
-        matches!(self, Role::Kick | Role::Snare | Role::Hat)
+        self.drum_voice().is_some()
+    }
+
+    /// Which drum this role plays, or `None` for a pitched part.
+    ///
+    /// The one place the two vocabularies meet — a role is what a *part* is for and a voice is
+    /// what a *groove* is written in — so nothing else has to know that a hat means a closed one.
+    pub fn drum_voice(self) -> Option<DrumVoice> {
+        Some(match self {
+            Role::Kick => DrumVoice::Kick,
+            Role::Snare => DrumVoice::Snare,
+            Role::Hat => DrumVoice::ClosedHat,
+            _ => return None,
+        })
     }
 
     /// The instrument a part of this role gets when none is named.
@@ -409,6 +422,13 @@ pub struct PartSpec {
     pub gate: f32,
     /// A rhythm written out by hand, which overrides the generated one.
     pub rhythm: Option<Pattern>,
+    /// Which MIDI note a drum part strikes, when it is not the General MIDI one.
+    ///
+    /// GM is the only agreement there is about which number is a kick, and a SoundFont is under
+    /// no obligation to keep it — a kit that puts its snare somewhere else comes out silent or
+    /// playing a cowbell, and there was nothing to say otherwise. A pitched part ignores this:
+    /// its notes come from the harmony.
+    pub note: Option<u8>,
     /// Level trim in decibels.
     pub gain_db: f32,
     /// Stereo position from -1 to 1.
@@ -427,9 +447,20 @@ impl PartSpec {
             subdivision: Subdivision::default(),
             gate: role.default_gate(),
             rhythm: None,
+            note: None,
             gain_db: role.default_gain_db(),
             pan: role.default_pan(),
         }
+    }
+
+    /// The MIDI note this part strikes, or `None` when it is not a drum.
+    ///
+    /// What the part says, or what General MIDI says its role is. One place, so the sheet's
+    /// picker and the writer cannot disagree about which note a kit is about to play.
+    pub fn drum_note(&self) -> Option<u8> {
+        self.role
+            .drum_voice()
+            .map(|voice| self.note.unwrap_or_else(|| voice.pitch()))
     }
 
     /// The MIDI range this part should stay inside, moved by its octave.
@@ -905,6 +936,8 @@ struct PartDoc {
     gain: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pan: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    note: Option<u8>,
 }
 
 impl SongDoc {
@@ -1231,6 +1264,24 @@ impl PartDoc {
                 )));
             }
         }
+        if let Some(note) = self.note {
+            if note > 127 {
+                errors.push(SpecError::about(format!(
+                    "part `{name}`: {note} is not a MIDI note, which runs 0 to 127"
+                )));
+            } else if part.role.drum_voice().is_none() {
+                // Not a warning to be ignored: a pitched part draws its notes from the harmony,
+                // so a `note` on one is an instruction that would have been silently dropped —
+                // and the person who wrote it would go looking for why the melody ignored them.
+                errors.push(SpecError::about(format!(
+                    "part `{name}` plays {}, whose notes come from the harmony; `note` is for a \
+                     drum part, which strikes one",
+                    part.role.name()
+                )));
+            } else {
+                part.note = Some(note);
+            }
+        }
         part
     }
 }
@@ -1323,6 +1374,7 @@ impl PartDoc {
             rhythm: part.rhythm.as_ref().map(Pattern::to_text),
             gain: (part.gain_db != plain.gain_db).then_some(f64::from(part.gain_db)),
             pan: (part.pan != plain.pan).then_some(part.pan),
+            note: part.note,
         }
     }
 }
@@ -1350,6 +1402,57 @@ mod tests {
                 role.name()
             );
         }
+    }
+
+    #[test]
+    fn a_drum_part_strikes_the_note_it_names_and_general_midi_otherwise() {
+        // General MIDI is the only agreement there is about which number is a kick, and a
+        // SoundFont is under no obligation to keep it: a kit that puts its snare somewhere else
+        // came out silent or playing a cowbell, and there was nothing to say otherwise.
+        let plain = PartSpec::of_role("kick", Role::Kick);
+        assert_eq!(plain.drum_note(), Some(DrumVoice::Kick.pitch()));
+        let moved = PartSpec {
+            note: Some(60),
+            ..PartSpec::of_role("kick", Role::Kick)
+        };
+        assert_eq!(moved.drum_note(), Some(60));
+
+        // A pitched part has no such note at all — its notes come from the harmony — and the
+        // format says so rather than dropping the instruction where nobody would find it.
+        assert_eq!(PartSpec::of_role("lead", Role::Melody).drum_note(), None);
+        let complaint = SongSpec::parse(
+            r#"
+            form = "verse"
+            [[part]]
+            name = "lead"
+            role = "melody"
+            note = 60
+            "#,
+        )
+        .expect_err("a note on a melody is an instruction that cannot be obeyed");
+        assert!(
+            complaint[0].to_string().contains("harmony"),
+            "{complaint:?}"
+        );
+
+        // And it survives the trip through the file, which is what makes it a setting rather
+        // than a thing to type again every time.
+        let spec = SongSpec::parse(
+            r#"
+            form = "verse"
+            [[part]]
+            name = "kick"
+            note = 24
+            "#,
+        )
+        .unwrap();
+        assert_eq!(spec.parts[0].drum_note(), Some(24));
+        assert_eq!(SongSpec::parse(&spec.to_toml()), Ok(spec));
+
+        assert!(
+            SongSpec::parse("form = \"verse\"\n[[part]]\nname = \"kick\"\nnote = 200").is_err(),
+            "200 is not a MIDI note"
+        );
     }
 
     #[test]

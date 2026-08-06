@@ -131,6 +131,13 @@ pub enum MenuCommand {
         /// Which octave it sits in.
         octave: i32,
     },
+    /// Set which MIDI note one drum part of the song sheet strikes.
+    SongPartNote {
+        /// Which part, by position in the roster.
+        part: usize,
+        /// The note it strikes.
+        note: u8,
+    },
     /// Add a part of this role to the song sheet's roster.
     SongAddPart(Role),
     /// Open the list of places a track's output could go.
@@ -915,6 +922,15 @@ impl AurisApp {
                     .and_then(|dials| dials.parts.get_mut(part))
                 {
                     part.octave = octave;
+                }
+            }
+            MenuCommand::SongPartNote { part, note } => {
+                if let Some(part) = self
+                    .song_sheet
+                    .as_mut()
+                    .and_then(|dials| dials.parts.get_mut(part))
+                {
+                    part.note = Some(note);
                 }
             }
             MenuCommand::SongAddPart(role) => {

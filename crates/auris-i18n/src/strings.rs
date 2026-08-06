@@ -432,6 +432,9 @@ strings! {
     SongPartName { en: "Name", ja: "名前" }
     SongPartRole { en: "Role", ja: "役割" }
     SongPartInstrument { en: "Instrument", ja: "音源" }
+    // Which MIDI note a drum part strikes. It stands where a pitched part shows its octave,
+    // because a kit has no octave and does need this.
+    SongPartNote { en: "Note", ja: "ノート" }
     SongPartGain { en: "Level", ja: "音量" }
     SongPartPan { en: "Pan", ja: "定位" }
     SongAddPart { en: "Add Part", ja: "パートを追加" }

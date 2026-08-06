@@ -1175,11 +1175,10 @@ fn drums(
     index: usize,
     part: &PartSpec,
 ) -> Vec<Draft> {
-    let voice = match part.role {
-        Role::Kick => DrumVoice::Kick,
-        Role::Snare => DrumVoice::Snare,
-        _ => DrumVoice::ClosedHat,
-    };
+    let voice = part.role.drum_voice().unwrap_or(DrumVoice::ClosedHat);
+    // What the part strikes, which is General MIDI unless it says otherwise. A SoundFont kit that
+    // does not follow GM comes out silent or playing a cowbell without this.
+    let pitch = part.drum_note().unwrap_or_else(|| voice.pitch());
     // A rhythm the user wrote is played as written. Only the groove's own pattern is thinned,
     // because that is the composer's suggestion rather than an instruction.
     let written = part.rhythm.is_some();
@@ -1251,7 +1250,7 @@ fn drums(
             *sounded = true;
             notes.push(Draft {
                 section: index,
-                pitch: voice.pitch(),
+                pitch,
                 velocity: (velocity(weight, section.intensity, settings.dynamics)
                     * dynamic(accent.scale(), settings.dynamics)
                     * phrase_shape(grid, section, at, settings.dynamics))
@@ -1328,7 +1327,9 @@ fn fill(
         let rise = mean + (0.45 + 0.5 * through - mean) * settings.dynamics.clamp(0.0, 1.0);
         notes.push(Draft {
             section: index,
-            pitch: voice.pitch(),
+            // The same note the groove is being played on, or the fill would run on the snare a
+            // General MIDI kit has rather than the one this instrument actually carries.
+            pitch: part.drum_note().unwrap_or_else(|| voice.pitch()),
             velocity: rise.clamp(0.08, 1.0),
             start: section.start + bar_start + grid.tick_of(step),
             length: Ticks(120),

@@ -45,6 +45,52 @@ pub const SECTION_NAMES: [&str; 8] = [
 /// and the numbers in between are ones nobody reaches for on purpose.
 pub const TRANSPOSES: [i32; 9] = [-5, -3, -2, -1, 0, 1, 2, 3, 5];
 
+/// The General MIDI percussion kit, which is what a drum part's note picker offers.
+///
+/// Thirty-five to fifty-nine, which is the kit proper. Everything above it is hand percussion
+/// rather than anything a kick, a snare or a hat would be pointed at, and a menu of a hundred and
+/// twenty-eight numbers is a menu nobody reads. A font that puts its kick somewhere else entirely
+/// is what writing `note = 12` in the file is for.
+pub const DRUM_NOTES: [(u8, &str); 25] = [
+    (35, "Acoustic Bass Drum"),
+    (36, "Bass Drum 1"),
+    (37, "Side Stick"),
+    (38, "Acoustic Snare"),
+    (39, "Hand Clap"),
+    (40, "Electric Snare"),
+    (41, "Low Floor Tom"),
+    (42, "Closed Hi-Hat"),
+    (43, "High Floor Tom"),
+    (44, "Pedal Hi-Hat"),
+    (45, "Low Tom"),
+    (46, "Open Hi-Hat"),
+    (47, "Low-Mid Tom"),
+    (48, "Hi-Mid Tom"),
+    (49, "Crash Cymbal 1"),
+    (50, "High Tom"),
+    (51, "Ride Cymbal 1"),
+    (52, "Chinese Cymbal"),
+    (53, "Ride Bell"),
+    (54, "Tambourine"),
+    (55, "Splash Cymbal"),
+    (56, "Cowbell"),
+    (57, "Crash Cymbal 2"),
+    (58, "Vibraslap"),
+    (59, "Ride Cymbal 2"),
+];
+
+/// How a drum note is written where there is room for its name.
+///
+/// The General MIDI names, left in English on purpose: they are the names printed on the pads of
+/// every drum machine and listed in every font's documentation, and translating them would make
+/// the picker and the thing being pointed at disagree.
+pub fn drum_note_label(note: u8) -> String {
+    match DRUM_NOTES.iter().find(|(number, _)| *number == note) {
+        Some((_, name)) => format!("{note} · {name}"),
+        None => note.to_string(),
+    }
+}
+
 /// How a transposition is written on its button.
 pub fn transpose_label(steps: i32) -> String {
     match steps {
@@ -1392,19 +1438,32 @@ impl AurisApp {
                                     cx.notify();
                                 }),
                             )))
-                            .child(div().w(px(52.0)).child(button(
-                                ("song-part-octave", index),
-                                part.octave.to_string(),
-                                ButtonStyle::Normal,
-                                false,
-                                theme.accent,
-                                &theme,
-                                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                                    let menu = this.song_octave_menu(event.position(), index);
-                                    this.open_menu(menu);
-                                    cx.notify();
-                                }),
-                            )))
+                            // A drum part has no octave — its pitches are drum numbers rather
+                            // than notes — and it badly needs the *one* number the octave would
+                            // have taken the room for, because General MIDI is the only agreement
+                            // there is about which number is a kick and a font need not keep it.
+                            .child(div().w(px(52.0)).child({
+                                let drum = part.drum_note();
+                                button(
+                                    ("song-part-note", index),
+                                    match drum {
+                                        Some(note) => note.to_string(),
+                                        None => part.octave.to_string(),
+                                    },
+                                    ButtonStyle::Normal,
+                                    false,
+                                    theme.accent,
+                                    &theme,
+                                    cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                                        let menu = match drum.is_some() {
+                                            true => this.song_note_menu(event.position(), index),
+                                            false => this.song_octave_menu(event.position(), index),
+                                        };
+                                        this.open_menu(menu);
+                                        cx.notify();
+                                    }),
+                                )
+                            }))
                             // The last part cannot go: a song with no parts writes no notes, and
                             // the button goes dead rather than Write producing an empty document.
                             .child(div().w(px(64.0)).child(button(
@@ -1715,6 +1774,18 @@ impl AurisApp {
         instruments.sort_by(|one, other| one.1.cmp(&other.1));
         for (id, name) in instruments {
             menu = menu.item(name, MenuCommand::SongPartInstrument { part, id });
+        }
+        menu
+    }
+
+    /// The notes a drum part may strike.
+    fn song_note_menu(&self, anchor: gpui::Point<gpui::Pixels>, part: usize) -> ContextMenu {
+        let mut menu = ContextMenu::new(anchor, self.t(Key::SongPartNote));
+        for (note, _) in DRUM_NOTES {
+            menu = menu.item(
+                drum_note_label(note),
+                MenuCommand::SongPartNote { part, note },
+            );
         }
         menu
     }
@@ -2108,6 +2179,43 @@ mod tests {
                 entry.name
             );
         }
+    }
+
+    #[test]
+    fn a_drum_part_offers_a_note_where_a_pitched_one_offers_an_octave() {
+        // The substitution the part row makes, and the reason it is free: a kit has no octave —
+        // its pitches are drum numbers rather than notes — and it badly needs the one number a
+        // font that does not follow General MIDI would otherwise leave it silent for.
+        let dials = SongDials::default();
+        for part in &dials.parts {
+            assert_eq!(
+                part.drum_note().is_some(),
+                part.role.is_drum(),
+                "{} offered the wrong control",
+                part.name
+            );
+        }
+
+        // Every note the picker offers is one the format accepts, and reads back as itself.
+        let mut kit = dials.clone();
+        let kick = kit
+            .parts
+            .iter()
+            .position(|part| part.role.is_drum())
+            .unwrap();
+        for (note, _) in DRUM_NOTES {
+            kit.parts[kick].note = Some(note);
+            let spec = song_spec(&kit);
+            assert_eq!(SongSpec::parse(&spec.to_toml()), Ok(spec), "note {note}");
+        }
+
+        // The names are General MIDI's own, and a note outside the kit still reads as itself.
+        assert_eq!(drum_note_label(36), "36 · Bass Drum 1");
+        assert_eq!(drum_note_label(120), "120");
+        let mut numbers: Vec<u8> = DRUM_NOTES.iter().map(|(note, _)| *note).collect();
+        let count = numbers.len();
+        numbers.dedup();
+        assert_eq!(count, numbers.len(), "the picker offers a note twice");
     }
 
     #[test]
