@@ -171,6 +171,14 @@ every note in the same place. Tempo is the one thing that does not survive exact
 stores whole microseconds per quarter note, so 144 bpm goes out as 416 667 and comes back as
 143.999 88. A thousandth of a beat per minute, and 96 or 120 divide evenly and return exact.
 
+**Pitch bend travels both ways.** A clip carries its own bend curve — on the clip rather than in an
+automation lane, because a bend belongs to the phrase and a clip dragged four bars later takes it
+along. It is the one thing here that is not exact through a file: MIDI carries fourteen bits across
+the range a receiver assumes, so a semitone is quantised to about a fiftieth of a cent on the way
+through. A curve that does not end at zero is **let go before the clip ends** — a bend is channel
+state an instrument holds until it is told otherwise, and a clip finishing two semitones sharp
+would detune everything after it.
+
 What a `.mid` has nowhere to put, in either direction: audio tracks, every mixer setting including
 mute and solo, which instrument each track plays, and the automation. A MIDI file is the notes and
 the clock.

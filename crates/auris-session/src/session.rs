@@ -3239,6 +3239,17 @@ impl Session {
                         ..*note
                     })
                     .collect();
+                // Rebased the same way the notes are, and cut to the clip: a bend written before
+                // the first note or after the last has nothing here to bend.
+                clip.bend = track
+                    .bend
+                    .iter()
+                    .filter(|point| point.at >= first && point.at <= last)
+                    .map(|point| auris_core::project::BendPoint {
+                        at: point.at - first,
+                        ..*point
+                    })
+                    .collect();
                 // The file said where the notes are; nothing should grow the clip past them on the
                 // next edit and quietly change what it holds.
                 clip.length_is_explicit = true;

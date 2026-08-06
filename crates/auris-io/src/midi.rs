@@ -36,7 +36,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use auris_core::project::{Note, Project};
+use auris_core::project::{BendPoint, Note, Project};
 use auris_core::time::{SignatureMap, TICKS_PER_QUARTER, TempoMap, Ticks, TimeSignature};
 use midly::num::{u4, u7, u15, u24, u28};
 use midly::{Format, Header, MetaMessage, MidiMessage, Smf, Timing, TrackEvent, TrackEventKind};
@@ -58,6 +58,11 @@ pub struct MidiTrack {
     pub channel: u8,
     /// Every note, positioned from the start of the song rather than from a clip.
     pub notes: Vec<Note>,
+    /// The pitch bend, positioned the same way.
+    ///
+    /// A file that never bends brings none, which is what keeps this off the overwhelming
+    /// majority of imports.
+    pub bend: Vec<BendPoint>,
 }
 
 /// Everything a Standard MIDI File said, in this application's units.
@@ -211,6 +216,14 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
                                 part.notes.push(note(started, at, pitch, per_quarter));
                             }
                         }
+                        MidiMessage::PitchBend { bend } => {
+                            if let Some(part) = parts.get_mut(&key) {
+                                part.bend.push(BendPoint {
+                                    at: scale(at, per_quarter),
+                                    semitones: bend.as_f32() * BEND_RANGE,
+                                });
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -242,10 +255,13 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
             (!part.notes.is_empty()).then(|| {
                 let mut notes = part.notes;
                 notes.sort_by_key(|note| (note.start, note.pitch));
+                let mut bend = part.bend;
+                bend.sort_by_key(|point| point.at);
                 MidiTrack {
                     name: part.name.unwrap_or_else(|| default_name(key.1)),
                     channel: key.1,
                     notes,
+                    bend,
                 }
             })
         })
@@ -334,6 +350,12 @@ fn build_tracks(project: &Project) -> (Vec<Vec<TrackEvent<'static>>>, usize) {
                     message(channel, note.pitch, u7::new(0)),
                 ));
             }
+            // The bend, sampled by the clip's own rule rather than by one of this file's. A
+            // fourteen-bit value is what the format carries, so semitones go out through
+            // [`BEND_RANGE`] and come back the same way.
+            for (at, semitones) in clip.bend_events(auris_core::project::BEND_STEP) {
+                events.push((clip.start + at, bend_message(channel, semitones)));
+            }
         }
         // Sorted by position, and at one position the releases go first: a note struck again at
         // the instant the last one ended must not have its release land on the new one.
@@ -412,6 +434,24 @@ fn message(channel: u4, pitch: u8, vel: u7) -> TrackEventKind<'static> {
     }
 }
 
+/// How many semitones a bend at full deflection means, in and out.
+///
+/// Two, which is MIDI's default and what a receiver assumes when nothing has told it otherwise.
+/// The document works in semitones and can hold an octave; a bend past this range is written to
+/// the file at its edge, because a file that said otherwise would play as something else
+/// everywhere but here.
+const BEND_RANGE: f32 = 2.0;
+
+/// A pitch bend message carrying `semitones`.
+fn bend_message(channel: u4, semitones: f32) -> TrackEventKind<'static> {
+    TrackEventKind::Midi {
+        channel,
+        message: MidiMessage::PitchBend {
+            bend: midly::PitchBend::from_f32((semitones / BEND_RANGE).clamp(-1.0, 1.0)),
+        },
+    }
+}
+
 /// Whether an event releases a note rather than starting one.
 fn is_release(kind: &TrackEventKind<'static>) -> bool {
     matches!(
@@ -450,6 +490,8 @@ const MAX_DENOMINATOR_POWER: u32 = 4;
 struct Part {
     name: Option<String>,
     notes: Vec<Note>,
+    /// The bend, at absolute ticks. Rebased onto the clip once the clip's start is known.
+    bend: Vec<BendPoint>,
 }
 
 /// The channel an event belongs to, or 0 for the ones that belong to the track as a whole.
@@ -773,6 +815,74 @@ mod tests {
     fn round_trip(project: &Project) -> MidiImport {
         let bytes = write_midi_bytes(project).expect("writable");
         read_midi_bytes(&bytes).expect("readable")
+    }
+
+    #[test]
+    fn a_bend_goes_out_and_comes_back_as_the_same_slide() {
+        // The one thing here that is *not* exact: a file carries fourteen bits across the range
+        // a receiver assumes, so a semitone is quantised on the way through. The tolerance below
+        // is a hundredth of one, which is a fiftieth of a cent and inaudible by a wide margin.
+        let mut project = project_with(
+            vec![Note::new(60, Ticks::ZERO, Ticks(TICKS_PER_QUARTER * 4))],
+            Ticks(TICKS_PER_QUARTER * 4),
+        );
+        let clip = project.tracks[0]
+            .kind
+            .as_instrument()
+            .expect("an instrument track")
+            .clips[0]
+            .id;
+        project.midi_clip_mut(clip).expect("the clip").bend = vec![
+            BendPoint {
+                at: Ticks::ZERO,
+                semitones: 0.0,
+            },
+            BendPoint {
+                at: Ticks(TICKS_PER_QUARTER * 2),
+                semitones: 2.0,
+            },
+        ];
+
+        let imported = round_trip(&project);
+        let bend = &imported.tracks[0].bend;
+        assert!(!bend.is_empty(), "the bend did not survive the file");
+        for pair in bend.windows(2) {
+            assert!(pair[0].at <= pair[1].at, "out of order: {bend:?}");
+        }
+        let at = |tick: i64| {
+            bend.iter()
+                .rfind(|point| point.at <= Ticks(tick))
+                .map(|point| point.semitones)
+                .unwrap_or(0.0)
+        };
+        assert!(at(0).abs() < 0.01, "it started bent: {}", at(0));
+        assert!(
+            (at(TICKS_PER_QUARTER) - 1.0).abs() < 0.01,
+            "halfway up is {}",
+            at(TICKS_PER_QUARTER)
+        );
+        assert!(
+            (at(TICKS_PER_QUARTER * 2) - 2.0).abs() < 0.01,
+            "the top is {}",
+            at(TICKS_PER_QUARTER * 2)
+        );
+        // And it is let go before the clip ends, or everything after it would play sharp.
+        assert!(
+            at(TICKS_PER_QUARTER * 4).abs() < 0.01,
+            "the bend was left hanging at {}",
+            at(TICKS_PER_QUARTER * 4)
+        );
+
+        // A file that never bends brings none, which keeps this off almost every import.
+        assert!(
+            round_trip(&project_with(
+                vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)],
+                Ticks::QUARTER
+            ))
+            .tracks[0]
+                .bend
+                .is_empty()
+        );
     }
 
     #[test]

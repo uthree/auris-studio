@@ -1607,6 +1607,19 @@ fn schedule_clip(
             },
         });
     }
+    // The bend, sampled the same way and by the same rule — asked of the clip rather than worked
+    // out here, so the roll drawing the curve and the renderer playing it read one answer.
+    for (at, semitones) in clip.bend_events(auris_core::project::BEND_STEP) {
+        out.push(ScheduledEvent {
+            frame: tempo_map
+                .ticks_to_samples(clip.start + at, sample_rate)
+                .raw(),
+            event: NoteEvent::PitchBend {
+                frame: 0,
+                semitones,
+            },
+        });
+    }
 }
 
 /// Rank used to break ties between events landing on the same frame.
