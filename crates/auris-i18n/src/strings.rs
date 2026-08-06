@@ -440,6 +440,10 @@ strings! {
     SongPartInstrument { en: "Instrument", ja: "音源" }
     // Which MIDI note a drum part strikes. It stands where a pitched part shows its octave,
     // because a kit has no octave and does need this.
+    // The strip under the piano roll, named by what is in it rather than by the word "lane".
+    BendLane { en: "Bend", ja: "ベンド" }
+    StraightenBend { en: "Straighten", ja: "ベンドを消す" }
+    CmdShowBendLane { en: "Pitch Bend", ja: "ピッチベンド" }
     SongPartNote { en: "Note", ja: "ノート" }
     SongPartGain { en: "Level", ja: "音量" }
     SongPartPan { en: "Pan", ja: "定位" }
@@ -636,6 +640,8 @@ strings! {
     EditSetTrackColor { en: "the track colour", ja: "トラックの色" }
     EditWriteAutomation { en: "the automation point", ja: "オートメーションの点" }
     EditEraseAutomation { en: "erasing the automation point", ja: "オートメーションの点の削除" }
+    EditWriteBend { en: "the pitch bend", ja: "ピッチベンド" }
+    EditEraseBend { en: "erasing the pitch bend", ja: "ピッチベンドの削除" }
     EditClearAutomation { en: "clearing the automation", ja: "オートメーションの消去" }
     EditImportAudio { en: "importing audio", ja: "オーディオの読み込み" }
     EditImportSoundFont { en: "importing a SoundFont", ja: "サウンドフォントの読み込み" }

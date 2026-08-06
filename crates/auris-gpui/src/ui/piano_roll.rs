@@ -348,6 +348,103 @@ impl AurisApp {
                             )),
                     ),
             )
+            .when(self.panels.bend_lane, |this| {
+                this.child(self.render_bend_lane(cx))
+            })
+            .into_any_element()
+    }
+
+    /// The strip under the notes where the pitch bend is drawn.
+    ///
+    /// Under rather than beside, and spanning the same timeline: a bend is a thing that happens
+    /// *at a moment in the phrase*, so the only useful way to look at it is with the notes it is
+    /// bending directly above it. The gutter on the left is the keyboard's width, for the same
+    /// reason the track headers reserve what the ruler spends — a strip that started at the panel
+    /// edge would put every point a keyboard's width away from the note it belongs to.
+    fn render_bend_lane(&mut self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        let theme = self.theme.clone();
+        let view = self.timeline.clone();
+        let playhead = self.playhead_ticks();
+        let Some(clip) = self.selected_midi_clip() else {
+            return div().into_any_element();
+        };
+        let (start, length, bend) = (clip.start, clip.length, clip.bend.clone());
+        let recorded = self.canvas.bend.clone();
+
+        div()
+            .flex()
+            .h(px(BEND_LANE_HEIGHT))
+            .flex_shrink_0()
+            .border_t_1()
+            .border_color(theme.border)
+            .bg(theme.surface_sunken)
+            .child(
+                div()
+                    .w(Metrics::KEYBOARD_WIDTH)
+                    .flex_shrink_0()
+                    .h_full()
+                    .px_1()
+                    .pt_1()
+                    .bg(theme.surface)
+                    .border_r_1()
+                    .border_color(theme.border)
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(self.t(Key::BendLane)),
+            )
+            .child(
+                div()
+                    .id("bend-lane")
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .overflow_hidden()
+                    .cursor_pointer()
+                    .child({
+                        let theme = theme.clone();
+                        canvas(
+                            move |bounds, _, _| recorded.set(Some(bounds)),
+                            move |bounds, _, window, cx| {
+                                paint::clipped(window, bounds, |window| {
+                                    paint_bend(
+                                        window, cx, bounds, &view, start, length, &bend, playhead,
+                                        &theme,
+                                    );
+                                });
+                            },
+                        )
+                        .size_full()
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                            this.press_bend_lane(event, cx);
+                        }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                            // Taking points off one at a time is the ⌥-click; this is the way
+                            // back from a curve that got away from somebody.
+                            let Some(clip) = this.selected_clip else {
+                                return;
+                            };
+                            let menu = crate::ui::context_menu::ContextMenu::new(
+                                event.position,
+                                this.t(Key::BendLane),
+                            )
+                            .item(
+                                this.t(Key::StraightenBend),
+                                crate::ui::context_menu::MenuCommand::ClearBend(clip),
+                            );
+                            this.open_menu(menu);
+                            cx.notify();
+                        }),
+                    )
+                    .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
+                        this.scroll_roll(event, cx);
+                    })),
+            )
             .into_any_element()
     }
 
@@ -945,6 +1042,208 @@ fn paint_notes(
     }
 }
 
+// ---------------------------------------------------------------- the bend lane
+
+/// How tall the bend strip is drawn.
+const BEND_LANE_HEIGHT: f32 = 76.0;
+
+/// How near a point a press has to land to take hold of it, in pixels.
+const BEND_GRAB: f32 = 7.0;
+
+/// How large a point is drawn.
+const BEND_POINT_RADIUS: f32 = 3.0;
+
+/// Where a bend of `semitones` sits in the strip, from 0 at the top to 1 at the bottom.
+///
+/// The whole of [`BEND_LIMIT`] either way, with nothing at the middle. Not the two semitones MIDI
+/// assumes, because the document works in semitones and can hold an octave — a strip that only
+/// reached a tone would make a dive of a fifth undrawable and, worse, unreadable once written.
+pub fn bend_row(semitones: f32) -> f32 {
+    0.5 - (semitones.clamp(-BEND_LIMIT, BEND_LIMIT) / BEND_LIMIT) * 0.5
+}
+
+/// The bend a row in the strip stands for. The inverse of [`bend_row`].
+pub fn bend_of_row(row: f32) -> f32 {
+    (0.5 - row.clamp(0.0, 1.0)) * 2.0 * BEND_LIMIT
+}
+
+/// The point within `radius` ticks of `at`, nearest first.
+///
+/// In ticks rather than pixels so the answer does not change with the zoom in a way the caller has
+/// to compensate for; the caller turns its pixels into ticks, which it has to do anyway.
+pub fn bend_point_at(points: &[BendPoint], at: Ticks, radius: Ticks) -> Option<Ticks> {
+    points
+        .iter()
+        .map(|point| (point.at, (point.at - at).raw().abs()))
+        .filter(|(_, distance)| *distance <= radius.raw().abs())
+        .min_by_key(|(_, distance)| *distance)
+        .map(|(at, _)| at)
+}
+
+/// Draws the bend: the middle line, the curve, and a handle on each point.
+#[allow(clippy::too_many_arguments)]
+fn paint_bend(
+    window: &mut Window,
+    cx: &mut App,
+    bounds: Bounds<Pixels>,
+    view: &TimelineView,
+    clip_start: Ticks,
+    clip_length: Ticks,
+    points: &[BendPoint],
+    playhead: Ticks,
+    theme: &Theme,
+) {
+    let top = f32::from(bounds.origin.y);
+    let height = f32::from(bounds.size.height);
+    let at = |tick: Ticks, semitones: f32| {
+        point(
+            bounds.origin.x + view.tick_to_x(clip_start + tick),
+            px(top + height * bend_row(semitones)),
+        )
+    };
+
+    // The stretch the clip covers, so a curve is read against the notes rather than against the
+    // whole song — the same tint the grid above uses for the same purpose.
+    paint::rect(
+        window,
+        Bounds {
+            origin: point(
+                bounds.origin.x + view.tick_to_x(clip_start),
+                bounds.origin.y,
+            ),
+            size: size(
+                view.tick_to_x(clip_start + clip_length) - view.tick_to_x(clip_start),
+                bounds.size.height,
+            ),
+        },
+        Theme::translucent(theme.surface, 0.5),
+    );
+    // Nothing, drawn: without it a flat curve at zero and an empty strip look the same, and the
+    // one number a person needs to find again is where they started from.
+    paint::rect(
+        window,
+        Bounds {
+            origin: point(bounds.origin.x, px(top + height * 0.5)),
+            size: size(bounds.size.width, px(1.0)),
+        },
+        theme.border,
+    );
+    paint::label(
+        window,
+        cx,
+        point(bounds.origin.x + px(3.0), px(top + 1.0)),
+        format!("+{BEND_LIMIT:.0}"),
+        px(9.0),
+        theme.text_faint,
+    );
+
+    if !points.is_empty() {
+        // Held flat outside the points, which is what `bend_at` says and therefore what is heard.
+        // A curve drawn only between its ends would show a slide starting somewhere it does not.
+        let mut drawn: Vec<Point<Pixels>> = Vec::with_capacity(points.len() + 2);
+        let first = points[0];
+        let last = points[points.len() - 1];
+        drawn.push(at(Ticks::ZERO, first.semitones));
+        drawn.extend(points.iter().map(|point| at(point.at, point.semitones)));
+        if last.at < clip_length {
+            drawn.push(at(clip_length, last.semitones));
+        }
+        paint::polyline(window, &drawn, px(1.5), theme.accent);
+        for held in points {
+            let centre = at(held.at, held.semitones);
+            paint::rounded_rect(
+                window,
+                Bounds {
+                    origin: point(
+                        centre.x - px(BEND_POINT_RADIUS),
+                        centre.y - px(BEND_POINT_RADIUS),
+                    ),
+                    size: size(px(BEND_POINT_RADIUS * 2.0), px(BEND_POINT_RADIUS * 2.0)),
+                },
+                px(BEND_POINT_RADIUS),
+                theme.accent,
+            );
+        }
+    }
+
+    paint::playhead(
+        window,
+        bounds,
+        bounds.origin.x + view.tick_to_x(playhead),
+        theme,
+    );
+}
+
+impl AurisApp {
+    /// A press in the bend strip: take a point off, take hold of one, or write one and drag it.
+    ///
+    /// The three cases in the order a hand expects them, which is the order the automation lane
+    /// put them in — delete first so the gesture bound to deleting takes a point off rather than
+    /// adding one on top of it, and a press on empty strip writes the point it is about to drag,
+    /// so placing a bend and shaping it is one gesture rather than click, look, click again.
+    fn press_bend_lane(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
+        let (Some(bounds), Some(clip)) = (self.canvas.bend.get(), self.selected_clip) else {
+            return;
+        };
+        let Some(held) = self.session.midi_clip(clip) else {
+            return;
+        };
+        let (clip_start, points) = (held.start, held.bend.clone());
+        let at = (self.snap_unless_held(
+            self.timeline.x_to_tick(event.position.x - bounds.origin.x),
+            event.modifiers,
+        ) - clip_start)
+            .max_zero();
+        // The grab zone in ticks, so it is the same handful of pixels at any zoom.
+        let radius = Ticks(self.timeline.x_to_tick(px(BEND_GRAB)).raw().abs().max(1));
+        let grabbed = bend_point_at(&points, at, radius);
+
+        if let Some(existing) = grabbed
+            && self.pointer.delete.matches(event)
+        {
+            self.session.remove_bend_point(clip, existing);
+            cx.notify();
+            return;
+        }
+
+        let row =
+            f32::from(event.position.y - bounds.origin.y) / f32::from(bounds.size.height).max(1.0);
+        let from = match grabbed {
+            Some(existing) => existing,
+            None => {
+                if !self.session.set_bend_point(clip, at, bend_of_row(row)) {
+                    return;
+                }
+                at
+            }
+        };
+        self.begin_drag(Drag::BendPoint { clip, at: from });
+        cx.notify();
+    }
+
+    /// Moves the point in hand to where the pointer is, and says where it landed.
+    ///
+    /// The point is looked up by where it currently sits rather than by where the drag began, the
+    /// way the automation lane's is: a point dropped onto another replaces it, and the drag has to
+    /// go on holding whatever survived.
+    pub(crate) fn drag_bend_point(
+        &mut self,
+        clip: ClipId,
+        at: Ticks,
+        event: &gpui::MouseMoveEvent,
+    ) -> Option<Ticks> {
+        let bounds = self.canvas.bend.get()?;
+        let clip_start = self.session.midi_clip(clip)?.start;
+        let to = (self.snap_unless_held(
+            self.timeline.x_to_tick(event.position.x - bounds.origin.x),
+            event.modifiers,
+        ) - clip_start)
+            .max_zero();
+        let row =
+            f32::from(event.position.y - bounds.origin.y) / f32::from(bounds.size.height).max(1.0);
+        self.session.move_bend_point(clip, at, to, bend_of_row(row))
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1101,5 +1400,69 @@ mod tests {
             !bar_fits(note(80.0, 5.0)),
             "and the rows go down to five pixels, which is thinner than the bar",
         );
+    }
+}
+
+#[cfg(test)]
+mod bend_tests {
+    use super::*;
+
+    #[test]
+    fn a_bend_survives_the_trip_to_the_strip_and_back() {
+        // The curve is drawn from `bend_row` and dragged through `bend_of_row`, so a value that
+        // did not round-trip would make the point slide out from under the pointer holding it.
+        for semitones in [-BEND_LIMIT, -5.0, -0.5, 0.0, 0.5, 5.0, BEND_LIMIT] {
+            let back = bend_of_row(bend_row(semitones));
+            assert!(
+                (back - semitones).abs() < 0.001,
+                "{semitones} went to {} and came back {back}",
+                bend_row(semitones)
+            );
+        }
+        // Nothing is the middle of the strip, which is what makes the line drawn there readable
+        // as a zero rather than as an arbitrary rule.
+        assert_eq!(bend_row(0.0), 0.5);
+        assert_eq!(bend_row(BEND_LIMIT), 0.0, "the top is up");
+        assert_eq!(bend_row(-BEND_LIMIT), 1.0, "and the bottom is down");
+        // Past either end clamps rather than drawing off the strip.
+        assert_eq!(bend_row(99.0), 0.0);
+        assert_eq!(bend_of_row(-2.0), BEND_LIMIT);
+    }
+
+    #[test]
+    fn a_press_takes_the_point_it_landed_on_and_nothing_else() {
+        let points = vec![
+            BendPoint {
+                at: Ticks(0),
+                semitones: 0.0,
+            },
+            BendPoint {
+                at: Ticks(480),
+                semitones: 2.0,
+            },
+            BendPoint {
+                at: Ticks(960),
+                semitones: 0.0,
+            },
+        ];
+        let radius = Ticks(40);
+        assert_eq!(bend_point_at(&points, Ticks(480), radius), Some(Ticks(480)));
+        assert_eq!(
+            bend_point_at(&points, Ticks(500), radius),
+            Some(Ticks(480)),
+            "just inside the zone"
+        );
+        assert_eq!(
+            bend_point_at(&points, Ticks(600), radius),
+            None,
+            "the line between two points belongs to neither"
+        );
+        // Nearest rather than first, so two points dragged close together still resolve to the
+        // one under the pointer.
+        assert_eq!(
+            bend_point_at(&points, Ticks(700), Ticks(400)),
+            Some(Ticks(480))
+        );
+        assert_eq!(bend_point_at(&[], Ticks(0), radius), None);
     }
 }

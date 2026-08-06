@@ -6,6 +6,7 @@
 //! one edit path forgets to record its inverse.
 
 use auris_core::Project;
+use auris_core::project::ClipId;
 use auris_core::time::Ticks;
 
 use crate::param::ParamTarget;
@@ -128,6 +129,13 @@ pub enum Edit {
     WriteAutomation(ParamTarget),
     /// A point was taken off a lane.
     EraseAutomation,
+    /// A point was written on a clip's pitch bend, or moved along it.
+    ///
+    /// Which clip travels along for the reason [`Edit::WriteAutomation`]'s parameter does: a bend
+    /// drawn on one clip and then on another must not fold into a single undo step.
+    WriteBend(ClipId),
+    /// A point was taken off a clip's bend, or the whole curve was.
+    EraseBend,
     /// A whole lane was removed, giving the parameter its stored value back.
     ClearAutomation,
     /// An audio file was imported onto a track.

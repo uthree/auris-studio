@@ -318,6 +318,14 @@ pub enum Drag {
         /// Pointer x when the drag began.
         start_x: Pixels,
     },
+    /// Dragging a point along a clip's pitch bend.
+    BendPoint {
+        /// Whose bend.
+        clip: ClipId,
+        /// The point being moved, by where it currently sits — a point dropped onto another
+        /// replaces it, and the drag goes on holding whichever survived.
+        at: Ticks,
+    },
     /// Dragging a corner of the envelope graph.
     ///
     /// Absolute rather than measured from where the drag began, unlike [`Drag::Param`]: a corner
@@ -451,6 +459,7 @@ impl Drag {
             Drag::ClipResize { .. } => Some(Edit::ResizeClip),
             Drag::ClipFade { .. } => Some(Edit::SetClipFade),
             Drag::AutomationPoint { target, .. } => Some(Edit::WriteAutomation(*target)),
+            Drag::BendPoint { clip, .. } => Some(Edit::WriteBend(*clip)),
             Drag::NoteMove { .. } => Some(Edit::MoveNotes),
             Drag::NoteResize { .. } => Some(Edit::ResizeNote),
             Drag::NoteVelocity { .. } => Some(Edit::SetNoteVelocity),
@@ -604,6 +613,8 @@ pub struct CanvasBounds {
     pub roll: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The envelope graph in the open plugin window.
     pub envelope: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The pitch bend strip under the piano roll.
+    pub bend: Rc<Cell<Option<Bounds<Pixels>>>>,
 }
 
 /// Waveform peaks keyed by audio source, shared by every lane in a frame.

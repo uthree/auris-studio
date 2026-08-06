@@ -85,6 +85,8 @@ actions!(
         ToggleHarmonyLane,
         /// Show or hide the tempo changes marked along the ruler.
         ToggleTempoMarks,
+        /// Show or hide the pitch bend strip under the piano roll.
+        ToggleBendLane,
         /// Open the settings window.
         OpenSettings,
         /// Open the command palette.
@@ -261,6 +263,7 @@ bindable! {
         "view.structure_lane",  GroupView,      CmdShowStructureLane,  "secondary-alt-s" => ToggleStructureLane;
         "view.harmony_lane",    GroupView,      CmdShowHarmonyLane,    "secondary-alt-h" => ToggleHarmonyLane;
         "view.tempo_marks",     GroupView,      CmdShowTempoMarks,     "secondary-alt-t" => ToggleTempoMarks;
+        "view.bend_lane",       GroupView,      CmdShowBendLane,       "secondary-alt-b" => ToggleBendLane;
         "view.zoom_in",         GroupView,      CmdZoomIn,             "secondary-=" => ZoomIn;
         "view.zoom_out",        GroupView,      CmdZoomOut,            "secondary--" => ZoomOut;
         "view.settings",        GroupView,      CmdSettings,           "secondary-," => OpenSettings;

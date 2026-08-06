@@ -173,7 +173,11 @@ stores whole microseconds per quarter note, so 144 bpm goes out as 416 667 and c
 
 **Pitch bend travels both ways.** A clip carries its own bend curve — on the clip rather than in an
 automation lane, because a bend belongs to the phrase and a clip dragged four bars later takes it
-along. It is the one thing here that is not exact through a file: MIDI carries fourteen bits across
+along. **View → Pitch Bend** puts a strip under the piano roll where it is drawn: a press on empty
+strip writes the point it is about to drag, so placing a bend and shaping it is one gesture; ⌥-click
+takes one off; right-click straightens the whole clip. It spans the same timeline as the notes
+above it, because a bend happens at a moment in the phrase and the only useful way to look at one
+is with the note it is bending directly overhead. It is the one thing here that is not exact through a file: MIDI carries fourteen bits across
 the range a receiver assumes, so a semitone is quantised to about a fiftieth of a cent on the way
 through. A curve that does not end at zero is **let go before the clip ends** — a bend is channel
 state an instrument holds until it is told otherwise, and a clip finishing two semitones sharp

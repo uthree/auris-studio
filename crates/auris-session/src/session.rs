@@ -9,6 +9,7 @@ use auris_core::automation::{Automation, AutomationCurve};
 use auris_core::harmony::Harmony;
 use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
 use auris_core::plugin::{PluginKind, PluginState};
+use auris_core::project::{BEND_LIMIT, BendPoint};
 use auris_core::theory::chart::{Chart, catalog};
 use auris_core::theory::chord::Chord;
 use auris_core::theory::key::Key as MusicalKey;
@@ -1705,6 +1706,108 @@ impl Session {
         self.replace_project(project);
         self.dirty = true;
         Ok(report)
+    }
+
+    // ------------------------------------------------------- the bend on a clip
+
+    /// Writes a point on a clip's pitch bend, replacing whatever was at that instant.
+    ///
+    /// Kept in time order here rather than wherever a curve is read, because everything that
+    /// reads one — the renderer, the MIDI writer, the roll — assumes it: a point out of order
+    /// would draw a line backwards and schedule a bend that jumped.
+    pub fn set_bend_point(&mut self, clip: ClipId, at: Ticks, semitones: f32) -> bool {
+        let at = at.max_zero();
+        let semitones = semitones.clamp(-BEND_LIMIT, BEND_LIMIT);
+        let Some((_, target)) = self.project.midi_clip(clip) else {
+            return false;
+        };
+        let at = at.min(target.length);
+        if target
+            .bend
+            .iter()
+            .any(|point| point.at == at && point.semitones == semitones)
+        {
+            return false;
+        }
+        self.record(Edit::WriteBend(clip));
+        if let Some(target) = self.project.midi_clip_mut(clip) {
+            target.bend.retain(|point| point.at != at);
+            target.bend.push(BendPoint { at, semitones });
+            target.bend.sort_by_key(|point| point.at);
+        }
+        self.invalidate_graph();
+        true
+    }
+
+    /// Moves a point along the bend, taking a new value with it.
+    ///
+    /// Returns where it landed, which is not always where it was asked to go: dropped onto another
+    /// point it replaces that one, since one instant cannot hold two bends. A drag wants
+    /// [`Self::begin_transaction`] around the whole gesture, the way every other drag does.
+    pub fn move_bend_point(
+        &mut self,
+        clip: ClipId,
+        from: Ticks,
+        to: Ticks,
+        semitones: f32,
+    ) -> Option<Ticks> {
+        let semitones = semitones.clamp(-BEND_LIMIT, BEND_LIMIT);
+        let length = self.project.midi_clip(clip)?.1.length;
+        let to = to.max_zero().min(length);
+        let held = self
+            .project
+            .midi_clip(clip)?
+            .1
+            .bend
+            .iter()
+            .find(|point| point.at == from)
+            .copied()?;
+        if held.at == to && held.semitones == semitones {
+            return Some(to);
+        }
+        self.record(Edit::WriteBend(clip));
+        let target = self.project.midi_clip_mut(clip)?;
+        target
+            .bend
+            .retain(|point| point.at != from && point.at != to);
+        target.bend.push(BendPoint { at: to, semitones });
+        target.bend.sort_by_key(|point| point.at);
+        self.invalidate_graph();
+        Some(to)
+    }
+
+    /// Takes one point off a clip's bend.
+    pub fn remove_bend_point(&mut self, clip: ClipId, at: Ticks) -> bool {
+        if !self
+            .project
+            .midi_clip(clip)
+            .is_some_and(|target| target.1.bend.iter().any(|point| point.at == at))
+        {
+            return false;
+        }
+        self.record(Edit::EraseBend);
+        if let Some(target) = self.project.midi_clip_mut(clip) {
+            target.bend.retain(|point| point.at != at);
+        }
+        self.invalidate_graph();
+        true
+    }
+
+    /// Straightens a clip out, removing its bend entirely.
+    pub fn clear_bend(&mut self, clip: ClipId) -> bool {
+        if !self
+            .project
+            .midi_clip(clip)
+            .is_some_and(|target| !target.1.bend.is_empty())
+        {
+            return false;
+        }
+        self.record(Edit::EraseBend);
+        if let Some(target) = self.project.midi_clip_mut(clip) {
+            target.bend.clear();
+        }
+        self.invalidate_graph();
+        true
     }
 
     /// Adds an empty MIDI clip to an instrument track.

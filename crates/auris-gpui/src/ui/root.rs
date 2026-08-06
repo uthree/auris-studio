@@ -139,6 +139,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_toggle_structure_lane))
             .on_action(cx.listener(Self::on_toggle_harmony_lane))
             .on_action(cx.listener(Self::on_toggle_tempo_marks))
+            .on_action(cx.listener(Self::on_toggle_bend_lane))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_open_command_palette))
             .on_action(cx.listener(Self::on_open_menu_bar))
@@ -503,6 +504,15 @@ impl AurisApp {
             Drag::AuditionHarmony => {
                 let x = event.position.x - self.timeline_origin().x;
                 self.audition_chord(self.timeline.x_to_tick(x).max_zero());
+            }
+            // The point has moved, so the drag has to follow it: the next pointer move would
+            // otherwise look for it where it no longer is and move nothing at all.
+            Drag::BendPoint { clip, at } => {
+                if let Some(landed) = self.drag_bend_point(clip, at, event)
+                    && let Some(Drag::BendPoint { at, .. }) = &mut self.drag
+                {
+                    *at = landed;
+                }
             }
             Drag::HarmonyChord { at, grab_offset } => {
                 let x = event.position.x - self.timeline_origin().x;
@@ -1372,6 +1382,17 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.panels.lanes.tempo = !self.panels.lanes.tempo;
+        self.remember_layout();
+        cx.notify();
+    }
+
+    fn on_toggle_bend_lane(
+        &mut self,
+        _: &actions::ToggleBendLane,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.panels.bend_lane = !self.panels.bend_lane;
         self.remember_layout();
         cx.notify();
     }

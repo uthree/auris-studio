@@ -123,6 +123,8 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::AdjustParameter(_) => Key::EditAdjustParameter,
         Edit::WriteAutomation(_) => Key::EditWriteAutomation,
         Edit::EraseAutomation => Key::EditEraseAutomation,
+        Edit::WriteBend(_) => Key::EditWriteBend,
+        Edit::EraseBend => Key::EditEraseBend,
         Edit::ClearAutomation => Key::EditClearAutomation,
         Edit::ImportAudio => Key::EditImportAudio,
         Edit::ImportSoundFont => Key::EditImportSoundFont,

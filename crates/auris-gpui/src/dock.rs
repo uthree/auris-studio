@@ -203,6 +203,11 @@ pub struct PanelLayout {
     pub header_width: Pixels,
     /// Which strips above the clip lanes are drawn.
     pub lanes: TimelineLanes,
+    /// Whether the piano roll draws its pitch bend strip.
+    ///
+    /// Off until asked for. A bend is a thing a few parts do and most do not, and a strip that is
+    /// always there takes seventy pixels off the notes of every clip that never bends.
+    pub bend_lane: bool,
 }
 
 impl Default for PanelLayout {
@@ -224,6 +229,7 @@ impl Default for PanelLayout {
             ],
             header_width: Metrics::TRACK_HEADER_WIDTH,
             lanes: TimelineLanes::default(),
+            bend_lane: false,
         }
     }
 }
@@ -429,6 +435,8 @@ struct StoredLayout {
     header_width: Option<f32>,
     /// Which strips above the clip lanes are drawn.
     lanes: TimelineLanes,
+    /// Whether the piano roll draws its pitch bend strip.
+    bend_lane: bool,
 }
 
 impl From<&PanelLayout> for StoredLayout {
@@ -452,6 +460,7 @@ impl From<&PanelLayout> for StoredLayout {
                 .collect(),
             header_width: Some(f32::from(layout.header_width)),
             lanes: layout.lanes,
+            bend_lane: layout.bend_lane,
         }
     }
 }
@@ -470,6 +479,7 @@ impl From<StoredLayout> for PanelLayout {
             layout.header_width = Self::resized_headers(px(width), px(0.0));
         }
         layout.lanes = stored.lanes;
+        layout.bend_lane = stored.bend_lane;
         // A dock shows one panel at a time, which nothing in the file is obliged to respect. The
         // first one named wins, and the rest are shut: two open panels in one dock would draw over
         // each other, and only one of them could be hidden again from the status bar.

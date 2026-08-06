@@ -142,6 +142,8 @@ pub enum MenuCommand {
         /// The note it strikes.
         note: u8,
     },
+    /// Straighten a clip out, taking its whole pitch bend off.
+    ClearBend(ClipId),
     /// Add a part of this role to the song sheet's roster.
     SongAddPart(Role),
     /// Open the list of places a track's output could go.
@@ -968,6 +970,9 @@ impl AurisApp {
                 {
                     part.note = Some(note);
                 }
+            }
+            MenuCommand::ClearBend(clip) => {
+                self.session.clear_bend(clip);
             }
             MenuCommand::SongAddPart(role) => {
                 if let Some(dials) = self.song_sheet.as_mut() {
