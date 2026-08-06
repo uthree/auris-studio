@@ -224,6 +224,20 @@ pub struct MidiReport {
 /// The instrument a track that played on the drum channel is given.
 const DRUM_INSTRUMENT: &str = "auris.synth.noisedrum";
 
+/// The effect a composed piece gets across its master.
+const MASTER_LIMITER: &str = "auris.fx.limiter";
+
+/// The limiter parameter that sets the level nothing may pass.
+const LIMITER_CEILING: &str = "ceiling_db";
+
+/// Where the composed master's ceiling is set, in decibels.
+///
+/// Three tenths under full scale, which is the usual place: it is far enough down that a
+/// resampler or a lossy encoder — both of which reconstruct a waveform that overshoots the samples
+/// it was given — has somewhere to overshoot into, and near enough that nobody could hear what it
+/// costs.
+const MASTER_CEILING_DB: f32 = -0.3;
+
 /// MIDI's drum channel, 0-based. Channel 10, counting the way a musician does.
 const DRUM_CHANNEL: u8 = 9;
 
@@ -244,6 +258,89 @@ pub struct ComposeReport {
     pub length: Ticks,
     /// Instruments a part asked for that this build does not have.
     pub substituted: Vec<String>,
+}
+
+/// How much a General MIDI percussion patch has to come down, in decibels, to sit where the
+/// quietest kit of the shipped font sits.
+///
+/// The kits of MuseScore General are not calibrated against one another. Struck at the same
+/// velocity through the same gain, the note the composer writes a kick on peaks at +6.51 dBFS on
+/// the Brush Kit and at -1.43 on the TR-808 — 7.95 dB between two sounds that are supposed to be
+/// the same instrument recorded in different rooms. Nobody decided that; it is the arithmetic of
+/// eight kits sampled at eight sessions, and it arrives in a composed mix as a piece that clips
+/// because of which kit its style happened to name. This is the correction, and it belongs here
+/// because *which font is installed* is the session's knowledge: the composer names General MIDI
+/// and has no idea whose file will answer.
+///
+/// # The table
+///
+/// Measured on the shipped font, at unity, on the note each kit's kick is written at. The kick,
+/// because it is what the excursion is made of: the composer writes three drums, and once each
+/// role's own level is on, the kick is the loudest of the three in every one of these kits — by
+/// two thirds of a decibel in the closest and by six in the widest. The reference is the quietest
+/// of them, the TR-808's, at -1.44 dBFS.
+///
+/// | kit | patch | kick at unity | trim |
+/// |---|---|---|---|
+/// | Standard | 0 | +2.38 dBFS | -3.82 dB |
+/// | Room | 8 | +5.32 dBFS | -6.76 dB |
+/// | Power | 16 | +1.95 dBFS | -3.39 dB |
+/// | Electronic | 24 | +2.46 dBFS | -3.90 dB |
+/// | TR-808 | 25 | -1.43 dBFS | 0 dB |
+/// | Jazz | 32 | +6.51 dBFS | -7.95 dB |
+/// | Brush | 40 | +6.51 dBFS | -7.95 dB |
+/// | Orchestra | 48 | -1.26 dBFS | 0 dB |
+///
+/// The TR-808 is the reference and the Orchestra Kit sits 0.18 dB above it, which is not a trim —
+/// a fifth of a decibel is below anything a listener or a mix has an opinion about, and writing it
+/// down would only claim a precision these numbers do not have.
+///
+/// # What these numbers are not
+///
+/// They are not a musical balance. Nothing here says a kick should be 7.95 dB under a brush kit;
+/// the levels a piece is *mixed* at are
+/// [`Role::default_gain_db`](auris_compose::Role::default_gain_db) and whatever the specification
+/// writes over it, and this is added to that rather than replacing it. This is a calibration of
+/// one file, and a different General MIDI font — a leaner one, or somebody's own — will want
+/// entirely different numbers or none at all.
+///
+/// A patch that is not in the table gets 0 dB, and so does every pitched program. A font is free
+/// to put a kit anywhere in bank 128 and almost none do; a sound nobody has measured is a sound
+/// this has nothing true to say about, and inventing a trim for it by rounding down to the nearest
+/// kit would be guessing with a number that changes what a person hears.
+pub fn kit_trim_db(sound: auris_compose::gm::Sound) -> f32 {
+    if sound.bank != auris_compose::gm::DRUM_BANK {
+        return 0.0;
+    }
+    // Every kit of `auris_compose::gm::KITS`, in patch order, including the two that come out at
+    // zero — so that the table above and the code under it can be read against each other, and a
+    // measured nought is not mistaken for a kit nobody looked at.
+    match sound.patch {
+        0 => -3.82,
+        8 => -6.76,
+        16 => -3.39,
+        24 => -3.90,
+        25 => 0.0,
+        32 => -7.95,
+        40 => -7.95,
+        48 => 0.0,
+        _ => 0.0,
+    }
+}
+
+/// The gain a composed part's mixer strip is set to.
+///
+/// The part's own gain **plus** whatever [`kit_trim_db`] says about the sound it landed on, never
+/// instead of it: the first is the mix the composer wrote and the second is an apology for the
+/// font, and collapsing the two would mean a specification that says `gain = -12` could not be
+/// read off the strip it produced.
+///
+/// `None` is a part that stayed on a built-in instrument, because no General MIDI font is
+/// installed or because it never asked for one — and it is left exactly where the composer put it.
+/// That is the half of this worth stating: the built-in kit is already 21.5 dB under its own
+/// pitched parts and a trim aimed at a SoundFont would push it under the floor.
+pub fn composed_gain_db(part_gain_db: f32, sound: Option<auris_compose::gm::Sound>) -> f32 {
+    part_gain_db + sound.map_or(0.0, kit_trim_db)
 }
 
 struct Transaction {
@@ -1743,7 +1840,11 @@ impl Session {
                 // palette entry by position, so which colour a part got depended on how many
                 // parts were declared before it.
                 entry.color = track.color;
-                entry.mixer.gain_db = track.gain_db;
+                // The composer's level, and — where the part landed on a General MIDI kit — the
+                // trim that kit needs to sit where the others do. This is the one place that knows
+                // both, because it is the one place a part's `program` has been resolved against
+                // a font that is actually installed.
+                entry.mixer.gain_db = composed_gain_db(track.gain_db, sound);
                 entry.mixer.pan = track.pan;
                 // A draft names a bus by its position in the composition, because the composer has
                 // no ids to name it by; this is where the two meet.
@@ -1789,6 +1890,42 @@ impl Session {
         // because a send cannot name a bus that does not exist yet.
         for bus in &buses {
             project.move_track(*bus, project.tracks.len());
+        }
+
+        // And a limiter across the master, because a measurement asked for one rather than
+        // because a mix bus usually has one. `kit_trim_db` takes the shipped presets off the
+        // ceiling and does not quite clear it: `city-pop` used to peak at +3.06 dBFS on every
+        // seed and clip 3507 samples in a hundred-second render, and with the kits normalised it
+        // still reaches over on four draws in 128, worst +0.63 dBFS and ten samples. That is a
+        // hundredfold better and it is not none, and a piece that arrives over full scale is a
+        // piece somebody exports to a 24-bit file and hears crack.
+        //
+        // A net and nothing more. Seven of those 128 draws even reach the ceiling, and no other
+        // preset's loudest draw in 24 comes near it, so on almost every piece this is a slot that
+        // passes its input through unchanged. That is what makes it the right shape: the same
+        // ceiling held by turning every composed mix down instead would have charged the pieces
+        // that never went over for the ones that did.
+        //
+        // Written into the document as a slot anyone can see and take off, rather than clamped
+        // somewhere in the renderer. It is a mixing decision, and a mixing decision a person
+        // cannot find is one they cannot disagree with.
+        match self.registry.has_effect(MASTER_LIMITER) {
+            true => {
+                if let Some(slot) = project.add_effect(None, MASTER_LIMITER)
+                    && let Some(added) = project.master.effects.iter_mut().find(|s| s.id == slot)
+                {
+                    // Written down rather than left to the plugin's default, so the ceiling the
+                    // piece was measured against is the ceiling the file carries.
+                    added
+                        .state
+                        .params
+                        .insert(LIMITER_CEILING.to_string(), MASTER_CEILING_DB);
+                }
+            }
+            // Reported the way a missing reverb on a bus is, and for a better reason: without it
+            // the piece is the same piece, only with nothing standing between a rare loud bar and
+            // the end of the scale.
+            false => report.substituted.push(MASTER_LIMITER.to_string()),
         }
 
         // Loop over the whole piece, so pressing play and leaving it running plays the song.
@@ -7364,6 +7501,138 @@ mod tests {
     }
 
     #[test]
+    fn the_kit_trims_bring_every_kit_of_the_shipped_font_to_the_quietest() {
+        // The measurement the table is, restated as the thing it claims: each kit's kick, at
+        // unity, on the shipped font, and the trim that puts it where the quietest one already
+        // is. Written out again here rather than derived, so that changing a trim without
+        // remeasuring — or remeasuring and forgetting a kit — fails rather than passes quietly.
+        let kits: [(u8, f32, f32); 8] = [
+            (0, 2.38, -3.82),
+            (8, 5.32, -6.76),
+            (16, 1.95, -3.39),
+            (24, 2.46, -3.90),
+            (25, -1.43, 0.0),
+            (32, 6.51, -7.95),
+            (40, 6.51, -7.95),
+            (48, -1.26, 0.0),
+        ];
+        for (patch, unity, trim) in kits {
+            let sound = auris_compose::gm::Program(patch).sound(true);
+            assert_eq!(
+                kit_trim_db(sound),
+                trim,
+                "{}",
+                auris_compose::gm::Program(patch).kit_name()
+            );
+            // And what it buys: 7.95 dB of spread across the font comes down to a fifth of a
+            // decibel, which is the whole claim. -1.44 is the reference, -1.26 the Orchestra Kit
+            // that is left alone because it is already within that.
+            let landed = unity + trim;
+            assert!(
+                (-1.45..=-1.25).contains(&landed),
+                "{} lands at {landed} dBFS",
+                auris_compose::gm::Program(patch).kit_name()
+            );
+            // A calibration takes away; it never hands a kit gain it did not measure.
+            assert!(trim <= 0.0);
+        }
+        // Every kit the composer can name is one of those eight, so nothing a specification can
+        // write falls through to the untouched case by accident.
+        for (patch, name) in auris_compose::gm::KITS {
+            assert!(
+                kits.iter().any(|(measured, _, _)| *measured == patch),
+                "{name} is a kit a specification can name and nobody measured it"
+            );
+        }
+
+        // A patch nobody measured is left where it is. A font may put a kit at any number in
+        // bank 128, and a trim for a sound this build has never heard would be a guess.
+        assert_eq!(kit_trim_db(auris_compose::gm::Program(1).sound(true)), 0.0);
+        assert_eq!(
+            kit_trim_db(auris_compose::gm::Program(127).sound(true)),
+            0.0
+        );
+        // And the bank is what decides that this is a kit at all: patch 0 is a grand piano in the
+        // pitched set and the Standard Kit in the percussion one, and only the second is trimmed.
+        assert_eq!(kit_trim_db(auris_compose::gm::Program(0).sound(false)), 0.0);
+        assert_eq!(
+            kit_trim_db(auris_compose::gm::Program(40).sound(false)),
+            0.0
+        );
+    }
+
+    #[test]
+    fn a_composed_kit_is_trimmed_on_top_of_the_level_its_role_asked_for() {
+        // The kit trim is an apology for the font, and the role gain is the mix the composer
+        // wrote. Adding them keeps both readable; replacing one with the other would mean a
+        // drummer at -5 dB and a drummer at -12 arrived at the same fader.
+        let room = auris_compose::gm::Program(8).sound(true);
+        let role = auris_compose::Role::Kick.default_gain_db();
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        assert!(
+            close(composed_gain_db(role, Some(room)), role + kit_trim_db(room)),
+            "{} is neither the role's level nor the trim alone",
+            composed_gain_db(role, Some(room))
+        );
+        assert!(composed_gain_db(role, Some(room)) < role.min(kit_trim_db(room)));
+        // A part that never reached a font keeps exactly the level it was written at — which is
+        // what leaves the built-in kit, already far under its own pitched parts, alone.
+        assert_eq!(composed_gain_db(role, None), role);
+
+        // And the document `compose` actually builds says the same. Whether the two hundred
+        // megabytes are on this machine is a fact about the machine — `session()` is headless
+        // precisely so that a document does not come out different on a CI runner — so what is
+        // asserted below is the rule rather than one machine's number.
+        let mut session = session();
+        let spec = auris_compose::SongSpec::parse(
+            r#"
+                form = ["verse"]
+
+                [section.verse]
+                bars = 4
+
+                [[part]]
+                name    = "kick"
+                role    = "kick"
+                program = "Room Kit"
+                "#,
+        )
+        .unwrap();
+        let piece = auris_compose::compose(&spec);
+        let part = piece
+            .tracks
+            .iter()
+            .find(|track| track.name == "kick")
+            .expect("the part was written");
+        assert_eq!(part.gain_db, role, "the part is at its role's level");
+        assert_eq!(part.sound, Some(room), "and it asked for the Room Kit");
+
+        session.compose(&piece).unwrap();
+        let strip = session
+            .project()
+            .tracks
+            .iter()
+            .find(|track| track.name == "kick")
+            .expect("the part became a track")
+            .mixer
+            .gain_db;
+        // Which way this comes out depends on whether the font reached the document, so it is
+        // stated as the rule rather than as a number: the strip is the part's level put through
+        // the same decision, and it moves off that level exactly when there is a kit playing.
+        let on_a_kit = !session.project().soundfonts.is_empty();
+        let expected = composed_gain_db(role, on_a_kit.then_some(room));
+        assert!(
+            close(strip, expected),
+            "the strip is at {strip} dB and should be at {expected}"
+        );
+        assert_eq!(
+            on_a_kit,
+            strip < role,
+            "a composed part is trimmed exactly when it landed on the font the trim is for"
+        );
+    }
+
+    #[test]
     fn a_composed_document_remembers_what_it_was_asked_for() {
         // Without this, a piece composed, saved and reopened comes back to a dialog full of
         // defaults, and Another Take on it writes a different song rather than another take of
@@ -7528,6 +7797,68 @@ mod tests {
         assert!(
             rendered.peak() > 0.01,
             "a composed piece rendered silence, peak {}",
+            rendered.peak()
+        );
+    }
+
+    #[test]
+    fn a_composed_piece_cannot_leave_the_master_over_full_scale() {
+        // The net under the kit trim, measured rather than described. `kit_trim_db` took the
+        // shipped presets off the ceiling and did not clear it — four seeds of `city-pop` in a
+        // hundred and twenty-eight still reached over, the worst at +0.63 dBFS — so a composed
+        // document carries a limiter, and what that has to be worth is a number.
+        let mut session = session();
+        let spec = auris_compose::SongSpec::parse(
+            r#"
+                form = "verse"
+                chords = "@marusa"
+                [section.verse]
+                bars = 4
+                "#,
+        )
+        .unwrap();
+        session.compose(&auris_compose::compose(&spec)).unwrap();
+
+        let slot = session
+            .project()
+            .master
+            .effects
+            .last()
+            .expect("a composed master carries a limiter");
+        assert_eq!(
+            slot.effect_id, MASTER_LIMITER,
+            "and it is the last thing in the chain"
+        );
+        assert_eq!(
+            slot.state.params.get(LIMITER_CEILING),
+            Some(&MASTER_CEILING_DB),
+            "with the ceiling the piece was measured against written down"
+        );
+
+        // Twenty decibels of drive, which is far more than any preset has ever asked for, so that
+        // what is measured is the ceiling holding rather than the piece happening to be quiet.
+        let tracks: Vec<TrackId> = session
+            .project()
+            .tracks
+            .iter()
+            .map(|track| track.id)
+            .collect();
+        for track in tracks {
+            session.set_param(ParamTarget::TrackGain(track), 20.0);
+        }
+        let rendered = session
+            .render_job()
+            .render(&auris_engine::OfflineOptions::whole_project(), &mut |_| {})
+            .unwrap();
+        let ceiling = auris_core::param::db_to_gain(MASTER_CEILING_DB);
+        assert!(
+            rendered.peak() > ceiling * 0.9,
+            "the drive did not reach the limiter, peak {}",
+            rendered.peak()
+        );
+        assert!(
+            rendered.peak() <= ceiling,
+            "the master left {} through a ceiling of {ceiling}",
             rendered.peak()
         );
     }
