@@ -469,6 +469,84 @@ pub fn remove_part(dials: &mut SongDials, index: usize) -> bool {
     true
 }
 
+/// Whether a part plays in a section.
+///
+/// An empty list means *everything*, so this is not the same question as whether the part is named.
+pub fn part_plays_in(section: &SectionSpec, part: &str) -> bool {
+    section.parts.is_empty() || section.parts.iter().any(|name| name == part)
+}
+
+/// What the button that opens a section's roster says.
+///
+/// A count and not a list of names: the row it sits in is already a name, a progression and a
+/// transposition wide, and seven names would not fit in any of what is left. `7/7` is the section
+/// that plays everything, which is also how a section that has never been touched reads.
+pub fn section_parts_label(section: &SectionSpec, roster: usize) -> String {
+    let playing = if section.parts.is_empty() {
+        roster
+    } else {
+        section.parts.len()
+    };
+    format!("{playing}/{roster}")
+}
+
+/// Turns one part on or off for one section.
+///
+/// Three things make this more than adding a name to a list or taking one out of it, and every
+/// one of them is a way a plain toggle would be wrong.
+///
+/// **Empty means everything.** So the stored list is read into the set it *stands for* before
+/// anything is changed. Taking the hat out of a section that names no parts is not "remove `hat`
+/// from an empty list" — which does nothing — it is "name the other six".
+///
+/// **A full list goes back to empty.** Turning the last part back on stores everything as nothing,
+/// because a section that names all seven parts would go on naming seven when an eighth is added,
+/// and would be the one section the new part silently does not play in. The format writes it that
+/// way for the same reason.
+///
+/// **The last part stays.** A section playing nothing is silence, and the list cannot say it: the
+/// spelling for an empty set is already taken by the full one. Refusing is the honest answer;
+/// somebody who wants a silent stretch removes the section from the form.
+pub fn toggle_part_in_section(dials: &mut SongDials, index: usize, part: &str) -> bool {
+    let roster: Vec<String> = dials.parts.iter().map(|part| part.name.clone()).collect();
+    if !roster.iter().any(|name| name == part) {
+        return false;
+    }
+    let Some(section) = dials.sections.get_mut(index) else {
+        return false;
+    };
+    let mut playing: Vec<String> = if section.parts.is_empty() {
+        roster.clone()
+    } else {
+        roster
+            .iter()
+            .filter(|name| section.parts.contains(name))
+            .cloned()
+            .collect()
+    };
+    if playing.iter().any(|name| name == part) {
+        if playing.len() <= 1 {
+            return false;
+        }
+        playing.retain(|name| name != part);
+    } else {
+        // Rebuilt in roster order rather than pushed onto the end, so the specification reads
+        // down the mixer rather than in the order somebody happened to click.
+        playing.push(part.to_string());
+        playing = roster
+            .iter()
+            .filter(|name| playing.contains(name))
+            .cloned()
+            .collect();
+    }
+    section.parts = if playing.len() == roster.len() {
+        Vec::new()
+    } else {
+        playing
+    };
+    true
+}
+
 /// The mood word these four numbers are exactly, if any.
 ///
 /// A mood the dials have been nudged away from is no word at all, and the picker says so. Naming
@@ -921,6 +999,125 @@ mod tests {
             spec.charts["marusa"].bar_count(),
             4,
             "丸サ進行 is four bars"
+        );
+    }
+
+    /// The names of the parts playing in a section, read the way the composer reads them.
+    fn playing(dials: &SongDials, index: usize) -> Vec<&str> {
+        dials
+            .parts
+            .iter()
+            .map(|part| part.name.as_str())
+            .filter(|name| part_plays_in(&dials.sections[index], name))
+            .collect()
+    }
+
+    #[test]
+    fn turning_a_part_off_in_a_section_that_named_none_names_the_others() {
+        // The trap this whole function exists for. An empty list means *everything*, so removing
+        // a name from it does nothing at all — the section goes on playing the part that was just
+        // switched off, and the row keeps its tick.
+        let mut dials = SongDials::default();
+        let roster = dials.parts.len();
+        assert!(
+            dials.sections[0].parts.is_empty(),
+            "the fixture starts open"
+        );
+
+        assert!(toggle_part_in_section(&mut dials, 0, "hat"));
+        assert_eq!(dials.sections[0].parts.len(), roster - 1);
+        assert!(!playing(&dials, 0).contains(&"hat"));
+        assert!(playing(&dials, 0).contains(&"bass"));
+    }
+
+    #[test]
+    fn turning_the_last_one_back_on_says_everything_rather_than_listing_it() {
+        // Stored as a list, a section naming all six parts would go on naming six when a seventh
+        // is added — and would be the one section the new part silently does not play in.
+        let mut dials = SongDials::default();
+        toggle_part_in_section(&mut dials, 0, "hat");
+        toggle_part_in_section(&mut dials, 0, "snare");
+        assert_eq!(dials.sections[0].parts.len(), dials.parts.len() - 2);
+
+        toggle_part_in_section(&mut dials, 0, "hat");
+        toggle_part_in_section(&mut dials, 0, "snare");
+        assert!(
+            dials.sections[0].parts.is_empty(),
+            "everything should be spelled as nothing: {:?}",
+            dials.sections[0].parts
+        );
+
+        // And the proof that it matters: a part added afterwards plays there.
+        add_part(&mut dials, Role::Pad);
+        let added = dials.parts.last().unwrap().name.clone();
+        assert!(playing(&dials, 0).contains(&added.as_str()));
+    }
+
+    #[test]
+    fn the_last_part_in_a_section_cannot_be_switched_off() {
+        // A section playing nothing is silence, and the list has no way to say it — the spelling
+        // for an empty set is already taken by the full one. Silently storing an empty list would
+        // turn every part back on, which is the opposite of what was asked for.
+        let mut dials = SongDials::default();
+        let names: Vec<String> = dials.parts.iter().map(|part| part.name.clone()).collect();
+        for name in names.iter().skip(1) {
+            assert!(toggle_part_in_section(&mut dials, 0, name));
+        }
+        assert_eq!(playing(&dials, 0), [names[0].as_str()]);
+
+        assert!(
+            !toggle_part_in_section(&mut dials, 0, &names[0]),
+            "the last part went out"
+        );
+        assert_eq!(playing(&dials, 0), [names[0].as_str()]);
+    }
+
+    #[test]
+    fn a_sections_roster_is_stored_down_the_mixer_rather_than_in_click_order() {
+        // The specification is a document somebody reads. A list in the order the rows happened
+        // to be clicked reads as noise next to a roster that is in a deliberate order.
+        let mut dials = SongDials::default();
+        for name in ["hat", "lead", "kick"] {
+            toggle_part_in_section(&mut dials, 0, name);
+        }
+        for name in ["kick", "hat"] {
+            toggle_part_in_section(&mut dials, 0, name);
+        }
+        let order: Vec<&str> = dials.parts.iter().map(|part| part.name.as_str()).collect();
+        let stored = &dials.sections[0].parts;
+        let expected: Vec<&&str> = order.iter().filter(|name| **name != "lead").collect();
+        assert_eq!(stored.iter().collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
+    fn a_section_that_sits_a_part_out_still_sits_it_out_after_a_save() {
+        // The seam the whole feature crosses: the sheet edits a set, the format writes a list,
+        // and the composer reads the list back. A section whose roster did not survive the file
+        // would be a button that appears to work in the sheet and does nothing to the song.
+        let mut dials = SongDials::default();
+        toggle_part_in_section(&mut dials, 0, "hat");
+        toggle_part_in_section(&mut dials, 0, "snare");
+        let before = playing(&dials, 0);
+
+        let written = song_spec(&dials).to_toml();
+        let back = song_dials(&SongSpec::parse(&written).expect("the sheet writes valid TOML"));
+        assert_eq!(playing(&back, 0), before, "\n{written}");
+        assert_eq!(back, dials);
+    }
+
+    #[test]
+    fn the_label_counts_the_parts_that_play() {
+        let mut dials = SongDials::default();
+        let roster = dials.parts.len();
+        assert_eq!(
+            section_parts_label(&dials.sections[0], roster),
+            format!("{roster}/{roster}"),
+            "a section nobody has touched plays everything"
+        );
+        toggle_part_in_section(&mut dials, 0, "hat");
+        assert_eq!(
+            section_parts_label(&dials.sections[0], roster),
+            format!("{}/{roster}", roster - 1)
         );
     }
 

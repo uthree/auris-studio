@@ -9,6 +9,21 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### A section chooses who plays it
+
+* **The song sheet can sit a part out.** `[section.x] parts = "…"` has been in the format the whole
+  time and worked end to end, and there was no way to reach it without hand-editing a `.asong` —
+  so a piece composed from the sheet was the same roster from the first bar to the last, however
+  long it ran. Every section row now has a `7/7` button listing the roster with a tick against the
+  parts that come in.
+* The rule the button obeys is not a set toggle, and could not be. An empty list means
+  *everything*, so switching the hat off in a section that names nobody has to write down the
+  other six rather than remove a name from an empty list — which is what a plain toggle would do,
+  and it does nothing at all. Turning the last one back on says everybody again rather than listing
+  them, or the section would go on naming six when a seventh part is added and would be the one
+  section that new part silently does not play in. The last part left cannot go: a section playing
+  nothing is silence, and the spelling for it is already taken.
+
 ### Eight presets are eight draws
 
 * **Every preset ships a seed of its own.** All eight left it at the default, so the shipped songs

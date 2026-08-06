@@ -429,6 +429,7 @@ strings! {
     SongAddSection { en: "Add Section", ja: "セクションを追加" }
     SongSectionName { en: "Section", ja: "セクション" }
     SongTranspose { en: "Transpose", ja: "移調" }
+    SongSectionParts { en: "Who Plays", ja: "演奏するパート" }
     // Writing a progression out, and keeping the one written. The second reaches past the song
     // into the book this installation carries.
     SongWriteProgression { en: "Write one…", ja: "手で書く…" }

@@ -344,8 +344,9 @@ between clips that happen to coexist and clips that belong to the same song.
 
 **File → Compose a Song…** opens the song sheet, in three columns: the **song** — key, tempo,
 meter, mood, groove, seed and the feel dials; the **form** — one row per playing of a section,
-each with its length, how hard it is played, what progression it plays and how far it is moved
-from the key; and the **parts** — one row each, with role, instrument, octave and four dials.
+each with its length, how hard it is played, what progression it plays, how far it is moved from
+the key and which parts play it; and the **parts** — one row each, with role, instrument, octave
+and four dials.
 **Write**, **Another Take** — the same dials and the next seed — and **Save as Specification…**.
 The whole piece arrives as a single undo step, so a composition that is not what was wanted is one
 press away from the document that was there before it.
@@ -385,6 +386,13 @@ twice, and editing either row edits the one section, because that is what makes 
 the same chorus. The section picker offers the song's own names first — choosing one of those is a
 repeat — and under a rule a fresh one of each: once there is a verse, `verse 2` is one click, which
 is how a song gets two verses that are not the same eight bars.
+
+**Who plays is chosen per section**, which is what stops a piece being the same six instruments
+from the first bar to the last. The `7/7` button lists the roster with a tick against the parts
+that come in; turning the pad off in the verse is one click. The last part left cannot be switched
+off — a section that plays nothing is silence, and the specification has no way to write it, since
+naming nobody is already how *everybody* is spelled. Turn the last one back on and it goes back to
+saying everybody, so a part added later plays there too.
 
 **A progression is chosen per section**, which is what lets one change partway through a song. The
 picker lists the ones this song already carries, then **Write one…** and **Keep in the catalogue…**,

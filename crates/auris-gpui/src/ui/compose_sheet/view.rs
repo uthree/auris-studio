@@ -365,6 +365,7 @@ impl AurisApp {
     ) -> Vec<AnyElement> {
         let theme = self.theme.clone();
         let removable = dials.form.len() > 1;
+        let roster = dials.parts.len();
         let mut rows: Vec<AnyElement> = vec![
             div()
                 .flex()
@@ -487,6 +488,20 @@ impl AurisApp {
                                 &theme,
                                 cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
                                     let menu = this.song_transpose_menu(event.position(), index);
+                                    this.open_menu(menu);
+                                    cx.notify();
+                                }),
+                            )))
+                            .child(div().w(px(44.0)).child(button(
+                                ("song-section-parts", place),
+                                section_parts_label(section, roster),
+                                ButtonStyle::Normal,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                                    let menu =
+                                        this.song_section_parts_menu(event.position(), index);
                                     this.open_menu(menu);
                                     cx.notify();
                                 }),

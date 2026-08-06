@@ -150,6 +150,47 @@ impl AurisApp {
         menu
     }
 
+    /// Which parts of the roster play in a section.
+    ///
+    /// One row per part with a tick against the ones that play, rather than a list to edit: the
+    /// question a person has here is "does the pad come in yet", and a tick answers it at a glance
+    /// for the whole roster at once.
+    ///
+    /// The last part left is shown ticked and dead. A section that plays nothing is silence, and
+    /// the specification cannot say it — an empty list is already how *everything* is written down
+    /// — so the row that would produce one is unusable rather than quietly doing nothing.
+    pub(super) fn song_section_parts_menu(
+        &self,
+        anchor: gpui::Point<gpui::Pixels>,
+        section: usize,
+    ) -> ContextMenu {
+        let mut menu = ContextMenu::new(anchor, self.t(Key::SongSectionParts));
+        let Some(dials) = self.song_sheet.as_ref() else {
+            return menu;
+        };
+        let Some(plan) = dials.sections.get(section) else {
+            return menu;
+        };
+        let playing = dials
+            .parts
+            .iter()
+            .filter(|part| part_plays_in(plan, &part.name))
+            .count();
+        for part in &dials.parts {
+            let plays = part_plays_in(plan, &part.name);
+            menu = menu.toggle_if(
+                !(plays && playing <= 1),
+                part.name.clone(),
+                MenuCommand::SongSectionPart {
+                    section,
+                    part: part.name.clone(),
+                },
+                plays,
+            );
+        }
+        menu
+    }
+
     /// The sections a place in the form may play: every one the song has, and a new one.
     pub(super) fn song_form_name_menu(
         &self,
