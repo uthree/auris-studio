@@ -116,6 +116,12 @@ fn render_segment(
         // A track muted long enough to have finished fading out contributes nothing, so skip it
         // entirely. One muted a moment ago still has a fade to slide down and must be rendered.
         if track.strip.is_silent() {
+            // `render_source` is the only thing that drains the audition queue, and skipping the
+            // strip skips that too — so notes played into a muted track would pile up until the
+            // queue hit its cap and then start dropping whatever came next, note-offs included.
+            // Every note-on that outlived its lost note-off came back sounding on the unmute and
+            // stayed there. The track cannot be heard either way, so the notes are dropped here.
+            track.audition.clear();
             continue;
         }
         track.scratch.set_frame_count(frames);
@@ -141,6 +147,17 @@ fn render_segment(
         strip.apply_gain_and_pan(scratch);
         strip.apply_mute(scratch);
         deliver_sends(sends, scratch, bus_inputs, false);
+
+        // `apply_mute` is what moves the fade, so this is the block it closed on and the last one
+        // this track renders until the mute opens again. Anything the instrument is still holding
+        // has to be let go of now: the note-off that would have released it arrives through the
+        // audition queue, which is cleared rather than delivered from here on, so the voice would
+        // otherwise be waiting at full level when the strip came back. Playback continuity is left
+        // alone deliberately — the skipped blocks make `continued_from` stale, so the notes the
+        // timeline holds across the mute are chased back in on the unmute.
+        if track.strip.is_silent() {
+            track.silence_voices();
+        }
 
         track.peak = track.peak.max(track.scratch.peak());
         // A spectrum display, if one is open on this strip, reads what the strip actually sends
@@ -909,6 +926,120 @@ mod tests {
         render_block(&mut graph, &mut transport, &mut out, false);
         assert!((out.peak() - TONE_AMPLITUDE).abs() < 1e-5);
         assert_eq!(transport.position_frames, 0);
+    }
+
+    /// How many voices a track's instrument is holding.
+    ///
+    /// The stand-in tone counts the note-ons it has not been handed a note-off for, so this is
+    /// exactly what "left sounding" means — and a count rather than a level, which a mute fade
+    /// sitting on top of the strip would otherwise hide.
+    fn sounding_voices(graph: &RenderGraph, track: usize) -> usize {
+        match graph.track(track).map(RenderTrack::source) {
+            Some(RenderSource::Instrument { instrument, .. }) => instrument.active_voices(),
+            _ => 0,
+        }
+    }
+
+    /// A track auditioned into while the transport sits still, with its timeline note parked far
+    /// enough away that nothing but the audition queue can reach the instrument.
+    fn auditioned_track() -> (RenderGraph, Transport, AudioBuffer) {
+        let project = one_note_project(Ticks::from_beats(100.0), Ticks::QUARTER);
+        (
+            build(&project, 512),
+            Transport::new(),
+            AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE),
+        )
+    }
+
+    #[test]
+    fn a_closing_mute_lets_go_of_the_voices_it_is_silencing() {
+        // The block the fade closes on is the last one the track renders until the mute opens
+        // again, and the release for a note held through it arrives by a queue nothing drains
+        // any more. Left holding, the voice waits at full level for the unmute.
+        let (mut graph, mut transport, mut out) = auditioned_track();
+        graph.note_on(0, 60, 1.0);
+        render_block(&mut graph, &mut transport, &mut out, false);
+        assert_eq!(sounding_voices(&graph, 0), 1);
+        assert!((out.peak() - TONE_AMPLITUDE).abs() < 1e-5);
+
+        // 512 frames is longer than the fade, so this is the block it closes on.
+        graph.set_track_mute(0, true);
+        render_block(&mut graph, &mut transport, &mut out, false);
+        assert_eq!(
+            sounding_voices(&graph, 0),
+            0,
+            "the note held through the mute has no way left to be released"
+        );
+
+        graph.note_off(0, 60);
+        graph.set_track_mute(0, false);
+        render_block(&mut graph, &mut transport, &mut out, false);
+        render_block(&mut graph, &mut transport, &mut out, false);
+        assert_eq!(out.peak(), 0.0, "the unmute brought a dead note back");
+    }
+
+    #[test]
+    fn notes_played_into_a_muted_track_do_not_come_back_on_the_unmute() {
+        // A mute is a command rather than a rebuild, so the same track — and the same audition
+        // queue — lives right through it, and the skipped strip means nothing drains that queue.
+        // Two chord-lane sweeps overfill its sixteen slots, what falls off the end is the last
+        // four note-offs, and each note-on that lost its release used to come back sounding.
+        let (mut graph, mut transport, mut out) = auditioned_track();
+        graph.set_track_mute(0, true);
+        render_block(&mut graph, &mut transport, &mut out, false);
+
+        for _ in 0..2 {
+            for pitch in 60u8..65 {
+                graph.note_on(0, pitch, 1.0);
+            }
+            for pitch in 60u8..65 {
+                graph.note_off(0, pitch);
+            }
+        }
+        render_block(&mut graph, &mut transport, &mut out, false);
+        assert_eq!(out.peak(), 0.0, "a muted track has nothing to say");
+        assert_eq!(sounding_voices(&graph, 0), 0);
+
+        graph.set_track_mute(0, false);
+        // The first block slides the fade open; by the second it is settled, so anything still
+        // held is at its own full level.
+        render_block(&mut graph, &mut transport, &mut out, false);
+        render_block(&mut graph, &mut transport, &mut out, false);
+        assert_eq!(
+            sounding_voices(&graph, 0),
+            0,
+            "the twenty events queued into a muted track came back as voices"
+        );
+        assert_eq!(out.peak(), 0.0);
+    }
+
+    #[test]
+    fn a_muted_track_keeps_its_timeline_notes_across_the_mute() {
+        // The other half of dropping what a muted track is holding: the notes that belong to the
+        // arrangement are not the audition queue's to lose. They come back through the chase,
+        // because the blocks the track sat out leave it with a playhead it did not continue from.
+        let project = one_note_project(Ticks::ZERO, Ticks::from_beats(4.0));
+        let mut graph = build(&project, 512);
+        let mut transport = Transport::playing_from(0);
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+        render_block(&mut graph, &mut transport, &mut out, false);
+
+        graph.set_track_mute(0, true);
+        for _ in 0..4 {
+            render_block(&mut graph, &mut transport, &mut out, false);
+        }
+        assert_eq!(out.peak(), 0.0);
+        assert_eq!(sounding_voices(&graph, 0), 0);
+
+        graph.set_track_mute(0, false);
+        render_block(&mut graph, &mut transport, &mut out, false);
+        render_block(&mut graph, &mut transport, &mut out, false);
+        assert_eq!(sounding_voices(&graph, 0), 1);
+        assert!(
+            (out.peak() - TONE_AMPLITUDE).abs() < 1e-5,
+            "got {}",
+            out.peak()
+        );
     }
 
     #[test]
