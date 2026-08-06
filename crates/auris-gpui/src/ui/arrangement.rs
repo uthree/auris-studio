@@ -508,32 +508,20 @@ impl AurisApp {
             self.prompt_for_section(tick);
             return;
         }
-        if let Some(at) = self.section_handle_at(x) {
-            self.begin_drag(Drag::SectionLabel {
-                at,
-                grab_offset: tick - at,
-            });
-        }
-    }
-
-    /// The section boundary whose handle sits under timeline-relative `x`, if any.
-    fn section_handle_at(&self, x: Pixels) -> Option<Ticks> {
         let width = self
             .canvas
             .structure
             .get()
             .map_or(px(1200.0), |bounds| bounds.size.width);
-        let (from, to) = self.timeline.visible_range(width);
-        self.project()
-            .sections
-            .points()
-            .iter()
-            .filter(|point| point.label.is_some() && point.tick >= from && point.tick <= to)
-            .map(|point| point.tick)
-            .find(|at| {
-                let edge = self.timeline.tick_to_x(*at);
-                x >= edge && x <= edge + paint::CHORD_HANDLE
-            })
+        let visible = self.timeline.visible_range(width);
+        if let Some(at) =
+            section_handle_at(&self.timeline, self.project().sections.points(), visible, x)
+        {
+            self.begin_drag(Drag::SectionLabel {
+                at,
+                grab_offset: tick - at,
+            });
+        }
     }
 
     /// The strip of chords under the structure lane.
@@ -1314,9 +1302,9 @@ impl AurisApp {
             && self.pointer.delete.matches(event)
         {
             let _ = self.session.remove_clip(clip_id);
-            if self.selected_clip == Some(clip_id) {
-                self.select_clip(None);
-            }
+            let (surviving, primary) =
+                selection_without(&self.selected_clips, self.selected_clip, clip_id);
+            self.select_clips(surviving, primary);
             self.selected_notes.clear();
             cx.notify();
             return;
@@ -1642,6 +1630,34 @@ fn chord_handle_at(
     })
 }
 
+/// The section boundary a press at `x` takes hold of, if it landed on that boundary's handle.
+///
+/// Two decisions, and only the first of them is the structure lane's own. A handle is drawn on a
+/// boundary that names a stretch and sits inside `visible`: the unnamed point that *ends* a
+/// song's structure has nothing to move, and a section beginning off to the left of the window
+/// is painted as a block with no grab bar on it, because dragging the visible edge of a clipped
+/// span would move a boundary that is not there.
+///
+/// Where the bar itself is, on the other hand, is [`chord_handle_at`]'s question rather than a
+/// second answer to it. `paint::structure_lane` insets its block by exactly the pixel
+/// `paint::harmony_lane` insets its own by, and paints the same six-pixel bar on the front of it;
+/// the copy of the rule that used to live here had drifted off that inset, which left the
+/// rightmost painted column of every grab bar dead to the press that landed on it.
+fn section_handle_at(
+    view: &crate::ui::timeline::TimelineView,
+    points: &[SectionPoint],
+    visible: (Ticks, Ticks),
+    x: Pixels,
+) -> Option<Ticks> {
+    let (from, to) = visible;
+    let handles: Vec<Ticks> = points
+        .iter()
+        .filter(|point| point.label.is_some() && point.tick >= from && point.tick <= to)
+        .map(|point| point.tick)
+        .collect();
+    chord_handle_at(view, &handles, x)
+}
+
 /// One edge's grab zone, split around the band an audio clip gives to its fade handles.
 ///
 /// Two rectangles rather than one when the band applies, because the name bar above it resizes
@@ -1713,6 +1729,32 @@ fn fade_handle_at(
     } else {
         FadeEdge::Out
     })
+}
+
+/// What is left of a clip selection once `removed` has been deleted from the document, as the
+/// surviving set and the clip the editors should point at.
+///
+/// The id has to leave the whole set and not merely the primary slot. A rubber band leaves
+/// several clips selected and the delete gesture takes them one at a time, so pruning only when
+/// the one deleted happened to be the primary left the id of a clip that no longer exists sitting
+/// in the selection — invisible until a command read the set, and then Duplicate, which fails a
+/// whole batch on the first id that resolves to nothing, reported failure for a gesture whose
+/// copies it had already made. Clearing the selection outright is the other half of the same
+/// mistake: the clips beside the deleted one are still there and were still chosen.
+///
+/// The primary is only dropped here, never re-pointed: `AurisApp::select_clips` puts it back on a
+/// member of whatever set it is given, and that is the one place that rule should live.
+fn selection_without(
+    selected: &std::collections::BTreeSet<ClipId>,
+    primary: Option<ClipId>,
+    removed: ClipId,
+) -> (std::collections::BTreeSet<ClipId>, Option<ClipId>) {
+    let surviving = selected
+        .iter()
+        .copied()
+        .filter(|id| *id != removed)
+        .collect();
+    (surviving, primary.filter(|id| *id != removed))
 }
 
 /// What one lane draws.
@@ -2067,6 +2109,113 @@ mod tests {
                 "every column the bar is painted on takes hold of it",
             );
         }
+    }
+
+    #[test]
+    fn a_section_is_taken_hold_of_by_the_bar_that_is_drawn_and_nothing_beside_it() {
+        // The structure lane's grab bars are the chord lane's, painted at the same inset by the
+        // same rule — and the second copy of that rule which used to live in the lane had drifted
+        // off the inset, leaving the rightmost painted column of every bar dead to a press.
+        let view = view();
+        let bar = Ticks(3840);
+        let points = [
+            SectionPoint {
+                tick: bar,
+                label: Some("Chorus".to_string()),
+            },
+            SectionPoint {
+                tick: bar * 4,
+                label: None,
+            },
+        ];
+        let visible = (Ticks::ZERO, bar * 8);
+        let at = |x| section_handle_at(&view, &points, visible, x);
+
+        let drawn = view.tick_to_x(bar) + paint::CHORD_BLOCK_INSET;
+        for offset in 0..(f32::from(paint::CHORD_HANDLE) as i32) {
+            assert_eq!(
+                at(drawn + px(offset as f32)),
+                Some(bar),
+                "every column the bar is painted on takes hold of the section",
+            );
+        }
+        assert_eq!(
+            at(drawn + paint::CHORD_HANDLE - px(0.5)),
+            Some(bar),
+            "the last column the bar is painted on is still the bar"
+        );
+        assert_eq!(
+            at(drawn - px(1.0)),
+            None,
+            "before it is the gap between two blocks"
+        );
+        assert_eq!(
+            at(drawn + paint::CHORD_HANDLE),
+            None,
+            "past it is the block the name is written on"
+        );
+
+        // The unnamed point that ends a structure draws as bare background: nothing to take hold
+        // of, because there is no section there to move.
+        assert_eq!(at(view.tick_to_x(bar * 4) + paint::CHORD_BLOCK_INSET), None);
+
+        // A section beginning just off the left of the window has no bar either. The painter
+        // draws a clipped span without one, because the boundary is not at the edge the visible
+        // block starts on — so the last columns of a bar that geometry alone would still answer
+        // for must not be pressable.
+        let scrolled = TimelineView {
+            pixels_per_beat: 48.0,
+            scroll_ticks: bar + Ticks(60),
+        };
+        assert_eq!(scrolled.tick_to_x(bar), px(-3.0));
+        assert_eq!(
+            section_handle_at(
+                &scrolled,
+                &points,
+                scrolled.visible_range(px(600.0)),
+                px(0.0)
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn deleting_one_of_a_swept_selection_prunes_it_and_keeps_the_rest() {
+        let swept: std::collections::BTreeSet<ClipId> =
+            [ClipId(1), ClipId(2), ClipId(3)].into_iter().collect();
+
+        // The gesture pruned the selection only when the clip deleted happened to be the primary
+        // one, so deleting any of the others left the id of a clip that no longer exists behind —
+        // and the next Duplicate failed the whole batch on it.
+        let (surviving, primary) = selection_without(&swept, Some(ClipId(1)), ClipId(3));
+        assert_eq!(
+            surviving.iter().copied().collect::<Vec<_>>(),
+            vec![ClipId(1), ClipId(2)],
+            "the deleted clip stayed in the selection"
+        );
+        assert_eq!(
+            primary,
+            Some(ClipId(1)),
+            "and the primary was not the one deleted"
+        );
+
+        // Deleting the primary is the other half of it: the clips beside it are still in the
+        // document and were still chosen, so the selection must not go with it.
+        let (surviving, primary) = selection_without(&swept, Some(ClipId(1)), ClipId(1));
+        assert_eq!(
+            surviving.iter().copied().collect::<Vec<_>>(),
+            vec![ClipId(2), ClipId(3)]
+        );
+        assert_eq!(
+            primary, None,
+            "`select_clips` is what puts it back on a survivor"
+        );
+
+        // The last clip standing leaves nothing selected at all, exactly as it always did.
+        let alone: std::collections::BTreeSet<ClipId> = [ClipId(7)].into_iter().collect();
+        let (surviving, primary) = selection_without(&alone, Some(ClipId(7)), ClipId(7));
+        assert!(surviving.is_empty());
+        assert_eq!(primary, None);
     }
 
     #[test]
