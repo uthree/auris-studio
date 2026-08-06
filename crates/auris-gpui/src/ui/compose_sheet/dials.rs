@@ -194,6 +194,32 @@ pub fn song_spec(dials: &SongDials) -> SongSpec {
     }
 }
 
+/// The dials the sheet opens on: what was remembered, corrected by what the document says now.
+///
+/// `remembered` is the specification stored with the project, which records what the composer was
+/// last *asked* for. Three of its fields are also the document's own — the key, the tempo and the
+/// meter — and the document is where a user changes them afterwards, from the harmony lane, the
+/// transport and the ruler. The stored specification does not move when they do.
+///
+/// So the document wins for those three and the specification keeps the rest. Without it the sheet
+/// opened on a key the song had stopped being in, and writing the song put the old one back — which
+/// reads as the composer ignoring the key entirely.
+///
+/// A free function because the view that calls it cannot be reached by a test, and this is a rule
+/// rather than a rendering.
+pub fn opening_dials(
+    remembered: Option<&SongSpec>,
+    key: MusicalKey,
+    tempo: f64,
+    meter: TimeSignature,
+) -> SongDials {
+    let mut dials = remembered.map_or_else(SongDials::default, song_dials);
+    dials.key = key;
+    dials.tempo = tempo;
+    dials.meter = meter;
+    dials
+}
+
 /// The dials a specification sets, which is [`song_spec`] the other way round.
 ///
 /// What makes the round trip hold is that this *normalises*: [`MAIN_CHART`] always exists and is
@@ -805,6 +831,46 @@ impl DialTarget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_sheet_opens_on_the_key_the_document_is_in_now() {
+        // The specification remembers what the composer was last asked for. The key, the tempo
+        // and the meter are also the document's, and a user changes them there — in the harmony
+        // lane, on the transport, on the ruler — long after the specification was stored. The
+        // sheet used to open on the remembered ones, so composing put the old key back.
+        let remembered = SongSpec {
+            key: MusicalKey::parse("C major").unwrap(),
+            tempo: 120.0,
+            meter: TimeSignature::new(4, 4),
+            title: "Remembered".to_string(),
+            groove: "shuffle".to_string(),
+            ..SongSpec::default()
+        };
+        let now = MusicalKey::parse("F# minor").unwrap();
+        let dials = opening_dials(Some(&remembered), now, 96.0, TimeSignature::new(3, 4));
+
+        assert_eq!(dials.key, now, "the key comes from the document");
+        assert_eq!(dials.tempo, 96.0, "and so does the tempo");
+        assert_eq!(dials.meter, TimeSignature::new(3, 4), "and the meter");
+        // Everything the document does not own is still the specification's.
+        assert_eq!(dials.title, "Remembered");
+        assert_eq!(dials.groove, "shuffle");
+    }
+
+    #[test]
+    fn a_document_with_no_specification_still_opens_on_its_own_key() {
+        // Nothing composed yet, so there is nothing remembered — but the document has been in
+        // A minor since the user set it, and the sheet has no business offering C major.
+        let now = MusicalKey::parse("A minor").unwrap();
+        let dials = opening_dials(None, now, 88.0, TimeSignature::new(6, 8));
+
+        assert_eq!(dials.key, now);
+        assert_eq!(dials.tempo, 88.0);
+        assert_eq!(dials.meter, TimeSignature::new(6, 8));
+        // And the rest is the default sheet, not an empty one.
+        assert_eq!(dials.title, SongDials::default().title);
+        assert!(!dials.parts.is_empty());
+    }
 
     /// A sheet with every kind of thing on it: two progressions, a modulation, a section made
     /// longer than the rest, and a part somebody has adjusted.

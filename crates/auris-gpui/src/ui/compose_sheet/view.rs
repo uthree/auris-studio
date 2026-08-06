@@ -40,9 +40,14 @@ impl AurisApp {
             .project()
             .song_spec
             .as_deref()
-            .and_then(|text| SongSpec::parse(text).ok())
-            .map(|spec| song_dials(&spec));
-        self.song_sheet = Some(remembered.unwrap_or_default());
+            .and_then(|text| SongSpec::parse(text).ok());
+        let project = self.project();
+        self.song_sheet = Some(super::opening_dials(
+            remembered.as_ref(),
+            project.harmony.keys.initial(),
+            project.tempo_map.initial_bpm(),
+            project.signatures.initial(),
+        ));
     }
 
     /// The song sheet, or nothing when it is closed.
