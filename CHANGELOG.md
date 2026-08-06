@@ -9,6 +9,16 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### Eight presets are eight draws
+
+* **Every preset ships a seed of its own.** All eight left it at the default, so the shipped songs
+  were eight arrangements over *one* set of random numbers — the same figure fell in the same bar
+  of every piece, and hearing all eight was hearing one draw eight times. Which numbers they are
+  does not matter and nothing claims it does; a test pins that no two are the same and that a
+  ninth preset added without one fails rather than quietly rejoining the pile. Checked across
+  seeds 0 to 8 of every preset: no draw loses a part, and none of the 72 reaches the master
+  limiter, which stays where it was put — dormant.
+
 ### A cymbal marks where the form arrives
 
 * **The kit has a crash.** A composed piece had nothing at the joins of its own form: the section

@@ -115,6 +115,7 @@ tempo  = 140
 mood   = "bright"
 groove = "four-on-the-floor"
 chords = "@axis"
+seed   = 1
 form   = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
 
 [section.intro]
@@ -162,6 +163,7 @@ mood   = "bright"
 groove = "eight-beat"
 chords = "@royal-road"
 fill   = 0.7
+seed   = 2
 form   = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
 
 [section.intro]
@@ -230,6 +232,7 @@ tension     = 0.7
 syncopation = 0.6
 swing       = 56
 humanize    = 0.45
+seed        = 3
 form        = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
 
 [section.intro]
@@ -292,6 +295,7 @@ groove   = "basic-rock"
 chords   = "@axis-minor"
 dynamics = 1.0
 fill     = 0.8
+seed     = 4
 form     = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
 
 [section.intro]
@@ -357,6 +361,7 @@ dynamics = 1.0
 fill     = 0.3
 tension  = 0.85
 energy   = 0.45
+seed     = 5
 form     = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
 
 [section.intro]
@@ -413,6 +418,7 @@ groove     = "sparse"
 chords     = "@epic"
 humanize   = 0.5
 variation  = 0.35
+seed       = 6
 form       = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
 
 [section.intro]
@@ -481,6 +487,7 @@ tension     = 0.4
 syncopation = 0.25
 humanize    = 0.15
 variation   = 0.2
+seed        = 7
 form        = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
 
 [section.intro]
@@ -552,6 +559,7 @@ humanize    = 0.55
 dynamics    = 0.5
 fill        = 0.0
 variation   = 0.4
+seed        = 8
 form        = ["intro", "verse", "chorus", "verse", "outro"]
 
 [section.intro]
@@ -629,6 +637,29 @@ mod tests {
             );
             assert!(!preset.description.is_empty());
         }
+    }
+
+    #[test]
+    fn every_preset_is_a_draw_of_its_own() {
+        // Every one of them used to leave the seed at its default, so eight presets were eight
+        // arrangements over one set of random numbers: the same figure fell in the same bar of
+        // every piece, and hearing all eight was hearing one draw eight times. Which numbers
+        // these are does not matter and nothing here says it does — what matters is that no two
+        // are the same, and that a ninth preset added without a seed fails this rather than
+        // quietly rejoining the pile.
+        let mut seeds: Vec<u64> = PRESETS.iter().map(|preset| preset.spec().seed).collect();
+        let count = seeds.len();
+        seeds.sort_unstable();
+        seeds.dedup();
+        assert_eq!(
+            count,
+            seeds.len(),
+            "two presets are the same draw: {seeds:?}"
+        );
+        assert!(
+            !seeds.contains(&SongSpec::default().seed),
+            "a preset left the seed where it found it"
+        );
     }
 
     #[test]
