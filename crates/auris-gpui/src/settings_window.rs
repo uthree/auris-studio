@@ -981,21 +981,17 @@ impl SettingsWindow {
         } else {
             self.keymap.set_at(command, slot, &keystroke)
         };
+        let name = self.t(command.label);
         if bound {
             let clash = self.keymap.conflicts(&keystroke, command);
-            let name = self.t(command.label);
-            self.status = match clash.first() {
-                Some(other) => messages::binding_set_with_clash(
-                    self.language,
-                    name,
-                    &keystroke,
-                    self.t(other.label),
-                ),
-                None => messages::binding_set(self.language, name, &keystroke),
+            let outcome = match clash.first() {
+                Some(other) => Captured::Clashes(self.t(other.label)),
+                None => Captured::Bound,
             };
+            self.status = capture_status(self.language, name, &keystroke, outcome);
             self.apply_keymap(cx);
         } else {
-            self.status = messages::binding_rejected(self.language, &keystroke);
+            self.status = capture_status(self.language, name, &keystroke, Captured::Refused);
             cx.notify();
         }
     }
@@ -1134,6 +1130,40 @@ fn section_title(title: &str, theme: &Theme) -> AnyElement {
         .into_any_element()
 }
 
+/// How a captured key press turned out.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Captured<'a> {
+    /// The command answers to it, and nothing else does.
+    Bound,
+    /// The command answers to it, and so does the command named here.
+    Clashes(&'a str),
+    /// The keymap would not take it.
+    Refused,
+}
+
+/// What the footer says about a key press that has just been captured.
+///
+/// A free function rather than three lines inside the capture, because of the rule it turns on:
+/// the keystroke a user sees is not the keystroke that is stored. `keystroke` arrives in the
+/// portable spelling that goes into the file, and all three of these lines are read rather than
+/// parsed — a footer saying "Save is now secondary-s" under a chip saying ⌘S is describing a
+/// chord nobody pressed.
+fn capture_status(
+    language: Language,
+    command: &str,
+    keystroke: &str,
+    outcome: Captured<'_>,
+) -> String {
+    let shown = crate::actions::menu_keystroke(keystroke);
+    match outcome {
+        Captured::Bound => messages::binding_set(language, command, &shown),
+        Captured::Clashes(other) => {
+            messages::binding_set_with_clash(language, command, &shown, other)
+        }
+        Captured::Refused => messages::binding_rejected(language, &shown),
+    }
+}
+
 /// One line describing what a device can do.
 fn describe(device: &OutputDeviceInfo, language: Language) -> String {
     let rates = match (device.sample_rates.first(), device.sample_rates.last()) {
@@ -1148,5 +1178,41 @@ fn describe(device: &OutputDeviceInfo, language: Language) -> String {
         format!("{detail} · {}", Key::DeviceIsDefault.get(language))
     } else {
         detail
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_footer_names_a_keystroke_the_way_the_platform_prints_it() {
+        // `secondary-s` is the storage spelling and it stays that in the keymap; the chip in the
+        // row already shows what the keyboard calls it. The footer two lines below was naming the
+        // same key the other way, so the window said ⌘S and "Save is now secondary-s" at once.
+        let shown = if cfg!(target_os = "macos") {
+            "⌘S"
+        } else {
+            "Ctrl+S"
+        };
+        for line in [
+            capture_status(Language::English, "Save", "secondary-s", Captured::Bound),
+            capture_status(
+                Language::English,
+                "Save",
+                "secondary-s",
+                Captured::Clashes("Loop"),
+            ),
+            capture_status(Language::English, "Save", "secondary-s", Captured::Refused),
+        ] {
+            assert!(
+                line.contains(shown),
+                "`{line}` does not name the key this keyboard has"
+            );
+            assert!(
+                !line.contains("secondary"),
+                "`{line}` leaks the storage spelling into something a person reads"
+            );
+        }
     }
 }

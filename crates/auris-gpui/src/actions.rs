@@ -375,18 +375,34 @@ fn portable_chunk(chunk: &str) -> String {
         return chunk.to_string();
     };
     let modifiers = parsed.modifiers;
+    let mac = cfg!(target_os = "macos");
     let mut out = String::new();
+    // The fn key is nobody's command modifier and has no portable stand-in, so it is written out
+    // as itself. gpui reports it only for a key that is not already an arrow or an F-key, which
+    // is what keeps a plain ← from being stored as `fn-left`.
+    if modifiers.function {
+        out.push_str("fn-");
+    }
     if modifiers.secondary() {
         out.push_str("secondary-");
     }
-    // The other three are written out as they are. On macOS `secondary` is ⌘ and `control` is a
-    // modifier in its own right; elsewhere `secondary` *is* control, and printing it twice would
-    // produce `secondary-ctrl-s`.
-    if modifiers.control && !modifiers.secondary() {
+    // Control and the platform key are one pair seen from two sides: on macOS `secondary` is ⌘,
+    // which leaves control a modifier in its own right, and everywhere else `secondary` *is*
+    // control, which leaves the Windows or Super key as the odd one out. Each is written unless
+    // the `secondary-` above has already said it. Writing the one it stands for twice would
+    // produce `secondary-ctrl-s`; leaving the other out cost macOS the whole control-⌘ space,
+    // which came back stored as the plain ⌘ chord the user had not pressed.
+    if modifiers.control && mac {
         out.push_str("ctrl-");
     }
-    if modifiers.platform && !modifiers.secondary() {
-        out.push_str("cmd-");
+    if modifiers.platform && !mac {
+        // Never `cmd-`: gpui would parse it back to the same key, but the file is read by people
+        // as well, and there is no command key on the keyboard this was captured from.
+        out.push_str(if cfg!(target_os = "windows") {
+            "win-"
+        } else {
+            "super-"
+        });
     }
     if modifiers.alt {
         out.push_str("alt-");
@@ -632,6 +648,45 @@ mod tests {
                 is_valid_keystroke(&once),
                 "`{}` normalises to an unbindable `{once}`",
                 entry.id
+            );
+        }
+    }
+
+    #[test]
+    fn the_stored_spelling_keeps_every_modifier_the_user_held() {
+        // The other direction from the test above: what the keyboard reported, written the way
+        // the file spells it. Control and the platform key swap roles across platforms —
+        // whichever of the two is `secondary` is written as that, and the *other* one still has
+        // to survive, or what comes back is a chord nobody pressed.
+        let control_command = portable_chunk("ctrl-cmd-l");
+        if cfg!(target_os = "macos") {
+            assert_eq!(control_command, "secondary-ctrl-l");
+            assert_eq!(portable_chunk("ctrl-l"), "ctrl-l");
+            assert_eq!(portable_chunk("cmd-l"), "secondary-l");
+        } else if cfg!(target_os = "windows") {
+            assert_eq!(control_command, "secondary-win-l");
+            assert_eq!(portable_chunk("ctrl-l"), "secondary-l");
+            assert_eq!(portable_chunk("cmd-l"), "win-l");
+        } else {
+            assert_eq!(control_command, "secondary-super-l");
+            assert_eq!(portable_chunk("ctrl-l"), "secondary-l");
+            assert_eq!(portable_chunk("cmd-l"), "super-l");
+        }
+        assert_ne!(
+            control_command,
+            portable_chunk("secondary-l"),
+            "a chord stored as the plain secondary one is bound to whatever holds that key"
+        );
+        // The fn key stands for nothing else and has no platform to argue about.
+        assert_eq!(portable_chunk("fn-a"), "fn-a");
+        assert_eq!(portable_chunk("fn-shift-a"), "fn-shift-a");
+        // And every one of them survives the trip out to the keyboard's spelling and back.
+        for stored in [control_command.as_str(), "fn-a", "fn-shift-a"] {
+            assert!(is_valid_keystroke(stored), "`{stored}` cannot be bound");
+            assert_eq!(
+                portable_chunk(&normalise_keystroke(stored)),
+                stored,
+                "`{stored}` does not survive the round trip"
             );
         }
     }
