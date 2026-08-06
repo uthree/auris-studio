@@ -26,8 +26,9 @@ format rather than a convention: `## <version> — <date>`.
 
 * **Auris Studio now ships with MuseScore General**, 128 instruments and a percussion bank under
   the MIT licence. It is in the library panel from the moment the window opens, with nothing to
-  import. Five oscillators were enough to hear the engine working and never enough to write
-  anything, and "install a SoundFont from somewhere" is not a first five minutes anybody enjoys.
+  import. Two oscillators and a noise drum were enough to hear the engine working and never enough
+  to write anything, and "install a SoundFont from somewhere" is not a first five minutes anybody
+  enjoys.
 * Not in this repository, because the file is two hundred megabytes — more than GitHub accepts in
   one piece and far more than every clone of a source tree should carry. `tools/fetch-soundfonts.sh`
   downloads it, checks it against a SHA-256, and installs it where the application looks; the

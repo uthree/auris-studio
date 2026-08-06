@@ -655,12 +655,12 @@ clicking an effect appends it to that track's chain.
 
 ### The SoundFont that comes with it
 
-Five oscillators are enough to hear the engine working and nowhere near enough to write anything,
-so a build ships with **MuseScore General** — a General MIDI set of 128 instruments and a
-percussion bank, under the MIT licence. It is FluidR3, Frank Wen's set that half the free software
-world quotes, remastered by S. Christian Collins; choosing between the two is choosing between an
-original and a curated version of itself. Every release archive carries it, and it is in the
-library panel from the moment the window opens, with no import step.
+Two oscillators and a noise drum are enough to hear the engine working and nowhere near enough to
+write anything, so a build ships with **MuseScore General** — a General MIDI set of 128
+instruments and a percussion bank, under the MIT licence. It is FluidR3, Frank Wen's set that half
+the free software world quotes, remastered by S. Christian Collins; choosing between the two is
+choosing between an original and a curated version of itself. Every release archive carries it,
+and it is in the library panel from the moment the window opens, with no import step.
 
 The bytes are **not in this repository**. The file is two hundred megabytes, which is more than
 GitHub accepts in one piece and far more than every clone of a source tree should have to carry.
@@ -678,7 +678,7 @@ archive. `auris soundfonts` says whether it is installed and where. The script a
 digest cannot be changed in one place and left stale in the other.
 
 Where the application looks, in order: `$AURIS_SOUNDFONTS`, a `SoundFonts` directory beside the
-executable, a macOS bundle's `Contents/Resources/SoundFonts`, up to four directories above the
+executable, a macOS bundle's `Contents/Resources/SoundFonts`, up to five directories above the
 executable — which is what reaches the checkout from `target/debug` — and finally
 `~/.config/auris-studio/SoundFonts`. A build with none of them installed starts perfectly well and
 has the built-in instruments, which is exactly what a CI runner does.
@@ -808,12 +808,13 @@ rather than `~/Library/Application Support` and `%APPDATA%`:
 ```
 ~/.config/auris-studio/
   settings.json       audio device, sample rate, buffer size, interface language
+  progressions.json   the chord progressions you have kept
   keymap.json         key bindings you have changed from the defaults
   appearance.json     the chosen colour scheme
   layout.json         where each panel is docked, and how large each dock is
 ```
 
-Four small JSON files, readable and hand-editable, in the directory a dotfiles repository is
+Five small JSON files, readable and hand-editable, in the directory a dotfiles repository is
 already checked out over. Set `AURIS_CONFIG_DIR` to name a directory outright, or `XDG_CONFIG_HOME`
 to move the parent. An installation predating the move keeps its settings: the old directory's
 files are copied across on the first run, never over a file already in the new place.
@@ -881,7 +882,7 @@ Built binaries are on the [releases page](https://github.com/uthree/auris-studio
 Apple Silicon and Intel; both `.exe`s for Windows; the command line tool alone for Linux.
 
 Every archive carries the shipped SoundFont, which is most of its size and all of the instruments
-past the built-in five. On macOS it is inside the bundle, so dragging `Auris Studio.app` to
+past the built-in four. On macOS it is inside the bundle, so dragging `Auris Studio.app` to
 /Applications takes the sounds with it.
 
 None of it is code-signed, so the first launch needs a word with the operating system. On macOS,
@@ -903,7 +904,7 @@ tool build anywhere Rust does. CI covers all three.
 
 The first line is once per checkout and downloads the shipped SoundFont, which is not in the
 repository — see [The SoundFont that comes with it](#the-soundfont-that-comes-with-it). Skip it
-and everything still builds and runs; there are simply five instruments instead of a hundred and
+and everything still builds and runs; there are simply four instruments instead of a hundred and
 thirty.
 
 ### Windows

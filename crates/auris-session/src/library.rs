@@ -1,6 +1,6 @@
 //! The sound library the application is packaged with.
 //!
-//! The built-in instruments are three oscillators and a noise drum. They are enough to hear a
+//! The built-in instruments are two oscillators and a noise drum. They are enough to hear a
 //! piece back and nowhere near enough to *write* one, so a build of Auris Studio ships with a
 //! General MIDI SoundFont beside it and every frontend finds it here.
 //!
@@ -199,6 +199,37 @@ mod tests {
         assert!(font.sha256.chars().all(|c| c.is_ascii_hexdigit()));
         assert!(font.bytes > 0);
         assert!(shipped("no-such-font").is_none());
+    }
+
+    #[test]
+    fn the_header_counts_the_instruments_the_registry_installs() {
+        // The first sentence of this module is the reason a font ships at all, so its count has
+        // to be the count `default_registry` actually installs — everything but the sampler,
+        // which is the instrument this font is *for* and makes no sound until one arrives.
+        let registry = crate::plugin_catalogue();
+        let without_a_font: Vec<&str> = registry
+            .instruments()
+            .map(|descriptor| descriptor.id.as_ref())
+            .filter(|id| *id != auris_sampler::SAMPLER_ID)
+            .collect();
+        assert_eq!(
+            without_a_font.len(),
+            3,
+            "two pitched voices and a drum: {without_a_font:?}"
+        );
+        // The header itself, which is the half of this that nothing else checks. Its own lines
+        // rather than the whole file, or the phrase written here would answer for it; joined as
+        // one line so that rewrapping the paragraph is not a failure.
+        let header: String = include_str!("library.rs")
+            .lines()
+            .filter_map(|line| line.strip_prefix("//!"))
+            .map(str::trim)
+            .collect::<Vec<&str>>()
+            .join(" ");
+        assert!(
+            header.contains("two oscillators and a noise drum"),
+            "the header counts them in prose, and the prose is what a reader gets"
+        );
     }
 
     #[test]

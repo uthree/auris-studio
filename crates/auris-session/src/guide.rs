@@ -861,11 +861,12 @@ pub mod platforms {
     //! # One configuration directory, and it is not the platform's
     //!
     //! [`config_dir`](crate::config_dir) answers `~/.config/auris-studio` on macOS and on Windows
-    //! as well as on Linux, rather than `~/Library/Application Support` and `%APPDATA%`. Three
-    //! files live there — `settings.json` from this crate, `keymap.json` and `appearance.json`
-    //! from the desktop frontend — and they are small, hand-editable and worth version
-    //! controlling. The people who do that keep a dotfiles repository checked out over
-    //! `~/.config`, and a file in `%APPDATA%` cannot join it.
+    //! as well as on Linux, rather than `~/Library/Application Support` and `%APPDATA%`.
+    //! Five files live there — `settings.json` and `progressions.json` from this crate,
+    //! `keymap.json`, `appearance.json` and `layout.json` from the desktop frontend — and they
+    //! are small, hand-editable and worth version controlling. The people who do that keep a
+    //! dotfiles repository checked out over `~/.config`, and a file in `%APPDATA%` cannot join
+    //! it.
     //!
     //! It is the one rule above inverted on purpose, so it is worth being explicit about the
     //! trade: the platform convention buys migration by an OS installer and a location a support
@@ -877,4 +878,63 @@ pub mod platforms {
     //! files across on the first run after the move. It copies rather than moves and never writes
     //! over a file already in the new place, so it is safe to call on every start-up — which both
     //! frontends do, before the first `Settings::load`.
+}
+
+#[cfg(test)]
+mod tests {
+    /// What this module actually says, as one line of prose.
+    ///
+    /// The doc lines alone rather than the whole source, because a test asking whether the guide
+    /// names a file would otherwise be answered by the name written in the test. Joined with a
+    /// space rather than kept as lines, so that rewrapping a paragraph — which is an edit to how
+    /// it reads and not to what it claims — cannot fail this.
+    fn account() -> String {
+        include_str!("guide.rs")
+            .lines()
+            .filter_map(|line| line.trim_start().strip_prefix("//!"))
+            .map(str::trim)
+            .collect::<Vec<&str>>()
+            .join(" ")
+    }
+
+    /// The account of the configuration directory has to name every file that turns up in it.
+    ///
+    /// A list of files is the kind of claim that goes stale in silence. Nothing at runtime reads
+    /// it — [`migrate_legacy_config`](crate::migrate_legacy_config) carries whatever the directory
+    /// holds rather than a list of names — so a file nobody added to the prose costs nothing at
+    /// all until somebody trusts the guide, which is the one thing the guide is for.
+    #[test]
+    fn every_configuration_file_is_named_in_the_account_of_the_directory() {
+        let account = account();
+
+        // The two this crate writes, asked of the code rather than written out a second time.
+        for path in [
+            crate::Settings::path(),
+            crate::progressions::ProgressionBook::path(),
+        ] {
+            let name = path
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .expect("a configuration file has a name");
+            assert!(
+                account.contains(name),
+                "{name} is written into the configuration directory and the guide does not say so"
+            );
+        }
+
+        // And the three the desktop frontend writes. Spelled out rather than asked for, because
+        // `auris-gpui` sits above this crate and nothing here may name it — which is also why the
+        // guide is where the whole list lives.
+        for name in ["keymap.json", "appearance.json", "layout.json"] {
+            assert!(
+                account.contains(name),
+                "{name} is written into the configuration directory and the guide does not say so"
+            );
+        }
+
+        assert!(
+            account.contains("Five files live there"),
+            "the count and the list are one claim, so they have to move together"
+        );
+    }
 }
