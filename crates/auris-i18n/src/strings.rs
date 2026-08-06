@@ -415,13 +415,18 @@ strings! {
     SongEnergy { en: "Energy", ja: "勢い" }
     SongTension { en: "Tension", ja: "緊張感" }
     SongVariation { en: "Variation", ja: "繰り返しの変化" }
-    // Bars per section, with the whole song's length beside it — the dial sets one thing and the
-    // number that matters is the other.
-    SongBars { en: "Bars per section", ja: "1セクションの小節数" }
+    // How long one section runs, with the whole song's length in the footer — the dial sets one
+    // thing and the number that matters is the other.
+    SongBars { en: "Bars", ja: "小節数" }
     SongLength { en: "Length", ja: "長さ" }
     SongBarsUnit { en: "bars", ja: "小節" }
     SongChords { en: "Progression", ja: "コード進行" }
     SongChordsOwn { en: "the composer's own", ja: "おまかせ" }
+    // The form: which sections play, in what order, and what each of them is.
+    SongFormHeading { en: "Form", ja: "構成" }
+    SongAddSection { en: "Add Section", ja: "セクションを追加" }
+    SongSectionName { en: "Section", ja: "セクション" }
+    SongTranspose { en: "Transpose", ja: "移調" }
     // The roster. `Part` alone is the heading on a single generated clip, so this one is plural.
     SongPartsHeading { en: "Parts", ja: "パート" }
     SongPartName { en: "Name", ja: "名前" }

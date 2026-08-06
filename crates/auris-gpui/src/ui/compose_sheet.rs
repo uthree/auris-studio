@@ -29,12 +29,43 @@ pub const GAIN_DB: std::ops::RangeInclusive<f32> = -30.0..=0.0;
 /// How far a drag travels before a dial has been turned end to end.
 const DRAG_RANGE_PIXELS: f32 = 220.0;
 
+/// The section names a form is offered, in the order a song usually reaches them.
+///
+/// A vocabulary rather than a rule: any name at all is legal in the file, and these are the ones
+/// that save somebody typing `chorus` for the hundredth time. `pre` is the pre-chorus and `drop`
+/// is what dance music calls the same arrival by a different name.
+pub const SECTION_NAMES: [&str; 8] = [
+    "intro", "verse", "pre", "chorus", "bridge", "drop", "solo", "outro",
+];
+
+/// How far a section may be moved from the key, in semitones.
+///
+/// Not a continuous dial. A modulation is a *choice from a short list* — up a tone into a last
+/// chorus, up a semitone for the same trick with less warning, down a third for a quiet reprise —
+/// and the numbers in between are ones nobody reaches for on purpose.
+pub const TRANSPOSES: [i32; 9] = [-5, -3, -2, -1, 0, 1, 2, 3, 5];
+
+/// How a transposition is written on its button.
+pub fn transpose_label(steps: i32) -> String {
+    match steps {
+        0 => "±0".to_string(),
+        up if up > 0 => format!("+{up}"),
+        down => down.to_string(),
+    }
+}
+
+/// The chart every section plays unless it says otherwise.
+///
+/// The specification's own word for it, and the reason the sheet always carries one: a section
+/// pointed at a name nothing answers to is a document its parser refuses.
+pub const MAIN_CHART: &str = "main";
+
 /// Everything the sheet is set to.
 ///
 /// The specification's own fields, held one for one, so that reading the sheet is reading the
-/// document. What it does *not* hold is the form: sections and their order are `.asong`'s job
-/// until the generator can invent one, and until then the sheet sets how long a section is and
-/// the default six-section shape carries the rest.
+/// document — with two of them turned inside out. `sections` and `charts` are ordered lists here
+/// and maps there, because **a list is what a person edits**: renaming a section in a `BTreeMap`
+/// would slide its row somewhere else in the panel while the pointer was still on it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SongDials {
     /// What the piece is called, and what the project is named after.
@@ -47,10 +78,6 @@ pub struct SongDials {
     pub meter: TimeSignature,
     /// How the piece should feel.
     pub mood: Mood,
-    /// How many bars one section lasts.
-    pub bars: usize,
-    /// The catalogue progression, by name and without its `@`. Empty means the composer's own.
-    pub chords: String,
     /// The drum groove.
     pub groove: String,
     /// The seed every random decision is drawn from.
@@ -65,37 +92,29 @@ pub struct SongDials {
     pub fill: f32,
     /// How much a repeat departs from what came before it.
     pub variation: f32,
+    /// The progressions the song carries, [`MAIN_CHART`] first.
+    ///
+    /// More than one is what lets a chorus play something the verse does not. They arrive by
+    /// being *chosen* — picking a catalogue progression for a section adds it here under its own
+    /// name — because a list somebody has to build before they can use it is a screen standing
+    /// between them and the thing they wanted.
+    pub charts: Vec<(String, Chart)>,
+    /// The sections, in the order the form first reaches them.
+    pub sections: Vec<SectionSpec>,
+    /// The order the sections play in, by name. A name may appear more than once.
+    pub form: Vec<String>,
     /// The roster, in the order the tracks are created.
     pub parts: Vec<PartSpec>,
 }
 
 impl Default for SongDials {
+    /// The song `SongSpec::default()` describes.
+    ///
+    /// Read *through* the specification rather than written out again here: two lists of defaults
+    /// would drift, and the one that drifted would be the one nobody reads — a dialog that opens
+    /// on a different song from `auris compose` with no file.
     fn default() -> Self {
-        // From the specification's own defaults rather than from a second list of numbers: the
-        // sheet opens on the song `SongSpec::default()` describes, and there is one place to
-        // change what that is.
-        let spec = SongSpec::default();
-        Self {
-            title: spec.title.clone(),
-            key: spec.key,
-            tempo: spec.tempo,
-            meter: spec.meter,
-            mood: spec.mood,
-            bars: spec
-                .sections
-                .values()
-                .next()
-                .map_or(8, |section| section.bars),
-            chords: String::new(),
-            groove: spec.groove.clone(),
-            seed: spec.seed,
-            swing: spec.swing,
-            humanize: spec.humanize,
-            dynamics: spec.dynamics,
-            fill: spec.fill,
-            variation: spec.variation,
-            parts: spec.parts.clone(),
-        }
+        song_dials(&SongSpec::default())
     }
 }
 
@@ -105,7 +124,7 @@ impl Default for SongDials {
 /// the `.asong`, refilling the sheet from one — goes through the specification, so a dial cannot
 /// mean one thing to the composer and another to the file.
 pub fn song_spec(dials: &SongDials) -> SongSpec {
-    let mut spec = SongSpec {
+    SongSpec {
         title: dials.title.clone(),
         key: dials.key,
         tempo: dials.tempo,
@@ -118,24 +137,204 @@ pub fn song_spec(dials: &SongDials) -> SongSpec {
         fill: dials.fill,
         variation: dials.variation,
         groove: dials.groove.clone(),
+        charts: dials.charts.iter().cloned().collect(),
+        sections: dials
+            .sections
+            .iter()
+            .map(|section| (section.name.clone(), section.clone()))
+            .collect(),
+        form: dials.form.clone(),
         parts: dials.parts.clone(),
-        ..SongSpec::default()
-    };
-    for section in spec.sections.values_mut() {
-        section.bars = dials.bars.clamp(*BARS.start(), *BARS.end());
     }
-    // An empty name leaves the default in place, and the default is marked as the composer's
-    // own — so "no progression chosen" is how the mood gets to colour one, rather than a hole.
-    if let Some(chart) = chart_named(&dials.chords) {
-        spec.charts.insert("main".to_string(), chart);
+}
+
+/// The dials a specification sets, which is [`song_spec`] the other way round.
+///
+/// What makes the round trip hold is that this *normalises*: [`MAIN_CHART`] always exists and is
+/// always first, and the sections come out in the order the form reaches them with any the form
+/// never names after. Every list the sheet can produce is already in that shape, because every
+/// gesture it offers preserves it.
+pub fn song_dials(spec: &SongSpec) -> SongDials {
+    let mut charts: Vec<(String, Chart)> = Vec::new();
+    if let Some(main) = spec.charts.get(MAIN_CHART) {
+        charts.push((MAIN_CHART.to_string(), main.clone()));
     }
-    spec
+    charts.extend(
+        spec.charts
+            .iter()
+            .filter(|(name, _)| name.as_str() != MAIN_CHART)
+            .map(|(name, chart)| (name.clone(), chart.clone())),
+    );
+
+    let mut sections: Vec<SectionSpec> = Vec::new();
+    let mut seen: Vec<&str> = Vec::new();
+    for name in spec.form.iter().chain(spec.sections.keys()) {
+        if seen.contains(&name.as_str()) {
+            continue;
+        }
+        let Some(section) = spec.sections.get(name) else {
+            continue;
+        };
+        seen.push(name);
+        sections.push(section.clone());
+    }
+
+    SongDials {
+        title: spec.title.clone(),
+        key: spec.key,
+        tempo: spec.tempo,
+        meter: spec.meter,
+        mood: spec.mood,
+        groove: spec.groove.clone(),
+        seed: spec.seed,
+        swing: spec.swing,
+        humanize: spec.humanize,
+        dynamics: spec.dynamics,
+        fill: spec.fill,
+        variation: spec.variation,
+        charts,
+        sections,
+        form: spec.form.clone(),
+        parts: spec.parts.clone(),
+    }
 }
 
 /// The catalogue chart a name asks for, or `None` for the composer's own.
 pub fn chart_named(name: &str) -> Option<Chart> {
     let name = name.trim();
     (!name.is_empty()).then(|| Chart::parse(&format!("@{name}")))?
+}
+
+// ---------------------------------------------------------------- the form
+
+/// Where in [`SongDials::sections`] the section played at `place` in the form is defined.
+///
+/// A name may be played more than once and there is one definition behind all of them — which is
+/// the whole point of a form. Editing the second chorus edits the first, because they are the
+/// same chorus.
+pub fn section_at(dials: &SongDials, place: usize) -> Option<usize> {
+    let name = dials.form.get(place)?;
+    dials
+        .sections
+        .iter()
+        .position(|section| &section.name == name)
+}
+
+/// A section name nothing in the song is using yet.
+pub fn unused_section_name(dials: &SongDials, stem: &str) -> String {
+    if !dials.sections.iter().any(|section| section.name == stem) {
+        return stem.to_string();
+    }
+    (2..)
+        .map(|n| format!("{stem} {n}"))
+        .find(|name| !dials.sections.iter().any(|section| &section.name == name))
+        .unwrap_or_else(|| stem.to_string())
+}
+
+/// Adds a playing of a section after `place`, defining the section if it is a new name.
+///
+/// A name the song already knows is a *repeat*, and repeats are what a form is made of — so
+/// choosing an existing name adds a place in the order and no second definition.
+pub fn add_to_form(dials: &mut SongDials, place: usize, name: &str) {
+    let name = name.trim();
+    if name.is_empty() {
+        return;
+    }
+    if !dials.sections.iter().any(|section| section.name == name) {
+        dials.sections.push(SectionSpec::named(name));
+    }
+    let at = (place + 1).min(dials.form.len());
+    dials.form.insert(at, name.to_string());
+    tidy_sections(dials);
+}
+
+/// Points the playing at `place` at a different section, defining it if it is a new name.
+pub fn set_form_entry(dials: &mut SongDials, place: usize, name: &str) -> bool {
+    let name = name.trim();
+    if name.is_empty() || place >= dials.form.len() {
+        return false;
+    }
+    if !dials.sections.iter().any(|section| section.name == name) {
+        dials.sections.push(SectionSpec::named(name));
+    }
+    dials.form[place] = name.to_string();
+    tidy_sections(dials);
+    true
+}
+
+/// Removes the playing at `place`, if the form would still have one.
+///
+/// A form of nothing writes nothing, and a specification says so — the button goes dead rather
+/// than Write producing a document the parser refuses.
+pub fn remove_from_form(dials: &mut SongDials, place: usize) -> bool {
+    if dials.form.len() <= 1 || place >= dials.form.len() {
+        return false;
+    }
+    dials.form.remove(place);
+    tidy_sections(dials);
+    true
+}
+
+/// Moves the playing at `place` one step earlier or later.
+pub fn move_in_form(dials: &mut SongDials, place: usize, later: bool) -> bool {
+    let to = match later {
+        true if place + 1 < dials.form.len() => place + 1,
+        false if place > 0 => place - 1,
+        _ => return false,
+    };
+    dials.form.swap(place, to);
+    tidy_sections(dials);
+    true
+}
+
+/// Puts the section list back into the shape [`song_dials`] produces: only what the form plays,
+/// in the order the form first reaches it.
+///
+/// Called after every change to the form, for two reasons. A section the form no longer plays
+/// would otherwise go on contributing a `[section.chorus]` table to the file, describing
+/// something that never sounds. And the order is what makes the round trip hold — reading a
+/// document back sorts by the form, so a sheet that did not would come back looking different
+/// from itself while describing the same song.
+///
+/// Reordering costs nothing on screen: the form column is drawn from [`SongDials::form`], and
+/// this list is storage its rows reach into by name.
+fn tidy_sections(dials: &mut SongDials) {
+    let mut kept: Vec<SectionSpec> = Vec::new();
+    for name in &dials.form {
+        if kept.iter().any(|section| &section.name == name) {
+            continue;
+        }
+        if let Some(section) = dials.sections.iter().find(|held| &held.name == name) {
+            kept.push(section.clone());
+        }
+    }
+    dials.sections = kept;
+}
+
+/// Points the section at `index` at the progression `name`, adding it to the song if it is a
+/// catalogue entry the song does not carry yet.
+///
+/// The one gesture that makes a second progression exist. Choosing 丸サ進行 for the chorus is what
+/// makes 丸サ進行 one of the song's charts — there is no list to fill in first.
+pub fn set_section_chart(dials: &mut SongDials, index: usize, name: &str) -> bool {
+    let Some(section) = dials.sections.get_mut(index) else {
+        return false;
+    };
+    if dials.charts.iter().any(|(known, _)| known == name) {
+        section.chords = name.to_string();
+        return true;
+    }
+    let Some(chart) = chart_named(name) else {
+        return false;
+    };
+    section.chords = name.to_string();
+    dials.charts.push((name.to_string(), chart));
+    true
+}
+
+/// How a chart is named on the sheet: the progression it quotes, or its own key.
+pub fn chart_label(name: &str, chart: &Chart) -> String {
+    chart.quoted_as.clone().unwrap_or_else(|| name.to_string())
 }
 
 /// The same song, next take.
@@ -228,8 +427,6 @@ pub fn role_key(role: Role) -> Key {
 pub enum SongDial {
     /// Beats per minute.
     Tempo,
-    /// How many bars one section lasts.
-    Bars,
     /// Dark to bright.
     Brightness,
     /// Calm to driving.
@@ -253,7 +450,6 @@ pub enum SongDial {
 /// The song's dials, in the order they are drawn.
 pub const SONG_DIALS: &[SongDial] = &[
     SongDial::Tempo,
-    SongDial::Bars,
     SongDial::Brightness,
     SongDial::Energy,
     SongDial::Tension,
@@ -270,7 +466,6 @@ impl SongDial {
     pub fn label(self) -> Key {
         match self {
             SongDial::Tempo => Key::Tempo,
-            SongDial::Bars => Key::SongBars,
             SongDial::Brightness => Key::SongBrightness,
             SongDial::Energy => Key::SongEnergy,
             SongDial::Tension => Key::SongTension,
@@ -291,7 +486,6 @@ impl SongDial {
                 *TEMPO.start() as f32,
                 *TEMPO.end() as f32,
             ),
-            SongDial::Bars => between(dials.bars as f32, *BARS.start() as f32, *BARS.end() as f32),
             SongDial::Brightness => dials.mood.brightness,
             SongDial::Energy => dials.mood.energy,
             SongDial::Tension => dials.mood.tension,
@@ -318,10 +512,6 @@ impl SongDial {
                 let bpm = lerp(fraction, *TEMPO.start() as f32, *TEMPO.end() as f32);
                 dials.tempo = f64::from(bpm.round());
             }
-            SongDial::Bars => {
-                let bars = lerp(fraction, *BARS.start() as f32, *BARS.end() as f32);
-                dials.bars = (bars.round() as usize).clamp(*BARS.start(), *BARS.end());
-            }
             SongDial::Brightness => dials.mood.brightness = fraction,
             SongDial::Energy => dials.mood.energy = fraction,
             SongDial::Tension => dials.mood.tension = fraction,
@@ -341,10 +531,63 @@ impl SongDial {
     pub fn text(self, dials: &SongDials) -> String {
         match self {
             SongDial::Tempo => format!("{:.0}", dials.tempo),
-            SongDial::Bars => dials.bars.to_string(),
             SongDial::Swing if dials.swing == 50 => "50".to_string(),
             SongDial::Swing => dials.swing.to_string(),
             other => percent(other.fraction(dials)),
+        }
+    }
+}
+
+/// One continuous dial on a section of the form.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum SectionDial {
+    /// How many bars it lasts.
+    Bars,
+    /// How hard it is played.
+    Intensity,
+}
+
+/// A section's dials, in the order they are drawn.
+pub const SECTION_DIALS: &[SectionDial] = &[SectionDial::Bars, SectionDial::Intensity];
+
+impl SectionDial {
+    /// What the row is called.
+    pub fn label(self) -> Key {
+        match self {
+            SectionDial::Bars => Key::SongBars,
+            SectionDial::Intensity => Key::PartIntensity,
+        }
+    }
+
+    /// Where the bar sits, from 0 to 1.
+    pub fn fraction(self, section: &SectionSpec) -> f32 {
+        match self {
+            SectionDial::Bars => between(
+                section.bars as f32,
+                *BARS.start() as f32,
+                *BARS.end() as f32,
+            ),
+            SectionDial::Intensity => section.intensity,
+        }
+    }
+
+    /// Puts the bar at `fraction`.
+    pub fn set(self, section: &mut SectionSpec, fraction: f32) {
+        let fraction = fraction.clamp(0.0, 1.0);
+        match self {
+            SectionDial::Bars => {
+                let bars = lerp(fraction, *BARS.start() as f32, *BARS.end() as f32);
+                section.bars = (bars.round() as usize).clamp(*BARS.start(), *BARS.end());
+            }
+            SectionDial::Intensity => section.intensity = fraction,
+        }
+    }
+
+    /// What the readout at the end of the bar says.
+    pub fn text(self, section: &SectionSpec) -> String {
+        match self {
+            SectionDial::Bars => section.bars.to_string(),
+            other => percent(other.fraction(section)),
         }
     }
 }
@@ -454,6 +697,8 @@ fn percent(fraction: f32) -> String {
 pub enum DialTarget {
     /// One of the song's own.
     Song(SongDial),
+    /// One belonging to the section at this position in [`SongDials::sections`].
+    Section(usize, SectionDial),
     /// One belonging to the part at this position in the roster.
     Part(usize, PartDial),
 }
@@ -463,6 +708,10 @@ impl DialTarget {
     pub fn fraction(self, dials: &SongDials) -> f32 {
         match self {
             DialTarget::Song(dial) => dial.fraction(dials),
+            DialTarget::Section(index, dial) => dials
+                .sections
+                .get(index)
+                .map_or(0.0, |section| dial.fraction(section)),
             DialTarget::Part(index, dial) => dials
                 .parts
                 .get(index)
@@ -474,6 +723,11 @@ impl DialTarget {
     pub fn set(self, dials: &mut SongDials, fraction: f32) {
         match self {
             DialTarget::Song(dial) => dial.set(dials, fraction),
+            DialTarget::Section(index, dial) => {
+                if let Some(section) = dials.sections.get_mut(index) {
+                    dial.set(section, fraction);
+                }
+            }
             DialTarget::Part(index, dial) => {
                 if let Some(part) = dials.parts.get_mut(index) {
                     dial.set(part, fraction);
@@ -499,11 +753,25 @@ use crate::ui::widgets::{ButtonStyle, SliderFill, button, divider, value_slider}
 const LABEL_WIDTH: f32 = 116.0;
 
 impl AurisApp {
-    /// Opens the song sheet, on the song it was last set to or on the default one.
+    /// Opens the song sheet: on the song it was last set to, on the one the document was written
+    /// from, or on the default one.
+    ///
+    /// In that order, and the middle one is the point. A piece composed, saved and reopened used
+    /// to come back to a sheet full of defaults — Another Take on it would have written a
+    /// different song rather than another take of that one.
     pub(crate) fn open_song_sheet(&mut self) {
-        if self.song_sheet.is_none() {
-            self.song_sheet = Some(SongDials::default());
+        if self.song_sheet.is_some() {
+            return;
         }
+        // A document written by a build that spelled something differently is not an error worth
+        // a dialog: the sheet opens on its defaults, which is where it opened before any of this.
+        let remembered = self
+            .project()
+            .song_spec
+            .as_deref()
+            .and_then(|text| SongSpec::parse(text).ok())
+            .map(|spec| song_dials(&spec));
+        self.song_sheet = Some(remembered.unwrap_or_default());
     }
 
     /// The song sheet, or nothing when it is closed.
@@ -539,7 +807,7 @@ impl AurisApp {
                         .flex()
                         .flex_col()
                         .gap_3()
-                        .w(px(880.0))
+                        .w(px(1120.0))
                         .max_h(relative(0.92))
                         .p_4()
                         .rounded(Metrics::RADIUS_LG)
@@ -564,9 +832,19 @@ impl AurisApp {
                                         .flex()
                                         .flex_col()
                                         .gap_1()
-                                        .w(px(360.0))
+                                        .w(px(320.0))
                                         .overflow_y_scroll()
                                         .children(self.song_rows(&dials, cx)),
+                                )
+                                .child(
+                                    div()
+                                        .id("song-sheet-form")
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1()
+                                        .w(px(330.0))
+                                        .overflow_y_scroll()
+                                        .children(self.song_form_rows(&dials, cx)),
                                 )
                                 .child(
                                     div()
@@ -722,28 +1000,6 @@ impl AurisApp {
         );
         rows.push(
             self.sheet_picker(
-                "song-chords",
-                Key::SongChords,
-                match progression_catalog()
-                    .iter()
-                    .find(|entry| entry.name == dials.chords)
-                {
-                    Some(entry) => {
-                        auris_i18n::audio::theory_description(entry.description, self.language())
-                            .to_string()
-                    }
-                    None => self.t(Key::SongChordsOwn).to_string(),
-                },
-                cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
-                    let menu = this.song_chords_menu(event.position());
-                    this.open_menu(menu);
-                    cx.notify();
-                }),
-            )
-            .into_any_element(),
-        );
-        rows.push(
-            self.sheet_picker(
                 "song-groove",
                 Key::PartGroove,
                 dials.groove.clone(),
@@ -801,6 +1057,199 @@ impl AurisApp {
                     }),
                 )
                 .into_any_element(),
+            );
+        }
+        rows
+    }
+
+    /// The middle: the form, one block per playing of a section.
+    ///
+    /// One row per *place in the order*, not one per section — a chorus played twice is two rows,
+    /// and both of them edit the one chorus, because that is what makes it the same chorus.
+    fn song_form_rows(
+        &mut self,
+        dials: &SongDials,
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<AnyElement> {
+        let theme = self.theme.clone();
+        let removable = dials.form.len() > 1;
+        let mut rows: Vec<AnyElement> = vec![
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .flex_1()
+                        .child(self.group_heading(Key::SongFormHeading)),
+                )
+                .child(button(
+                    "song-add-section",
+                    self.t(Key::SongAddSection),
+                    ButtonStyle::Normal,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                        let places = this
+                            .song_sheet
+                            .as_ref()
+                            .map_or(0, |dials| dials.form.len().saturating_sub(1));
+                        let menu = this.song_section_menu(event.position(), places);
+                        this.open_menu(menu);
+                        cx.notify();
+                    }),
+                ))
+                .into_any_element(),
+        ];
+
+        for (place, name) in dials.form.iter().enumerate() {
+            let Some(index) = section_at(dials, place) else {
+                continue;
+            };
+            let section = &dials.sections[index];
+            let chart = dials
+                .charts
+                .iter()
+                .find(|(known, _)| known == &section.chords)
+                .map(|(known, chart)| self.progression_name(&chart_label(known, chart)))
+                .unwrap_or_else(|| section.chords.clone());
+
+            let mut dial_row = div().flex().gap_2();
+            for dial in SECTION_DIALS {
+                let dial = *dial;
+                let target = DialTarget::Section(index, dial);
+                let fraction = dial.fraction(section);
+                dial_row = dial_row.child(div().flex_1().min_w_0().child(value_slider(
+                    (
+                        "song-section-dial",
+                        place * SECTION_DIALS.len() + dial as usize,
+                    ),
+                    self.t(dial.label()),
+                    dial.text(section),
+                    fraction,
+                    theme.accent,
+                    SliderFill::FromStart,
+                    &theme,
+                    cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                        this.begin_drag(Drag::SongDial {
+                            target,
+                            start_fraction: fraction,
+                            start_x: event.position.x,
+                        });
+                    }),
+                    cx.listener(move |this, event: &gpui::ScrollWheelEvent, _, cx| {
+                        let notches = f32::from(event.delta.pixel_delta(px(16.0)).y) / 16.0;
+                        this.nudge_song_dial(target, notches);
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                )));
+            }
+
+            rows.push(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .p_2()
+                    .rounded(Metrics::RADIUS_SM)
+                    .bg(theme.surface_sunken)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(div().w(px(84.0)).child(button(
+                                ("song-form-name", place),
+                                name.clone(),
+                                ButtonStyle::Normal,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                                    let menu = this.song_form_name_menu(event.position(), place);
+                                    this.open_menu(menu);
+                                    cx.notify();
+                                }),
+                            )))
+                            .child(div().flex_1().min_w_0().child(button(
+                                ("song-section-chords", place),
+                                chart,
+                                ButtonStyle::Normal,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                                    let menu = this.song_chords_menu(event.position(), index);
+                                    this.open_menu(menu);
+                                    cx.notify();
+                                }),
+                            )))
+                            .child(div().w(px(44.0)).child(button(
+                                ("song-section-transpose", place),
+                                transpose_label(section.transpose),
+                                ButtonStyle::Normal,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                                    let menu = this.song_transpose_menu(event.position(), index);
+                                    this.open_menu(menu);
+                                    cx.notify();
+                                }),
+                            )))
+                            .child(div().w(px(22.0)).child(button(
+                                ("song-form-up", place),
+                                "↑",
+                                ButtonStyle::Normal,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                                    if let Some(dials) = this.song_sheet.as_mut() {
+                                        move_in_form(dials, place, false);
+                                    }
+                                    cx.notify();
+                                }),
+                            )))
+                            .child(div().w(px(22.0)).child(button(
+                                ("song-form-down", place),
+                                "↓",
+                                ButtonStyle::Normal,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                                    if let Some(dials) = this.song_sheet.as_mut() {
+                                        move_in_form(dials, place, true);
+                                    }
+                                    cx.notify();
+                                }),
+                            )))
+                            // The last playing cannot go: a form of nothing writes nothing, and
+                            // the specification refuses one rather than composing silence.
+                            .child(div().w(px(22.0)).child(button(
+                                ("song-form-remove", place),
+                                "✕",
+                                ButtonStyle::Normal,
+                                false,
+                                if removable {
+                                    theme.danger
+                                } else {
+                                    theme.border
+                                },
+                                &theme,
+                                cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                                    if let Some(dials) = this.song_sheet.as_mut() {
+                                        remove_from_form(dials, place);
+                                    }
+                                    cx.notify();
+                                }),
+                            ))),
+                    )
+                    .child(dial_row)
+                    .into_any_element(),
             );
         }
         rows
@@ -1107,15 +1556,111 @@ impl AurisApp {
         menu
     }
 
-    /// Every progression the composer knows by name, and the option of none.
-    fn song_chords_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
-        let mut menu = ContextMenu::new(anchor, self.t(Key::SongChords))
-            .item(self.t(Key::SongChordsOwn), MenuCommand::SongChords(""));
+    /// What one section may play: the progressions this song already carries, and every one the
+    /// catalogue knows.
+    ///
+    /// Choosing a catalogue entry the song does not carry adds it, which is the only way a second
+    /// progression comes into existence — there is no chart list to fill in first.
+    fn song_chords_menu(&self, anchor: gpui::Point<gpui::Pixels>, section: usize) -> ContextMenu {
+        let mut menu = ContextMenu::new(anchor, self.t(Key::SongChords));
+        let carried: Vec<String> = self
+            .song_sheet
+            .as_ref()
+            .map(|dials| {
+                dials
+                    .charts
+                    .iter()
+                    .map(|(name, chart)| chart_label(name, chart))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if let Some(dials) = self.song_sheet.as_ref() {
+            for (name, chart) in &dials.charts {
+                menu = menu.item(
+                    self.progression_name(&chart_label(name, chart)),
+                    MenuCommand::SongSectionChords {
+                        section,
+                        name: name.clone(),
+                    },
+                );
+            }
+        }
         for entry in progression_catalog() {
+            // Already offered above under the name this song files it under.
+            if carried.iter().any(|held| held == entry.name) {
+                continue;
+            }
             menu = menu.item(
                 auris_i18n::audio::theory_description(entry.description, self.language()),
-                MenuCommand::SongChords(entry.name),
+                MenuCommand::SongSectionChords {
+                    section,
+                    name: entry.name.to_string(),
+                },
             );
+        }
+        menu
+    }
+
+    /// How far a section is moved from the key, in semitones.
+    fn song_transpose_menu(
+        &self,
+        anchor: gpui::Point<gpui::Pixels>,
+        section: usize,
+    ) -> ContextMenu {
+        let mut menu = ContextMenu::new(anchor, self.t(Key::SongTranspose));
+        for steps in TRANSPOSES {
+            menu = menu.item(
+                transpose_label(steps),
+                MenuCommand::SongSectionTranspose { section, steps },
+            );
+        }
+        menu
+    }
+
+    /// The sections a place in the form may play: every one the song has, and a new one.
+    fn song_form_name_menu(&self, anchor: gpui::Point<gpui::Pixels>, place: usize) -> ContextMenu {
+        self.section_menu(anchor, Key::SongSectionName, move |name| {
+            MenuCommand::SongFormName {
+                place,
+                name: name.to_string(),
+            }
+        })
+    }
+
+    /// The same list, for a section being added after `place`.
+    fn song_section_menu(&self, anchor: gpui::Point<gpui::Pixels>, place: usize) -> ContextMenu {
+        self.section_menu(anchor, Key::SongAddSection, move |name| {
+            MenuCommand::SongAddSection {
+                place,
+                name: name.to_string(),
+            }
+        })
+    }
+
+    /// Every section this song has, then a fresh one of each name it knows.
+    ///
+    /// Two groups, and the difference between them is the whole of what a form is. Choosing from
+    /// the first is a **repeat** — the same chorus again, sharing one definition, which is what
+    /// makes it recognisably the same chorus. Choosing from the second makes a *new* section, and
+    /// a name already taken comes back numbered: once there is a verse, the second group offers
+    /// `verse 2`, which is how a song gets two verses that are not the same eight bars.
+    fn section_menu(
+        &self,
+        anchor: gpui::Point<gpui::Pixels>,
+        title: Key,
+        command: impl Fn(&str) -> MenuCommand,
+    ) -> ContextMenu {
+        let mut menu = ContextMenu::new(anchor, self.t(title));
+        let Some(dials) = self.song_sheet.as_ref() else {
+            return menu;
+        };
+        for section in &dials.sections {
+            menu = menu.item(section.name.clone(), command(&section.name));
+        }
+        menu = menu.separator();
+        for stem in SECTION_NAMES {
+            let name = unused_section_name(dials, stem);
+            menu = menu.item(name.clone(), command(&name));
         }
         menu
     }
@@ -1191,36 +1736,35 @@ impl AurisApp {
 fn this_word(app: &AurisApp, name: &str) -> String {
     app.t(mood_key(name)).to_string()
 }
+
+impl AurisApp {
+    /// What a progression is called in the interface, or its own name if the catalogue has never
+    /// heard of it — which is what a chart somebody typed out by hand looks like.
+    fn progression_name(&self, name: &str) -> String {
+        progression_catalog()
+            .iter()
+            .find(|entry| entry.name == name)
+            .map(|entry| {
+                auris_i18n::audio::theory_description(entry.description, self.language())
+                    .to_string()
+            })
+            .unwrap_or_else(|| name.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_sheet_opens_on_the_song_the_specification_describes() {
-        // Two lists of defaults would drift, and the one that drifted would be the one nobody
-        // reads: a dialog that opens on a different song from `auris compose` with no file.
-        let dials = SongDials::default();
-        let spec = SongSpec::default();
-        assert_eq!(song_spec(&dials).title, spec.title);
-        assert_eq!(song_spec(&dials).tempo, spec.tempo);
-        assert_eq!(song_spec(&dials).key, spec.key);
-        assert_eq!(song_spec(&dials).parts, spec.parts);
-        assert_eq!(song_spec(&dials).total_bars(), spec.total_bars());
-    }
-
-    #[test]
-    fn what_the_sheet_writes_is_a_document_that_reads_back_the_same() {
-        // The test the sheet and the format share. A dial the specification cannot express, or
-        // expresses differently, shows up here rather than as a song that changes when it is
-        // saved and opened.
+    /// A sheet with every kind of thing on it: two progressions, a modulation, a section made
+    /// longer than the rest, and a part somebody has adjusted.
+    fn peopled() -> SongDials {
         let mut dials = SongDials {
             title: "Neon Drive".to_string(),
             key: MusicalKey::parse("C minor").unwrap(),
             tempo: 124.0,
             meter: TimeSignature::new(3, 4),
             mood: Mood::named("driving").unwrap(),
-            bars: 16,
-            chords: "marusa".to_string(),
             groove: "four-on-the-floor".to_string(),
             seed: 7,
             swing: 54,
@@ -1228,14 +1772,49 @@ mod tests {
             variation: 0.4,
             ..SongDials::default()
         };
+        let chorus = dials
+            .sections
+            .iter()
+            .position(|section| section.name == "chorus")
+            .expect("the default form has a chorus");
+        set_section_chart(&mut dials, chorus, "marusa");
+        dials.sections[chorus].transpose = 2;
+        dials.sections[chorus].bars = 16;
         dials.parts[0].gain_db = -3.5;
         dials.parts[0].pan = -0.4;
         dials.parts[1].density = Some(0.65);
+        dials
+    }
 
-        let spec = song_spec(&dials);
+    #[test]
+    fn the_sheet_opens_on_the_song_the_specification_describes() {
+        // Two lists of defaults would drift, and the one that drifted would be the one nobody
+        // reads: a dialog that opens on a different song from `auris compose` with no file.
+        assert_eq!(song_spec(&SongDials::default()), SongSpec::default());
+    }
+
+    #[test]
+    fn what_the_sheet_writes_is_a_document_that_reads_back_the_same() {
+        // The test the sheet and the format share. A dial the specification cannot express, or
+        // expresses differently, shows up here rather than as a song that changes when it is
+        // saved and opened.
+        let spec = song_spec(&peopled());
         assert_eq!(SongSpec::parse(&spec.to_toml()).unwrap(), spec);
-        assert_eq!(spec.total_bars(), 16 * 6, "six sections of sixteen bars");
-        assert_eq!(spec.charts["main"].bar_count(), 4, "丸サ進行 is four bars");
+        assert_eq!(
+            spec.charts["marusa"].bar_count(),
+            4,
+            "丸サ進行 is four bars"
+        );
+    }
+
+    #[test]
+    fn a_document_refills_the_sheet_it_was_written_from() {
+        // What lets a song be composed, saved, reopened and taken again. Through the *file*
+        // rather than through the specification, because a file is what a project carries.
+        let dials = peopled();
+        let written = song_spec(&dials).to_toml();
+        let back = song_dials(&SongSpec::parse(&written).expect("the sheet writes valid TOML"));
+        assert_eq!(back, dials, "\n{written}");
     }
 
     #[test]
@@ -1247,6 +1826,17 @@ mod tests {
                 let mut dials = SongDials::default();
                 dial.set(&mut dials, target);
                 let back = dial.fraction(&dials);
+                assert!(
+                    (back - target).abs() < 0.03,
+                    "{dial:?} set to {target} read back {back}"
+                );
+            }
+        }
+        for dial in SECTION_DIALS {
+            for target in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                let mut section = SectionSpec::named("verse");
+                dial.set(&mut section, target);
+                let back = dial.fraction(&section);
                 assert!(
                     (back - target).abs() < 0.03,
                     "{dial:?} set to {target} read back {back}"
@@ -1271,9 +1861,14 @@ mod tests {
         // Every end of every dial, written out and read back: the sheet must not be able to
         // produce a document its own parser rejects.
         for end in [0.0, 1.0] {
-            let mut dials = SongDials::default();
+            let mut dials = peopled();
             for dial in SONG_DIALS {
                 dial.set(&mut dials, end);
+            }
+            for section in &mut dials.sections {
+                for dial in SECTION_DIALS {
+                    dial.set(section, end);
+                }
             }
             for part in &mut dials.parts {
                 for dial in PART_DIALS {
@@ -1287,6 +1882,9 @@ mod tests {
                 Ok(spec),
                 "every dial at {end}:\n{written}"
             );
+            // And the sheet still reads back as itself, which the round trip above does not say
+            // on its own: an extreme is exactly where a default would quietly swallow a value.
+            assert_eq!(song_dials(&song_spec(&dials)), dials, "every dial at {end}");
         }
     }
 
@@ -1332,21 +1930,138 @@ mod tests {
     }
 
     #[test]
+    fn a_name_played_twice_is_one_section_played_twice() {
+        // The whole point of a form. Two verse rows read and write the one verse, or the second
+        // would be eight different bars wearing the same label.
+        let dials = SongDials::default();
+        let places: Vec<usize> = dials
+            .form
+            .iter()
+            .enumerate()
+            .filter(|(_, name)| name.as_str() == "verse")
+            .map(|(place, _)| place)
+            .collect();
+        assert!(places.len() >= 2, "the default form plays a verse twice");
+        let sections: Vec<Option<usize>> = places
+            .iter()
+            .map(|place| section_at(&dials, *place))
+            .collect();
+        assert_eq!(sections[0], sections[1]);
+        assert!(sections[0].is_some());
+    }
+
+    #[test]
+    fn the_form_is_edited_and_stays_a_form_the_format_accepts() {
+        let mut dials = SongDials::default();
+        let places = dials.form.len();
+        let sections = dials.sections.len();
+
+        // Adding a name the song already has is a repeat: a place in the order, no definition.
+        add_to_form(&mut dials, 0, "chorus");
+        assert_eq!(dials.form.len(), places + 1);
+        assert_eq!(
+            dials.sections.len(),
+            sections,
+            "a repeat defines nothing new"
+        );
+        assert_eq!(dials.form[1], "chorus");
+
+        // A name the song has never used brings its definition with it.
+        add_to_form(&mut dials, 0, "solo");
+        assert_eq!(dials.sections.len(), sections + 1);
+        assert!(dials.sections.iter().any(|section| section.name == "solo"));
+
+        // A second verse that is *not* the first one, which is what the numbered names in the
+        // menu are for. The space in it has to survive being a TOML table key.
+        let second = unused_section_name(&dials, "verse");
+        assert_eq!(second, "verse 2");
+        add_to_form(&mut dials, 1, &second);
+        assert!(dials.sections.iter().any(|section| section.name == second));
+        let written = song_spec(&dials).to_toml();
+        assert_eq!(
+            SongSpec::parse(&written).map(|spec| song_dials(&spec)),
+            Ok(dials.clone()),
+            "\n{written}"
+        );
+
+        // Moving is a swap, and stops at both ends rather than wrapping round.
+        let first = dials.form[0].clone();
+        assert!(move_in_form(&mut dials, 0, true));
+        assert_eq!(dials.form[1], first);
+        assert!(!move_in_form(&mut dials, 0, false));
+        let last = dials.form.len() - 1;
+        assert!(!move_in_form(&mut dials, last, true));
+
+        // A section the form no longer plays takes its definition with it, rather than going on
+        // contributing a row to the panel and a table to the file describing nothing audible.
+        let solo = dials.form.iter().position(|name| name == "solo").unwrap();
+        assert!(remove_from_form(&mut dials, solo));
+        assert!(
+            !dials.sections.iter().any(|section| section.name == "solo"),
+            "a section nothing plays stayed behind: {:?}",
+            dials.sections
+        );
+
+        assert!(SongSpec::parse(&song_spec(&dials).to_toml()).is_ok());
+    }
+
+    #[test]
+    fn the_last_playing_cannot_be_removed() {
+        // An empty form is a document the specification refuses outright, so the button goes dead
+        // rather than Write reporting an error the sheet could have prevented.
+        let mut dials = SongDials::default();
+        while dials.form.len() > 1 {
+            assert!(remove_from_form(&mut dials, 0));
+        }
+        assert!(!remove_from_form(&mut dials, 0));
+        assert_eq!(dials.form.len(), 1);
+        assert_eq!(dials.sections.len(), 1, "and its section is the one left");
+    }
+
+    #[test]
+    fn choosing_a_progression_for_a_section_is_what_makes_the_song_carry_it() {
+        // The only way a second chart comes into existence. A list somebody has to build before
+        // they can use it would be a screen between them and the thing they wanted.
+        let mut dials = SongDials::default();
+        assert_eq!(dials.charts.len(), 1);
+        assert_eq!(dials.charts[0].0, MAIN_CHART);
+
+        let chorus = dials
+            .sections
+            .iter()
+            .position(|section| section.name == "chorus")
+            .unwrap();
+        assert!(set_section_chart(&mut dials, chorus, "marusa"));
+        assert_eq!(dials.charts.len(), 2);
+        assert_eq!(dials.sections[chorus].chords, "marusa");
+
+        // The verse is untouched, which is the whole feature: a progression that changes partway.
+        let verse = dials
+            .sections
+            .iter()
+            .position(|section| section.name == "verse")
+            .unwrap();
+        assert_eq!(dials.sections[verse].chords, MAIN_CHART);
+
+        // Choosing the same one for another section adds nothing.
+        assert!(set_section_chart(&mut dials, verse, "marusa"));
+        assert_eq!(dials.charts.len(), 2);
+
+        // A name nothing answers to changes nothing at all, rather than pointing a section at a
+        // chart that does not exist — which is a document the parser refuses.
+        assert!(!set_section_chart(&mut dials, verse, "nonsense"));
+        let spec = song_spec(&dials);
+        assert_eq!(SongSpec::parse(&spec.to_toml()), Ok(spec));
+    }
+
+    #[test]
     fn no_progression_chosen_leaves_the_one_the_mood_may_colour() {
         // "Nothing chosen" is how the composer gets to invent, not a hole: the default chart is
         // marked as its own and is the only kind colouring is allowed to touch.
-        let dials = SongDials::default();
-        assert_eq!(dials.chords, "");
         assert_eq!(
-            song_spec(&dials).charts["main"].origin,
+            song_spec(&SongDials::default()).charts[MAIN_CHART].origin,
             ChartOrigin::Generated
         );
-
-        let quoted = SongDials {
-            chords: "marusa".to_string(),
-            ..SongDials::default()
-        };
-        assert_eq!(song_spec(&quoted).charts["main"].origin, ChartOrigin::Given);
     }
 
     #[test]
@@ -1393,5 +2108,16 @@ mod tests {
                 entry.name
             );
         }
+    }
+
+    #[test]
+    fn a_transposition_says_which_way_it_goes() {
+        assert_eq!(transpose_label(0), "±0");
+        assert_eq!(transpose_label(2), "+2");
+        assert_eq!(transpose_label(-3), "-3");
+        assert!(
+            TRANSPOSES.contains(&0),
+            "there has to be a way back to none"
+        );
     }
 }

@@ -321,10 +321,27 @@ between clips that happen to coexist and clips that belong to the same song.
 
 ### Automatic composition
 
-**File → Compose a Song…** opens the song sheet: the key, the tempo, the mood, the progression and
-a table of parts, with **Write**, **Another Take** — the same dials and the next seed — and **Save
-as Specification…**. The whole piece arrives as a single undo step, so a composition that is not
-what was wanted is one press away from the document that was there before it.
+**File → Compose a Song…** opens the song sheet, in three columns: the **song** — key, tempo,
+meter, mood, groove, seed and the feel dials; the **form** — one row per playing of a section,
+each with its length, how hard it is played, what progression it plays and how far it is moved
+from the key; and the **parts** — one row each, with role, instrument, octave and four dials.
+**Write**, **Another Take** — the same dials and the next seed — and **Save as Specification…**.
+The whole piece arrives as a single undo step, so a composition that is not what was wanted is one
+press away from the document that was there before it.
+
+A row in the form is a *playing*, not a section: a name that appears twice is one section played
+twice, and editing either row edits the one section, because that is what makes it recognisably
+the same chorus. The section picker offers the song's own names first — choosing one of those is a
+repeat — and under a rule a fresh one of each: once there is a verse, `verse 2` is one click, which
+is how a song gets two verses that are not the same eight bars.
+
+**A progression is chosen per section**, which is what lets one change partway through a song. The
+picker lists the ones this song already carries and then the whole catalogue, and choosing a
+catalogue entry the song does not carry is what adds it — there is no chart list to fill in first.
+
+A composed document **remembers the specification it was written from**, so the sheet reopens on
+the song rather than on the defaults after a save and a reload, and **Another Take** on a piece
+whose `.asong` nobody kept still gives another take of *that* song.
 
 The sheet and the file are two faces of one `SongSpec`, so neither can drift from the other:
 **File → Compose from Specification…**, or `auris compose song.asong`, writes a piece from the same

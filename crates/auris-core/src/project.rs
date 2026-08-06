@@ -1083,6 +1083,18 @@ pub struct Project {
     /// Editing grid size, in ticks.
     #[serde(default = "default_grid")]
     pub grid: Ticks,
+    /// The specification a composed document was written from, if it was composed.
+    ///
+    /// Text rather than a typed field, because the type lives in a crate this one may not name and
+    /// because that text is already the canonical way of writing a song specification down. It is
+    /// what lets the song sheet refill itself after a save and a reload — otherwise a piece could
+    /// be composed, saved, reopened, and there would be no way back to the dials that made it.
+    ///
+    /// Not a bump: a build that has never heard of this field opens the document, plays every note
+    /// of it correctly, and writes it back without the memory. That costs a dialog its history and
+    /// nothing that is heard, which is not worth refusing the file over.
+    #[serde(default)]
+    pub song_spec: Option<String>,
     next_id: u64,
 }
 
@@ -1162,6 +1174,7 @@ impl Project {
             loop_region: None,
             loop_enabled: false,
             grid: default_grid(),
+            song_spec: None,
             next_id: 1,
         }
     }

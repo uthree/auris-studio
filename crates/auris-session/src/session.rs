@@ -1592,6 +1592,10 @@ impl Session {
         // composed song comes out belonging to the same song.
         project.harmony = composition.harmony.clone();
         project.sections = composition.sections.clone();
+        // What it was asked for, kept with what it produced. A song sheet reopened after a save
+        // and a reload refills itself from this, and Another Take goes on working on a piece
+        // nobody has the original `.asong` for.
+        project.song_spec = Some(composition.spec.clone());
 
         let mut report = ComposeReport {
             tracks: 0,
@@ -6592,6 +6596,41 @@ mod tests {
         assert_eq!(session.undo(), Some(Edit::Compose));
         assert_eq!(session.project().tracks.len(), 1);
         assert_eq!(session.project().tracks[0].name, "Old");
+    }
+
+    #[test]
+    fn a_composed_document_remembers_what_it_was_asked_for() {
+        // Without this, a piece composed, saved and reopened comes back to a dialog full of
+        // defaults, and Another Take on it writes a different song rather than another take of
+        // that one. The text is the format's own, so it reads back as the specification it was.
+        let mut session = session();
+        let spec = auris_compose::SongSpec::parse(
+            r#"
+                title = "Remembered"
+                key = "C minor"
+                form = "verse chorus"
+                chords = "@marusa"
+                [section.verse]
+                bars = 4
+                "#,
+        )
+        .unwrap();
+        session.compose(&auris_compose::compose(&spec)).unwrap();
+
+        let remembered = session
+            .project()
+            .song_spec
+            .clone()
+            .expect("a composed document carries its specification");
+        assert_eq!(
+            auris_compose::SongSpec::parse(&remembered),
+            Ok(spec),
+            "\n{remembered}"
+        );
+
+        // A document nobody composed carries nothing, rather than a specification that would
+        // describe a song it is not.
+        assert!(Project::new("By Hand", 48_000.0).song_spec.is_none());
     }
 
     #[test]

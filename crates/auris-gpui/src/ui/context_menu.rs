@@ -80,8 +80,34 @@ pub enum MenuCommand {
     SongMeter(u32, u32),
     /// Set the song sheet's mood from a named feeling.
     SongMood(&'static str),
-    /// Set the song sheet's progression by catalogue name; empty is the composer's own.
-    SongChords(&'static str),
+    /// Set what one section of the song sheet plays, by chart name or catalogue name.
+    SongSectionChords {
+        /// Which section, by position in the sheet's list.
+        section: usize,
+        /// A progression the song already carries, or one the catalogue knows.
+        name: String,
+    },
+    /// Move one section of the song sheet away from the key.
+    SongSectionTranspose {
+        /// Which section, by position in the sheet's list.
+        section: usize,
+        /// How far, in semitones.
+        steps: i32,
+    },
+    /// Point one place in the song sheet's form at a section.
+    SongFormName {
+        /// Which place in the order.
+        place: usize,
+        /// The section it should play.
+        name: String,
+    },
+    /// Add a playing of a section to the song sheet's form.
+    SongAddSection {
+        /// After which place in the order.
+        place: usize,
+        /// The section to play.
+        name: String,
+    },
     /// Set the song sheet's drum groove.
     SongGroove(&'static str),
     /// Set the role of one part on the song sheet.
@@ -831,9 +857,28 @@ impl AurisApp {
                     dials.mood = mood;
                 }
             }
-            MenuCommand::SongChords(name) => {
+            MenuCommand::SongSectionChords { section, name } => {
                 if let Some(dials) = self.song_sheet.as_mut() {
-                    dials.chords = name.to_string();
+                    crate::ui::compose_sheet::set_section_chart(dials, section, &name);
+                }
+            }
+            MenuCommand::SongSectionTranspose { section, steps } => {
+                if let Some(section) = self
+                    .song_sheet
+                    .as_mut()
+                    .and_then(|dials| dials.sections.get_mut(section))
+                {
+                    section.transpose = steps;
+                }
+            }
+            MenuCommand::SongFormName { place, name } => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    crate::ui::compose_sheet::set_form_entry(dials, place, &name);
+                }
+            }
+            MenuCommand::SongAddSection { place, name } => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    crate::ui::compose_sheet::add_to_form(dials, place, &name);
                 }
             }
             MenuCommand::SongGroove(name) => {
