@@ -135,6 +135,31 @@ pub fn polyline(window: &mut Window, points: &[Point<Pixels>], width: Pixels, co
     }
 }
 
+/// Fills the area between a run of points and a baseline.
+///
+/// The companion to [`polyline`], for a curve that is a *quantity* rather than a path: a spectrum
+/// or an envelope reads as a shape, and the same figure drawn as a bare line over a dark panel is
+/// a thread. Nothing is drawn for fewer than two points, on [`polyline`]'s reasoning.
+pub fn area_under(window: &mut Window, points: &[Point<Pixels>], baseline: Pixels, color: Hsla) {
+    let Some((first, rest)) = points.split_first() else {
+        return;
+    };
+    let Some(last) = rest.last() else {
+        return;
+    };
+    let mut path = gpui::PathBuilder::fill();
+    path.move_to(point(first.x, baseline));
+    path.line_to(*first);
+    for at in rest {
+        path.line_to(*at);
+    }
+    path.line_to(point(last.x, baseline));
+    path.close();
+    if let Ok(built) = path.build() {
+        window.paint_path(built, color);
+    }
+}
+
 pub fn label(
     window: &mut Window,
     cx: &mut App,

@@ -14,11 +14,12 @@
 
 use auris_i18n::Key;
 use auris_session::prelude::*;
-use gpui::{AnyElement, Pixels, Point, Size, div, point, prelude::*, px};
+use gpui::{AnyElement, Bounds, Pixels, Point, Size, Window, div, point, prelude::*, px, size};
 
 use crate::app::{AurisApp, Drag};
 use crate::theme::Metrics;
 use crate::ui::icons::Icon;
+use crate::ui::paint;
 use crate::ui::plugin_editor::plugin_header;
 use crate::ui::widgets::chain_button;
 
@@ -137,42 +138,170 @@ fn analyses_spectrum(plugin_id: &str) -> bool {
     plugin_id == "auris.fx.eq"
 }
 
-/// One bar per band, drawn as a strip across the top of the window.
-fn spectrum_display(bands: Vec<f32>, theme: &crate::theme::Theme) -> AnyElement {
-    let bars: Vec<AnyElement> = bands
-        .into_iter()
-        .map(|level| {
-            let height = ((level - SPECTRUM_FLOOR) / -SPECTRUM_FLOOR).clamp(0.0, 1.0);
-            div()
-                .flex_1()
-                .h_full()
-                .flex()
-                .flex_col()
-                .justify_end()
-                .child(
-                    div()
-                        .w_full()
-                        .h(gpui::relative(height))
-                        .bg(crate::theme::Theme::translucent(theme.accent, 0.75)),
-                )
-                .into_any_element()
-        })
-        .collect();
+/// The frequencies the scale marks, and whether each carries its number.
+///
+/// Decades are named and the steps between them are only ruled. A line every octave with a
+/// number on it is a ruler; three numbers and a set of ticks is a scale somebody can read while
+/// looking at something else, which is what an analyser is for.
+const SPECTRUM_TICKS: [(f64, bool); 8] = [
+    (50.0, false),
+    (100.0, true),
+    (200.0, false),
+    (500.0, false),
+    (1_000.0, true),
+    (2_000.0, false),
+    (5_000.0, false),
+    (10_000.0, true),
+];
 
+/// How tall the strip carrying the numbers is.
+const SPECTRUM_SCALE_HEIGHT: f32 = 12.0;
+
+/// The longest run of unmeasured bands [`bridge_gaps`] will draw across.
+///
+/// Four at the very bottom of the display, where the gaps are widest; the number has one spare.
+const SPECTRUM_GAP: usize = 5;
+
+/// Where a frequency sits across the display, from 0 at the left edge to 1 at the right.
+///
+/// Logarithmic, because pitch is, and because that is how [`auris_dsp::bands_from_bins`] spaces
+/// the bands — the scale and the curve have to agree or the numbers under it are decoration.
+fn spectrum_x(hz: f64) -> f32 {
+    let span = (SPECTRUM_HIGH / SPECTRUM_LOW).ln();
+    ((hz / SPECTRUM_LOW).ln() / span).clamp(0.0, 1.0) as f32
+}
+
+/// How a frequency is written on the scale.
+fn hz_label(hz: f64) -> String {
+    if hz >= 1_000.0 {
+        format!("{:.0}k", hz / 1_000.0)
+    } else {
+        format!("{hz:.0}")
+    }
+}
+
+/// Bridges the gaps a logarithmic display leaves at the bottom of the spectrum.
+///
+/// At 30 Hz a band is four hertz wide and the analyser's bins are twenty-odd hertz apart, so most
+/// of the bottom octave has no bin in it at all and comes back at the floor. Drawn as bars nobody
+/// noticed; drawn as a line it is a comb, and the comb is a property of the display rather than
+/// of the sound.
+///
+/// So a *short* run at the floor between two measured bands is interpolated across: the analyser
+/// had nothing to say there, and a line that dives to the floor and back says "silence", which is
+/// a stronger claim than it made. A long run is left exactly where it is, because that is what a
+/// genuinely quiet part of the spectrum looks like — and so is a run at either end, which has
+/// nothing on one side to interpolate from.
+fn bridge_gaps(bands: &mut [f32], floor: f32, longest: usize) {
+    let mut at = 0;
+    while at < bands.len() {
+        if bands[at] > floor {
+            at += 1;
+            continue;
+        }
+        let mut end = at;
+        while end < bands.len() && bands[end] <= floor {
+            end += 1;
+        }
+        if end - at <= longest && at > 0 && end < bands.len() {
+            let (before, after) = (bands[at - 1], bands[end]);
+            let steps = (end - at + 1) as f32;
+            for (offset, index) in (at..end).enumerate() {
+                bands[index] = before + (after - before) * (offset + 1) as f32 / steps;
+            }
+        }
+        at = end;
+    }
+}
+
+/// The spectrum as a filled curve over a frequency scale, across the top of the window.
+///
+/// A curve rather than a bar chart. A bar chart of forty-eight bands is a picture of the
+/// *display's* resolution; what an ear hears and what an equalizer is about to move is a shape,
+/// and a shape is what a line draws. The numbers underneath are the other half of it — a bump was
+/// visible before and there was nothing on screen to say whether it was at 200 Hz or at 2 kHz,
+/// which is the only question anybody reaches for an analyser to answer.
+fn spectrum_display(mut bands: Vec<f32>, theme: &crate::theme::Theme) -> AnyElement {
+    bridge_gaps(&mut bands, Session::spectrum_silence(), SPECTRUM_GAP);
+    let theme = theme.clone();
     div()
-        .h(px(64.0))
+        .h(px(76.0))
         .w_full()
         .flex_shrink_0()
-        .flex()
-        .items_end()
-        .gap(px(1.0))
         .px_2()
         .py_1()
         .bg(theme.surface_sunken)
         .border_b_1()
         .border_color(theme.border)
-        .children(bars)
+        .child(
+            gpui::canvas(
+                |_, _, _| (),
+                move |bounds, _, window, cx| paint_spectrum(window, cx, bounds, &bands, &theme),
+            )
+            .size_full(),
+        )
         .into_any_element()
+}
+
+/// Draws the scale, then the curve over it.
+fn paint_spectrum(
+    window: &mut Window,
+    cx: &mut gpui::App,
+    bounds: Bounds<Pixels>,
+    bands: &[f32],
+    theme: &crate::theme::Theme,
+) {
+    let plot_height = (bounds.size.height - px(SPECTRUM_SCALE_HEIGHT)).max(px(1.0));
+    let baseline = bounds.origin.y + plot_height;
+    let left = f32::from(bounds.origin.x);
+    let width = f32::from(bounds.size.width);
+    let top = f32::from(bounds.origin.y);
+    let height = f32::from(plot_height);
+
+    for (hz, named) in SPECTRUM_TICKS {
+        let x = px(left + width * spectrum_x(hz));
+        paint::rect(
+            window,
+            Bounds {
+                origin: point(x, bounds.origin.y),
+                size: size(px(1.0), plot_height),
+            },
+            crate::theme::Theme::translucent(theme.border, if named { 1.0 } else { 0.5 }),
+        );
+        if named {
+            // Pulled back inside the panel where a decade would otherwise hang off the right
+            // edge: 10 kHz sits at ninety-one per cent of a display that ends at eighteen.
+            let at = (x + px(3.0)).min(bounds.origin.x + bounds.size.width - px(19.0));
+            paint::label(
+                window,
+                cx,
+                point(at, baseline + px(1.0)),
+                hz_label(hz),
+                px(9.0),
+                theme.text_faint,
+            );
+        }
+    }
+
+    let points: Vec<Point<Pixels>> = bands
+        .iter()
+        .enumerate()
+        .map(|(index, level)| {
+            // The middle of the band, because that is the frequency it stands for — the bands are
+            // spaced across the same log range the scale is, so the two line up by construction.
+            let across = (index as f32 + 0.5) / bands.len().max(1) as f32;
+            let up = ((level - SPECTRUM_FLOOR) / -SPECTRUM_FLOOR).clamp(0.0, 1.0);
+            point(px(left + width * across), px(top + height * (1.0 - up)))
+        })
+        .collect();
+
+    paint::area_under(
+        window,
+        &points,
+        baseline,
+        crate::theme::Theme::translucent(theme.accent, 0.25),
+    );
+    paint::polyline(window, &points, px(1.5), theme.accent);
 }
 
 impl AurisApp {
@@ -337,7 +466,62 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::size;
+
+    #[test]
+    fn the_scale_and_the_curve_measure_the_same_axis() {
+        // The numbers under a curve are decoration unless they sit over the frequency they name.
+        // The bands are spaced across the log range by `bands_from_bins`, and the tick positions
+        // have to be worked out the same way or a 1 kHz mark lands on a 700 Hz band.
+        assert_eq!(spectrum_x(SPECTRUM_LOW), 0.0);
+        assert_eq!(spectrum_x(SPECTRUM_HIGH), 1.0);
+        assert_eq!(spectrum_x(1.0), 0.0, "below the display is its left edge");
+        assert_eq!(spectrum_x(40_000.0), 1.0, "and above it is the right");
+
+        // The middle of the display is the geometric mean, which is what makes it logarithmic:
+        // 30 Hz to 735 Hz is as wide as 735 Hz to 18 kHz, and both are half the panel.
+        let middle = (SPECTRUM_LOW * SPECTRUM_HIGH).sqrt();
+        assert!((spectrum_x(middle) - 0.5).abs() < 0.001, "{middle} Hz");
+
+        for (hz, _) in SPECTRUM_TICKS {
+            let at = spectrum_x(hz);
+            assert!(
+                (0.02..=0.98).contains(&at),
+                "the {hz} Hz tick is at {at}, which is on the frame rather than in the display"
+            );
+        }
+        assert_eq!(hz_label(100.0), "100");
+        assert_eq!(hz_label(10_000.0), "10k");
+    }
+
+    #[test]
+    fn a_short_gap_is_drawn_across_and_a_long_one_is_not() {
+        // The bottom octave has fewer bins than bands, so it comes back full of holes that are a
+        // property of the analyser rather than of the sound. A line that dives to the floor and
+        // back through one of them claims a silence nobody measured.
+        let floor = -90.0;
+        let mut bands = [-20.0, floor, floor, -24.0];
+        bridge_gaps(&mut bands, floor, 3);
+        assert!(
+            bands[1] < -20.0 && bands[1] > -24.0 && bands[2] < bands[1],
+            "the hole was not filled from its neighbours: {bands:?}"
+        );
+
+        // A long run is a quiet stretch of the spectrum and stays exactly where it is.
+        let mut long = [-20.0, floor, floor, floor, floor, -24.0];
+        bridge_gaps(&mut long, floor, 3);
+        assert_eq!(long, [-20.0, floor, floor, floor, floor, -24.0]);
+
+        // A run at either end has nothing on one side to interpolate from.
+        let mut edges = [floor, -20.0, floor];
+        bridge_gaps(&mut edges, floor, 3);
+        assert_eq!(edges, [floor, -20.0, floor]);
+
+        // Silence stays silence, whatever the length.
+        let mut silent = [floor; 8];
+        bridge_gaps(&mut silent, floor, 3);
+        assert_eq!(silent, [floor; 8]);
+        bridge_gaps(&mut [], floor, 3);
+    }
 
     #[test]
     fn a_subject_names_the_parameter_it_edits() {
