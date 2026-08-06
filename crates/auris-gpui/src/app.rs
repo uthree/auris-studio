@@ -1348,7 +1348,7 @@ impl AurisApp {
             || {
                 point(
                     self.left_dock_offset() + self.panels.header_width,
-                    Metrics::TRANSPORT_HEIGHT + Metrics::RULER_HEIGHT,
+                    Metrics::TRANSPORT_HEIGHT + self.panels.lanes.header_height(),
                 )
             },
             |bounds| bounds.origin,

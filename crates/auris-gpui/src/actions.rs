@@ -79,6 +79,12 @@ actions!(
         TogglePianoRoll,
         /// Show or hide the mixer.
         ToggleMixer,
+        /// Show or hide the strip of section names above the arrangement.
+        ToggleStructureLane,
+        /// Show or hide the key and chord strip above the arrangement.
+        ToggleHarmonyLane,
+        /// Show or hide the tempo changes marked along the ruler.
+        ToggleTempoMarks,
         /// Open the settings window.
         OpenSettings,
         /// Open the command palette.
@@ -249,6 +255,12 @@ bindable! {
         "view.inspector",       GroupView,      CmdShowInspector,      "i"           => ToggleInspector;
         "view.piano_roll",      GroupView,      CmdShowPianoRoll,      "p"           => TogglePianoRoll;
         "view.mixer",           GroupView,      CmdShowMixer,          "m"           => ToggleMixer;
+        // The three strips over the arrangement. Out on `secondary-alt-` because they are
+        // arrangement furniture rather than things reached mid-take, and because the plain and
+        // shifted forms of these letters are all spoken for.
+        "view.structure_lane",  GroupView,      CmdShowStructureLane,  "secondary-alt-s" => ToggleStructureLane;
+        "view.harmony_lane",    GroupView,      CmdShowHarmonyLane,    "secondary-alt-h" => ToggleHarmonyLane;
+        "view.tempo_marks",     GroupView,      CmdShowTempoMarks,     "secondary-alt-t" => ToggleTempoMarks;
         "view.zoom_in",         GroupView,      CmdZoomIn,             "secondary-=" => ZoomIn;
         "view.zoom_out",        GroupView,      CmdZoomOut,            "secondary--" => ZoomOut;
         "view.settings",        GroupView,      CmdSettings,           "secondary-," => OpenSettings;

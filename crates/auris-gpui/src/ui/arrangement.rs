@@ -386,8 +386,8 @@ impl AurisApp {
             .flex()
             .items_center()
             .gap_1()
-            // Matches the ruler *and* the harmony lane opposite. See the constant.
-            .h(Metrics::TIMELINE_HEADER_HEIGHT)
+            // Matches the ruler and whichever strips are showing opposite. See the method.
+            .h(self.panels.lanes.header_height())
             .px_1()
             .bg(theme.surface_raised)
             .border_b_1()
@@ -677,8 +677,13 @@ impl AurisApp {
         let signatures = self.project().signatures.spans();
         let lane_signatures = signatures.clone();
         let playhead = self.playhead_ticks();
-        // The whole map, cheaply: the painter draws nothing for a constant-tempo song.
-        let tempo: Vec<TempoPoint> = self.project().tempo_map.points().to_vec();
+        // The whole map, cheaply: the painter draws nothing for a constant-tempo song. Empty when
+        // the marks are turned off, which is the whole of hiding them — a painter given nothing
+        // draws nothing, and there is no second code path to keep in step with the first.
+        let tempo: Vec<TempoPoint> = match self.panels.lanes.tempo {
+            true => self.project().tempo_map.points().to_vec(),
+            false => Vec::new(),
+        };
         let loop_region = self
             .project()
             .loop_region
@@ -762,8 +767,12 @@ impl AurisApp {
                         this.scroll_timeline(event, cx);
                     })),
             )
-            .child(self.render_structure_lane(cx))
-            .child(self.render_harmony_lane(cx))
+            .when(self.panels.lanes.structure, |this| {
+                this.child(self.render_structure_lane(cx))
+            })
+            .when(self.panels.lanes.harmony, |this| {
+                this.child(self.render_harmony_lane(cx))
+            })
             .child(
                 div()
                     .id("lanes")

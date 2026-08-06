@@ -278,6 +278,12 @@ A strip under the bar ruler carries the key and the chords, spanning every track
 what harmony is: one thing the whole arrangement obeys at any one moment, belonging to no track.
 Like the tempo map, it changes as the song goes on.
 
+It, the structure strip above it and the tempo marks along the ruler are each shown or hidden from
+the **View** menu, and where you leave them is where they are next launch. A piece with no chords
+written pays fifty pixels a row for two empty strips; a piece being arranged around a chorus wants
+all three. Hiding a lane hides the drawing of something and never the thing — the document keeps
+its chords whether or not they are on screen.
+
 Right-click it to type a chord (`IV`, `vi`, `bVII7`) or a key (`Eb`, `F# minor`), or to write one
 of the named progressions — `axis`, `marusa`, `royal-road`, `canon` and a dozen more, the same
 catalogue `auris progressions` lists and the composer reads as `@marusa`. A progression is written

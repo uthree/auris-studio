@@ -164,8 +164,8 @@ const SPECTRUM_GAP: usize = 5;
 
 /// Where a frequency sits across the display, from 0 at the left edge to 1 at the right.
 ///
-/// Logarithmic, because pitch is, and because that is how [`auris_dsp::bands_from_bins`] spaces
-/// the bands — the scale and the curve have to agree or the numbers under it are decoration.
+/// Logarithmic, because pitch is, and because that is how `auris_dsp::bands_from_bins` spaces the
+/// bands — the scale and the curve have to agree or the numbers under it are decoration.
 fn spectrum_x(hz: f64) -> f32 {
     let span = (SPECTRUM_HIGH / SPECTRUM_LOW).ln();
     ((hz / SPECTRUM_LOW).ln() / span).clamp(0.0, 1.0) as f32

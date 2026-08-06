@@ -136,6 +136,9 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_toggle_inspector))
             .on_action(cx.listener(Self::on_toggle_piano_roll))
             .on_action(cx.listener(Self::on_toggle_mixer))
+            .on_action(cx.listener(Self::on_toggle_structure_lane))
+            .on_action(cx.listener(Self::on_toggle_harmony_lane))
+            .on_action(cx.listener(Self::on_toggle_tempo_marks))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_open_command_palette))
             .on_action(cx.listener(Self::on_open_menu_bar))
@@ -1334,6 +1337,39 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.toggle_panel(Panel::Mixer);
+        cx.notify();
+    }
+
+    fn on_toggle_structure_lane(
+        &mut self,
+        _: &actions::ToggleStructureLane,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.panels.lanes.structure = !self.panels.lanes.structure;
+        self.remember_layout();
+        cx.notify();
+    }
+
+    fn on_toggle_harmony_lane(
+        &mut self,
+        _: &actions::ToggleHarmonyLane,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.panels.lanes.harmony = !self.panels.lanes.harmony;
+        self.remember_layout();
+        cx.notify();
+    }
+
+    fn on_toggle_tempo_marks(
+        &mut self,
+        _: &actions::ToggleTempoMarks,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.panels.lanes.tempo = !self.panels.lanes.tempo;
+        self.remember_layout();
         cx.notify();
     }
 

@@ -128,6 +128,62 @@ impl Panel {
     }
 }
 
+/// The strips between the ruler and the clips, and whether each is drawn.
+///
+/// One question asked three times: how much of the window the *song* gets, against how much its
+/// structure and its harmony get. A piece with neither written is paying fifty pixels a row for
+/// two empty strips; a piece being arranged around a chorus wants both of them and the tempo
+/// marks as well.
+///
+/// A property of the window rather than of the document, like a panel's width — hiding a lane
+/// hides the drawing of something, never the thing.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TimelineLanes {
+    /// The strip of section names: イントロ, Aメロ, サビ.
+    pub structure: bool,
+    /// The key and the chords.
+    pub harmony: bool,
+    /// Tempo changes, marked along the ruler's lower edge.
+    ///
+    /// Not a lane of its own — it is drawn *on* the ruler — so turning it off changes no height.
+    /// It is here because it is the same question: a strip of numbers over a song that never
+    /// changes tempo says nothing, and one over a song that does is the only place it is said.
+    pub tempo: bool,
+}
+
+impl Default for TimelineLanes {
+    /// All three. A lane nobody has hidden is a lane that is drawn: somebody who does not know
+    /// these can be turned off should still see what the document holds.
+    fn default() -> Self {
+        Self {
+            structure: true,
+            harmony: true,
+            tempo: true,
+        }
+    }
+}
+
+impl TimelineLanes {
+    /// Everything above the clip lanes on the right, and the strip that matches it on the left.
+    ///
+    /// The track headers line up with their lanes only because the left column reserves exactly
+    /// what the right column spends above them. Adding a lane on one side and not the other slides
+    /// every header out of register with the track it names — a bug that reads as a paint glitch
+    /// and that no test can see, because nothing here is ever rendered in one. Both sides call
+    /// this, so they cannot disagree.
+    pub fn header_height(self) -> Pixels {
+        let mut height = Metrics::RULER_HEIGHT;
+        if self.structure {
+            height += Metrics::STRUCTURE_LANE_HEIGHT;
+        }
+        if self.harmony {
+            height += Metrics::HARMONY_LANE_HEIGHT;
+        }
+        height
+    }
+}
+
 /// Where every panel sits, whether it is showing, and how large each dock is drawn.
 ///
 /// Kept together so the layout, the hit tests and the dividers all read one source rather than
@@ -145,6 +201,8 @@ pub struct PanelLayout {
     sizes: [Pixels; 3],
     /// Width of the track header column.
     pub header_width: Pixels,
+    /// Which strips above the clip lanes are drawn.
+    pub lanes: TimelineLanes,
 }
 
 impl Default for PanelLayout {
@@ -165,6 +223,7 @@ impl Default for PanelLayout {
                 Metrics::RIGHT_DOCK_WIDTH,
             ],
             header_width: Metrics::TRACK_HEADER_WIDTH,
+            lanes: TimelineLanes::default(),
         }
     }
 }
@@ -368,6 +427,8 @@ struct StoredLayout {
     sizes: BTreeMap<Dock, f32>,
     /// Width of the track header column.
     header_width: Option<f32>,
+    /// Which strips above the clip lanes are drawn.
+    lanes: TimelineLanes,
 }
 
 impl From<&PanelLayout> for StoredLayout {
@@ -390,6 +451,7 @@ impl From<&PanelLayout> for StoredLayout {
                 .map(|dock| (dock, f32::from(layout.size(dock))))
                 .collect(),
             header_width: Some(f32::from(layout.header_width)),
+            lanes: layout.lanes,
         }
     }
 }
@@ -407,6 +469,7 @@ impl From<StoredLayout> for PanelLayout {
         if let Some(width) = stored.header_width {
             layout.header_width = Self::resized_headers(px(width), px(0.0));
         }
+        layout.lanes = stored.lanes;
         // A dock shows one panel at a time, which nothing in the file is obliged to respect. The
         // first one named wins, and the rest are shut: two open panels in one dock would draw over
         // each other, and only one of them could be hidden again from the status bar.
@@ -570,11 +633,53 @@ mod tests {
     }
 
     #[test]
+    fn the_two_columns_reserve_the_same_height_above_the_lanes() {
+        // The track headers line up with their lanes only because the left column reserves
+        // exactly what the ruler and whichever strips are showing spend on the right. Nothing
+        // renders in a test, so this arithmetic is the only place the misalignment can be caught
+        // before a person sees every header sitting off the track it names.
+        let all = TimelineLanes::default();
+        assert_eq!(
+            all.header_height(),
+            Metrics::RULER_HEIGHT + Metrics::STRUCTURE_LANE_HEIGHT + Metrics::HARMONY_LANE_HEIGHT
+        );
+
+        let bare = TimelineLanes {
+            structure: false,
+            harmony: false,
+            tempo: false,
+        };
+        assert_eq!(
+            bare.header_height(),
+            Metrics::RULER_HEIGHT,
+            "the ruler is not a lane and never goes"
+        );
+
+        // The tempo marks are drawn on the ruler, so hiding them buys no height at all.
+        let no_tempo = TimelineLanes {
+            tempo: false,
+            ..all
+        };
+        assert_eq!(no_tempo.header_height(), all.header_height());
+
+        // And each of the two that *are* lanes gives back exactly its own row.
+        let no_structure = TimelineLanes {
+            structure: false,
+            ..all
+        };
+        assert_eq!(
+            all.header_height() - no_structure.header_height(),
+            Metrics::STRUCTURE_LANE_HEIGHT
+        );
+    }
+
+    #[test]
     fn an_arrangement_round_trips_through_the_file() {
         let mut layout = PanelLayout::default();
         layout.move_to(Panel::Mixer, Dock::Left);
         layout.set_size(Dock::Right, px(360.0));
         layout.header_width = px(220.0);
+        layout.lanes.harmony = false;
 
         let text = serde_json::to_string(&StoredLayout::from(&layout)).unwrap();
         let restored = PanelLayout::from(serde_json::from_str::<StoredLayout>(&text).unwrap());

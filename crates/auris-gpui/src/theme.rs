@@ -517,18 +517,6 @@ impl Metrics {
     /// which is why it sits above: the stack reads from the largest division of the song down
     /// to the smallest.
     pub const STRUCTURE_LANE_HEIGHT: Pixels = px(18.0);
-    /// Everything above the clip lanes on the right, and the strip that matches it on the left.
-    ///
-    /// The track headers line up with their lanes only because the left column reserves exactly
-    /// what the right column spends above them. Adding a lane on one side and not the other slides
-    /// every header out of register with the track it names — a bug that reads as a paint glitch
-    /// and that no test can see, because nothing here is ever rendered in one. Both sides read
-    /// this, so they cannot disagree.
-    ///
-    /// Spelled out rather than summed because `Pixels` keeps its inner value private and there is
-    /// no const arithmetic to be had. `the_two_columns_reserve_the_same_height_above_the_lanes`
-    /// is what keeps the three numbers honest.
-    pub const TIMELINE_HEADER_HEIGHT: Pixels = px(80.0);
     /// Width of the track header column.
     pub const TRACK_HEADER_WIDTH: Pixels = px(196.0);
     /// Width of the piano-roll keyboard.
@@ -564,18 +552,6 @@ impl Metrics {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_two_columns_reserve_the_same_height_above_the_lanes() {
-        // The track headers line up with their lanes only because the left column reserves
-        // exactly what the ruler, the structure lane and the harmony lane spend on the right.
-        // Nothing renders in a test, so this arithmetic is the only place the misalignment can
-        // be caught before a person sees every header sitting off the track it names.
-        assert_eq!(
-            Metrics::TIMELINE_HEADER_HEIGHT,
-            Metrics::RULER_HEIGHT + Metrics::STRUCTURE_LANE_HEIGHT + Metrics::HARMONY_LANE_HEIGHT
-        );
-    }
 
     #[test]
     fn every_scheme_is_reachable_by_the_name_it_is_stored_under() {

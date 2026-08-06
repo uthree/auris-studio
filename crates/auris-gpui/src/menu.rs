@@ -223,6 +223,22 @@ pub fn model(language: Language) -> Vec<MenuSection> {
             ),
             command(t(Key::CmdShowMixer), actions::ToggleMixer, "view.mixer"),
             MenuRow::Separator,
+            command(
+                t(Key::CmdShowStructureLane),
+                actions::ToggleStructureLane,
+                "view.structure_lane",
+            ),
+            command(
+                t(Key::CmdShowHarmonyLane),
+                actions::ToggleHarmonyLane,
+                "view.harmony_lane",
+            ),
+            command(
+                t(Key::CmdShowTempoMarks),
+                actions::ToggleTempoMarks,
+                "view.tempo_marks",
+            ),
+            MenuRow::Separator,
             command(t(Key::CmdZoomIn), actions::ZoomIn, "view.zoom_in"),
             command(t(Key::CmdZoomOut), actions::ZoomOut, "view.zoom_out"),
         ],
