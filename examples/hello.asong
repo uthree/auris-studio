@@ -1,0 +1,13 @@
+# The smallest thing that is a song.
+#
+# Every field a specification has, has a default, so a document is never rejected for being
+# short. This one names a key and a progression and lets the composer decide the rest: the
+# form, the roster, the tempo, how hard it is played and how much a repeat departs from what
+# came before it.
+#
+#   auris compose examples/hello.asong --print
+#   auris compose examples/hello.asong -o hello.auris
+
+title:  Hello
+key:    C major
+chords: @axis

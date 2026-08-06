@@ -316,6 +316,14 @@ document that an agent can write and a person can edit one line of. The whole pi
 single undo step, so a composition that is not what was wanted is one press away from the document
 that was there before it.
 
+Two are in [`examples/`](examples): `hello.asong` is three lines, which is a whole song because
+every field has a default, and `neon-drive.asong` is most of the vocabulary with a comment beside
+each part of it.
+
+```bash
+auris compose examples/neon-drive.asong -o neon.auris
+```
+
 ```
 title:  Neon Drive
 key:    C minor

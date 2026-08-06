@@ -1,0 +1,107 @@
+# A whole song, with most of the vocabulary in it.
+#
+# Eight parts over six sections, on 丸サ進行.
+#
+#   auris compose examples/neon-drive.asong --print     # the specification, filled in
+#   auris compose examples/neon-drive.asong -o neon.auris
+#
+# Change one line and hear what it does. `seed:` is the most rewarding: everything below is a
+# pure function of this document and that number, so a different seed is a different take of
+# the same song rather than a different song.
+
+title:      Neon Drive
+key:        C minor
+scale:      aeolian
+tempo:      124
+meter:      4/4
+seed:       7
+
+# The four dials behind `mood:`. Naming a feeling — driving, bright, dark, calm — sets all
+# four at once; writing them out is how you get somewhere between two feelings.
+brightness:  0.35
+energy:      0.80
+tension:     0.55
+syncopation: 0.45
+
+groove:    four-on-the-floor
+swing:     54
+humanize:  0.30
+dynamics:  0.90
+fill:      0.60
+# How much a second chorus departs from the first. At 0 it is note for note; the default
+# leaves most of the material alone and rewrites the occasional bar.
+variation: 0.30
+
+chords: @marusa
+form:   intro verse chorus verse chorus outro
+
+# ------------------------------------------------------------------ sections
+# `intensity` is how hard the section is played. Every section name carries a default — a
+# chorus is 0.90 and an intro 0.30 — so these lines are here to be tuned, not required.
+
+[section intro]
+bars:      4
+intensity: 0.30
+# Which parts play. Everything else sits the intro out, which is what makes the verse an
+# entrance rather than a continuation.
+parts:     pad bass hat
+
+[section verse]
+bars:      8
+intensity: 0.55
+parts:     lead chords bass kick snare hat
+
+[section chorus]
+bars:      8
+intensity: 0.95
+# `transpose:` would move this section by a number of semitones — but it belongs to the
+# *section*, and both choruses are the same section, so it would move both. A last chorus a
+# tone higher than the first needs a section of its own today, which then gets figures of its
+# own because material is keyed by the label. Modulating a repeat is on the list.
+
+[section outro]
+bars:      4
+intensity: 0.25
+parts:     pad bass
+
+# ------------------------------------------------------------------ parts
+# A part's name implies its role, so `[part bass]` needs no `role:` line. Everything a role
+# implies — its register, its level, how long it holds a note — is a default the part is free
+# to override.
+
+[part lead]
+instrument: auris.synth.chiptune
+octave:     1
+density:    0.55
+gate:       0.85
+
+[part chords]
+role:        chords
+instrument:  auris.synth.fm2
+subdivision: 8
+density:     0.45
+
+[part pad]
+role:       pad
+instrument: auris.synth.fm2
+octave:     -1
+
+[part arp]
+role:        arp
+instrument:  auris.synth.chiptune
+subdivision: 16
+density:     0.75
+octave:      1
+
+[part bass]
+instrument: auris.synth.fm2
+
+[part kick]
+instrument: auris.synth.noisedrum
+
+[part snare]
+instrument: auris.synth.noisedrum
+
+[part hat]
+instrument: auris.synth.noisedrum
+density:    0.65
