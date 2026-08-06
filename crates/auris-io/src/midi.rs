@@ -36,7 +36,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use auris_core::project::{BendPoint, Note, Project};
+use auris_core::project::{CURVE_STEP, ClipCurve, CurvePoint, Note, Project};
 use auris_core::time::{SignatureMap, TICKS_PER_QUARTER, TempoMap, Ticks, TimeSignature};
 use midly::num::{u4, u7, u15, u24, u28};
 use midly::{Format, Header, MetaMessage, MidiMessage, Smf, Timing, TrackEvent, TrackEventKind};
@@ -62,7 +62,9 @@ pub struct MidiTrack {
     ///
     /// A file that never bends brings none, which is what keeps this off the overwhelming
     /// majority of imports.
-    pub bend: Vec<BendPoint>,
+    pub bend: Vec<CurvePoint>,
+    /// The modulation, positioned the same way.
+    pub modulation: Vec<CurvePoint>,
 }
 
 /// Everything a Standard MIDI File said, in this application's units.
@@ -218,9 +220,19 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
                         }
                         MidiMessage::PitchBend { bend } => {
                             if let Some(part) = parts.get_mut(&key) {
-                                part.bend.push(BendPoint {
+                                part.bend.push(CurvePoint {
                                     at: scale(at, per_quarter),
-                                    semitones: bend.as_f32() * BEND_RANGE,
+                                    value: bend.as_f32() * BEND_RANGE,
+                                });
+                            }
+                        }
+                        MidiMessage::Controller { controller, value }
+                            if controller.as_int() == CC_MODULATION =>
+                        {
+                            if let Some(part) = parts.get_mut(&key) {
+                                part.modulation.push(CurvePoint {
+                                    at: scale(at, per_quarter),
+                                    value: f32::from(value.as_int()) / 127.0,
                                 });
                             }
                         }
@@ -257,11 +269,14 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
                 notes.sort_by_key(|note| (note.start, note.pitch));
                 let mut bend = part.bend;
                 bend.sort_by_key(|point| point.at);
+                let mut modulation = part.modulation;
+                modulation.sort_by_key(|point| point.at);
                 MidiTrack {
                     name: part.name.unwrap_or_else(|| default_name(key.1)),
                     channel: key.1,
                     notes,
                     bend,
+                    modulation,
                 }
             })
         })
@@ -350,11 +365,14 @@ fn build_tracks(project: &Project) -> (Vec<Vec<TrackEvent<'static>>>, usize) {
                     message(channel, note.pitch, u7::new(0)),
                 ));
             }
-            // The bend, sampled by the clip's own rule rather than by one of this file's. A
-            // fourteen-bit value is what the format carries, so semitones go out through
-            // [`BEND_RANGE`] and come back the same way.
-            for (at, semitones) in clip.bend_events(auris_core::project::BEND_STEP) {
+            // The curves, sampled by the clip's own rule rather than by one of this file's. What
+            // the wire carries — fourteen bits of bend, seven of controller — is this file's
+            // business and stops here; the document works in semitones and in a fraction.
+            for (at, semitones) in clip.curve_events(ClipCurve::Bend, CURVE_STEP) {
                 events.push((clip.start + at, bend_message(channel, semitones)));
+            }
+            for (at, amount) in clip.curve_events(ClipCurve::Modulation, CURVE_STEP) {
+                events.push((clip.start + at, modulation_message(channel, amount)));
             }
         }
         // Sorted by position, and at one position the releases go first: a note struck again at
@@ -442,12 +460,29 @@ fn message(channel: u4, pitch: u8, vel: u7) -> TrackEventKind<'static> {
 /// everywhere but here.
 const BEND_RANGE: f32 = 2.0;
 
+/// Controller 1: the modulation wheel.
+const CC_MODULATION: u8 = 1;
+
 /// A pitch bend message carrying `semitones`.
 fn bend_message(channel: u4, semitones: f32) -> TrackEventKind<'static> {
     TrackEventKind::Midi {
         channel,
         message: MidiMessage::PitchBend {
             bend: midly::PitchBend::from_f32((semitones / BEND_RANGE).clamp(-1.0, 1.0)),
+        },
+    }
+}
+
+/// A modulation message carrying `amount`, from 0 to 1.
+///
+/// The seven bits are the wire's business and stop here: the document works in a fraction, the
+/// way [`NoteEvent::Modulation`](auris_core::NoteEvent::Modulation) does.
+fn modulation_message(channel: u4, amount: f32) -> TrackEventKind<'static> {
+    TrackEventKind::Midi {
+        channel,
+        message: MidiMessage::Controller {
+            controller: u7::new(CC_MODULATION),
+            value: u7::new((amount.clamp(0.0, 1.0) * 127.0).round() as u8),
         },
     }
 }
@@ -491,7 +526,9 @@ struct Part {
     name: Option<String>,
     notes: Vec<Note>,
     /// The bend, at absolute ticks. Rebased onto the clip once the clip's start is known.
-    bend: Vec<BendPoint>,
+    bend: Vec<CurvePoint>,
+    /// The modulation, gathered and rebased the same way.
+    modulation: Vec<CurvePoint>,
 }
 
 /// The channel an event belongs to, or 0 for the ones that belong to the track as a whole.
@@ -833,13 +870,13 @@ mod tests {
             .clips[0]
             .id;
         project.midi_clip_mut(clip).expect("the clip").bend = vec![
-            BendPoint {
+            CurvePoint {
                 at: Ticks::ZERO,
-                semitones: 0.0,
+                value: 0.0,
             },
-            BendPoint {
+            CurvePoint {
                 at: Ticks(TICKS_PER_QUARTER * 2),
-                semitones: 2.0,
+                value: 2.0,
             },
         ];
 
@@ -852,7 +889,7 @@ mod tests {
         let at = |tick: i64| {
             bend.iter()
                 .rfind(|point| point.at <= Ticks(tick))
-                .map(|point| point.semitones)
+                .map(|point| point.value)
                 .unwrap_or(0.0)
         };
         assert!(at(0).abs() < 0.01, "it started bent: {}", at(0));
@@ -883,6 +920,68 @@ mod tests {
                 .bend
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn the_wheel_goes_out_as_controller_one_and_comes_back() {
+        // Seven bits rather than fourteen, so the tolerance is a hundred and twenty-eighth of the
+        // travel — and that *is* the resolution the wire has, so a receiver reading this file
+        // hears exactly what a receiver reading any other one would.
+        let mut project = project_with(
+            vec![Note::new(60, Ticks::ZERO, Ticks(TICKS_PER_QUARTER * 4))],
+            Ticks(TICKS_PER_QUARTER * 4),
+        );
+        let clip = project.tracks[0]
+            .kind
+            .as_instrument()
+            .expect("an instrument track")
+            .clips[0]
+            .id;
+        project.midi_clip_mut(clip).expect("the clip").modulation = vec![
+            CurvePoint {
+                at: Ticks::ZERO,
+                value: 0.0,
+            },
+            CurvePoint {
+                at: Ticks(TICKS_PER_QUARTER * 2),
+                value: 1.0,
+            },
+        ];
+
+        let imported = round_trip(&project);
+        let wheel = &imported.tracks[0].modulation;
+        assert!(!wheel.is_empty(), "the wheel did not survive the file");
+        for pair in wheel.windows(2) {
+            assert!(pair[0].at <= pair[1].at, "out of order: {wheel:?}");
+        }
+        let at = |tick: i64| {
+            wheel
+                .iter()
+                .rfind(|point| point.at <= Ticks(tick))
+                .map(|point| point.value)
+                .unwrap_or(0.0)
+        };
+        assert!(at(0).abs() < 0.01, "it started up: {}", at(0));
+        assert!(
+            (at(TICKS_PER_QUARTER) - 0.5).abs() < 0.01,
+            "halfway up is {}",
+            at(TICKS_PER_QUARTER)
+        );
+        assert!(
+            (at(TICKS_PER_QUARTER * 2) - 1.0).abs() < 0.01,
+            "the top is {}",
+            at(TICKS_PER_QUARTER * 2)
+        );
+        // Let go before the clip ends, for the reason the bend is: a wheel left up is channel
+        // state, and everything after it would go on wobbling.
+        assert!(
+            at(TICKS_PER_QUARTER * 4).abs() < 0.01,
+            "the wheel was left up at {}",
+            at(TICKS_PER_QUARTER * 4)
+        );
+        // And a bend written beside it comes back as a bend rather than as a wheel: two curves on
+        // one channel, told apart by the message they are carried in.
+        assert!(imported.tracks[0].bend.is_empty());
     }
 
     #[test]

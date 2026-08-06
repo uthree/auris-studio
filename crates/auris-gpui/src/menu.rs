@@ -244,6 +244,11 @@ pub fn model(language: Language) -> Vec<MenuSection> {
                 actions::ToggleBendLane,
                 "view.bend_lane",
             ),
+            command(
+                t(Key::CmdShowModulationLane),
+                actions::ToggleModulationLane,
+                "view.modulation_lane",
+            ),
             MenuRow::Separator,
             command(t(Key::CmdZoomIn), actions::ZoomIn, "view.zoom_in"),
             command(t(Key::CmdZoomOut), actions::ZoomOut, "view.zoom_out"),

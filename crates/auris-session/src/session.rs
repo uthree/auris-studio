@@ -9,7 +9,7 @@ use auris_core::automation::{Automation, AutomationCurve};
 use auris_core::harmony::Harmony;
 use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
 use auris_core::plugin::{PluginKind, PluginState};
-use auris_core::project::{BEND_LIMIT, BendPoint};
+use auris_core::project::{ClipCurve, CurvePoint};
 use auris_core::theory::chart::{Chart, catalog};
 use auris_core::theory::chord::Chord;
 use auris_core::theory::key::Key as MusicalKey;
@@ -1786,103 +1786,117 @@ impl Session {
         Ok(report)
     }
 
-    // ------------------------------------------------------- the bend on a clip
+    // --------------------------------------------------- the curves on a clip
 
-    /// Writes a point on a clip's pitch bend, replacing whatever was at that instant.
+    /// Writes a point on one of a clip's curves, replacing whatever was at that instant.
     ///
     /// Kept in time order here rather than wherever a curve is read, because everything that
     /// reads one — the renderer, the MIDI writer, the roll — assumes it: a point out of order
-    /// would draw a line backwards and schedule a bend that jumped.
-    pub fn set_bend_point(&mut self, clip: ClipId, at: Ticks, semitones: f32) -> bool {
+    /// would draw a line backwards and schedule a jump.
+    ///
+    /// `which` is the only thing that tells the bend from the modulation anywhere in this crate.
+    /// They are the same shape and obey the same rules, and two copies of these four commands
+    /// would be two chances for the wheel to behave differently from the bend for no reason
+    /// anybody could see.
+    pub fn set_curve_point(
+        &mut self,
+        clip: ClipId,
+        which: ClipCurve,
+        at: Ticks,
+        value: f32,
+    ) -> bool {
         let at = at.max_zero();
-        let semitones = semitones.clamp(-BEND_LIMIT, BEND_LIMIT);
+        let (low, high) = which.range();
+        let value = value.clamp(low, high);
         let Some((_, target)) = self.project.midi_clip(clip) else {
             return false;
         };
         let at = at.min(target.length);
         if target
-            .bend
+            .curve(which)
             .iter()
-            .any(|point| point.at == at && point.semitones == semitones)
+            .any(|point| point.at == at && point.value == value)
         {
             return false;
         }
-        self.record(Edit::WriteBend(clip));
+        self.record(Edit::write_curve(which, clip));
         if let Some(target) = self.project.midi_clip_mut(clip) {
-            target.bend.retain(|point| point.at != at);
-            target.bend.push(BendPoint { at, semitones });
-            target.bend.sort_by_key(|point| point.at);
+            let points = target.curve_mut(which);
+            points.retain(|point| point.at != at);
+            points.push(CurvePoint { at, value });
+            points.sort_by_key(|point| point.at);
         }
         self.invalidate_graph();
         true
     }
 
-    /// Moves a point along the bend, taking a new value with it.
+    /// Moves a point along a curve, taking a new value with it.
     ///
     /// Returns where it landed, which is not always where it was asked to go: dropped onto another
-    /// point it replaces that one, since one instant cannot hold two bends. A drag wants
+    /// point it replaces that one, since one instant cannot hold two values. A drag wants
     /// [`Self::begin_transaction`] around the whole gesture, the way every other drag does.
-    pub fn move_bend_point(
+    pub fn move_curve_point(
         &mut self,
         clip: ClipId,
+        which: ClipCurve,
         from: Ticks,
         to: Ticks,
-        semitones: f32,
+        value: f32,
     ) -> Option<Ticks> {
-        let semitones = semitones.clamp(-BEND_LIMIT, BEND_LIMIT);
+        let (low, high) = which.range();
+        let value = value.clamp(low, high);
         let length = self.project.midi_clip(clip)?.1.length;
         let to = to.max_zero().min(length);
         let held = self
             .project
             .midi_clip(clip)?
             .1
-            .bend
+            .curve(which)
             .iter()
             .find(|point| point.at == from)
             .copied()?;
-        if held.at == to && held.semitones == semitones {
+        if held.at == to && held.value == value {
             return Some(to);
         }
-        self.record(Edit::WriteBend(clip));
+        self.record(Edit::write_curve(which, clip));
         let target = self.project.midi_clip_mut(clip)?;
-        target
-            .bend
-            .retain(|point| point.at != from && point.at != to);
-        target.bend.push(BendPoint { at: to, semitones });
-        target.bend.sort_by_key(|point| point.at);
+        let points = target.curve_mut(which);
+        points.retain(|point| point.at != from && point.at != to);
+        points.push(CurvePoint { at: to, value });
+        points.sort_by_key(|point| point.at);
         self.invalidate_graph();
         Some(to)
     }
 
-    /// Takes one point off a clip's bend.
-    pub fn remove_bend_point(&mut self, clip: ClipId, at: Ticks) -> bool {
+    /// Takes one point off a curve.
+    pub fn remove_curve_point(&mut self, clip: ClipId, which: ClipCurve, at: Ticks) -> bool {
         if !self
             .project
             .midi_clip(clip)
-            .is_some_and(|target| target.1.bend.iter().any(|point| point.at == at))
+            .is_some_and(|target| target.1.curve(which).iter().any(|point| point.at == at))
         {
             return false;
         }
-        self.record(Edit::EraseBend);
+        self.record(Edit::erase_curve(which));
         if let Some(target) = self.project.midi_clip_mut(clip) {
-            target.bend.retain(|point| point.at != at);
+            target.curve_mut(which).retain(|point| point.at != at);
         }
         self.invalidate_graph();
         true
     }
 
-    /// Straightens a clip out, removing its bend entirely.
-    pub fn clear_bend(&mut self, clip: ClipId) -> bool {
+    /// Straightens a clip out, removing one of its curves entirely.
+    pub fn clear_curve(&mut self, clip: ClipId, which: ClipCurve) -> bool {
         if !self
             .project
             .midi_clip(clip)
-            .is_some_and(|target| !target.1.bend.is_empty())
+            .is_some_and(|target| !target.1.curve(which).is_empty())
         {
             return false;
         }
-        self.record(Edit::EraseBend);
+        self.record(Edit::erase_curve(which));
         if let Some(target) = self.project.midi_clip_mut(clip) {
-            target.bend.clear();
+            target.curve_mut(which).clear();
         }
         self.invalidate_graph();
         true
@@ -3421,17 +3435,20 @@ impl Session {
                         ..*note
                     })
                     .collect();
-                // Rebased the same way the notes are, and cut to the clip: a bend written before
-                // the first note or after the last has nothing here to bend.
-                clip.bend = track
-                    .bend
-                    .iter()
-                    .filter(|point| point.at >= first && point.at <= last)
-                    .map(|point| auris_core::project::BendPoint {
-                        at: point.at - first,
-                        ..*point
-                    })
-                    .collect();
+                // Rebased the same way the notes are, and cut to the clip: a curve written before
+                // the first note or after the last has nothing here to shape.
+                let rebase = |points: &[CurvePoint]| -> Vec<CurvePoint> {
+                    points
+                        .iter()
+                        .filter(|point| point.at >= first && point.at <= last)
+                        .map(|point| CurvePoint {
+                            at: point.at - first,
+                            ..*point
+                        })
+                        .collect()
+                };
+                clip.bend = rebase(&track.bend);
+                clip.modulation = rebase(&track.modulation);
                 // The file said where the notes are; nothing should grow the clip past them on the
                 // next edit and quietly change what it holds.
                 clip.length_is_explicit = true;

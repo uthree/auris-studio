@@ -171,17 +171,26 @@ every note in the same place. Tempo is the one thing that does not survive exact
 stores whole microseconds per quarter note, so 144 bpm goes out as 416 667 and comes back as
 143.999 88. A thousandth of a beat per minute, and 96 or 120 divide evenly and return exact.
 
-**Pitch bend travels both ways.** A clip carries its own bend curve — on the clip rather than in an
-automation lane, because a bend belongs to the phrase and a clip dragged four bars later takes it
-along. **View → Pitch Bend** puts a strip under the piano roll where it is drawn: a press on empty
-strip writes the point it is about to drag, so placing a bend and shaping it is one gesture; ⌥-click
-takes one off; right-click straightens the whole clip. It spans the same timeline as the notes
-above it, because a bend happens at a moment in the phrase and the only useful way to look at one
-is with the note it is bending directly overhead. It is the one thing here that is not exact through a file: MIDI carries fourteen bits across
-the range a receiver assumes, so a semitone is quantised to about a fiftieth of a cent on the way
-through. A curve that does not end at zero is **let go before the clip ends** — a bend is channel
-state an instrument holds until it is told otherwise, and a clip finishing two semitones sharp
-would detune everything after it.
+**Pitch bend and modulation travel both ways.** A clip carries both curves itself — on the clip
+rather than in an automation lane, because they belong to the phrase and a clip dragged four bars
+later takes them along. **View → Pitch Bend** (`⌘⌥B`) and **View → Modulation** (`⌘⌥W`) put a strip
+under the piano roll for each: a press on empty strip writes the point it is about to drag, so
+placing a curve and shaping it is one gesture; ⌥-click takes one off; right-click straightens the
+whole clip. They span the same timeline as the notes above them, because both happen at a moment in
+the phrase and the only useful way to look at one is with the note it is shaping directly overhead.
+
+One set of gestures and one painter for both, differing in exactly two things: the bend goes both
+ways from a line across the middle, and the wheel goes up from a floor, because there is nothing
+below the bottom of its travel.
+
+Neither is exact through a file, and for opposite reasons. A bend is fourteen bits across the range
+a receiver assumes, so a semitone is quantised to about a fiftieth of a cent; the wheel is
+controller 1, seven bits, which is all the resolution the wire has — a receiver reading this file
+hears exactly what it would hear reading anybody else's.
+
+A curve that does not end at zero is **let go before the clip ends**. Both are channel state an
+instrument holds until it is told otherwise: a clip finishing two semitones sharp would detune
+everything after it, and one finishing with the wheel up would leave it wobbling.
 
 What a `.mid` has nowhere to put, in either direction: audio tracks, every mixer setting including
 mute and solo, which instrument each track plays, and the automation. A MIDI file is the notes and

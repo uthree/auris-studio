@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use auris_i18n::Key;
+use auris_session::prelude::ClipCurve;
 use gpui::{Pixels, px};
 use serde::{Deserialize, Serialize};
 
@@ -214,6 +215,26 @@ pub struct PanelLayout {
     /// Off until asked for. A bend is a thing a few parts do and most do not, and a strip that is
     /// always there takes seventy pixels off the notes of every clip that never bends.
     pub bend_lane: bool,
+    /// Whether the piano roll draws its modulation strip, on the same terms.
+    pub modulation_lane: bool,
+}
+
+impl PanelLayout {
+    /// Whether one of the roll's two curve strips is drawn.
+    pub fn curve_lane(&self, which: ClipCurve) -> bool {
+        match which {
+            ClipCurve::Bend => self.bend_lane,
+            ClipCurve::Modulation => self.modulation_lane,
+        }
+    }
+
+    /// Shows or hides one of them.
+    pub fn set_curve_lane(&mut self, which: ClipCurve, shown: bool) {
+        match which {
+            ClipCurve::Bend => self.bend_lane = shown,
+            ClipCurve::Modulation => self.modulation_lane = shown,
+        }
+    }
 }
 
 impl Default for PanelLayout {
@@ -246,6 +267,7 @@ impl Default for PanelLayout {
             header_width: Metrics::TRACK_HEADER_WIDTH,
             lanes: TimelineLanes::default(),
             bend_lane: false,
+            modulation_lane: false,
         }
     }
 }
@@ -453,6 +475,7 @@ struct StoredLayout {
     lanes: TimelineLanes,
     /// Whether the piano roll draws its pitch bend strip.
     bend_lane: bool,
+    modulation_lane: bool,
 }
 
 impl From<&PanelLayout> for StoredLayout {
@@ -477,6 +500,7 @@ impl From<&PanelLayout> for StoredLayout {
             header_width: Some(f32::from(layout.header_width)),
             lanes: layout.lanes,
             bend_lane: layout.bend_lane,
+            modulation_lane: layout.modulation_lane,
         }
     }
 }
@@ -496,6 +520,7 @@ impl From<StoredLayout> for PanelLayout {
         }
         layout.lanes = stored.lanes;
         layout.bend_lane = stored.bend_lane;
+        layout.modulation_lane = stored.modulation_lane;
         // A dock shows one panel at a time, which nothing in the file is obliged to respect. The
         // first one named wins, and the rest are shut: two open panels in one dock would draw over
         // each other, and only one of them could be hidden again from the status bar.

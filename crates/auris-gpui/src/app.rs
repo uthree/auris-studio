@@ -324,10 +324,12 @@ pub enum Drag {
         /// Pointer x when the drag began.
         start_x: Pixels,
     },
-    /// Dragging a point along a clip's pitch bend.
-    BendPoint {
-        /// Whose bend.
+    /// Dragging a point along one of a clip's curves.
+    CurvePoint {
+        /// Whose curve.
         clip: ClipId,
+        /// Which of the two.
+        which: ClipCurve,
         /// The point being moved, by where it currently sits — a point dropped onto another
         /// replaces it, and the drag goes on holding whichever survived.
         at: Ticks,
@@ -465,7 +467,7 @@ impl Drag {
             Drag::ClipResize { .. } => Some(Edit::ResizeClip),
             Drag::ClipFade { .. } => Some(Edit::SetClipFade),
             Drag::AutomationPoint { target, .. } => Some(Edit::WriteAutomation(*target)),
-            Drag::BendPoint { clip, .. } => Some(Edit::WriteBend(*clip)),
+            Drag::CurvePoint { clip, which, .. } => Some(Edit::write_curve(*which, *clip)),
             Drag::NoteMove { .. } => Some(Edit::MoveNotes),
             Drag::NoteResize { .. } => Some(Edit::ResizeNote),
             Drag::NoteVelocity { .. } => Some(Edit::SetNoteVelocity),
@@ -621,6 +623,18 @@ pub struct CanvasBounds {
     pub envelope: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The pitch bend strip under the piano roll.
     pub bend: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The modulation strip under it.
+    pub modulation: Rc<Cell<Option<Bounds<Pixels>>>>,
+}
+
+impl CanvasBounds {
+    /// Where one of the two curve strips was painted.
+    pub fn curve(&self, which: ClipCurve) -> &Rc<Cell<Option<Bounds<Pixels>>>> {
+        match which {
+            ClipCurve::Bend => &self.bend,
+            ClipCurve::Modulation => &self.modulation,
+        }
+    }
 }
 
 /// Waveform peaks keyed by audio source, shared by every lane in a frame.

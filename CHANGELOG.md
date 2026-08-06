@@ -32,6 +32,23 @@ format rather than a convention: `## <version> — <date>`.
 * A build with nothing installed starts, runs and composes on the built-in instruments — which is
   what CI does on every commit.
 
+### The modulation wheel goes all the way through
+
+* **View → Modulation** (`⌘⌥W`) puts a second strip under the piano roll, beside the bend. A clip
+  carries the curve itself, the engine schedules it, the instruments answer it, and a `.mid` takes
+  it out and brings it back as controller 1.
+* One set of gestures and one painter for both strips. They differ in exactly two things — the bend
+  goes both ways from a line across the middle, the wheel goes up from a floor — and two copies
+  would have been two chances for the wheel to behave differently from the bend for no reason
+  anybody could see. The same goes for the four session commands, which now take *which* curve.
+* A clip's bend is now a `CurvePoint` list shared with its modulation, so the stored field is
+  spelt `value` where it was `semitones`. **`Project::FORMAT_VERSION` is 8**: a version 7 document's
+  bends would otherwise read as zeroes, silently, because the field has a default — and a slide
+  somebody wrote would simply stop happening.
+* Like the bend, a modulation curve that does not end at zero is let go before the clip ends. Both
+  are channel state, and a clip finishing with the wheel up would leave everything after it
+  wobbling.
+
 ### The built-in instruments have a vibrato
 
 * **Vibrato Rate**, **Vibrato** and **Mod Depth** on the chiptune and the FM voice, and

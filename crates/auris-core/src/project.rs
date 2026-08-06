@@ -489,13 +489,59 @@ impl ClipRecipe {
     }
 }
 
-/// One point on a clip's pitch bend curve.
+/// One point on a curve written across a clip.
+///
+/// Shared by the bend and the modulation, because they are the same shape and the same rules: a
+/// value at an instant, straight lines between the points, held flat outside them. What the number
+/// *means* is the curve's business and not this one's.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BendPoint {
+pub struct CurvePoint {
     /// Where it sits, measured from the clip's own start.
     pub at: Ticks,
-    /// How far the sounding notes are bent, in semitones.
-    pub semitones: f32,
+    /// What the curve reads there — semitones on a bend, 0 to 1 on the modulation.
+    pub value: f32,
+}
+
+/// Which of the two curves a clip carries.
+///
+/// They are the same shape and are drawn, dragged, scheduled and written to a MIDI file by the
+/// same code; this is the one parameter that tells the two apart, so that there is exactly one
+/// copy of each of those and no chance of them disagreeing.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ClipCurve {
+    /// The pitch bend, in semitones either side of the note.
+    Bend,
+    /// The modulation wheel, from nothing to all the way up.
+    Modulation,
+}
+
+impl ClipCurve {
+    /// Both, in the order a frontend should stack their lanes.
+    pub const ALL: [ClipCurve; 2] = [ClipCurve::Bend, ClipCurve::Modulation];
+
+    /// The furthest from zero a point on this curve may be written.
+    pub fn limit(self) -> f32 {
+        match self {
+            ClipCurve::Bend => BEND_LIMIT,
+            ClipCurve::Modulation => MODULATION_LIMIT,
+        }
+    }
+
+    /// Whether the curve goes below zero.
+    ///
+    /// A bend does — the whole point of one is that it goes both ways — and a wheel does not: it
+    /// is up or it is down, and there is nothing below the bottom of its travel.
+    pub fn is_bipolar(self) -> bool {
+        matches!(self, ClipCurve::Bend)
+    }
+
+    /// The lowest and highest a point may be written at.
+    pub fn range(self) -> (f32, f32) {
+        match self.is_bipolar() {
+            true => (-self.limit(), self.limit()),
+            false => (0.0, self.limit()),
+        }
+    }
 }
 
 /// How far a bend may be written, either way.
@@ -506,12 +552,76 @@ pub struct BendPoint {
 /// dive of an octave is a sound people want.
 pub const BEND_LIMIT: f32 = 12.0;
 
-/// How finely a bend is sampled into events.
+/// How far the modulation wheel goes.
+///
+/// One, because that is what [`NoteEvent::Modulation`](crate::NoteEvent::Modulation) carries and
+/// what a wheel is: all the way up, or somewhere below it. The seven bits MIDI spends on it are a
+/// detail of the wire that stops at [`auris_io`](https://docs.rs/auris-io).
+pub const MODULATION_LIMIT: f32 = 1.0;
+
+/// How finely a curve is sampled into events.
 ///
 /// A ninety-sixth note, which at 120 bpm is about twenty milliseconds: fine enough that a slide
 /// sounds continuous and coarse enough that a bar of it is a few dozen events rather than a few
 /// thousand. Only the stretch a curve was actually written over is sampled at all.
-pub const BEND_STEP: Ticks = Ticks(crate::time::TICKS_PER_QUARTER / 24);
+pub const CURVE_STEP: Ticks = Ticks(crate::time::TICKS_PER_QUARTER / 24);
+
+/// What a curve reads at `at`: straight lines between its points, flat outside them.
+///
+/// Flat rather than interpolated towards nothing, because that is what is *heard*: a curve is
+/// channel state, so before its first point the instrument is still holding whatever it was last
+/// told, and after its last point it holds that. A line drawn only between the ends would show a
+/// slide starting somewhere it does not.
+pub fn curve_at(points: &[CurvePoint], at: Ticks) -> f32 {
+    let (Some(first), Some(last)) = (points.first(), points.last()) else {
+        return 0.0;
+    };
+    if at <= first.at {
+        return first.value;
+    }
+    if at >= last.at {
+        return last.value;
+    }
+    // The pair `at` falls between. A handful of points per clip, so a walk is the whole of it.
+    let (from, to) = match points.windows(2).find(|pair| at < pair[1].at) {
+        Some(pair) => (pair[0], pair[1]),
+        None => (*first, *last),
+    };
+    let span = (to.at - from.at).raw().max(1) as f32;
+    let through = (at - from.at).raw() as f32 / span;
+    from.value + (to.value - from.value) * through
+}
+
+/// A curve sampled into the `(tick, value)` pairs an instrument reads, from the clip's own start.
+///
+/// Every `step` across the stretch the curve was written over, plus the points themselves so a
+/// corner lands exactly where it was drawn. An empty curve produces nothing at all, which is what
+/// keeps this off every project that has never used one.
+///
+/// It **ends at zero** whenever the curve does not. A curve is channel state that an instrument
+/// holds until it is told otherwise, so a clip that finishes two semitones sharp — or with the
+/// wheel still up — would carry that into everything after it, including a clip somebody else
+/// wrote on the far side of a gap, with nothing on screen to say why.
+pub fn curve_events(points: &[CurvePoint], length: Ticks, step: Ticks) -> Vec<(Ticks, f32)> {
+    let (Some(first), Some(last)) = (points.first(), points.last()) else {
+        return Vec::new();
+    };
+    let step = Ticks(step.raw().max(1));
+    let mut out: Vec<(Ticks, f32)> = Vec::new();
+    let mut at = first.at.max_zero();
+    while at < last.at {
+        out.push((at, curve_at(points, at)));
+        at += step;
+    }
+    out.push((last.at, last.value));
+    if last.value != 0.0 {
+        out.push((length, 0.0));
+    }
+    // A point past the end of the clip would be scheduled outside the window the notes were cut
+    // to, so the whole curve is kept inside it — including the release above.
+    out.retain(|(at, _)| *at <= length);
+    out
+}
 
 /// A block of notes placed on an instrument track.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -544,7 +654,14 @@ pub struct MidiClip {
     /// to the phrase: a clip dragged four bars later takes its bends with it, which a lane over
     /// the timeline could not do.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub bend: Vec<BendPoint>,
+    pub bend: Vec<CurvePoint>,
+    /// The modulation written across the clip, in time order.
+    ///
+    /// Beside the bend and for the same reasons: controller 1 is a message every instrument
+    /// answers rather than a parameter of any one of them, and it belongs to the phrase — a clip
+    /// dragged four bars later takes its wheel movements with it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modulation: Vec<CurvePoint>,
     /// Whether the length above was chosen by hand rather than grown to fit the notes.
     ///
     /// Once it has been, [`Self::fit_length_to_notes`] leaves it alone. Without this a clip
@@ -567,6 +684,7 @@ impl MidiClip {
             muted: false,
             recipe: None,
             bend: Vec::new(),
+            modulation: Vec::new(),
             // A new clip's length is a default, not a decision, so notes written past it still
             // grow it. Dragging its edge is what makes it a decision.
             length_is_explicit: false,
@@ -605,63 +723,30 @@ impl MidiClip {
         self.start + self.length
     }
 
-    /// How far the clip bends at `at`, measured from its own start.
-    ///
-    /// Straight lines between the points, and the nearest value held flat outside them — the rule
-    /// an automation lane already follows, and for the same reason: a curve makes a claim about
-    /// the stretch it was written over and none about the rest.
-    pub fn bend_at(&self, at: Ticks) -> f32 {
-        let Some(first) = self.bend.first() else {
-            return 0.0;
-        };
-        if at <= first.at {
-            return first.semitones;
+    /// One of the clip's two curves.
+    pub fn curve(&self, which: ClipCurve) -> &[CurvePoint] {
+        match which {
+            ClipCurve::Bend => &self.bend,
+            ClipCurve::Modulation => &self.modulation,
         }
-        let Some(last) = self.bend.last() else {
-            return 0.0;
-        };
-        if at >= last.at {
-            return last.semitones;
-        }
-        // The pair `at` falls between. A handful of points per clip, so a walk is the whole of it.
-        let (from, to) = match self.bend.windows(2).find(|pair| at < pair[1].at) {
-            Some(pair) => (pair[0], pair[1]),
-            None => (*first, *last),
-        };
-        let span = (to.at - from.at).raw().max(1) as f32;
-        let through = (at - from.at).raw() as f32 / span;
-        from.semitones + (to.semitones - from.semitones) * through
     }
 
-    /// The bend curve sampled into the events an instrument reads, from the clip's own start.
-    ///
-    /// Every `step` across the stretch the curve was written over, plus the points themselves so
-    /// a corner lands exactly where it was drawn. A clip with no bend produces nothing at all,
-    /// which is what keeps this off every project that has never used one.
-    ///
-    /// It **ends at zero** whenever the curve does not. A bend is channel state that an instrument
-    /// holds until it is told otherwise, so a clip that finishes two semitones sharp would detune
-    /// everything that came after it — including a clip somebody else wrote, on the far side of a
-    /// gap, with nothing on screen to say why.
-    pub fn bend_events(&self, step: Ticks) -> Vec<(Ticks, f32)> {
-        let (Some(first), Some(last)) = (self.bend.first(), self.bend.last()) else {
-            return Vec::new();
-        };
-        let step = Ticks(step.raw().max(1));
-        let mut out: Vec<(Ticks, f32)> = Vec::new();
-        let mut at = first.at.max_zero();
-        while at < last.at {
-            out.push((at, self.bend_at(at)));
-            at += step;
+    /// One of the clip's two curves, to be edited.
+    pub fn curve_mut(&mut self, which: ClipCurve) -> &mut Vec<CurvePoint> {
+        match which {
+            ClipCurve::Bend => &mut self.bend,
+            ClipCurve::Modulation => &mut self.modulation,
         }
-        out.push((last.at, last.semitones));
-        if last.semitones != 0.0 {
-            out.push((self.length, 0.0));
-        }
-        // A point past the end of the clip would be scheduled outside the window the notes were
-        // cut to, so the whole curve is kept inside it — including the release above.
-        out.retain(|(at, _)| *at <= self.length);
-        out
+    }
+
+    /// What a curve reads at `at`, measured from the clip's own start.
+    pub fn curve_at(&self, which: ClipCurve, at: Ticks) -> f32 {
+        curve_at(self.curve(which), at)
+    }
+
+    /// A curve sampled into the events an instrument reads, from the clip's own start.
+    pub fn curve_events(&self, which: ClipCurve, step: Ticks) -> Vec<(Ticks, f32)> {
+        curve_events(self.curve(which), self.length, step)
     }
 
     /// Grows the clip so that every note fits inside it, rounded up to `grid`.
@@ -1238,7 +1323,12 @@ impl Project {
     /// 7 since [`ClipPreset`] gained [`Kick`](ClipPreset::Kick), [`Snare`](ClipPreset::Snare) and
     /// [`Hat`](ClipPreset::Hat), so that a composed song's drum clips carry a recipe. Another
     /// stored enum, and the same one-way street.
-    pub const FORMAT_VERSION: u32 = 7;
+    ///
+    /// 8 since a clip's bend became a [`CurvePoint`] list shared with its modulation. The field is
+    /// spelt `value` where it was `semitones`, so a version 7 document's bends would be read as
+    /// zeroes — silently, because the field has a default — and a slide somebody wrote would
+    /// simply stop happening.
+    pub const FORMAT_VERSION: u32 = 8;
 
     /// An empty project.
     ///
@@ -2204,9 +2294,9 @@ mod tests {
         MidiClip {
             bend: points
                 .iter()
-                .map(|(at, semitones)| BendPoint {
+                .map(|(at, semitones)| CurvePoint {
                     at: Ticks(*at),
-                    semitones: *semitones,
+                    value: *semitones,
                 })
                 .collect(),
             ..MidiClip::new(ClipId(1), "bent", Ticks::ZERO, Ticks(length))
@@ -2218,16 +2308,31 @@ mod tests {
         // The rule an automation lane already follows, and for the same reason: a curve makes a
         // claim about the stretch it was written over and none at all about the rest.
         let clip = bent(&[(480, 0.0), (960, 2.0)], 1920);
-        assert_eq!(clip.bend_at(Ticks(0)), 0.0, "flat before the first point");
-        assert_eq!(clip.bend_at(Ticks(480)), 0.0);
-        assert!((clip.bend_at(Ticks(720)) - 1.0).abs() < 0.001, "halfway up");
-        assert_eq!(clip.bend_at(Ticks(960)), 2.0);
-        assert_eq!(clip.bend_at(Ticks(1900)), 2.0, "and flat after the last");
+        assert_eq!(
+            clip.curve_at(ClipCurve::Bend, Ticks(0)),
+            0.0,
+            "flat before the first point"
+        );
+        assert_eq!(clip.curve_at(ClipCurve::Bend, Ticks(480)), 0.0);
+        assert!(
+            (clip.curve_at(ClipCurve::Bend, Ticks(720)) - 1.0).abs() < 0.001,
+            "halfway up"
+        );
+        assert_eq!(clip.curve_at(ClipCurve::Bend, Ticks(960)), 2.0);
+        assert_eq!(
+            clip.curve_at(ClipCurve::Bend, Ticks(1900)),
+            2.0,
+            "and flat after the last"
+        );
 
         // A clip nobody has bent is not bent, which is what keeps this off every project that has
         // never used one.
-        assert_eq!(bent(&[], 1920).bend_at(Ticks(500)), 0.0);
-        assert!(bent(&[], 1920).bend_events(BEND_STEP).is_empty());
+        assert_eq!(bent(&[], 1920).curve_at(ClipCurve::Bend, Ticks(500)), 0.0);
+        assert!(
+            bent(&[], 1920)
+                .curve_events(ClipCurve::Bend, CURVE_STEP)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -2235,17 +2340,17 @@ mod tests {
         // A bend is channel state an instrument holds until it is told otherwise. A clip that
         // finished two semitones sharp would detune everything after it — including a clip
         // somebody else wrote, on the far side of a gap, with nothing on screen to say why.
-        let events = bent(&[(0, 0.0), (960, 2.0)], 1920).bend_events(BEND_STEP);
+        let events = bent(&[(0, 0.0), (960, 2.0)], 1920).curve_events(ClipCurve::Bend, CURVE_STEP);
         let (last_at, last_value) = *events.last().expect("it was bent");
         assert_eq!(last_value, 0.0, "the bend was left hanging");
         assert_eq!(last_at, Ticks(1920), "and it is released at the clip's end");
 
         // A curve that already ends at nothing needs no such release.
-        let settled = bent(&[(0, 2.0), (960, 0.0)], 1920).bend_events(BEND_STEP);
+        let settled = bent(&[(0, 2.0), (960, 0.0)], 1920).curve_events(ClipCurve::Bend, CURVE_STEP);
         assert_eq!(settled.last().map(|(at, _)| *at), Some(Ticks(960)));
 
         // Nothing is scheduled past the window the notes were cut to.
-        let past = bent(&[(0, 1.0), (4000, 2.0)], 960).bend_events(BEND_STEP);
+        let past = bent(&[(0, 1.0), (4000, 2.0)], 960).curve_events(ClipCurve::Bend, CURVE_STEP);
         assert!(
             past.iter().all(|(at, _)| *at <= Ticks(960)),
             "a point ran past the clip: {past:?}"
@@ -2256,7 +2361,7 @@ mod tests {
     fn a_bend_is_sampled_finely_enough_to_hear_as_a_slide() {
         // Every step across the stretch the curve covers, so a rise sounds continuous rather than
         // as a staircase — and the corners land exactly where they were drawn.
-        let events = bent(&[(0, 0.0), (960, 2.0)], 1920).bend_events(BEND_STEP);
+        let events = bent(&[(0, 0.0), (960, 2.0)], 1920).curve_events(ClipCurve::Bend, CURVE_STEP);
         let across = events.iter().filter(|(at, _)| *at <= Ticks(960)).count();
         assert!(across >= 20, "half a bar gave only {across} events");
         assert!(

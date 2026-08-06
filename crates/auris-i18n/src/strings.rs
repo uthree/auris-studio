@@ -444,8 +444,10 @@ strings! {
     // because a kit has no octave and does need this.
     // The strip under the piano roll, named by what is in it rather than by the word "lane".
     BendLane { en: "Bend", ja: "ベンド" }
-    StraightenBend { en: "Straighten", ja: "ベンドを消す" }
+    ModulationLane { en: "Mod", ja: "モジュ" }
+    StraightenCurve { en: "Straighten", ja: "カーブを消す" }
     CmdShowBendLane { en: "Pitch Bend", ja: "ピッチベンド" }
+    CmdShowModulationLane { en: "Modulation", ja: "モジュレーション" }
     SongPartNote { en: "Note", ja: "ノート" }
     SongPartGain { en: "Level", ja: "音量" }
     SongPartPan { en: "Pan", ja: "定位" }
@@ -644,6 +646,8 @@ strings! {
     EditEraseAutomation { en: "erasing the automation point", ja: "オートメーションの点の削除" }
     EditWriteBend { en: "the pitch bend", ja: "ピッチベンド" }
     EditEraseBend { en: "erasing the pitch bend", ja: "ピッチベンドの削除" }
+    EditWriteModulation { en: "the modulation", ja: "モジュレーション" }
+    EditEraseModulation { en: "erasing the modulation", ja: "モジュレーションの削除" }
     EditClearAutomation { en: "clearing the automation", ja: "オートメーションの消去" }
     EditImportAudio { en: "importing audio", ja: "オーディオの読み込み" }
     EditImportSoundFont { en: "importing a SoundFont", ja: "サウンドフォントの読み込み" }

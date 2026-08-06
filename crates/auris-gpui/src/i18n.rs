@@ -125,6 +125,8 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::EraseAutomation => Key::EditEraseAutomation,
         Edit::WriteBend(_) => Key::EditWriteBend,
         Edit::EraseBend => Key::EditEraseBend,
+        Edit::WriteModulation(_) => Key::EditWriteModulation,
+        Edit::EraseModulation => Key::EditEraseModulation,
         Edit::ClearAutomation => Key::EditClearAutomation,
         Edit::ImportAudio => Key::EditImportAudio,
         Edit::ImportSoundFont => Key::EditImportSoundFont,

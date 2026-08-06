@@ -141,6 +141,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_toggle_harmony_lane))
             .on_action(cx.listener(Self::on_toggle_tempo_marks))
             .on_action(cx.listener(Self::on_toggle_bend_lane))
+            .on_action(cx.listener(Self::on_toggle_modulation_lane))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_open_command_palette))
             .on_action(cx.listener(Self::on_open_menu_bar))
@@ -509,9 +510,9 @@ impl AurisApp {
             }
             // The point has moved, so the drag has to follow it: the next pointer move would
             // otherwise look for it where it no longer is and move nothing at all.
-            Drag::BendPoint { clip, at } => {
-                if let Some(landed) = self.drag_bend_point(clip, at, event)
-                    && let Some(Drag::BendPoint { at, .. }) = &mut self.drag
+            Drag::CurvePoint { clip, which, at } => {
+                if let Some(landed) = self.drag_curve_point(clip, which, at, event)
+                    && let Some(Drag::CurvePoint { at, .. }) = &mut self.drag
                 {
                     *at = landed;
                 }
@@ -1404,9 +1405,25 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.panels.bend_lane = !self.panels.bend_lane;
-        self.remember_layout();
+        self.toggle_curve_lane(ClipCurve::Bend);
         cx.notify();
+    }
+
+    fn on_toggle_modulation_lane(
+        &mut self,
+        _: &actions::ToggleModulationLane,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_curve_lane(ClipCurve::Modulation);
+        cx.notify();
+    }
+
+    /// Shows or hides one of the roll's curve strips, and remembers it.
+    fn toggle_curve_lane(&mut self, which: ClipCurve) {
+        let shown = self.panels.curve_lane(which);
+        self.panels.set_curve_lane(which, !shown);
+        self.remember_layout();
     }
 
     fn on_open_settings(

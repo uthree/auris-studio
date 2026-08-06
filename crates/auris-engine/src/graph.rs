@@ -1607,18 +1607,27 @@ fn schedule_clip(
             },
         });
     }
-    // The bend, sampled the same way and by the same rule — asked of the clip rather than worked
-    // out here, so the roll drawing the curve and the renderer playing it read one answer.
-    for (at, semitones) in clip.bend_events(auris_core::project::BEND_STEP) {
-        out.push(ScheduledEvent {
-            frame: tempo_map
+    // The two curves, sampled the same way and by the same rule — asked of the clip rather than
+    // worked out here, so the roll drawing a curve and the renderer playing it read one answer.
+    for which in auris_core::project::ClipCurve::ALL {
+        for (at, value) in clip.curve_events(which, auris_core::project::CURVE_STEP) {
+            let frame = tempo_map
                 .ticks_to_samples(clip.start + at, sample_rate)
-                .raw(),
-            event: NoteEvent::PitchBend {
-                frame: 0,
-                semitones,
-            },
-        });
+                .raw();
+            out.push(ScheduledEvent {
+                frame,
+                event: match which {
+                    auris_core::project::ClipCurve::Bend => NoteEvent::PitchBend {
+                        frame: 0,
+                        semitones: value,
+                    },
+                    auris_core::project::ClipCurve::Modulation => NoteEvent::Modulation {
+                        frame: 0,
+                        amount: value,
+                    },
+                },
+            });
+        }
     }
 }
 
@@ -1912,7 +1921,7 @@ fn drive_automation(
 mod tests {
     use super::*;
     use crate::testkit;
-    use auris_core::project::Note;
+    use auris_core::project::{CurvePoint, Note};
     use auris_core::time::TICKS_PER_QUARTER;
 
     fn quarter_note_project() -> Project {
@@ -1925,6 +1934,84 @@ mod tests {
         midi.notes
             .push(Note::new(60, Ticks::QUARTER, Ticks::QUARTER));
         project
+    }
+
+    #[test]
+    fn both_of_a_clips_curves_are_scheduled_as_the_message_they_are() {
+        // Two curves of the same shape on one clip, and the only thing that tells them apart is
+        // the event each becomes. Read the wrong way round, the wheel would detune the part and
+        // the bend would open a vibrato.
+        let mut project = quarter_note_project();
+        let clip = project.tracks[0]
+            .kind
+            .as_instrument()
+            .expect("an instrument track")
+            .clips[0]
+            .id;
+        let midi = project.midi_clip_mut(clip).expect("the clip");
+        midi.bend = vec![
+            CurvePoint {
+                at: Ticks::ZERO,
+                value: 0.0,
+            },
+            CurvePoint {
+                at: Ticks::QUARTER,
+                value: 2.0,
+            },
+        ];
+        midi.modulation = vec![
+            CurvePoint {
+                at: Ticks::ZERO,
+                value: 0.0,
+            },
+            CurvePoint {
+                at: Ticks::QUARTER,
+                value: 1.0,
+            },
+        ];
+
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        let RenderSource::Instrument { events, .. } = &graph.tracks()[0].source else {
+            panic!("expected an instrument source");
+        };
+        let bends: Vec<f32> = events
+            .iter()
+            .filter_map(|scheduled| match scheduled.event {
+                NoteEvent::PitchBend { semitones, .. } => Some(semitones),
+                _ => None,
+            })
+            .collect();
+        let wheel: Vec<f32> = events
+            .iter()
+            .filter_map(|scheduled| match scheduled.event {
+                NoteEvent::Modulation { amount, .. } => Some(amount),
+                _ => None,
+            })
+            .collect();
+        assert!(!bends.is_empty(), "the bend was never scheduled");
+        assert!(!wheel.is_empty(), "the wheel was never scheduled");
+        // Each rises to its own top and is let go before the clip ends, because both are channel
+        // state and a clip that finished holding either would carry it into the next one.
+        assert!(bends.iter().cloned().fold(f32::MIN, f32::max) >= 2.0);
+        assert!(wheel.iter().cloned().fold(f32::MIN, f32::max) >= 1.0);
+        assert_eq!(
+            bends.last().copied(),
+            Some(0.0),
+            "the bend was left hanging"
+        );
+        assert_eq!(wheel.last().copied(), Some(0.0), "the wheel was left up");
+        // And neither ever reads as the other: a wheel is never negative and never past one.
+        assert!(wheel.iter().all(|value| (0.0..=1.0).contains(value)));
+
+        // And the whole list stays sorted by frame, which is what the renderer walks it assuming.
+        let frames: Vec<u64> = events.iter().map(|scheduled| scheduled.frame).collect();
+        let mut sorted = frames.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            frames, sorted,
+            "adding the curves left the events out of order"
+        );
     }
 
     #[test]

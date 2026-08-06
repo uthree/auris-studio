@@ -124,9 +124,9 @@ pub mod prelude {
         SectionMap, SectionPoint, SectionSpan, SendId, SoundFontId, SoundFontRef, SourceId,
         Subdivision, Track, TrackId, TrackKind,
     };
-    // The bend a clip carries, and how far one may go. A frontend drawing the curve has to know
-    // the range it is drawing against, and may not reach past this crate to find out.
-    pub use auris_core::project::{BEND_LIMIT, BendPoint};
+    // The curves a clip carries, and how far each may go. A frontend drawing one has to know the
+    // range it is drawing against, and may not reach past this crate to find out.
+    pub use auris_core::project::{BEND_LIMIT, ClipCurve, CurvePoint, MODULATION_LIMIT};
 
     /// Every chord progression the composer knows by name.
     pub fn progression_catalog() -> &'static [CatalogEntry] {

@@ -6,7 +6,7 @@
 //! one edit path forgets to record its inverse.
 
 use auris_core::Project;
-use auris_core::project::ClipId;
+use auris_core::project::{ClipCurve, ClipId};
 use auris_core::time::Ticks;
 
 use crate::param::ParamTarget;
@@ -136,6 +136,10 @@ pub enum Edit {
     WriteBend(ClipId),
     /// A point was taken off a clip's bend, or the whole curve was.
     EraseBend,
+    /// A point was written on a clip's modulation, or moved along it.
+    WriteModulation(ClipId),
+    /// A point was taken off a clip's modulation, or the whole curve was.
+    EraseModulation,
     /// A whole lane was removed, giving the parameter its stored value back.
     ClearAutomation,
     /// An audio file was imported onto a track.
@@ -164,6 +168,28 @@ pub enum Edit {
     FreezeClip,
     /// The document was replaced by a composed piece.
     Compose,
+}
+
+impl Edit {
+    /// The step that writing on `which` records.
+    ///
+    /// The two curves share every command, and this is where they stop sharing: an undo menu
+    /// saying "the pitch bend" over a wheel movement would be a menu that lies about the thing it
+    /// is offering to take back.
+    pub fn write_curve(which: ClipCurve, clip: ClipId) -> Edit {
+        match which {
+            ClipCurve::Bend => Edit::WriteBend(clip),
+            ClipCurve::Modulation => Edit::WriteModulation(clip),
+        }
+    }
+
+    /// The step that erasing from `which` records.
+    pub fn erase_curve(which: ClipCurve) -> Edit {
+        match which {
+            ClipCurve::Bend => Edit::EraseBend,
+            ClipCurve::Modulation => Edit::EraseModulation,
+        }
+    }
 }
 
 /// A bounded undo/redo stack of project snapshots.
