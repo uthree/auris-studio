@@ -7,6 +7,7 @@
 pub mod arrangement;
 pub mod automation;
 pub mod commands;
+pub mod compose_sheet;
 pub mod context_menu;
 pub mod drop;
 pub mod icons;

@@ -310,11 +310,15 @@ between clips that happen to coexist and clips that belong to the same song.
 
 ### Automatic composition
 
-**File → Compose from Specification…**, or `auris compose song.asong`, writes a piece from a text
-specification: key, scale, tempo, mood, chord progression, form and parts, in a TOML document that
-an agent can write and a person can edit one line of. The whole piece arrives as a single undo
-step, so a composition that is not what was wanted is one press away from the document that was
-there before it.
+**File → Compose a Song…** opens the song sheet: the key, the tempo, the mood, the progression and
+a table of parts, with **Write**, **Another Take** — the same dials and the next seed — and **Save
+as Specification…**. The whole piece arrives as a single undo step, so a composition that is not
+what was wanted is one press away from the document that was there before it.
+
+The sheet and the file are two faces of one `SongSpec`, so neither can drift from the other:
+**File → Compose from Specification…**, or `auris compose song.asong`, writes a piece from the same
+thing in a TOML document — key, scale, tempo, mood, chord progression, form and parts — that an
+agent can write and a person can edit one line of.
 
 Two are in [`examples/`](examples): `hello.asong` is three lines, which is a whole song because
 every field has a default, and `neon-drive.asong` is most of the vocabulary with a comment beside

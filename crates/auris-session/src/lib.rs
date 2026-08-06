@@ -88,7 +88,10 @@ pub fn midi_extensions() -> &'static [&'static str] {
 /// text. Both names would compile — an explicit `use` beats a glob — but a reader would have to
 /// know that rule to tell which `Key` a line means, and one of the two would be wrong silently.
 pub mod prelude {
-    pub use auris_compose::{Composition, SongSpec, SpecError, compose, default_instrument};
+    pub use auris_compose::{
+        Composition, Mood, PartSpec, Role, SectionSpec, SongSpec, SpecError, compose,
+        default_instrument,
+    };
     pub use auris_core::automation::{
         Automation, AutomationCurve, AutomationLane, AutomationPoint,
     };
@@ -97,7 +100,7 @@ pub mod prelude {
         ParamDescriptor, ParamId, ParamUnit, ParamValueCurve, db_to_gain, gain_to_db,
     };
     pub use auris_core::plugin::{PluginCategory, PluginDescriptor, PluginKind};
-    pub use auris_core::theory::chart::{CatalogEntry, Chart, HarmonicEvent};
+    pub use auris_core::theory::chart::{CatalogEntry, Chart, ChartOrigin, HarmonicEvent};
     pub use auris_core::theory::chord::{Chord, Quality};
     pub use auris_core::theory::key::Key as MusicalKey;
     pub use auris_core::theory::numeral::Numeral;

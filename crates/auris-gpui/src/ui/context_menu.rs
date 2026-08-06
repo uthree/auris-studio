@@ -73,6 +73,40 @@ pub enum MenuCommand {
     NewAudioTrack,
     /// Append a bus.
     NewBusTrack,
+    /// Set the song sheet's time signature.
+    ///
+    /// These eight turn the *sheet* rather than the document: nothing they set has been written
+    /// until Write is pressed, so none of them records an undo step.
+    SongMeter(u32, u32),
+    /// Set the song sheet's mood from a named feeling.
+    SongMood(&'static str),
+    /// Set the song sheet's progression by catalogue name; empty is the composer's own.
+    SongChords(&'static str),
+    /// Set the song sheet's drum groove.
+    SongGroove(&'static str),
+    /// Set the role of one part on the song sheet.
+    SongPartRole {
+        /// Which part, by position in the roster.
+        part: usize,
+        /// What it plays.
+        role: Role,
+    },
+    /// Set the instrument of one part on the song sheet.
+    SongPartInstrument {
+        /// Which part, by position in the roster.
+        part: usize,
+        /// The plugin's registry id.
+        id: String,
+    },
+    /// Set the octave of one part on the song sheet.
+    SongPartOctave {
+        /// Which part, by position in the roster.
+        part: usize,
+        /// Which octave it sits in.
+        octave: i32,
+    },
+    /// Add a part of this role to the song sheet's roster.
+    SongAddPart(Role),
     /// Open the list of places a track's output could go.
     ShowOutputPicker {
         /// Track being routed.
@@ -787,6 +821,62 @@ impl AurisApp {
             MenuCommand::NewInstrumentTrack => self.add_instrument_track(),
             MenuCommand::NewAudioTrack => self.add_audio_track(),
             MenuCommand::NewBusTrack => self.add_bus_track(),
+            MenuCommand::SongMeter(numerator, denominator) => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    dials.meter = TimeSignature::new(numerator, denominator);
+                }
+            }
+            MenuCommand::SongMood(name) => {
+                if let (Some(dials), Some(mood)) = (self.song_sheet.as_mut(), Mood::named(name)) {
+                    dials.mood = mood;
+                }
+            }
+            MenuCommand::SongChords(name) => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    dials.chords = name.to_string();
+                }
+            }
+            MenuCommand::SongGroove(name) => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    dials.groove = name.to_string();
+                }
+            }
+            MenuCommand::SongPartRole { part, role } => {
+                if let Some(part) = self
+                    .song_sheet
+                    .as_mut()
+                    .and_then(|dials| dials.parts.get_mut(part))
+                {
+                    // Everything the role implies comes with it, and the name does not: the name
+                    // is what the document keys its material by, and changing it under somebody
+                    // would rewrite the part they were listening to.
+                    let name = part.name.clone();
+                    *part = PartSpec::of_role(name, role);
+                }
+            }
+            MenuCommand::SongPartInstrument { part, id } => {
+                if let Some(part) = self
+                    .song_sheet
+                    .as_mut()
+                    .and_then(|dials| dials.parts.get_mut(part))
+                {
+                    part.instrument = id;
+                }
+            }
+            MenuCommand::SongPartOctave { part, octave } => {
+                if let Some(part) = self
+                    .song_sheet
+                    .as_mut()
+                    .and_then(|dials| dials.parts.get_mut(part))
+                {
+                    part.octave = octave;
+                }
+            }
+            MenuCommand::SongAddPart(role) => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    crate::ui::compose_sheet::add_part(dials, role);
+                }
+            }
             MenuCommand::ShowOutputPicker { track, at } => {
                 let menu = self.output_menu(at, track);
                 self.open_menu(menu);

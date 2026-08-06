@@ -70,6 +70,7 @@ impl Render for AurisApp {
         let arrangement_pane = self.pane(Pane::Arrangement, window, cx);
         let status = self.render_status_bar(cx);
         let export_overlay = self.render_export_overlay(cx);
+        let song_sheet = self.render_song_sheet(cx);
         let prompt = self.render_prompt(cx);
         let palette = self.render_palette(cx);
         let menu = self.render_context_menu(window, cx);
@@ -107,6 +108,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_open_project))
             .on_action(cx.listener(Self::on_quit))
             .on_action(cx.listener(Self::on_compose_song))
+            .on_action(cx.listener(Self::on_compose_from_spec))
             .on_action(cx.listener(Self::on_save_project))
             .on_action(cx.listener(Self::on_save_project_as))
             .on_action(cx.listener(Self::on_import_audio))
@@ -194,6 +196,7 @@ impl Render for AurisApp {
             )
             .child(status)
             .children(export_overlay)
+            .children(song_sheet)
             .child(drop_ring)
             // These come last so they paint — and are hit-tested — above the panels. The plugin
             // editor sits below the menu because a right-click inside it opens one.
@@ -721,6 +724,14 @@ impl AurisApp {
                 let delta = f32::from(event.position.x - start_x);
                 self.drag_dial(clip, dial, start_fraction, delta);
             }
+            Drag::SongDial {
+                target,
+                start_fraction,
+                start_x,
+            } => {
+                let delta = f32::from(event.position.x - start_x);
+                self.drag_song_dial(target, start_fraction, delta);
+            }
             Drag::TimeZoom {
                 start_fraction,
                 start_x,
@@ -1008,6 +1019,16 @@ impl AurisApp {
     fn on_compose_song(
         &mut self,
         _: &actions::ComposeSong,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_song_sheet();
+        cx.notify();
+    }
+
+    fn on_compose_from_spec(
+        &mut self,
+        _: &actions::ComposeFromSpec,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

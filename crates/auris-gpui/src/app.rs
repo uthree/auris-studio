@@ -343,6 +343,18 @@ pub enum Drag {
         /// pointer.
         grab_offset: Ticks,
     },
+    /// Turning one of the song sheet's dials.
+    ///
+    /// Separate from every other dial drag because nothing is being edited: the sheet is not the
+    /// document, so this writes no undo step and rebuilds no graph.
+    SongDial {
+        /// Which dial, and which part it belongs to when it belongs to one.
+        target: crate::ui::compose_sheet::DialTarget,
+        /// Where the bar was when the drag began, from 0 to 1.
+        start_fraction: f32,
+        /// Pointer x when the drag began.
+        start_x: Pixels,
+    },
     /// Turning one of a generated clip's dials.
     ///
     /// Separate from [`Drag::Param`] because a recipe is not a plugin parameter: there is no
@@ -432,6 +444,10 @@ impl Drag {
             // "Write It Again" uses — moving a dial is writing the part again with one thing
             // changed, and a stack full of "Adjusted parameter" would say nothing about which.
             Drag::PartDial { .. } => Some(Edit::GenerateClip),
+            // A dial on the song sheet turns nothing in the document: the sheet is a question
+            // about a song that has not been written yet, and nothing it does belongs on the
+            // undo stack until Write is pressed.
+            Drag::SongDial { .. } => None,
             Drag::Tempo { at, .. } => Some(Edit::ChangeTempo(*at)),
             // Selecting is not an edit; it changes what a later edit will act on.
             Drag::RubberBand { .. } => None,
@@ -598,6 +614,11 @@ pub struct AurisApp {
     pub(crate) panels: PanelLayout,
     pub(crate) status: String,
     pub(crate) export: Option<ExportState>,
+    /// The song sheet's dials while it is open, and nothing when it is not.
+    ///
+    /// State of the sheet rather than of the document: nothing here has been written until Write
+    /// is pressed, which is what lets a whole song be set up and then thrown away.
+    pub(crate) song_sheet: Option<crate::ui::compose_sheet::SongDials>,
     /// Notes currently sounding because the user is holding a key, dragging one, or pressing a
     /// chord on the harmony lane.
     pub(crate) auditioning: Option<(TrackId, Vec<u8>)>,
@@ -731,6 +752,7 @@ impl AurisApp {
             panels: PanelLayout::load(),
             status,
             export: None,
+            song_sheet: None,
             auditioning: None,
             focus: cx.focus_handle(),
             panes: PaneFocus::new(cx),
@@ -795,6 +817,9 @@ impl AurisApp {
             || self.palette.is_some()
             || self.menu.is_some()
             || self.menu_bar.is_some()
+            // The song sheet is a form, and every letter typed into one of its fields has to
+            // reach the field rather than the binding that letter would otherwise fire.
+            || self.song_sheet.is_some()
     }
 
     /// The key context a pane's element should name, or `None` while a sheet is up.

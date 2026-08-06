@@ -70,6 +70,17 @@ pub enum PromptTarget {
     ClipGain(ClipId),
     /// Where the playhead sits, as bar, beat and hundredth.
     Position,
+    /// The song sheet's title, which its project is named after.
+    ///
+    /// These four edit the *sheet* and not the document: nothing they set has been written until
+    /// Write is pressed, which is why none of them records an undo step.
+    SongTitle,
+    /// The key the song sheet is set to.
+    SongKey,
+    /// The seed the song sheet is set to.
+    SongSeed,
+    /// The name of the part at this position in the song sheet's roster.
+    SongPartName(usize),
 }
 
 impl PromptTarget {
@@ -89,6 +100,9 @@ impl PromptTarget {
             PromptTarget::Signature(_) | PromptTarget::SignatureFrom(_) => Key::HintSignature,
             PromptTarget::ClipGain(_) => Key::HintClipGain,
             PromptTarget::Position => Key::HintPosition,
+            PromptTarget::SongKey => Key::HintKey,
+            PromptTarget::SongSeed => Key::HintSeed,
+            PromptTarget::SongTitle | PromptTarget::SongPartName(_) => return None,
             PromptTarget::Track(_) | PromptTarget::Clip(_) => return None,
         })
     }
@@ -458,6 +472,61 @@ impl AurisApp {
             // job rather than an empty field's.
             PromptTarget::Section(at) => {
                 self.session.set_section(at, Some(text));
+                Ok(())
+            }
+            // The four that edit the song sheet. None of them records an undo step: the sheet is
+            // a question about a song nobody has written yet.
+            PromptTarget::SongTitle => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    dials.title = text;
+                }
+                Ok(())
+            }
+            PromptTarget::SongKey => match auris_session::prelude::MusicalKey::parse(&text) {
+                Some(key) => {
+                    if let Some(dials) = self.song_sheet.as_mut() {
+                        dials.key = key;
+                    }
+                    Ok(())
+                }
+                None => {
+                    self.set_failed_status(messages::not_a_key(self.language(), &text));
+                    return;
+                }
+            },
+            PromptTarget::SongSeed => match text.parse::<u64>() {
+                Ok(seed) => {
+                    if let Some(dials) = self.song_sheet.as_mut() {
+                        dials.seed = seed;
+                    }
+                    Ok(())
+                }
+                Err(_) => {
+                    self.set_failed_status(messages::not_a_seed(self.language(), &text));
+                    return;
+                }
+            },
+            // A part's name is what the composer keys its material by, so two of one name would
+            // be two parts writing the same notes — and the format refuses it outright.
+            PromptTarget::SongPartName(index) => {
+                let taken = self.song_sheet.as_ref().is_some_and(|dials| {
+                    dials
+                        .parts
+                        .iter()
+                        .enumerate()
+                        .any(|(other, part)| other != index && part.name == text)
+                });
+                if taken || text.trim().is_empty() {
+                    self.set_failed_status(self.t(Key::NameCannotBeEmpty).to_string());
+                    return;
+                }
+                if let Some(part) = self
+                    .song_sheet
+                    .as_mut()
+                    .and_then(|dials| dials.parts.get_mut(index))
+                {
+                    part.name = text;
+                }
                 Ok(())
             }
             PromptTarget::Seed(clip) => match text.parse::<u64>() {

@@ -231,7 +231,8 @@ strings! {
     CmdPanic { en: "Panic", ja: "パニック" }
     CmdNewProject { en: "New Project", ja: "新規プロジェクト" }
     CmdOpenProject { en: "Open Project", ja: "プロジェクトを開く" }
-    CmdComposeSong { en: "Compose", ja: "自動作曲" }
+    CmdComposeSong { en: "Compose a Song…", ja: "曲を作る…" }
+    CmdComposeFromSpec { en: "Compose from Specification…", ja: "仕様ファイルから作曲…" }
     CmdSave { en: "Save", ja: "保存" }
     CmdSaveAs { en: "Save As", ja: "名前を付けて保存" }
     CmdImportAudio { en: "Import Audio", ja: "オーディオを読み込む" }
@@ -390,6 +391,68 @@ strings! {
     SubdivisionSixteenth { en: "1/16", ja: "1/16" }
     SubdivisionEighthTriplet { en: "1/8 triplet", ja: "1/8 三連" }
     SubdivisionSixteenthTriplet { en: "1/16 triplet", ja: "1/16 三連" }
+
+    // ------------------------------------------------------------------ the song sheet
+    // The dialog that writes a whole piece. Its dials are the specification's own fields, so
+    // where one is already named above — density, gate, swing — the same string is reused and
+    // only what the sheet adds appears here.
+    SongSheetTitle { en: "Compose a Song", ja: "曲を作る" }
+    SongHeading { en: "Song", ja: "曲" }
+    SongTitleField { en: "Title", ja: "タイトル" }
+    SongKey { en: "Key", ja: "調" }
+    SongScale { en: "Scale", ja: "スケール" }
+    SongMeter { en: "Time signature", ja: "拍子" }
+    // The named feeling, and the four numbers behind it. A mood the dials have been nudged away
+    // from matches no word, and the picker says so rather than naming the one it started at.
+    SongMood { en: "Mood", ja: "曲調" }
+    SongMoodCustom { en: "custom", ja: "カスタム" }
+    SongBrightness { en: "Brightness", ja: "明るさ" }
+    SongEnergy { en: "Energy", ja: "勢い" }
+    SongTension { en: "Tension", ja: "緊張感" }
+    SongVariation { en: "Variation", ja: "繰り返しの変化" }
+    // Bars per section, with the whole song's length beside it — the dial sets one thing and the
+    // number that matters is the other.
+    SongBars { en: "Bars per section", ja: "1セクションの小節数" }
+    SongLength { en: "Length", ja: "長さ" }
+    SongBarsUnit { en: "bars", ja: "小節" }
+    SongChords { en: "Progression", ja: "コード進行" }
+    SongChordsOwn { en: "the composer's own", ja: "おまかせ" }
+    // The roster. `Part` alone is the heading on a single generated clip, so this one is plural.
+    SongPartsHeading { en: "Parts", ja: "パート" }
+    SongPartName { en: "Name", ja: "名前" }
+    SongPartRole { en: "Role", ja: "役割" }
+    SongPartInstrument { en: "Instrument", ja: "音源" }
+    SongPartGain { en: "Level", ja: "音量" }
+    SongPartPan { en: "Pan", ja: "定位" }
+    SongAddPart { en: "Add Part", ja: "パートを追加" }
+    SongRemovePart { en: "Remove", ja: "削除" }
+    SongPartNameTitle { en: "Name for this part", ja: "このパートの名前" }
+    // The three things the sheet can do. "Another take" is the next seed rather than a random
+    // one, which is what makes a take somebody liked reachable again.
+    SongWrite { en: "Write", ja: "書き出す" }
+    SongAnotherTake { en: "Another Take", ja: "別テイク" }
+    SongSaveSpec { en: "Save as Specification…", ja: "仕様ファイルに保存…" }
+    // What the roles are called where a part names one. `Role::name` is the word the document
+    // writes and stays English; this is the word the picker shows.
+    RoleMelody { en: "Melody", ja: "メロディ" }
+    RoleChords { en: "Chords", ja: "コード" }
+    RolePad { en: "Pad", ja: "パッド" }
+    RoleArp { en: "Arpeggio", ja: "アルペジオ" }
+    RoleStab { en: "Stab", ja: "スタブ" }
+    RoleBass { en: "Bass", ja: "ベース" }
+    RoleKick { en: "Kick", ja: "キック" }
+    RoleSnare { en: "Snare", ja: "スネア" }
+    RoleHat { en: "Hi-hat", ja: "ハイハット" }
+    // The mood vocabulary. Nine words that each mean four numbers.
+    MoodNeutral { en: "Neutral", ja: "ニュートラル" }
+    MoodBright { en: "Bright", ja: "明るい" }
+    MoodDark { en: "Dark", ja: "暗い" }
+    MoodCalm { en: "Calm", ja: "穏やか" }
+    MoodDriving { en: "Driving", ja: "疾走感" }
+    MoodEpic { en: "Epic", ja: "壮大" }
+    MoodDreamy { en: "Dreamy", ja: "夢見心地" }
+    MoodTense { en: "Tense", ja: "張り詰めた" }
+    MoodFunky { en: "Funky", ja: "ファンキー" }
 
     // ------------------------------------------------------------------ appearance
     AppearanceHeading { en: "Colour scheme", ja: "カラースキーム" }
