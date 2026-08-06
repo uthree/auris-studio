@@ -173,6 +173,49 @@ impl PartSpec {
     }
 }
 
+/// How a section that changes key is arrived at.
+///
+/// Only ever consulted where the section before is in a different one, so on a piece that does not
+/// modulate this says nothing at all.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum LeadIn {
+    /// The last chord before the change becomes the dominant seventh of the key being arrived at.
+    ///
+    /// The oldest device there is, and the one an arranger reaches for first: a `V7` names its
+    /// tonic before the tonic has sounded, so the ear is already in the new key when the section
+    /// starts. Without it the change is a step sideways that the listener notices as an *edit*
+    /// rather than as an arrival.
+    ///
+    /// This rewrites a bar of the section before, which is worth stating plainly because nothing
+    /// else in this format does — a chart quoted by name is otherwise played exactly as written.
+    /// The trade is deliberate: a modulation is a structural instruction, it was asked for by hand,
+    /// and there is no way to prepare one without changing the chord that prepares it. [`Self::None`]
+    /// is how somebody says they meant the plain jump.
+    #[default]
+    Dominant,
+    /// Nothing. The new key simply begins.
+    None,
+}
+
+impl LeadIn {
+    /// The name the text format writes.
+    pub fn name(self) -> &'static str {
+        match self {
+            LeadIn::Dominant => "dominant",
+            LeadIn::None => "none",
+        }
+    }
+
+    /// Reads a lead-in name, accepting the obvious synonyms.
+    pub fn parse(text: &str) -> Option<Self> {
+        Some(match text.trim().to_ascii_lowercase().as_str() {
+            "dominant" | "v7" | "prepare" => LeadIn::Dominant,
+            "none" | "direct" | "off" => LeadIn::None,
+            _ => return None,
+        })
+    }
+}
+
 /// One section of the form.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SectionSpec {
@@ -200,6 +243,13 @@ pub struct SectionSpec {
     /// A property of the section and so of every playing of it: a chorus that lifts to 132 lifts
     /// on both times round, which is what makes it the same chorus.
     pub tempo: Option<f64>,
+    /// How this section is arrived at, when it is in a different key from the one before it.
+    ///
+    /// A property of *this* section that changes the one before, which is the only field here that
+    /// reaches outside its own bars. It belongs here anyway: how a key change is prepared is a fact
+    /// about the arrival, and a verse that leads into a modulating chorus is not the same eight
+    /// bars as one that does not — that difference is what a lead-in *is*.
+    pub lead_in: LeadIn,
 }
 
 impl SectionSpec {
@@ -225,6 +275,7 @@ impl SectionSpec {
             parts: Vec::new(),
             transpose: 0,
             tempo: None,
+            lead_in: LeadIn::default(),
         }
     }
 }

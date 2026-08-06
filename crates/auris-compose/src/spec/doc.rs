@@ -23,7 +23,7 @@ use crate::theory::chart::{Chart, ChartOrigin};
 use crate::theory::key::Key;
 use crate::theory::scale::ScaleId;
 
-use super::{Mood, PartSpec, Role, SectionSpec, SongSpec};
+use super::{LeadIn, Mood, PartSpec, Role, SectionSpec, SongSpec};
 
 /// Something wrong with a document.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -301,6 +301,8 @@ struct SectionDoc {
     transpose: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tempo: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lead_in: Option<String>,
     #[serde(
         default,
         deserialize_with = "words_or_list",
@@ -608,6 +610,16 @@ impl SectionDoc {
                 )));
             }
         }
+        if let Some(text) = self.lead_in {
+            match LeadIn::parse(&text) {
+                Some(lead_in) => section.lead_in = lead_in,
+                None => errors.push(SpecError::about(format!(
+                    "section `{name}`: `{text}` is not a lead-in; there is {}, {}",
+                    LeadIn::Dominant.name(),
+                    LeadIn::None.name()
+                ))),
+            }
+        }
         if let Some(parts) = self.parts {
             // `*` is how the line-oriented format said "everything", which is what an empty
             // list already means. Still accepted, so nobody's document breaks over a star.
@@ -797,6 +809,7 @@ impl SectionDoc {
             intensity: (section.intensity != plain.intensity).then_some(section.intensity),
             transpose: (section.transpose != 0).then_some(section.transpose),
             tempo: section.tempo,
+            lead_in: (section.lead_in != plain.lead_in).then(|| section.lead_in.name().to_string()),
             parts: (!section.parts.is_empty()).then(|| section.parts.clone()),
         }
     }
@@ -1151,6 +1164,44 @@ mod tests {
         let errors = SongSpec::parse("form = \"verse\"\n[section.verse]\ntempo = 900").unwrap_err();
         assert!(
             errors.iter().any(|error| error.to_string().contains("900")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn a_section_can_refuse_to_be_led_into() {
+        let spec = SongSpec::parse(
+            r#"
+            form = "verse chorus"
+
+            [section.chorus]
+            transpose = 2
+            lead_in   = "none"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(spec.sections["chorus"].lead_in, LeadIn::None);
+        assert_eq!(
+            spec.sections["verse"].lead_in,
+            LeadIn::Dominant,
+            "a section that does not say is prepared"
+        );
+        // Only written where it is not the default, and read back where it is.
+        assert!(spec.to_toml().contains("lead_in"));
+        assert_eq!(SongSpec::parse(&spec.to_toml()), Ok(spec));
+        assert!(
+            !SongSpec::parse("form = \"verse\"")
+                .unwrap()
+                .to_toml()
+                .contains("lead_in")
+        );
+
+        let errors =
+            SongSpec::parse("form = \"verse\"\n[section.verse]\nlead_in = \"pivot\"").unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.to_string().contains("pivot")),
             "{errors:?}"
         );
     }

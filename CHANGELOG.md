@@ -9,6 +9,28 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### A key change is arrived at rather than stumbled into
+
+* **The last chord before a modulation becomes the dominant of the key being arrived at.** A
+  transposed section used to begin and that was all: the piece stepped sideways and a listener
+  heard the join as an edit. A `V7` names its tonic before that tonic has sounded, which is why
+  every arranger reaches for it first and why nothing else does the job.
+* One event, replaced in place — the section keeps its bars and its clips keep their lengths — and
+  only where the key actually changes, so a piece that does not modulate is untouched whatever the
+  field says. It runs *before* the melodic skeleton is chosen, or the tune would be the one part in
+  the band still playing the chord that used to be there.
+* The section keeps its own key and the chord is renamed against it, exactly as a borrowed chord
+  is. The lane draws one key change, at the bar where it happens, with a chromatic chord leaning
+  into it — not a second modulation half a bar early.
+* This is the one thing in the format that rewrites a bar of a progression quoted by name. The
+  trade is deliberate and `lead_in = "none"` refuses it: a modulation is a structural instruction
+  asked for by hand, it outranks a chord chart, and there is no way to prepare a key change without
+  changing the chord that prepares it.
+* The composer's fingerprint test now compares chords rather than the text of their names. A
+  numeral knows which letter its degree demands and a chord only knows whether its key leans sharp
+  or flat, so B♭ and A♯ are one chord written twice — and the test flagged that as the two
+  disagreeing.
+
 ### No bar takes the wheel
 
 * **Sliders no longer answer a scroll.** Faders, sends, plugin parameters, clip dials, the song

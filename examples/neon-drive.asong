@@ -66,6 +66,11 @@ tempo     = 132
 # the first needs a section of its own today, which then gets figures of its own because material
 # is keyed by the label. Modulating a repeat is on the list. The tempo above has the same shape:
 # both choruses lift, because they are one chorus played twice.
+#
+# A section that *does* change key is led into: the last chord of whatever precedes it becomes the
+# dominant seventh of the key being arrived at, so the ear is already there when the section
+# starts. It is the one thing in this format that rewrites a bar of a progression quoted by name,
+# and `lead_in = "none"` is how to say the plain jump was meant.
 
 [section.outro]
 bars      = 4

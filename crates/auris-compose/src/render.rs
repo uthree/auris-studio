@@ -930,16 +930,19 @@ mod tests {
             out.push_str(" |");
             for event in &section.events {
                 // Both, and not only one: `name()` reads the numeral, which is what the timeline
-                // will store, while `chord` is what the colouring pass produced and what is
-                // heard. Colouring keeps the two saying the same chord, so an arrow here is the
-                // shape of that going wrong again — and a fingerprint showing one of them would
-                // hide it.
+                // will store, while `chord` is what is heard. Every pass that rewrites one keeps
+                // the other with it, so an arrow here is the shape of that going wrong again —
+                // and a fingerprint showing one of them would hide it.
+                //
+                // Compared as *chords* and not as text. The two are spelled by different rules on
+                // purpose — a numeral knows which letter its degree demands, a chord only knows
+                // whether the key leans sharp or flat — so B flat and A sharp are the same chord
+                // written twice, and an arrow between them would be an alarm about nothing.
                 let numeral = event.name();
-                let sounding = event.chord.name_in(event.key);
-                if numeral == sounding {
+                if event.chord == event.numeral.chord_in(event.key) {
                     out.push_str(&format!(" {numeral}"));
                 } else {
-                    out.push_str(&format!(" {numeral}→{sounding}"));
+                    out.push_str(&format!(" {numeral}→{}", event.chord.name_in(event.key)));
                 }
             }
             out.push_str(" |\n");
@@ -1124,7 +1127,14 @@ mod tests {
              629 notes, digest 320d8793d96fc1d4\n"
         );
 
-        // A transposed section, which is about to become a key change on the timeline.
+        // A transposed section, which is a key change on the timeline — and the one fixture here
+        // that modulates, so the only one a lead-in reaches. 丸サ進行's last chord is `C7` and the
+        // verse plays `Bb7` instead: the dominant of the E flat the chorus arrives in, named from
+        // the key still in force. Every other chord of the quoted chart is untouched, which is the
+        // scope of the trade — one bar, only where a modulation was asked for by hand.
+        //
+        // The count is unchanged at 204. This edit moves a chord and must never add or drop a
+        // note; the digest moved because the parts play what the chord says.
         assert_eq!(
             fingerprint(
                 r#"
@@ -1139,9 +1149,9 @@ mod tests {
                     transpose = 3
                     "#
             ),
-            "verse·1 C major | Fmaj7 E7 Am7 C7 |\n\
+            "verse·1 C major | Fmaj7 E7 Am7 Bb7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
-             204 notes, digest 19ddfe856fd8e3aa\n"
+             204 notes, digest 61300f163a80c19e\n"
         );
     }
 

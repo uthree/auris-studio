@@ -393,6 +393,14 @@ the same chorus. The section picker offers the song's own names first — choosi
 repeat — and under a rule a fresh one of each: once there is a verse, `verse 2` is one click, which
 is how a song gets two verses that are not the same eight bars.
 
+**A section that changes key is led into.** The last chord before the change becomes the dominant
+seventh of the key being arrived at — the oldest device there is, and the reason a modulation can
+sound like an arrival rather than an edit: a `V7` names its tonic before that tonic has sounded, so
+the ear is already in the new key when the section starts. One chord, replaced in place, only in
+the bars before a change somebody asked for by hand. It is the single thing in the format that
+rewrites a bar of a progression quoted by name, and `lead_in = "none"` is how to say the plain jump
+was meant.
+
 **A section can play at a tempo of its own**, which is the difference between a chorus that lifts
 and one that is only louder. Its button on the dial row reads `—` for a section that follows the
 song and the tempo itself for one that does not, and the menu offers the song's tempo either side.
