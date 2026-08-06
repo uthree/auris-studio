@@ -2,12 +2,22 @@
 
 use auris_core::Note;
 use auris_core::harmony::{ChordMap, ChordPoint, Harmony, KeyMap, KeyPoint};
+use auris_core::plugin::PluginState;
 use auris_core::structure::{SectionMap, SectionPoint};
 use auris_core::time::{Ticks, TimeSignature};
 
 use crate::frame::{Frame, plan};
 use crate::parts::{ScoreSettings, write_parts};
-use crate::spec::SongSpec;
+use crate::spec::{Role, SongSpec};
+
+/// The bus a whole kit sits under, so one fader moves the drums.
+const DRUM_BUS: &str = "Drums";
+
+/// The room the pitched parts share, fed by sends.
+const ROOM_BUS: &str = "Room";
+
+/// The reverb the room bus carries.
+const REVERB_ID: &str = "auris.fx.reverb";
 
 /// One clip: a run of notes with a place on the timeline.
 #[derive(Clone, Debug, PartialEq)]
@@ -33,8 +43,47 @@ pub struct TrackDraft {
     pub gain_db: f32,
     /// Stereo position.
     pub pan: f32,
+    /// Which bus this track's output goes to, by position in [`Composition::buses`].
+    ///
+    /// `None` for the master. A position rather than a name or an id, because the composer has
+    /// neither: ids belong to a document and do not exist until one is built.
+    pub output: Option<usize>,
+    /// Copies of this track fed to buses alongside its own output.
+    pub sends: Vec<SendDraft>,
     /// The clips, in time order.
     pub clips: Vec<ClipDraft>,
+}
+
+/// A copy of a track, on its way to a bus.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct SendDraft {
+    /// Which bus, by position in [`Composition::buses`].
+    pub bus: usize,
+    /// How much of the track goes there, in decibels.
+    pub level_db: f32,
+}
+
+/// A mixing point the composed arrangement routes through.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BusDraft {
+    /// The bus's name.
+    pub name: String,
+    /// Level trim in decibels.
+    pub gain_db: f32,
+    /// Effects it carries, in chain order.
+    pub effects: Vec<BusEffectDraft>,
+}
+
+/// One effect on a bus, and the parameters it should not be left at its defaults for.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BusEffectDraft {
+    /// Registry id.
+    ///
+    /// Named rather than instantiated for the same reason a track's instrument is: this crate
+    /// knows what a reverb is *for* and has never heard of the one that ships.
+    pub id: String,
+    /// Parameter values, by their stable key — the document's own shape, so nothing translates it.
+    pub state: PluginState,
 }
 
 /// A finished piece, ready to become a project.
@@ -64,6 +113,13 @@ pub struct Composition {
     pub sections: SectionMap,
     /// The tracks, in the order the parts were declared.
     pub tracks: Vec<TrackDraft>,
+    /// The buses the tracks route through, in the order they should be created.
+    ///
+    /// A rough mix rather than a finished one: a kit under one fader and a room the pitched parts
+    /// share. What it is not is a substitute for mixing — it is the state a person would have
+    /// spent the first ten minutes setting up before they could hear whether the piece was any
+    /// good, which is ten minutes of not listening to it.
+    pub buses: Vec<BusDraft>,
 }
 
 impl Composition {
@@ -116,6 +172,20 @@ pub fn compose(spec: &SongSpec) -> Composition {
 /// Turns a planned frame and its parts into tracks of clips.
 fn render(spec: &SongSpec, frame: &Frame) -> Composition {
     let drafts = write_parts(&ScoreSettings::from(spec), &spec.parts, frame);
+    // The roster's roles, so the mix can be laid out before a single track exists. A draft carries
+    // its part's name and not its role, and the name is what ties the two together.
+    let role_of = |name: &str| {
+        spec.parts
+            .iter()
+            .find(|part| part.name == name)
+            .map(|part| part.role)
+    };
+    let buses = buses_for(
+        &drafts
+            .iter()
+            .filter_map(|draft| role_of(&draft.name))
+            .collect::<Vec<_>>(),
+    );
     let mut tracks = Vec::new();
 
     for draft in drafts {
@@ -166,11 +236,16 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
         if clips.is_empty() {
             continue;
         }
+        let (output, sends) = role_of(&draft.name)
+            .map(|role| routing_for(role, &buses))
+            .unwrap_or_default();
         tracks.push(TrackDraft {
             name: draft.name,
             instrument: draft.instrument,
             gain_db: draft.gain_db,
             pan: draft.pan,
+            output,
+            sends,
             clips,
         });
     }
@@ -184,7 +259,89 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
         harmony: harmony_of(frame),
         sections: sections_of(frame),
         tracks,
+        buses,
     }
+}
+
+/// The buses a roster needs, in the order they should be created.
+///
+/// Only the ones something actually goes to: a piece with no drums has no drum bus, and one with
+/// nothing pitched in it has no room. A bus nobody feeds is a strip in the mixer that can only be
+/// confusing.
+fn buses_for(roles: &[Role]) -> Vec<BusDraft> {
+    let mut buses = Vec::new();
+    if roles.iter().any(|role| drum_bus_takes(*role)) {
+        buses.push(BusDraft {
+            name: DRUM_BUS.to_string(),
+            // The parts carry their own balance; the bus is here to move all of it at once.
+            gain_db: 0.0,
+            effects: Vec::new(),
+        });
+    }
+    if roles.iter().any(|role| room_send_db(*role).is_some()) {
+        let mut state = PluginState::empty();
+        // Fully wet. A send bus carries the *reflections* — the dry signal is already on its way
+        // to the master by its own path, and a bus at the shipped 30 % mix would add a second
+        // quieter copy of it, which is a comb filter rather than a room.
+        state.params.insert("mix".to_string(), 1.0);
+        state.params.insert("room_size".to_string(), 0.55);
+        buses.push(BusDraft {
+            name: ROOM_BUS.to_string(),
+            // The sends set how much goes in; this sets how loud what comes back is.
+            gain_db: -3.0,
+            effects: vec![BusEffectDraft {
+                id: REVERB_ID.to_string(),
+                state,
+            }],
+        });
+    }
+    buses
+}
+
+/// `true` when a role belongs under the drum fader.
+fn drum_bus_takes(role: Role) -> bool {
+    matches!(role, Role::Kick | Role::Snare | Role::Hat)
+}
+
+/// How much of a role goes to the room, in decibels, or `None` for a part that stays dry.
+///
+/// **More room is further away.** That is the whole of the ordering: the pad is the furthest back
+/// because being a wash rather than a chord is what makes it a bed, and the tune is the nearest
+/// because it is the thing being sung. A part in front gets *less* of the room, not more.
+///
+/// Low frequencies in a reverb are mud, and there is no version of a kick or a bass in a room that
+/// a mix is better for, so those two get none at all.
+fn room_send_db(role: Role) -> Option<f32> {
+    Some(match role {
+        // Furthest back, in order.
+        Role::Pad => -6.0,
+        Role::Chords => -10.0,
+        // A stab is a chord with its release cut off, and what is left after the cut is the room.
+        Role::Stab => -10.0,
+        Role::Arp => -12.0,
+        // Nearest of the pitched parts.
+        Role::Melody => -15.0,
+        // A snare in a room is the oldest trick there is; a hat wants a suggestion of one.
+        Role::Snare => -12.0,
+        Role::Hat => -20.0,
+        Role::Bass | Role::Kick => return None,
+    })
+}
+
+/// Where one role's output goes and what it sends, given the buses [`buses_for`] produced.
+///
+/// By name rather than by a position worked out twice: the two functions are read together and a
+/// second copy of "the drum bus is the first one when there are drums" is a second chance to be
+/// wrong about it.
+fn routing_for(role: Role, buses: &[BusDraft]) -> (Option<usize>, Vec<SendDraft>) {
+    let index_of = |name: &str| buses.iter().position(|bus| bus.name == name);
+    let output = drum_bus_takes(role).then(|| index_of(DRUM_BUS)).flatten();
+    let sends = room_send_db(role)
+        .zip(index_of(ROOM_BUS))
+        .map(|(level_db, bus)| SendDraft { bus, level_db })
+        .into_iter()
+        .collect();
+    (output, sends)
 }
 
 /// The frame's harmony, moved onto the song's own timeline.
@@ -272,6 +429,102 @@ mod tests {
         [section chorus]
         bars: 8
     ";
+
+    #[test]
+    fn a_piece_arrives_with_a_kit_under_one_fader_and_a_room_to_share() {
+        let piece = compose_text(BASE);
+        let names: Vec<&str> = piece.buses.iter().map(|bus| bus.name.as_str()).collect();
+        assert_eq!(names, vec!["Drums", "Room"]);
+
+        let track = |name: &str| {
+            piece
+                .tracks
+                .iter()
+                .find(|track| track.name == name)
+                .unwrap_or_else(|| panic!("no {name} track"))
+        };
+        // The kit goes under its own fader; the pitched parts go straight to the master.
+        for drum in ["kick", "snare", "hat"] {
+            assert_eq!(track(drum).output, Some(0), "{drum}");
+        }
+        assert_eq!(track("lead").output, None);
+
+        // Everything but the low end sends to the room, and more room is further away.
+        let send = |name: &str| track(name).sends.first().map(|send| send.level_db);
+        assert!(send("lead") < send("chords"), "the tune sits in front");
+        assert_eq!(send("bass"), None, "low frequencies in a reverb are mud");
+        assert_eq!(send("kick"), None);
+        assert_eq!(track("snare").sends[0].bus, 1, "the room, not the drum bus");
+    }
+
+    #[test]
+    fn more_room_is_further_away() {
+        // The whole of the ordering, on the policy itself rather than on a roster that happens to
+        // hold six of the nine roles. A pad is a wash and that is what makes it a bed; a tune is
+        // the thing being sung and sits in front of all of it.
+        let db = |role| room_send_db(role).expect("a pitched part sends to the room");
+        assert!(db(Role::Melody) < db(Role::Arp));
+        assert!(db(Role::Arp) < db(Role::Chords));
+        assert!(db(Role::Chords) <= db(Role::Stab));
+        assert!(db(Role::Stab) < db(Role::Pad));
+        assert!(db(Role::Hat) < db(Role::Snare), "a hat wants a suggestion");
+        assert_eq!(room_send_db(Role::Bass), None);
+        assert_eq!(room_send_db(Role::Kick), None);
+    }
+
+    #[test]
+    fn a_room_bus_carries_a_reverb_that_is_all_reflection() {
+        // The shipped reverb passes 70 % of its input through dry. On a send bus that is a second,
+        // quieter copy of a signal already on its way to the master by another path — a comb
+        // filter rather than a room.
+        let piece = compose_text(BASE);
+        let room = piece
+            .buses
+            .iter()
+            .find(|bus| bus.name == "Room")
+            .expect("a room");
+        let reverb = &room.effects[0];
+        assert_eq!(reverb.id, "auris.fx.reverb");
+        assert_eq!(reverb.state.params.get("mix"), Some(&1.0));
+    }
+
+    #[test]
+    fn a_piece_with_no_drums_has_no_drum_bus() {
+        // A bus nobody feeds is a strip in the mixer that can only be confusing.
+        let text = format!("{BASE}\n[part lead]\nrole: melody\n");
+        let spec = SongSpec {
+            parts: vec![crate::spec::PartSpec::of_role("lead", Role::Melody)],
+            ..SongSpec::parse(&text).expect("the fixture parses")
+        };
+        let piece = compose(&spec);
+        let names: Vec<&str> = piece.buses.iter().map(|bus| bus.name.as_str()).collect();
+        assert_eq!(names, vec!["Room"]);
+        // And the one bus that does exist is the one the send names.
+        assert_eq!(piece.tracks[0].sends[0].bus, 0);
+    }
+
+    #[test]
+    fn the_parts_are_spread_across_the_image_but_the_anchors_stay_centred() {
+        // Six parts stacked in the middle are six parts fighting for the same space. What a
+        // listener localises the song by does not move.
+        let piece = compose_text(BASE);
+        let pan = |name: &str| {
+            piece
+                .tracks
+                .iter()
+                .find(|track| track.name == name)
+                .map(|track| track.pan)
+        };
+        assert_eq!(pan("lead"), Some(0.0));
+        assert_eq!(pan("bass"), Some(0.0));
+        assert_eq!(pan("kick"), Some(0.0));
+        assert_ne!(pan("chords"), Some(0.0));
+        assert_ne!(pan("hat"), Some(0.0));
+        // Nothing hard over: a part at the edge of the image disappears in mono.
+        for track in &piece.tracks {
+            assert!(track.pan.abs() <= 0.5, "{} is too far over", track.name);
+        }
+    }
 
     #[test]
     fn a_piece_carries_the_harmony_its_parts_were_written_against() {

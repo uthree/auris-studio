@@ -138,6 +138,27 @@ impl Role {
         }
     }
 
+    /// Where a part of this role sits across the stereo image, from -1 to 1.
+    ///
+    /// Six parts stacked in the middle are six parts fighting for the same space, and the fix a
+    /// mix engineer reaches for first is to move them apart. What stays in the centre is what a
+    /// listener localises the song by — the tune, the bass and the kick — and what moves is the
+    /// accompaniment. Nothing goes hard over: a part at the edge of the image disappears on a
+    /// mono speaker, and a phone is a mono speaker.
+    ///
+    /// A default rather than a decision, the same way [`Self::default_gain_db`] is: a
+    /// specification that writes `pan` gets what it asked for.
+    pub fn default_pan(self) -> f32 {
+        match self {
+            Role::Melody | Role::Bass | Role::Kick | Role::Snare => 0.0,
+            Role::Chords => -0.25,
+            Role::Pad => 0.2,
+            Role::Arp => 0.3,
+            Role::Stab => -0.3,
+            Role::Hat => 0.25,
+        }
+    }
+
     /// The level a part of this role sits at, in decibels.
     ///
     /// Six parts all at unity sum well past full scale. These are the rough balances a mix
@@ -345,7 +366,7 @@ impl PartSpec {
             gate: role.default_gate(),
             rhythm: None,
             gain_db: role.default_gain_db(),
-            pan: 0.0,
+            pan: role.default_pan(),
         }
     }
 

@@ -200,7 +200,11 @@ const DRUM_CHANNEL: u8 = 9;
 /// What composing produced.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ComposeReport {
-    /// How many tracks were created.
+    /// How many tracks of *music* were created.
+    ///
+    /// The buses the mix routes through are not counted. They are plumbing rather than parts, and
+    /// a report saying eight over a piece with six things playing in it would be answering a
+    /// question nobody asked.
     pub tracks: usize,
     /// How many clips.
     pub clips: usize,
@@ -1592,6 +1596,36 @@ impl Session {
             substituted: Vec::new(),
         };
 
+        // The buses first, so that the tracks routed into them have somewhere to land. They are
+        // *added* first and then moved below the parts, because the arrangement reads better as
+        // the music followed by the places it is mixed at — and a bus above its feeders would be
+        // the first thing a person clicked on.
+        let mut buses: Vec<TrackId> = Vec::new();
+        for bus in &composition.buses {
+            let id = project.add_bus_track(&bus.name);
+            if let Some(entry) = project.track_mut(id) {
+                entry.mixer.gain_db = bus.gain_db;
+            }
+            for effect in &bus.effects {
+                if !self.registry.has_effect(&effect.id) {
+                    // The same trade the instruments get: a missing plugin costs a colour, not a
+                    // piece. Without the reverb the room bus is a plain sum, which is quiet and
+                    // harmless rather than wrong.
+                    report.substituted.push(effect.id.clone());
+                    continue;
+                }
+                let Some(slot) = project.add_effect(Some(id), &effect.id) else {
+                    continue;
+                };
+                if let Some(entry) = project.track_mut(id)
+                    && let Some(added) = entry.mixer.effects.iter_mut().find(|s| s.id == slot)
+                {
+                    added.state = effect.state.clone();
+                }
+            }
+            buses.push(id);
+        }
+
         for track in &composition.tracks {
             let instrument = if self.registry.has_instrument(&track.instrument) {
                 track.instrument.clone()
@@ -1603,6 +1637,26 @@ impl Session {
             if let Some(entry) = project.track_mut(track_id) {
                 entry.mixer.gain_db = track.gain_db;
                 entry.mixer.pan = track.pan;
+                // A draft names a bus by its position in the composition, because the composer has
+                // no ids to name it by; this is where the two meet.
+                entry.output = track
+                    .output
+                    .and_then(|index| buses.get(index))
+                    .map_or(Output::Master, |bus| Output::Bus(*bus));
+            }
+            for send in &track.sends {
+                let Some(bus) = buses.get(send.bus).copied() else {
+                    continue;
+                };
+                let id = project.next_send_id();
+                if let Some(entry) = project.track_mut(track_id) {
+                    entry.sends.push(AuxSend {
+                        id,
+                        target: bus,
+                        level_db: send.level_db,
+                        pre_fader: false,
+                    });
+                }
             }
             report.tracks += 1;
 
@@ -1621,6 +1675,12 @@ impl Session {
                 }
                 report.clips += 1;
             }
+        }
+
+        // The buses to the bottom, where a mixing point belongs. Moved rather than created there,
+        // because a send cannot name a bus that does not exist yet.
+        for bus in &buses {
+            project.move_track(*bus, project.tracks.len());
         }
 
         // Loop over the whole piece, so pressing play and leaving it running plays the song.
@@ -6502,7 +6562,15 @@ mod tests {
         assert!(report.tracks > 0);
         assert!(report.notes > 0);
         assert_eq!(session.project().name, "Composed");
-        assert_eq!(session.project().tracks.len(), report.tracks);
+        // Every part reported, plus the buses the mix routes through — which the report does not
+        // count, because they are plumbing rather than things that play.
+        let buses = session
+            .project()
+            .tracks
+            .iter()
+            .filter(|track| track.kind.is_bus())
+            .count();
+        assert_eq!(session.project().tracks.len(), report.tracks + buses);
 
         // One step takes the whole piece back, not one note.
         assert_eq!(session.undo(), Some(Edit::Compose));
@@ -6562,6 +6630,48 @@ mod tests {
             notes > 0,
             "a clip written over a composed song came out empty"
         );
+    }
+
+    #[test]
+    fn a_composed_document_arrives_already_routed() {
+        // The composer names a bus by its position, because it has no ids to name one by. This is
+        // where the two meet, and getting it wrong would point every send at the wrong strip.
+        let mut session = session();
+        let spec = auris_compose::SongSpec::default();
+        let piece = auris_compose::compose(&spec);
+        session.compose(&piece).unwrap();
+
+        let project = session.project();
+        let bus = |name: &str| {
+            project
+                .tracks
+                .iter()
+                .find(|track| track.kind.is_bus() && track.name == name)
+                .unwrap_or_else(|| panic!("no {name} bus"))
+        };
+        let drums = bus("Drums").id;
+        let room = bus("Room").id;
+
+        // The kit under one fader, and the room fed rather than routed through.
+        let track = |name: &str| project.tracks.iter().find(|t| t.name == name).unwrap();
+        assert_eq!(track("kick").output, Output::Bus(drums));
+        assert_eq!(track("lead").output, Output::Master);
+        assert_eq!(track("lead").sends[0].target, room);
+        assert!(track("bass").sends.is_empty());
+
+        // The reverb is on the bus and is all reflection, which is the one setting a send/return
+        // reverb cannot be left at its default for.
+        let reverb = &bus("Room").mixer.effects[0];
+        assert_eq!(reverb.effect_id, "auris.fx.reverb");
+        assert_eq!(reverb.state.params.get("mix"), Some(&1.0));
+
+        // The buses sit below the music, and nothing about the routing loops.
+        assert!(project.tracks[project.tracks.len() - 1].kind.is_bus());
+        for track in &project.tracks {
+            for target in track.feeds() {
+                assert!(!project.routing_would_cycle(track.id, target));
+            }
+        }
     }
 
     #[test]

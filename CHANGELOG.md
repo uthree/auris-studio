@@ -22,6 +22,16 @@ format rather than a convention: `## <version> — <date>`.
 * **The drums can be asked for one voice at a time.** `Kick`, `Snare` and `Hat` join `Drums` in
   the part picker, so a hi-hat can be written onto a track of its own. A kit on one track is three
   voices no fader can separate; three tracks is a mix. `Project::FORMAT_VERSION` is 7.
+* **A composed piece arrives with a rough mix.** The kit goes under one drum fader, the pitched
+  parts share a room fed by sends, and the parts are spread across the stereo image instead of
+  stacked in the middle. What stays centred is what a listener localises the song by — the tune,
+  the bass and the kick — and nothing goes hard over, because a part at the edge of the image
+  disappears on a phone. It is not a substitute for mixing; it is the ten minutes a person would
+  have spent setting up before they could hear whether the piece was any good.
+* More room means further away, which is the whole of the send ordering: the pad is furthest back
+  because being a wash is what makes it a bed, and the tune is nearest. The bass and the kick get
+  none at all — low frequencies in a reverb are mud. The reverb on the bus is set fully wet, which
+  is the one setting a send/return reverb cannot be left at its default for.
 * Not a note of what the composer writes moved: its tests compare whole pieces chord by chord and
   note by note, and they pass unchanged.
 
