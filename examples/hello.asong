@@ -8,6 +8,6 @@
 #   auris compose examples/hello.asong --print
 #   auris compose examples/hello.asong -o hello.auris
 
-title:  Hello
-key:    C major
-chords: @axis
+title  = "Hello"
+key    = "C major"
+chords = "@axis"

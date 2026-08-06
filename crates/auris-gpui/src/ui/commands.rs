@@ -755,14 +755,15 @@ impl AurisApp {
                 return;
             }
         };
-        // The parser reports every complaint it has, not just the first, so a specification with
-        // three typos takes one round trip rather than three.
+        // A syntax error comes back on its own with the line it is on; every complaint about
+        // what the document *means* comes back at once, so a specification with three bad
+        // values takes one round trip rather than three.
         let spec = match SongSpec::parse(&text) {
             Ok(spec) => spec,
             Err(errors) => {
                 // Every complaint, in a sheet. They were joined with newlines into the status
-                // bar, which is one row twenty-two pixels tall: the parser's whole point — say
-                // all of it at once — was thrown away by where the answer was put.
+                // bar, which is one row twenty-two pixels tall: the whole point — say all of it
+                // at once — was thrown away by where the answer was put.
                 self.set_failed_status(messages::spec_rejected(language, &shown));
                 self.open_prompt(crate::ui::prompt::Prompt::notice(
                     self.t(Key::SpecRejectedTitle),

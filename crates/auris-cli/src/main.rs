@@ -166,7 +166,7 @@ fn compose(args: &[String]) -> Result<(), String> {
     let source = PathBuf::from(source);
 
     let mut output = source.with_extension(auris_session::PROJECT_EXTENSION);
-    let mut overrides: Vec<String> = Vec::new();
+    let mut overrides: Vec<(String, String)> = Vec::new();
     let mut print_only = false;
 
     let mut index = 2;
@@ -182,17 +182,14 @@ fn compose(args: &[String]) -> Result<(), String> {
                     )
                 })?);
             }
-            // Every override is just another line of the format, appended after the document —
-            // so the command line needs no vocabulary of its own and can never drift from it.
+            // Every override names a field of the format, so the command line needs no
+            // vocabulary of its own and can never drift from it.
             "--set" => {
                 index += 1;
-                overrides.push(
-                    args.get(index)
-                        .ok_or_else(|| {
-                            messages::option_needs_value(LANGUAGE, "--set", "field: value")
-                        })?
-                        .clone(),
-                );
+                let pair = args.get(index).ok_or_else(|| {
+                    messages::option_needs_value(LANGUAGE, "--set", "field: value")
+                })?;
+                overrides.push(split_override(pair)?);
             }
             "--seed" | "--key" | "--tempo" | "--mood" | "--groove" | "--scale" | "--swing" => {
                 let field = args[index].trim_start_matches('-').to_string();
@@ -202,7 +199,7 @@ fn compose(args: &[String]) -> Result<(), String> {
                     // interpolated verbatim into the middle of the Japanese message.
                     messages::option_needs_value(LANGUAGE, &field, Key::CliNeedsValue.get(LANGUAGE))
                 })?;
-                overrides.push(format!("{field}: {value}"));
+                overrides.push((field, value.clone()));
             }
             "--print" => print_only = true,
             other => return Err(messages::unknown_option(LANGUAGE, other)),
@@ -212,23 +209,18 @@ fn compose(args: &[String]) -> Result<(), String> {
 
     let text = std::fs::read_to_string(&source)
         .map_err(|error| format!("{}: {error}", source.display()))?;
-    // `[song]` first, so an override lands on a header field even when the document ends inside
-    // a section or a part block.
-    let combined = if overrides.is_empty() {
-        text
-    } else {
-        format!("{text}\n[song]\n{}", overrides.join("\n"))
-    };
-    let spec = auris_session::prelude::SongSpec::parse(&combined).map_err(|errors| {
-        let mut message = messages::spec_rejected(LANGUAGE, &source.display().to_string());
-        for error in errors {
-            message.push_str(&format!("\n  {error}"));
-        }
-        message
-    })?;
+    let spec = auris_session::prelude::SongSpec::parse_with_overrides(&text, &overrides).map_err(
+        |errors| {
+            let mut message = messages::spec_rejected(LANGUAGE, &source.display().to_string());
+            for error in errors {
+                message.push_str(&format!("\n  {error}"));
+            }
+            message
+        },
+    )?;
 
     if print_only {
-        return printed(write!(std::io::stdout(), "{}", spec.to_text()));
+        return printed(write!(std::io::stdout(), "{}", spec.to_toml()));
     }
 
     let piece = auris_session::prelude::compose(&spec);
@@ -252,6 +244,19 @@ fn compose(args: &[String]) -> Result<(), String> {
     ))?;
     printed(write!(std::io::stdout(), "{}", piece.summary()))?;
     Ok(())
+}
+
+/// Splits `--set "field: value"` into its two halves.
+///
+/// Either separator is accepted: the document itself writes `field = value`, and the option was
+/// documented with a colon long before it did. Neither is ambiguous, because no field name of
+/// the format contains one. The value is left exactly as it was typed — `D minor` rather than
+/// `"D minor"` — and quoted for TOML on the other side, where a number can still be a number.
+fn split_override(pair: &str) -> Result<(String, String), String> {
+    let (field, value) = pair
+        .split_once([':', '='])
+        .ok_or_else(|| messages::option_needs_value(LANGUAGE, "--set", "field: value"))?;
+    Ok((field.trim().to_string(), value.trim().to_string()))
 }
 
 fn list_plugins() -> Result<(), String> {
@@ -617,6 +622,27 @@ fn new_project(args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_override_is_split_on_either_separator() {
+        // The document writes `field = value`; this option was documented with a colon long
+        // before it did, and both are unambiguous because no field name of the format has one.
+        assert_eq!(
+            split_override("tempo: 128").unwrap(),
+            ("tempo".to_string(), "128".to_string())
+        );
+        assert_eq!(
+            split_override("tempo = 128").unwrap(),
+            ("tempo".to_string(), "128".to_string())
+        );
+        // The value keeps its spaces and its quotes stay off: `key: D minor`, not `key: "D
+        // minor"`. Quoting it for TOML is the format's job, not the shell's.
+        assert_eq!(
+            split_override("key: D minor").unwrap(),
+            ("key".to_string(), "D minor".to_string())
+        );
+        assert!(split_override("tempo").is_err());
+    }
 
     #[test]
     fn japanese_characters_count_as_two_columns() {

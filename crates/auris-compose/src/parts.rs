@@ -1437,14 +1437,14 @@ mod tests {
             .unwrap_or_else(|| panic!("no part called {name}"))
     }
 
-    const BASE: &str = "
-        form: verse
-        chords: @axis
-        humanize: 0
-        swing: 50
-        [section verse]
-        bars: 4
-    ";
+    const BASE: &str = r#"
+        form = "verse"
+        chords = "@axis"
+        humanize = 0
+        swing = 50
+        [section.verse]
+        bars = 4
+    "#;
 
     #[test]
     fn every_default_part_writes_notes() {
@@ -1550,7 +1550,7 @@ mod tests {
     #[test]
     fn humanising_moves_notes_and_the_seed_decides_where() {
         let straight = draft(BASE).2;
-        let loose = draft(&BASE.replace("humanize: 0", "humanize: 0.8")).2;
+        let loose = draft(&BASE.replace("humanize = 0", "humanize = 0.8")).2;
         let moved = straight
             .iter()
             .zip(&loose)
@@ -1560,7 +1560,7 @@ mod tests {
         assert!(moved > 0, "humanising did nothing");
 
         // And it is reproducible.
-        let again = draft(&BASE.replace("humanize: 0", "humanize: 0.8")).2;
+        let again = draft(&BASE.replace("humanize = 0", "humanize = 0.8")).2;
         for (a, b) in loose.iter().zip(&again) {
             assert_eq!(a.notes, b.notes, "`{}` was not reproducible", a.name);
         }
@@ -1569,7 +1569,7 @@ mod tests {
     #[test]
     fn swing_delays_the_offbeats_of_a_busy_part() {
         let straight = draft(BASE).2;
-        let swung = draft(&BASE.replace("swing: 50", "swing: 66")).2;
+        let swung = draft(&BASE.replace("swing = 50", "swing = 66")).2;
         let hat_straight = part(&straight, "hat");
         let hat_swung = part(&swung, "hat");
         let delayed = hat_straight
@@ -1593,15 +1593,16 @@ mod tests {
     fn a_written_rhythm_survives_a_quiet_section() {
         // Thinning is a suggestion about the groove, not licence to ignore an instruction.
         let (_, frame, parts) = draft(
-            "
-            form: verse
-            humanize: 0
-            [section verse]
-            bars: 1
-            intensity: 0.05
-            [part kick]
-            rhythm: x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~
-            ",
+            r#"
+            form = "verse"
+            humanize = 0
+            [section.verse]
+            bars = 1
+            intensity = 0.05
+            [[part]]
+            name = "kick"
+            rhythm = "x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~"
+            "#,
         );
         let steps: Vec<usize> = part(&parts, "kick")
             .notes
@@ -1614,14 +1615,15 @@ mod tests {
     #[test]
     fn a_written_rhythm_is_played_as_written() {
         let (_, frame, parts) = draft(
-            "
-            form: verse
-            humanize: 0
-            [section verse]
-            bars: 1
-            [part kick]
-            rhythm: x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~
-            ",
+            r#"
+            form = "verse"
+            humanize = 0
+            [section.verse]
+            bars = 1
+            [[part]]
+            name = "kick"
+            rhythm = "x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~"
+            "#,
         );
         let kick = part(&parts, "kick");
         let steps: Vec<usize> = kick
@@ -1634,8 +1636,8 @@ mod tests {
 
     #[test]
     fn a_louder_section_plays_more_drum_hits() {
-        let quiet = draft(&BASE.replace("bars: 4", "bars: 4\nintensity: 0.1")).2;
-        let loud = draft(&BASE.replace("bars: 4", "bars: 4\nintensity: 1.0")).2;
+        let quiet = draft(&BASE.replace("bars = 4", "bars = 4\nintensity = 0.1")).2;
+        let loud = draft(&BASE.replace("bars = 4", "bars = 4\nintensity = 1.0")).2;
         assert!(
             part(&loud, "hat").notes.len() > part(&quiet, "hat").notes.len(),
             "intensity did not change how much the drummer plays"
@@ -1660,13 +1662,13 @@ mod tests {
     #[test]
     fn the_bass_plays_the_sounding_bass_of_a_slash_chord() {
         let (_, frame, parts) = draft(
-            "
-            form: verse
-            chords: @koakuma
-            humanize: 0
-            [section verse]
-            bars: 4
-            ",
+            r#"
+            form = "verse"
+            chords = "@koakuma"
+            humanize = 0
+            [section.verse]
+            bars = 4
+            "#,
         );
         let bass = part(&parts, "bass");
         let section = &frame.sections[0];
@@ -1693,8 +1695,14 @@ mod tests {
             "@blues",
         ] {
             let text = format!(
-                "key: C major\nform: verse\nchords: {chart}\nhumanize: 0\n\
-                 [section verse]\nbars: 4"
+                r#"
+                    key = "C major"
+                    form = "verse"
+                    chords = "{chart}"
+                    humanize = 0
+                    [section.verse]
+                    bars = 4
+                    "#
             );
             let (spec, frame, parts) = draft(&text);
             let section = &frame.sections[0];
@@ -1721,10 +1729,27 @@ mod tests {
     fn adding_a_part_leaves_the_other_parts_alone() {
         // Every part hangs off the same skeleton, so taking that skeleton from whichever melody
         // part happened to be in the roster meant adding a part rewrote the whole arrangement.
-        let base = "form: verse\nchords: @axis\nhumanize: 0\n[section verse]\nbars: 4\n\
-                    [part bass]\n[part kick]";
+        let base = r#"
+            form = "verse"
+            chords = "@axis"
+            humanize = 0
+            [section.verse]
+            bars = 4
+            [[part]]
+            name = "bass"
+            [[part]]
+            name = "kick"
+            "#;
         let before = draft(base).2;
-        let after = draft(&format!("{base}\n[part extra]\nrole: pad")).2;
+        let after = draft(&format!(
+            r#"
+            {base}
+            [[part]]
+            name = "extra"
+            role = "pad"
+            "#
+        ))
+        .2;
         for name in ["bass", "kick"] {
             assert_eq!(
                 part(&before, name).notes,
@@ -1738,8 +1763,19 @@ mod tests {
     fn editing_one_section_leaves_the_others_alone() {
         // The humanise stream used to be one sequential draw per part, so a note added anywhere
         // re-timed every note after it.
-        let base = "form: verse chorus\nchords: @axis\nhumanize: 0.6\nseed: 3\n\
-                    [section verse]\nbars: 2\n[section chorus]\nbars: 2\nintensity: {}";
+        let base = r#"
+            form     = "verse chorus"
+            chords   = "@axis"
+            humanize = 0.6
+            seed     = 3
+
+            [section.verse]
+            bars = 2
+
+            [section.chorus]
+            bars      = 2
+            intensity = {}
+        "#;
         let quiet = draft(&base.replace("{}", "0.9")).2;
         let loud = draft(&base.replace("{}", "0.4")).2;
         for (a, b) in quiet.iter().zip(&loud) {
@@ -1757,8 +1793,16 @@ mod tests {
     fn the_bass_follows_the_kick_in_an_odd_meter() {
         // The groove is a bar long, so it has to be read modulo the bar rather than modulo its
         // own sixteen steps, or it drifts against the drums in anything but four four.
-        let (_, frame, parts) =
-            draft("form: verse\nmeter: 3/4\nchords: @axis\nhumanize: 0\n[section verse]\nbars: 4");
+        let (_, frame, parts) = draft(
+            r#"
+                form = "verse"
+                meter = "3/4"
+                chords = "@axis"
+                humanize = 0
+                [section.verse]
+                bars = 4
+                "#,
+        );
         let bass = part(&parts, "bass");
         let kick = part(&parts, "kick");
         assert!(!bass.notes.is_empty() && !kick.notes.is_empty());
@@ -1779,13 +1823,13 @@ mod tests {
     #[test]
     fn a_section_can_leave_a_part_out() {
         let (_, _, parts) = draft(
-            "
-            form: intro chorus
-            humanize: 0
+            r#"
+            form = "intro chorus"
+            humanize = 0
 
-            [section intro]
-            parts: bass
-            ",
+            [section.intro]
+            parts = "bass"
+            "#,
         );
         let hat = part(&parts, "hat");
         // Nothing in the intro, which is section zero.
@@ -1801,8 +1845,16 @@ mod tests {
         // Every bar used to roll its own rhythm from its own stream, so no figure ever recurred
         // and a section had nothing in it to recognise.
         let (_, frame, parts) = draft(
-            "form: verse\nchords: @axis\nhumanize: 0\nvariation: 0\n\
-             [section verse]\nbars: 8\n[part lead]",
+            r#"
+                form = "verse"
+                chords = "@axis"
+                humanize = 0
+                variation = 0
+                [section.verse]
+                bars = 8
+                [[part]]
+                name = "lead"
+                "#,
         );
         let lead = part(&parts, "lead");
         let figure = bar_steps(&frame, lead, 0);
@@ -1822,8 +1874,15 @@ mod tests {
         // A note used to be held until the next onset or the bar line, so every bar was full of
         // sound from end to end and a phrase never finished — it only stopped.
         let (_, frame, parts) = draft(
-            "form: verse\nchords: @axis\nhumanize: 0\n\
-             [section verse]\nbars: 8\n[part lead]",
+            r#"
+                form = "verse"
+                chords = "@axis"
+                humanize = 0
+                [section.verse]
+                bars = 8
+                [[part]]
+                name = "lead"
+                "#,
         );
         let lead = part(&parts, "lead");
         let mut longest_rest = Ticks::ZERO;
@@ -1846,8 +1905,14 @@ mod tests {
         // The section instance used to be part of every stream name, so a second chorus shared
         // nothing with the first and the piece had no chorus, only two sections with one name.
         let (_, frame, parts) = draft(
-            "form: verse verse\nchords: @axis\nhumanize: 0\nvariation: 0\n\
-             [section verse]\nbars: 4",
+            r#"
+                form = "verse verse"
+                chords = "@axis"
+                humanize = 0
+                variation = 0
+                [section.verse]
+                bars = 4
+                "#,
         );
         assert_eq!(frame.sections.len(), 2);
         for draft in &parts {
@@ -1865,8 +1930,15 @@ mod tests {
         // A section that stopped and was replaced sounded like an edit rather than an arrival.
         // The last section of a piece has nothing to lead into, so it keeps the groove instead.
         let (_, frame, parts) = draft(
-            "form: verse verse\nchords: @axis\nhumanize: 0\nvariation: 0\n\
-             [section verse]\nbars: 4\nintensity: 0.8",
+            r#"
+                form = "verse verse"
+                chords = "@axis"
+                humanize = 0
+                variation = 0
+                [section.verse]
+                bars = 4
+                intensity = 0.8
+                "#,
         );
         let snare = part(&parts, "snare");
         let bar = frame.grid.bar_ticks();
@@ -1893,8 +1965,15 @@ mod tests {
         // Every bar used to be played at one level, so the only dynamic anywhere in a piece was
         // the step from one section's intensity to the next's.
         let (_, frame, parts) = draft(
-            "form: verse\nchords: @axis\nhumanize: 0\n\
-             [section verse]\nbars: 8\n[part lead]",
+            r#"
+                form = "verse"
+                chords = "@axis"
+                humanize = 0
+                [section.verse]
+                bars = 8
+                [[part]]
+                name = "lead"
+                "#,
         );
         let lead = part(&parts, "lead");
         let mean = |from: i64, to: i64| -> f32 {
@@ -1916,8 +1995,16 @@ mod tests {
 
     #[test]
     fn variation_lets_a_repeat_depart_from_the_first_playing() {
-        let text = "form: verse verse\nchords: @axis\nhumanize: 0\nvariation: 1.0\n\
-                    [section verse]\nbars: 4\n[part lead]";
+        let text = r#"
+            form = "verse verse"
+            chords = "@axis"
+            humanize = 0
+            variation = 1.0
+            [section.verse]
+            bars = 4
+            [[part]]
+            name = "lead"
+            "#;
         let (_, frame, parts) = draft(text);
         let lead = part(&parts, "lead");
         assert_ne!(
@@ -1948,15 +2035,25 @@ mod tests {
 
     #[test]
     fn a_written_rhythm_reaches_every_pitched_part() {
-        // The field's contract is that it overrides the generated rhythm, and the parser
+        // The field's contract is that it overrides the generated rhythm, and the format
         // promises that nothing it accepts is quietly ignored. The melody and the drums kept
-        // that promise; the chords, the pad, the stab, the arp and the bass parsed the line,
-        // round-tripped it through to_text, and played their own rhythm anyway.
+        // that promise; the chords, the pad, the stab, the arp and the bass read the field,
+        // round-tripped it through the document, and played their own rhythm anyway.
         for role in ["chords", "pad", "stab", "arp", "bass"] {
             let text = format!(
-                "form: verse\nchords: @axis\nhumanize: 0\nswing: 50\n\
-                 [section verse]\nbars: 2\n[part {role}]\n\
-                 rhythm: x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~"
+                r#"
+                form     = "verse"
+                chords   = "@axis"
+                humanize = 0
+                swing    = 50
+
+                [section.verse]
+                bars = 2
+
+                [[part]]
+                name   = "{role}"
+                rhythm = "x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~"
+                "#
             );
             let (_, frame, parts) = draft(&text);
             let played = part(&parts, role);
@@ -1981,8 +2078,17 @@ mod tests {
         // on top.
         let kit = |density: f32| {
             let text = format!(
-                "form: verse\nchords: @axis\nhumanize: 0\nswing: 50\n\
-                 [section verse]\nbars: 4\n[part kick]\ndensity: {density}"
+                r#"
+                    form = "verse"
+                    chords = "@axis"
+                    humanize = 0
+                    swing = 50
+                    [section.verse]
+                    bars = 4
+                    [[part]]
+                    name = "kick"
+                    density = {density}
+                    "#
             );
             let (_, frame, parts) = draft(&text);
             section_notes(&frame, part(&parts, "kick"), 0)
@@ -2004,14 +2110,34 @@ mod tests {
         );
     }
 
-    /// The default roster with `extra` inserted into the `chords` block.
+    /// The default roster with `extra` inserted into the `chords` part.
     ///
     /// Every part is named, because declaring one part replaces the roster rather than adding to
     /// it — and the point of these tests is what the *other* parts do.
-    fn roster(extra: &str) -> String {
+    fn roster(seed: u64, extra: &str) -> String {
         format!(
-            "form: verse\nchords: @axis\nhumanize: 0\nseed: 5\n[section verse]\nbars: 4\n\
-             [part lead]\n[part chords]\n{extra}[part bass]\n[part kick]"
+            r#"
+            form     = "verse"
+            chords   = "@axis"
+            humanize = 0
+            seed     = {seed}
+
+            [section.verse]
+            bars = 4
+
+            [[part]]
+            name = "lead"
+
+            [[part]]
+            name = "chords"
+            {extra}
+
+            [[part]]
+            name = "bass"
+
+            [[part]]
+            name = "kick"
+            "#
         )
     }
 
@@ -2026,8 +2152,7 @@ mod tests {
         // both grids at once. What has to be true is that the setting is *reachable*.
         let mut off_the_straight_grid = 0;
         for seed in 1..=8u64 {
-            let text = roster("subdivision: 8t\ndensity: 0.9\n")
-                .replace("seed: 5", &format!("seed: {seed}"));
+            let text = roster(seed, "subdivision = \"8t\"\n            density = 0.9");
             let (_, _, parts) = draft(&text);
             let chords = part(&parts, "chords");
             assert!(!chords.notes.is_empty(), "seed {seed} wrote nothing");
@@ -2054,8 +2179,8 @@ mod tests {
         // Both live on the part, so turning them up must leave every other part where it was.
         // This is also what makes the fixture in `render` readable: when it moves, the part that
         // moved it is the part that was changed.
-        let before = draft(&roster("")).2;
-        let after = draft(&roster("subdivision: 16t\ngate: 0.25\n")).2;
+        let before = draft(&roster(5, "")).2;
+        let after = draft(&roster(5, "subdivision = \"16t\"\n            gate = 0.25")).2;
         for name in ["lead", "bass", "kick"] {
             assert_eq!(
                 part(&before, name).notes,
@@ -2074,8 +2199,8 @@ mod tests {
     fn the_gate_shortens_a_note_without_moving_it() {
         // Articulation, not rhythm. A gate that shifted a note would be a second timing control
         // fighting the swing and the humanising for the same tick.
-        let long = draft(&roster("")).2;
-        let short = draft(&roster("gate: 0.25\n")).2;
+        let long = draft(&roster(5, "")).2;
+        let short = draft(&roster(5, "gate = 0.25")).2;
         let (long, short) = (part(&long, "chords"), part(&short, "chords"));
         assert_eq!(long.notes.len(), short.notes.len());
 
@@ -2101,8 +2226,18 @@ mod tests {
         // give is most of the steps, with the holes that make it a rhythm.
         let full = |seed: u64| {
             format!(
-                "form: verse\nchords: @axis\nhumanize: 0\nseed: {seed}\n\
-                 [section verse]\nbars: 4\nintensity: 1.0\n[part chords]\ndensity: 1.0"
+                r#"
+                    form = "verse"
+                    chords = "@axis"
+                    humanize = 0
+                    seed = {seed}
+                    [section.verse]
+                    bars = 4
+                    intensity = 1.0
+                    [[part]]
+                    name = "chords"
+                    density = 1.0
+                    "#
             )
         };
         let mut counts = Vec::new();
@@ -2132,8 +2267,18 @@ mod tests {
         let mut steady = 0;
         for seed in 1..=8u64 {
             let (_, frame, parts) = draft(&format!(
-                "form: verse\nchords: @axis\nhumanize: 0\nvariation: 0\nseed: {seed}\n\
-                 [section verse]\nbars: 8\n[part chords]\ndensity: 0.8"
+                r#"
+                    form = "verse"
+                    chords = "@axis"
+                    humanize = 0
+                    variation = 0
+                    seed = {seed}
+                    [section.verse]
+                    bars = 8
+                    [[part]]
+                    name = "chords"
+                    density = 0.8
+                    "#
             ));
             let chords = part(&parts, "chords");
             // Bars 0, 1 and 2 of each four-bar phrase are never allowed to differ from each
@@ -2177,8 +2322,17 @@ mod tests {
         // both would be a control nobody could aim.
         let spec = |dynamics: &str| {
             format!(
-                "form: verse\nchords: @axis\nhumanize: 0\nseed: 4\ndynamics: {dynamics}\n\
-                 [section verse]\nbars: 4\n[part lead]"
+                r#"
+                    form = "verse"
+                    chords = "@axis"
+                    humanize = 0
+                    seed = 4
+                    dynamics = {dynamics}
+                    [section.verse]
+                    bars = 4
+                    [[part]]
+                    name = "lead"
+                    "#
             )
         };
         let flat = draft(&spec("0")).2;
@@ -2221,8 +2375,20 @@ mod tests {
         // The difference the two parts existed to have and did not. Both read the same harmony
         // through the same writer, so without this a pad was a comp that happened to have drawn
         // the held figure — which the comp could draw too, and did, four times in ten.
-        let roster = "form: verse\nchords: @axis\nhumanize: 0\nseed: 3\n\
-                      [section verse]\nbars: 4\n[part pad]\nrole: pad\n[part comp]\nrole: chords";
+        let roster = r#"
+            form = "verse"
+            chords = "@axis"
+            humanize = 0
+            seed = 3
+            [section.verse]
+            bars = 4
+            [[part]]
+            name = "pad"
+            role = "pad"
+            [[part]]
+            name = "comp"
+            role = "chords"
+            "#;
         let (_, frame, parts) = draft(roster);
         let section = &frame.sections[0];
         assert!(section.events.len() >= 4, "a chord per bar to tie across");
@@ -2257,8 +2423,17 @@ mod tests {
         // makes it a separate dial from the density rather than a second way to spell it.
         let spec = |syncopation: &str| {
             format!(
-                "form: verse\nchords: @axis\nhumanize: 0\nseed: 6\nsyncopation: {syncopation}\n\
-                 [section verse]\nbars: 8\n[part lead]"
+                r#"
+                    form = "verse"
+                    chords = "@axis"
+                    humanize = 0
+                    seed = 6
+                    syncopation = {syncopation}
+                    [section.verse]
+                    bars = 8
+                    [[part]]
+                    name = "lead"
+                    "#
             )
         };
         let square = draft(&spec("0.0")).2;
@@ -2292,8 +2467,20 @@ mod tests {
 
     #[test]
     fn a_different_seed_writes_a_different_piece() {
-        let a = draft(&format!("seed: 1\n{BASE}")).2;
-        let b = draft(&format!("seed: 2\n{BASE}")).2;
+        let a = draft(&format!(
+            r#"
+            seed = 1
+            {BASE}
+            "#
+        ))
+        .2;
+        let b = draft(&format!(
+            r#"
+            seed = 2
+            {BASE}
+            "#
+        ))
+        .2;
         let melody_a = &part(&a, "lead").notes;
         let melody_b = &part(&b, "lead").notes;
         assert_ne!(melody_a, melody_b, "the seed did not reach the melody");

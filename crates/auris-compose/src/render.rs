@@ -417,18 +417,18 @@ mod tests {
         compose(&SongSpec::parse(text).expect("the fixture parses"))
     }
 
-    const BASE: &str = "
-        title: Test
-        form: intro verse chorus
-        chords: @axis
-        humanize: 0
-        [section intro]
-        bars: 4
-        [section verse]
-        bars: 8
-        [section chorus]
-        bars: 8
-    ";
+    const BASE: &str = r#"
+        title = "Test"
+        form = "intro verse chorus"
+        chords = "@axis"
+        humanize = 0
+        [section.intro]
+        bars = 4
+        [section.verse]
+        bars = 8
+        [section.chorus]
+        bars = 8
+    "#;
 
     #[test]
     fn a_piece_arrives_with_a_kit_under_one_fader_and_a_room_to_share() {
@@ -491,7 +491,14 @@ mod tests {
     #[test]
     fn a_piece_with_no_drums_has_no_drum_bus() {
         // A bus nobody feeds is a strip in the mixer that can only be confusing.
-        let text = format!("{BASE}\n[part lead]\nrole: melody\n");
+        let text = format!(
+            r#"
+            {BASE}
+            [[part]]
+            name = "lead"
+            role = "melody"
+            "#
+        );
         let spec = SongSpec {
             parts: vec![crate::spec::PartSpec::of_role("lead", Role::Melody)],
             ..SongSpec::parse(&text).expect("the fixture parses")
@@ -581,9 +588,27 @@ mod tests {
         let piece = compose_text(BASE);
         assert_eq!(piece.harmony.keys.points().len(), 1);
 
-        // A section that transposes is a change, and gets one.
-        let modulating = format!("{BASE}\n[section chorus]\ntranspose: 2\n");
-        let piece = compose_text(&modulating);
+        // A section that transposes is a change, and gets one. Written out in full rather than
+        // appended to `BASE`, which already declares the chorus — TOML refuses the same table
+        // twice, and quite right too: which of the two would `bars` have come from?
+        let piece = compose_text(
+            r#"
+            title    = "Test"
+            form     = "intro verse chorus"
+            chords   = "@axis"
+            humanize = 0
+
+            [section.intro]
+            bars = 4
+
+            [section.verse]
+            bars = 8
+
+            [section.chorus]
+            bars      = 8
+            transpose = 2
+            "#,
+        );
         assert_eq!(piece.harmony.keys.points().len(), 2);
     }
 
@@ -659,7 +684,14 @@ mod tests {
         // major key every colour it can reach is writable as a numeral.
         assert_eq!(
             fingerprint(
-                "form: verse\nkey: C major\nseed: 7\ntension: 0.95\n[section verse]\nbars: 8"
+                r#"
+                    form = "verse"
+                    key = "C major"
+                    seed = 7
+                    tension = 0.95
+                    [section.verse]
+                    bars = 8
+                    "#
             ),
             "verse·1 C major | C→Cmaj7 G Am F→Fmaj7 C→Cmaj7 G→Gmaj7 Am→Am9 F |\n\
              133 notes, digest f8264e14061e3532\n"
@@ -671,7 +703,14 @@ mod tests {
         // at zero and from the major scale otherwise, and F sharp falls between the two.
         assert_eq!(
             fingerprint(
-                "form: verse\nkey: A minor\nseed: 1\nmood: tense\n[section verse]\nbars: 8"
+                r#"
+                    form = "verse"
+                    key = "A minor"
+                    seed = 1
+                    mood = "tense"
+                    [section.verse]
+                    bars = 8
+                    "#
             ),
             "verse·1 A minor | A→Amaj7 E Fm→Fm7 D A→Amaj7 E→Emaj7 Fm→Gbm D→Dmaj7 |\n\
              203 notes, digest 192c401e1bd094a8\n"
@@ -689,8 +728,17 @@ mod tests {
         // A transposed section, which is about to become a key change on the timeline.
         assert_eq!(
             fingerprint(
-                "form: verse chorus\nchords: @marusa\nkey: C major\nseed: 3\n\
-                 [section verse]\nbars: 4\n[section chorus]\nbars: 4\ntranspose: 3"
+                r#"
+                    form = "verse chorus"
+                    chords = "@marusa"
+                    key = "C major"
+                    seed = 3
+                    [section.verse]
+                    bars = 4
+                    [section.chorus]
+                    bars = 4
+                    transpose = 3
+                    "#
             ),
             "verse·1 C major | Fmaj7 E7 Am7 C7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
@@ -782,7 +830,7 @@ mod tests {
         // Deleting a note nudged a few ticks before its section took the downbeat out of every
         // section but the first; it is clamped back into the clip instead.
         let straight = compose_text(BASE);
-        let loose = compose_text(&BASE.replace("humanize: 0", "humanize: 1.0"));
+        let loose = compose_text(&BASE.replace("humanize = 0", "humanize = 1.0"));
         for (a, b) in straight.tracks.iter().zip(&loose.tracks) {
             for (before, after) in a.clips.iter().zip(&b.clips) {
                 assert_eq!(
@@ -800,15 +848,16 @@ mod tests {
     fn an_extended_chord_is_voiced_upward_rather_than_folded_flat() {
         // A ninth folded into the triad sounds as a second against the root.
         let piece = compose_text(
-            "
-            key: C major
-            form: verse
-            chords: | Imaj9 | Imaj9 | Imaj9 | Imaj9 |
-            humanize: 0
-            [section verse]
-            bars: 4
-            [part chords]
-            ",
+            r#"
+            key = "C major"
+            form = "verse"
+            chords = "| Imaj9 | Imaj9 | Imaj9 | Imaj9 |"
+            humanize = 0
+            [section.verse]
+            bars = 4
+            [[part]]
+            name = "chords"
+            "#,
         );
         let clip = &piece.tracks[0].clips[0];
         let first: Vec<u8> = clip
@@ -833,17 +882,19 @@ mod tests {
     #[test]
     fn a_part_that_never_plays_leaves_no_track() {
         let piece = compose_text(
-            "
-            form: intro
-            humanize: 0
+            r#"
+            form = "intro"
+            humanize = 0
 
-            [section intro]
-            bars: 4
-            parts: bass
+            [section.intro]
+            bars = 4
+            parts = "bass"
 
-            [part bass]
-            [part hat]
-            ",
+            [[part]]
+            name = "bass"
+            [[part]]
+            name = "hat"
+            "#,
         );
         let names: Vec<&str> = piece.tracks.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(
@@ -875,7 +926,7 @@ mod tests {
     #[test]
     fn humanising_never_pushes_a_note_out_of_its_clip() {
         // The one place humanisation could corrupt the document rather than just move a note.
-        let piece = compose_text(&BASE.replace("humanize: 0", "humanize: 1.0"));
+        let piece = compose_text(&BASE.replace("humanize = 0", "humanize = 1.0"));
         for track in &piece.tracks {
             for clip in &track.clips {
                 for note in &clip.notes {
@@ -890,15 +941,16 @@ mod tests {
     fn a_named_progression_reaches_the_notes() {
         // The bass plays roots, so its first note of each bar spells the progression out.
         let piece = compose_text(
-            "
-            key: C major
-            form: verse
-            chords: @marusa
-            humanize: 0
-            [section verse]
-            bars: 4
-            [part bass]
-            ",
+            r#"
+            key = "C major"
+            form = "verse"
+            chords = "@marusa"
+            humanize = 0
+            [section.verse]
+            bars = 4
+            [[part]]
+            name = "bass"
+            "#,
         );
         let bass = &piece.tracks[0];
         let bar = TimeSignature::default().ticks_per_bar();

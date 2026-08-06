@@ -390,44 +390,55 @@ pub mod composition {
     //!
     //! # The document
     //!
-    //! Line-oriented `field: value` with `[block name]` headers, chosen for the two callers it
-    //! has: an agent writing it through a tool interface, which needs a grammar it cannot get
-    //! subtly wrong, and a person typing it into a terminal, who needs to change one line without
-    //! understanding the rest.
+    //! TOML, with the extension `.asong` — the syntax rather than the identity, exactly as a
+    //! project file is JSON inside `.auris`. Serde reads and writes it, which is the point: a
+    //! format that can only be read makes a dialog that saves its settings a second
+    //! implementation of the same grammar, free to disagree with the first.
     //!
     //! ```text
-    //! title:  Neon Drive
-    //! key:    C minor
-    //! tempo:  128
-    //! mood:   driving
-    //! chords: @marusa
-    //! form:   intro verse chorus verse chorus outro
+    //! title  = "Neon Drive"
+    //! key    = "C minor"
+    //! tempo  = 128
+    //! mood   = "driving"
+    //! chords = "@marusa"
+    //! form   = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
     //!
-    //! [section chorus]
-    //! bars: 8
-    //! intensity: 0.95
+    //! [section.chorus]
+    //! bars      = 8
+    //! intensity = 0.95
+    //!
+    //! [[part]]
+    //! name       = "lead"
+    //! instrument = "auris.synth.chiptune"
     //! ```
+    //!
+    //! Sections are a table keyed by name because their order means nothing — `form` decides what
+    //! plays when. Parts are an array of tables because theirs does: it is the order the tracks
+    //! are created in.
     //!
     //! It is deliberately a *specification* rather than a notation — it says what to write, not
     //! what was written — because that is the layer at which "make the chorus busier" is one word
-    //! rather than four hundred edited notes. Parse it with
-    //! [`SongSpec::parse`](auris_compose::SongSpec::parse), which reports every complaint it has at
-    //! once rather than stopping at the first.
+    //! rather than four hundred edited notes. Read one with
+    //! [`SongSpec::parse`](auris_compose::SongSpec::parse) and write one back with
+    //! [`SongSpec::to_toml`](auris_compose::SongSpec::to_toml). A syntax error stops at the first
+    //! and says which line it is on; every complaint about *meaning* is reported at once.
     //!
     //! ```
     //! use auris_compose::{SongSpec, compose};
     //!
     //! let spec = SongSpec::parse(
-    //!     "title:  Neon Drive\n\
-    //!      key:    C minor\n\
-    //!      tempo:  128\n\
-    //!      mood:   driving\n\
-    //!      chords: @marusa\n\
-    //!      form:   intro verse chorus verse chorus outro\n\
-    //!      \n\
-    //!      [section chorus]\n\
-    //!      bars: 8\n\
-    //!      intensity: 0.95\n",
+    //!     r#"
+    //!     title  = "Neon Drive"
+    //!     key    = "C minor"
+    //!     tempo  = 128
+    //!     mood   = "driving"
+    //!     chords = "@marusa"
+    //!     form   = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
+    //!
+    //!     [section.chorus]
+    //!     bars      = 8
+    //!     intensity = 0.95
+    //!     "#,
     //! )
     //! .expect("the specification above parses");
     //!
@@ -438,6 +449,10 @@ pub mod composition {
     //! // Everything is a pure function of the document and its seed, so this holds however many
     //! // times it is asked.
     //! assert_eq!(compose(&spec), piece);
+    //!
+    //! // And the document it writes is the document it read: the dialog and the file are two
+    //! // faces of one type, so neither can drift from the other.
+    //! assert_eq!(SongSpec::parse(&spec.to_toml()).unwrap(), spec);
     //! ```
     //!
     //! # Two stages

@@ -10,8 +10,11 @@ rust-version.workspace = true
 # Depends on the document model and nothing else. This crate writes notes; it must never learn
 # what a sample is, which is why `auris-dsp`, `auris-synth` and `auris-engine` are absent.
 #
-# No `serde` either: a specification is read from text and a composition is handed straight to the
-# session, so nothing here is ever written to a file. The theory types that *are* serialised live
-# in `auris-core`, next to the document that holds them.
+# `toml` is the syntax of a song specification, and `serde` reads and writes it. Neither is a new
+# crate in the build: both are already in `Cargo.lock`, pulled in by build-time tooling. A
+# composition is still handed straight to the session — it is the *specification* that has to
+# survive a round trip through a file, so that a dialog can save what it was set to.
 [dependencies]
 auris-core.workspace = true
+serde.workspace = true
+toml.workspace = true

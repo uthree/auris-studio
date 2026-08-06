@@ -311,10 +311,10 @@ between clips that happen to coexist and clips that belong to the same song.
 ### Automatic composition
 
 **File → Compose from Specification…**, or `auris compose song.asong`, writes a piece from a text
-specification: key, scale, tempo, mood, chord progression, form and parts, in a line-oriented
-document that an agent can write and a person can edit one line of. The whole piece arrives as a
-single undo step, so a composition that is not what was wanted is one press away from the document
-that was there before it.
+specification: key, scale, tempo, mood, chord progression, form and parts, in a TOML document that
+an agent can write and a person can edit one line of. The whole piece arrives as a single undo
+step, so a composition that is not what was wanted is one press away from the document that was
+there before it.
 
 Two are in [`examples/`](examples): `hello.asong` is three lines, which is a whole song because
 every field has a default, and `neon-drive.asong` is most of the vocabulary with a comment beside
@@ -324,18 +324,31 @@ each part of it.
 auris compose examples/neon-drive.asong -o neon.auris
 ```
 
-```
-title:  Neon Drive
-key:    C minor
-tempo:  128
-mood:   driving
-chords: @marusa
-form:   intro verse chorus verse chorus outro
+```toml
+title  = "Neon Drive"
+key    = "C minor"
+tempo  = 128
+mood   = "driving"
+chords = "@marusa"
+form   = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
 
-[section chorus]
-bars: 8
-intensity: 0.95
+[section.chorus]
+bars      = 8
+intensity = 0.95
+
+[[part]]
+name       = "lead"
+instrument = "auris.synth.chiptune"
 ```
+
+The syntax is TOML and the extension is `.asong`, the same way a project file is JSON inside
+`.auris`. Serde reads *and writes* it, which is the point: a format that can only be read makes a
+dialog that saves its settings a second implementation of the same grammar, free to disagree with
+the first. Sections are a table keyed by name because their order means nothing — `form` decides
+what plays when — and parts are an array because theirs is the order the tracks are created in.
+Unknown fields are refused rather than ignored, so a misspelling is never a silently dropped
+instruction: a syntax error says which line it is on, and every complaint about *meaning* is
+reported at once.
 
 Progressions can be quoted from a catalogue by name — `@marusa` (丸サ進行), `@royal-road`
 (王道進行), `@koakuma`, `@komuro`, `@canon`, `@junjo`, `@blues`, `@andalusian` and the rest — or
@@ -346,15 +359,16 @@ itself.
 Each part is built from one short figure invented per section and then restated bar after bar,
 which is what gives a section something an ear can hold on to; the fourth bar of every phrase
 answers it rather than repeating it again. A section played twice is the same section both times —
-`variation: 0.4` buys back as much departure as you want, and `variation: 0` makes a second chorus
-note for note the first. A section that another follows runs a fill into it, and every part leans
+`variation = 0.4` buys back as much departure as you want, and `variation = 0` makes a second
+chorus note for note the first. A section that another follows runs a fill into it, and every part leans
 gently across a phrase rather than sitting at one level throughout.
 
 Everything is a pure function of the specification and its seed, so the same document always
 writes the same piece and `--seed 7` writes a different one. Every decision draws from a stream
 addressed by name rather than by call order, so changing the drum density does not silently
 rewrite the melody. `auris progressions` lists the catalogue; `--set "field: value"` overrides any
-field from the command line.
+field from the command line, with the value written the way you would say it rather than the way
+TOML quotes it — `--set "key: D minor"`.
 
 ### Clips that write themselves
 
@@ -424,10 +438,11 @@ set is theirs, a dial still where the last preset left it is not.
 
 `auris` compose specifications reach the same settings, per part:
 
-```
-[part chords]
-subdivision: 16t
-gate: 0.25
+```toml
+[[part]]
+name        = "chords"
+subdivision = "16t"
+gate        = 0.25
 ```
 
 ### Built-in instruments

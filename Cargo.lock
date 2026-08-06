@@ -560,6 +560,8 @@ name = "auris-compose"
 version = "0.1.0"
 dependencies = [
  "auris-core",
+ "serde",
+ "toml 1.1.4+spec-1.1.0",
 ]
 
 [[package]]

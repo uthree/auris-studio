@@ -338,16 +338,16 @@ mod tests {
     #[test]
     fn the_form_lays_the_sections_out_end_to_end() {
         let frame = plan(&spec(
-            "
-            form: intro verse chorus
+            r#"
+            form = "intro verse chorus"
 
-            [section intro]
-            bars: 4
-            [section verse]
-            bars: 8
-            [section chorus]
-            bars: 8
-            ",
+            [section.intro]
+            bars = 4
+            [section.verse]
+            bars = 8
+            [section.chorus]
+            bars = 8
+            "#,
         ));
         assert_eq!(frame.sections.len(), 3);
         assert_eq!(frame.sections[0].start, Ticks::ZERO);
@@ -358,7 +358,7 @@ mod tests {
 
     #[test]
     fn a_repeated_section_counts_its_instances() {
-        let frame = plan(&spec("form: verse chorus verse chorus"));
+        let frame = plan(&spec(r#"form = "verse chorus verse chorus""#));
         let instances: Vec<usize> = frame.sections.iter().map(|s| s.instance).collect();
         assert_eq!(instances, [1, 1, 2, 2]);
     }
@@ -366,13 +366,13 @@ mod tests {
     #[test]
     fn a_section_repeats_its_chart_to_fill_its_bars() {
         let frame = plan(&spec(
-            "
-            form: verse
-            chords: @axis
+            r#"
+            form = "verse"
+            chords = "@axis"
 
-            [section verse]
-            bars: 8
-            ",
+            [section.verse]
+            bars = 8
+            "#,
         ));
         let verse = &frame.sections[0];
         assert_eq!(verse.events.len(), 8, "a four-bar loop played twice");
@@ -383,13 +383,13 @@ mod tests {
     #[test]
     fn a_transposed_section_moves_its_chords_and_nothing_else() {
         let frame = plan(&spec(
-            "
-            key: C major
-            form: chorus
+            r#"
+            key = "C major"
+            form = "chorus"
 
-            [section chorus]
-            transpose: 2
-            ",
+            [section.chorus]
+            transpose = 2
+            "#,
         ));
         let chorus = &frame.sections[0];
         assert_eq!(chorus.key.tonic, PitchClass::parse("D").unwrap());
@@ -402,7 +402,11 @@ mod tests {
         // reason for naming one.
         for tension in ["0.0", "0.5", "1.0"] {
             let frame = plan(&spec(&format!(
-                "form: verse\nchords: @marusa\ntension: {tension}"
+                r#"
+                    form = "verse"
+                    chords = "@marusa"
+                    tension = {tension}
+                    "#
             )));
             let chords: Vec<String> = frame.sections[0]
                 .events
@@ -420,7 +424,12 @@ mod tests {
 
     #[test]
     fn the_skeleton_gives_one_pitch_per_chord_inside_the_melody_range() {
-        let frame = plan(&spec("form: verse\nchords: @axis"));
+        let frame = plan(&spec(
+            r#"
+            form = "verse"
+            chords = "@axis"
+            "#,
+        ));
         let verse = &frame.sections[0];
         assert_eq!(verse.skeleton.len(), verse.events.len());
         for (pitch, event) in verse.skeleton.iter().zip(&verse.events) {
@@ -439,7 +448,12 @@ mod tests {
     #[test]
     fn the_skeleton_moves_by_steps_rather_than_leaps() {
         let frame = plan(&spec(
-            "form: verse\nchords: @canon\n[section verse]\nbars: 8",
+            r#"
+                form = "verse"
+                chords = "@canon"
+                [section.verse]
+                bars = 8
+                "#,
         ));
         let skeleton = &frame.sections[0].skeleton;
         let leaps = skeleton
@@ -455,7 +469,12 @@ mod tests {
     #[test]
     fn the_skeleton_ends_somewhere_stable() {
         // A phrase that ends on the seventh sounds like a question nobody answered.
-        let frame = plan(&spec("form: verse\nchords: @axis"));
+        let frame = plan(&spec(
+            r#"
+            form = "verse"
+            chords = "@axis"
+            "#,
+        ));
         let verse = &frame.sections[0];
         let last = *verse.skeleton.last().unwrap();
         let degree = verse.key.tonic.distance_up_to(PitchClass::new(last));
@@ -467,11 +486,20 @@ mod tests {
 
     #[test]
     fn planning_is_reproducible_and_seed_dependent() {
-        let a = plan(&spec("form: verse\nseed: 1\ntension: 0.9"));
-        let b = plan(&spec("form: verse\nseed: 1\ntension: 0.9"));
+        let seeded = |seed: u64| {
+            format!(
+                r#"
+                form    = "verse"
+                seed    = {seed}
+                tension = 0.9
+                "#
+            )
+        };
+        let a = plan(&spec(&seeded(1)));
+        let b = plan(&spec(&seeded(1)));
         assert_eq!(a.sections[0].skeleton, b.sections[0].skeleton);
 
-        let c = plan(&spec("form: verse\nseed: 2\ntension: 0.9"));
+        let c = plan(&spec(&seeded(2)));
         // Not a guarantee for every seed pair, but these two do differ, and the test pins that
         // the seed is actually reaching the plan.
         assert_ne!(a.sections[0].skeleton, c.sections[0].skeleton);
@@ -479,7 +507,12 @@ mod tests {
 
     #[test]
     fn the_chord_at_a_tick_is_the_one_sounding_there() {
-        let frame = plan(&spec("form: verse\nchords: @axis"));
+        let frame = plan(&spec(
+            r#"
+            form   = "verse"
+            chords = "@axis"
+            "#,
+        ));
         let verse = &frame.sections[0];
         let bar = frame.grid.bar_ticks();
         assert_eq!(verse.chord_at(Ticks::ZERO).unwrap().chord.to_string(), "C");

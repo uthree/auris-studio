@@ -6554,7 +6554,13 @@ mod tests {
         session.forget_history();
 
         let spec = auris_compose::SongSpec::parse(
-            "title: Composed\nform: verse\nchords: @axis\n[section verse]\nbars: 4",
+            r#"
+                title = "Composed"
+                form = "verse"
+                chords = "@axis"
+                [section.verse]
+                bars = 4
+                "#,
         )
         .unwrap();
         let report = session.compose(&auris_compose::compose(&spec)).unwrap();
@@ -6586,8 +6592,21 @@ mod tests {
         // both — so a part added to a composed song by hand had nothing to agree with.
         let mut session = session();
         let spec = auris_compose::SongSpec::parse(
-            "title: Whole\nkey: C minor\nform: intro verse chorus\nchords: @marusa\n\
-             [section intro]\nbars: 4\n[section verse]\nbars: 8\n[section chorus]\nbars: 8",
+            r#"
+            title  = "Whole"
+            key    = "C minor"
+            form   = "intro verse chorus"
+            chords = "@marusa"
+
+            [section.intro]
+            bars = 4
+
+            [section.verse]
+            bars = 8
+
+            [section.chorus]
+            bars = 8
+            "#,
         )
         .unwrap();
         let piece = auris_compose::compose(&spec);
@@ -6678,7 +6697,12 @@ mod tests {
     fn a_composed_piece_renders_to_audible_audio() {
         let mut session = session();
         let spec = auris_compose::SongSpec::parse(
-            "form: verse\nchords: @marusa\n[section verse]\nbars: 4",
+            r#"
+                form = "verse"
+                chords = "@marusa"
+                [section.verse]
+                bars = 4
+                "#,
         )
         .unwrap();
         session.compose(&auris_compose::compose(&spec)).unwrap();
@@ -6698,7 +6722,14 @@ mod tests {
     fn an_unknown_instrument_costs_a_timbre_rather_than_the_piece() {
         let mut session = session();
         let spec = auris_compose::SongSpec::parse(
-            "form: verse\n[section verse]\nbars: 2\n[part lead]\ninstrument: nope.not.here",
+            r#"
+                form = "verse"
+                [section.verse]
+                bars = 2
+                [[part]]
+                name = "lead"
+                instrument = "nope.not.here"
+                "#,
         )
         .unwrap();
         let report = session.compose(&auris_compose::compose(&spec)).unwrap();
