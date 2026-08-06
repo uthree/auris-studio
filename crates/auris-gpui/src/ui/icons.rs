@@ -43,6 +43,12 @@ pub enum Icon {
     Faders,
     /// The inspector: horizontal sliders, the controls it is made of.
     Sliders,
+    /// An instrument: a keyboard, seen from the front.
+    Keyboard,
+    /// An effect: a knob with its pointer.
+    Knob,
+    /// A sound — a font's preset, or the shelf a set of them sits on.
+    Wave,
 }
 
 /// An element that draws `icon` at `size`, centred in whatever box it is given.
@@ -94,6 +100,21 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
             px(w.min(h) * side / 2.0),
             color,
         )
+    };
+
+    // A circle, four quadratic arcs with their controls at the corners of the bounding square.
+    // Not a true circle — the corners bulge by about three per cent of the radius — and at the
+    // ten pixels an icon is drawn at, three per cent is a third of nothing.
+    let ring = |window: &mut Window, cx: f32, cy: f32, r: f32, width: f32| {
+        let mut builder = PathBuilder::stroke(px((side * width).max(1.0)));
+        builder.move_to(at(cx, cy - r));
+        builder.curve_to(at(cx + r, cy), at(cx + r, cy - r));
+        builder.curve_to(at(cx, cy + r), at(cx + r, cy + r));
+        builder.curve_to(at(cx - r, cy), at(cx - r, cy + r));
+        builder.curve_to(at(cx, cy - r), at(cx - r, cy - r));
+        if let Ok(path) = builder.build() {
+            window.paint_path(path, color);
+        }
     };
 
     match icon {
@@ -227,6 +248,36 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
             bar(window, 0.16, 0.62, 0.84, 0.70);
             knob(window, 0.62, 0.34, 0.15, 0.30);
             knob(window, 0.36, 0.66, 0.15, 0.30);
+        }
+        // The three kinds of thing the library holds. They sit on the leaf rows, where the tree
+        // has run out of headings to say what something is — an instrument, an effect and a sound
+        // are three different clicks, and until these arrived the rows looked identical.
+        Icon::Keyboard => {
+            // A keyboard seen from the front: the case across the top, three keys hanging off it.
+            // Gaps are the only thing that can say "keys" in a single-colour silhouette, so the
+            // keys are separate bars rather than one block with lines drawn on it.
+            bar(window, 0.16, 0.24, 0.84, 0.38);
+            bar(window, 0.20, 0.38, 0.33, 0.76);
+            bar(window, 0.435, 0.38, 0.565, 0.76);
+            bar(window, 0.67, 0.38, 0.80, 0.76);
+        }
+        Icon::Knob => {
+            ring(window, 0.50, 0.52, 0.30, 0.10);
+            // The pointer runs from the middle out through the ring, which is what makes the
+            // circle a control rather than a full stop.
+            bar(window, 0.455, 0.14, 0.545, 0.52);
+        }
+        Icon::Wave => {
+            // A sine and a half. One period reads as a bracket; the extra half is what makes it
+            // periodic, and periodic is what makes it a sound.
+            let mut builder = PathBuilder::stroke(px((side * 0.10).max(1.25)));
+            builder.move_to(at(0.14, 0.50));
+            builder.curve_to(at(0.38, 0.50), at(0.26, 0.16));
+            builder.curve_to(at(0.62, 0.50), at(0.50, 0.84));
+            builder.curve_to(at(0.86, 0.50), at(0.74, 0.16));
+            if let Ok(path) = builder.build() {
+                window.paint_path(path, color);
+            }
         }
         Icon::Cross => {
             // Two bars rotated 45°, drawn as paths because quads cannot be rotated.

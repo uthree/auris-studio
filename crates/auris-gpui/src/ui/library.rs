@@ -179,15 +179,18 @@ impl AurisApp {
             .bg(theme.surface)
             .child(panel_header(self.t(Key::Library), &theme))
             .child(
+                // No gap between the rows and half the padding round them. A browser is a list
+                // to run an eye down, and every pixel of air between two names is a name that
+                // did not fit on the screen — this used to show eleven rows where it now shows
+                // twenty-odd.
                 div()
                     .id("library-body")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .p_2()
+                    .p_1()
                     .flex()
                     .flex_col()
-                    .gap_1()
                     .children(rows),
             )
     }
@@ -227,6 +230,7 @@ impl AurisApp {
         let mut rows = vec![self.section_row(
             Branch::Instruments,
             Key::BrowserInstruments,
+            Icon::Keyboard,
             groups.iter().map(|(_, members)| members.len()).sum(),
             cx,
         )];
@@ -254,6 +258,7 @@ impl AurisApp {
                 let id = plugin.id.clone();
                 rows.push(self.plugin_row(
                     &plugin,
+                    Icon::Keyboard,
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                         this.set_track_instrument(&id);
                         cx.notify();
@@ -285,6 +290,7 @@ impl AurisApp {
         let mut rows = vec![self.section_row(
             Branch::Effects,
             Key::BrowserEffects,
+            Icon::Knob,
             groups.iter().map(|(_, members)| members.len()).sum(),
             cx,
         )];
@@ -311,6 +317,7 @@ impl AurisApp {
                 let id = plugin.id.clone();
                 rows.push(self.plugin_row(
                     &plugin,
+                    Icon::Knob,
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                         this.add_effect_to_selection(&id);
                         cx.notify();
@@ -333,8 +340,13 @@ impl AurisApp {
             .map(|font| (font.id, font.name.clone()))
             .collect();
 
-        let mut rows =
-            vec![self.section_row(Branch::SoundFonts, Key::BrowserSoundFonts, fonts.len(), cx)];
+        let mut rows = vec![self.section_row(
+            Branch::SoundFonts,
+            Key::BrowserSoundFonts,
+            Icon::Wave,
+            fonts.len(),
+            cx,
+        )];
         if !self.library.is_open(Branch::SoundFonts) {
             return rows;
         }
@@ -362,6 +374,7 @@ impl AurisApp {
                     1,
                     open,
                     loaded,
+                    None,
                     name,
                     detail,
                     if loaded { theme.text } else { theme.text_muted },
@@ -393,6 +406,7 @@ impl AurisApp {
                         2,
                         open,
                         true,
+                        None,
                         self.bank_label(bank),
                         presets.len().to_string(),
                         theme.text,
@@ -440,6 +454,7 @@ impl AurisApp {
         &self,
         branch: Branch,
         label: Key,
+        kind: Icon,
         count: usize,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
@@ -450,6 +465,7 @@ impl AurisApp {
             0,
             open,
             true,
+            Some(kind),
             self.t(label).to_string(),
             count.to_string(),
             theme.text_muted,
@@ -476,6 +492,7 @@ impl AurisApp {
             1,
             open,
             true,
+            None,
             self.category_label(category),
             count.to_string(),
             theme.text,
@@ -495,6 +512,7 @@ impl AurisApp {
         depth: usize,
         open: bool,
         enabled: bool,
+        kind: Option<Icon>,
         label: String,
         detail: String,
         label_color: gpui::Hsla,
@@ -511,7 +529,8 @@ impl AurisApp {
             .items_center()
             .gap_1p5()
             .pl(indent(depth))
-            .p_1p5()
+            .px_1p5()
+            .py_1()
             .rounded(Metrics::RADIUS_SM)
             // A branch with nothing to open — a font whose file has gone — must not offer the
             // pointer and the hover fill of a row that would answer a click. It looked exactly
@@ -537,11 +556,16 @@ impl AurisApp {
                     theme.text_faint
                 },
             ))
+            .when_some(kind, |this, kind| {
+                this.child(crate::ui::icons::icon(kind, px(11.0), theme.text_muted))
+            })
             .child(
                 div()
                     .flex_1()
+                    .min_w_0()
                     .text_xs()
                     .text_color(label_color)
+                    .truncate()
                     .child(label),
             )
             .child(div().text_xs().text_color(theme.text_muted).child(detail))
@@ -549,7 +573,11 @@ impl AurisApp {
     }
 
     /// One plugin, ready to load onto the selected track.
-    fn plugin_row<F>(&self, plugin: &LibraryPlugin, on_click: F) -> AnyElement
+    ///
+    /// Name and summary on one line rather than two. The summary is worth having and is not worth
+    /// doubling the height of every row in the panel for — set beside the name and allowed to run
+    /// off the end, it costs nothing and still answers "which reverb is that one".
+    fn plugin_row<F>(&self, plugin: &LibraryPlugin, kind: Icon, on_click: F) -> AnyElement
     where
         F: Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
     {
@@ -559,12 +587,15 @@ impl AurisApp {
         div()
             .id(gpui::SharedString::from(format!("lib-{}", plugin.id)))
             .flex()
-            .flex_col()
+            .items_center()
+            .gap_1p5()
             .pl(indent(2))
-            .p_1p5()
+            .px_1p5()
+            .py_0p5()
             .rounded(Metrics::RADIUS_SM)
             .cursor_pointer()
             .hover(|this| this.bg(theme.surface_hover))
+            .child(crate::ui::icons::icon(kind, px(11.0), theme.text_muted))
             .child(
                 div()
                     .text_xs()
@@ -573,8 +604,11 @@ impl AurisApp {
             )
             .child(
                 div()
+                    .flex_1()
+                    .min_w_0()
                     .text_xs()
-                    .text_color(theme.text_muted)
+                    .text_color(theme.text_faint)
+                    .truncate()
                     .child(self.plugin_description(&plugin.description)),
             )
             .on_mouse_down(gpui::MouseButton::Left, on_click)
@@ -594,16 +628,25 @@ impl AurisApp {
             )))
             .flex()
             .items_center()
-            .justify_between()
+            .gap_1p5()
             .pl(indent(3))
-            .p_1p5()
+            .px_1p5()
+            .py_0p5()
             .rounded(Metrics::RADIUS_SM)
             .cursor_pointer()
             .hover(|this| this.bg(theme.surface_hover))
+            .child(crate::ui::icons::icon(
+                Icon::Wave,
+                px(11.0),
+                theme.text_muted,
+            ))
             .child(
                 div()
+                    .flex_1()
+                    .min_w_0()
                     .text_xs()
                     .text_color(theme.text)
+                    .truncate()
                     .child(preset.name.clone()),
             )
             .child(
@@ -633,7 +676,8 @@ impl AurisApp {
             .text_xs()
             .text_color(self.theme.text_muted)
             .pl(indent(depth))
-            .p_1p5()
+            .px_1p5()
+            .py_1()
             .child(text.to_string())
             .into_any_element()
     }
