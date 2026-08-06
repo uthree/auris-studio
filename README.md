@@ -393,6 +393,18 @@ the same chorus. The section picker offers the song's own names first — choosi
 repeat — and under a rule a fresh one of each: once there is a verse, `verse 2` is one click, which
 is how a song gets two verses that are not the same eight bars.
 
+**A section can change how a part plays**, as a patch rather than a second declaration: what it
+does not name it does not touch, so a busier chorus is one line. The lead an octave up in the last
+chorus, the hat on sixteenths in the bridge, a rhythm written out for one section — `octave`,
+`density`, `gate`, `subdivision`, `rhythm` and `note`, under `[section.chorus.part.lead]`.
+
+What is deliberately *not* patchable: the name, the role, the instrument, the program, the level
+and the pan. Those are not how a part plays, they are what its **track** is, and a part is one
+track for the whole song — one row, one instrument, one fader. A chorus on strings where the verse
+was on a piano is two parts and not one, and the roster button above is what brings each of them
+in. The line is not a limitation waiting to be lifted: a track that changed instrument half way
+through would have to be two tracks, and then it was two parts all along.
+
 **A section that changes key is led into.** The last chord before the change becomes the dominant
 seventh of the key being arrived at — the oldest device there is, and the reason a modulation can
 sound like an arrival rather than an edit: a `V7` names its tonic before that tonic has sounded, so

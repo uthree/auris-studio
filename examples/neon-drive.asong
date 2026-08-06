@@ -72,6 +72,17 @@ tempo     = 132
 # starts. It is the one thing in this format that rewrites a bar of a progression quoted by name,
 # and `lead_in = "none"` is how to say the plain jump was meant.
 
+# What a section changes about *how* a part plays, as a patch: what it does not name it does not
+# touch. The lead comes in an octave up and busier here and is unchanged everywhere else.
+[section.chorus.part.lead]
+octave  = 6
+density = 0.8
+
+# What cannot be here: the name, the role, the instrument, the program, the level and the pan.
+# Those are not how a part plays, they are what its *track* is — one row, one instrument, one
+# fader for the whole song. A chorus on strings where the verse was on a piano is two parts, and
+# `parts` above is what brings each of them in.
+
 [section.outro]
 bars      = 4
 intensity = 0.25

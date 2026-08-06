@@ -136,10 +136,22 @@ pub fn write_parts(settings: &ScoreSettings, roster: &[PartSpec], frame: &Frame)
                 pan: part.pan,
                 notes: Vec::new(),
             };
+            // The part as each section plays it, resolved once for the whole part. A section may
+            // patch how it plays — busier, an octave up, on sixteenths — and *every* pass below
+            // has to read the same answer: a writer taking the chorus's subdivision while the
+            // gate and the swing afterwards took the roster's would be one part played two ways
+            // at once, and the seam would show as notes that do not line up with themselves.
+            let played: Vec<PartSpec> = frame
+                .sections
+                .iter()
+                .map(|plan| plan.played(part))
+                .collect();
+
             for (index, section) in frame.sections.iter().enumerate() {
                 if !section.parts.is_empty() && !section.parts.contains(&part.name) {
                     continue;
                 }
+                let part = &played[index];
                 let notes = match part.role {
                     Role::Melody => melody(settings, frame, section, index, part),
                     Role::Chords | Role::Pad | Role::Stab => {
@@ -157,8 +169,8 @@ pub fn write_parts(settings: &ScoreSettings, roster: &[PartSpec], frame: &Frame)
                 };
                 draft.notes.extend(notes);
             }
-            shorten(part, &mut draft.notes);
-            humanise(settings, frame, part, &mut draft.notes);
+            shorten(&played, &mut draft.notes);
+            humanise(settings, frame, &played, &mut draft.notes);
             draft
                 .notes
                 .sort_by_key(|note| (note.start.raw(), note.pitch));
@@ -182,15 +194,21 @@ const MIN_GATE: f32 = 0.05;
 ///
 /// A drum is left alone. A one-shot ignores its note-off, so shortening one would change nothing
 /// anybody can hear and only make the piano roll harder to read.
-fn shorten(part: &PartSpec, notes: &mut [Draft]) {
-    if part.role.is_drum() {
-        return;
-    }
-    let gate = part.gate.clamp(MIN_GATE, 1.0);
-    if gate >= 1.0 {
-        return;
-    }
+///
+/// `played` is the part as each section plays it, so a gate a section patches reaches the notes of
+/// that section and no others.
+fn shorten(played: &[PartSpec], notes: &mut [Draft]) {
     for note in notes.iter_mut() {
+        let Some(part) = played.get(note.section) else {
+            continue;
+        };
+        if part.role.is_drum() {
+            continue;
+        }
+        let gate = part.gate.clamp(MIN_GATE, 1.0);
+        if gate >= 1.0 {
+            continue;
+        }
         // The floor never lengthens a note: a chord shorter than the floor to begin with is a
         // chord the harmony asked for, and the gate is not the place to argue with it.
         let floor = MIN_NOTE_TICKS.min(note.length.raw()).max(1);
@@ -218,9 +236,13 @@ const WANDER_MS: f32 = 15.0;
 /// `humanize: 0` is exactly the identity apart from swing, which is what lets every timing test
 /// assert on an exact tick rather than on a tolerance. So is any humanisation at all for a drum,
 /// which is a stronger promise and the reason for the guard below.
-fn humanise(settings: &ScoreSettings, frame: &Frame, part: &PartSpec, notes: &mut [Draft]) {
-    let grid = part_grid(frame, part);
-    // Where a player sits against the beat: a hat pushes, a bass drags.
+fn humanise(settings: &ScoreSettings, frame: &Frame, played: &[PartSpec], notes: &mut [Draft]) {
+    let Some(part) = played.first() else {
+        return;
+    };
+    // Where a player sits against the beat: a hat pushes, a bass drags. Off the roster's own copy
+    // and not a section's, because the role is not something a section patches — a part is what it
+    // is for the whole song, and only *how* it plays can change.
     let push = match part.role {
         Role::Hat => -8.0,
         Role::Melody | Role::Arp => -4.0,
@@ -256,6 +278,10 @@ fn humanise(settings: &ScoreSettings, frame: &Frame, part: &PartSpec, notes: &mu
     };
 
     for note in notes.iter_mut() {
+        // The grid this note was written on, which is the section's and not the roster's: a part
+        // put onto triplets for one section would otherwise have its swing looked up on a
+        // sixteenth grid, and the offbeat it delayed would be the wrong step of the bar.
+        let grid = part_grid(frame, played.get(note.section).unwrap_or(part));
         let bar_position = note.start.raw().rem_euclid(grid.bar_ticks().raw().max(1));
         let step = grid.step_of(Ticks(bar_position));
         let mut start = note.start + swing_offset(grid, step, settings.swing);
@@ -517,6 +543,115 @@ mod tests {
             "the chorus runs three times the verse's tempo and wandered {chorus:.1} ticks against \
              {verse:.1}, a ratio of {ratio:.2}"
         );
+    }
+
+    /// The default roster over a two-section form, with `lead` patched in the chorus.
+    fn tweaked(lines: &str) -> (Frame, Vec<PartDraft>) {
+        let (_, frame, parts) = draft(&format!(
+            r#"
+            form     = "verse chorus"
+            chords   = "@axis"
+            humanize = 0
+            seed     = 5
+
+            [section.verse]
+            bars = 4
+            [section.chorus]
+            bars = 4
+
+            [section.chorus.part.lead]
+            {lines}
+            "#
+        ));
+        (frame, parts)
+    }
+
+    /// One part's notes in one section.
+    fn in_section(draft: &PartDraft, section: usize) -> Vec<Draft> {
+        draft
+            .notes
+            .iter()
+            .filter(|note| note.section == section)
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn a_section_can_send_a_part_an_octave_up_without_moving_it_anywhere_else() {
+        let (_, parts) = tweaked("octave = 6");
+        let lead = part(&parts, "lead");
+        let low = in_section(lead, 0).iter().map(|n| n.pitch).min().unwrap();
+        let high = in_section(lead, 1).iter().map(|n| n.pitch).min().unwrap();
+        assert!(
+            high > low,
+            "the chorus sits at {high} against the verse's {low}"
+        );
+        // The verse is what it was without the tweak, which is the half that says this is a patch
+        // on one section rather than a change to the part.
+        let (_, plain) = tweaked("density = 0.5");
+        assert_eq!(
+            in_section(lead, 0),
+            in_section(part(&plain, "lead"), 0),
+            "the tweak reached back into the verse"
+        );
+    }
+
+    #[test]
+    fn a_gate_a_section_patches_reaches_that_sections_notes_and_no_others() {
+        // The trap the whole resolution exists for. `shorten` runs once over the finished part,
+        // after every section has been written, so a gate read off the roster there would apply
+        // the verse's value to the chorus's notes — the one place a per-section field silently
+        // does nothing.
+        let (_, parts) = tweaked("gate = 0.25");
+        let lead = part(&parts, "lead");
+        let mean = |notes: &[Draft]| {
+            notes.iter().map(|n| n.length.raw()).sum::<i64>() / notes.len().max(1) as i64
+        };
+        let verse = mean(&in_section(lead, 0));
+        let chorus = mean(&in_section(lead, 1));
+        assert!(
+            chorus * 2 < verse,
+            "a quarter of the gap should be well under half: {chorus} against {verse}"
+        );
+    }
+
+    #[test]
+    fn a_subdivision_a_section_patches_is_swung_on_its_own_grid() {
+        // The other half of the same trap, and the subtler one: `humanise` looks a note's step up
+        // on a grid to decide whether it is an offbeat worth delaying. Read off the roster, a
+        // section put onto triplets would have its swing measured against sixteenths and the
+        // wrong steps of the bar would move.
+        // `humanize = 0` is the identity apart from swing, which is what lets this assert on an
+        // exact tick instead of on a tolerance the wander would have to fit inside.
+        let (_, _, parts) = draft(
+            r#"
+            form     = "verse chorus"
+            chords   = "@axis"
+            swing    = 66
+            humanize = 0
+            seed     = 5
+
+            [section.verse]
+            bars = 4
+            [section.chorus]
+            bars = 4
+
+            [section.chorus.part.lead]
+            subdivision = "8t"
+            density     = 0.9
+            "#,
+        );
+        let lead = part(&parts, "lead");
+        // A triplet grid has nothing for swing to do — the offbeat is already where the dial
+        // would push it — so every note of that section lands exactly on a third of a beat.
+        for note in in_section(lead, 1) {
+            assert_eq!(
+                note.start.raw() % 320,
+                0,
+                "a chorus note at {} is not on a triplet",
+                note.start.raw()
+            );
+        }
     }
 
     #[test]

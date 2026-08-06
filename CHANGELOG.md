@@ -9,6 +9,28 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### A section can change how a part plays
+
+* **`[section.chorus.part.lead] octave = 6`.** A part was one setting for the whole song: whatever
+  density, octave, gate and subdivision the roster gave it, it played that way from the first bar
+  to the last. A section can now patch any of those, plus `rhythm` and `note` — the lead an octave
+  up in the last chorus, the hat on sixteenths in the bridge.
+* A **patch**, not a second declaration: what it does not name it does not touch, so a busier
+  chorus is one line and adding a field to a part does not silently reset it in every section that
+  tweaks one.
+* The resolution happens once per part per section, and every pass reads it. That is the whole of
+  the change and the only part of it with a trap: `shorten` and `humanise` run over the finished
+  part *after* every section has been written, so a gate or a subdivision read off the roster there
+  would be the one kind of per-section field that silently does nothing — a chorus cut to the
+  verse's note lengths, or a section on triplets having its swing measured against sixteenths.
+  Both are pinned by tests that fail when the resolution is taken away.
+* Not patchable, by construction: the name, the role, the instrument, the program, the level and
+  the pan. Those are not how a part plays, they are what its *track* is — one row, one instrument,
+  one fader for the whole song. A chorus on strings where the verse was on a piano is two parts and
+  the section roster is what brings each of them in. The line is not waiting to be lifted: a track
+  that changed instrument half way through would have to be two tracks, and then it was two parts
+  all along.
+
 ### A key change is arrived at rather than stumbled into
 
 * **The last chord before a modulation becomes the dominant of the key being arrived at.** A

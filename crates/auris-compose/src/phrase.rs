@@ -142,6 +142,8 @@ pub fn write_phrase(
             events,
             skeleton,
             parts: Vec::new(),
+            // A clip is one part in one stretch, so there is nothing to patch it against.
+            tweaks: Default::default(),
         }],
         length,
         seed: recipe.seed,

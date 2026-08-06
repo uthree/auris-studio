@@ -140,6 +140,7 @@ mod tests {
                 events: Vec::new(),
                 skeleton: Vec::new(),
                 parts: Vec::new(),
+                tweaks: Default::default(),
             })
             .collect();
         (0..sections.len())

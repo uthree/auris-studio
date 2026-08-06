@@ -45,6 +45,22 @@ pub struct SectionPlan {
     pub skeleton: Vec<i32>,
     /// The parts that play, by name. Empty means all of them.
     pub parts: Vec<String>,
+    /// What this section changes about how particular parts play, by part name.
+    pub tweaks: std::collections::BTreeMap<String, crate::spec::PartTweak>,
+}
+
+impl SectionPlan {
+    /// A part as this section plays it: the roster's, with whatever this section patches.
+    ///
+    /// Every pass has to go through here and none may read the roster's copy directly, which is
+    /// the whole risk this method exists to name. A writer that took the section's density and a
+    /// gate applied afterwards from the roster would be one part played two ways at once.
+    pub fn played(&self, part: &crate::spec::PartSpec) -> crate::spec::PartSpec {
+        match self.tweaks.get(&part.name) {
+            Some(tweak) => tweak.applied_to(part),
+            None => part.clone(),
+        }
+    }
 }
 
 impl SectionPlan {
@@ -166,6 +182,7 @@ pub fn plan(spec: &SongSpec) -> Frame {
             events,
             skeleton,
             parts: section.parts.clone(),
+            tweaks: section.tweaks.clone(),
         });
         start += length;
     }

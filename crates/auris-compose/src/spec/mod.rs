@@ -173,6 +173,59 @@ impl PartSpec {
     }
 }
 
+/// What one section changes about how one part plays.
+///
+/// Every field is optional and `None` means "whatever the roster says", so a tweak is a *patch*
+/// rather than a second declaration of the part. That is what keeps a busier chorus one line
+/// instead of a copy of the part with one number changed — and it is why adding a field to
+/// [`PartSpec`] does not silently reset it in every section that names a tweak.
+///
+/// # What is not here, and cannot be
+///
+/// The name, the role, the instrument, the program, the level and the pan. Those are not how a
+/// part *plays*, they are what its **track** is, and a part is one track for the whole song: one
+/// row in the arrangement, one instrument, one fader. A chorus on strings where the verse was on a
+/// piano is two parts and not one, and [`SectionSpec::parts`] is what brings each of them in.
+///
+/// The line between the two is worth stating because it is not arbitrary and it is not a
+/// limitation to be lifted later: a track that changed instrument half way through would have to
+/// be two tracks, and then it was two parts all along.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PartTweak {
+    /// How busy it is here, as a fraction of the available steps.
+    pub density: Option<f32>,
+    /// Which octave it sits in here, as an absolute MIDI octave.
+    pub octave: Option<i32>,
+    /// How long a note is held here, as a fraction of the gap to the one after it.
+    pub gate: Option<f32>,
+    /// How finely it divides the beat here.
+    pub subdivision: Option<Subdivision>,
+    /// A rhythm written out by hand for this section, which overrides the generated one.
+    pub rhythm: Option<Pattern>,
+    /// Which MIDI note a drum part strikes here.
+    pub note: Option<u8>,
+}
+
+impl PartTweak {
+    /// `true` when the tweak changes nothing, and so has nothing to write down.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The part as this section plays it.
+    pub fn applied_to(&self, part: &PartSpec) -> PartSpec {
+        PartSpec {
+            density: self.density.or(part.density),
+            octave: self.octave.unwrap_or(part.octave),
+            gate: self.gate.unwrap_or(part.gate),
+            subdivision: self.subdivision.unwrap_or(part.subdivision),
+            rhythm: self.rhythm.clone().or_else(|| part.rhythm.clone()),
+            note: self.note.or(part.note),
+            ..part.clone()
+        }
+    }
+}
+
 /// How a section that changes key is arrived at.
 ///
 /// Only ever consulted where the section before is in a different one, so on a piece that does not
@@ -250,6 +303,12 @@ pub struct SectionSpec {
     /// about the arrival, and a verse that leads into a modulating chorus is not the same eight
     /// bars as one that does not — that difference is what a lead-in *is*.
     pub lead_in: LeadIn,
+    /// What this section changes about how particular parts play, by part name.
+    ///
+    /// Keyed by name and not by position because a roster is reordered by the person editing it
+    /// and a tweak pointing at "the third part" would follow the move to somewhere it means
+    /// nothing. A name that no part answers to is a mistake the format reports.
+    pub tweaks: BTreeMap<String, PartTweak>,
 }
 
 impl SectionSpec {
@@ -276,6 +335,7 @@ impl SectionSpec {
             transpose: 0,
             tempo: None,
             lead_in: LeadIn::default(),
+            tweaks: BTreeMap::new(),
         }
     }
 }
@@ -470,6 +530,38 @@ mod tests {
         // And a part that named none stays on its plugin, which is what keeps a piece written on
         // the built-in voices written on them.
         assert_eq!(PartSpec::of_role("lead", Role::Melody).sound(), None);
+    }
+
+    #[test]
+    fn a_section_patches_a_part_rather_than_redeclaring_it() {
+        // A tweak is a patch and not a second declaration: what it does not name it does not
+        // touch. The whole point of the shape — a busier chorus is one line, and adding a field
+        // to a part does not silently reset it in every section that tweaks one.
+        let lead = PartSpec {
+            density: Some(0.4),
+            gate: 0.8,
+            octave: 5,
+            ..PartSpec::of_role("lead", Role::Melody)
+        };
+        let tweak = PartTweak {
+            density: Some(0.9),
+            ..PartTweak::default()
+        };
+        let played = tweak.applied_to(&lead);
+        assert_eq!(played.density, Some(0.9));
+        assert_eq!(played.gate, 0.8, "a field the tweak did not name");
+        assert_eq!(played.octave, 5);
+
+        // And the identity of the part is never a patch: those are what its *track* is, and a
+        // track is one row, one instrument and one fader for the whole song.
+        assert_eq!(played.name, lead.name);
+        assert_eq!(played.role, lead.role);
+        assert_eq!(played.instrument, lead.instrument);
+        assert_eq!(played.gain_db, lead.gain_db);
+        assert_eq!(played.pan, lead.pan);
+
+        assert!(PartTweak::default().is_empty());
+        assert_eq!(PartTweak::default().applied_to(&lead), lead);
     }
 
     #[test]

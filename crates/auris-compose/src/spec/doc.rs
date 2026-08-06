@@ -23,7 +23,7 @@ use crate::theory::chart::{Chart, ChartOrigin};
 use crate::theory::key::Key;
 use crate::theory::scale::ScaleId;
 
-use super::{LeadIn, Mood, PartSpec, Role, SectionSpec, SongSpec};
+use super::{LeadIn, Mood, PartSpec, PartTweak, Role, SectionSpec, SongSpec};
 
 /// Something wrong with a document.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -309,6 +309,31 @@ struct SectionDoc {
         skip_serializing_if = "Option::is_none"
     )]
     parts: Option<Vec<String>>,
+    /// `[section.chorus.part.lead]`: what this section changes about one part.
+    ///
+    /// A table keyed by name, unlike the roster's `[[part]]`, which is an array. The order of the
+    /// roster is the order the tracks are created in and means something; the order of a
+    /// section's tweaks means nothing at all — each one names the part it patches.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    part: BTreeMap<String, PartTweakDoc>,
+}
+
+/// One `[section.name.part.name]` table: the fields a section may change about a part.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PartTweakDoc {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    density: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    octave: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gate: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    subdivision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rhythm: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    note: Option<u8>,
 }
 
 /// The `program = …` field: a name or a number on the way in, and on the way out whichever name
@@ -550,7 +575,7 @@ impl SongDoc {
                         .join(", ")
                 )));
             }
-            for part in &section.parts {
+            for part in section.parts.iter().chain(section.tweaks.keys()) {
                 if !part_names.contains(&part.as_str()) {
                     errors.push(SpecError::about(format!(
                         "section `{name}` names the part `{part}`, which does not exist; there \
@@ -624,6 +649,12 @@ impl SectionDoc {
             // `*` is how the line-oriented format said "everything", which is what an empty
             // list already means. Still accepted, so nobody's document breaks over a star.
             section.parts = parts.into_iter().filter(|name| name != "*").collect();
+        }
+        for (part, tweak) in self.part {
+            let tweak = tweak.into_spec(name, &part, errors);
+            if !tweak.is_empty() {
+                section.tweaks.insert(part, tweak);
+            }
         }
         section
     }
@@ -811,6 +842,92 @@ impl SectionDoc {
             tempo: section.tempo,
             lead_in: (section.lead_in != plain.lead_in).then(|| section.lead_in.name().to_string()),
             parts: (!section.parts.is_empty()).then(|| section.parts.clone()),
+            part: section
+                .tweaks
+                .iter()
+                .map(|(name, tweak)| (name.clone(), PartTweakDoc::from_spec(tweak)))
+                .collect(),
+        }
+    }
+}
+
+impl PartTweakDoc {
+    /// A patch on one part, with every value checked against the range it means.
+    ///
+    /// The same ranges the part itself is held to, and complained about the same way: a density of
+    /// 3 is no more writable here than it is in the roster, and a person who typed one wants to be
+    /// told rather than to be given 1.
+    fn into_spec(self, section: &str, part: &str, errors: &mut Vec<SpecError>) -> PartTweak {
+        let mut tweak = PartTweak::default();
+        let what = format!("section `{section}`, part `{part}`");
+        if let Some(density) = self.density {
+            if (0.0..=1.0).contains(&density) {
+                tweak.density = Some(density);
+            } else {
+                errors.push(SpecError::about(format!(
+                    "{what}: density runs from 0 to 1, not {density}"
+                )));
+            }
+        }
+        if let Some(octave) = self.octave {
+            if (-1..=9).contains(&octave) {
+                tweak.octave = Some(octave);
+            } else {
+                errors.push(SpecError::about(format!(
+                    "{what}: octave {octave} is outside the MIDI range"
+                )));
+            }
+        }
+        if let Some(gate) = self.gate {
+            // Zero would write a note of no length at every onset, which is a part that is silent
+            // and looks like one that is not.
+            if (0.0..=1.0).contains(&gate) && gate > 0.0 {
+                tweak.gate = Some(gate);
+            } else {
+                errors.push(SpecError::about(format!(
+                    "{what}: gate runs from just above 0 to 1, not {gate}"
+                )));
+            }
+        }
+        if let Some(text) = &self.subdivision {
+            match Subdivision::parse(text) {
+                Some(subdivision) => tweak.subdivision = Some(subdivision),
+                None => errors.push(SpecError::about(format!(
+                    "{what}: `{text}` is not a subdivision; use 8, 16, 8t or 16t"
+                ))),
+            }
+        }
+        if let Some(text) = &self.rhythm {
+            match Pattern::parse(text) {
+                Some(pattern) => tweak.rhythm = Some(pattern),
+                None => errors.push(SpecError::about(format!(
+                    "{what}: `{text}` is not a rhythm; use x, X, o and ~"
+                ))),
+            }
+        }
+        // A note above 127 cannot be written: `u8` stops at 255 and serde has already refused
+        // anything larger, so this is the only half of the range left to check.
+        if let Some(note) = self.note {
+            if note > 127 {
+                errors.push(SpecError::about(format!(
+                    "{what}: {note} is not a MIDI note, which runs 0 to 127"
+                )));
+            } else {
+                tweak.note = Some(note);
+            }
+        }
+        tweak
+    }
+
+    /// The document a tweak would be written as.
+    fn from_spec(tweak: &PartTweak) -> Self {
+        Self {
+            density: tweak.density,
+            octave: tweak.octave,
+            gate: tweak.gate,
+            subdivision: tweak.subdivision.map(|s| s.name().to_string()),
+            rhythm: tweak.rhythm.as_ref().map(Pattern::to_text),
+            note: tweak.note,
         }
     }
 }
@@ -1164,6 +1281,72 @@ mod tests {
         let errors = SongSpec::parse("form = \"verse\"\n[section.verse]\ntempo = 900").unwrap_err();
         assert!(
             errors.iter().any(|error| error.to_string().contains("900")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn a_section_can_patch_how_a_part_plays() {
+        let spec = SongSpec::parse(
+            r#"
+            form = "verse chorus"
+
+            [section.chorus.part.lead]
+            octave      = 6
+            density     = 0.85
+            subdivision = "16"
+            "#,
+        )
+        .unwrap();
+        let tweak = &spec.sections["chorus"].tweaks["lead"];
+        assert_eq!(tweak.octave, Some(6));
+        assert_eq!(tweak.density, Some(0.85));
+        assert_eq!(tweak.gate, None, "what it did not name it does not touch");
+        assert!(spec.sections["verse"].tweaks.is_empty());
+        assert_eq!(SongSpec::parse(&spec.to_toml()), Ok(spec));
+    }
+
+    #[test]
+    fn a_tweak_is_held_to_the_same_ranges_the_part_is() {
+        // A density of 3 is no more writable here than in the roster, and a person who typed one
+        // wants to be told rather than to be handed 1. Both complaints at once, which is what the
+        // format promises about meaning.
+        let errors = SongSpec::parse(
+            r#"
+            form = "verse"
+
+            [section.verse.part.lead]
+            density = 3
+            octave  = 40
+            "#,
+        )
+        .unwrap_err();
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(
+            errors
+                .iter()
+                .all(|error| error.to_string().contains("lead"))
+        );
+    }
+
+    #[test]
+    fn a_tweak_naming_a_part_that_does_not_exist_is_a_mistake() {
+        // The same complaint `parts` raises, for the same reason: a name nothing answers to is an
+        // instruction that would be silently dropped, and the person who wrote it would go looking
+        // for why the chorus sounded like the verse.
+        let errors = SongSpec::parse(
+            r#"
+            form = "verse"
+
+            [section.verse.part.trombone]
+            octave = 3
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.to_string().contains("trombone")),
             "{errors:?}"
         );
     }
