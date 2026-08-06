@@ -22,6 +22,20 @@ use std::path::{Component, Path, PathBuf};
 /// Separator used inside a stored relative path, on every platform.
 const PORTABLE_SEPARATOR: char = '/';
 
+/// The plain directory and file names in a path, with everything else dropped.
+///
+/// This is the whole of what "inside" means: a chain of names, with no root, no `..`, and — the
+/// case that only wears a disguise on Windows — no drive prefix. [`AssetPath::inside`] applies the
+/// rule when it builds a reference and [`AssetPath::resolve`] applies it again when it opens one,
+/// because a document read off disk never passed through the constructor. Keeping the rule in one
+/// function is what stops those two answers from drifting apart.
+fn plain_names(path: &Path) -> impl Iterator<Item = &std::ffi::OsStr> {
+    path.components().filter_map(|component| match component {
+        Component::Normal(name) => Some(name),
+        _ => None,
+    })
+}
+
 /// Where an asset's file is, as the document records it.
 ///
 /// Comparison is on the stored form, so two references are equal when they say the same thing —
@@ -51,13 +65,8 @@ impl AssetPath {
     /// tracks. Dropping `..` along the way keeps "inside" true, which is the other half of the
     /// promise this variant makes.
     pub fn inside(relative: impl AsRef<Path>) -> Self {
-        let portable: Vec<String> = relative
-            .as_ref()
-            .components()
-            .filter_map(|component| match component {
-                Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
-                _ => None,
-            })
+        let portable: Vec<String> = plain_names(relative.as_ref())
+            .map(|name| name.to_string_lossy().into_owned())
             .collect();
         AssetPath::Inside(PathBuf::from(
             portable.join(&PORTABLE_SEPARATOR.to_string()),
@@ -91,20 +100,24 @@ impl AssetPath {
     /// project that was never saved — and one of those cannot have collected anything, so the
     /// case exists to be handled rather than to happen.
     ///
-    /// The relative path is rebuilt component by component rather than joined. `Path::join` with
-    /// an absolute argument throws the folder away, and `Deserialize` does not go through
-    /// [`Self::inside`] — so a hand-edited or hostile document could otherwise point an "inside"
-    /// reference anywhere on the machine.
+    /// The relative path is rebuilt name by name rather than joined, and every name is put through
+    /// the same `plain_names` rule the constructor uses, because `Deserialize` does not go through
+    /// [`Self::inside`] — a hand-edited or hostile document could otherwise point an "inside"
+    /// reference somewhere else entirely. `Path::join` with an absolute argument throws the folder
+    /// away, and on Windows `PathBuf::push` does the same for a name carrying a drive prefix, so
+    /// `C:` in a stored path walks out of the folder exactly as a leading slash would.
     pub fn resolve(&self, project_folder: Option<&Path>) -> Option<PathBuf> {
         match self {
             AssetPath::Inside(relative) => project_folder.map(|folder| {
                 let mut resolved = folder.to_path_buf();
-                for part in relative
-                    .to_string_lossy()
-                    .split([PORTABLE_SEPARATOR, '\\'])
-                    .filter(|part| !part.is_empty() && *part != "." && *part != "..")
-                {
-                    resolved.push(part);
+                // Split on both separators first: a project saved on Windows must still open on a
+                // Mac, where `\` is a perfectly good character in a file name and so is not a
+                // separator at all. Each piece is then held to the rule on its own.
+                let stored = relative.to_string_lossy();
+                for part in stored.split([PORTABLE_SEPARATOR, '\\']) {
+                    for name in plain_names(Path::new(part)) {
+                        resolved.push(name);
+                    }
                 }
                 resolved
             }),
@@ -239,9 +252,20 @@ mod tests {
     #[test]
     fn an_inside_reference_cannot_point_outside() {
         // `Path::join` with an absolute path discards the base, and nothing stops a hand-edited
-        // document from containing one.
+        // document from containing one. A drive letter is the same trick in Windows dress:
+        // `PathBuf::push` replaces everything accumulated so far when what it is given carries a
+        // prefix, so `C:` leaves the folder as surely as a leading slash does. These are built the
+        // way a document off disk is, through the representation, because that is the road that
+        // misses the constructor's own guard.
         let folder = Path::new("/songs/first");
-        for escape in ["/etc/passwd", "../../etc/passwd", "..\\..\\secrets"] {
+        for escape in [
+            "/etc/passwd",
+            "../../etc/passwd",
+            "..\\..\\secrets",
+            "C:/Users/Public/evil.wav",
+            "C:\\Windows\\win.ini",
+            "D:/x.wav",
+        ] {
             let stored: AssetPath =
                 serde_json::from_value(serde_json::json!({ "inside": escape })).unwrap();
             let resolved = stored.resolve(Some(folder)).unwrap();
