@@ -150,14 +150,17 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
                 TrackEventKind::Meta(MetaMessage::Tempo(micros)) => {
                     let micros = micros.as_int().max(1);
                     let bpm = 60_000_000.0 / f64::from(micros);
-                    match saw_tempo {
-                        // The first one *is* the song's tempo rather than a change written on top
-                        // of a default that was never in the file.
+                    // A tempo at the very start *is* the song's tempo rather than a change
+                    // written on top of a default that was never in the file. One that arrives
+                    // later is a change, and the head of the song ran at the default until it —
+                    // so the question is where the event sits and not merely whether it is the
+                    // first one seen. Everything after that goes through `set_point`, which
+                    // replaces the anchor in place when it lands at zero: a later track
+                    // restating the opening tempo, which a format 1 file often does, must not
+                    // throw away the changes already read.
+                    match saw_tempo || tick != Ticks::ZERO {
                         false => tempo_map = TempoMap::constant(bpm),
                         true => tempo_map.set_point(tick, bpm),
-                    }
-                    if tick == Ticks::ZERO {
-                        tempo_map = TempoMap::constant(bpm);
                     }
                     saw_tempo = true;
                 }
@@ -734,6 +737,65 @@ mod tests {
             imported.tempo_map.bpm_at(Ticks(TICKS_PER_QUARTER * 4)),
             240.0
         );
+    }
+
+    #[test]
+    fn a_later_track_restating_the_opening_tempo_does_not_erase_the_changes() {
+        // A format 1 file often repeats the tempo at the head of every track, because a player
+        // that started reading at track two would otherwise have nothing to go on. That is the
+        // same tempo said twice, not an instruction to forget the rest of the map.
+        let imported = metrical(vec![
+            vec![
+                event(
+                    0,
+                    TrackEventKind::Meta(MetaMessage::Tempo(u24::new(500_000))),
+                ),
+                event(
+                    1_920,
+                    TrackEventKind::Meta(MetaMessage::Tempo(u24::new(250_000))),
+                ),
+            ],
+            vec![
+                event(
+                    0,
+                    TrackEventKind::Meta(MetaMessage::Tempo(u24::new(500_000))),
+                ),
+                note_on(0, 60, 100),
+                note_off(480, 60),
+            ],
+        ]);
+        assert_eq!(imported.tempo_map.bpm_at(Ticks::ZERO), 120.0);
+        assert_eq!(
+            imported.tempo_map.bpm_at(Ticks(TICKS_PER_QUARTER * 4)),
+            240.0,
+            "the change in the first track survived the second track's restatement"
+        );
+        assert_eq!(imported.tempo_map.points().len(), 2);
+    }
+
+    #[test]
+    fn a_tempo_that_first_appears_partway_in_leaves_the_head_at_the_default() {
+        // Nothing said what the opening bars run at, so they run at the tempo every sequencer
+        // assumes. Taking the first event as the song's tempo wherever it sat would play the
+        // head at a speed the file never named for it.
+        let imported = metrical(vec![vec![
+            note_on(0, 60, 100),
+            note_off(1_920, 60),
+            event(
+                0,
+                TrackEventKind::Meta(MetaMessage::Tempo(u24::new(250_000))),
+            ),
+        ]]);
+        assert_eq!(
+            imported.tempo_map.bpm_at(Ticks::ZERO),
+            120.0,
+            "the head is the default, not the tempo that arrives four beats in"
+        );
+        assert_eq!(
+            imported.tempo_map.bpm_at(Ticks(TICKS_PER_QUARTER * 4)),
+            240.0
+        );
+        assert_eq!(imported.tempo_map.points().len(), 2);
     }
 
     #[test]
