@@ -444,6 +444,14 @@ mod tests {
             ["Fmaj7", "E7", "Am7", "C7"],
             "丸サ進行 in C"
         );
+        // Read literally against a minor key, degree by degree — which is what quoting a
+        // major-key progression into one asks for. `vi7` used to come out Abmaj7 here, a major
+        // third above a root the chart writes in lower case.
+        assert_eq!(
+            chord_names(&catalog("marusa").unwrap(), "C minor"),
+            ["Fmaj7", "Eb7", "Abm7", "C7"],
+            "丸サ進行 in C minor"
+        );
         assert_eq!(
             chord_names(&catalog("royal-road").unwrap(), "C major"),
             ["Fmaj7", "G7", "Em7", "Am"],

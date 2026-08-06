@@ -208,8 +208,8 @@ impl Numeral {
         }
 
         let root = degree_class(key, self.degree, self.accidental);
+        let diatonic = diatonic_quality(key, self.degree);
         let triad = self.quality.unwrap_or_else(|| {
-            let diatonic = diatonic_quality(key, self.degree);
             // Case only speaks when it disagrees with the key: writing `IV` in a minor key is how
             // a borrowed major subdominant is asked for.
             if self.accidental != 0 || diatonic.is_minor() != self.minor_case {
@@ -222,6 +222,9 @@ impl Numeral {
                 diatonic
             }
         });
+        // Whether the triad above is the one the key builds on this degree, rather than one the
+        // numeral's case asked for instead. It decides where the *seventh* may come from below.
+        let borrowed = self.quality.is_some() || self.accidental != 0 || triad != diatonic;
         let quality = match self.extension {
             None => triad,
             // An upper-case numeral with a bare seven is a dominant — `V7`, `I7`, `IV7` — which
@@ -237,15 +240,22 @@ impl Numeral {
             }
             Some(extension) => {
                 // An upper-case numeral on a major triad takes a *dominant* seventh, which is
-                // the convention. Everything else takes the seventh the key itself stacks, so
-                // the leading tone of a harmonic minor comes out fully diminished rather than
-                // half — a distinction `with_seventh` cannot make from the triad alone.
+                // the convention. A numeral playing the key's own triad takes the seventh the
+                // key itself stacks, so the leading tone of a harmonic minor comes out fully
+                // diminished rather than half — a distinction `with_seventh` cannot make from
+                // the triad alone.
+                //
+                // Anything borrowed builds its seventh on the triad it actually has. Reaching
+                // for the key's seventh there used to put back the third the case had just
+                // taken out: `vi` in C minor is Abm and `vi7` came out **Abmaj7**, so adding a
+                // seventh silently flipped the chord from minor to major. 丸サ進行 quoted in a
+                // minor key was the audible version of that.
                 let seventh = if !self.minor_case && triad == Quality::Major {
                     Quality::Dominant7
-                } else if self.quality.is_none() && self.accidental == 0 {
-                    diatonic_seventh(key, self.degree).unwrap_or_else(|| triad.with_seventh())
-                } else {
+                } else if borrowed {
                     triad.with_seventh()
+                } else {
+                    diatonic_seventh(key, self.degree).unwrap_or_else(|| triad.with_seventh())
                 };
                 if extension >= 9 {
                     seventh.with_ninth()
@@ -768,6 +778,51 @@ mod tests {
         assert_eq!(chord_of("I7", "C major"), "C7");
         assert_eq!(chord_of("vi7", "C major"), "Am7");
         assert_eq!(chord_of("IV7", "C major"), "F7");
+    }
+
+    #[test]
+    fn adding_a_seventh_never_changes_the_triad_under_it() {
+        // The bug this pins: the triad was chosen by case, and the seventh was then taken from
+        // the key *regardless* — so on a degree where the two disagree, adding a seventh put the
+        // third back that the case had just taken out. `vi` in C minor is Ab minor and `vi7`
+        // came out Ab **major** seventh.
+        //
+        // 丸サ進行 quoted in a minor key is where it was audible: its `vi7` is the chord the whole
+        // loop leans on, and it sounded a major third above a root the chart says is minor.
+        assert_eq!(chord_of("vi", "C minor"), "Abm");
+        assert_eq!(chord_of("vi7", "C minor"), "Abm7");
+        assert_eq!(chord_of("iii7", "C minor"), "Ebm7");
+        assert_eq!(chord_of("vii7", "A minor"), "Gm7");
+
+        // Stated as the property, because a chord that changes quality when a seventh is added
+        // is wrong wherever it happens and the catalogue is not the only thing that asks.
+        for key_text in [
+            "C major",
+            "C minor",
+            "C harmonic-minor",
+            "C dorian",
+            "C phrygian",
+            "C lydian",
+            "C mixolydian",
+            "A minor",
+            "F# minor",
+            "Bb major",
+        ] {
+            for plain in [
+                "I", "i", "II", "ii", "III", "iii", "IV", "iv", "V", "v", "VI", "vi", "VII", "vii",
+            ] {
+                let triad = Numeral::parse(plain).unwrap().chord_in(key(key_text));
+                let seventh = Numeral::parse(&format!("{plain}7"))
+                    .unwrap()
+                    .chord_in(key(key_text));
+                assert_eq!(
+                    triad.quality.is_minor(),
+                    seventh.quality.is_minor(),
+                    "in {key_text}, `{plain}` is {triad} but `{plain}7` is {seventh}"
+                );
+                assert_eq!(triad.root, seventh.root, "in {key_text}, `{plain}`");
+            }
+        }
     }
 
     #[test]
