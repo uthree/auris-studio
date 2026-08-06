@@ -1,6 +1,15 @@
 //! Auris Studio — a digital audio workstation built with Rust and gpui.
 
 #![warn(missing_docs)]
+// A release build is a window and nothing else. Windows gives a console-subsystem binary a
+// console whether it wants one or not, so double-clicking `auris-studio.exe` opened a black
+// terminal beside the application and keeping that terminal open was the only way to keep the
+// application running — which is not what a DAW looks like.
+//
+// The debug build keeps its console, because `cargo run` and `RUST_LOG=debug` are how this is
+// worked on. What replaces it for everybody else is the log panel: the records are kept whether
+// or not there is anywhere to print them. The attribute is ignored on every other platform.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod actions;
 mod app;
@@ -9,6 +18,7 @@ mod dock;
 mod gestures;
 mod i18n;
 mod keymap;
+mod logbook;
 mod menu;
 mod settings_window;
 mod theme;
@@ -25,8 +35,10 @@ use menu::menus;
 
 fn main() {
     // Warnings matter here — a missing audio file or a plugin the registry does not know is
-    // logged rather than shown — so surface them by default instead of requiring RUST_LOG.
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    // logged rather than shown — so surface them by default instead of requiring RUST_LOG. And
+    // they are *kept*, because the terminal they used to go to is not somewhere an application
+    // launched from an icon has: **View → Log** is where they are read.
+    logbook::install();
 
     // Before anything reads a preference: the configuration moved to `~/.config/auris-studio`,
     // and an installation that predates the move keeps its settings, keymap and colour scheme.

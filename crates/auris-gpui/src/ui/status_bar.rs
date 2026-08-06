@@ -88,6 +88,18 @@ impl AurisApp {
             true => (Theme::translucent(theme.accent, 0.22), theme.text),
             false => (gpui::transparent_black(), theme.text_faint),
         };
+        // The log is the one panel that is closed by default, so it is the one panel that has to
+        // be able to say *look at me*. Nothing else on screen reports a warning, and a warning
+        // nobody sees is the same as one that was never written: a font that could not be found,
+        // a plugin substituted, a device that disappeared.
+        let unread = match panel {
+            Panel::Log if !open => crate::logbook::book().problems() > 0,
+            _ => false,
+        };
+        let mark = match unread {
+            true => theme.warning,
+            false => mark,
+        };
         let hover = theme.surface_hover;
 
         div()

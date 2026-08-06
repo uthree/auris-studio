@@ -271,6 +271,11 @@ pub struct Theme {
     /// away. Not derived from the accent: a scheme whose accent is already red would otherwise
     /// report every failure in the same colour it draws its buttons.
     pub danger: Hsla,
+    /// Something happened that somebody should know about, but nothing failed.
+    ///
+    /// A step short of [`Self::danger`] and a different hue, because the log draws both at once
+    /// and a warning that looked like an error would make the errors invisible.
+    pub warning: Hsla,
     /// Transport playing indicator.
     pub playing: Hsla,
     /// Playhead line.
@@ -369,6 +374,9 @@ impl Theme {
             // colours that have to be read against its background — which is what a status line
             // reporting a failure in it needs.
             danger: scheme.signal(0.01, 0.72),
+            // Amber, a third of the way round from the red: far enough that the two are told
+            // apart at a glance in a list where they sit one line above the other.
+            warning: scheme.signal(0.11, 0.78),
             meter_low: scheme.signal(0.38, 0.52),
             meter_mid: scheme.signal(0.14, 0.62),
             meter_high: scheme.signal(0.01, 0.68),

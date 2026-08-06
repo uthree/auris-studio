@@ -32,6 +32,22 @@ format rather than a convention: `## <version> — <date>`.
 * A build with nothing installed starts, runs and composes on the built-in instruments — which is
   what CI does on every commit.
 
+### The log has somewhere to go, and the release build has no terminal
+
+* **View → Log** (`⌘⌥L`) opens a panel holding the last five hundred records the application
+  wrote. Off by default, remembered in `layout.json`. A DAW is meant to fail quietly — a moved
+  SoundFont costs one track its sound rather than the session — and every one of those quiet
+  failures was logged to a terminal nobody was looking at. A track went silent and said nothing.
+* Newest first, because the reason anybody opened it is the thing that just happened. **The log's
+  status-bar icon turns amber** while there is a warning or an error nobody has read, which is the
+  only part of this a person who never opens the panel will see.
+* **A release build no longer opens a console window.** `windows_subsystem = "windows"`, so
+  double-clicking `auris-studio.exe` gives the window and nothing else — where before it gave a
+  black terminal beside the application, and closing that terminal closed the application. A debug
+  build keeps its console, because `cargo run` and `RUST_LOG` are how this is worked on.
+* The recorder sits in *front* of `env_logger` rather than instead of it, so the terminal and the
+  panel can never disagree about what was logged.
+
 ### Eight whole songs to start from
 
 * **Style** is the first row of the song sheet, and choosing one fills the rest of it: `chiptune`,

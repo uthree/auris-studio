@@ -222,6 +222,7 @@ pub fn model(language: Language) -> Vec<MenuSection> {
                 "view.piano_roll",
             ),
             command(t(Key::CmdShowMixer), actions::ToggleMixer, "view.mixer"),
+            command(t(Key::CmdShowLog), actions::ToggleLog, "view.log"),
             MenuRow::Separator,
             command(
                 t(Key::CmdShowStructureLane),

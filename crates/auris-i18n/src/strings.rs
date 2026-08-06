@@ -779,6 +779,10 @@ new のオプション
         --bpm <tempo>             新規プロジェクトのテンポ（既定: 120）
         --sample-rate <hz>        新規プロジェクトのサンプルレート（既定: 48000）"
     }
+    LogPanel { en: "Log", ja: "ログ" }
+    LogClear { en: "Clear", ja: "消去" }
+    LogEmpty { en: "Nothing has been logged.", ja: "ログはまだありません。" }
+    CmdShowLog { en: "Log", ja: "ログ" }
     CliPresets { en: "SONG PRESETS", ja: "楽曲プリセット" }
     CliSoundFonts { en: "SHIPPED SOUNDFONTS", ja: "同梱サウンドフォント" }
     CliSoundFontMissing {

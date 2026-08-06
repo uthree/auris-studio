@@ -43,6 +43,8 @@ pub enum Icon {
     Faders,
     /// The inspector: horizontal sliders, the controls it is made of.
     Sliders,
+    /// The log: lines of text, ragged the way written lines are.
+    Log,
     /// An instrument: a keyboard, seen from the front.
     Keyboard,
     /// An effect: a knob with its pointer.
@@ -248,6 +250,14 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
             bar(window, 0.16, 0.62, 0.84, 0.70);
             knob(window, 0.62, 0.34, 0.15, 0.30);
             knob(window, 0.36, 0.66, 0.15, 0.30);
+        }
+        Icon::Log => {
+            // Four lines of writing. Ragged right, because a block of equal bars reads as a
+            // table or a fader bank — the uneven ends are the whole of what says "text".
+            bar(window, 0.16, 0.22, 0.84, 0.30);
+            bar(window, 0.16, 0.40, 0.68, 0.48);
+            bar(window, 0.16, 0.58, 0.80, 0.66);
+            bar(window, 0.16, 0.76, 0.52, 0.84);
         }
         // The three kinds of thing the library holds. They sit on the leaf rows, where the tree
         // has run out of headings to say what something is — an instrument, an effect and a sound

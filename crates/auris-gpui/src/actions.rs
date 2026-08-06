@@ -79,6 +79,8 @@ actions!(
         TogglePianoRoll,
         /// Show or hide the mixer.
         ToggleMixer,
+        /// Show or hide the log.
+        ToggleLog,
         /// Show or hide the strip of section names above the arrangement.
         ToggleStructureLane,
         /// Show or hide the key and chord strip above the arrangement.
@@ -122,6 +124,8 @@ pub mod context {
     pub const MIXER: &str = "AurisMixer";
     /// The inspector.
     pub const INSPECTOR: &str = "AurisInspector";
+    /// The log.
+    pub const LOG: &str = "AurisLog";
 }
 
 /// One command the user can rebind.
@@ -257,6 +261,10 @@ bindable! {
         "view.inspector",       GroupView,      CmdShowInspector,      "i"           => ToggleInspector;
         "view.piano_roll",      GroupView,      CmdShowPianoRoll,      "p"           => TogglePianoRoll;
         "view.mixer",           GroupView,      CmdShowMixer,          "m"           => ToggleMixer;
+        // Out on `secondary-alt-` with the arrangement furniture rather than on a bare letter
+        // like its three sibling panels: the log is opened on the day something is wrong and left
+        // alone every other day, and a plain letter is worth more to something reached mid-take.
+        "view.log",             GroupView,      CmdShowLog,            "secondary-alt-l" => ToggleLog;
         // The three strips over the arrangement. Out on `secondary-alt-` because they are
         // arrangement furniture rather than things reached mid-take, and because the plain and
         // shifted forms of these letters are all spoken for.

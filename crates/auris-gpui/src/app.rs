@@ -102,16 +102,19 @@ pub enum Pane {
     Mixer,
     /// The inspector.
     Inspector,
+    /// The log.
+    Log,
 }
 
 impl Pane {
     /// Every pane, in tab order.
-    pub const ALL: [Pane; 5] = [
+    pub const ALL: [Pane; 6] = [
         Pane::Library,
         Pane::Arrangement,
         Pane::PianoRoll,
         Pane::Mixer,
         Pane::Inspector,
+        Pane::Log,
     ];
 
     /// Where this pane sits in the tab order.
@@ -137,6 +140,7 @@ pub struct PaneFocus {
     piano_roll: FocusHandle,
     mixer: FocusHandle,
     inspector: FocusHandle,
+    log: FocusHandle,
 }
 
 impl PaneFocus {
@@ -156,6 +160,7 @@ impl PaneFocus {
             piano_roll: stop(cx, Pane::PianoRoll),
             mixer: stop(cx, Pane::Mixer),
             inspector: stop(cx, Pane::Inspector),
+            log: stop(cx, Pane::Log),
         }
     }
 
@@ -167,6 +172,7 @@ impl PaneFocus {
             Pane::PianoRoll => &self.piano_roll,
             Pane::Mixer => &self.mixer,
             Pane::Inspector => &self.inspector,
+            Pane::Log => &self.log,
         }
     }
 }
@@ -875,6 +881,7 @@ impl AurisApp {
             Pane::PianoRoll => actions::context::ROLL,
             Pane::Mixer => actions::context::MIXER,
             Pane::Inspector => actions::context::INSPECTOR,
+            Pane::Log => actions::context::LOG,
         })
     }
 

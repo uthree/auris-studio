@@ -136,6 +136,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_toggle_inspector))
             .on_action(cx.listener(Self::on_toggle_piano_roll))
             .on_action(cx.listener(Self::on_toggle_mixer))
+            .on_action(cx.listener(Self::on_toggle_log))
             .on_action(cx.listener(Self::on_toggle_structure_lane))
             .on_action(cx.listener(Self::on_toggle_harmony_lane))
             .on_action(cx.listener(Self::on_toggle_tempo_marks))
@@ -291,6 +292,7 @@ impl AurisApp {
             Panel::PianoRoll => self.render_piano_roll(window, cx),
             Panel::Mixer => self.render_mixer(window, cx).into_any_element(),
             Panel::Inspector => self.render_inspector(window, cx).into_any_element(),
+            Panel::Log => self.render_log(window, cx).into_any_element(),
         }
     }
 
@@ -1350,6 +1352,16 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.toggle_panel(Panel::Mixer);
+        cx.notify();
+    }
+
+    fn on_toggle_log(
+        &mut self,
+        _: &actions::ToggleLog,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_panel(Panel::Log);
         cx.notify();
     }
 

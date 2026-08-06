@@ -607,6 +607,26 @@ it is said, and neither answers for the other. All four or none — the drum syn
 nothing else, and inventing two corners for it would be a picture of something that is not
 happening.
 
+### The log
+
+**View → Log** (`⌘⌥L` / `Ctrl+Alt+L`) opens a panel holding the last five hundred records the
+application wrote. It is off by default and remembered in `layout.json` with the rest of the
+furniture.
+
+It exists because a DAW is *meant* to fail quietly: a SoundFont whose file has moved costs one
+track its sound rather than the session, an unknown plugin is substituted, an engine command
+dropped under load is dropped. All of that is logged — and until this panel the log went to a
+terminal, which a release build does not open and which nobody launching from an icon has ever
+looked at. The result was a track that went silent and said nothing about why.
+
+Newest line first, because the reason anybody opened it is the thing that just happened. The
+log's icon in the status bar turns amber while there is a warning or an error nobody has looked
+at, which is the only part of this that a person who has never opened the panel will see.
+
+A **release build has no console at all** — `windows_subsystem = "windows"`, so double-clicking
+`auris-studio.exe` opens the window and nothing else. A debug build keeps its terminal, because
+`cargo run` and `RUST_LOG=debug` are how this is worked on, and the records go to both.
+
 The library panel is a tree: instruments, SoundFonts and effects, each opening into
 groups rather than a flat list — the plugins by category, a font by the banks it declares. Every
 branch remembers whether it was left open. Clicking an instrument sets it on the selected track,

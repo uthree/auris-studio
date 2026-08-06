@@ -74,15 +74,18 @@ pub enum Panel {
     Mixer,
     /// The inspector for the selected track.
     Inspector,
+    /// What the application has logged.
+    Log,
 }
 
 impl Panel {
     /// Every panel, in the order a dock stacks their icons.
-    pub const ALL: [Panel; 4] = [
+    pub const ALL: [Panel; 5] = [
         Panel::Library,
         Panel::PianoRoll,
         Panel::Mixer,
         Panel::Inspector,
+        Panel::Log,
     ];
 
     /// Where the keyboard is while this panel holds it.
@@ -92,6 +95,7 @@ impl Panel {
             Panel::PianoRoll => Pane::PianoRoll,
             Panel::Mixer => Pane::Mixer,
             Panel::Inspector => Pane::Inspector,
+            Panel::Log => Pane::Log,
         }
     }
 
@@ -102,6 +106,7 @@ impl Panel {
             Panel::PianoRoll => Key::PianoRoll,
             Panel::Mixer => Key::Mixer,
             Panel::Inspector => Key::Inspector,
+            Panel::Log => Key::LogPanel,
         }
     }
 
@@ -116,6 +121,7 @@ impl Panel {
             Panel::PianoRoll => Icon::Notes,
             Panel::Mixer => Icon::Faders,
             Panel::Inspector => Icon::Sliders,
+            Panel::Log => Icon::Log,
         }
     }
 
@@ -191,11 +197,11 @@ impl TimelineLanes {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PanelLayout {
     /// Which dock each panel is in, in [`Panel::ALL`] order.
-    docks: [Dock; 4],
+    docks: [Dock; 5],
     /// Whether each panel is showing, in [`Panel::ALL`] order.
     ///
     /// At most one is true per dock; [`Self::show`] is what keeps that so.
-    open: [bool; 4],
+    open: [bool; 5],
     /// How large each dock is drawn, in [`Dock::ALL`] order: a width for the sides, a height for
     /// the bottom.
     sizes: [Pixels; 3],
@@ -215,13 +221,23 @@ impl Default for PanelLayout {
         Self {
             // Library on the left, inspector on the right, the two editors sharing the strip along
             // the bottom: Logic's arrangement, and the one this window was laid out at.
-            docks: [Dock::Left, Dock::Bottom, Dock::Bottom, Dock::Right],
+            // The log shares the bottom with the two editors: it is read in the same posture as a
+            // mixer — glanced at and dismissed — and what it wants is width rather than height.
+            docks: [
+                Dock::Left,
+                Dock::Bottom,
+                Dock::Bottom,
+                Dock::Right,
+                Dock::Bottom,
+            ],
             // The mixer starts closed because the piano roll has the dock they share. The library
             // starts open, unlike Logic, which defaults its Library closed: there, a channel
             // strip's instrument slot is a second way to load one; here the library is the only
             // one, so starting closed would leave a new project with no visible way to choose an
             // instrument at all.
-            open: [true, true, false, true],
+            // The log starts closed and stays closed until somebody wants it: it is the panel
+            // that is interesting on the day something goes wrong and noise on every other one.
+            open: [true, true, false, true, false],
             sizes: [
                 Metrics::LEFT_DOCK_WIDTH,
                 Metrics::BOTTOM_DOCK_HEIGHT,
@@ -558,8 +574,8 @@ mod tests {
         let mut layout = PanelLayout::default();
         layout.toggle(Panel::PianoRoll);
         assert_eq!(layout.showing(Dock::Bottom), None);
-        // The mixer is still down there, waiting to be asked for.
-        assert_eq!(layout.panels_in(Dock::Bottom).count(), 2);
+        // The mixer and the log are still down there, waiting to be asked for.
+        assert_eq!(layout.panels_in(Dock::Bottom).count(), 3);
         layout.toggle(Panel::PianoRoll);
         assert_eq!(layout.showing(Dock::Bottom), Some(Panel::PianoRoll));
     }
