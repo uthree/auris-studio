@@ -352,7 +352,9 @@ field from the command line.
 
 A single clip can be written from the chords underneath it without a specification for a whole
 song: right-click an empty stretch of an instrument track and choose a preset — lead, chords, pad,
-arpeggio, stab, bass or drums. The clip keeps the recipe that produced it, so **Another Take** is
+arpeggio, stab, bass, drums, or one drum voice at a time: kick, snare or hi-hat. A kit on one track
+is three voices no fader can separate, so the pieces are there for when it needs to be a mix rather
+than a part. The clip keeps the recipe that produced it, so **Another Take** is
 the next seed, **Write It Again** follows the chords when they move, and **Keep This One** drops
 the recipe when a take turns out to be the keeper. A track's own menu has **Keep Every Take Here**,
 which does that to all of them at once and says how many it acted on. The dials are in the

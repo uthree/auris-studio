@@ -9,6 +9,22 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### A composed song arrives as a whole document
+
+* **A composed piece now carries its own harmony and its own structure.** Both were computed and
+  then dropped: the composer resolves a key and a full chord progression per section and names
+  every stretch, and a composed song opened with an empty harmony lane and an empty structure lane
+  over a piece that plainly has chords and sections. Worse than cosmetic, because a clip generated
+  afterwards *reads* both — a part added by hand to a finished song had nothing to agree with.
+* A key change is written only where the key changes, so a song in one key throughout has one
+  point rather than one per section. Past the last bar the harmony and the structure both end,
+  rather than the final chord and the outro running on for ever.
+* **The drums can be asked for one voice at a time.** `Kick`, `Snare` and `Hat` join `Drums` in
+  the part picker, so a hi-hat can be written onto a track of its own. A kit on one track is three
+  voices no fader can separate; three tracks is a mix. `Project::FORMAT_VERSION` is 7.
+* Not a note of what the composer writes moved: its tests compare whole pieces chord by chord and
+  note by note, and they pass unchanged.
+
 ### Tracks can be dragged into order
 
 * **Drag a track header up or down** to move it in the list. The arrangement reorders as the

@@ -2104,6 +2104,9 @@ pub(crate) fn preset_key(preset: ClipPreset) -> Key {
         ClipPreset::Bass => Key::PresetBass,
         ClipPreset::Stab => Key::PresetStab,
         ClipPreset::Drums => Key::PresetDrums,
+        ClipPreset::Kick => Key::PresetKick,
+        ClipPreset::Snare => Key::PresetSnare,
+        ClipPreset::Hat => Key::PresetHat,
     }
 }
 

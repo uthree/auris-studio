@@ -353,6 +353,9 @@ strings! {
     // is the word anybody looking for it would search for.
     PresetStab { en: "Stab", ja: "リリースカットピアノ" }
     PresetDrums { en: "Drums", ja: "ドラム" }
+    PresetKick { en: "Kick", ja: "キック" }
+    PresetSnare { en: "Snare", ja: "スネア" }
+    PresetHat { en: "Hi-hat", ja: "ハイハット" }
     MenuClearHarmony { en: "Clear Chords", ja: "コードを消去" }
     NoInstrumentToHearItOn {
         en: "No instrument track to hear it on",

@@ -179,9 +179,10 @@ impl Note {
 
 /// What an automatically written clip is trying to be.
 ///
-/// The vocabulary a person chooses from, which is not quite the vocabulary the composer writes
-/// in: `Drums` is one choice here and three parts inside the composer, because a kick, a snare and
-/// a hat share an instrument and belong in one clip rather than three.
+/// The vocabulary a person chooses from, and — since the drums arrived one at a time — the same
+/// vocabulary the composer writes in. `Drums` is a whole kit in one clip, which is what somebody
+/// filling a bar by hand wants; `Kick`, `Snare` and `Hat` are the three parts a written song keeps
+/// on tracks of their own, so that a kit can be mixed at all.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClipPreset {
@@ -199,11 +200,20 @@ pub enum ClipPreset {
     Stab,
     /// Kick, snare and hat together.
     Drums,
+    /// The kick drum alone.
+    Kick,
+    /// The snare alone.
+    Snare,
+    /// The hi-hat alone.
+    Hat,
 }
 
 impl ClipPreset {
     /// Every preset, in the order a picker should offer them.
-    pub const ALL: [ClipPreset; 7] = [
+    ///
+    /// The whole kit before the three pieces of it: a person reaching for drums usually means all
+    /// of them, and the parts are what a mix wants rather than what a first choice does.
+    pub const ALL: [ClipPreset; 10] = [
         ClipPreset::Lead,
         ClipPreset::Chords,
         ClipPreset::Pad,
@@ -211,6 +221,9 @@ impl ClipPreset {
         ClipPreset::Stab,
         ClipPreset::Bass,
         ClipPreset::Drums,
+        ClipPreset::Kick,
+        ClipPreset::Snare,
+        ClipPreset::Hat,
     ];
 
     /// The name the interface and the command line write.
@@ -223,6 +236,9 @@ impl ClipPreset {
             ClipPreset::Bass => "bass",
             ClipPreset::Stab => "stab",
             ClipPreset::Drums => "drums",
+            ClipPreset::Kick => "kick",
+            ClipPreset::Snare => "snare",
+            ClipPreset::Hat => "hat",
         }
     }
 
@@ -236,8 +252,22 @@ impl ClipPreset {
             "bass" => ClipPreset::Bass,
             "stab" | "stabs" | "release-cut" => ClipPreset::Stab,
             "drums" | "drum" | "kit" => ClipPreset::Drums,
+            "kick" | "bd" => ClipPreset::Kick,
+            "snare" | "sd" => ClipPreset::Snare,
+            "hat" | "hihat" | "hh" => ClipPreset::Hat,
             _ => return None,
         })
+    }
+
+    /// `true` when this preset plays a drum rather than a pitch.
+    ///
+    /// What separates them is the harmony: a pitched part has nothing to play where no chord is
+    /// written, and a kit carries on regardless.
+    pub fn is_drums(self) -> bool {
+        matches!(
+            self,
+            ClipPreset::Drums | ClipPreset::Kick | ClipPreset::Snare | ClipPreset::Hat
+        )
     }
 }
 
@@ -1099,7 +1129,11 @@ impl Project {
     /// would fail on the whole document rather than the one track — and the fields are worse than
     /// that: they *would* be ignored, so a mix where six tracks feed one reverb would open with
     /// all six routed dry to the master and be saved back that way.
-    pub const FORMAT_VERSION: u32 = 6;
+    ///
+    /// 7 since [`ClipPreset`] gained [`Kick`](ClipPreset::Kick), [`Snare`](ClipPreset::Snare) and
+    /// [`Hat`](ClipPreset::Hat), so that a composed song's drum clips carry a recipe. Another
+    /// stored enum, and the same one-way street.
+    pub const FORMAT_VERSION: u32 = 7;
 
     /// An empty project.
     ///

@@ -34,6 +34,9 @@ pub fn roles_of(preset: ClipPreset) -> &'static [Role] {
         ClipPreset::Stab => &[Role::Stab],
         ClipPreset::Bass => &[Role::Bass],
         ClipPreset::Drums => &[Role::Kick, Role::Snare, Role::Hat],
+        ClipPreset::Kick => &[Role::Kick],
+        ClipPreset::Snare => &[Role::Snare],
+        ClipPreset::Hat => &[Role::Hat],
     }
 }
 
@@ -228,6 +231,23 @@ mod tests {
     }
 
     #[test]
+    fn a_single_drum_voice_writes_only_itself() {
+        // What the whole kit could not be asked for one piece at a time. A kit on one track is
+        // three voices no fader can separate; three tracks is a mix.
+        let pitches = |preset| {
+            let mut out: Vec<u8> = phrase(preset, 3).iter().map(|note| note.pitch).collect();
+            out.sort_unstable();
+            out.dedup();
+            out
+        };
+        assert_eq!(pitches(ClipPreset::Kick), vec![36]);
+        assert_eq!(pitches(ClipPreset::Snare), vec![38]);
+        assert_eq!(pitches(ClipPreset::Hat), vec![42]);
+        // And together they are the kit: the same three voices the one preset writes at once.
+        assert_eq!(pitches(ClipPreset::Drums), vec![36, 38, 42]);
+    }
+
+    #[test]
     fn every_preset_writes_something_playable() {
         for preset in ClipPreset::ALL {
             let notes = phrase(preset, 1);
@@ -294,22 +314,40 @@ mod tests {
             ClipPreset::Pad => 0.92,
             // A kit follows its groove, and the groove is the part somebody chose.
             ClipPreset::Drums => 0.75,
+            // One drum voice on its own has less room still. A kit can vary its hat, which is
+            // where most of a kit's variation lives; a lone snare is a backbeat, and a backbeat
+            // played differently is a different groove rather than another take of this one.
+            // Measured: kick 52%, snare 70%, hat 46%. The ceiling is here to catch a voice that
+            // never changes at all, not to demand one that changes as much as a melody.
+            ClipPreset::Kick | ClipPreset::Snare | ClipPreset::Hat => 0.85,
             _ => 0.55,
         };
-        for preset in ClipPreset::ALL {
-            let pairs = [(1u64, 2), (2, 3), (3, 4), (1, 7), (5, 9)];
-            let mean: f32 = pairs
-                .iter()
-                .map(|(one, other)| overlap(preset, *one, *other))
-                .sum::<f32>()
-                / pairs.len() as f32;
-            assert!(
-                mean < ceiling(preset),
-                "{}: two takes share {:.0}% of what they play on average",
-                preset.name(),
-                mean * 100.0
-            );
-        }
+        // Every offender, not the first: with ten presets a stop at the first hides the rest, and
+        // the number each one scores is what a person needs to judge whether a ceiling is right.
+        let over: Vec<String> = ClipPreset::ALL
+            .into_iter()
+            .filter_map(|preset| {
+                let pairs = [(1u64, 2), (2, 3), (3, 4), (1, 7), (5, 9)];
+                let mean: f32 = pairs
+                    .iter()
+                    .map(|(one, other)| overlap(preset, *one, *other))
+                    .sum::<f32>()
+                    / pairs.len() as f32;
+                (mean >= ceiling(preset)).then(|| {
+                    format!(
+                        "{} shares {:.0}% (ceiling {:.0}%)",
+                        preset.name(),
+                        mean * 100.0,
+                        ceiling(preset) * 100.0
+                    )
+                })
+            })
+            .collect();
+        assert!(
+            over.is_empty(),
+            "two takes are too alike: {}",
+            over.join(", ")
+        );
     }
 
     #[test]
