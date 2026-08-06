@@ -8,7 +8,7 @@ use auris_core::structure::{SectionMap, SectionPoint};
 use auris_core::time::{Ticks, TimeSignature};
 
 use crate::frame::{Frame, plan};
-use crate::parts::{ScoreSettings, write_parts};
+use crate::parts::{PartDraft, ScoreSettings, write_parts};
 use crate::spec::{Role, SongSpec};
 
 /// The bus a whole kit sits under, so one fader moves the drums.
@@ -196,6 +196,56 @@ pub fn compose(spec: &SongSpec) -> Composition {
     render(spec, &frame)
 }
 
+/// One part's notes, cut into a clip per section of the frame.
+///
+/// Empty when the part never plays. That is not a strange case: a groove is free to leave a voice
+/// out — `sparse` writes no snare at all — so a part can be declared, written, and produce nothing.
+fn clips_of(draft: &PartDraft, frame: &Frame) -> Vec<ClipDraft> {
+    let mut clips = Vec::new();
+    for (index, section) in frame.sections.iter().enumerate() {
+        let mut notes: Vec<Note> = draft
+            .notes
+            .iter()
+            .filter(|note| note.section == index)
+            .filter_map(|note| {
+                // Rebase onto the clip. A note humanisation nudged a few ticks over a
+                // section boundary is clamped back rather than deleted — dropping it took
+                // the downbeat out of every section at the default humanisation.
+                let start = (note.start - section.start)
+                    .max_zero()
+                    .min(section.length - Ticks(1));
+                if note.start - section.start >= section.length {
+                    return None;
+                }
+                // Truncate rather than let a note overhang: the scheduler would drop it
+                // silently, and `fit_length_to_notes` would grow the clip if it did not.
+                let length = note.length.min(section.length - start).max(Ticks(1));
+                Some(Note {
+                    pitch: note.pitch.min(127),
+                    velocity: note.velocity.clamp(0.0, 1.0),
+                    start,
+                    length,
+                })
+            })
+            .collect();
+
+        // A canonical order, so two runs of the same spec compare equal byte for byte.
+        notes.sort_by_key(|note| (note.start.raw(), note.pitch));
+
+        // An empty clip is a hole in the arrangement rather than a block of silence.
+        if notes.is_empty() {
+            continue;
+        }
+        clips.push(ClipDraft {
+            name: format!("{} {} · {}", section.name, section.instance, draft.name),
+            start: section.start,
+            length: section.length,
+            notes,
+        });
+    }
+    clips
+}
+
 /// Turns a planned frame and its parts into tracks of clips.
 fn render(spec: &SongSpec, frame: &Frame) -> Composition {
     let drafts = write_parts(&ScoreSettings::from(spec), &spec.parts, frame);
@@ -207,62 +257,32 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
             .find(|part| part.name == name)
             .map(|part| part.role)
     };
+    // The parts that actually play, and their clips. A part that never plays leaves no track at
+    // all — a groove is free to leave a voice out, and `sparse` writes no snare.
+    //
+    // The buses are decided from *these* rather than from the roster, which is the whole reason
+    // this is a separate pass. `buses_for` promises that only the buses something reaches get
+    // made, and asking the roster broke that promise: a piece whose only drum part turned out
+    // silent still got a Drums bus, which then sat in the arrangement as a track with no clips on
+    // it and nothing routed to it.
+    let played: Vec<(PartDraft, Vec<ClipDraft>)> = drafts
+        .into_iter()
+        .map(|draft| {
+            let clips = clips_of(&draft, frame);
+            (draft, clips)
+        })
+        .filter(|(_, clips)| !clips.is_empty())
+        .collect();
+
     let buses = buses_for(
-        &drafts
+        &played
             .iter()
-            .filter_map(|draft| role_of(&draft.name))
+            .filter_map(|(draft, _)| role_of(&draft.name))
             .collect::<Vec<_>>(),
     );
     let mut tracks = Vec::new();
 
-    for draft in drafts {
-        let mut clips = Vec::new();
-        for (index, section) in frame.sections.iter().enumerate() {
-            let mut notes: Vec<Note> = draft
-                .notes
-                .iter()
-                .filter(|note| note.section == index)
-                .filter_map(|note| {
-                    // Rebase onto the clip. A note humanisation nudged a few ticks over a
-                    // section boundary is clamped back rather than deleted — dropping it took
-                    // the downbeat out of every section at the default humanisation.
-                    let start = (note.start - section.start)
-                        .max_zero()
-                        .min(section.length - Ticks(1));
-                    if note.start - section.start >= section.length {
-                        return None;
-                    }
-                    // Truncate rather than let a note overhang: the scheduler would drop it
-                    // silently, and `fit_length_to_notes` would grow the clip if it did not.
-                    let length = note.length.min(section.length - start).max(Ticks(1));
-                    Some(Note {
-                        pitch: note.pitch.min(127),
-                        velocity: note.velocity.clamp(0.0, 1.0),
-                        start,
-                        length,
-                    })
-                })
-                .collect();
-
-            // A canonical order, so two runs of the same spec compare equal byte for byte.
-            notes.sort_by_key(|note| (note.start.raw(), note.pitch));
-
-            // An empty clip is a hole in the arrangement rather than a block of silence.
-            if notes.is_empty() {
-                continue;
-            }
-            clips.push(ClipDraft {
-                name: format!("{} {} · {}", section.name, section.instance, draft.name),
-                start: section.start,
-                length: section.length,
-                notes,
-            });
-        }
-
-        // A part that never plays leaves no track at all.
-        if clips.is_empty() {
-            continue;
-        }
+    for (draft, clips) in played {
         let role = role_of(&draft.name);
         let (output, sends) = role
             .map(|role| routing_for(role, &buses))
@@ -546,6 +566,64 @@ mod tests {
         assert_eq!(names, vec!["Room"]);
         // And the one bus that does exist is the one the send names.
         assert_eq!(piece.tracks[0].sends[0].bus, 0);
+    }
+
+    #[test]
+    fn a_kit_that_turns_out_silent_leaves_no_bus_behind() {
+        // `sparse` writes no snare at all, so a piece whose only drum part is a snare has a kit
+        // on paper and none in the arrangement. The bus used to be decided from the roster, so
+        // one was made anyway and nothing was ever routed to it — which is what a user sees as a
+        // drum track with no clips on it.
+        let piece = compose_text(
+            r#"
+            title  = "Silent kit"
+            groove = "sparse"
+
+            [[part]]
+            name = "lead"
+            role = "melody"
+
+            [[part]]
+            name = "snare"
+            role = "snare"
+            "#,
+        );
+        let names: Vec<&str> = piece.buses.iter().map(|bus| bus.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["Room"],
+            "the snare wrote nothing, so there is no kit to bus"
+        );
+        assert!(
+            !piece.tracks.iter().any(|track| track.name == "snare"),
+            "a part that never plays leaves no track"
+        );
+        // The point of the whole exercise: nothing in the piece is a bus with no track feeding it.
+        for (index, bus) in piece.buses.iter().enumerate() {
+            assert!(
+                piece.tracks.iter().any(|track| {
+                    track.output == Some(index) || track.sends.iter().any(|send| send.bus == index)
+                }),
+                "nothing reaches the {} bus",
+                bus.name
+            );
+        }
+    }
+
+    #[test]
+    fn a_kit_that_plays_still_gets_its_bus() {
+        // The other half, so the fix above cannot pass by making no buses at all.
+        let piece = compose_text(BASE);
+        let names: Vec<&str> = piece.buses.iter().map(|bus| bus.name.as_str()).collect();
+        assert!(names.contains(&DRUM_BUS), "{names:?}");
+        let drums = names.iter().position(|name| *name == DRUM_BUS);
+        assert!(
+            piece
+                .tracks
+                .iter()
+                .any(|track| track.output == drums && track.name == "kick"),
+            "the kick goes to the drum bus"
+        );
     }
 
     #[test]
