@@ -1111,6 +1111,10 @@ impl Session {
     /// usually means. A name nothing answers to is an error rather than a quiet no-op — there is
     /// no nearest right answer to a misspelling, and stamping nothing while reporting success is
     /// the one outcome nobody could debug.
+    ///
+    /// The chart is read against the key in force where it lands, so a major-mode progression
+    /// dropped into a minor stretch names its chords from the relative key rather than having
+    /// its degrees read literally: the same loop, centred where the music is.
     pub fn stamp_named_progression(
         &mut self,
         name: &str,
@@ -1119,6 +1123,7 @@ impl Session {
     ) -> Result<usize, SessionError> {
         let chart =
             catalog(name).ok_or_else(|| SessionError::UnknownProgression(name.to_string()))?;
+        let chart = chart.spelled_in(self.project.harmony.key_at(from.max_zero()));
         let bars = if bars == 0 { chart.bar_count() } else { bars };
         Ok(self.stamp_progression(&chart, from, bars))
     }

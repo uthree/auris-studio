@@ -106,7 +106,11 @@ pub fn plan(spec: &SongSpec) -> Frame {
         let instance = *instance;
 
         let key = spec.key.transposed(section.transpose);
-        let chart = spec.chart_for(section).fit_to(section.bars);
+        // Read against the key before it is fitted to the bars: a progression quoted by name is
+        // written in a mode, and asked for in the other one it names its chords from the
+        // relative key rather than reading its degrees literally. 丸サ進行 in C minor is the loop
+        // centred on C minor, not four degrees of an aeolian scale.
+        let chart = spec.chart_for(section).spelled_in(key).fit_to(section.bars);
         let mut events = chart.resolve(key, grid.bar_ticks());
 
         // A chart the user wrote or quoted is played as written. Only a chart the composer made

@@ -1244,7 +1244,16 @@ impl From<&SongSpec> for SongDoc {
                 // out is what gives the composer the same freedom when this is read back — a
                 // written one would come back marked as quoted, and never be coloured again.
                 .filter(|(_, chart)| chart.origin == ChartOrigin::Given)
-                .map(|(name, chart)| (name.clone(), chart.to_string()))
+                // A quotation is written back as the quotation. Spelling its bars out would be
+                // longer to read and would lose the *mode* it was written in, which is what
+                // lets 丸サ進行 be asked for in a minor key and still be 丸サ進行.
+                .map(|(name, chart)| {
+                    let text = match &chart.quoted_as {
+                        Some(quoted) => format!("@{quoted}"),
+                        None => chart.to_string(),
+                    };
+                    (name.clone(), text)
+                })
                 .collect(),
             section: spec
                 .sections
@@ -1483,6 +1492,25 @@ mod tests {
         assert_eq!(spec.key.to_text(), "F# minor");
         let chart = SongSpec::parse("chords = \"| #iv | V |\"  # a comment").unwrap();
         assert_eq!(chart.charts["main"].bar_count(), 2);
+    }
+
+    #[test]
+    fn a_quotation_is_written_back_as_the_quotation() {
+        // Spelling its bars out would be longer to read and would lose the *mode* the
+        // progression was written in — which is what lets 丸サ進行 be asked for in a minor key
+        // and still come out 丸サ進行 rather than four degrees read against an aeolian scale.
+        let spec = SongSpec::parse("chords = \"@marusa\"").unwrap();
+        let written = spec.to_toml();
+        assert!(written.contains("main = \"@marusa\""), "{written}");
+        assert_eq!(SongSpec::parse(&written).unwrap(), spec);
+
+        // A repeat count comes with it, or the chart would come back half as long.
+        let doubled = SongSpec::parse("chords = \"@axis x2\"").unwrap();
+        assert_eq!(doubled.charts["main"].bar_count(), 8);
+        assert_eq!(
+            SongSpec::parse(&doubled.to_toml()).unwrap().charts["main"].bar_count(),
+            8
+        );
     }
 
     #[test]

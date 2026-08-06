@@ -18,6 +18,18 @@ pub struct Chart {
     pub bars: Vec<Vec<Numeral>>,
     /// Where the chart came from, which decides whether it may be rewritten.
     pub origin: ChartOrigin,
+    /// The mode the numerals are written in, when the chart knows.
+    ///
+    /// `None` for a chart somebody wrote out by hand: those are the degrees they meant, and
+    /// nothing should second-guess them. A catalogue entry does know, and [`Self::spelled_in`]
+    /// is what it knows it for.
+    pub mode: Option<ChartMode>,
+    /// The catalogue name this was quoted from, without the `@`, and with any repeat count.
+    ///
+    /// So that a document that said `@marusa` can be written back saying `@marusa` rather than
+    /// four bars of numerals — which is both shorter to read and the only way the *mode* comes
+    /// back with it, since a spelled-out chart cannot say which mode it was written in.
+    pub quoted_as: Option<String>,
 }
 
 /// Where a chart came from.
@@ -32,10 +44,85 @@ pub enum ChartOrigin {
     Generated,
 }
 
+/// The mode a progression's degrees are written against.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ChartMode {
+    /// `I` is the tonic and `vi` its relative minor: the ordinary major-key chart.
+    Major,
+    /// `i` is the tonic: `| i | bVI | bIII | bVII |` and its kind.
+    Minor,
+}
+
+impl ChartMode {
+    /// Which mode a key is in.
+    pub fn of(key: Key) -> Self {
+        if key.is_minor() {
+            Self::Minor
+        } else {
+            Self::Major
+        }
+    }
+
+    /// `true` when a chart in this mode can be read against `key` as written.
+    pub fn suits(self, key: Key) -> bool {
+        Self::of(key) == self
+    }
+}
+
 impl Chart {
-    /// A chart from bars of numerals.
+    /// A chart from bars of numerals, in no declared mode.
     pub fn new(bars: Vec<Vec<Numeral>>, origin: ChartOrigin) -> Self {
-        Self { bars, origin }
+        Self {
+            bars,
+            origin,
+            mode: None,
+            quoted_as: None,
+        }
+    }
+
+    /// The same chart, saying which mode its degrees are written against.
+    pub fn written_in(self, mode: ChartMode) -> Self {
+        Self {
+            mode: Some(mode),
+            ..self
+        }
+    }
+
+    /// The same progression, its numerals read against `key`.
+    ///
+    /// A named progression is written in a mode, and asking for it in the other one used to read
+    /// its degrees literally — so 丸サ進行 in C minor came out Fmaj7 – Eb7 – Abm7 – C7, which
+    /// shares one chord with the loop anybody means by the name and lands nowhere near it. The
+    /// chords are what a quoted progression *is*, so the numerals are resolved against the
+    /// relative key they were written for and renamed for the key the piece is in: the same four
+    /// chords, centred where the piece is centred.
+    ///
+    /// A chart nobody named — one written out by hand — declares no mode and is returned
+    /// unchanged. Those are the degrees the person meant.
+    pub fn spelled_in(&self, key: Key) -> Self {
+        let Some(mode) = self.mode else {
+            return self.clone();
+        };
+        if mode.suits(key) {
+            return self.clone();
+        }
+        let written_for = key.relative();
+        Self {
+            bars: self
+                .bars
+                .iter()
+                .map(|bar| {
+                    bar.iter()
+                        .map(|numeral| numeral.respelled_in(written_for, key))
+                        .collect()
+                })
+                .collect(),
+            origin: self.origin,
+            mode: Some(ChartMode::of(key)),
+            // Still the same quotation: the name is what these numerals were derived from, and
+            // reading it again in the same key gives them back.
+            quoted_as: self.quoted_as.clone(),
+        }
     }
 
     /// How many bars the chart occupies.
@@ -69,14 +156,16 @@ impl Chart {
                 None => (rest.trim(), 1),
             };
             let chart = catalog(name)?;
-            let bars = chart
-                .bars
-                .iter()
-                .cycle()
-                .take(chart.bars.len() * repeats.max(1))
-                .cloned()
-                .collect();
-            return Some(Self::new(bars, ChartOrigin::Given));
+            let quoted = chart.quoted_as.clone().unwrap_or_else(|| name.to_string());
+            let quoted = if repeats > 1 {
+                format!("{quoted} x{repeats}")
+            } else {
+                quoted
+            };
+            return Some(Chart {
+                quoted_as: Some(quoted),
+                ..chart.fit_to(chart.bars.len() * repeats.max(1))
+            });
         }
 
         let mut bars = Vec::new();
@@ -99,11 +188,18 @@ impl Chart {
     /// Repeating rather than stretching: a four-bar loop under an eight-bar verse is played
     /// twice, which is what every band does and what every listener expects.
     pub fn fit_to(&self, bars: usize) -> Self {
-        if self.bars.is_empty() || bars == 0 {
-            return Self::new(Vec::new(), self.origin);
+        let fitted = if self.bars.is_empty() || bars == 0 {
+            Vec::new()
+        } else {
+            self.bars.iter().cycle().take(bars).cloned().collect()
+        };
+        Self {
+            bars: fitted,
+            // A chart cut or repeated to a different length is no longer the quoted one, and
+            // writing its name back out would give the wrong number of bars.
+            quoted_as: None,
+            ..self.clone()
         }
-        let fitted = self.bars.iter().cycle().take(bars).cloned().collect();
-        Self::new(fitted, self.origin)
     }
 
     /// Where each chord falls, laid out from tick zero, before it is read against any key.
@@ -234,6 +330,8 @@ pub struct CatalogEntry {
     pub description: &'static str,
     /// The chart, in the notation [`Chart::parse`] reads.
     pub chart: &'static str,
+    /// Which mode its degrees are written against, so it can be quoted into the other one.
+    pub mode: ChartMode,
 }
 
 /// Every progression the composer knows by name.
@@ -245,81 +343,97 @@ pub const CATALOG: &[CatalogEntry] = &[
         name: "axis",
         description: "The four chords of a thousand pop songs",
         chart: "| I | V | vi | IV |",
+        mode: ChartMode::Major,
     },
     CatalogEntry {
         name: "axis-minor",
         description: "The same four chords starting from the relative minor",
         chart: "| vi | IV | I | V |",
+        mode: ChartMode::Major,
     },
     CatalogEntry {
         name: "epic",
         description: "The minor axis: dark, modal, and everywhere in game music",
         chart: "| i | bVI | bIII | bVII |",
+        mode: ChartMode::Minor,
     },
     CatalogEntry {
         name: "komuro",
         description: "小室進行: minor start resolving to major",
         chart: "| vi | IV | V | I |",
+        mode: ChartMode::Major,
     },
     CatalogEntry {
         name: "marusa",
         description: "丸サ進行: the Just-the-Two-of-Us loop that never lands on a tonic",
         chart: "| IVmaj7 | III7 | vi7 | I7 |",
+        mode: ChartMode::Major,
     },
     CatalogEntry {
         name: "marusa5",
         description: "丸サ進行 with the ii-V into the subdominant spelled out",
         chart: "| IVmaj7 | III7 | vi7 | v7 I7 |",
+        mode: ChartMode::Major,
     },
     CatalogEntry {
         name: "royal-road",
         description: "王道進行 (4536): the J-pop staple",
         chart: "| IVmaj7 | V7 | iii7 | vi |",
+        mode: ChartMode::Major,
     },
     CatalogEntry {
         name: "koakuma",
         description: "小悪魔進行: 王道進行 with the dominant over a subdominant pedal",
         chart: "| IVmaj7 | V/4 | iii7 | vi |",
+        mode: ChartMode::Major,
     },
     CatalogEntry {
         name: "naki",
         description: "泣きの進行: the royal road with a secondary dominant in its third bar",
         chart: "| IV | V | III7 | vi |",
+        mode: ChartMode::Major,
     },
     CatalogEntry {
         name: "canon",
         description: "カノン進行, after Pachelbel",
         chart: "| I | V | vi | iii | IV | I | IV | V |",
+        mode: ChartMode::Major,
     },
     CatalogEntry {
         name: "junjo",
         description: "純情進行: the canon over a stepwise descending bass",
         chart: "| I | V/7 | vi | iii/5 | IV | I/3 | ii | V |",
+        mode: ChartMode::Major,
     },
     CatalogEntry {
         name: "doo-wop",
         description: "The fifties progression",
         chart: "| I | vi | IV | V |",
+        mode: ChartMode::Major,
     },
     CatalogEntry {
         name: "ii-v-i",
         description: "The cadence jazz is built on",
         chart: "| ii7 | V7 | Imaj7 | Imaj7 |",
+        mode: ChartMode::Major,
     },
     CatalogEntry {
         name: "blues",
         description: "Twelve-bar blues with a quick change and a turnaround",
         chart: "| I7 | IV7 | I7 | I7 | IV7 | IV7 | I7 | I7 | V7 | IV7 | I7 | V7 |",
+        mode: ChartMode::Major,
     },
     CatalogEntry {
         name: "andalusian",
         description: "The descending tetrachord: i bVII bVI V",
         chart: "| i | bVII | bVI | V |",
+        mode: ChartMode::Minor,
     },
     CatalogEntry {
         name: "sad-loop",
         description: "A four-bar loop that keeps turning back on itself",
         chart: "| vi | IV | I | V |",
+        mode: ChartMode::Major,
     },
 ];
 
@@ -340,7 +454,14 @@ pub fn catalog(name: &str) -> Option<Chart> {
     CATALOG
         .iter()
         .find(|entry| entry.name == normalised)
-        .and_then(|entry| Chart::parse(entry.chart))
+        .and_then(|entry| {
+            Chart::parse(entry.chart).map(|chart| Chart {
+                // The canonical name, not the one that was asked for, so `@丸サ進行` and
+                // `@marusa` are the same chart rather than two that merely sound alike.
+                quoted_as: Some(entry.name.to_string()),
+                ..chart.written_in(entry.mode)
+            })
+        })
 }
 
 #[cfg(test)]
@@ -444,13 +565,17 @@ mod tests {
             ["Fmaj7", "E7", "Am7", "C7"],
             "丸サ進行 in C"
         );
-        // Read literally against a minor key, degree by degree — which is what quoting a
-        // major-key progression into one asks for. `vi7` used to come out Abmaj7 here, a major
-        // third above a root the chart writes in lower case.
+        // Read literally against a minor key, degree by degree. Nobody asks for that — see
+        // `a_named_progression_is_the_same_loop_in_the_other_mode` — but it is what the numerals
+        // say, and `vi7` used to come out Abmaj7 here: a major third above a root written in
+        // lower case.
         assert_eq!(
-            chord_names(&catalog("marusa").unwrap(), "C minor"),
+            chord_names(
+                &catalog("marusa").unwrap().written_in(ChartMode::Minor),
+                "C minor"
+            ),
             ["Fmaj7", "Eb7", "Abm7", "C7"],
-            "丸サ進行 in C minor"
+            "丸サ進行 in C minor, if its degrees were taken at face value"
         );
         assert_eq!(
             chord_names(&catalog("royal-road").unwrap(), "C major"),
@@ -519,5 +644,102 @@ mod tests {
         assert!(Chart::parse("| I | nonsense |").is_none());
         assert!(Chart::parse("").is_none());
         assert!(Chart::parse("| |").is_none());
+    }
+
+    /// The chords a chart makes in `key`, read the way the composer reads it.
+    fn played_in(chart: &Chart, key_text: &str) -> Vec<String> {
+        let key = key(key_text);
+        chart
+            .spelled_in(key)
+            .resolve(key, BAR)
+            .iter()
+            .map(|event| event.chord.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_named_progression_is_the_same_loop_in_the_other_mode() {
+        // 丸サ進行 is those four chords. Asked for in a minor key, reading its degrees literally
+        // gave Fmaj7 – Eb7 – Abm7 – C7, which shares one chord with the loop anybody means by
+        // the name and lands nowhere near it. The relative key is where a major-mode chart is
+        // written when the piece is minor: the same four chords, centred where the piece is.
+        assert_eq!(
+            played_in(&catalog("marusa").unwrap(), "C minor"),
+            ["Abmaj7", "G7", "Cm7", "Eb7"],
+            "丸サ進行 centred on C minor"
+        );
+        // Which is E flat major's — the relative — chord for chord.
+        assert_eq!(
+            played_in(&catalog("marusa").unwrap(), "C minor"),
+            played_in(&catalog("marusa").unwrap(), "Eb major"),
+        );
+        // And in A minor it is C major's, which is the famous voicing itself: the loop is the
+        // one that never lands on a tonic, so either name for the key is right about it.
+        assert_eq!(
+            played_in(&catalog("marusa").unwrap(), "A minor"),
+            ["Fmaj7", "E7", "Am7", "C7"],
+        );
+
+        // The numerals come back spelled for the key the piece is in, so the lane and the
+        // chords agree about the same bar rather than one of them quietly using another key.
+        let respelled: Vec<String> = catalog("marusa")
+            .unwrap()
+            .spelled_in(key("C minor"))
+            .bars
+            .iter()
+            .flatten()
+            .map(|numeral| numeral.to_text())
+            .collect();
+        assert_eq!(respelled, ["VImaj7", "V7", "i7", "III7"]);
+    }
+
+    #[test]
+    fn a_minor_mode_entry_travels_the_other_way_too() {
+        // The rule is not "major charts get moved": it is that a quotation keeps its chords.
+        assert_eq!(
+            played_in(&catalog("epic").unwrap(), "C minor"),
+            ["Cm", "Ab", "Eb", "Bb"],
+            "written for a minor key, so C minor reads it as it stands"
+        );
+        assert_eq!(
+            played_in(&catalog("epic").unwrap(), "C major"),
+            ["Am", "F", "C", "G"],
+            "and in a major key it is the loop on the relative minor"
+        );
+    }
+
+    #[test]
+    fn a_chart_written_out_by_hand_is_taken_at_face_value() {
+        // Nobody named it, so nothing knows what mode it is in — and the person who typed the
+        // degrees meant those degrees.
+        let hand = Chart::parse("| i | bVI | bIII | bVII |").unwrap();
+        assert_eq!(hand.mode, None);
+        assert_eq!(played_in(&hand, "C minor"), ["Cm", "Ab", "Eb", "Bb"]);
+        assert_eq!(
+            played_in(&hand, "C major"),
+            ["Cm", "Ab", "Eb", "Bb"],
+            "the same degrees, whatever the key calls itself"
+        );
+    }
+
+    #[test]
+    fn a_quotation_remembers_the_name_it_was_quoted_from() {
+        // Which is how the mode survives being written to a file: a chart spelled out in
+        // numerals cannot say which mode it was written in, and a name can.
+        assert_eq!(
+            Chart::parse("@marusa").unwrap().quoted_as.as_deref(),
+            Some("marusa")
+        );
+        assert_eq!(
+            Chart::parse("@丸サ進行").unwrap().quoted_as.as_deref(),
+            Some("marusa"),
+            "the canonical name, not the one that was asked for"
+        );
+        assert_eq!(
+            Chart::parse("@axis x2").unwrap().quoted_as.as_deref(),
+            Some("axis x2"),
+            "the repeat count too, or the chart would come back half as long"
+        );
+        assert_eq!(Chart::parse("| I | V |").unwrap().quoted_as, None);
     }
 }

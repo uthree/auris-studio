@@ -80,6 +80,23 @@ impl Key {
         self.scale.is_minor()
     }
 
+    /// The key with the same notes and the other mode.
+    ///
+    /// A minor key's relative major is a minor third above it, a major key's relative minor a
+    /// minor third below. This is where a progression written in one mode goes to be read in the
+    /// other: 丸サ進行 asked for in C minor is the loop centred on C minor, which is the loop of
+    /// E flat major, and not its own degrees read against an aeolian scale.
+    ///
+    /// A mode is treated as major or minor by its third — the same approximation
+    /// [`Self::spelling`] makes, and for the same reason: it only ever picks a direction.
+    pub fn relative(self) -> Self {
+        if self.is_minor() {
+            Self::new(self.tonic.transposed(3), ScaleId::Major)
+        } else {
+            Self::new(self.tonic.transposed(-3), ScaleId::Minor)
+        }
+    }
+
     /// How the key is written back out.
     pub fn to_text(self) -> String {
         format!("{} {}", self.tonic.name(self.spelling()), self.scale.name())
@@ -136,6 +153,23 @@ impl TryFrom<String> for Key {
 mod tests {
     use super::super::pitch::Spelling;
     use super::*;
+
+    #[test]
+    fn the_relative_key_has_the_same_notes_and_the_other_mode() {
+        let relative = |text: &str| Key::parse(text).unwrap().relative().to_text();
+        assert_eq!(relative("C minor"), "Eb major");
+        assert_eq!(relative("A minor"), "C major");
+        assert_eq!(relative("C major"), "A minor");
+        assert_eq!(relative("Eb major"), "C minor");
+        // There and back again, for every key there is.
+        for tonic in 0..12 {
+            for scale in [ScaleId::Major, ScaleId::Minor] {
+                let key = Key::new(PitchClass::new(tonic), scale);
+                assert_eq!(key.relative().relative(), key, "{}", key.to_text());
+                assert_ne!(key.is_minor(), key.relative().is_minor());
+            }
+        }
+    }
 
     #[test]
     fn a_key_can_be_written_with_or_without_its_mode() {

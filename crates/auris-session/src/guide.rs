@@ -722,6 +722,15 @@ pub mod harmony {
     //! timeline uneditable: changing one chord of bar six would mean editing a pattern that also
     //! governs bars two and ten.
     //!
+    //! A quoted chart follows its **chords** rather than its degrees. Each catalogue entry says
+    //! which mode it was written in, and
+    //! [`Chart::spelled_in`](auris_core::theory::chart::Chart::spelled_in) reads it against the
+    //! relative key when the music is in the other one — so 丸サ進行 asked for in C minor is
+    //! Abmaj7, G7, Cm7, Eb7, the loop centred where the piece is, and not its degrees read
+    //! against an aeolian scale. That is the same principle as never recolouring a quotation:
+    //! the whole value of naming a progression is that it comes out sounding like itself. A
+    //! chart somebody wrote out by hand declares no mode and is taken at face value.
+    //!
     //! # Clips that write themselves
     //!
     //! A [`MidiClip`](auris_core::MidiClip) may carry a

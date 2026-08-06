@@ -356,6 +356,14 @@ written out in roman numerals (`| IVmaj7 | III7 | vi7 | I7 |`) in any key. A quo
 never recoloured, because the whole point of naming one is that it comes out sounding like
 itself.
 
+That is also why a quotation follows its **chords** rather than its degrees when the key is in
+the other mode. 丸サ進行 is written for a major key; asked for in C minor it is read against the
+relative — Abmaj7, G7, Cm7, Eb7, the loop centred where the piece is — and not `IVmaj7 III7 vi7
+I7` of an aeolian scale, which shares one chord with it and lands nowhere near. It travels the
+other way just as well: `@epic`, written in minor degrees, is the loop on the relative minor when
+a piece is in major. A progression you write out yourself declares no mode and is taken at face
+value, because those are the degrees you meant.
+
 Each part is built from one short figure invented per section and then restated bar after bar,
 which is what gives a section something an ear can hold on to; the fourth bar of every phrase
 answers it rather than repeating it again. A section played twice is the same section both times —

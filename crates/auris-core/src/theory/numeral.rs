@@ -199,6 +199,43 @@ impl Numeral {
         })
     }
 
+    /// The same chord, named from a different key.
+    ///
+    /// This is what lets a progression written in one mode be asked for in the other. The chords
+    /// are what a quoted progression *is* — 丸サ進行 is the loop those four chords make, not the
+    /// four degrees somebody wrote them as — so the chord is resolved in the key it was written
+    /// for and then renamed against the key the piece is actually in.
+    ///
+    /// The shape as written is kept wherever the new key reads it the same way, because `V7` is
+    /// worth more to a reader than a numeral that is merely correct. Where it does not, the
+    /// quality is spelled out, which is the only way to name a chord a key would not have given.
+    pub fn respelled_in(self, from: Key, to: Key) -> Self {
+        let chord = self.chord_in(from);
+        let (degree, accidental) = degree_of(to, chord.root);
+        let bass_degree = chord.bass.map(|bass| degree_of(to, bass).0);
+        // A secondary dominant is dropped rather than carried: `/V` names a degree of the key it
+        // was written for, and the chord it stands for is already in hand.
+        let as_written = Self {
+            degree,
+            accidental,
+            bass_degree,
+            secondary_of: None,
+            ..self
+        };
+        if as_written.chord_in(to) == chord {
+            return as_written;
+        }
+        Self {
+            degree,
+            accidental,
+            minor_case: chord.quality.is_minor(),
+            quality: Some(chord.quality),
+            extension: None,
+            secondary_of: None,
+            bass_degree,
+        }
+    }
+
     /// The chord this numeral means in `key`.
     pub fn chord_in(self, key: Key) -> Chord {
         if let Some((target, alteration)) = self.secondary_of {
@@ -410,6 +447,31 @@ fn degree_class(key: Key, degree: u8, accidental: i32) -> PitchClass {
         let major = Key::new(key.tonic, super::scale::ScaleId::Major);
         major.class(index).transposed(accidental)
     }
+}
+
+/// The degree of `key` that names `class`, and the accidental it needs.
+///
+/// The inverse of the reading [`Numeral::chord_in`] does, and it has to agree with it exactly or
+/// a numeral would not survive being renamed. A note the key has is named plainly; anything else
+/// is named from the degree of the **major** scale nearest to it, which is the convention roman
+/// numeral analysis uses and the one that is read back.
+pub fn degree_of(key: Key, class: PitchClass) -> (u8, i32) {
+    let key = harmonic_key(key);
+    for degree in 1..=7u8 {
+        if key.class(i32::from(degree) - 1) == class {
+            return (degree, 0);
+        }
+    }
+    let major = Key::new(key.tonic, super::scale::ScaleId::Major);
+    // Flat before sharp, and one accidental before two: `bVI` is how everybody writes that note.
+    for accidental in [-1, 1, -2, 2] {
+        for degree in 1..=7u8 {
+            if major.class(i32::from(degree) - 1).transposed(accidental) == class {
+                return (degree, accidental);
+            }
+        }
+    }
+    (1, 0)
 }
 
 /// The seventh chord the key itself builds on `degree`, by stacking four scale thirds.
