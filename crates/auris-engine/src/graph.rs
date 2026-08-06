@@ -1631,7 +1631,9 @@ fn event_rank(event: &NoteEvent) -> u8 {
         NoteEvent::NoteOff { .. }
         | NoteEvent::AllNotesOff { .. }
         | NoteEvent::AllSoundOff { .. } => 0,
-        NoteEvent::PitchBend { .. } => 1,
+        // Controller state before the strike, so a note landing on the same frame as the curve
+        // that shapes it is already being shaped when it starts.
+        NoteEvent::PitchBend { .. } | NoteEvent::Modulation { .. } => 1,
         NoteEvent::NoteOn { .. } => 2,
     }
 }
@@ -1720,7 +1722,7 @@ fn max_sounding_notes(events: &[ScheduledEvent]) -> usize {
             }
             NoteEvent::NoteOff { .. } => sounding = sounding.saturating_sub(1),
             NoteEvent::AllNotesOff { .. } | NoteEvent::AllSoundOff { .. } => sounding = 0,
-            NoteEvent::PitchBend { .. } => {}
+            NoteEvent::PitchBend { .. } | NoteEvent::Modulation { .. } => {}
         }
     }
     most

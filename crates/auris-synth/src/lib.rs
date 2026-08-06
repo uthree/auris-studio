@@ -40,6 +40,7 @@
 pub mod chiptune;
 pub mod envelope;
 pub mod fm2;
+pub mod lfo;
 pub mod noisedrum;
 pub mod oscillator;
 pub mod pack;

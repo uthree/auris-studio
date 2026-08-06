@@ -52,6 +52,7 @@ const CONTROL_CHANGE: i32 = 0xB0;
 const PROGRAM_CHANGE: i32 = 0xC0;
 const PITCH_BEND: i32 = 0xE0;
 const CC_BANK_SELECT: i32 = 0x00;
+const CC_MODULATION: i32 = 0x01;
 const CC_DATA_ENTRY: i32 = 0x06;
 const CC_RPN_LSB: i32 = 0x64;
 const CC_RPN_MSB: i32 = 0x65;
@@ -294,6 +295,14 @@ impl Sampler {
                 let travel = (semitones / BEND_RANGE as f32).clamp(-1.0, 1.0);
                 let raw = (8192.0 + travel * 8191.0).round().clamp(0.0, 16383.0) as i32;
                 synth.process_midi_message(CHANNEL, PITCH_BEND, raw & 0x7F, (raw >> 7) & 0x7F);
+            }
+            NoteEvent::Modulation { amount, .. } => {
+                // Handed straight to the font rather than interpreted. A SoundFont declares its
+                // own modulators, and controller 1 is conventionally wired to a vibrato depth in
+                // every General MIDI set — but a font is free to have wired it to a filter, and
+                // what it was authored to do is what it should do.
+                let raw = (amount.clamp(0.0, 1.0) * 127.0).round() as i32;
+                synth.process_midi_message(CHANNEL, CONTROL_CHANGE, CC_MODULATION, raw);
             }
         }
     }

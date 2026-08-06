@@ -136,7 +136,7 @@ impl ConstantTone {
             NoteEvent::NoteOn { .. } => self.held += 1,
             NoteEvent::NoteOff { .. } => self.held = self.held.saturating_sub(1),
             NoteEvent::AllNotesOff { .. } | NoteEvent::AllSoundOff { .. } => self.held = 0,
-            NoteEvent::PitchBend { .. } => {}
+            NoteEvent::PitchBend { .. } | NoteEvent::Modulation { .. } => {}
         }
     }
 }

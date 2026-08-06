@@ -590,11 +590,23 @@ Deliberately simple chiptune voices, enough to hear the engine working:
 
 | Id | Name | What it is |
 | --- | --- | --- |
-| `auris.synth.chiptune` | Chiptune | Sine / square / saw / triangle / LFSR noise with pulse width, ADSR, glide, unison and bit-crush |
+| `auris.synth.chiptune` | Chiptune | Sine / square / saw / triangle / LFSR noise with pulse width, ADSR, glide, vibrato, unison and bit-crush |
 | `auris.synth.fm2` | FM 2-Op | A two-operator FM voice, included to show a different synthesis method dropping in unchanged |
 | `auris.synth.noisedrum` | Noise Drum | Pitch-swept noise through a band-pass, for percussion |
 
 Square and saw are PolyBLEP band-limited, so high notes stay clean instead of aliasing.
+
+Both pitched voices have a **vibrato**, in three controls: **Vibrato Rate** in hertz, **Vibrato**
+— how far this *sound* wobbles, whatever anybody is doing with a controller — and **Mod Depth**,
+how much further the modulation wheel can push it. `Vibrato` starts at zero, so a patch nobody has
+touched sounds exactly as it did before any of this existed; `Mod Depth` starts at half a semitone,
+because a wheel that does nothing until a parameter is found is a wheel nobody discovers.
+
+The LFO is per voice and restarted at each note on, so a chord struck together wobbles together —
+a single instrument-wide one would have every note somewhere different in its cycle, and the chord
+would arrive detuned by however far the wheel happened to be up. It keeps running when the depth is
+zero, so turning the wheel up mid-note picks the cycle up where it would have been instead of
+jumping.
 
 A plugin carrying all four of attack, decay, sustain and release draws them as **the shape they
 are**, above its sliders: a polyline with a handle on each corner, dragged the way Logic drags one.

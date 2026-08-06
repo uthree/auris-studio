@@ -291,6 +291,11 @@ impl ParamDescriptor {
             ParamUnit::Hertz => {
                 if value >= 1000.0 {
                     format!("{:.2} kHz", value / 1000.0)
+                } else if value < 20.0 {
+                    // Below hearing, so this is a modulation rate rather than a pitch or a filter
+                    // corner — and there the whole of the useful range is one decade wide. Rounded
+                    // to a whole number, a vibrato at 5.5 Hz and one at 6.4 Hz read the same.
+                    format!("{value:.1} Hz")
                 } else {
                     format!("{value:.0} Hz")
                 }

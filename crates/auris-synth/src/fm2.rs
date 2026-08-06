@@ -8,6 +8,7 @@ use auris_core::{
 };
 
 use crate::envelope::Adsr;
+use crate::lfo::Lfo;
 use crate::oscillator::{Oscillator, RADIANS_TO_CYCLES, Waveform};
 use crate::params::{ParamBank, finite_or};
 use crate::render::{SegmentRenderer, render_segments, spread_to_all_channels};
@@ -23,7 +24,10 @@ const P_ATTACK: u32 = 3;
 const P_DECAY: u32 = 4;
 const P_SUSTAIN: u32 = 5;
 const P_RELEASE: u32 = 6;
-const P_LEVEL: u32 = 7;
+const P_VIBRATO_RATE: u32 = 7;
+const P_VIBRATO: u32 = 8;
+const P_MOD_DEPTH: u32 = 9;
+const P_LEVEL: u32 = 10;
 
 /// Widest pitch bend followed, in semitones.
 const MAX_BEND_SEMITONES: f32 = 24.0;
@@ -49,6 +53,8 @@ struct Fm2Voice {
     carrier: Oscillator,
     modulator: Oscillator,
     envelope: Adsr,
+    /// The vibrato, restarted at every note on so a chord wobbles together.
+    vibrato: Lfo,
     /// Drives the modulation depth. Its sustain is zero, which is what gives 2-op FM its
     /// characteristic bright attack settling into a near-sine body.
     mod_envelope: Adsr,
@@ -66,10 +72,13 @@ impl Fm2Voice {
         let mut mod_envelope = Adsr::new();
         envelope.set_sample_rate(sample_rate);
         mod_envelope.set_sample_rate(sample_rate);
+        let mut vibrato = Lfo::new();
+        vibrato.set_sample_rate(sample_rate);
         Self {
             carrier,
             modulator,
             envelope,
+            vibrato,
             mod_envelope,
             pitch: 69.0,
             velocity: 0.0,
@@ -98,6 +107,10 @@ pub struct Fm2 {
     /// Modulation index converted from radians of peak phase deviation to cycles.
     index_cycles: f32,
     bend: f32,
+    /// Most recent modulation, 0 to 1.
+    modulation: f32,
+    /// How far the vibrato swings right now, in semitones.
+    vibrato_depth: f32,
     output_gain: f32,
 }
 
@@ -121,6 +134,8 @@ impl Fm2 {
             ratio: 2.0,
             index_cycles: 0.0,
             bend: 0.0,
+            modulation: 0.0,
+            vibrato_depth: 0.0,
             output_gain: 1.0,
         };
         synth.refresh();
@@ -131,6 +146,9 @@ impl Fm2 {
         self.ratio = self.params.at(P_RATIO);
         self.index_cycles = self.params.at(P_INDEX) * RADIANS_TO_CYCLES;
         self.output_gain = db_to_gain(self.params.at(P_LEVEL));
+        self.vibrato_depth =
+            self.params.at(P_VIBRATO) + self.params.at(P_MOD_DEPTH) * self.modulation;
+        let vibrato_rate = self.params.at(P_VIBRATO_RATE);
 
         let (attack, decay) = (self.params.at(P_ATTACK), self.params.at(P_DECAY));
         let (sustain, release) = (self.params.at(P_SUSTAIN), self.params.at(P_RELEASE));
@@ -140,6 +158,7 @@ impl Fm2 {
             voice
                 .mod_envelope
                 .set_adsr(MOD_ATTACK_SECONDS, mod_decay, 0.0, MOD_RELEASE_SECONDS);
+            voice.vibrato.set_rate(vibrato_rate);
         }
     }
 
@@ -159,6 +178,7 @@ impl Fm2 {
             // reproducible note needs both to start together — safe only on a silent voice.
             voice.carrier.reset();
             voice.modulator.reset();
+            voice.vibrato.reset();
         }
         voice.envelope.trigger();
         voice.mod_envelope.trigger();
@@ -194,6 +214,28 @@ fn descriptors() -> Vec<ParamDescriptor> {
         ParamDescriptor::new(P_RELEASE, "release", "Release", 0.0, 4.0, 0.25)
             .with_unit(ParamUnit::Seconds)
             .with_curve(ParamValueCurve::Power(3.0)),
+        ParamDescriptor::new(
+            P_VIBRATO_RATE,
+            "vibrato_rate",
+            "Vibrato Rate",
+            0.1,
+            12.0,
+            5.5,
+        )
+        .with_unit(ParamUnit::Hertz),
+        ParamDescriptor::new(P_VIBRATO, "vibrato", "Vibrato", 0.0, 2.0, 0.0)
+            .with_unit(ParamUnit::Semitones)
+            .with_curve(ParamValueCurve::Power(2.0)),
+        ParamDescriptor::new(
+            P_MOD_DEPTH,
+            "mod_depth",
+            "Mod Depth",
+            0.0,
+            2.0,
+            crate::chiptune::DEFAULT_MOD_DEPTH,
+        )
+        .with_unit(ParamUnit::Semitones)
+        .with_curve(ParamValueCurve::Power(2.0)),
         ParamDescriptor::decibels(P_LEVEL, "level", "Level", -60.0, 6.0, -9.0),
     ]
 }
@@ -241,6 +283,10 @@ impl SegmentRenderer for Fm2 {
                 self.bend =
                     finite_or(semitones, 0.0).clamp(-MAX_BEND_SEMITONES, MAX_BEND_SEMITONES);
             }
+            NoteEvent::Modulation { amount, .. } => {
+                self.modulation = finite_or(amount, 0.0).clamp(0.0, 1.0);
+                self.refresh();
+            }
         }
     }
 
@@ -256,6 +302,7 @@ impl SegmentRenderer for Fm2 {
         let ratio = self.ratio;
         let index_cycles = self.index_cycles;
         let bend = self.bend;
+        let vibrato_depth = self.vibrato_depth;
 
         for (slot, voice) in self.voices.iter_mut().enumerate() {
             if !voice.envelope.is_active() {
@@ -267,6 +314,19 @@ impl SegmentRenderer for Fm2 {
             let gain = voice.velocity;
 
             for sample in dst.iter_mut() {
+                // Both operators move together, so the ratio between them — which is the whole
+                // of the timbre — is unchanged by the wobble.
+                let swing = match vibrato_depth > 0.0 {
+                    true => (voice.vibrato.next() * vibrato_depth / 12.0).exp2(),
+                    false => {
+                        voice.vibrato.next();
+                        1.0
+                    }
+                };
+                if swing != 1.0 {
+                    voice.carrier.set_frequency(frequency * swing);
+                    voice.modulator.set_frequency(frequency * swing * ratio);
+                }
                 let depth = voice.mod_envelope.process() * index_cycles;
                 let offset = voice.modulator.next(Waveform::Sine) * depth;
                 let carrier = voice.carrier.next_modulated(Waveform::Sine, offset);
@@ -310,6 +370,7 @@ impl Instrument for Fm2 {
         }
         self.allocator.prepare(VOICE_COUNT);
         self.bend = 0.0;
+        self.modulation = 0.0;
         self.refresh();
     }
 
@@ -322,6 +383,7 @@ impl Instrument for Fm2 {
         }
         self.allocator.clear();
         self.bend = 0.0;
+        self.modulation = 0.0;
     }
 
     fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
@@ -368,7 +430,7 @@ mod tests {
         for (index, descriptor) in synth.parameters().iter().enumerate() {
             assert_eq!(descriptor.id.index(), index, "id of `{}`", descriptor.key);
         }
-        assert_eq!(synth.parameters().len(), 8);
+        assert_eq!(synth.parameters().len(), 11);
     }
 
     #[test]

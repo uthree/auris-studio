@@ -32,6 +32,22 @@ format rather than a convention: `## <version> — <date>`.
 * A build with nothing installed starts, runs and composes on the built-in instruments — which is
   what CI does on every commit.
 
+### The built-in instruments have a vibrato
+
+* **Vibrato Rate**, **Vibrato** and **Mod Depth** on the chiptune and the FM voice, and
+  `NoteEvent::Modulation` — MIDI controller 1 — for a wheel to reach them by. The sampler passes
+  it to the font, which is where a General MIDI set already has it wired to a vibrato of its own.
+* `Vibrato` is zero by default, so a patch nobody has touched sounds exactly as it did before this
+  existed and every piece already written is unchanged. `Mod Depth` is *not* zero — half a
+  semitone, what a mod wheel does on almost every synthesiser ever sold — because a wheel that
+  does nothing until a parameter is found is a wheel nobody discovers.
+* One LFO per voice, restarted at each note on, so a chord struck together wobbles together. A
+  single instrument-wide one would have every note somewhere different in its cycle, and the chord
+  would arrive detuned by however far the wheel happened to be up. It keeps running while the
+  depth is zero, so turning the wheel up mid-note picks the cycle up rather than jumping.
+* A modulation rate now reads as `5.5 Hz` rather than `6 Hz`: below hearing the useful range is one
+  decade wide, and rounded to a whole number half of it reads the same.
+
 ### The log has somewhere to go, and the release build has no terminal
 
 * **View → Log** (`⌘⌥L`) opens a panel holding the last five hundred records the application

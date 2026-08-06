@@ -259,6 +259,18 @@ pub enum NoteEvent {
         /// Bend amount in semitones.
         semitones: f32,
     },
+    /// Move the modulation wheel.
+    ///
+    /// MIDI controller 1, and channel state like the bend: an instrument holds the last value it
+    /// was given until it is given another. What an instrument *does* with it is the instrument's
+    /// own business — the built-in synths open a vibrato, and the sampler hands it to the font,
+    /// which may have been authored to do something else entirely with it.
+    Modulation {
+        /// Offset within the block.
+        frame: u32,
+        /// How far the wheel is up, 0 to 1.
+        amount: f32,
+    },
 }
 
 impl NoteEvent {
@@ -269,7 +281,8 @@ impl NoteEvent {
             | NoteEvent::NoteOff { frame, .. }
             | NoteEvent::AllNotesOff { frame }
             | NoteEvent::AllSoundOff { frame }
-            | NoteEvent::PitchBend { frame, .. } => frame,
+            | NoteEvent::PitchBend { frame, .. }
+            | NoteEvent::Modulation { frame, .. } => frame,
         }
     }
 
@@ -280,7 +293,8 @@ impl NoteEvent {
             | NoteEvent::NoteOff { frame, .. }
             | NoteEvent::AllNotesOff { frame }
             | NoteEvent::AllSoundOff { frame }
-            | NoteEvent::PitchBend { frame, .. } => *frame = new_frame,
+            | NoteEvent::PitchBend { frame, .. }
+            | NoteEvent::Modulation { frame, .. } => *frame = new_frame,
         }
         self
     }

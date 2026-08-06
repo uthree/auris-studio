@@ -8,6 +8,7 @@ use auris_core::{
 };
 
 use crate::envelope::{Adsr, SEGMENT_TIME_CONSTANTS};
+use crate::lfo::Lfo;
 use crate::oscillator::{Oscillator, Waveform};
 use crate::params::{ParamBank, finite_or};
 use crate::render::{SegmentRenderer, render_segments, spread_to_all_channels};
@@ -30,20 +31,33 @@ const P_DECAY: u32 = 5;
 const P_SUSTAIN: u32 = 6;
 const P_RELEASE: u32 = 7;
 const P_GLIDE: u32 = 8;
-const P_UNISON: u32 = 9;
-const P_SPREAD: u32 = 10;
-const P_BITS: u32 = 11;
-const P_LEVEL: u32 = 12;
+const P_VIBRATO_RATE: u32 = 9;
+const P_VIBRATO: u32 = 10;
+const P_MOD_DEPTH: u32 = 11;
+const P_UNISON: u32 = 12;
+const P_SPREAD: u32 = 13;
+const P_BITS: u32 = 14;
+const P_LEVEL: u32 = 15;
 
 /// Widest pitch bend the instrument will follow, in semitones. Two octaves covers every
 /// sensible bend range without letting a runaway controller push a voice past Nyquist.
 const MAX_BEND_SEMITONES: f32 = 24.0;
+
+/// How far the modulation wheel bends the pitch at the top of its travel, by default.
+///
+/// Half a semitone, which is what a mod wheel does on almost every synthesiser ever sold: enough
+/// to be unmistakably vibrato and short of the quarter-tone where it starts sounding out of tune.
+/// A patch that wants none sets it to zero — but the default is *not* zero, because a wheel that
+/// does nothing until a parameter is found is a wheel nobody discovers.
+pub const DEFAULT_MOD_DEPTH: f32 = 0.5;
 
 /// One voice's oscillators and envelope.
 #[derive(Clone, Debug)]
 struct ChiptuneVoice {
     oscillators: [Oscillator; MAX_UNISON],
     envelope: Adsr,
+    /// The vibrato, restarted at every note on so a chord wobbles together.
+    vibrato: Lfo,
     /// MIDI note the voice was started with, before octave, detune and bend.
     pitch: f32,
     /// Frequency the voice is sounding at right now; chases `target` when glide is on.
@@ -62,9 +76,12 @@ impl ChiptuneVoice {
         });
         let mut envelope = Adsr::new();
         envelope.set_sample_rate(sample_rate);
+        let mut vibrato = Lfo::new();
+        vibrato.set_sample_rate(sample_rate);
         Self {
             oscillators,
             envelope,
+            vibrato,
             pitch: 69.0,
             frequency: 440.0,
             target: 440.0,
@@ -89,6 +106,13 @@ pub struct Chiptune {
     /// Octave, detune and pitch bend folded into one offset in semitones.
     pitch_offset: f32,
     bend: f32,
+    /// Most recent modulation, 0 to 1.
+    modulation: f32,
+    /// How far the vibrato swings right now, in semitones: the patch's own depth plus whatever
+    /// the modulation is asking for.
+    vibrato_depth: f32,
+    /// How fast it swings, in hertz.
+    vibrato_rate: f32,
     glide_coeff: f32,
     unison: usize,
     unison_ratios: [f32; MAX_UNISON],
@@ -119,6 +143,9 @@ impl Chiptune {
             waveform: Waveform::Square,
             pitch_offset: 0.0,
             bend: 0.0,
+            modulation: 0.0,
+            vibrato_depth: 0.0,
+            vibrato_rate: 0.0,
             glide_coeff: 1.0,
             unison: 1,
             unison_ratios: [1.0; MAX_UNISON],
@@ -140,6 +167,16 @@ impl Chiptune {
         self.waveform = Waveform::from_param(self.params.at(P_WAVEFORM));
         self.pitch_offset = self.params.at(P_OCTAVE) * 12.0 + self.params.at(P_DETUNE) + self.bend;
         self.output_gain = db_to_gain(self.params.at(P_LEVEL));
+
+        // The patch's own vibrato plus whatever the wheel is asking for. Added rather than
+        // blended, because they are two people's decisions: the patch says how much this *sound*
+        // wobbles and the wheel says how much more is wanted right now.
+        self.vibrato_rate = self.params.at(P_VIBRATO_RATE);
+        self.vibrato_depth =
+            self.params.at(P_VIBRATO) + self.params.at(P_MOD_DEPTH) * self.modulation;
+        for voice in &mut self.voices {
+            voice.vibrato.set_rate(self.vibrato_rate);
+        }
 
         let bits = self.params.at(P_BITS).round().clamp(1.0, 16.0);
         // A depth of 16 bits is finer than the f32 mix path resolves, so it means "off".
@@ -219,6 +256,9 @@ impl Chiptune {
             for oscillator in &mut voice.oscillators {
                 oscillator.reset();
             }
+            // And the vibrato with them, so a chord struck together wobbles together. A voice
+            // stolen mid-note keeps its phase for the same reason its oscillators do.
+            voice.vibrato.reset();
         }
         voice.envelope.trigger();
         self.last_frequency = Some(target);
@@ -255,6 +295,29 @@ fn descriptors() -> Vec<ParamDescriptor> {
         ParamDescriptor::new(P_GLIDE, "glide", "Glide", 0.0, 1.0, 0.0)
             .with_unit(ParamUnit::Seconds)
             .with_curve(ParamValueCurve::Power(3.0)),
+        // Beside Glide, because these are the other three controls that move the pitch.
+        ParamDescriptor::new(
+            P_VIBRATO_RATE,
+            "vibrato_rate",
+            "Vibrato Rate",
+            0.1,
+            12.0,
+            5.5,
+        )
+        .with_unit(ParamUnit::Hertz),
+        ParamDescriptor::new(P_VIBRATO, "vibrato", "Vibrato", 0.0, 2.0, 0.0)
+            .with_unit(ParamUnit::Semitones)
+            .with_curve(ParamValueCurve::Power(2.0)),
+        ParamDescriptor::new(
+            P_MOD_DEPTH,
+            "mod_depth",
+            "Mod Depth",
+            0.0,
+            2.0,
+            DEFAULT_MOD_DEPTH,
+        )
+        .with_unit(ParamUnit::Semitones)
+        .with_curve(ParamValueCurve::Power(2.0)),
         ParamDescriptor::new(P_UNISON, "unison", "Unison", 1.0, MAX_UNISON as f32, 1.0)
             .with_steps(MAX_UNISON as u32),
         ParamDescriptor::new(P_SPREAD, "spread", "Unison Spread", 0.0, 0.5, 0.08)
@@ -309,6 +372,10 @@ impl SegmentRenderer for Chiptune {
                     finite_or(semitones, 0.0).clamp(-MAX_BEND_SEMITONES, MAX_BEND_SEMITONES);
                 self.refresh();
             }
+            NoteEvent::Modulation { amount, .. } => {
+                self.modulation = finite_or(amount, 0.0).clamp(0.0, 1.0);
+                self.refresh();
+            }
         }
     }
 
@@ -327,6 +394,7 @@ impl SegmentRenderer for Chiptune {
         let ratios = self.unison_ratios;
         let voice_gain = self.unison_gain;
         let pitch_offset = self.pitch_offset;
+        let vibrato_depth = self.vibrato_depth;
 
         for (index, voice) in self.voices.iter_mut().enumerate() {
             if !voice.envelope.is_active() {
@@ -337,12 +405,25 @@ impl SegmentRenderer for Chiptune {
 
             for sample in dst.iter_mut() {
                 voice.frequency += (voice.target - voice.frequency) * glide_coeff;
+                // The vibrato multiplies the glided frequency rather than joining the pitch
+                // offset, so it is a wobble *around* wherever the note has glided to rather than
+                // something the glide would chase and flatten out.
+                let swing = match vibrato_depth > 0.0 {
+                    true => (voice.vibrato.next() * vibrato_depth / 12.0).exp2(),
+                    // Still advanced when it is silent, so turning the wheel up mid-note picks
+                    // the cycle up where it would have been rather than jumping.
+                    false => {
+                        voice.vibrato.next();
+                        1.0
+                    }
+                };
+                let frequency = voice.frequency * swing;
                 let envelope = voice.envelope.process();
                 let mut mix = 0.0;
                 for (oscillator, ratio) in
                     voice.oscillators.iter_mut().zip(ratios.iter()).take(unison)
                 {
-                    oscillator.set_frequency(voice.frequency * ratio);
+                    oscillator.set_frequency(frequency * ratio);
                     mix += oscillator.next(waveform);
                 }
                 *sample += mix * gain * envelope;
@@ -396,6 +477,7 @@ impl Instrument for Chiptune {
         }
         self.allocator.prepare(VOICE_COUNT);
         self.bend = 0.0;
+        self.modulation = 0.0;
         self.last_frequency = None;
         self.refresh();
     }
@@ -409,6 +491,7 @@ impl Instrument for Chiptune {
         }
         self.allocator.clear();
         self.bend = 0.0;
+        self.modulation = 0.0;
         self.last_frequency = None;
         self.refresh();
     }
@@ -459,7 +542,7 @@ mod tests {
         for (index, descriptor) in synth.parameters().iter().enumerate() {
             assert_eq!(descriptor.id.index(), index, "id of `{}`", descriptor.key);
         }
-        assert_eq!(synth.parameters().len(), 13);
+        assert_eq!(synth.parameters().len(), 16);
     }
 
     #[test]
@@ -482,6 +565,80 @@ mod tests {
         assert!(
             at_440 > below * 10.0 && at_440 > above * 10.0,
             "440 Hz bin {at_440:.4}, neighbours {below:.4} / {above:.4}"
+        );
+    }
+
+    #[test]
+    fn the_wheel_opens_a_vibrato_and_nothing_opens_it_by_itself() {
+        // Two claims, and both matter. A patch nobody has touched must sound exactly as it did
+        // before any of this existed — otherwise every piece already written changed. And the
+        // wheel must reach the pitch without a parameter being found first, or it is a control
+        // nobody discovers.
+        // Half a second of audio and a two-hertz swing, so the render covers a whole cycle —
+        // eight slices of an eighth each, which is fine enough to catch both ends of it.
+        let slice = 3_000;
+
+        let mut still = sine_rig();
+        let steady = still.render(24_000, &[note_on(0, 69)]);
+        let plain: Vec<f64> = steady[512..]
+            .chunks(slice)
+            .map(|chunk| zero_crossing_hz(chunk, SAMPLE_RATE))
+            .collect();
+        for measured in &plain {
+            assert!(
+                (measured / 440.0 - 1.0).abs() < 0.02,
+                "an untouched patch wobbled: {measured:.2} Hz"
+            );
+        }
+
+        let mut wheeled = sine_rig();
+        wheeled.set_param("vibrato_rate", 2.0);
+        wheeled.set_param("mod_depth", 2.0);
+        let rendered = wheeled.render(
+            24_000,
+            &[
+                NoteEvent::Modulation {
+                    frame: 0,
+                    amount: 1.0,
+                },
+                note_on(0, 69),
+            ],
+        );
+        let swung: Vec<f64> = rendered[512..]
+            .chunks(slice)
+            .map(|chunk| zero_crossing_hz(chunk, SAMPLE_RATE))
+            .collect();
+        let highest = swung.iter().cloned().fold(f64::MIN, f64::max);
+        let lowest = swung.iter().cloned().fold(f64::MAX, f64::min);
+        assert!(
+            highest > 465.0 && lowest < 415.0,
+            "the wheel should swing a whole tone either way: {swung:?}"
+        );
+        // And it comes back — the swing is *around* the note, not a detune away from it.
+        let mean = swung.iter().sum::<f64>() / swung.len() as f64;
+        assert!(
+            (mean / 440.0 - 1.0).abs() < 0.03,
+            "the vibrato is centred on {mean:.2} Hz rather than on the note"
+        );
+    }
+
+    #[test]
+    fn a_vibrato_written_into_the_patch_needs_no_wheel() {
+        // The other half of the pair: `vibrato` is the depth this *sound* has, and it is there
+        // whether or not anybody touches a controller.
+        let mut rig = sine_rig();
+        rig.set_param("vibrato_rate", 2.0);
+        rig.set_param("vibrato", 2.0);
+        let rendered = rig.render(24_000, &[note_on(0, 69)]);
+        let swung: Vec<f64> = rendered[512..]
+            .chunks(3_000)
+            .map(|chunk| zero_crossing_hz(chunk, SAMPLE_RATE))
+            .collect();
+        let highest = swung.iter().cloned().fold(f64::MIN, f64::max);
+        let lowest = swung.iter().cloned().fold(f64::MAX, f64::min);
+        assert!(
+            highest > 465.0 && lowest < 415.0,
+            "no wobble without a wheel: {swung:?}"
         );
     }
 
