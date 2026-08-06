@@ -222,6 +222,33 @@ mod tests {
     }
 
     #[test]
+    fn every_progression_has_a_name_short_enough_to_pick_from_a_menu() {
+        // The pickers used to show the *description*, which is a sentence: sixteen rows reading
+        // "王道進行 (4536): the J-pop staple" is a menu nobody can scan. They show the name now,
+        // and a name missing from the table falls back to the catalogue slug — `royal-road`,
+        // which is the vocabulary of a file rather than of a person. This is the only place the
+        // catalogue and the table can be checked against each other, for the same reason the
+        // test above it exists.
+        for entry in auris_session::prelude::progression_catalog() {
+            for language in Language::ALL {
+                let shown = audio::theory_name(entry.name, language);
+                assert_ne!(
+                    shown, entry.name,
+                    "{:?} has no {language:?} name and would show its slug",
+                    entry.name
+                );
+                // Long enough to be a sentence is long enough to be the old bug back again. The
+                // longest legitimate one is 丸サ進行 (ii–V) at fifteen.
+                assert!(
+                    shown.chars().count() <= 24,
+                    "{:?} shows {shown:?} in {language:?}, which is a description and not a name",
+                    entry.name
+                );
+            }
+        }
+    }
+
+    #[test]
     fn every_built_in_plugin_is_translated() {
         // The lookup falls back to English for a plugin nobody has translated, which is right
         // for a third-party one and wrong for ours — so ours are checked here rather than being

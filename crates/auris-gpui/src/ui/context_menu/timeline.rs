@@ -227,11 +227,11 @@ impl AurisApp {
         let mut menu = ContextMenu::new(anchor, self.t(Key::MenuWriteProgression));
         for entry in progression_catalog() {
             menu = menu.item(
-                // What it is, not what the parser calls it. The rows read `axis-minor` and
-                // `doo-wop`, which is the vocabulary of a specification file rather than of
-                // somebody deciding what the next four bars should do — and the catalogue has
-                // carried a description for each of them all along.
-                auris_i18n::audio::theory_description(entry.description, self.language()),
+                // What it is called, not what the parser calls it and not what it is *for*. The
+                // slug — `axis-minor`, `doo-wop` — is the vocabulary of a specification file, and
+                // the description is a whole sentence; a menu of sixteen sentences is one nobody
+                // can scan.
+                auris_i18n::audio::theory_name(entry.name, self.language()),
                 MenuCommand::StampProgression {
                     name: entry.name,
                     at,

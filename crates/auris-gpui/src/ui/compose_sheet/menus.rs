@@ -103,7 +103,10 @@ impl AurisApp {
                 continue;
             }
             menu = menu.item(
-                auris_i18n::audio::theory_description(entry.description, self.language()),
+                // The name, not the description. A description is a sentence — "王道進行 (4536):
+                // the J-pop staple" — and sixteen sentences stacked in a menu is a menu nobody
+                // can scan. The name is what the thing is called and what a `.asong` writes.
+                auris_i18n::audio::theory_name(entry.name, self.language()),
                 MenuCommand::SongSectionChords {
                     section,
                     name: entry.name.to_string(),
@@ -377,13 +380,6 @@ impl AurisApp {
     /// What a progression is called in the interface, or its own name if the catalogue has never
     /// heard of it — which is what a chart somebody typed out by hand looks like.
     pub(super) fn progression_name(&self, name: &str) -> String {
-        progression_catalog()
-            .iter()
-            .find(|entry| entry.name == name)
-            .map(|entry| {
-                auris_i18n::audio::theory_description(entry.description, self.language())
-                    .to_string()
-            })
-            .unwrap_or_else(|| name.to_string())
+        auris_i18n::audio::theory_name(name, self.language()).to_string()
     }
 }

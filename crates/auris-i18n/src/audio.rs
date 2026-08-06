@@ -30,6 +30,29 @@ pub fn theory_description(text: &str, language: Language) -> &str {
     lookup(THEORY_DESCRIPTIONS, text, language)
 }
 
+/// The short name a chord progression is shown under, or `name` itself when it is not known here.
+///
+/// Keyed on the catalogue's own name — `axis`, `royal-road` — because that is the stable thing: it
+/// is what a `.asong` writes and what `auris compose` takes, and it does not move when somebody
+/// rewords a description.
+///
+/// The only table here whose English column is a real entry rather than the key, and it has to be:
+/// the key is a slug, and a picker row reading `royal-road` is not what anybody calls it. That is
+/// also why the picker cannot simply show the description — "王道進行 (4536): the J-pop staple" is
+/// a sentence, and a menu of sixteen sentences is a menu nobody can scan.
+///
+/// The progressions with Japanese names keep them in both columns, for the reason
+/// [`theory_description`] gives: 王道進行 is what the thing is called.
+pub fn theory_name(name: &str, language: Language) -> &str {
+    THEORY_NAMES
+        .iter()
+        .find(|(key, _, _)| *key == name)
+        .map_or(name, |(_, english, japanese)| match language {
+            Language::English => english,
+            Language::Japanese => japanese,
+        })
+}
+
 /// Translation of a song preset's one-line description.
 ///
 /// Same shape and the same reason as [`theory_description`]: the catalogue is a set of `.asong`
@@ -226,10 +249,33 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("LP Q", "LP Q"),
 ];
 
-/// Japanese versions of the one-line descriptions the progression and groove pickers show.
+/// The short names the progression pickers show, keyed on the catalogue's own name.
 ///
-/// The progressions with Japanese names keep them: 王道進行 is what the thing is called, and a
-/// picker that said "the J-pop staple" instead would be naming it worse in either language.
+/// `(catalogue name, English, Japanese)`. See [`theory_name`] for why the English column exists at
+/// all, and for why more than half of these are the same in both.
+const THEORY_NAMES: &[(&str, &str, &str)] = &[
+    ("axis", "Axis", "アクシス進行"),
+    (
+        "axis-minor",
+        "Axis from the sixth",
+        "アクシス進行（vi 始まり）",
+    ),
+    ("epic", "Minor axis", "短調のアクシス"),
+    ("komuro", "小室進行", "小室進行"),
+    ("marusa", "丸サ進行", "丸サ進行"),
+    ("marusa5", "丸サ進行 (ii–V)", "丸サ進行（ii-V 入り）"),
+    ("royal-road", "王道進行", "王道進行"),
+    ("koakuma", "小悪魔進行", "小悪魔進行"),
+    ("naki", "泣きの進行", "泣きの進行"),
+    ("canon", "カノン進行", "カノン進行"),
+    ("junjo", "純情進行", "純情進行"),
+    ("doo-wop", "Doo-wop", "ドゥーワップ進行"),
+    ("ii-v-i", "ii–V–I", "ツーファイブワン"),
+    ("blues", "Twelve-bar blues", "12 小節ブルース"),
+    ("andalusian", "Andalusian cadence", "アンダルシア終止"),
+    ("sad-loop", "Sad loop", "哀しい循環"),
+];
+
 /// The song presets, whose descriptions are what a style picker shows.
 const PRESET_DESCRIPTIONS: &[(&str, &str)] = &[
     (
@@ -266,6 +312,10 @@ const PRESET_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
 ];
 
+/// Japanese versions of the one-line descriptions the progression and groove pickers show.
+///
+/// The progressions with Japanese names keep them: 王道進行 is what the thing is called, and a
+/// picker that said "the J-pop staple" instead would be naming it worse in either language.
 const THEORY_DESCRIPTIONS: &[(&str, &str)] = &[
     (
         "The four chords of a thousand pop songs",
