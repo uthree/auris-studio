@@ -706,17 +706,6 @@ mod tests {
         out
     }
 
-    /// The pieces the composer writes today, pinned exactly.
-    ///
-    /// Not because this output is sacred — it is a composer, and what it writes is a matter of
-    /// taste — but because it is about to be taken apart and reassembled, and a change that
-    /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
-    /// a bug or a decision, and this is what makes anyone look.
-    ///
-    /// It last moved when the kit stopped dropping a third of the hits its groove asked for.
-    /// All four fixtures moved and all four grew, by between twelve and twenty-three per cent,
-    /// and every note of the growth is a drum: the pitched parts are note for note what they
-    /// were. That is the report on the blast radius, and it is the intended one.
     #[test]
     fn a_track_carries_the_sound_its_part_asked_for() {
         // The composer has no font and cannot resolve a preset; what it can do is carry the
@@ -797,6 +786,21 @@ mod tests {
         assert_eq!(drums.color, Role::Snare.color());
     }
 
+    /// The pieces the composer writes today, pinned exactly.
+    ///
+    /// Not because this output is sacred — it is a composer, and what it writes is a matter of
+    /// taste — but because it is about to be taken apart and reassembled, and a change that
+    /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
+    /// a bug or a decision, and this is what makes anyone look.
+    ///
+    /// It last moved when the timing humanisation became a time rather than a count of ticks, lost
+    /// its floor, and stopped reaching the kit. Three of the four fixtures moved and the fourth is
+    /// `BASE`, which writes `humanize = 0` and so is the one piece here the dial never touched —
+    /// that it did not move is the assertion that nothing else did. All four counts are exactly
+    /// what they were, which is the property to check first: this edit moves notes and must never
+    /// add or drop one. Nor does it restrike any — the wander is drawn whether or not it is used,
+    /// so every velocity in all four is the number it always was, and every difference in the
+    /// three digests that moved is a start time.
     #[test]
     fn the_composer_writes_what_it_wrote_before() {
         // A chart nobody asked for is the composer's own, and so the only kind it colours. In a
@@ -813,7 +817,7 @@ mod tests {
                     "#
             ),
             "verse·1 C major | Cmaj7 G Am Fmaj7 Cmaj7 Gmaj7 Am9 F |\n\
-             163 notes, digest e56e38402c7ada74\n"
+             163 notes, digest a275095187edb4bd\n"
         );
 
         // The same in a minor key, where one chord is a borrow that moves the root: `vi` read in
@@ -841,10 +845,13 @@ mod tests {
                     "#
             ),
             "verse·1 A minor | Amaj7 E Fm7 D Amaj7 Emaj7 Gbm Dmaj7 |\n\
-             227 notes, digest 35b52587bd16e2ac\n"
+             227 notes, digest 1cee42201fccefc1\n"
         );
 
-        // A quoted chart, which is never coloured, over a form that repeats.
+        // A quoted chart, which is never coloured, over a form that repeats — and the one fixture
+        // here that writes `humanize = 0`. Its digest has not moved and must not: a dial at zero
+        // was the identity before this change and still is, so this line is what says the wander
+        // was reshaped rather than the writing underneath it.
         assert_eq!(
             fingerprint(BASE),
             "intro·1 C major | C G Am F |\n\
@@ -870,7 +877,7 @@ mod tests {
             ),
             "verse·1 C major | Fmaj7 E7 Am7 C7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
-             204 notes, digest 46841cf7f19de660\n"
+             204 notes, digest 19ddfe856fd8e3aa\n"
         );
     }
 

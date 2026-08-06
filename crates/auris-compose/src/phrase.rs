@@ -12,7 +12,7 @@
 //! kept in step.
 
 use auris_core::harmony::Harmony;
-use auris_core::time::{SignatureMap, Ticks, TimeSignature};
+use auris_core::time::{SignatureMap, TempoMap, Ticks, TimeSignature};
 use auris_core::{ClipPreset, ClipRecipe, Note, Subdivision};
 
 use crate::frame::{Frame, SectionPlan, skeleton};
@@ -60,6 +60,19 @@ pub fn default_instrument(preset: ClipPreset) -> &'static str {
 /// the motif holds, the details may turn. With no section named, the preset keys the streams as
 /// before, so an unstructured timeline writes what it always wrote.
 ///
+/// `tempo` is the one in force at `start`, in beats per minute — the caller reads it off the
+/// document's tempo map, exactly as it reads `meter` off the signature map. A clip is written in
+/// ticks and would not otherwise care how fast they go by, but the humanisation dial is a *time*:
+/// [`ScoreSettings::humanize`](crate::parts::ScoreSettings::humanize) asks for a wander of so many
+/// milliseconds, and nothing can turn that into ticks without knowing the tempo. Passing the
+/// wrong one does not write different notes; it writes them with the wrong amount of looseness,
+/// which at 64 BPM is nearly twice what the dial asked for.
+///
+/// One number for the whole clip, even where the map changes half way through it. A clip is one
+/// figure played once — the same reason it takes one `meter` — and a wander that widened in the
+/// middle of a bar would be a change of feel that nothing on the panel accounts for. The tempo it
+/// begins at is the one a person hears it counted in.
+///
 /// An empty answer is a real answer: a range with no chords written under it, or one shorter than
 /// a bar, has nothing for a part to play, and inventing something would mean inventing harmony the
 /// person did not ask for.
@@ -68,6 +81,7 @@ pub fn write_phrase(
     start: Ticks,
     length: Ticks,
     meter: TimeSignature,
+    tempo: f64,
     recipe: &ClipRecipe,
     section: Option<(&str, usize)>,
 ) -> Vec<Note> {
@@ -134,6 +148,10 @@ pub fn write_phrase(
 
     let settings = ScoreSettings {
         mood: frame.mood,
+        // Held to the range a timeline can hold rather than taken on trust. This is the one
+        // setting that does not come off the recipe, so a caller with no map to read is the way
+        // a nonsense tempo gets in, and `TempoMap` is where what counts as nonsense is decided.
+        tempo: tempo.clamp(TempoMap::MIN_BPM, TempoMap::MAX_BPM),
         swing: recipe.swing,
         humanize: recipe.humanize.clamp(0.0, 1.0),
         dynamics: recipe.dynamics.clamp(0.0, 1.0),
@@ -203,6 +221,12 @@ mod tests {
 
     const BAR: Ticks = Ticks(3840);
 
+    /// The tempo every test that is not about the tempo writes at.
+    ///
+    /// Nothing but the humanisation reads it, so it is the same 120 the rest of the workspace
+    /// defaults to and no test below has to think about it.
+    const TEMPO: f64 = 120.0;
+
     fn four_four() -> TimeSignature {
         TimeSignature::new(4, 4)
     }
@@ -225,6 +249,7 @@ mod tests {
             Ticks::ZERO,
             BAR * 4,
             four_four(),
+            TEMPO,
             &ClipRecipe::new(preset, seed),
             None,
         )
@@ -269,6 +294,167 @@ mod tests {
         for preset in ClipPreset::ALL {
             assert_eq!(phrase(preset, 9), phrase(preset, 9), "{}", preset.name());
         }
+    }
+
+    /// How many takes a timing measurement is pooled over.
+    ///
+    /// One four-bar lead holds about twenty notes, which is not enough to measure a spread to the
+    /// few per cent asked for below. Different seeds rather than one seed measured harder: a seed
+    /// decides which figure is played, and the notes of one figure sit on a handful of steps.
+    const TAKES: u64 = 24;
+
+    /// How far every note of `preset` moved from where a machine would have put it, in
+    /// milliseconds, pooled over [`TAKES`] takes.
+    ///
+    /// The technique is `parts::tests::displacements`, which measures the same thing for a whole
+    /// song. The same recipe at `humanize` 0 is the machine: the dial reaches the timing and the
+    /// strength of the stroke and nothing else, so the two takes hold the same notes and each one
+    /// pairs with itself. Paired by pitch and then by time, because humanisation moves a note and
+    /// cannot repitch it, whereas the order a clip comes back in — by time, then by pitch — is
+    /// exactly the one two notes struck together can be swapped in.
+    fn displacements(preset: ClipPreset, tempo: f64, humanize: f32) -> Vec<f32> {
+        // A tick is a 960th of a quarter note, and a quarter note is 60000/tempo milliseconds.
+        let ms_per_tick = 62.5 / tempo as f32;
+        let take = |seed: u64, humanize: f32| {
+            let mut notes = write_phrase(
+                &axis(),
+                Ticks::ZERO,
+                BAR * 4,
+                four_four(),
+                tempo,
+                &ClipRecipe {
+                    humanize,
+                    ..ClipRecipe::new(preset, seed)
+                },
+                None,
+            );
+            notes.sort_by_key(|note| (note.pitch, note.start.raw()));
+            notes
+        };
+        let mut out = Vec::new();
+        for seed in 0..TAKES {
+            let played = take(seed, humanize);
+            let written = take(seed, 0.0);
+            assert_eq!(
+                played.len(),
+                written.len(),
+                "seed {seed}: humanising changed how many notes {} plays",
+                preset.name()
+            );
+            for (played, written) in played.iter().zip(&written) {
+                assert_eq!(played.pitch, written.pitch, "seed {seed}: mispaired");
+                out.push((played.start - written.start).raw() as f32 * ms_per_tick);
+            }
+        }
+        out
+    }
+
+    /// The standard deviation of a set of displacements, about their own mean.
+    ///
+    /// About the mean rather than about zero, because a part's constant lean is not wander: a
+    /// melody sits the same few ticks ahead of the beat in every bar of the clip, and what a
+    /// listener hears as loose is the scatter around that rather than where the middle of it sits.
+    fn spread(values: &[f32]) -> f32 {
+        assert!(!values.is_empty(), "nothing was measured");
+        let mean = values.iter().sum::<f32>() / values.len() as f32;
+        let variance =
+            values.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / values.len() as f32;
+        variance.sqrt()
+    }
+
+    #[test]
+    fn one_clip_is_the_same_feel_at_any_tempo() {
+        // What the tempo travels down here for, measured the way
+        // `parts::tests::the_same_dial_is_the_same_feel_at_any_tempo` measures it for a whole
+        // song. The clip was the one place the promise did not hold: `write_phrase` had no tempo
+        // to build a `ScoreSettings` from and wrote 120 into it, so a clip generated in a 64 BPM
+        // project wandered by 120/64 of what was asked — 7.0 ms at the recipe's own default of
+        // 0.25, where the dial asks for 3.75. Two projects, one dial, two amounts of looseness,
+        // and nothing on the panel to explain the difference.
+        //
+        // Three times apart, which spans everything the presets ask for and then some. The two
+        // takes hold the same notes and draw the same numbers out of the same streams, because
+        // the wander is keyed by where a note is written rather than by the clock; all the tempo
+        // changes is what those numbers are multiplied by. So this is not two samples of one
+        // distribution being compared, and the tolerance does not have to cover sampling error.
+        for preset in [
+            ClipPreset::Lead,
+            ClipPreset::Chords,
+            ClipPreset::Arp,
+            ClipPreset::Bass,
+        ] {
+            let slow = spread(&displacements(preset, 60.0, 0.5));
+            let fast = spread(&displacements(preset, 180.0, 0.5));
+            // Five per cent, and the same reasoning as the song's: what is left between the two
+            // is rounding a displacement onto a whole tick, which at 60 BPM is a grid of 1.04 ms
+            // and at 180 one of 0.35, and rounding onto a grid of width w adds w²/12 to a
+            // variance of about 51. Measured, the four presets disagree by under half a per
+            // cent. Five per cent leaves room for the note or two per clip that lean off the
+            // front and are held at zero, which is the one displacement a tempo can truncate.
+            assert!(
+                (slow - fast).abs() < 0.05 * slow.max(fast),
+                "{}: {slow:.2} ms at 60 BPM against {fast:.2} ms at 180",
+                preset.name()
+            );
+        }
+
+        // And the wander is the one that was asked for, rather than merely the same at both
+        // tempos. 7.5 ms is `parts`' own `WANDER_MS` of 15 at half the dial; the number is
+        // written out here because that constant is private to the module that decides it, and a
+        // clip agreeing with it is exactly what is at stake — a phrase is meant to be written by
+        // the same machinery as a whole song and to feel like it.
+        //
+        // Fifteen per cent, which is what the song's test allows and for the same reasons: the
+        // jitter is clamped at three sigma, a note that leans off the front of the clip is held
+        // at tick zero, and twenty notes a take is a sample rather than a distribution. Measured,
+        // the lead sits at 7.55 ms and the comp, which is not asserted on here, at 7.12.
+        for (tempo, measured) in [
+            (60.0, spread(&displacements(ClipPreset::Lead, 60.0, 0.5))),
+            (180.0, spread(&displacements(ClipPreset::Lead, 180.0, 0.5))),
+        ] {
+            assert!(
+                (measured - 7.5).abs() < 7.5 * 0.15,
+                "{tempo} BPM: a clip wandered by {measured:.2} ms against the 7.5 asked for"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tempo_no_timeline_could_hold_is_held_to_one_that_could() {
+        // `tempo` is the one setting that does not come off the recipe, so a caller with nothing
+        // to read it from is how a zero gets in — and a zero would multiply the wander to nothing
+        // and quietly turn the dial off. It is held to what `TempoMap` accepts instead, which is
+        // the same range the document itself is held to.
+        let at = |tempo: f64| {
+            write_phrase(
+                &axis(),
+                Ticks::ZERO,
+                BAR * 4,
+                four_four(),
+                tempo,
+                &ClipRecipe::new(ClipPreset::Lead, 3),
+                None,
+            )
+        };
+        assert_eq!(at(0.0), at(TempoMap::MIN_BPM), "a floor, not a silence");
+        assert_eq!(at(1e9), at(TempoMap::MAX_BPM), "and a ceiling above it");
+        // The floor is a tempo and not a machine: something still moves at it.
+        assert_ne!(
+            at(0.0),
+            write_phrase(
+                &axis(),
+                Ticks::ZERO,
+                BAR * 4,
+                four_four(),
+                TEMPO,
+                &ClipRecipe {
+                    humanize: 0.0,
+                    ..ClipRecipe::new(ClipPreset::Lead, 3)
+                },
+                None,
+            ),
+            "the clamped tempo humanised by nothing at all"
+        );
     }
 
     /// How much two takes have in common, as a fraction of everything either of them plays.
@@ -379,6 +565,7 @@ mod tests {
             Ticks::ZERO,
             BAR * 4,
             four_four(),
+            TEMPO,
             &ClipRecipe {
                 humanize: 0.0,
                 ..ClipRecipe::new(ClipPreset::Bass, 4)
@@ -453,6 +640,7 @@ mod tests {
                 Ticks::ZERO,
                 BAR * 4,
                 four_four(),
+                TEMPO,
                 &ClipRecipe {
                     humanize: 0.0,
                     density: 1.0,
@@ -490,6 +678,7 @@ mod tests {
             Ticks::ZERO,
             BAR * 4,
             four_four(),
+            TEMPO,
             &ClipRecipe::new(ClipPreset::Chords, 1),
             None,
         );
@@ -501,6 +690,7 @@ mod tests {
             Ticks::ZERO,
             Ticks(960),
             four_four(),
+            TEMPO,
             &ClipRecipe::new(ClipPreset::Chords, 1),
             None,
         );
@@ -524,7 +714,15 @@ mod tests {
             ..ClipRecipe::new(ClipPreset::Lead, 5)
         };
         let write = |start: Ticks, section: Option<(&str, usize)>| {
-            write_phrase(&harmony, start, BAR * 4, four_four(), &recipe, section)
+            write_phrase(
+                &harmony,
+                start,
+                BAR * 4,
+                four_four(),
+                TEMPO,
+                &recipe,
+                section,
+            )
         };
 
         assert_eq!(
@@ -570,6 +768,7 @@ mod tests {
                     Ticks::ZERO,
                     BAR * 4,
                     four_four(),
+                    TEMPO,
                     &ClipRecipe {
                         humanize: 0.0,
                         ..ClipRecipe::new(ClipPreset::Lead, seed)
@@ -615,6 +814,7 @@ mod tests {
                 Ticks::ZERO,
                 BAR * 8,
                 four_four(),
+                TEMPO,
                 &ClipRecipe {
                     humanize: 0.0,
                     ..ClipRecipe::new(ClipPreset::Lead, seed)
@@ -663,6 +863,7 @@ mod tests {
             BAR * 4,
             BAR * 4,
             four_four(),
+            TEMPO,
             &ClipRecipe::new(ClipPreset::Bass, 4),
             None,
         );
@@ -697,6 +898,7 @@ mod tests {
                     Ticks::ZERO,
                     BAR * 4,
                     four_four(),
+                    TEMPO,
                     &ClipRecipe {
                         density,
                         ..ClipRecipe::new(preset, seed)
@@ -754,6 +956,7 @@ mod tests {
                 Ticks::ZERO,
                 BAR * 4,
                 four_four(),
+                TEMPO,
                 &ClipRecipe {
                     groove: groove.to_string(),
                     density,
@@ -780,6 +983,7 @@ mod tests {
             Ticks::ZERO,
             BAR * 4,
             four_four(),
+            TEMPO,
             &ClipRecipe {
                 density: 0.0,
                 humanize: 0.0,
@@ -808,6 +1012,7 @@ mod tests {
                 Ticks::ZERO,
                 BAR * 4,
                 four_four(),
+                TEMPO,
                 &ClipRecipe {
                     density,
                     humanize: 0.0,
@@ -851,6 +1056,7 @@ mod tests {
                 Ticks::ZERO,
                 BAR * 4,
                 four_four(),
+                TEMPO,
                 &ClipRecipe {
                     fill,
                     humanize: 0.0,
@@ -896,6 +1102,7 @@ mod tests {
                 Ticks::ZERO,
                 BAR * 4,
                 four_four(),
+                TEMPO,
                 &ClipRecipe {
                     groove: groove.to_string(),
                     ..ClipRecipe::new(ClipPreset::Drums, 3)

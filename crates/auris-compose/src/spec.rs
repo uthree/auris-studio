@@ -553,6 +553,22 @@ pub struct SongSpec {
     /// How much the offbeats are delayed, as a percentage where 50 is straight.
     pub swing: u8,
     /// How far timing and velocity wander, from 0 for a machine to 1 for a sloppy band.
+    ///
+    /// The timing half is a *time* and not a number of ticks: at 1 a pitched note lands within a
+    /// standard deviation of fifteen milliseconds of where it was written, and at the default of
+    /// 0.35 within about five, at whatever tempo the piece is played. That is what makes one
+    /// setting mean one thing — the same dial used to read as a slight looseness at 148 BPM and as
+    /// nobody being together at 64, because the wander was a fraction of a beat and a beat is not
+    /// a fixed length of time.
+    ///
+    /// It scales the whole way down, so a small setting is a small wander rather than the first
+    /// step of a staircase.
+    ///
+    /// The kit is exempt from the wander and only from the wander. A drummer holding the time is
+    /// what the rest of the band is loose *against*, so the kick, the snare and the hat land
+    /// exactly where they were written; what they keep is their constant lean — the hat a little
+    /// early, the snare a little late, by the same amount in every bar — and how much this dial
+    /// varies the strength of the stroke.
     pub humanize: f32,
     /// How far apart the hardest and softest notes are struck, from 0 to 1.
     ///

@@ -2100,6 +2100,18 @@ impl Session {
             // The meter the clip begins in. `write_phrase` builds every figure on one grid, so a
             // clip is written in one meter however many the timeline holds.
             self.project.signatures.signature_at(start),
+            // And the tempo it begins at, read off the map for the same reason the meter is: the
+            // humanisation dial asks for a wander in milliseconds, so a clip written at the
+            // project's nominal tempo instead of the one under it would come out loose by some
+            // other amount than the one asked for. The map, not `bpm()`: a piece that drops to
+            // 64 for its middle section is a piece where the nominal is the wrong number for
+            // every clip in that section.
+            //
+            // Read when the clip is written and not afterwards, so moving the tempo later leaves
+            // the notes where they are until somebody regenerates. That is the same promise every
+            // other input here makes — nothing rewrites a clip because something near it moved —
+            // and it is what makes a generated clip safe to edit by hand.
+            self.project.tempo_map.bpm_at(start),
             recipe,
             self.project.sections.section_at(start),
         )
@@ -4721,6 +4733,52 @@ mod tests {
         // And the same label writes the same take again: the hint is deterministic.
         session.regenerate_clip(clip).expect("regenerated again");
         assert_eq!(session.midi_clip(clip).expect("clip").notes, labelled);
+    }
+
+    #[test]
+    fn a_generated_clip_is_written_at_the_tempo_underneath_it() {
+        // The composer's humanisation asks for a wander of so many *milliseconds*, so writing a
+        // clip needs a tempo — and the honest one is the tempo where the clip sits. A piece that
+        // drops to half speed for its middle section has clips there that a listener counts in
+        // at 60, and writing them at the project's opening 120 would shake them by twice the
+        // time the dial asked for. Nothing else about a clip reads the tempo, so what this
+        // measures is the wander and only the wander.
+        let notes_at = |changes: &[(Ticks, f64)]| {
+            let mut session = session();
+            for (at, bpm) in changes {
+                match *at == Ticks::ZERO {
+                    true => session.set_bpm(*bpm),
+                    false => session.set_tempo_point(*at, *bpm),
+                }
+            }
+            let track = session.add_default_instrument_track("Lead").expect("track");
+            session
+                .stamp_named_progression("axis", Ticks::ZERO, 8)
+                .expect("the catalogue knows axis");
+            let clip = session
+                .generate_clip(
+                    track,
+                    BAR * 4,
+                    BAR * 4,
+                    ClipRecipe::new(ClipPreset::Lead, 7),
+                )
+                .expect("generated");
+            let notes = session.midi_clip(clip).expect("clip").notes.clone();
+            assert!(!notes.is_empty(), "nothing was written to compare");
+            notes
+        };
+
+        let after_the_change = notes_at(&[(BAR * 4, 60.0)]);
+        assert_eq!(
+            after_the_change,
+            notes_at(&[(Ticks::ZERO, 60.0)]),
+            "a clip in a stretch at 60 must be written exactly as one in a piece that runs at 60"
+        );
+        assert_ne!(
+            after_the_change,
+            notes_at(&[]),
+            "the clip was written at the project's opening tempo rather than its own"
+        );
     }
 
     #[test]
