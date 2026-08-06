@@ -3,6 +3,7 @@
 #![warn(missing_docs)]
 
 pub mod frame;
+pub mod gm;
 pub mod parts;
 pub mod phrase;
 pub mod render;

@@ -91,6 +91,11 @@ pub fn midi_extensions() -> &'static [&'static str] {
 /// text. Both names would compile — an explicit `use` beats a glob — but a reader would have to
 /// know that rule to tell which `Key` a line means, and one of the two would be wrong silently.
 pub mod prelude {
+    /// General MIDI: the programs a part can ask for, and the kits a drum part can.
+    ///
+    /// A whole module rather than the type alone, because a picker needs the name table beside
+    /// it — a frontend cannot list what it has no list of.
+    pub use auris_compose::gm;
     pub use auris_compose::{
         Composition, Mood, PartSpec, Role, SectionSpec, SongSpec, SpecError, compose,
         default_instrument,

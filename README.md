@@ -394,7 +394,24 @@ intensity = 0.95
 [[part]]
 name       = "lead"
 instrument = "auris.synth.chiptune"
+
+[[part]]
+name    = "strings"
+role    = "pad"
+program = "String Ensemble 1"
 ```
+
+`instrument` names a plugin; **`program` names a General MIDI sound** out of whichever General
+MIDI SoundFont is installed — by name, as above, or by number for anybody working from a font's
+own listing. A part may carry both, and that is the point rather than a redundancy: the program
+is played when there is a font to play it from, and the plugin is what the part falls back to when
+there is not, so a specification asking for a string section on a build with no library comes out
+as an oscillator rather than as silence.
+
+On a **drum** part the same field means something else entirely, because in General MIDI it does:
+percussion patches select a whole *kit* — `"Standard Kit"`, `"TR-808 Kit"`, `"Brush Kit"` — and it
+is the note number that picks the drum. Which of the two readings a number gets is never guessed
+at, because `role` has already said.
 
 The syntax is TOML and the extension is `.asong`, the same way a project file is JSON inside
 `.auris`. Serde reads *and writes* it, which is the point: a format that can only be read makes a

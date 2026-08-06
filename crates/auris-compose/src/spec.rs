@@ -54,6 +54,7 @@ use serde::{Deserialize, Serialize};
 use auris_core::Subdivision;
 use auris_core::time::TimeSignature;
 
+use crate::gm;
 use crate::rhythm::{DrumVoice, Pattern};
 use crate::theory::chart::{Chart, ChartOrigin};
 use crate::theory::key::Key;
@@ -400,8 +401,18 @@ pub struct PartSpec {
     pub name: String,
     /// What it plays.
     pub role: Role,
-    /// The plugin that plays it.
+    /// The plugin that plays it, when no [`Self::program`] names a SoundFont sound.
     pub instrument: String,
+    /// The General MIDI sound it asks for: a program on a pitched part, a kit on a drum one.
+    ///
+    /// `None` — the default — leaves the part on [`Self::instrument`], which is why the built-in
+    /// pieces are still built-in voices. Set, it puts the part on the sampler playing that sound
+    /// out of whichever General MIDI font is installed.
+    ///
+    /// The two coexist rather than replacing one another, and that is the point: a build with no
+    /// SoundFont installed falls back to the plugin the part also names, so a specification asking
+    /// for a violin comes out as an oscillator rather than as silence.
+    pub program: Option<gm::Program>,
     /// Which octave it sits in, as an **absolute** MIDI octave rather than an offset.
     ///
     /// A melody's default is 5, so 6 moves it up one and 1 moves it down four. Worth saying
@@ -442,6 +453,7 @@ impl PartSpec {
             name: name.into(),
             role,
             instrument: role.default_instrument().to_string(),
+            program: None,
             octave: role.default_octave(),
             density: None,
             subdivision: Subdivision::default(),
@@ -451,6 +463,15 @@ impl PartSpec {
             gain_db: role.default_gain_db(),
             pan: role.default_pan(),
         }
+    }
+
+    /// The SoundFont sound this part asks for, or `None` when it stays on its plugin.
+    ///
+    /// Which of General MIDI's two readings the number gets is decided here, by the role, and
+    /// nowhere else: a kit on a drum part, a program on everything else.
+    pub fn sound(&self) -> Option<gm::Sound> {
+        self.program
+            .map(|program| program.sound(self.role.is_drum()))
     }
 
     /// The MIDI note this part strikes, or `None` when it is not a drum.
@@ -913,6 +934,37 @@ struct SectionDoc {
     parts: Option<Vec<String>>,
 }
 
+/// The `program = …` field: a name or a number on the way in, and on the way out whichever name
+/// suits the part's role.
+///
+/// The flag is consulted only when writing. On the way in it does not matter, because
+/// [`gm::Program::parse`] reads a kit's name, a program's name and a bare number all into the same
+/// number — which of the three the document happened to use is not a fact worth keeping.
+///
+/// It exists because the same number means two unrelated things and serde cannot see the role
+/// from inside a field. Writing `program = "Acoustic Guitar (nylon)"` on a snare part would be a
+/// document that parses back correctly and reads as nonsense, which is the worse kind of wrong.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ProgramField {
+    program: gm::Program,
+    drums: bool,
+}
+
+impl Serialize for ProgramField {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.program.label(self.drums))
+    }
+}
+
+impl<'de> Deserialize<'de> for ProgramField {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self {
+            program: gm::Program::deserialize(deserializer)?,
+            drums: false,
+        })
+    }
+}
+
 /// One `[[part]]` table.
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -922,6 +974,8 @@ struct PartDoc {
     role: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     instrument: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    program: Option<ProgramField>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     octave: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1197,6 +1251,9 @@ impl PartDoc {
         if let Some(instrument) = self.instrument {
             part.instrument = instrument;
         }
+        // Nothing to check: `Program` refuses anything outside 0..127 as it is read, which is the
+        // one thing that could be wrong about it.
+        part.program = self.program.map(|field| field.program);
         if let Some(octave) = self.octave {
             if (-1..=9).contains(&octave) {
                 part.octave = octave;
@@ -1366,6 +1423,10 @@ impl PartDoc {
             name: part.name.clone(),
             role: (infer_role(&part.name) != part.role).then(|| part.role.name().to_string()),
             instrument: (part.instrument != plain.instrument).then(|| part.instrument.clone()),
+            program: part.program.map(|program| ProgramField {
+                program,
+                drums: part.role.is_drum(),
+            }),
             octave: (part.octave != plain.octave).then_some(part.octave),
             density: part.density,
             subdivision: (part.subdivision != plain.subdivision)
@@ -1959,6 +2020,97 @@ mod tests {
             SongSpec::parse(&original.to_toml()).unwrap(),
             original,
             "written out and read back is the same song, field for field"
+        );
+    }
+
+    #[test]
+    fn a_program_is_a_kit_on_a_drum_part_and_a_program_on_every_other() {
+        // The same number means two unrelated things in General MIDI, and which one it means is
+        // never a guess: the role has already said. Read wrongly, a violin part would play
+        // whatever kit patch 40 is and a snare part would play a violin.
+        let violin = PartSpec {
+            program: Some(gm::Program(40)),
+            ..PartSpec::of_role("lead", Role::Melody)
+        };
+        assert_eq!(violin.sound(), Some(gm::Sound { bank: 0, patch: 40 }));
+
+        let brushes = PartSpec {
+            program: Some(gm::Program(40)),
+            ..PartSpec::of_role("snare", Role::Snare)
+        };
+        assert_eq!(
+            brushes.sound(),
+            Some(gm::Sound {
+                bank: gm::DRUM_BANK,
+                patch: 40
+            })
+        );
+
+        // And a part that named none stays on its plugin, which is what keeps a piece written on
+        // the built-in voices written on them.
+        assert_eq!(PartSpec::of_role("lead", Role::Melody).sound(), None);
+    }
+
+    #[test]
+    fn a_program_survives_the_round_trip_by_name() {
+        let original = SongSpec::parse(
+            r#"
+            form = ["verse"]
+
+            [[part]]
+            name    = "lead"
+            program = "Violin"
+
+            [[part]]
+            name    = "kick"
+            role    = "kick"
+            program = 24
+
+            [[part]]
+            name = "pad"
+            "#,
+        )
+        .unwrap();
+
+        let named = |spec: &SongSpec, name: &str| {
+            spec.parts
+                .iter()
+                .find(|part| part.name == name)
+                .expect("the part is in the roster")
+                .clone()
+        };
+        assert_eq!(named(&original, "lead").program, Some(gm::Program(40)));
+        assert_eq!(named(&original, "kick").program, Some(gm::Program(24)));
+        assert_eq!(named(&original, "pad").program, None);
+
+        // Written back as a name whichever way it arrived, because a specification is meant to be
+        // read — `program = 24` is a fact about a MIDI chart and `"Electronic Kit"` is a fact
+        // about the music.
+        let written = original.to_toml();
+        assert!(written.contains(r#"program = "Violin""#), "{written}");
+        assert!(
+            written.contains(r#"program = "Electronic Kit""#),
+            "a kit is written as the kit it is: {written}"
+        );
+        assert_eq!(SongSpec::parse(&written).unwrap().parts, original.parts);
+    }
+
+    #[test]
+    fn a_program_nobody_recognises_is_an_error_rather_than_a_grand_piano() {
+        // Silently falling back to program 0 would give a piece full of pianos and no clue why.
+        let errors = SongSpec::parse(
+            r#"
+            [[part]]
+            name    = "lead"
+            program = "tuba solo"
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.to_string().contains("tuba")),
+            "{errors:?}"
         );
     }
 

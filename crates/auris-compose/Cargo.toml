@@ -18,3 +18,9 @@ rust-version.workspace = true
 auris-core.workspace = true
 serde.workspace = true
 toml.workspace = true
+
+# For the tests only, and only to exercise a single value's serde in isolation: TOML has no
+# notion of a bare scalar document, so a round trip through it would be a round trip through a
+# table wrapping the thing under test.
+[dev-dependencies]
+serde_json.workspace = true

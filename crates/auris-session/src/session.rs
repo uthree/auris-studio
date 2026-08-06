@@ -704,14 +704,24 @@ impl Session {
 
     /// Replaces the whole document, keeping the engine in step.
     fn replace_project(&mut self, project: Project) {
-        self.project = project;
-        self.transaction = None;
-        self.needs_rebuild = false;
-        self.last_record = None;
+        self.adopt_project(project);
         self.rebuild_graph();
         // The loop lives in the audio thread's transport and only `SetLoop` moves it, so a
         // document swap that does not republish leaves playback wrapping the old range.
         self.publish_loop();
+    }
+
+    /// Replaces the document *without* telling the engine, for a caller that has more to do first.
+    ///
+    /// [`Self::open`] is the one: its document names files that have not been read yet, and a
+    /// graph built over those would be a graph of silent tracks — logged, one warning per track,
+    /// about assets that are about to arrive — and then thrown away and built again. Every other
+    /// caller wants [`Self::replace_project`].
+    fn adopt_project(&mut self, project: Project) {
+        self.project = project;
+        self.transaction = None;
+        self.needs_rebuild = false;
+        self.last_record = None;
     }
 
     // ---------------------------------------------------------------- transport
@@ -1669,14 +1679,49 @@ impl Session {
             buses.push(id);
         }
 
+        // The General MIDI font, once, and only if a part actually asked for a sound out of it.
+        // A piece written entirely on the built-in voices should not carry a two-hundred-megabyte
+        // reference it never plays.
+        let general_midi = composition
+            .tracks
+            .iter()
+            .any(|track| track.sound.is_some())
+            .then(|| self.adopt_general_midi(&mut project))
+            .flatten();
+        if general_midi.is_none() && composition.tracks.iter().any(|t| t.sound.is_some()) {
+            // Named the way a missing plugin is, because it is the same thing happening: the
+            // piece plays, on the instruments the parts also name, and the report is where
+            // somebody finds out why it sounds like an oscillator.
+            report.substituted.push("General MIDI".to_string());
+        }
+
         for track in &composition.tracks {
-            let instrument = if self.registry.has_instrument(&track.instrument) {
-                track.instrument.clone()
-            } else {
-                report.substituted.push(track.instrument.clone());
-                fallback.clone()
+            let sound = general_midi.and(track.sound);
+            let instrument = match &sound {
+                // Choosing a sound is choosing the instrument that makes it, exactly as it is in
+                // `set_track_preset`.
+                Some(_) => SAMPLER_ID.to_string(),
+                None if self.registry.has_instrument(&track.instrument) => track.instrument.clone(),
+                None => {
+                    report.substituted.push(track.instrument.clone());
+                    fallback.clone()
+                }
             };
             let track_id = project.add_instrument_track(&track.name, instrument);
+            if let Some((sound, font)) = sound.zip(general_midi)
+                && let Some(inner) = project
+                    .track_mut(track_id)
+                    .and_then(|entry| entry.kind.as_instrument_mut())
+            {
+                store_preset(
+                    &mut inner.instrument_state,
+                    PresetRef {
+                        font,
+                        bank: i32::from(sound.bank),
+                        patch: i32::from(sound.patch),
+                    },
+                );
+            }
             if let Some(entry) = project.track_mut(track_id) {
                 // The composer's colour, not the palette's. `add_instrument_track` takes the next
                 // palette entry by position, so which colour a part got depended on how many
@@ -3438,7 +3483,7 @@ impl Session {
         self.clear_sources();
         self.path = Some(path.to_path_buf());
         self.dirty = false;
-        self.replace_project(project);
+        self.adopt_project(project);
 
         let missing = self.reload_assets();
         // After the search, not before it. A project saved on another machine names the shipped
@@ -3448,6 +3493,9 @@ impl Session {
         // and be held in memory twice, which for this font is four hundred megabytes.
         self.install_shipped_fonts();
         self.rebuild_graph();
+        // The document was adopted without telling the engine, so the loop it holds is still the
+        // one the *previous* project had.
+        self.publish_loop();
         Ok(missing)
     }
 
@@ -3714,16 +3762,7 @@ impl Session {
     /// **File → New**, which empties the id-keyed bank — costs a map lookup rather than two
     /// hundred megabytes of file.
     fn adopt_font(&mut self, path: &Path) -> Option<SoundFontId> {
-        let font = match self.shipped.get(path) {
-            Some(font) => Arc::clone(font),
-            None => {
-                let font = load_soundfont(path)
-                    .inspect_err(|error| log::warn!("{}: {error}", path.display()))
-                    .ok()?;
-                self.shipped.insert(path.to_path_buf(), Arc::clone(&font));
-                font
-            }
-        };
+        let font = self.shipped_font_data(path)?;
         let id = match self.project.soundfont_at(self.project_folder(), path) {
             Some(existing) => existing,
             None => {
@@ -3733,6 +3772,42 @@ impl Session {
             }
         };
         self.fonts.insert(id, font);
+        Some(id)
+    }
+
+    /// A shipped font's samples, read from the file the first time and cached after that.
+    fn shipped_font_data(&mut self, path: &Path) -> Option<Arc<SoundFont>> {
+        if let Some(font) = self.shipped.get(path) {
+            return Some(Arc::clone(font));
+        }
+        let font = load_soundfont(path)
+            .inspect_err(|error| log::warn!("{}: {error}", path.display()))
+            .ok()?;
+        self.shipped.insert(path.to_path_buf(), Arc::clone(&font));
+        Some(font)
+    }
+
+    /// Puts the shipped General MIDI font into a project being built, and returns its new id.
+    ///
+    /// Takes the project rather than working on [`Self::project`] because the only caller is
+    /// [`Self::compose`], which assembles a whole document before it swaps one in — a font added
+    /// to the open project would belong to the piece being replaced.
+    ///
+    /// `None` when nothing is installed, which is what makes a part asking for a violin come out
+    /// as the oscillator it also names rather than as silence.
+    fn adopt_general_midi(&mut self, project: &mut Project) -> Option<SoundFontId> {
+        if !self.shipped_library {
+            return None;
+        }
+        let font = crate::library::shipped(crate::library::GENERAL_MIDI)?;
+        let path = crate::library::installed(font)?;
+        let data = self.shipped_font_data(&path)?;
+        let name = font_name(&data, &path);
+        let id = project.add_soundfont(name, AssetPath::external(&path), byte_size(&path));
+        // Into the bank now rather than when the document is swapped in. The swap rebuilds the
+        // graph, and a graph built while the samples were still missing would log a warning per
+        // track about a font that is right here, then be thrown away and built again.
+        self.fonts.insert(id, data);
         Some(id)
     }
 
@@ -6820,6 +6895,50 @@ mod tests {
         assert_eq!(session.undo(), Some(Edit::Compose));
         assert_eq!(session.project().tracks.len(), 1);
         assert_eq!(session.project().tracks[0].name, "Old");
+    }
+
+    #[test]
+    fn a_piece_asking_for_sounds_this_build_has_none_of_still_plays() {
+        // `session()` is headless, which means no shipped library — deliberately, so that this
+        // test says the same thing on a machine with the SoundFont installed and one without.
+        // What it pins is the fallback: a part naming a violin comes out on the oscillator it
+        // *also* names, and the report says why rather than leaving a piece that sounds wrong for
+        // no visible reason.
+        let mut session = session();
+        let spec = auris_compose::SongSpec::parse(
+            r#"
+                form = ["verse"]
+
+                [[part]]
+                name    = "lead"
+                role    = "melody"
+                program = "Violin"
+                "#,
+        )
+        .unwrap();
+        let report = session.compose(&auris_compose::compose(&spec)).unwrap();
+
+        assert!(
+            report.substituted.iter().any(|name| name == "General MIDI"),
+            "the report should say the font was missing: {:?}",
+            report.substituted
+        );
+        assert!(
+            session.project().soundfonts.is_empty(),
+            "and the document should not name a font that is not there"
+        );
+        let lead = session
+            .project()
+            .tracks
+            .iter()
+            .find(|track| track.name == "lead")
+            .expect("the part became a track");
+        assert_eq!(
+            lead.kind.as_instrument().map(|inner| &inner.instrument_id),
+            Some(&auris_compose::Role::Melody.default_instrument().to_string()),
+            "the part keeps the plugin it named"
+        );
+        assert_eq!(session.track_preset(lead.id), None);
     }
 
     #[test]

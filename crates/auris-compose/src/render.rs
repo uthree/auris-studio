@@ -38,8 +38,14 @@ pub struct ClipDraft {
 pub struct TrackDraft {
     /// The track's name.
     pub name: String,
-    /// The plugin that plays it.
+    /// The plugin that plays it, when no [`Self::sound`] names a SoundFont one.
     pub instrument: String,
+    /// The General MIDI sound the part asked for, if it asked for one.
+    ///
+    /// A bank and a patch rather than a preset, because the composer has no font to name one in.
+    /// The session resolves it against whichever General MIDI font is installed — and falls back
+    /// to [`Self::instrument`] when there is none, which is why both are here.
+    pub sound: Option<crate::gm::Sound>,
     /// The colour the track is drawn in, chosen by the part's role.
     pub color: Color,
     /// Level trim in decibels.
@@ -157,10 +163,18 @@ impl Composition {
             self.seed
         );
         for track in &self.tracks {
+            // What the track will actually play. Printing the plugin id under a part that asked
+            // for a violin would name the fallback and never the sound.
+            let voice = match track.sound {
+                Some(sound) => crate::gm::Program(sound.patch)
+                    .label(sound.bank == crate::gm::DRUM_BANK)
+                    .to_string(),
+                None => track.instrument.clone(),
+            };
             out.push_str(&format!(
                 "  {:<12} {:<24} {} clips, {} notes\n",
                 track.name,
-                track.instrument,
+                voice,
                 track.clips.len(),
                 track
                     .clips
@@ -256,6 +270,7 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
         tracks.push(TrackDraft {
             name: draft.name,
             instrument: draft.instrument,
+            sound: draft.sound,
             // A part with no role in the roster cannot happen — a draft is written *from* one —
             // but the melody's colour is the honest answer if it ever did.
             color: role.unwrap_or(Role::Melody).color(),
@@ -701,6 +716,57 @@ mod tests {
     /// All four fixtures moved and all four grew, by between twelve and twenty-three per cent,
     /// and every note of the growth is a drum: the pitched parts are note for note what they
     /// were. That is the report on the blast radius, and it is the intended one.
+    #[test]
+    fn a_track_carries_the_sound_its_part_asked_for() {
+        // The composer has no font and cannot resolve a preset; what it can do is carry the
+        // request as far as the session, which does. A track that dropped it on the way would
+        // compose a full orchestra and play all of it on an oscillator.
+        let spec = SongSpec::parse(
+            r#"
+            form = ["verse"]
+
+            [[part]]
+            name    = "lead"
+            role    = "melody"
+            program = "Violin"
+
+            [[part]]
+            name = "bass"
+            role = "bass"
+
+            [[part]]
+            name    = "kick"
+            role    = "kick"
+            program = "TR-808 Kit"
+            "#,
+        )
+        .expect("a valid specification");
+        let piece = compose(&spec);
+        let sound_of = |name: &str| {
+            piece
+                .tracks
+                .iter()
+                .find(|track| track.name == name)
+                .unwrap_or_else(|| panic!("{name} is in the piece"))
+                .sound
+        };
+        assert_eq!(
+            sound_of("lead"),
+            Some(crate::gm::Sound { bank: 0, patch: 40 })
+        );
+        // The kit is the other reading of the same field, and the bank is what says so.
+        assert_eq!(
+            sound_of("kick"),
+            Some(crate::gm::Sound {
+                bank: crate::gm::DRUM_BANK,
+                patch: 25
+            })
+        );
+        // A part that asked for nothing stays on its plugin, so a piece written on the built-in
+        // voices is still written on them.
+        assert_eq!(sound_of("bass"), None);
+    }
+
     #[test]
     fn a_track_is_the_colour_of_what_it_plays() {
         // Which colour a part got used to depend on how many parts were declared before it, so

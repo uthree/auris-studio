@@ -32,6 +32,23 @@ format rather than a convention: `## <version> — <date>`.
 * A build with nothing installed starts, runs and composes on the built-in instruments — which is
   what CI does on every commit.
 
+### A composed part can ask for a real instrument
+
+* **`program = "String Ensemble 1"` in a `.asong`** puts that part on the shipped SoundFont. By
+  name — read case-, space- and punctuation-insensitively — or by number, for anybody working
+  from a font's own listing. The composer had no way to name a SoundFont sound at all: an
+  instrument was a plugin id, and a SoundFont's sounds do not have those.
+* A part may carry `program` *and* `instrument`, and that is deliberate. The program is played
+  where there is a font to play it from and the plugin is the fallback where there is not, so a
+  specification asking for strings on a build with no library comes out as an oscillator rather
+  than as silence — and the compose report names the missing library, so it is clear why.
+* **On a drum part the same field is a kit**, because in General MIDI it is: the patch selects the
+  whole kit and the note number picks the drum. Which of the two readings a number gets is never
+  guessed at, because the role has already said — and a kit writes itself back out as
+  `"TR-808 Kit"` rather than as whatever guitar shares its number.
+* `auris compose --print` and the composed-track listing now name the *sound*, not the plugin the
+  part would have fallen back to.
+
 ### A composed song arrives as a whole document
 
 * **A composed piece now carries its own harmony and its own structure.** Both were computed and

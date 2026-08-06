@@ -33,8 +33,10 @@ pub struct Draft {
 pub struct PartDraft {
     /// The part's name, which becomes its track name.
     pub name: String,
-    /// The plugin that plays it.
+    /// The plugin that plays it, when no [`Self::sound`] names a SoundFont one.
     pub instrument: String,
+    /// The General MIDI sound it asked for, if it asked for one.
+    pub sound: Option<crate::gm::Sound>,
     /// Level trim.
     pub gain_db: f32,
     /// Stereo position.
@@ -93,6 +95,7 @@ pub fn write_parts(settings: &ScoreSettings, roster: &[PartSpec], frame: &Frame)
             let mut draft = PartDraft {
                 name: part.name.clone(),
                 instrument: part.instrument.clone(),
+                sound: part.sound(),
                 gain_db: part.gain_db,
                 pan: part.pan,
                 notes: Vec::new(),
