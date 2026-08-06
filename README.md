@@ -341,6 +341,36 @@ from the key; and the **parts** — one row each, with role, instrument, octave 
 The whole piece arrives as a single undo step, so a composition that is not what was wanted is one
 press away from the document that was there before it.
 
+**Style** is the first row and the one to start at. Around thirty dials is a lot to be asked for
+before anything has made a sound, and the honest answer to what they should be is *depends what you
+are writing* — so the shelf answers all of them at once:
+
+| | |
+| --- | --- |
+| `chiptune` | The built-in voices, four to the floor |
+| `pop-band` | Drums, bass, keys and a lead — the 王道進行 |
+| `city-pop` | Electric piano and slap bass over 丸サ進行 |
+| `rock` | Overdriven guitar, organ and a hard kit |
+| `jazz-trio` | Piano, upright bass and brushes on a ii-V-I |
+| `orchestral` | Strings, horns and timpani in 3/4 |
+| `synthwave` | Saw lead, analogue bass and a TR-808 |
+| `ambient` | Pads and a slow bell, no kit at all |
+
+Choosing one replaces the whole sheet — tempo, key, groove, progression, form and roster — because
+half a style is the arrangement of one at the tempo of another. Then change what you do not like,
+which is a much better place to start than an empty form. From the command line the same list is
+`auris presets`, and `auris compose --preset city-pop` writes one without a file.
+
+Each is a `.asong` document embedded in the build rather than a structure assembled in code: a
+preset is meant to be *read*, the format was designed to be the readable one, and it means the
+presets are parser tests that fail loudly rather than silently.
+
+A part's instrument cell offers the General MIDI sounds first, grouped into the sixteen families
+the standard already divides them into — a hundred and twenty-eight names in one menu is a menu
+nobody can read — and the built-in plugins under a rule below them. A drum part is offered the
+eight kits instead, because on a drum part that number is a whole kit. Choosing a plugin clears the
+program, so the row never says one thing while the piece plays another.
+
 A row in the form is a *playing*, not a section: a name that appears twice is one section played
 twice, and editing either row edits the one section, because that is what makes it recognisably
 the same chorus. The section picker offers the song's own names first — choosing one of those is a
@@ -791,6 +821,8 @@ compiling here.
 auris compose song.asong -o song.auris         # write a piece from a specification
 auris progressions                             # every chord progression known by name
 auris plugins                                  # every registered instrument and effect
+auris presets                                  # the whole songs a piece can start from
+auris compose --preset city-pop                # …and one written without a file
 auris soundfonts                               # what this build ships with, and whether it is here
 auris new song.auris --bpm 128
 auris info song.auris                          # tracks, clips, duration

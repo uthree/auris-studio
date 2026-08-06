@@ -97,8 +97,8 @@ pub mod prelude {
     /// it — a frontend cannot list what it has no list of.
     pub use auris_compose::gm;
     pub use auris_compose::{
-        Composition, Mood, PartSpec, Role, SectionSpec, SongSpec, SpecError, compose,
-        default_instrument,
+        Composition, Mood, PRESETS, PartSpec, Role, SectionSpec, SongPreset, SongSpec, SpecError,
+        compose, default_instrument, preset,
     };
     pub use auris_core::automation::{
         Automation, AutomationCurve, AutomationLane, AutomationPoint,

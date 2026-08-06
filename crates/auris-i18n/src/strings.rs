@@ -423,6 +423,8 @@ strings! {
     SongChords { en: "Progression", ja: "コード進行" }
     SongChordsOwn { en: "the composer's own", ja: "おまかせ" }
     // The form: which sections play, in what order, and what each of them is.
+    SongStyle { en: "Style", ja: "スタイル" }
+    SongStyleChoose { en: "Choose…", ja: "選ぶ…" }
     SongFormHeading { en: "Form", ja: "構成" }
     SongAddSection { en: "Add Section", ja: "セクションを追加" }
     SongSectionName { en: "Section", ja: "セクション" }
@@ -708,6 +710,7 @@ USAGE
 
 COMMANDS
     compose <song.asong> [opts]   Write a piece from a specification
+    presets                       List the whole songs a piece can start from
     progressions                  List every chord progression known by name
     plugins                       List every registered instrument and effect
     soundfonts [--manifest]       List the SoundFonts shipped with this build
@@ -718,6 +721,7 @@ COMMANDS
     help                          Show this message
 
 COMPOSE OPTIONS
+        --preset <name>           Start from a song preset instead of a file
     -o, --output <file.auris>     Where to write (default: alongside the specification)
         --seed <n>                Override the seed, so the same spec writes a different piece
         --key <key>               Override the key, as in `C minor`
@@ -744,6 +748,7 @@ auris — コマンドラインから使う Auris Studio
 
 コマンド
     compose <song.asong> [opts]   仕様ファイルから曲を書き出す
+    presets                       曲の出発点になる楽曲プリセットを一覧表示
     progressions                  名前の付いたコード進行を一覧表示
     plugins                       登録済みの音源とエフェクトを一覧表示
     soundfonts [--manifest]       同梱サウンドフォントを一覧表示
@@ -754,6 +759,7 @@ auris — コマンドラインから使う Auris Studio
     help                          このメッセージを表示
 
 compose のオプション
+        --preset <name>           ファイルの代わりに楽曲プリセットから書き出す
     -o, --output <file.auris>     出力先（既定: 仕様ファイルと同じ場所）
         --seed <n>                シードを上書き。同じ仕様から別の曲になります
         --key <key>               調を上書き（例: `C minor`）
@@ -773,6 +779,7 @@ new のオプション
         --bpm <tempo>             新規プロジェクトのテンポ（既定: 120）
         --sample-rate <hz>        新規プロジェクトのサンプルレート（既定: 48000）"
     }
+    CliPresets { en: "SONG PRESETS", ja: "楽曲プリセット" }
     CliSoundFonts { en: "SHIPPED SOUNDFONTS", ja: "同梱サウンドフォント" }
     CliSoundFontMissing {
         en: "not installed — run tools/fetch-soundfonts.sh",

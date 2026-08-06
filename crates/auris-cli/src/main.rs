@@ -47,6 +47,7 @@ fn main() -> ExitCode {
         "plugins" => list_plugins(),
         "progressions" => list_progressions(),
         "soundfonts" => list_soundfonts(&args),
+        "presets" => list_presets(),
         "compose" => compose(&args),
         "info" => with_path(&args, info),
         "render" => render(&args),
@@ -176,6 +177,36 @@ fn list_progressions() -> Result<(), String> {
     printed(print)
 }
 
+/// Lists the whole songs the composer can start from.
+fn list_presets() -> Result<(), String> {
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    let print = (|| {
+        writeln!(out, "{}", Key::CliPresets.get(LANGUAGE))?;
+        for preset in auris_session::prelude::PRESETS {
+            let spec = preset.spec();
+            writeln!(
+                out,
+                "  {} {}",
+                pad(preset.name, 13),
+                auris_i18n::audio::preset_description(preset.description, LANGUAGE)
+            )?;
+            // The three facts that decide whether it is the right one to start from, and the
+            // three a description would otherwise have to spell out in words.
+            writeln!(
+                out,
+                "  {} {} · {:.0} BPM · {}",
+                pad("", 13),
+                spec.key.to_text(),
+                spec.tempo,
+                spec.groove
+            )?;
+        }
+        Ok(())
+    })();
+    printed(print)
+}
+
 /// Lists the SoundFonts this build ships with, and whether they are installed.
 ///
 /// With `--manifest`, prints the same list as tab-separated fields instead:
@@ -213,18 +244,34 @@ fn list_soundfonts(args: &[String]) -> Result<(), String> {
 }
 
 /// Writes a piece from a specification and saves it as a project.
+///
+/// The specification is a file, or — with `--preset` and no file — one of the styles the composer
+/// ships with. Both land in the same `SongSpec`, so every other option means the same thing
+/// whichever way the piece was started.
 fn compose(args: &[String]) -> Result<(), String> {
     let source = args
         .get(1)
         .filter(|arg| !arg.starts_with('-'))
-        .ok_or_else(|| Key::CliExpectedSpecPath.get(LANGUAGE).to_string())?;
-    let source = PathBuf::from(source);
+        .map(PathBuf::from);
+    let named = args
+        .iter()
+        .position(|arg| arg == "--preset")
+        .and_then(|at| args.get(at + 1));
+    if source.is_none() && named.is_none() {
+        return Err(Key::CliExpectedSpecPath.get(LANGUAGE).to_string());
+    }
 
-    let mut output = source.with_extension(auris_session::PROJECT_EXTENSION);
+    let mut output = match (&source, named) {
+        (Some(path), _) => path.with_extension(auris_session::PROJECT_EXTENSION),
+        // Beside nothing, so it lands in the working directory under the style's own name —
+        // there is no file to sit next to.
+        (None, Some(name)) => PathBuf::from(name).with_extension(auris_session::PROJECT_EXTENSION),
+        (None, None) => unreachable!("one of the two was required above"),
+    };
     let mut overrides: Vec<(String, String)> = Vec::new();
     let mut print_only = false;
 
-    let mut index = 2;
+    let mut index = if source.is_some() { 2 } else { 1 };
     while index < args.len() {
         match args[index].as_str() {
             "-o" | "--output" => {
@@ -257,16 +304,31 @@ fn compose(args: &[String]) -> Result<(), String> {
                 overrides.push((field, value.clone()));
             }
             "--print" => print_only = true,
+            // Already read, above, because it decides what there is to read at all.
+            "--preset" => index += 1,
             other => return Err(messages::unknown_option(LANGUAGE, other)),
         }
         index += 1;
     }
 
-    let text = std::fs::read_to_string(&source)
-        .map_err(|error| format!("{}: {error}", source.display()))?;
+    // A named style and a file both arrive here as text, so `--set` and every other override
+    // reaches one exactly as it reaches the other.
+    let (origin, text) = match (&source, named) {
+        (Some(path), _) => (
+            path.display().to_string(),
+            std::fs::read_to_string(path)
+                .map_err(|error| format!("{}: {error}", path.display()))?,
+        ),
+        (None, Some(name)) => {
+            let preset = auris_session::prelude::preset(name)
+                .ok_or_else(|| messages::unknown_preset(LANGUAGE, name))?;
+            (preset.name.to_string(), preset.source.to_string())
+        }
+        (None, None) => unreachable!("one of the two was required above"),
+    };
     let spec = auris_session::prelude::SongSpec::parse_with_overrides(&text, &overrides).map_err(
         |errors| {
-            let mut message = messages::spec_rejected(LANGUAGE, &source.display().to_string());
+            let mut message = messages::spec_rejected(LANGUAGE, &origin);
             for error in errors {
                 message.push_str(&format!("\n  {error}"));
             }

@@ -48,6 +48,33 @@ pub const KITS: [(u8, &str); 8] = [
     (48, "Orchestra Kit"),
 ];
 
+/// How many programs a family holds. General MIDI's own grouping, and it is exact.
+pub const FAMILY_SIZE: usize = 8;
+
+/// The sixteen families General MIDI groups its programs into, eight to a family.
+///
+/// Not decoration: a hundred and twenty-eight names is a menu nobody can read, and this is the
+/// division the standard already made — so a picker that groups by it groups the way every chart
+/// and every hardware panel a musician has ever seen already does.
+pub const FAMILIES: [&str; 16] = [
+    "Piano",
+    "Chromatic Percussion",
+    "Organ",
+    "Guitar",
+    "Bass",
+    "Strings",
+    "Ensemble",
+    "Brass",
+    "Reed",
+    "Pipe",
+    "Synth Lead",
+    "Synth Pad",
+    "Synth Effects",
+    "Ethnic",
+    "Percussive",
+    "Sound Effects",
+];
+
 /// The hundred and twenty-eight General MIDI program names, in program order.
 pub const PROGRAMS: [&str; 128] = [
     "Acoustic Grand Piano",
@@ -225,6 +252,25 @@ impl Program {
             .map_or("Standard Kit", |(_, name)| *name)
     }
 
+    /// Which family this program belongs to, as a position in [`FAMILIES`].
+    pub fn family(self) -> usize {
+        usize::from(self.0) / FAMILY_SIZE
+    }
+
+    /// Every program in one family, in program order.
+    ///
+    /// Empty for a position past the end of [`FAMILIES`], which is a caller's mistake and not
+    /// worth a panic in a menu builder.
+    pub fn family_programs(family: usize) -> Vec<Program> {
+        if family >= FAMILIES.len() {
+            return Vec::new();
+        }
+        let first = family * FAMILY_SIZE;
+        (first..first + FAMILY_SIZE)
+            .map(|number| Program(number as u8))
+            .collect()
+    }
+
     /// What to call this number for a part of this kind: a kit for a drum part, a program for
     /// every other.
     pub fn label(self, drums: bool) -> &'static str {
@@ -345,6 +391,35 @@ mod tests {
         assert_eq!(Program(73).name(), "Flute");
         assert_eq!(Program(127).name(), "Gunshot");
         assert_eq!(PROGRAMS.len(), 128);
+    }
+
+    #[test]
+    fn the_families_divide_the_programs_exactly() {
+        // A picker is built from these, so a family that overlapped or left a gap would be a
+        // sound nobody could reach through the interface.
+        assert_eq!(FAMILIES.len() * FAMILY_SIZE, PROGRAMS.len());
+        let mut covered: Vec<Program> = Vec::new();
+        for (family, name) in FAMILIES.iter().enumerate() {
+            let programs = Program::family_programs(family);
+            assert_eq!(programs.len(), FAMILY_SIZE, "{name}");
+            for program in &programs {
+                assert_eq!(program.family(), family, "{}", program.name());
+            }
+            covered.extend(programs);
+        }
+        assert_eq!(covered.len(), PROGRAMS.len());
+        covered.dedup();
+        assert_eq!(
+            covered.len(),
+            PROGRAMS.len(),
+            "a program is in two families"
+        );
+        assert!(Program::family_programs(FAMILIES.len()).is_empty());
+
+        // And the names are the standard's own, which is what makes the grouping recognisable.
+        assert_eq!(FAMILIES[Program(40).family()], "Strings");
+        assert_eq!(FAMILIES[Program(0).family()], "Piano");
+        assert_eq!(FAMILIES[Program(127).family()], "Sound Effects");
     }
 
     #[test]

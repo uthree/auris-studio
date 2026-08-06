@@ -509,6 +509,12 @@ messages! {
         ja: "`{name}` というオプションはありません"
     }
 
+    /// A `--preset` naming a style the composer does not ship.
+    fn unknown_preset(name: &str) {
+        en: "there is no `{name}` preset; `auris presets` lists them",
+        ja: "`{name}` というプリセットはありません。`auris presets` で一覧を表示できます"
+    }
+
     /// An option that needs a value it was not given.
     fn option_needs_value(name: &str, kind: &str) {
         en: "{name} needs {kind}",

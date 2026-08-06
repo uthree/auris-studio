@@ -6,6 +6,7 @@ pub mod frame;
 pub mod gm;
 pub mod parts;
 pub mod phrase;
+pub mod preset;
 pub mod render;
 pub mod rhythm;
 pub mod rng;
@@ -21,6 +22,7 @@ pub mod spec;
 pub use auris_core::theory;
 
 pub use phrase::{default_instrument, roles_of, write_phrase};
+pub use preset::{PRESETS, SongPreset, preset};
 pub use render::{ClipDraft, Composition, TrackDraft, compose};
 pub use spec::{Mood, PartSpec, Role, SectionSpec, SongSpec, SpecError};
 

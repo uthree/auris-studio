@@ -1000,6 +1000,22 @@ impl AurisApp {
         let mut rows: Vec<AnyElement> =
             vec![self.group_heading(Key::SongHeading).into_any_element()];
 
+        // First, because it is the row that sets every other one. Somebody opening this for the
+        // first time is looking at thirty dials and no idea which of them matter; a style is the
+        // answer to all of them at once, and what they came here to change is what happens next.
+        rows.push(
+            self.sheet_picker(
+                "song-style",
+                Key::SongStyle,
+                self.t(Key::SongStyleChoose).to_string(),
+                cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
+                    let menu = this.song_preset_menu(event.position());
+                    this.open_menu(menu);
+                    cx.notify();
+                }),
+            )
+            .into_any_element(),
+        );
         rows.push(
             self.sheet_picker(
                 "song-title",
@@ -1351,14 +1367,21 @@ impl AurisApp {
         ];
 
         for (index, part) in dials.parts.iter().enumerate() {
-            let instrument = self
-                .registry()
-                .instruments()
-                .find(|descriptor| descriptor.id == part.instrument)
-                .map(|descriptor| {
-                    auris_i18n::audio::plugin_name(&descriptor.name, self.language()).to_string()
-                })
-                .unwrap_or_else(|| part.instrument.clone());
+            // What the part will be *heard* as: the General MIDI sound where it names one, and
+            // otherwise the plugin. Showing the plugin under a part that asked for a violin would
+            // name the fallback and never the sound.
+            let instrument = match part.program {
+                Some(program) => program.label(part.role.is_drum()).to_string(),
+                None => self
+                    .registry()
+                    .instruments()
+                    .find(|descriptor| descriptor.id == part.instrument)
+                    .map(|descriptor| {
+                        auris_i18n::audio::plugin_name(&descriptor.name, self.language())
+                            .to_string()
+                    })
+                    .unwrap_or_else(|| part.instrument.clone()),
+            };
 
             let mut dial_row = div().flex().gap_2();
             for dial in PART_DIALS {
@@ -1823,9 +1846,63 @@ impl AurisApp {
     }
 
     /// Every instrument this build can play.
+    /// The whole songs the sheet can be filled from.
+    fn song_preset_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
+        let mut menu = ContextMenu::new(anchor, self.t(Key::SongStyle));
+        let language = self.language();
+        for entry in PRESETS {
+            // The description rather than the name: `city-pop` is what a command line takes, and
+            // "Electric piano and slap bass over 丸サ進行" is what tells somebody whether it is
+            // the one they want.
+            menu = menu.item(
+                format!(
+                    "{} — {}",
+                    entry.name,
+                    auris_i18n::audio::preset_description(entry.description, language)
+                ),
+                MenuCommand::SongPreset(entry.name),
+            );
+        }
+        menu
+    }
+
+    /// What one part plays: a General MIDI sound, or one of the built-in plugins.
+    ///
+    /// The programs go in by family rather than all hundred and twenty-eight at once — a menu
+    /// that tall does not fit on a screen, and General MIDI already grouped them in eights.
     fn song_instrument_menu(&self, anchor: gpui::Point<gpui::Pixels>, part: usize) -> ContextMenu {
         let mut menu = ContextMenu::new(anchor, self.t(Key::SongPartInstrument));
         let language = self.language();
+        let drums = self
+            .song_sheet
+            .as_ref()
+            .and_then(|dials| dials.parts.get(part))
+            .is_some_and(|part| part.role.is_drum());
+        if drums {
+            // A drum part's number is a whole kit, so there is nothing to group: the eight kits
+            // are the list.
+            for (patch, name) in gm::KITS {
+                menu = menu.item(
+                    name,
+                    MenuCommand::SongPartProgram {
+                        part,
+                        program: patch,
+                    },
+                );
+            }
+        } else {
+            for (family, name) in gm::FAMILIES.iter().enumerate() {
+                menu = menu.item(
+                    format!("{name}…"),
+                    MenuCommand::SongPartFamily {
+                        part,
+                        family,
+                        anchor,
+                    },
+                );
+            }
+        }
+        menu = menu.separator();
         let mut instruments: Vec<(String, String)> = self
             .registry()
             .instruments()
@@ -1839,6 +1916,27 @@ impl AurisApp {
         instruments.sort_by(|one, other| one.1.cmp(&other.1));
         for (id, name) in instruments {
             menu = menu.item(name, MenuCommand::SongPartInstrument { part, id });
+        }
+        menu
+    }
+
+    /// The eight sounds of one General MIDI family.
+    pub(crate) fn song_program_menu(
+        &self,
+        anchor: gpui::Point<gpui::Pixels>,
+        part: usize,
+        family: usize,
+    ) -> ContextMenu {
+        let title = gm::FAMILIES.get(family).copied().unwrap_or_default();
+        let mut menu = ContextMenu::new(anchor, title);
+        for program in gm::Program::family_programs(family) {
+            menu = menu.item(
+                program.name(),
+                MenuCommand::SongPartProgram {
+                    part,
+                    program: program.0,
+                },
+            );
         }
         menu
     }
@@ -2273,6 +2371,46 @@ mod tests {
                 role.name()
             );
         }
+        for entry in PRESETS {
+            assert_ne!(
+                auris_i18n::audio::preset_description(
+                    entry.description,
+                    auris_i18n::Language::Japanese
+                ),
+                entry.description,
+                "the `{}` preset has no Japanese description",
+                entry.name
+            );
+        }
+    }
+
+    #[test]
+    fn choosing_a_style_fills_the_whole_sheet_with_it() {
+        // Half a preset is the arrangement of one style at the tempo of another, which is not a
+        // style at all — so this is the assertion that the sheet takes the lot.
+        for entry in PRESETS {
+            let spec = entry.spec();
+            let dials = song_dials(&spec);
+            assert_eq!(
+                song_spec(&dials),
+                spec,
+                "{} is not the sheet it fills",
+                entry.name
+            );
+        }
+    }
+
+    #[test]
+    fn every_program_the_picker_offers_is_reachable_through_a_family() {
+        // The part row's menu lists families and each family lists eight programs; a program in
+        // no family would be a sound the interface can never choose, however well it composes.
+        let mut reachable: Vec<u8> = (0..gm::FAMILIES.len())
+            .flat_map(gm::Program::family_programs)
+            .map(|program| program.0)
+            .collect();
+        reachable.sort_unstable();
+        reachable.dedup();
+        assert_eq!(reachable.len(), gm::PROGRAMS.len());
     }
 
     #[test]

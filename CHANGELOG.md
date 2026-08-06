@@ -32,6 +32,26 @@ format rather than a convention: `## <version> — <date>`.
 * A build with nothing installed starts, runs and composes on the built-in instruments — which is
   what CI does on every commit.
 
+### Eight whole songs to start from
+
+* **Style** is the first row of the song sheet, and choosing one fills the rest of it: `chiptune`,
+  `pop-band`, `city-pop`, `rock`, `jazz-trio`, `orchestral`, `synthwave`, `ambient`. Around thirty
+  dials was a lot to be asked for before anything had made a sound, and knowing which of them
+  matter is exactly what somebody opening a composer for the first time does not know.
+* A style replaces the *whole* sheet — tempo, key, groove, progression, form and roster — because
+  half a style is the arrangement of one at the tempo of another, which is not a style at all.
+* `auris presets` lists them and **`auris compose --preset city-pop`** writes one with no file at
+  all. Every other option means the same thing either way, because a named style and a file both
+  arrive as the same text.
+* Each preset is a `.asong` document embedded in the build rather than a structure assembled in
+  code. A preset is meant to be read, the format was designed to be the readable one, and it makes
+  the presets parser tests that fail loudly rather than silently.
+* The part row's instrument picker now offers the General MIDI sounds, grouped into the sixteen
+  families the standard already divides them into — a hundred and twenty-eight names in one menu
+  is a menu nobody can read, and it would be taller than the screen. A drum part is offered the
+  eight kits instead. Choosing a plugin clears the program, so the row never says one thing while
+  the piece plays another.
+
 ### A composed part can ask for a real instrument
 
 * **`program = "String Ensemble 1"` in a `.asong`** puts that part on the shipped SoundFont. By

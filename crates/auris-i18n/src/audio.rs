@@ -30,6 +30,16 @@ pub fn theory_description(text: &str, language: Language) -> &str {
     lookup(THEORY_DESCRIPTIONS, text, language)
 }
 
+/// Translation of a song preset's one-line description.
+///
+/// Same shape and the same reason as [`theory_description`]: the catalogue is a set of `.asong`
+/// documents in `auris-compose`, which may not name a language, and what a picker shows is a
+/// sentence. The names — `city-pop`, `jazz-trio` — are not translated: they are what
+/// `auris compose --preset` takes.
+pub fn preset_description(text: &str, language: Language) -> &str {
+    lookup(PRESET_DESCRIPTIONS, text, language)
+}
+
 /// Translation of a parameter's display name, or `name` itself when it is not known here.
 pub fn parameter(name: &str, language: Language) -> &str {
     lookup(PARAMETERS, name, language)
@@ -217,6 +227,42 @@ const PARAMETERS: &[(&str, &str)] = &[
 ///
 /// The progressions with Japanese names keep them: 王道進行 is what the thing is called, and a
 /// picker that said "the J-pop staple" instead would be naming it worse in either language.
+/// The song presets, whose descriptions are what a style picker shows.
+const PRESET_DESCRIPTIONS: &[(&str, &str)] = &[
+    (
+        "The built-in voices, four to the floor",
+        "内蔵音源のみ・四つ打ち",
+    ),
+    (
+        "Drums, bass, keys and a lead — the 王道進行",
+        "ドラム・ベース・鍵盤・リード — 王道進行",
+    ),
+    (
+        "Electric piano and slap bass over 丸サ進行",
+        "エレピとスラップベース・丸サ進行",
+    ),
+    (
+        "Overdriven guitar, organ and a hard kit",
+        "歪んだギターとオルガン・強めのドラム",
+    ),
+    (
+        "Piano, upright bass and brushes on a ii-V-I",
+        "ピアノ・ウッドベース・ブラシ・ツーファイブワン",
+    ),
+    (
+        "Strings, horns and timpani in 3/4",
+        "弦・ホルン・ティンパニ・3拍子",
+    ),
+    (
+        "Saw lead, analogue bass and a TR-808",
+        "ノコギリ波リード・アナログベース・TR-808",
+    ),
+    (
+        "Pads and a slow bell, no kit at all",
+        "パッドと鐘・ドラムなし",
+    ),
+];
+
 const THEORY_DESCRIPTIONS: &[(&str, &str)] = &[
     (
         "The four chords of a thousand pop songs",

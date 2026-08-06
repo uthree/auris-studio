@@ -15,6 +15,7 @@ use gpui::{
 use crate::app::AurisApp;
 use crate::dock::{Dock, Panel};
 use crate::theme::Metrics;
+use crate::ui::compose_sheet::song_dials;
 use crate::ui::icons::{Icon, icon};
 use crate::ui::prompt::{Prompt, PromptTarget};
 
@@ -128,6 +129,28 @@ pub enum MenuCommand {
         /// The plugin's registry id.
         id: String,
     },
+    /// Open the General MIDI programs of one family, for one part on the song sheet.
+    ///
+    /// The anchor travels with the command because the menu that offered it is already closed by
+    /// the time this runs, and the second menu has to open where the first one was rather than
+    /// wherever the pointer has wandered since.
+    SongPartFamily {
+        /// Which part, by position in the roster.
+        part: usize,
+        /// Which family, by position in [`gm::FAMILIES`].
+        family: usize,
+        /// Where to put the menu.
+        anchor: gpui::Point<gpui::Pixels>,
+    },
+    /// Set which General MIDI sound one part on the song sheet plays.
+    SongPartProgram {
+        /// Which part, by position in the roster.
+        part: usize,
+        /// The program, or the kit on a drum part.
+        program: u8,
+    },
+    /// Replace everything on the song sheet with one of the composer's whole-song presets.
+    SongPreset(&'static str),
     /// Set the octave of one part on the song sheet.
     SongPartOctave {
         /// Which part, by position in the roster.
@@ -951,6 +974,34 @@ impl AurisApp {
                     .and_then(|dials| dials.parts.get_mut(part))
                 {
                     part.instrument = id;
+                    // Choosing a plugin is choosing *that* sound, and a program left behind
+                    // would go on winning — the row would say one thing and the piece play
+                    // another.
+                    part.program = None;
+                }
+            }
+            MenuCommand::SongPartFamily {
+                part,
+                family,
+                anchor,
+            } => {
+                let menu = self.song_program_menu(anchor, part, family);
+                self.open_menu(menu);
+            }
+            MenuCommand::SongPartProgram { part, program } => {
+                if let Some(part) = self
+                    .song_sheet
+                    .as_mut()
+                    .and_then(|dials| dials.parts.get_mut(part))
+                {
+                    part.program = Some(gm::Program(program));
+                }
+            }
+            MenuCommand::SongPreset(name) => {
+                if let Some(preset) = preset(name) {
+                    // The whole sheet, title and all. Half a preset is the arrangement of one
+                    // style at the tempo of another, which is not a style at all.
+                    self.song_sheet = Some(song_dials(&preset.spec()));
                 }
             }
             MenuCommand::SongPartOctave { part, octave } => {
