@@ -9,6 +9,19 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### A slash bass keeps its accidental
+
+* A numeral's slash bass now carries an accidental of its own, so `v/b7` is a symbol a chord can
+  be stored as. Without it, respelling a progression into a key whose scale is not the major's —
+  harmonic and melodic minor, dorian, phrygian, locrian — resolved the bass as that key's own
+  unaltered degree, and `@junjo` in A harmonic minor came out as `Em/G#` where it should be
+  `Em/G`: a bass part sounding a minor second against the chord's own third, and the wrong numeral
+  written into the document.
+* **`Project::FORMAT_VERSION` is 9.** A version 8 build has no reading for the accidental — it
+  falls through to the secondary-dominant branch, finds no roman numeral, and rejects the numeral,
+  which fails the whole document rather than the one chord. The version is what makes that happen
+  at the door rather than halfway through a harmony lane.
+
 ### A General MIDI SoundFont comes with it
 
 * **Auris Studio now ships with MuseScore General**, 128 instruments and a percussion bank under

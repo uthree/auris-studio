@@ -40,8 +40,13 @@ pub struct Numeral {
     /// The degree this chord is the dominant of, and that degree's accidental, from a `/V`
     /// suffix.
     pub secondary_of: Option<(u8, i32)>,
-    /// A bass degree from a `/3`-style suffix, one-based.
-    pub bass_degree: Option<u8>,
+    /// A bass degree from a `/3`-style suffix, one-based, and that degree's accidental.
+    ///
+    /// The accidental is carried for the same reason `secondary_of` carries one: a bass note is
+    /// not always a note the key holds. `iii/5` quoted into A harmonic minor is E minor over G,
+    /// and that G is the key's seventh *lowered* — writing it as a plain seventh would put a G
+    /// sharp under the chord, a semitone from its own third.
+    pub bass_degree: Option<(u8, i32)>,
 }
 
 impl Numeral {
@@ -118,13 +123,17 @@ impl Numeral {
             }
             out.write_str(ROMAN[(target.clamp(1, 7) - 1) as usize])?;
         }
-        if let Some(bass) = self.bass_degree {
-            write!(out, "/{bass}")?;
+        if let Some((bass, alteration)) = self.bass_degree {
+            out.write_str("/")?;
+            for _ in 0..alteration.abs() {
+                out.write_str(if alteration < 0 { "b" } else { "#" })?;
+            }
+            write!(out, "{bass}")?;
         }
         Ok(())
     }
 
-    /// Reads a numeral: `I`, `vi`, `bVII`, `V7`, `IVmaj7`, `V7/V`, `IV/5`.
+    /// Reads a numeral: `I`, `vi`, `bVII`, `V7`, `IVmaj7`, `V7/V`, `IV/5`, `v/b7`.
     pub fn parse(text: &str) -> Option<Self> {
         let text = text.trim();
         if text.is_empty() {
@@ -132,22 +141,16 @@ impl Numeral {
         }
 
         // A trailing `/x` is either a secondary target (a numeral) or a bass degree (a digit).
+        // Either kind may be altered — `V/bVI` is the dominant of the flat sixth, `v/b7` sits on
+        // the flat seventh — so the accidentals come off first and what is left of the tail is
+        // what says which of the two was written.
         let (head, tail) = match text.rsplit_once('/') {
             Some((head, tail)) => (head, Some(tail)),
             None => (text, None),
         };
         let (secondary_of, bass_degree) = match tail {
             None => (None, None),
-            Some(tail) if tail.chars().all(|c| c.is_ascii_digit()) => {
-                // Only a degree the scale has: `degree_class` clamps into 1..=7, so `I/8`
-                // accepted here would come out as I over the *leading tone* — a stable wrong
-                // chord, since the symbol round-trips through save and load unchanged. Refused
-                // like a malformed roman target, and for the same reason.
-                let degree = tail.parse::<u8>().ok().filter(|d| (1..=7).contains(d))?;
-                (None, Some(degree))
-            }
             Some(tail) => {
-                // The target of a secondary dominant may itself be altered, as in `V/bVI`.
                 let mut target = tail.trim();
                 let mut alteration = 0;
                 while let Some(rest) = target.strip_prefix('b') {
@@ -158,7 +161,16 @@ impl Numeral {
                     alteration += 1;
                     target = rest;
                 }
-                (Some((roman_degree(target)?, alteration)), None)
+                if target.chars().all(|c| c.is_ascii_digit()) {
+                    // Only a degree the scale has: `degree_class` clamps into 1..=7, so `I/8`
+                    // accepted here would come out as I over the *leading tone* — a stable wrong
+                    // chord, since the symbol round-trips through save and load unchanged.
+                    // Refused like a malformed roman target, and for the same reason.
+                    let degree = target.parse::<u8>().ok().filter(|d| (1..=7).contains(d))?;
+                    (None, Some((degree, alteration)))
+                } else {
+                    (Some((roman_degree(target)?, alteration)), None)
+                }
             }
         };
 
@@ -212,7 +224,11 @@ impl Numeral {
     pub fn respelled_in(self, from: Key, to: Key) -> Self {
         let chord = self.chord_in(from);
         let (degree, accidental) = degree_of(to, chord.root);
-        let bass_degree = chord.bass.map(|bass| degree_of(to, bass).0);
+        // The bass keeps its accidental too. The new key may not hold that note at all — the G
+        // under `iii/5` is not a degree of A harmonic minor — and dropping the accidental would
+        // resolve it back to the key's own seventh, a semitone above the note the chord was
+        // written over.
+        let bass_degree = chord.bass.map(|bass| degree_of(to, bass));
         // A secondary dominant is dropped rather than carried: `/V` names a degree of the key it
         // was written for, and the chord it stands for is already in hand.
         let as_written = Self {
@@ -304,7 +320,7 @@ impl Numeral {
 
         let chord = Chord::new(root, quality);
         match self.bass_degree {
-            Some(bass) => chord.over(degree_class(key, bass, 0)),
+            Some((bass, alteration)) => chord.over(degree_class(key, bass, alteration)),
             None => chord,
         }
     }
@@ -332,7 +348,9 @@ impl Numeral {
         };
 
         let mut name = format!("{root}{}", chord.quality.suffix());
-        if let Some(bass) = self.bass_degree {
+        // The accidental is not consulted: `spell_on_degree` works out for itself what the letter
+        // that degree demands needs in front of it to mean the note that is actually there.
+        if let Some((bass, _)) = self.bass_degree {
             let class = chord.bass_class();
             let spelled = spell_on_degree(key, bass, class)
                 .unwrap_or_else(|| class.name(key.spelling()).to_string());
@@ -772,6 +790,61 @@ mod tests {
         assert_eq!(chord.root.sharp_name(), "F");
         assert_eq!(chord.bass_class().sharp_name(), "G");
         assert_eq!(chord.to_string(), "F/G");
+    }
+
+    #[test]
+    fn a_slash_bass_carries_its_own_accidental() {
+        // A bass note the key does not hold needs an accidental of its own, and it has to survive
+        // the trip through the stored text, because that text is the whole of what a project file
+        // keeps of a chord.
+        for (text, bass) in [("v/b7", (7, -1)), ("IV/#5", (5, 1)), ("I/3", (3, 0))] {
+            let numeral = Numeral::parse(text).unwrap();
+            assert_eq!(numeral.bass_degree, Some(bass), "{text}");
+            assert_eq!(
+                numeral.to_text(),
+                text,
+                "{text} did not write back as itself"
+            );
+            assert_eq!(Numeral::parse(&numeral.to_text()), Some(numeral), "{text}");
+        }
+
+        // And the accidental moves the note, by exactly the semitone it asks for.
+        assert_eq!(chord_of("v/b7", "A harmonic-minor"), "Em/G");
+        assert_eq!(chord_of("v/7", "A harmonic-minor"), "Em/G#");
+        assert_eq!(chord_of("I/#5", "C major"), "C/G#");
+    }
+
+    #[test]
+    fn a_quoted_progression_keeps_the_bass_it_was_written_over() {
+        // 純情進行 is the canon laid over a bass that walks down by step, and that walk is what the
+        // progression is. Quoted into A harmonic minor its fourth chord is E minor over G — a note
+        // that key does not hold, its seventh being a G sharp. The bass degree used to be renamed
+        // without its accidental, so the numeral that went into the document said "the seventh",
+        // read back as G sharp, and sounded a minor second under the chord's own third.
+        let minor = key("A harmonic-minor");
+        let junjo = super::super::chart::Chart::parse("@junjo")
+            .unwrap()
+            .spelled_in(minor);
+        let named: Vec<String> = junjo
+            .bars
+            .iter()
+            .flatten()
+            .map(|numeral| numeral.name_in(minor))
+            .collect();
+        assert_eq!(
+            named,
+            ["C", "G/B", "Am", "Em/G", "F", "C/E", "Dm", "G"],
+            "the same eight chords, named for the key they were asked for in"
+        );
+
+        // Renaming is what the file records, so the symbol has to be right too.
+        let stored: Vec<String> = junjo
+            .bars
+            .iter()
+            .flatten()
+            .map(|numeral| numeral.to_text())
+            .collect();
+        assert_eq!(stored[3], "v/b7", "the fourth chord, as it is written down");
     }
 
     #[test]

@@ -1328,7 +1328,13 @@ impl Project {
     /// spelt `value` where it was `semitones`, so a version 7 document's bends would be read as
     /// zeroes — silently, because the field has a default — and a slide somebody wrote would
     /// simply stop happening.
-    pub const FORMAT_VERSION: u32 = 8;
+    ///
+    /// 9 since a numeral's slash bass gained an accidental, so `v/b7` is now a symbol a chord can
+    /// be stored as. A version 8 build has no reading for the `b`: it falls through to the
+    /// secondary-dominant branch, finds no roman numeral there, and rejects the numeral — which
+    /// fails the whole document rather than the one chord. That is the honest answer, but the
+    /// version is what makes it happen at the door instead of halfway through a harmony lane.
+    pub const FORMAT_VERSION: u32 = 9;
 
     /// An empty project.
     ///
