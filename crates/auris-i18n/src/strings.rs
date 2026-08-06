@@ -470,6 +470,7 @@ strings! {
     RoleKick { en: "Kick", ja: "キック" }
     RoleSnare { en: "Snare", ja: "スネア" }
     RoleHat { en: "Hi-hat", ja: "ハイハット" }
+    RoleCrash { en: "Crash", ja: "クラッシュ" }
     // The mood vocabulary. Nine words that each mean four numbers.
     MoodNeutral { en: "Neutral", ja: "ニュートラル" }
     MoodBright { en: "Bright", ja: "明るい" }

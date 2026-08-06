@@ -22,6 +22,7 @@ mod arp;
 mod bass;
 mod comp;
 mod drums;
+mod joins;
 mod melody;
 mod writer;
 
@@ -39,6 +40,7 @@ use arp::arp;
 use bass::bass;
 use comp::comp;
 use drums::drums;
+use joins::joins;
 use melody::melody;
 use writer::part_grid;
 
@@ -154,6 +156,10 @@ pub fn write_parts(settings: &ScoreSettings, roster: &[PartSpec], frame: &Frame)
                     }
                     Role::Arp => arp(settings, frame, section, index, part),
                     Role::Bass => bass(settings, frame, section, index, part),
+                    // Written against the joins of the form rather than against a groove: it is
+                    // handed a section and asks whether arriving there is worth striking
+                    // something for, which is a question no bar-long pattern can answer.
+                    Role::Crash => joins(settings, frame, section, index, part),
                     Role::Kick | Role::Snare | Role::Hat => {
                         drums(settings, frame, section, index, part)
                     }

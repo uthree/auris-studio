@@ -9,6 +9,32 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### A cymbal marks where the form arrives
+
+* **The kit has a crash.** A composed piece had nothing at the joins of its own form: the section
+  changed and the only thing that marked it was a snare fill running into a bar that sounded like
+  every other bar. `crash` is a new part role, and the writer behind it reads the *form* rather
+  than a groove — it strikes the downbeat of a section that arrives at something at least as
+  strong as the one before it, and stays silent where the arrangement is coming back down. The
+  shipped pop form gets three: into the verse and into each chorus, and none on the verse after a
+  chorus or on the outro. Six of the eight presets carry one. `DrumVoice::Crash` had existed the
+  whole time and every groove returned an empty pattern for it, because a bar-long loop is the
+  wrong shape for a thing that happens once a section.
+* **The built-in cymbal is voiced as one.** `auris.synth.noisedrum` is a tom — noise through a
+  band-pass swept down from where the note puts it — and at its defaults a part striking 49 came
+  out at a spectral centroid of **342 Hz, ringing 595 ms**, which is a low tom under the name of a
+  crash. It is now 3.6 kHz and 945 ms. A composed track can carry plugin parameters for the first
+  time, and this is the only thing that uses it: opening the filter that far let through 13.5 dB
+  more than the built-in snare across the first 300 ms, so the voicing carries the level that puts
+  it back. The five General MIDI kits the presets use already place their crash within 1.4 dB of
+  their own snare, and both sides are then separated by the same role gain.
+* Worth knowing, and deliberately *not* changed: the rest of the built-in kit is the same
+  algorithm at the same defaults, told apart only by which note each part strikes — measured, the
+  kick, the snare and the hat sit at 190, 215 and 246 Hz, three thuds within 56 Hz of each other,
+  and nothing about 246 Hz is a hi-hat. That is what the one preset on the built-in voices has
+  always sounded like, and revoicing it is a decision about a preset rather than part of adding a
+  cymbal.
+
 ### The composer keeps time, and a velocity means one thing
 
 * **The kit does not wander.** Timing humanisation applied to every role including the drums,

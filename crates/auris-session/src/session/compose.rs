@@ -222,19 +222,31 @@ impl Session {
                 }
             };
             let track_id = project.add_instrument_track(&track.name, instrument);
-            if let Some((sound, font)) = sound.zip(general_midi)
+            if let Some((sound, font)) = sound.zip(general_midi) {
+                if let Some(inner) = project
+                    .track_mut(track_id)
+                    .and_then(|entry| entry.kind.as_instrument_mut())
+                {
+                    store_preset(
+                        &mut inner.instrument_state,
+                        PresetRef {
+                            font,
+                            bank: i32::from(sound.bank),
+                            patch: i32::from(sound.patch),
+                        },
+                    );
+                }
+            } else if !track.state.params.is_empty()
                 && let Some(inner) = project
                     .track_mut(track_id)
                     .and_then(|entry| entry.kind.as_instrument_mut())
             {
-                store_preset(
-                    &mut inner.instrument_state,
-                    PresetRef {
-                        font,
-                        bank: i32::from(sound.bank),
-                        patch: i32::from(sound.patch),
-                    },
-                );
+                // Only where the part stayed on the plugin it named. The composer's voicing is
+                // written for that plugin's own parameters — a crash asks the noise drum for a
+                // long decay and no pitch sweep — and the branch above has just put this track on
+                // the sampler instead, where the same keys mean nothing and the sound is a
+                // recording of a cymbal that needs no help being one.
+                inner.instrument_state = track.state.clone();
             }
             if let Some(entry) = project.track_mut(track_id) {
                 // The composer's colour, not the palette's. `add_instrument_track` takes the next
@@ -383,6 +395,48 @@ mod tests {
         assert_eq!(session.undo(), Some(Edit::Compose));
         assert_eq!(session.project().tracks.len(), 1);
         assert_eq!(session.project().tracks[0].name, "Old");
+    }
+
+    #[test]
+    fn a_cymbal_that_stayed_on_its_plugin_arrives_voiced() {
+        // The composer knows a crash wants a long decay and no pitch sweep and has never heard of
+        // the instrument that will play one. This is where the two meet, and it is the only place
+        // a composed track's parameters are set at all — so a crash arriving at the shipped
+        // quarter-second decay is this seam having quietly come apart.
+        let mut session = session();
+        let spec = auris_compose::SongSpec::parse(
+            r#"
+                form = ["chorus"]
+
+                [[part]]
+                name = "crash"
+                role = "crash"
+                "#,
+        )
+        .unwrap();
+        session.compose(&auris_compose::compose(&spec)).unwrap();
+
+        let crash = session
+            .project()
+            .tracks
+            .iter()
+            .find(|track| track.name == "crash")
+            .and_then(|track| track.kind.as_instrument())
+            .expect("the cymbal has a track");
+        assert!(
+            crash.instrument_state.params["decay"] > 1.0,
+            "the cymbal arrived at the noise drum's own decay: {:?}",
+            crash.instrument_state.params
+        );
+
+        // And nothing else is touched. A composed piece is a mix, not a set of edited plugins.
+        let lead = session
+            .project()
+            .tracks
+            .iter()
+            .find(|track| track.name == "lead")
+            .and_then(|track| track.kind.as_instrument());
+        assert!(lead.is_none_or(|lead| lead.instrument_state.params.is_empty()));
     }
 
     #[test]

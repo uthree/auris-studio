@@ -48,6 +48,17 @@ pub struct TrackDraft {
     pub sound: Option<crate::gm::Sound>,
     /// The colour the track is drawn in, chosen by the part's role.
     pub color: Color,
+    /// Parameters the part's role needs [`Self::instrument`] set to, if any.
+    ///
+    /// Empty for almost every part, and that is the intended state: a role picks an instrument and
+    /// then leaves it sounding how it sounds. What this is for is the case where the role and the
+    /// instrument together mean something the instrument's own defaults do not — today that is the
+    /// crash cymbal on the built-in noise drum, and `voicing_for` is where the exception is argued.
+    ///
+    /// It has nothing to say about a part that landed on a SoundFont. A sound out of a font is a
+    /// recording of the thing itself, and there is no parameter on a sampler that would make it
+    /// more of one.
+    pub state: PluginState,
     /// Level trim in decibels.
     pub gain_db: f32,
     /// Stereo position.
@@ -287,6 +298,9 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
         let (output, sends) = role
             .map(|role| routing_for(role, &buses))
             .unwrap_or_default();
+        let state = role.map_or_else(PluginState::empty, |role| {
+            voicing_for(role, &draft.instrument)
+        });
         tracks.push(TrackDraft {
             name: draft.name,
             instrument: draft.instrument,
@@ -294,6 +308,7 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
             // A part with no role in the roster cannot happen — a draft is written *from* one —
             // but the melody's colour is the honest answer if it ever did.
             color: role.unwrap_or(Role::Melody).color(),
+            state,
             gain_db: draft.gain_db,
             pan: draft.pan,
             output,
@@ -356,9 +371,68 @@ fn buses_for(roles: &[Role]) -> Vec<BusDraft> {
     buses
 }
 
+/// The parameters a role needs set on the instrument it also named.
+///
+/// Keyed by plugin id, exactly as the room bus names `auris.fx.reverb` before setting its mix:
+/// this crate knows what a crash cymbal *is* and has never heard of the oscillator that ships. A
+/// part on anybody else's plugin gets nothing, because `decay = 1.8` means one thing on the noise
+/// drum and could mean anything at all elsewhere.
+///
+/// # Why only the cymbal
+///
+/// `auris.synth.noisedrum` is one algorithm — noise through a band-pass swept down from where the
+/// note puts it — and the whole built-in kit is that algorithm at its shipped defaults, told apart
+/// only by which General MIDI note each part strikes. Measured, one hit each at 48 kHz:
+///
+/// | Part | note | spectral centroid | 40 dB down at |
+/// |---|---|---|---|
+/// | Kick | 36 | 190 Hz | 115 ms |
+/// | Snare | 38 | 215 Hz | 460 ms |
+/// | Hi-hat | 42 | 246 Hz | 285 ms |
+///
+/// Three low thuds within 56 Hz of each other, which is not a kit, and the hi-hat is the plainest
+/// case: nothing about 246 Hz is a hi-hat. That is worth saying here because it is *not* what this
+/// function fixes. Those three have sounded like that since the composer could write them, they
+/// are what the one preset on the built-in voices sounds like today, and changing them is a
+/// decision about how that preset should sound rather than a defect in a part being added.
+///
+/// The cymbal is different only because it is new. A part that has never had a sound has no sound
+/// to preserve, and shipping it at the defaults would be shipping a fourth thud — 342 Hz, 595 ms,
+/// which is a low tom — under the name of a crash.
+///
+/// # What the numbers are
+///
+/// `tone` is stated at MIDI 60 and transposed by the note struck, so a crash written at 49 sounds
+/// it 11 semitones down: the parameter's ceiling of 8 kHz arrives as 4.2 kHz, which is where a
+/// crash lives. It is at the ceiling rather than near it because the ceiling is the constraint —
+/// a hi-hat would want 7 kHz and cannot have it, since 42 is a further seven semitones down.
+///
+/// No sweep: the downward pitch move is what reads as a drum head losing tension, and a cymbal has
+/// no head. A decay of 1.8 s is most of the range the parameter allows and about what a crash
+/// rings for.
+///
+/// The level is not a taste and is the reason the other three are the numbers they are. Opening
+/// the band-pass at 4.2 kHz and stopping it sweeping lets through far more of the noise than the
+/// shipped voicing does, and the hit arrived 13.5 dB over the built-in snare measured as RMS
+/// across its first 300 ms — which is the measure that matters here, because a cymbal's peak is a
+/// fraction of what a listener hears of it. The five General MIDI kits the presets use put their
+/// crash within 1.4 dB of their own snare by that measure, and `-19.5` is what puts the built-in
+/// one in the same place. What separates a cymbal from a backbeat afterwards is
+/// [`Role::default_gain_db`], on both sides alike.
+fn voicing_for(role: Role, instrument: &str) -> PluginState {
+    let mut state = PluginState::empty();
+    if role == Role::Crash && instrument == "auris.synth.noisedrum" {
+        state.params.insert("tone".to_string(), 8_000.0);
+        state.params.insert("sweep".to_string(), 0.0);
+        state.params.insert("decay".to_string(), 1.8);
+        state.params.insert("level".to_string(), -19.5);
+    }
+    state
+}
+
 /// `true` when a role belongs under the drum fader.
 fn drum_bus_takes(role: Role) -> bool {
-    matches!(role, Role::Kick | Role::Snare | Role::Hat)
+    matches!(role, Role::Kick | Role::Snare | Role::Hat | Role::Crash)
 }
 
 /// How much of a role goes to the room, in decibels, or `None` for a part that stays dry.
@@ -382,6 +456,10 @@ fn room_send_db(role: Role) -> Option<f32> {
         // A snare in a room is the oldest trick there is; a hat wants a suggestion of one.
         Role::Snare => -12.0,
         Role::Hat => -20.0,
+        // A crash is mostly its own decay, and a dry one stops dead where the room lets it spill
+        // into the bar it opened. More than the snare gets, because it is further back in the kit
+        // and because the tail is the point of the sound rather than a side effect of it.
+        Role::Crash => -10.0,
         Role::Bass | Role::Kick => return None,
     })
 }
@@ -623,6 +701,78 @@ mod tests {
                 .iter()
                 .any(|track| track.output == drums && track.name == "kick"),
             "the kick goes to the drum bus"
+        );
+    }
+
+    #[test]
+    fn a_cymbal_on_the_built_in_drum_is_voiced_as_one() {
+        // The shipped noise drum is a tom: a band-pass swept down from where the note puts it,
+        // decaying in a quarter of a second. At the defaults a part striking 49 comes out a
+        // fourth thud rather than a cymbal, so the voicing is what makes the crash a crash.
+        let voiced = voicing_for(Role::Crash, "auris.synth.noisedrum");
+        assert_eq!(
+            voiced.params.get("sweep"),
+            Some(&0.0),
+            "a cymbal has no head"
+        );
+        assert!(
+            voiced.params["decay"] > 1.0,
+            "a crash that stops in {} s is a tick",
+            voiced.params["decay"]
+        );
+        // The whole reason a level is set at all: opening the filter this far lets through far
+        // more of the noise, and the hit arrived over the rest of the kit until it was corrected.
+        assert!(voiced.params["level"] < -6.0);
+    }
+
+    #[test]
+    fn nothing_but_the_cymbal_is_told_how_to_sound() {
+        // A role picks an instrument and then leaves it sounding how it sounds. Reaching into a
+        // plugin's parameters is the exception, and it stays one — the kick, the snare and the
+        // hat on this same instrument are what the built-in kit has always sounded like, and
+        // revoicing them is a decision about a preset rather than part of adding a cymbal.
+        for role in Role::ALL {
+            let voiced = voicing_for(role, "auris.synth.noisedrum");
+            assert_eq!(
+                voiced.params.is_empty(),
+                role != Role::Crash,
+                "{} was voiced when it should not have been, or the other way round",
+                role.name()
+            );
+        }
+        // And a cymbal somebody put on another plugin gets nothing either. `decay` means one
+        // thing on the noise drum and could mean anything at all elsewhere.
+        assert!(
+            voicing_for(Role::Crash, "auris.synth.chiptune")
+                .params
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_composed_cymbal_carries_its_voicing_onto_its_track() {
+        let piece = compose_text(
+            r#"
+            form = "chorus"
+            [[part]]
+            name = "crash"
+            role = "crash"
+            "#,
+        );
+        let crash = piece
+            .tracks
+            .iter()
+            .find(|track| track.name == "crash")
+            .expect("the cymbal plays");
+        assert!(!crash.state.params.is_empty(), "the voicing was dropped");
+        // Every other part is left alone, which is what makes this a exception rather than a pass
+        // over the roster.
+        let piece = compose_text(BASE);
+        assert!(
+            piece
+                .tracks
+                .iter()
+                .all(|track| track.state.params.is_empty())
         );
     }
 

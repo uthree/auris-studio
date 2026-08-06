@@ -147,6 +147,10 @@ role = "snare"
 [[part]]
 name = "hat"
 role = "hat"
+
+[[part]]
+name = "crash"
+role = "crash"
 "#;
 
 /// A four-piece with keys on top, on the progression half of J-pop is built from.
@@ -205,6 +209,11 @@ program = "Standard Kit"
 [[part]]
 name    = "hat"
 role    = "hat"
+program = "Standard Kit"
+
+[[part]]
+name    = "crash"
+role    = "crash"
 program = "Standard Kit"
 "#;
 
@@ -266,6 +275,11 @@ program = "Room Kit"
 name    = "hat"
 role    = "hat"
 program = "Room Kit"
+
+[[part]]
+name    = "crash"
+role    = "crash"
+program = "Room Kit"
 "#;
 
 /// Guitars, an organ pad and a kit that is allowed to be loud.
@@ -322,6 +336,11 @@ program = "Power Kit"
 [[part]]
 name    = "hat"
 role    = "hat"
+program = "Power Kit"
+
+[[part]]
+name    = "crash"
+role    = "crash"
 program = "Power Kit"
 "#;
 
@@ -382,7 +401,8 @@ role    = "hat"
 program = "Brush Kit"
 "#;
 
-/// Slow, in three, and with the drums replaced by a timpani that only marks the big moments.
+/// Slow, in three, and with the drums replaced by a timpani and a cymbal that only mark the big
+/// moments.
 const ORCHESTRAL: &str = r#"
 title      = "Orchestral"
 key        = "D minor"
@@ -441,6 +461,11 @@ name    = "timpani"
 role    = "kick"
 program = "Orchestra Kit"
 gain    = -8
+
+[[part]]
+name    = "cymbal"
+role    = "crash"
+program = "Orchestra Kit"
 "#;
 
 /// A saw over an eighth-note bass, and the drum machine everybody means by "eighties".
@@ -501,6 +526,11 @@ program = "TR-808 Kit"
 [[part]]
 name    = "hat"
 role    = "hat"
+program = "TR-808 Kit"
+
+[[part]]
+name    = "crash"
+role    = "crash"
 program = "TR-808 Kit"
 "#;
 

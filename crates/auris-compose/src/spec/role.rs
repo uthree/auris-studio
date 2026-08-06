@@ -28,11 +28,13 @@ pub enum Role {
     Snare,
     /// The hi-hat.
     Hat,
+    /// The crash cymbal, struck where one section arrives at the next.
+    Crash,
 }
 
 impl Role {
     /// Every role, in the order a default roster uses them.
-    pub const ALL: [Role; 9] = [
+    pub const ALL: [Role; 10] = [
         Role::Melody,
         Role::Chords,
         Role::Pad,
@@ -42,6 +44,7 @@ impl Role {
         Role::Kick,
         Role::Snare,
         Role::Hat,
+        Role::Crash,
     ];
 
     /// The name the text format writes.
@@ -56,6 +59,7 @@ impl Role {
             Role::Kick => "kick",
             Role::Snare => "snare",
             Role::Hat => "hat",
+            Role::Crash => "crash",
         }
     }
 
@@ -71,6 +75,7 @@ impl Role {
             "kick" | "bd" => Role::Kick,
             "snare" | "sd" => Role::Snare,
             "hat" | "hihat" | "hh" => Role::Hat,
+            "crash" | "cymbal" | "cym" => Role::Crash,
             _ => return None,
         })
     }
@@ -89,6 +94,7 @@ impl Role {
             Role::Kick => DrumVoice::Kick,
             Role::Snare => DrumVoice::Snare,
             Role::Hat => DrumVoice::ClosedHat,
+            Role::Crash => DrumVoice::Crash,
             _ => return None,
         })
     }
@@ -145,6 +151,10 @@ impl Role {
             Role::Arp => 0.3,
             Role::Stab => -0.3,
             Role::Hat => 0.25,
+            // Opposite the hat, which is the one thing in the kit it would otherwise sit on top
+            // of: both are bright, both are mostly noise, and a crash landing in the hat's place
+            // reads as the hat having got louder rather than as a cymbal.
+            Role::Crash => -0.2,
         }
     }
 
@@ -168,6 +178,11 @@ impl Role {
             Role::Kick => -5.0,
             Role::Snare => -6.0,
             Role::Hat => -15.0,
+            // Under the snare, which is the one it is most often heard next to — they are struck
+            // together on the downbeat of a chorus, and a cymbal that arrives louder than the
+            // backbeat swallows it. Loud enough that the join is unmistakable; a crash nobody
+            // notices is a crash nobody wrote.
+            Role::Crash => -9.0,
         }
     }
 
@@ -178,7 +193,7 @@ impl Role {
     /// next, and a colour that means nothing is a colour nobody reads. By role, the arrangement
     /// can be read at a glance and reads the same way every time.
     ///
-    /// The kit is one family in three weights, because the three of them are one instrument.
+    /// The kit is one family in four weights, because the four of them are one instrument.
     /// Nothing else shares a hue with anything else.
     pub fn color(self) -> auris_core::project::Color {
         auris_core::project::Color(match self {
@@ -191,6 +206,9 @@ impl Role {
             Role::Kick => 0xc0554a,
             Role::Snare => 0xd97b6c,
             Role::Hat => 0xe8a396,
+            // The lightest of the family, next to the hat: the two cymbals read as a pair, which
+            // is what they are, and the weights still run heaviest to brightest down the kit.
+            Role::Crash => 0xf2c9b4,
         })
     }
 
