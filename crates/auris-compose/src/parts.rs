@@ -10,7 +10,7 @@ use crate::frame::{Frame, SectionPlan};
 use crate::rhythm::{Accent, DrumVoice, Grid, Pattern, swing_offset};
 use crate::rng::{Key as RngKey, Rng};
 use crate::spec::{Mood, PartSpec, Role, SongSpec};
-use crate::theory::key::Key;
+use crate::theory::chord_scale::ChordScale;
 use crate::theory::pitch::{OCTAVE, PitchClass, fold_into};
 
 /// A note as the composer writes it, before it becomes a clip.
@@ -583,8 +583,11 @@ fn melody(
 
             // The figure is written in scale steps from the chord's structural pitch, so it keeps
             // its shape while the harmony moves under it — in the scale of the *event's* key,
-            // so a modulation inside the range moves the scale at the tick it moves the chords.
-            let mut pitch = shift_within(event.key, anchor, cell.degree, low, high);
+            // so a modulation inside the range moves the scale at the tick it moves the chords,
+            // and in the scale the *chord* implies there, so a borrowed note is not answered by
+            // the degree it borrowed from.
+            let scale = ChordScale::new(event.key, event.chord);
+            let mut pitch = shift_within(&scale, anchor, cell.degree, low, high);
             // A note on a strong step has to agree with the chord, or the figure's shape wins an
             // argument with the harmony that it should not be having.
             if weight >= 3 {
@@ -606,13 +609,14 @@ fn melody(
     notes
 }
 
-/// The pitch `steps` scale degrees from `from`, in `key`'s scale.
+/// The pitch `steps` scale degrees from `from`.
 ///
-/// The key is a parameter rather than the section's, because a section written over a document
-/// can modulate inside itself: the caller passes the key of the chord the note sounds over.
-fn scale_shift(key: Key, from: i32, steps: i32) -> i32 {
-    let scale = key.scale;
-    let tonic = key.tonic;
+/// The scale is a parameter rather than the section's, for two reasons. A section written over a
+/// document can modulate inside itself, so the caller passes the key of the chord the note sounds
+/// over; and a chord that borrows a note replaces the degree it borrowed from, so what the caller
+/// passes is [`ChordScale`] rather than the key's own seven notes.
+fn scale_shift(scale: &ChordScale, from: i32, steps: i32) -> i32 {
+    let tonic = scale.tonic();
     let semitones = tonic.distance_up_to(PitchClass::new(from));
     let octaves = (from - tonic.midi(0) - semitones) / OCTAVE;
     let degree = scale.nearest_degree(semitones) + octaves * scale.degree_count() as i32;
@@ -626,10 +630,10 @@ fn scale_shift(key: Key, from: i32, steps: i32) -> i32 {
 /// nothing had priced. Pulling the interval in instead keeps the direction the figure was going,
 /// which is what an ear follows. Folding is kept only for the case where even the anchor is out
 /// of range, where there is nothing left to shrink.
-fn shift_within(key: Key, anchor: i32, degree: i32, low: i32, high: i32) -> i32 {
+fn shift_within(scale: &ChordScale, anchor: i32, degree: i32, low: i32, high: i32) -> i32 {
     let mut steps = degree;
     loop {
-        let pitch = scale_shift(key, anchor, steps);
+        let pitch = scale_shift(scale, anchor, steps);
         if (low..=high).contains(&pitch) {
             return pitch;
         }
@@ -1127,17 +1131,14 @@ fn bass(
                 // From inside the key, not a semitone below. A chromatic approach is what a jazz
                 // player would reach for, but every other note this crate writes belongs to the
                 // chord or to the key, and one part quietly breaking that would be a wrong note
-                // to anybody reading the piano roll.
+                // to anybody reading the piano roll. Inside the scale the chord implies, so an
+                // approach into a dominant does not walk through the degree it just altered.
                 BassFigure::Approach if position == last && last > 0 => target
                     .and_then(|next| {
+                        let scale = ChordScale::new(event.key, event.chord);
                         (1..=3)
                             .map(|step| next - step)
-                            .find(|pitch| {
-                                event
-                                    .key
-                                    .scale
-                                    .contains(event.key.tonic, PitchClass::new(*pitch))
-                            })
+                            .find(|pitch| scale.contains(PitchClass::new(*pitch)))
                             .map(|pitch| fold_into(pitch, low, high))
                     })
                     .unwrap_or(fifth),
@@ -1684,6 +1685,73 @@ mod tests {
     }
 
     #[test]
+    fn nothing_answers_a_borrowed_note_with_the_degree_it_replaced() {
+        // A secondary dominant raises a degree; a part still drawing on the key's own scale goes
+        // on playing the unraised one, and both versions sound at once. That is not colour, it is
+        // the one dissonance an ear calls a mistake — the melody answered the G7 of a minor-key
+        // 丸サ進行 with a B flat, a semitone under the chord's own third.
+        //
+        // Measured as a rate rather than by ear: over these four charts it was twenty-one notes
+        // in eight hundred, all of them in the melody, and it is none.
+        for (key_text, chart) in [
+            ("C minor", "@marusa"),
+            ("C major", "@marusa"),
+            ("A minor", "@royal-road"),
+            ("Eb major", "@naki"),
+            ("F# minor", "@junjo"),
+        ] {
+            let text = format!(
+                r#"
+                key    = "{key_text}"
+                chords = "{chart}"
+                form   = "verse chorus"
+                seed   = 3
+                # Straight and unhumanised, so a note struck on a chord change is not nudged a
+                # few ticks back into the chord that is leaving. This is about which note a
+                # part chooses, not about when it arrives.
+                humanize = 0
+                swing    = 50
+
+                [section.verse]
+                bars = 8
+
+                [section.chorus]
+                bars = 8
+                "#
+            );
+            let (spec, frame, parts) = draft(&text);
+            for (part_draft, declared) in parts.iter().zip(&spec.parts) {
+                if declared.role.is_drum() {
+                    continue;
+                }
+                for note in &part_draft.notes {
+                    let section = &frame.sections[note.section];
+                    let Some(event) = section.chord_at(note.start - section.start) else {
+                        continue;
+                    };
+                    let class = PitchClass::new(i32::from(note.pitch));
+                    if event.chord.contains(class) {
+                        continue;
+                    }
+                    for tone in event.chord.classes() {
+                        // Only a chord tone the key does not have: a semitone between two notes
+                        // the key itself offers is ordinary tension and stays.
+                        if event.key.scale.contains(event.key.tonic, tone) {
+                            continue;
+                        }
+                        let apart = class.distance_up_to(tone).min(tone.distance_up_to(class));
+                        assert_ne!(
+                            apart, 1,
+                            "`{}` played {class} a semitone from the {tone} of {} in {key_text} \
+                             {chart}",
+                            part_draft.name, event.chord
+                        );
+                    }
+                }
+            }
+        }
+    }
+    #[test]
     fn no_part_plays_a_note_outside_the_scale_or_the_chord() {
         // The fixture deliberately contains a diminished triad and a slash chord, which is where
         // a bass line that assumed a perfect fifth above the sounding bass went wrong.
@@ -2022,7 +2090,7 @@ mod tests {
         let section = &frame.sections[0];
         let (low, high) = Role::Melody.range();
         let anchor = high - 2;
-        let pitch = shift_within(section.key, anchor, 6, low, high);
+        let pitch = shift_within(&ChordScale::of_key(section.key), anchor, 6, low, high);
         assert!(
             (low..=high).contains(&pitch),
             "{pitch} is outside the range"

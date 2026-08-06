@@ -701,6 +701,12 @@ mod tests {
         // parallel major is an F sharp minor, and in A minor no combination of degree and
         // accidental names an F sharp at all — `degree_class` measures from the key's own scale
         // at zero and from the major scale otherwise, and F sharp falls between the two.
+        //
+        // This and the transposed 丸サ below are the two of the four whose digest moved when the
+        // melody started reading the scale each chord implies rather than the key's own, and
+        // that is the whole report on the blast radius: they are the two whose chords borrow.
+        // The chords, the count and the shape are what they were; some melody notes stepped onto
+        // the altered degree instead of onto the one it replaced.
         assert_eq!(
             fingerprint(
                 r#"
@@ -713,7 +719,7 @@ mod tests {
                     "#
             ),
             "verse·1 A minor | A→Amaj7 E Fm→Fm7 D A→Amaj7 E→Emaj7 Fm→Gbm D→Dmaj7 |\n\
-             203 notes, digest 192c401e1bd094a8\n"
+             203 notes, digest 8a99bd4d40057699\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats.
@@ -742,7 +748,7 @@ mod tests {
             ),
             "verse·1 C major | Fmaj7 E7 Am7 C7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
-             177 notes, digest 718f97d8deda9866\n"
+             177 notes, digest c3c3a6002fe6bd87\n"
         );
     }
 

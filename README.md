@@ -371,6 +371,12 @@ answers it rather than repeating it again. A section played twice is the same se
 chorus note for note the first. A section that another follows runs a fill into it, and every part leans
 gently across a phrase rather than sitting at one level throughout.
 
+The notes a part may reach for come from the chord under it rather than from the key alone. A
+chord that borrows — a secondary dominant, a raised leading tone — does not add a note, it
+*replaces* the degree that note came from, and a melody drawn from the plain scale would go on
+playing the degree it replaced with both versions sounding at once. Over a G7 in C minor the
+available notes are therefore `D Eb F G Ab B`: the harmonic minor, arrived at rather than named.
+
 Everything is a pure function of the specification and its seed, so the same document always
 writes the same piece and `--seed 7` writes a different one. Every decision draws from a stream
 addressed by name rather than by call order, so changing the drum density does not silently

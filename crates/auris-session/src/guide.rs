@@ -472,6 +472,14 @@ pub mod composition {
     //! read the same harmony, and the rhythm section all reads the same groove — the bass follows
     //! the kick *pattern*, not the kick *part*.
     //!
+    //! Reading the same harmony has to mean reading the same *notes*, which is why a part steps
+    //! through [`ChordScale`](auris_core::theory::chord_scale::ChordScale) rather than through
+    //! the key's own scale. A chord that borrows does not add a note, it replaces the degree the
+    //! note came from — and a melody drawn from the plain scale went on playing the degree it
+    //! replaced, so both versions sounded at once. That is the one dissonance an ear calls a
+    //! mistake rather than colour. Over a G7 in C minor the notes are `D Eb F G Ab B`, the
+    //! harmonic minor, arrived at rather than named.
+    //!
     //! # Figures, and why a section repeats
     //!
     //! Each part invents one short figure per section and restates it, because a passage built of
