@@ -336,8 +336,19 @@ repeat — and under a rule a fresh one of each: once there is a verse, `verse 2
 is how a song gets two verses that are not the same eight bars.
 
 **A progression is chosen per section**, which is what lets one change partway through a song. The
-picker lists the ones this song already carries and then the whole catalogue, and choosing a
-catalogue entry the song does not carry is what adds it — there is no chart list to fill in first.
+picker lists the ones this song already carries, then **Write one…** and **Keep in the catalogue…**,
+then the progressions this installation has been taught, then the whole built-in catalogue.
+Choosing a catalogue entry the song does not carry is what adds it — there is no chart list to fill
+in first.
+
+**Write one…** takes bars of roman numerals (`| IVmaj7 | III7 | vi7 | I7 |`) and files them under
+the section's own name, so a second section can reach the same chords from the same picker.
+**Keep in the catalogue…** puts the one written into `~/.config/auris-studio/progressions.json`,
+where every later song's picker finds it and `auris progressions` lists it. A kept progression is
+*a snippet the picker offers*, not a name a file resolves: choosing one writes its chords into the
+song, so an `.asong` never refers to anything outside itself and still plays for somebody who has
+never seen your book. A name the built-in catalogue already uses is refused, because two `@axis`es
+in one picker is a choice nobody can make.
 
 A composed document **remembers the specification it was written from**, so the sheet reopens on
 the song rather than on the defaults after a save and a reload, and **Another Take** on a piece

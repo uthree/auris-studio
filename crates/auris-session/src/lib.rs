@@ -46,6 +46,7 @@ pub mod error;
 pub mod guide;
 pub mod history;
 pub mod param;
+pub mod progressions;
 pub mod registry;
 pub mod render;
 pub mod session;

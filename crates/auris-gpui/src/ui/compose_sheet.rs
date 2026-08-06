@@ -363,18 +363,37 @@ fn tidy_sections(dials: &mut SongDials) {
 /// The one gesture that makes a second progression exist. Choosing 丸サ進行 for the chorus is what
 /// makes 丸サ進行 one of the song's charts — there is no list to fill in first.
 pub fn set_section_chart(dials: &mut SongDials, index: usize, name: &str) -> bool {
-    let Some(section) = dials.sections.get_mut(index) else {
-        return false;
-    };
     if dials.charts.iter().any(|(known, _)| known == name) {
+        let Some(section) = dials.sections.get_mut(index) else {
+            return false;
+        };
         section.chords = name.to_string();
         return true;
     }
-    let Some(chart) = chart_named(name) else {
+    match chart_named(name) {
+        Some(chart) => give_section_chart(dials, index, name, chart),
+        None => false,
+    }
+}
+
+/// Points the section at `index` at a progression the caller already has, under `name`.
+///
+/// What a progression written out by hand, or taken from the book somebody keeps, comes in
+/// through — neither of which the catalogue can be asked for. Replacing rather than adding when
+/// the name is taken, so writing a section's chords twice leaves one chart rather than two.
+pub fn give_section_chart(dials: &mut SongDials, index: usize, name: &str, chart: Chart) -> bool {
+    let name = name.trim();
+    let Some(section) = dials.sections.get_mut(index) else {
         return false;
     };
+    if name.is_empty() {
+        return false;
+    }
     section.chords = name.to_string();
-    dials.charts.push((name.to_string(), chart));
+    match dials.charts.iter_mut().find(|(known, _)| known == name) {
+        Some((_, held)) => *held = chart,
+        None => dials.charts.push((name.to_string(), chart)),
+    }
     true
 }
 
@@ -1644,6 +1663,34 @@ impl AurisApp {
                 );
             }
         }
+        // Writing one out, and keeping the one written. The second only appears where there is
+        // something to keep: a section playing a quoted progression already has a name, and
+        // offering to file 丸サ進行 under a second one would be a way to end up with two.
+        menu = menu.separator();
+        menu = menu.item(
+            self.t(Key::SongWriteProgression),
+            MenuCommand::SongWriteProgression(section),
+        );
+        if self.section_chart_is_written(section) {
+            menu = menu.item(
+                self.t(Key::SongKeepProgression),
+                MenuCommand::SongKeepProgression(section),
+            );
+        }
+
+        // The book somebody keeps, then the catalogue that shipped. Theirs first: a person who
+        // has written progressions down is reaching for one of those.
+        menu = menu.separator();
+        for entry in self.progressions.entries() {
+            menu = menu.item(
+                entry.name.clone(),
+                MenuCommand::SongSectionChords {
+                    section,
+                    name: entry.name.clone(),
+                },
+            );
+        }
+        menu = menu.separator();
         for entry in progression_catalog() {
             // Already offered above under the name this song files it under.
             if carried.iter().any(|held| held == entry.name) {
@@ -1658,6 +1705,24 @@ impl AurisApp {
             );
         }
         menu
+    }
+
+    /// Whether the section's progression is one somebody wrote out rather than one it quotes.
+    ///
+    /// A quotation already has a name and keeping it under a second would be a way to end up with
+    /// the same loop twice in one picker.
+    fn section_chart_is_written(&self, section: usize) -> bool {
+        self.song_sheet
+            .as_ref()
+            .and_then(|dials| {
+                let section = dials.sections.get(section)?;
+                let (_, chart) = dials
+                    .charts
+                    .iter()
+                    .find(|(name, _)| name == &section.chords)?;
+                Some(chart.quoted_as.is_none())
+            })
+            .unwrap_or(false)
     }
 
     /// How far a section is moved from the key, in semitones.
@@ -2121,6 +2186,58 @@ mod tests {
         // A name nothing answers to changes nothing at all, rather than pointing a section at a
         // chart that does not exist — which is a document the parser refuses.
         assert!(!set_section_chart(&mut dials, verse, "nonsense"));
+        let spec = song_spec(&dials);
+        assert_eq!(SongSpec::parse(&spec.to_toml()), Ok(spec));
+    }
+
+    #[test]
+    fn a_progression_written_out_by_hand_belongs_to_the_song_that_uses_it() {
+        // What a chart nobody named comes in through: neither the catalogue nor the book can be
+        // *asked* for one, and it has to end up in the song's own charts or the section would
+        // point at a name nothing answers to — a document the parser refuses.
+        let mut dials = SongDials::default();
+        let chorus = dials
+            .sections
+            .iter()
+            .position(|section| section.name == "chorus")
+            .unwrap();
+        let written = Chart::parse("| IVmaj7 | III7 | vi7 | I7 |").unwrap();
+        assert!(give_section_chart(
+            &mut dials,
+            chorus,
+            "chorus",
+            written.clone()
+        ));
+        assert_eq!(dials.sections[chorus].chords, "chorus");
+        assert_eq!(dials.charts.len(), 2);
+
+        // Written twice leaves one chart rather than two of the same name.
+        let again = Chart::parse("| ii | V | I | I |").unwrap();
+        assert!(give_section_chart(
+            &mut dials,
+            chorus,
+            "chorus",
+            again.clone()
+        ));
+        assert_eq!(dials.charts.len(), 2);
+        assert_eq!(dials.charts[1].1, again);
+
+        // A hand-written chart quotes nothing, which is what the sheet reads to decide whether
+        // there is anything worth offering to keep.
+        assert_eq!(dials.charts[1].1.quoted_as, None);
+        assert_eq!(
+            dials.charts[0].1.quoted_as, None,
+            "the default is its own too"
+        );
+        set_section_chart(&mut dials, chorus, "marusa");
+        let quoted = dials
+            .charts
+            .iter()
+            .find(|(name, _)| name == "marusa")
+            .unwrap();
+        assert_eq!(quoted.1.quoted_as.as_deref(), Some("marusa"));
+
+        // And it survives the file, which is what makes it the song's rather than the picker's.
         let spec = song_spec(&dials);
         assert_eq!(SongSpec::parse(&spec.to_toml()), Ok(spec));
     }

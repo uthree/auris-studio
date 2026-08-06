@@ -81,6 +81,13 @@ pub enum PromptTarget {
     SongSeed,
     /// The name of the part at this position in the song sheet's roster.
     SongPartName(usize),
+    /// The chords the section at this position in the song sheet plays, written out.
+    SongSectionChart(usize),
+    /// The name to keep the chart of the section at this position under.
+    ///
+    /// The one prompt here that reaches past the sheet: it writes to the progression book, which
+    /// outlives the song being written.
+    KeepProgression(usize),
 }
 
 impl PromptTarget {
@@ -102,7 +109,10 @@ impl PromptTarget {
             PromptTarget::Position => Key::HintPosition,
             PromptTarget::SongKey => Key::HintKey,
             PromptTarget::SongSeed => Key::HintSeed,
-            PromptTarget::SongTitle | PromptTarget::SongPartName(_) => return None,
+            PromptTarget::SongSectionChart(_) => Key::HintProgression,
+            PromptTarget::SongTitle
+            | PromptTarget::SongPartName(_)
+            | PromptTarget::KeepProgression(_) => return None,
             PromptTarget::Track(_) | PromptTarget::Clip(_) => return None,
         })
     }
@@ -527,6 +537,56 @@ impl AurisApp {
                 {
                     part.name = text;
                 }
+                Ok(())
+            }
+            // A progression written out by hand. Named after the section it was written for, so
+            // there is one prompt rather than two — and a second section can still reach it, from
+            // the same picker, under that name.
+            PromptTarget::SongSectionChart(index) => {
+                let Some(chart) = Chart::parse(&text) else {
+                    self.set_failed_status(messages::not_a_chord(self.language(), &text));
+                    return;
+                };
+                let name = self
+                    .song_sheet
+                    .as_ref()
+                    .and_then(|dials| dials.sections.get(index))
+                    .map(|section| section.name.clone());
+                if let (Some(dials), Some(name)) = (self.song_sheet.as_mut(), name) {
+                    crate::ui::compose_sheet::give_section_chart(dials, index, &name, chart);
+                }
+                Ok(())
+            }
+            // The one prompt that reaches past the sheet: the book outlives the song.
+            PromptTarget::KeepProgression(index) => {
+                let held = self.song_sheet.as_ref().and_then(|dials| {
+                    let section = dials.sections.get(index)?;
+                    let (_, chart) = dials
+                        .charts
+                        .iter()
+                        .find(|(name, _)| name == &section.chords)?;
+                    Some(chart.clone())
+                });
+                let Some(chart) = held else { return };
+                if !self.progressions.keep(&text, &chart, chart.mode) {
+                    // A name the built-in catalogue already uses, or none at all.
+                    self.set_failed_status(self.t(Key::NameCannotBeEmpty).to_string());
+                    return;
+                }
+                if let Err(error) = self.progressions.save() {
+                    self.set_failed_status(messages::failed(
+                        self.language(),
+                        self.t(Key::SongKeepProgression),
+                        &error.to_string(),
+                    ));
+                    return;
+                }
+                self.set_status(messages::saved(
+                    self.language(),
+                    &auris_session::progressions::ProgressionBook::path()
+                        .display()
+                        .to_string(),
+                ));
                 Ok(())
             }
             PromptTarget::Seed(clip) => match text.parse::<u64>() {

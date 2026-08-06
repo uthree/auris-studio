@@ -639,6 +639,11 @@ pub struct AurisApp {
     /// State of the sheet rather than of the document: nothing here has been written until Write
     /// is pressed, which is what lets a whole song be set up and then thrown away.
     pub(crate) song_sheet: Option<crate::ui::compose_sheet::SongDials>,
+    /// The progressions this installation has been taught, beside the ones it shipped with.
+    ///
+    /// Loaded once and held, because every chart picker lists it and reading a file per frame to
+    /// draw a menu would be absurd. Written the moment one is kept.
+    pub(crate) progressions: auris_session::progressions::ProgressionBook,
     /// Notes currently sounding because the user is holding a key, dragging one, or pressing a
     /// chord on the harmony lane.
     pub(crate) auditioning: Option<(TrackId, Vec<u8>)>,
@@ -773,6 +778,7 @@ impl AurisApp {
             status,
             export: None,
             song_sheet: None,
+            progressions: auris_session::progressions::ProgressionBook::load(),
             auditioning: None,
             focus: cx.focus_handle(),
             panes: PaneFocus::new(cx),

@@ -87,6 +87,10 @@ pub enum MenuCommand {
         /// A progression the song already carries, or one the catalogue knows.
         name: String,
     },
+    /// Write out the progression one section of the song sheet plays.
+    SongWriteProgression(usize),
+    /// Keep the progression one section plays, in the book that outlives this song.
+    SongKeepProgression(usize),
     /// Move one section of the song sheet away from the key.
     SongSectionTranspose {
         /// Which section, by position in the sheet's list.
@@ -865,9 +869,41 @@ impl AurisApp {
                 }
             }
             MenuCommand::SongSectionChords { section, name } => {
-                if let Some(dials) = self.song_sheet.as_mut() {
-                    crate::ui::compose_sheet::set_section_chart(dials, section, &name);
+                // The song's own charts and the catalogue first, then the book. Read before the
+                // sheet is borrowed, because both live on `self`.
+                let kept = self.progressions.chart(&name);
+                if let Some(dials) = self.song_sheet.as_mut()
+                    && !crate::ui::compose_sheet::set_section_chart(dials, section, &name)
+                    && let Some(chart) = kept
+                {
+                    crate::ui::compose_sheet::give_section_chart(dials, section, &name, chart);
                 }
+            }
+            MenuCommand::SongWriteProgression(section) => {
+                let title = self.t(Key::SongChords);
+                let current = self
+                    .song_sheet
+                    .as_ref()
+                    .and_then(|dials| {
+                        let held = dials.sections.get(section)?;
+                        let (_, chart) =
+                            dials.charts.iter().find(|(name, _)| name == &held.chords)?;
+                        Some(chart.to_string())
+                    })
+                    .unwrap_or_default();
+                self.open_prompt(crate::ui::prompt::Prompt::new(
+                    title,
+                    crate::ui::prompt::PromptTarget::SongSectionChart(section),
+                    current,
+                ));
+            }
+            MenuCommand::SongKeepProgression(section) => {
+                let title = self.t(Key::SongKeepProgression);
+                self.open_prompt(crate::ui::prompt::Prompt::new(
+                    title,
+                    crate::ui::prompt::PromptTarget::KeepProgression(section),
+                    String::new(),
+                ));
             }
             MenuCommand::SongSectionTranspose { section, steps } => {
                 if let Some(section) = self

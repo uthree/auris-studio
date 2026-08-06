@@ -427,6 +427,12 @@ strings! {
     SongAddSection { en: "Add Section", ja: "セクションを追加" }
     SongSectionName { en: "Section", ja: "セクション" }
     SongTranspose { en: "Transpose", ja: "移調" }
+    // Writing a progression out, and keeping the one written. The second reaches past the song
+    // into the book this installation carries.
+    SongWriteProgression { en: "Write one…", ja: "手で書く…" }
+    SongKeepProgression { en: "Keep in the catalogue…", ja: "カタログに登録…" }
+    HintProgression { en: "Bars of roman numerals: | IVmaj7 | III7 | vi7 | I7 |",
+                      ja: "ローマ数字を小節ごとに: | IVmaj7 | III7 | vi7 | I7 |" }
     // The roster. `Part` alone is the heading on a single generated clip, so this one is plural.
     SongPartsHeading { en: "Parts", ja: "パート" }
     SongPartName { en: "Name", ja: "名前" }
@@ -786,6 +792,7 @@ new のオプション
     CliFieldRouting { en: "routing", ja: "ルーティング" }
     CliClipCount { en: "clip(s)", ja: "クリップ" }
     CliProgressions { en: "PROGRESSIONS", ja: "コード進行" }
+    CliKeptProgressions { en: "KEPT", ja: "登録済みのコード進行" }
     CliExpectedSpecPath {
         en: "expected a path to a song specification",
         ja: "曲の仕様ファイルのパスを指定してください"
