@@ -107,14 +107,27 @@ pub(crate) fn in_progress_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-/// Writes `project` to `path` as pretty-printed JSON.
+/// Writes `project` to `path` as pretty-printed JSON, stamped with this build's format version.
+///
+/// The stamp is why the project is taken by `&mut`. A version number is a claim about the file,
+/// and the only build that can make it honestly is the one doing the writing: a document opened
+/// from an older file and saved here has this build's schema in it, whatever number it arrived
+/// with. Writing the number back out unchanged would make [`load_project`]'s gate read the
+/// document's ancestry instead — an older build would happily open a file full of fields it has
+/// never heard of, ignore them, and write them away on its next save.
+///
+/// In memory the field means nothing at all: a `Project` this build holds has this build's shape
+/// whichever way it was built. It only becomes a claim when it is written down, so this is where
+/// it is made true, rather than at the door in `load_project` — every path to disk goes through
+/// here, including any future one.
 ///
 /// The document is written to a sibling scratch file and then renamed over the target, so an
 /// interrupted save — a full disk, a lost connection to a network share — leaves the previous
 /// version of the project intact. Writing straight to `path` would truncate it first, and a
 /// failure after that point would destroy the user's work with no backup to fall back on, since
 /// undo history lives in the application rather than on disk.
-pub fn save_project(path: &Path, project: &Project) -> Result<()> {
+pub fn save_project(path: &Path, project: &mut Project) -> Result<()> {
+    project.format_version = Project::FORMAT_VERSION;
     let json = serde_json::to_string_pretty(project)?;
 
     let in_progress = in_progress_path(path);
@@ -262,8 +275,8 @@ mod tests {
     #[test]
     fn a_project_round_trips_through_a_file() {
         let file = TempFile::new("round-trip.auris");
-        let project = demo_project();
-        save_project(file.path(), &project).unwrap();
+        let mut project = demo_project();
+        save_project(file.path(), &mut project).unwrap();
 
         let loaded = load_project(file.path()).unwrap();
         assert_eq!(loaded, project);
@@ -276,7 +289,7 @@ mod tests {
     #[test]
     fn the_saved_file_is_pretty_printed_json() {
         let file = TempFile::new("pretty.auris");
-        save_project(file.path(), &demo_project()).unwrap();
+        save_project(file.path(), &mut demo_project()).unwrap();
         let text = std::fs::read_to_string(file.path()).unwrap();
         assert!(text.lines().count() > 20, "file was written on one line");
         assert!(text.contains("\n  \"name\": \"Demo\""));
@@ -285,8 +298,8 @@ mod tests {
     #[test]
     fn ids_handed_out_after_loading_do_not_collide() {
         let file = TempFile::new("ids.auris");
-        let project = demo_project();
-        save_project(file.path(), &project).unwrap();
+        let mut project = demo_project();
+        save_project(file.path(), &mut project).unwrap();
 
         let mut loaded = load_project(file.path()).unwrap();
         let mut used: Vec<u64> = Vec::new();
@@ -329,11 +342,11 @@ mod tests {
     fn saving_replaces_an_existing_file_and_leaves_no_scratch_behind() {
         let file = TempFile::new("overwrite.auris");
         let mut project = demo_project();
-        save_project(file.path(), &project).unwrap();
+        save_project(file.path(), &mut project).unwrap();
 
         project.name = "Renamed".into();
         project.set_bpm(90.0);
-        save_project(file.path(), &project).unwrap();
+        save_project(file.path(), &mut project).unwrap();
 
         let loaded = load_project(file.path()).unwrap();
         assert_eq!(loaded.name, "Renamed");
@@ -347,8 +360,8 @@ mod tests {
     #[test]
     fn a_failed_save_leaves_the_previous_version_intact() {
         let file = TempFile::new("preserved.auris");
-        let project = demo_project();
-        save_project(file.path(), &project).unwrap();
+        let mut project = demo_project();
+        save_project(file.path(), &mut project).unwrap();
         let before = std::fs::read_to_string(file.path()).unwrap();
 
         // A directory in place of the scratch file makes the write fail after the point where a
@@ -357,7 +370,7 @@ mod tests {
         std::fs::create_dir(&blocker).unwrap();
         let mut doomed = demo_project();
         doomed.name = "Should not land".into();
-        assert!(save_project(file.path(), &doomed).is_err());
+        assert!(save_project(file.path(), &mut doomed).is_err());
         std::fs::remove_dir(&blocker).unwrap();
 
         assert_eq!(std::fs::read_to_string(file.path()).unwrap(), before);
@@ -369,7 +382,7 @@ mod tests {
         let path = std::env::temp_dir()
             .join("auris-io-no-such-directory")
             .join("project.auris");
-        match save_project(&path, &demo_project()) {
+        match save_project(&path, &mut demo_project()) {
             Err(IoError::FileNotFound(reported)) => assert_eq!(reported, path),
             other => panic!("expected FileNotFound, got {other:?}"),
         }
@@ -378,17 +391,49 @@ mod tests {
     #[test]
     fn a_newer_format_version_is_rejected() {
         let file = TempFile::new("future.auris");
-        let mut project = demo_project();
-        project.format_version = Project::FORMAT_VERSION + 7;
-        save_project(file.path(), &project).unwrap();
+        // Written by hand rather than saved, because the saver stamps this build's version over
+        // whatever it is handed: a file from a later build is not something this one can produce.
+        // The body is deliberately nothing a `Project` could parse, which is what shows the
+        // version is read and refused before the document behind it is.
+        let future = Project::FORMAT_VERSION + 7;
+        std::fs::write(
+            file.path(),
+            format!(r#"{{ "format_version": {future}, "tracks": "in a shape from the future" }}"#),
+        )
+        .unwrap();
 
         match load_project(file.path()) {
             Err(IoError::ProjectVersionMismatch { found, supported }) => {
-                assert_eq!(found, Project::FORMAT_VERSION + 7);
+                assert_eq!(found, future);
                 assert_eq!(supported, Project::FORMAT_VERSION);
             }
             other => panic!("expected a version mismatch, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_saved_file_carries_the_version_of_the_build_that_wrote_it() {
+        let file = TempFile::new("stamped.auris");
+        // A document from an older build, put on disk without going through the saver so that
+        // the old number is genuinely what is read back.
+        let mut older = demo_project();
+        older.format_version = 1;
+        std::fs::write(file.path(), serde_json::to_string_pretty(&older).unwrap()).unwrap();
+
+        let mut loaded = load_project(file.path()).unwrap();
+        assert_eq!(loaded.format_version, 1, "the file's own version is read");
+
+        save_project(file.path(), &mut loaded).unwrap();
+        let written: FormatVersionProbe =
+            serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
+        assert_eq!(
+            written.format_version,
+            Project::FORMAT_VERSION,
+            "the file records where the document came from rather than what wrote it, so an \
+             older build would open a document full of fields it has never heard of"
+        );
+        // And the document agrees with the file it was just written to.
+        assert_eq!(loaded.format_version, Project::FORMAT_VERSION);
     }
 
     #[test]

@@ -864,6 +864,15 @@ pub struct AudioSource {
     pub sample_rate: f64,
     /// Channel count of the decoded audio.
     pub channel_count: usize,
+    /// Size of the file in bytes, or 0 when it was recorded before this field existed.
+    ///
+    /// Not for reading the file — for recognising it, exactly as [`SoundFontRef::byte_size`] does
+    /// for a font. When the stored path stops being true the file name alone is a weak match, and
+    /// this is what separates the sample that moved from a different one someone happened to give
+    /// the same name. [`Self::frame_count`] cannot stand in: it counts frames *after* import
+    /// resampling, so it describes what was decoded rather than what is on disk.
+    #[serde(default)]
+    pub byte_size: u64,
 }
 
 /// Decoded audio for every [`AudioSource`], kept out of the serialised project.
@@ -1726,6 +1735,11 @@ impl Project {
     }
 
     /// Registers imported file metadata and returns its new id.
+    ///
+    /// Everything asked for here describes the *decoded* audio, which is what a caller holding a
+    /// buffer has. [`AudioSource::byte_size`] describes the file instead, so it is left at 0 —
+    /// which reads as "no fingerprint" — for whoever has the file on disk to fill in: importing,
+    /// collecting into the project folder and finding a file that moved all write it.
     pub fn add_audio_source(
         &mut self,
         name: impl Into<String>,
@@ -1744,6 +1758,7 @@ impl Project {
                 frame_count,
                 sample_rate,
                 channel_count,
+                byte_size: 0,
             },
         );
         id
@@ -2918,6 +2933,7 @@ mod tests {
             frame_count: 1000,
             sample_rate: 48_000.0,
             channel_count: 2,
+            byte_size: 0,
         };
         let mut clip = AudioClip::new(ClipId(2), "c", Ticks::ZERO, &source);
         clip.fade_in_frames = 100;

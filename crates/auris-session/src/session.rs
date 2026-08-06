@@ -3546,7 +3546,7 @@ impl Session {
     /// The project folder becomes the directory holding `path`, so a caller choosing a fresh
     /// location wants [`Self::save_as`] instead — this one would leave the audio behind.
     pub fn save(&mut self, path: &Path) -> Result<(), SessionError> {
-        save_project(path, &self.project)?;
+        save_project(path, &mut self.project)?;
         self.path = Some(path.to_path_buf());
         self.dirty = false;
         Ok(())
@@ -3559,9 +3559,10 @@ impl Session {
     /// alongside it, so the folder can afterwards be moved, renamed, copied to another machine or
     /// zipped up and still open.
     ///
-    /// SoundFonts are left where they are. A font is a library shared by every project that uses
-    /// it, and a copy per project would cost gigabytes to save a path; [`Self::collect_assets`]
-    /// is how someone archiving a project asks for those too.
+    /// SoundFonts outside the folder are left where they are. A font is a library shared by every
+    /// project that uses it, and a copy per project would cost gigabytes to save a path;
+    /// [`Self::collect_assets`] is how someone archiving a project asks for those too. A font
+    /// already *inside* the folder is a file this project owns like any other, and travels.
     pub fn save_as(&mut self, chosen: &Path) -> Result<SaveReport, SessionError> {
         let document = document_in_folder(chosen);
         // The system save dialog offered to replace whatever is at `chosen`. It is not what gets
@@ -3597,6 +3598,18 @@ impl Session {
             .values()
             .map(|source| (source.id, source.path.resolve(self.project_folder())))
             .collect();
+        // A font is left where it lies, and an external one stays external — Save As is not the
+        // archiving opt-in. But a font that is already `Inside` lives in the *old* folder, and
+        // carrying its reference across unchanged would leave the copy naming a file that is not
+        // there: the save would report success, playback here would go on sounding from the
+        // samples already in memory, and every track on that font would open silent elsewhere.
+        let fonts: Vec<(SoundFontId, Option<PathBuf>)> = self
+            .project
+            .soundfonts
+            .values()
+            .filter(|font| font.path.is_inside())
+            .map(|font| (font.id, font.path.resolve(self.project_folder())))
+            .collect();
 
         // From here the document belongs to the new folder even if the write below fails: the
         // files land there, and their references are read against wherever `self.path` says the
@@ -3610,8 +3623,15 @@ impl Session {
                 uncollected.push(from);
             }
         }
+        for (id, from) in fonts {
+            let Some(from) = from else { continue };
+            if let Err(error) = self.collect_font(id, &from) {
+                log::warn!("could not collect {}: {error}", from.display());
+                uncollected.push(from);
+            }
+        }
 
-        save_project(&document, &self.project)?;
+        save_project(&document, &mut self.project)?;
         self.dirty = false;
         Ok(SaveReport {
             document,
@@ -3639,10 +3659,12 @@ impl Session {
     /// other file has had its attempt — missing assets are reported, never fatal, and what was
     /// copied stays copied and marked unsaved. A retry adopts what already landed.
     pub fn collect_assets(&mut self) -> Result<usize, SessionError> {
-        let folder = self
-            .project_folder()
-            .map(Path::to_path_buf)
-            .ok_or(SessionError::NoPath)?;
+        // Each copy below finds the folder for itself. This is here so that a project which has
+        // never been saved is told so, rather than being handed a cheerful `Ok(0)` for having
+        // collected nothing into nowhere.
+        if self.project_folder().is_none() {
+            return Err(SessionError::NoPath);
+        }
 
         let sources: Vec<(SourceId, Option<PathBuf>)> = self
             .project
@@ -3673,14 +3695,9 @@ impl Session {
         }
         for (id, from) in fonts {
             let Some(from) = from else { continue };
-            match copy_into(&from, &folder.join(AUDIO_DIR)) {
-                Ok(name) => {
-                    if let Some(font) = self.project.soundfonts.get_mut(&id) {
-                        font.path = AssetPath::inside(Path::new(AUDIO_DIR).join(name));
-                    }
-                    collected += 1;
-                }
-                Err(error) => failed = failed.or(Some(error.into())),
+            match self.collect_font(id, &from) {
+                Ok(()) => collected += 1,
+                Err(error) => failed = failed.or(Some(error)),
             }
         }
 
@@ -3712,6 +3729,10 @@ impl Session {
             buffer.sample_rate(),
             buffer.channel_count(),
         );
+        // Written down now rather than after the copy below, because the copy is the branch that
+        // may not happen: a project with no folder yet keeps pointing at the file where it lies,
+        // and that reference is the one most likely to need finding again later.
+        self.record_source_size(source, path);
         // A failure to copy is not a failure to import: the audio decoded, and referring to it
         // where it lies is exactly what an unsaved project does anyway.
         let has_folder = self.project_folder().is_some();
@@ -3893,11 +3914,11 @@ impl Session {
         let rate = self.project.sample_rate;
         let folder = self.project_folder().map(Path::to_path_buf);
 
-        let sources: Vec<(SourceId, AssetPath)> = self
+        let sources: Vec<(SourceId, AssetPath, u64)> = self
             .project
             .audio_sources
             .values()
-            .map(|source| (source.id, source.path.clone()))
+            .map(|source| (source.id, source.path.clone(), source.byte_size))
             .collect();
         let fonts: Vec<(SoundFontId, AssetPath, u64)> = self
             .project
@@ -3909,8 +3930,8 @@ impl Session {
         let mut search = self.search_path();
         let mut missing = Vec::new();
 
-        for (id, stored) in sources {
-            let Some(found) = locate(&stored, folder.as_deref(), &search, 0) else {
+        for (id, stored, size) in sources {
+            let Some(found) = locate(&stored, folder.as_deref(), &search, size) else {
                 log::warn!("no audio file for {stored}");
                 missing.push(stored.as_stored().to_path_buf());
                 continue;
@@ -4009,6 +4030,28 @@ impl Session {
         if let Some(source) = self.project.audio_sources.get_mut(&id) {
             source.path = AssetPath::inside(Path::new(AUDIO_DIR).join(name));
         }
+        // `copy_into` either copied these bytes or found a file already holding them, so the size
+        // of the source is the size of the copy the document now names.
+        self.record_source_size(id, from);
+        Ok(())
+    }
+
+    /// Copies one SoundFont into the project folder and points the document at the copy.
+    ///
+    /// Whether a font *should* be copied is policy and belongs to the callers — a font is a
+    /// library shared by every project, so only [`Self::collect_assets`] brings an external one
+    /// in, while [`Self::save_as`] carries across the ones this project already owns. This is the
+    /// mechanism both of them use, so there is one account of what "the project owns it" means on
+    /// disk.
+    fn collect_font(&mut self, id: SoundFontId, from: &Path) -> Result<(), SessionError> {
+        let folder = self
+            .project_folder()
+            .map(Path::to_path_buf)
+            .ok_or(SessionError::NoPath)?;
+        let name = copy_into(from, &folder.join(AUDIO_DIR))?;
+        if let Some(font) = self.project.soundfonts.get_mut(&id) {
+            font.path = AssetPath::inside(Path::new(AUDIO_DIR).join(name));
+        }
         Ok(())
     }
 
@@ -4020,6 +4063,7 @@ impl Session {
         if let Some(source) = self.project.audio_sources.get_mut(&id) {
             source.path = reference;
         }
+        self.record_source_size(id, found);
         self.dirty = true;
     }
 
@@ -4033,6 +4077,19 @@ impl Session {
             font.byte_size = byte_size(found);
         }
         self.dirty = true;
+    }
+
+    /// Writes down how large the file an audio source names is.
+    ///
+    /// The fingerprint `Session::reload_assets` confirms a candidate with, so it is refreshed
+    /// everywhere the reference is rewritten — a font does the same thing inline in
+    /// `Session::relocate_font`, and a source needs it in three places rather than one. A file
+    /// that cannot be measured records 0, which means "no fingerprint" and leaves the name to be
+    /// taken on trust: the same answer a document written before the field existed gives.
+    fn record_source_size(&mut self, id: SourceId, file: &Path) {
+        if let Some(source) = self.project.audio_sources.get_mut(&id) {
+            source.byte_size = byte_size(file);
+        }
     }
 
     /// How the document should refer to a file now found at `found`, or `None` when that is
@@ -6026,17 +6083,24 @@ mod tests {
 
         /// Writes a short tone so `import_audio` has a real file to decode.
         fn tone(&self, name: &str) -> PathBuf {
-            let mut buffer = AudioBuffer::new(2, 480, 48_000.0);
-            for channel in 0..2 {
-                for (frame, sample) in buffer.channel_mut(channel).iter_mut().enumerate() {
-                    *sample = (frame as f32 * 0.01).sin() * 0.5;
-                }
-            }
-            let path = self.join(name);
-            auris_io::write_wav(&path, &buffer, &auris_io::WavExportSettings::default())
-                .expect("a WAV file writes");
-            path
+            write_tone(&self.join(name), 480)
         }
+    }
+
+    /// Writes a decodable tone of `frames` frames wherever it is asked to.
+    ///
+    /// The length is a parameter because the tests about a file that moved turn on two files of
+    /// the same name being different files, and the length is what makes them different sizes.
+    fn write_tone(path: &Path, frames: usize) -> PathBuf {
+        let mut buffer = AudioBuffer::new(2, frames, 48_000.0);
+        for channel in 0..2 {
+            for (frame, sample) in buffer.channel_mut(channel).iter_mut().enumerate() {
+                *sample = (frame as f32 * 0.01).sin() * 0.5;
+            }
+        }
+        auris_io::write_wav(path, &buffer, &auris_io::WavExportSettings::default())
+            .expect("a WAV file writes");
+        path.to_path_buf()
     }
 
     impl Drop for Scratch {
@@ -6187,6 +6251,90 @@ mod tests {
     }
 
     #[test]
+    fn saving_under_a_new_name_takes_a_font_the_project_already_owns_with_it() {
+        // A collected font lives in the *old* folder. Carrying its reference across unchanged
+        // reported success, went on sounding here from the samples already in memory, and opened
+        // silent on the machine the copy was made for.
+        let scratch = Scratch::new("font-travels");
+        let library = scratch.join("GM.sf2");
+        std::fs::write(&library, b"stand-in for a very large font").unwrap();
+
+        let mut session = session();
+        session
+            .save_as(&scratch.join("First.auris"))
+            .expect("saves");
+        session.project.add_soundfont(
+            "GM",
+            AssetPath::external(&library),
+            auris_io::byte_size(&library),
+        );
+        assert_eq!(session.collect_assets().expect("collects"), 1);
+        // The library it came from goes away, so nothing below can be reading the original.
+        std::fs::remove_file(&library).unwrap();
+
+        let report = session
+            .save_as(&scratch.join("Second.auris"))
+            .expect("saves again");
+        assert!(
+            report.uncollected.is_empty(),
+            "nothing should have been left behind: {:?}",
+            report.uncollected
+        );
+
+        let second = scratch.join("Second");
+        assert!(
+            second.join(AUDIO_DIR).join("GM.sf2").is_file(),
+            "a font the project owns has to travel with it"
+        );
+        assert!(
+            scratch
+                .join("First")
+                .join(AUDIO_DIR)
+                .join("GM.sf2")
+                .is_file(),
+            "and Save As copies rather than moves, so the project saved from still has its own"
+        );
+        let stored = session.project().soundfonts.values().next().unwrap();
+        assert_eq!(
+            stored.path.resolve(session.project_folder()),
+            Some(second.join(AUDIO_DIR).join("GM.sf2")),
+            "the stored reference has to resolve to the copy in the new folder"
+        );
+    }
+
+    #[test]
+    fn saving_under_a_new_name_leaves_a_font_in_its_library_alone() {
+        // The policy Save As must not quietly change: a font is shared by every project that uses
+        // it, and `collect_assets` is the opt-in that pays for a copy.
+        let scratch = Scratch::new("font-stays");
+        let library = scratch.join("GM.sf2");
+        std::fs::write(&library, b"stand-in for a very large font").unwrap();
+
+        let mut session = session();
+        session.project.add_soundfont(
+            "GM",
+            AssetPath::external(&library),
+            auris_io::byte_size(&library),
+        );
+        session
+            .save_as(&scratch.join("MySong.auris"))
+            .expect("saves");
+
+        assert!(
+            !scratch
+                .join("MySong")
+                .join(AUDIO_DIR)
+                .join("GM.sf2")
+                .exists(),
+            "hundreds of megabytes per save is what this policy exists to avoid"
+        );
+        assert_eq!(
+            session.project().soundfonts.values().next().unwrap().path,
+            AssetPath::external(&library)
+        );
+    }
+
+    #[test]
     fn collecting_needs_somewhere_to_collect_into() {
         let mut session = session();
         assert!(matches!(
@@ -6227,6 +6375,68 @@ mod tests {
         assert!(
             reopened.is_dirty(),
             "the repair is an unsaved change like any other"
+        );
+    }
+
+    #[test]
+    fn a_sample_of_the_wrong_size_wearing_the_name_is_not_adopted() {
+        // A plain `save` collects nothing, so the document points outside its own folder — and
+        // that file has gone. Something else called `kick.wav` is sitting in `Audio/`. Playing
+        // that instead of reporting the sample missing is a wrong answer nobody is told about,
+        // and Collect Assets afterwards writes it into the document for good.
+        let scratch = Scratch::new("decoy");
+        let folder = scratch.join("MySong");
+        std::fs::create_dir_all(folder.join(AUDIO_DIR)).unwrap();
+
+        let mut session = session();
+        session
+            .import_audio(&scratch.tone("kick.wav"), Ticks::ZERO)
+            .unwrap();
+        let source = session.project().audio_sources.values().next().unwrap().id;
+        session.save(&folder.join("MySong.auris")).unwrap();
+
+        std::fs::remove_file(scratch.join("kick.wav")).unwrap();
+        write_tone(&folder.join(AUDIO_DIR).join("kick.wav"), 4_800);
+
+        let mut reopened = self::tests::session();
+        let missing = reopened.open(&folder.join("MySong.auris")).unwrap();
+        assert_eq!(missing.len(), 1, "a different file is not the file");
+        assert!(
+            !reopened.project().audio_sources[&source].path.is_inside(),
+            "and the reference must not be rewritten to point at the impostor"
+        );
+    }
+
+    #[test]
+    fn a_sample_of_the_right_size_wearing_the_name_is_still_found() {
+        // The other half of the same rule: the size confirms a candidate, it must not veto one.
+        // The copy in `Audio/` is a different file on disk holding the same bytes, which is what
+        // a project someone copied folder-first looks like.
+        let scratch = Scratch::new("twin");
+        let folder = scratch.join("MySong");
+        std::fs::create_dir_all(folder.join(AUDIO_DIR)).unwrap();
+
+        let mut session = session();
+        session
+            .import_audio(&scratch.tone("kick.wav"), Ticks::ZERO)
+            .unwrap();
+        let source = session.project().audio_sources.values().next().unwrap().id;
+        session.save(&folder.join("MySong.auris")).unwrap();
+
+        std::fs::copy(
+            scratch.join("kick.wav"),
+            folder.join(AUDIO_DIR).join("kick.wav"),
+        )
+        .unwrap();
+        std::fs::remove_file(scratch.join("kick.wav")).unwrap();
+
+        let mut reopened = self::tests::session();
+        let missing = reopened.open(&folder.join("MySong.auris")).unwrap();
+        assert!(missing.is_empty(), "the file is right there: {missing:?}");
+        assert_eq!(
+            reopened.project().audio_sources[&source].path,
+            AssetPath::inside(Path::new(AUDIO_DIR).join("kick.wav")),
+            "and finding it is written down, so it is found once rather than every time"
         );
     }
 
