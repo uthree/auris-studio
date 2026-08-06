@@ -384,6 +384,11 @@ impl Instrument for Fm2 {
         self.allocator.clear();
         self.bend = 0.0;
         self.modulation = 0.0;
+        // The vibrato depth is derived from the wheel and `refresh` is the only thing that
+        // writes it, so zeroing the wheel without this leaves the swing latched at whatever the
+        // last modulation asked for — and the next note played after a Stop wobbles at a wheel
+        // position the instrument no longer believes it is at.
+        self.refresh();
     }
 
     fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
@@ -704,5 +709,60 @@ mod tests {
         let rendered = rig.render(512, &[]);
         assert!(rendered.iter().all(|s| *s == 0.0));
         assert_eq!(rig.instrument.active_voices(), 0);
+    }
+
+    #[test]
+    fn reset_closes_the_vibrato_the_wheel_opened() {
+        // `reset` is what a Stop, a Seek and a Panic all arrive at, and it puts the wheel back to
+        // zero. The vibrato depth is *derived* from the wheel, though, so unless the derivation is
+        // run again the swing stays latched and every note played after the Stop wobbles from a
+        // wheel position nobody is holding.
+        //
+        // Measured the way the chiptune measures its vibrato: eighths of a vibrato cycle, each
+        // read for its own fundamental, and the extremes compared against the note.
+        const SLICE: usize = 3_000;
+
+        fn swing(rig: &mut Rig, events: &[NoteEvent]) -> Vec<f64> {
+            // Two hertz over half a second is one whole vibrato cycle, so the slices cover both
+            // ends of the swing. Skipping the first block keeps the attack out of the first one.
+            rig.render(24_000, events)[512..]
+                .chunks(SLICE)
+                .map(|chunk| zero_crossing_hz(chunk, SAMPLE_RATE))
+                .collect()
+        }
+
+        let mut rig = rig();
+        // A bare carrier, so a zero crossing is a whole cycle and the frequency reading is exact.
+        rig.set_param("index", 0.0);
+        rig.set_param("vibrato_rate", 2.0);
+        rig.set_param("mod_depth", 2.0);
+
+        let opened = swing(
+            &mut rig,
+            &[
+                NoteEvent::Modulation {
+                    frame: 0,
+                    amount: 1.0,
+                },
+                note_on(0, 69),
+            ],
+        );
+        let highest = opened.iter().cloned().fold(f64::MIN, f64::max);
+        let lowest = opened.iter().cloned().fold(f64::MAX, f64::min);
+        assert!(
+            highest > 465.0 && lowest < 415.0,
+            "the wheel never opened a vibrato to close: {opened:?}"
+        );
+
+        rig.instrument.reset();
+
+        // Same instrument, same patch, a fresh note — and no wheel behind it any more.
+        let after = swing(&mut rig, &[note_on(0, 69)]);
+        for measured in &after {
+            assert!(
+                (measured / 440.0 - 1.0).abs() < 0.01,
+                "the vibrato survived the reset: {measured:.2} Hz among {after:?}"
+            );
+        }
     }
 }
