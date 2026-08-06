@@ -2386,7 +2386,10 @@ impl Session {
     /// the rule a split already follows.
     ///
     /// Both ends are bounded by what there is. An audio clip's front stops at the first frame of
-    /// its source, and neither kind may be dragged past its own end.
+    /// its source, and neither kind may be dragged past its own end. A played or generated clip
+    /// that is already shorter than the editing grid has nothing left to give and refuses to be
+    /// shortened from the front at all — it can still be dragged the other way, which lengthens
+    /// it.
     pub fn trim_clip_start(&mut self, clip: ClipId, start: Ticks) -> Result<(), SessionError> {
         self.require_clip(clip)?;
         let grid = self.project.grid;
@@ -2397,8 +2400,14 @@ impl Session {
             .map(|(_, midi)| (midi.start, midi.length, midi.recipe.clone()))
         {
             // Never past its own end: the clip keeps at least a grid division, which is the same
-            // floor the other edge stops at.
-            let now = start.max_zero().min(was + length - grid);
+            // floor the other edge stops at. A clip that is *already* shorter than a division —
+            // a piece of a split, anything drawn at a finer grid than the one now set — has no
+            // room under that floor, and `was + length - grid` falls behind `was`. Clamped to
+            // `was` it simply refuses to be shortened from the front, instead of being dragged
+            // leftwards into a lengthening nobody asked for and, in the first bar, a start
+            // before zero. Dragging the other way still lengthens it: it is only the shortening
+            // that has nowhere to go.
+            let now = start.max_zero().min((was + length - grid).max(was));
             let by = now - was;
             if by == Ticks::ZERO {
                 return Ok(());
@@ -5464,6 +5473,60 @@ mod tests {
             session.midi_clip(clip).unwrap().length,
             session.project().grid
         );
+    }
+
+    #[test]
+    fn a_clip_already_shorter_than_the_grid_refuses_to_be_trimmed_from_the_front() {
+        // A clip shorter than a grid division is ordinary — a piece of a split, a clip drawn
+        // before the grid was made coarser — and the floor the front stops at then sits behind
+        // the clip's own start. Taken as a ceiling it dragged the start *backwards* on the first
+        // mouse-move of a gesture with no threshold, lengthening a clip nobody asked to lengthen
+        // and, in the first bar, pushing its start below zero.
+        let mut session = session();
+        session.set_grid(BAR);
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        session.forget_history();
+
+        session.trim_clip_start(clip, Ticks::QUARTER).unwrap();
+        let midi = session.midi_clip(clip).unwrap();
+        assert_eq!(midi.start, Ticks::ZERO, "the start moved, and backwards");
+        assert_eq!(
+            midi.length,
+            Ticks::QUARTER,
+            "the clip grew of its own accord"
+        );
+        assert!(
+            !session.can_undo(),
+            "an edge with nowhere to go is not an edit"
+        );
+
+        // Dragging the other way is still a lengthening, because uncovering earlier material is
+        // never the thing that runs out of room.
+        let clip = session
+            .add_midi_clip(track, "Short", BAR * 2, Ticks::QUARTER)
+            .unwrap();
+        session.trim_clip_start(clip, BAR).unwrap();
+        let midi = session.midi_clip(clip).unwrap();
+        assert_eq!(midi.start, BAR);
+        assert_eq!(midi.length, BAR + Ticks::QUARTER, "the end moved");
+
+        // And a clip longer than the grid trims exactly as it did: to where it was asked, and no
+        // further than a division short of its own end.
+        let clip = session
+            .add_midi_clip(track, "Long", Ticks::ZERO, BAR * 4)
+            .unwrap();
+        session.trim_clip_start(clip, BAR).unwrap();
+        let midi = session.midi_clip(clip).unwrap();
+        assert_eq!(midi.start, BAR);
+        assert_eq!(midi.length, BAR * 3);
+
+        session.trim_clip_start(clip, BAR * 9).unwrap();
+        let midi = session.midi_clip(clip).unwrap();
+        assert_eq!(midi.start, BAR * 3);
+        assert_eq!(midi.length, BAR);
     }
 
     #[test]
