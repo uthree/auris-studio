@@ -1808,6 +1808,19 @@ impl Project {
         removed
     }
 
+    /// Drops every lane driving a track's instrument, returning `true` when there was one.
+    ///
+    /// Called when the instrument itself is replaced, for the reason the swap also throws away
+    /// the saved parameter values: a lane names a track and a parameter *index*, never the plugin
+    /// that owns it, so a curve drawn for one instrument's waveform would carry straight on as a
+    /// curve driving whatever the next instrument keeps at that index. It lives here rather than
+    /// in the caller so that whatever changes a track's instrument next inherits the cleanup.
+    pub fn remove_instrument_automation(&mut self, track: TrackId) -> bool {
+        self.automation.remove_lanes_where(|target| {
+            matches!(target, crate::param::ParamTarget::Instrument { track: id, .. } if id == track)
+        })
+    }
+
     /// A MIDI clip anywhere in the project.
     pub fn midi_clip(&self, clip_id: ClipId) -> Option<(TrackId, &MidiClip)> {
         self.tracks.iter().find_map(|track| {

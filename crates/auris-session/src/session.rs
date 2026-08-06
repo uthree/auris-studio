@@ -1443,7 +1443,8 @@ impl Session {
         Ok(())
     }
 
-    /// Replaces a track's instrument, discarding the previous plugin's parameter values.
+    /// Replaces a track's instrument, discarding the previous plugin's parameter values and the
+    /// automation that drove them.
     pub fn set_track_instrument(
         &mut self,
         id: TrackId,
@@ -1469,15 +1470,22 @@ impl Session {
             });
         }
         self.record(Edit::ChangeInstrument);
+        let mut swapped = false;
         if let Some(inner) = self
             .project
             .track_mut(id)
             .and_then(|track| track.kind.as_instrument_mut())
         {
+            swapped = inner.instrument_id != instrument_id;
             inner.instrument_id = instrument_id.to_string();
             // The saved values belong to the old plugin; applying them to a different one would
             // write another plugin's numbers into unrelated controls.
             inner.instrument_state = PluginState::empty();
+        }
+        if swapped {
+            // And so do the curves that were writing those values every block, for the same
+            // reason. After the `record`, so that undo brings the lanes back with the plugin.
+            self.project.remove_instrument_automation(id);
         }
         self.invalidate_graph();
         Ok(())
@@ -1489,9 +1497,10 @@ impl Session {
     /// anything else is switched to the sampler as part of the same edit — which is what makes
     /// picking a preset out of a library one gesture rather than two.
     ///
-    /// A track already on the sampler keeps its level, reverb and chorus: those are how the
-    /// player is set up, not which sound it is playing, and losing them every time somebody
-    /// auditioned a neighbouring preset would be its own small tragedy.
+    /// A track already on the sampler keeps its level, reverb and chorus — and the lanes that
+    /// drive them: those are how the player is set up, not which sound it is playing, and losing
+    /// them every time somebody auditioned a neighbouring preset would be its own small tragedy.
+    /// A track arriving from another instrument loses both, because they described that plugin.
     pub fn set_track_preset(&mut self, id: TrackId, preset: PresetRef) -> Result<(), SessionError> {
         self.require_track(id)?;
         if !self
@@ -1509,6 +1518,7 @@ impl Session {
             return Err(SessionError::UnknownSoundFont(preset.font.0));
         }
         self.record(Edit::ChoosePreset);
+        let mut swapped = false;
         if let Some(inner) = self
             .project
             .track_mut(id)
@@ -1517,8 +1527,14 @@ impl Session {
             if inner.instrument_id != SAMPLER_ID {
                 inner.instrument_id = SAMPLER_ID.to_string();
                 inner.instrument_state = PluginState::empty();
+                swapped = true;
             }
             store_preset(&mut inner.instrument_state, preset);
+        }
+        if swapped {
+            // The track was playing something else a moment ago, so its lanes were addressed to
+            // that plugin's parameters. After the `record`, so that undo brings them back.
+            self.project.remove_instrument_automation(id);
         }
         self.invalidate_graph();
         Ok(())
@@ -4468,6 +4484,11 @@ mod tests {
         {
             inner.instrument_state.params.insert("level".into(), -6.0);
         }
+        let knob = ParamTarget::Instrument {
+            track,
+            param: ParamId(0),
+        };
+        assert!(session.set_automation_point(knob, Ticks::ZERO, 0.0));
 
         let second = PresetRef {
             font,
@@ -4483,6 +4504,12 @@ mod tests {
             .expect("an instrument track");
         assert_eq!(session.track_preset(track), Some(second));
         assert_eq!(inner.instrument_state.params.get("level"), Some(&-6.0));
+        // The plugin did not change, so its curves still address exactly what they were drawn
+        // for. Dropping them here would lose a sweep to the act of trying the next patch along.
+        assert!(
+            session.automation().lane(knob).is_some(),
+            "an audition is not a change of plugin"
+        );
     }
 
     #[test]
@@ -5824,13 +5851,12 @@ mod tests {
     fn changing_the_instrument_discards_the_old_plugin_state() {
         let mut session = session();
         let track = session.add_default_instrument_track("Lead").unwrap();
-        session.set_param(
-            ParamTarget::Instrument {
-                track,
-                param: ParamId(0),
-            },
-            1.0,
-        );
+        let first = ParamTarget::Instrument {
+            track,
+            param: ParamId(0),
+        };
+        session.set_param(first, 1.0);
+        assert!(session.set_automation_point(first, Ticks::ZERO, 1.0));
 
         session
             .set_track_instrument(track, "auris.synth.fm2")
@@ -5846,6 +5872,54 @@ mod tests {
         assert!(
             state.params.is_empty(),
             "another plugin's values must not survive the swap"
+        );
+        // A lane names the track and the parameter's index, never the plugin, so one left behind
+        // would go on sweeping whatever the new instrument keeps at that index.
+        assert!(
+            session.automation().lane(first).is_none(),
+            "another plugin's curve must not survive the swap either"
+        );
+
+        // The removal sits after the `record`, so the whole edit comes back together.
+        assert_eq!(session.undo(), Some(Edit::ChangeInstrument));
+        assert!(
+            session.automation().lane(first).is_some(),
+            "undo put the instrument back without its automation"
+        );
+    }
+
+    #[test]
+    fn choosing_a_sound_drops_the_lanes_that_drove_the_old_instrument() {
+        // Picking a preset switches a track off its synth, which is a change of plugin like any
+        // other — and the lanes belonged to the synth.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").expect("track");
+        let font = named_font(&mut session, "Orchestra");
+        let first = ParamTarget::Instrument {
+            track,
+            param: ParamId(0),
+        };
+        assert!(session.set_automation_point(first, Ticks::ZERO, 1.0));
+
+        session
+            .set_track_preset(
+                track,
+                PresetRef {
+                    font,
+                    bank: 0,
+                    patch: 40,
+                },
+            )
+            .expect("chosen");
+        assert!(
+            session.automation().lane(first).is_none(),
+            "the synth's curve stayed behind to drive the sampler"
+        );
+
+        assert_eq!(session.undo(), Some(Edit::ChoosePreset));
+        assert!(
+            session.automation().lane(first).is_some(),
+            "undo put the instrument back without its automation"
         );
     }
 
