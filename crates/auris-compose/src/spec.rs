@@ -190,7 +190,12 @@ impl Role {
     /// The level a part of this role sits at, in decibels.
     ///
     /// Six parts all at unity sum well past full scale. These are the rough balances a mix
-    /// engineer would reach for first: the tune on top, the pad and the hat well under it.
+    /// engineer would reach for first: the tune on top, the pad well under it.
+    ///
+    /// The kit sits *above* the tune, which is where a kit sits in almost every record made
+    /// since about 1980. It used to sit five decibels under one, which is a demo of an
+    /// arrangement rather than a piece of music — the drums were audibly holding back, and the
+    /// hat at −20 was a rumour.
     pub fn default_gain_db(self) -> f32 {
         match self {
             Role::Melody => -7.0,
@@ -199,10 +204,33 @@ impl Role {
             Role::Arp => -12.0,
             Role::Stab => -13.0,
             Role::Bass => -10.0,
-            Role::Kick => -10.0,
-            Role::Snare => -12.0,
-            Role::Hat => -20.0,
+            Role::Kick => -5.0,
+            Role::Snare => -6.0,
+            Role::Hat => -15.0,
         }
+    }
+
+    /// The colour a track of this role is drawn in.
+    ///
+    /// A composed song used to take the palette in order, so which colour a part got depended on
+    /// how many parts were declared before it — the bass was green in one piece and pink in the
+    /// next, and a colour that means nothing is a colour nobody reads. By role, the arrangement
+    /// can be read at a glance and reads the same way every time.
+    ///
+    /// The kit is one family in three weights, because the three of them are one instrument.
+    /// Nothing else shares a hue with anything else.
+    pub fn color(self) -> auris_core::project::Color {
+        auris_core::project::Color(match self {
+            Role::Melody => 0xe0b452,
+            Role::Chords => 0x5fc9a3,
+            Role::Pad => 0xb07cc6,
+            Role::Arp => 0x4f9dde,
+            Role::Stab => 0xd16b8a,
+            Role::Bass => 0x6f7fd6,
+            Role::Kick => 0xc0554a,
+            Role::Snare => 0xd97b6c,
+            Role::Hat => 0xe8a396,
+        })
     }
 
     /// The MIDI range a part of this role should stay inside.
@@ -1302,6 +1330,41 @@ impl PartDoc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_role_has_a_colour_of_its_own_and_it_can_be_seen() {
+        // Two roles sharing a colour would fail in exactly the place colour is for: telling the
+        // bass from the pad at a glance, across forty bars, without reading a single name.
+        let mut seen: Vec<u32> = Role::ALL.iter().map(|role| role.color().0).collect();
+        let count = seen.len();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(count, seen.len(), "two roles share a colour");
+
+        for role in Role::ALL {
+            let (r, g, b) = role.color().rgb();
+            let luma = 0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b);
+            assert!(
+                (70.0..=225.0).contains(&luma),
+                "{} is {luma:.0} bright, which is a track nobody can pick out of the lanes",
+                role.name()
+            );
+        }
+    }
+
+    #[test]
+    fn the_kit_carries_the_mix_rather_than_hiding_under_it() {
+        // The kick and the snare are the two loudest things in most records made since about
+        // 1980. They used to sit five and six decibels under the tune, which is a demo of an
+        // arrangement rather than a piece of music.
+        let melody = Role::Melody.default_gain_db();
+        assert!(Role::Kick.default_gain_db() > melody);
+        assert!(Role::Snare.default_gain_db() > melody);
+        // The hat is the exception and stays under: loud enough to be heard keeping time, never
+        // the thing being listened to. Under the tune, and still clear of the pad.
+        assert!(Role::Hat.default_gain_db() < melody);
+        assert!(Role::Hat.default_gain_db() > Role::Pad.default_gain_db());
+    }
 
     #[test]
     fn an_empty_document_is_a_whole_song() {

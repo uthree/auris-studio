@@ -1609,6 +1609,7 @@ impl Session {
         for bus in &composition.buses {
             let id = project.add_bus_track(&bus.name);
             if let Some(entry) = project.track_mut(id) {
+                entry.color = bus.color;
                 entry.mixer.gain_db = bus.gain_db;
             }
             for effect in &bus.effects {
@@ -1640,6 +1641,10 @@ impl Session {
             };
             let track_id = project.add_instrument_track(&track.name, instrument);
             if let Some(entry) = project.track_mut(track_id) {
+                // The composer's colour, not the palette's. `add_instrument_track` takes the next
+                // palette entry by position, so which colour a part got depended on how many
+                // parts were declared before it.
+                entry.color = track.color;
                 entry.mixer.gain_db = track.gain_db;
                 entry.mixer.pan = track.pan;
                 // A draft names a bus by its position in the composition, because the composer has

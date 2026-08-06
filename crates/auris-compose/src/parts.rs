@@ -1224,9 +1224,18 @@ fn drums(
                     // A quiet section thins the pattern out rather than playing it softly, which
                     // is what a drummer does. The downbeat is never thinned, or the bar loses its
                     // footing.
-                    let survives = (0.45 + 0.14 * f32::from(weight))
-                        * (0.45 + 0.55 * section.intensity)
-                        * leaning;
+                    //
+                    // What thins a hit is how weak its step is, and how quietly the section is
+                    // being played. A *beat* survives outright at the middle of the dial: the
+                    // arithmetic here used to drop one in three of them at the default settings,
+                    // which is not a drummer playing quietly, it is a drummer missing — and it
+                    // is why the kit came out too sparse to hold a song up.
+                    let strength = match weight {
+                        0 => 0.72,
+                        1 => 0.90,
+                        _ => 1.0,
+                    };
+                    let survives = strength * (0.70 + 0.30 * section.intensity) * leaning;
                     if !written && weight < 4 && !rng.chance(survives.clamp(0.0, 1.0)) {
                         continue;
                     }

@@ -386,6 +386,14 @@ chord that borrows — a secondary dominant, a raised leading tone — does not 
 playing the degree it replaced with both versions sounding at once. Over a G7 in C minor the
 available notes are therefore `D Eb F G Ab B`: the harmonic minor, arrived at rather than named.
 
+A composed piece arrives **mixed rather than merely written**: levels and a pan spread by role,
+the kit under one drum fader, and a room the pitched parts send to — most for the pad, least for
+the tune, none at all for the kick and the bass, because more room is further away. The kit sits
+*above* the tune, where a kit has sat in most records made since about 1980. Every track is
+coloured by what it plays rather than by the palette in order, so the kit is one family of reds,
+the bass is indigo wherever it was declared, and an arrangement can be read without reading a
+single name.
+
 Everything is a pure function of the specification and its seed, so the same document always
 writes the same piece and `--seed 7` writes a different one. Every decision draws from a stream
 addressed by name rather than by call order, so changing the drum density does not silently
@@ -425,9 +433,11 @@ the level stays where the intensity put it rather than sagging with the spread. 
 source of variation at once: the metric hierarchy, the accents, the lean across a phrase and the
 crescendo of a drum fill.
 
-A kit reads the density around the middle: below it the groove thins from its weakest hits upward
-and never loses a downbeat, and above it the steps the groove left empty start taking ghost notes
-— which is how a drummer gets busier without playing something else. *Which* rhythm it plays is
+A kit reads the density around the middle, and the middle **plays the groove**: a beat is never
+thinned there, a weak sixteenth sometimes is, and a quiet section thins further. Below the middle
+the groove thins from its weakest hits upward and never loses a downbeat; above it the steps the
+groove left empty start taking ghost notes — which is how a drummer gets busier without playing
+something else. *Which* rhythm it plays is
 still the groove picker, and that is a choice from a drummer's own vocabulary rather than a
 number: `basic-rock`, `eight-beat`, `sixteen-beat`, `four-on-the-floor`, `shuffle`, `breakbeat`,
 `bossa-nova`, `half-time` and `sparse`.

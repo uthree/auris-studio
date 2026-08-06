@@ -3,6 +3,7 @@
 use auris_core::Note;
 use auris_core::harmony::{ChordMap, ChordPoint, Harmony, KeyMap, KeyPoint};
 use auris_core::plugin::PluginState;
+use auris_core::project::Color;
 use auris_core::structure::{SectionMap, SectionPoint};
 use auris_core::time::{Ticks, TimeSignature};
 
@@ -39,6 +40,8 @@ pub struct TrackDraft {
     pub name: String,
     /// The plugin that plays it.
     pub instrument: String,
+    /// The colour the track is drawn in, chosen by the part's role.
+    pub color: Color,
     /// Level trim in decibels.
     pub gain_db: f32,
     /// Stereo position.
@@ -68,6 +71,8 @@ pub struct SendDraft {
 pub struct BusDraft {
     /// The bus's name.
     pub name: String,
+    /// The colour the bus is drawn in.
+    pub color: Color,
     /// Level trim in decibels.
     pub gain_db: f32,
     /// Effects it carries, in chain order.
@@ -236,12 +241,16 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
         if clips.is_empty() {
             continue;
         }
-        let (output, sends) = role_of(&draft.name)
+        let role = role_of(&draft.name);
+        let (output, sends) = role
             .map(|role| routing_for(role, &buses))
             .unwrap_or_default();
         tracks.push(TrackDraft {
             name: draft.name,
             instrument: draft.instrument,
+            // A part with no role in the roster cannot happen — a draft is written *from* one —
+            // but the melody's colour is the honest answer if it ever did.
+            color: role.unwrap_or(Role::Melody).color(),
             gain_db: draft.gain_db,
             pan: draft.pan,
             output,
@@ -273,6 +282,8 @@ fn buses_for(roles: &[Role]) -> Vec<BusDraft> {
     if roles.iter().any(|role| drum_bus_takes(*role)) {
         buses.push(BusDraft {
             name: DRUM_BUS.to_string(),
+            // The kit's own hue, so the fader that moves the drums is the colour of the drums.
+            color: Role::Snare.color(),
             // The parts carry their own balance; the bus is here to move all of it at once.
             gain_db: 0.0,
             effects: Vec::new(),
@@ -287,6 +298,9 @@ fn buses_for(roles: &[Role]) -> Vec<BusDraft> {
         state.params.insert("room_size".to_string(), 0.55);
         buses.push(BusDraft {
             name: ROOM_BUS.to_string(),
+            // Grey, and the only grey in the arrangement: the room is not a part, and a hue would
+            // put it in a family with one of them.
+            color: Color(0x8792a2),
             // The sends set how much goes in; this sets how loud what comes back is.
             gain_db: -3.0,
             effects: vec![BusEffectDraft {
@@ -674,10 +688,39 @@ mod tests {
     /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
     /// a bug or a decision, and this is what makes anyone look.
     ///
-    /// It last moved when the held chord was weighted down out of a comp's way and dropping the
-    /// fifth stopped being a no-op on a triad. Everything that has moved it so far is in the
-    /// `chords` part — the melody, the bass and the kit have been note for note the same
-    /// throughout, which is what says the blast radius has been the intended one every time.
+    /// It last moved when the kit stopped dropping a third of the hits its groove asked for.
+    /// All four fixtures moved and all four grew, by between twelve and twenty-three per cent,
+    /// and every note of the growth is a drum: the pitched parts are note for note what they
+    /// were. That is the report on the blast radius, and it is the intended one.
+    #[test]
+    fn a_track_is_the_colour_of_what_it_plays() {
+        // Which colour a part got used to depend on how many parts were declared before it, so
+        // the bass was green in one piece and pink in the next. Colour that means nothing is
+        // colour nobody reads.
+        let piece = compose(&SongSpec::default());
+        for track in &piece.tracks {
+            let role = SongSpec::default()
+                .parts
+                .iter()
+                .find(|part| part.name == track.name)
+                .map(|part| part.role)
+                .expect("every track came from a part");
+            assert_eq!(
+                track.color,
+                role.color(),
+                "{} is the wrong colour",
+                track.name
+            );
+        }
+        // And the fader that moves the drums is the colour of the drums.
+        let drums = piece
+            .buses
+            .iter()
+            .find(|bus| bus.name == DRUM_BUS)
+            .expect("the default roster has a kit");
+        assert_eq!(drums.color, Role::Snare.color());
+    }
+
     #[test]
     fn the_composer_writes_what_it_wrote_before() {
         // A chart nobody asked for is the composer's own, and so the only kind it colours. In a
@@ -694,7 +737,7 @@ mod tests {
                     "#
             ),
             "verse·1 C major | C→Cmaj7 G Am F→Fmaj7 C→Cmaj7 G→Gmaj7 Am→Am9 F |\n\
-             133 notes, digest f8264e14061e3532\n"
+             163 notes, digest e56e38402c7ada74\n"
         );
 
         // The same in a minor key. `Fm→Gbm` is the borrow that has no spelling: `vi` read in the
@@ -719,7 +762,7 @@ mod tests {
                     "#
             ),
             "verse·1 A minor | A→Amaj7 E Fm→Fm7 D A→Amaj7 E→Emaj7 Fm→Gbm D→Dmaj7 |\n\
-             203 notes, digest 8a99bd4d40057699\n"
+             227 notes, digest 35b52587bd16e2ac\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats.
@@ -728,7 +771,7 @@ mod tests {
             "intro·1 C major | C G Am F |\n\
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
-             563 notes, digest 7ead73fafcc0bc34\n"
+             629 notes, digest 320d8793d96fc1d4\n"
         );
 
         // A transposed section, which is about to become a key change on the timeline.
@@ -748,7 +791,7 @@ mod tests {
             ),
             "verse·1 C major | Fmaj7 E7 Am7 C7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
-             177 notes, digest c3c3a6002fe6bd87\n"
+             204 notes, digest 46841cf7f19de660\n"
         );
     }
 

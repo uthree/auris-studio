@@ -312,14 +312,19 @@ mod tests {
             // with a figure in it. The ceiling is here to catch a pad that never changes at all,
             // which is what it used to do, and not to demand one that changes a lot.
             ClipPreset::Pad => 0.92,
-            // A kit follows its groove, and the groove is the part somebody chose.
-            ClipPreset::Drums => 0.75,
-            // One drum voice on its own has less room still. A kit can vary its hat, which is
-            // where most of a kit's variation lives; a lone snare is a backbeat, and a backbeat
-            // played differently is a different groove rather than another take of this one.
-            // Measured: kick 52%, snare 70%, hat 46%. The ceiling is here to catch a voice that
-            // never changes at all, not to demand one that changes as much as a melody.
-            ClipPreset::Kick | ClipPreset::Snare | ClipPreset::Hat => 0.85,
+            // A kit follows its groove, and the groove is the part somebody chose. These two
+            // ceilings used to be 0.75 and 0.85, and they were only that low because the kit was
+            // being *sampled* rather than played: a third of the hits the groove asked for were
+            // dropped at the neutral dial, and it was that dropping — not any musical decision —
+            // that made one take differ from the next. Playing the groove costs most of it back.
+            // Measured now: kit 84 %, kick 83, snare 87, hat 79. What still makes two takes
+            // different is the melody, the voicings, the fills and which weak steps survive.
+            ClipPreset::Drums => 0.90,
+            // One drum voice on its own has less room still. A lone snare is a backbeat, and a
+            // backbeat played differently is a different groove rather than another take of this
+            // one. The ceiling is here to catch a voice that never changes at all, not to demand
+            // one that changes as much as a melody.
+            ClipPreset::Kick | ClipPreset::Snare | ClipPreset::Hat => 0.92,
             _ => 0.55,
         };
         // Every offender, not the first: with ten presets a stop at the first hides the rest, and
@@ -867,12 +872,19 @@ mod tests {
 
         // At zero the last bar is the groove and nothing else, which is what a loop that is not
         // meant to announce its own end wants.
+        //
+        // Within a hit or two of the first bar rather than equal to it. Thinning draws afresh
+        // each bar, so two bars of one groove were never obliged to match — they happened to
+        // while so little of the groove survived that both bars came out as the strong steps
+        // alone. A fill puts four to eight extra hits in the bar, which is well clear.
         let none = kit(0.0);
         assert!(!none.is_empty(), "turning the fill off silenced the kit");
-        assert_eq!(
-            last_bar(&none),
-            none.iter().filter(|note| note.start < BAR).count(),
-            "the last bar differs from the first with no fill in it"
+        let first = none.iter().filter(|note| note.start < BAR).count();
+        assert!(
+            last_bar(&none).abs_diff(first) <= 2,
+            "the last bar has {} hits against the first bar's {first}: a fill ran with the dial \
+             at zero",
+            last_bar(&none)
         );
     }
 
