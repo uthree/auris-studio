@@ -46,6 +46,7 @@ fn main() -> ExitCode {
     let result = match command {
         "plugins" => list_plugins(),
         "progressions" => list_progressions(),
+        "soundfonts" => list_soundfonts(&args),
         "compose" => compose(&args),
         "info" => with_path(&args, info),
         "render" => render(&args),
@@ -130,8 +131,14 @@ fn with_path(args: &[String], run: impl Fn(&Path) -> Result<(), String>) -> Resu
 }
 
 /// A session with no audio device and no GPU, which is all a batch tool needs.
+///
+/// With the shipped SoundFonts, which [`SessionOptions::headless`] leaves out because a *test*
+/// wants a session that is the same on every machine. This is not a test: `auris compose` here
+/// and **Compose a Song…** in the window have to write the same piece, and half the instruments
+/// a piece asks for are in that library.
 fn headless() -> Result<Session, String> {
-    Session::new(SessionOptions::headless()).map_err(|error| error.to_string())
+    Session::new(SessionOptions::headless().with_shipped_fonts(true))
+        .map_err(|error| error.to_string())
 }
 
 /// Lists the chord progressions the composer knows by name.
@@ -163,6 +170,42 @@ fn list_progressions() -> Result<(), String> {
             for entry in book.entries() {
                 writeln!(out, "  {:<15} {}", entry.name, entry.chart)?;
             }
+        }
+        Ok(())
+    })();
+    printed(print)
+}
+
+/// Lists the SoundFonts this build ships with, and whether they are installed.
+///
+/// With `--manifest`, prints the same list as tab-separated fields instead:
+/// `id`, `file`, `bytes`, `sha256`, `url`, `license_url`. That form is what `tools/fetch-soundfonts.sh`
+/// downloads from, which is the point of it — the manifest lives in
+/// [`auris_session::library`] and nowhere else, so a font that is added or a digest that
+/// changes cannot leave the script quietly fetching last month's file.
+fn list_soundfonts(args: &[String]) -> Result<(), String> {
+    let manifest = args.iter().any(|arg| arg == "--manifest");
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    let print = (|| {
+        if manifest {
+            for font in auris_session::library::SHIPPED {
+                writeln!(
+                    out,
+                    "{}\t{}\t{}\t{}\t{}\t{}",
+                    font.id, font.file, font.bytes, font.sha256, font.url, font.license_url
+                )?;
+            }
+            return Ok(());
+        }
+        writeln!(out, "{}", Key::CliSoundFonts.get(LANGUAGE))?;
+        for font in auris_session::library::SHIPPED {
+            let state = match auris_session::library::installed(font) {
+                Some(path) => path.display().to_string(),
+                None => Key::CliSoundFontMissing.get(LANGUAGE).to_string(),
+            };
+            writeln!(out, "  {} {}", pad(font.name, 22), font.license)?;
+            writeln!(out, "  {} {state}", pad("", 22))?;
         }
         Ok(())
     })();
@@ -610,8 +653,12 @@ fn new_project(args: &[String]) -> Result<(), String> {
         index += 1;
     }
 
-    let mut session = Session::new(SessionOptions::headless().with_sample_rate(sample_rate))
-        .map_err(|error| error.to_string())?;
+    let mut session = Session::new(
+        SessionOptions::headless()
+            .with_sample_rate(sample_rate)
+            .with_shipped_fonts(true),
+    )
+    .map_err(|error| error.to_string())?;
     session.set_bpm(bpm);
     session
         .add_default_instrument_track(messages::new_track_name(LANGUAGE, 1))

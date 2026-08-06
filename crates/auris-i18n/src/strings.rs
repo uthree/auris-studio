@@ -710,6 +710,7 @@ COMMANDS
     compose <song.asong> [opts]   Write a piece from a specification
     progressions                  List every chord progression known by name
     plugins                       List every registered instrument and effect
+    soundfonts [--manifest]       List the SoundFonts shipped with this build
     info <project.auris>          Print a project's tracks, clips and duration
     render <project.auris> [opts] Render a project to a WAV file
     new <project.auris> [opts]    Create a project with one instrument track
@@ -745,6 +746,7 @@ auris — コマンドラインから使う Auris Studio
     compose <song.asong> [opts]   仕様ファイルから曲を書き出す
     progressions                  名前の付いたコード進行を一覧表示
     plugins                       登録済みの音源とエフェクトを一覧表示
+    soundfonts [--manifest]       同梱サウンドフォントを一覧表示
     info <project.auris>          プロジェクトのトラック・クリップ・長さを表示
     render <project.auris> [opts] プロジェクトを WAV に書き出す
     new <project.auris> [opts]    ソフト音源トラック 1 本のプロジェクトを作成
@@ -770,6 +772,11 @@ render のオプション
 new のオプション
         --bpm <tempo>             新規プロジェクトのテンポ（既定: 120）
         --sample-rate <hz>        新規プロジェクトのサンプルレート（既定: 48000）"
+    }
+    CliSoundFonts { en: "SHIPPED SOUNDFONTS", ja: "同梱サウンドフォント" }
+    CliSoundFontMissing {
+        en: "not installed — run tools/fetch-soundfonts.sh",
+        ja: "未インストール — tools/fetch-soundfonts.sh を実行してください"
     }
     CliInstruments { en: "INSTRUMENTS", ja: "音源" }
     CliEffects { en: "EFFECTS", ja: "エフェクト" }

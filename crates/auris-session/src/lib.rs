@@ -45,6 +45,7 @@
 pub mod error;
 pub mod guide;
 pub mod history;
+pub mod library;
 pub mod param;
 pub mod progressions;
 pub mod registry;
@@ -54,6 +55,7 @@ pub mod settings;
 
 pub use error::SessionError;
 pub use history::{Edit, History};
+pub use library::{GENERAL_MIDI, LIBRARY_DIR_VAR, LIBRARY_FOLDER, ShippedFont};
 pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob};

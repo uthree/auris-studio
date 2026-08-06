@@ -41,6 +41,11 @@ jobs:
             cargo build --release --locked --target "$target" -p auris-gpui -p auris-cli
           done
 
+      # After the build, because the script asks the command line tool what to fetch — the
+      # manifest lives in `auris_session::library` and is not duplicated in the script.
+      - name: Fetch the shipped SoundFonts
+        run: tools/fetch-soundfonts.sh
+
       # `Auris Studio.app` around the desktop binary, with the command line tool beside it.
       # Nothing is signed: this is a workflow with no certificate, and the release says what
       # Gatekeeper will make of that.
@@ -63,6 +68,17 @@ jobs:
           done
           mv "$stage/auris-studio" "$app/Contents/MacOS/auris-studio"
 
+          # Inside the bundle's resource directory, because that is what makes dragging
+          # `Auris Studio.app` to /Applications carry the sounds with it — a font left beside the
+          # bundle would be a fresh installation with no instruments in it.
+          #
+          # The `auris` binary sits *beside* the bundle rather than in it and only ever searches
+          # upwards, so it is given a link to the same directory rather than a second copy. Two
+          # copies would be four hundred megabytes to save a symlink.
+          mkdir -p "$app/Contents/Resources"
+          cp -R SoundFonts "$app/Contents/Resources/SoundFonts"
+          ln -s "Auris Studio.app/Contents/Resources/SoundFonts" "$stage/SoundFonts"
+
           cp README.md CHANGELOG.md LICENSE "$stage/"
           tar -czf "$stage.tar.gz" "$stage"
 
@@ -84,12 +100,18 @@ jobs:
       - name: Build
         run: cargo build --release --locked -p auris-gpui -p auris-cli
 
+      - name: Fetch the shipped SoundFonts
+        shell: bash
+        run: tools/fetch-soundfonts.sh
+
       - name: Assemble the archive
         shell: bash
         run: |
           stage="auris-studio-${GITHUB_REF_NAME}-windows-x86_64"
           mkdir -p "$stage"
           cp target/release/auris-studio.exe target/release/auris.exe "$stage/"
+          # Beside the binaries, which is the first place `auris_session::library` looks.
+          cp -R SoundFonts "$stage/SoundFonts"
           cp README.md CHANGELOG.md LICENSE "$stage/"
           7z a "$stage.zip" "$stage"
 
@@ -120,11 +142,18 @@ jobs:
       - name: Build
         run: cargo build --release --locked -p auris-cli
 
+      - name: Fetch the shipped SoundFonts
+        run: tools/fetch-soundfonts.sh
+
       - name: Assemble the archive
         run: |
           stage="auris-${GITHUB_REF_NAME}-linux-x86_64"
           mkdir -p "$stage"
           cp target/release/auris "$stage/"
+          # The command line tool composes too, and a piece written on Linux has to be the piece
+          # written on Windows. Skipping the fonts here would make `auris compose` quietly answer
+          # in three oscillators on one platform and an orchestra on the others.
+          cp -R SoundFonts "$stage/SoundFonts"
           cp README.md CHANGELOG.md LICENSE "$stage/"
           tar -czf "$stage.tar.gz" "$stage"
 
@@ -173,6 +202,11 @@ jobs:
           | `…-macos-universal.tar.gz` | `Auris Studio.app` and the `auris` command line tool — Apple Silicon and Intel in one binary |
           | `…-windows-x86_64.zip` | `auris-studio.exe` and `auris.exe` |
           | `…-linux-x86_64.tar.gz` | the `auris` command line tool only |
+
+          Every archive carries **MuseScore General**, a General MIDI SoundFont under the MIT
+          licence, in a `SoundFonts` directory — which is most of the download size and all of the
+          instruments beyond the four built in. On macOS it lives inside the bundle, so dragging
+          `Auris Studio.app` to /Applications takes it along.
 
           None of it is code-signed. macOS will refuse the first launch and say the developer
           cannot be verified: open it from the right-click menu once, or run

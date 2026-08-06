@@ -34,5 +34,10 @@ target
 # something to review a diff of.
 *.auris
 
+# The SoundFonts the application ships with, fetched by `tools/fetch-soundfonts.sh`. Two hundred
+# megabytes of samples that GitHub would refuse and every clone would pay for; the manifest in
+# `auris_session::library` is what is version-controlled instead.
+/SoundFonts
+
 # macOS
 .DS_Store

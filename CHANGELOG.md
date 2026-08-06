@@ -9,6 +9,29 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### A General MIDI SoundFont comes with it
+
+* **Auris Studio now ships with MuseScore General**, 128 instruments and a percussion bank under
+  the MIT licence. It is in the library panel from the moment the window opens, with nothing to
+  import. Five oscillators were enough to hear the engine working and never enough to write
+  anything, and "install a SoundFont from somewhere" is not a first five minutes anybody enjoys.
+* Not in this repository, because the file is two hundred megabytes — more than GitHub accepts in
+  one piece and far more than every clone of a source tree should carry. `tools/fetch-soundfonts.sh`
+  downloads it, checks it against a SHA-256, and installs it where the application looks; the
+  release workflow runs the same script before it assembles each archive. What is version
+  controlled is the manifest, in `auris_session::library`, which is the part worth reviewing.
+* The script asks `auris soundfonts --manifest` what to fetch rather than keeping its own copy of
+  the list. A URL recorded twice is a URL that goes stale in one of the two places.
+* Putting the font in the document is deliberately *not* an edit: no undo step, no dirty flag, and
+  a new project nobody has touched is still unmodified. It is what this installation has, the same
+  way the built-in instruments are, and neither belongs in a history of what somebody did.
+* The search for an asset that has moved now covers the library directories, so a project saved on
+  one machine and opened on another finds that machine's copy of the shipped font and writes the
+  new path back. The reference most likely to break when a project is sent to somebody else is
+  also the only one that always has an answer.
+* A build with nothing installed starts, runs and composes on the built-in instruments — which is
+  what CI does on every commit.
+
 ### A composed song arrives as a whole document
 
 * **A composed piece now carries its own harmony and its own structure.** Both were computed and

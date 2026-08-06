@@ -1,0 +1,312 @@
+//! The sound library the application is packaged with.
+//!
+//! The built-in instruments are three oscillators and a noise drum. They are enough to hear a
+//! piece back and nowhere near enough to *write* one, so a build of Auris Studio ships with a
+//! General MIDI SoundFont beside it and every frontend finds it here.
+//!
+//! # Why the font is not in the repository
+//!
+//! [`GENERAL_MIDI`] is two hundred megabytes. GitHub refuses a single file over a hundred, and a
+//! repository that carried one would charge every clone for it forever — including the clones
+//! that only ever build the command line tool. So the bytes are fetched rather than committed:
+//! `tools/fetch-soundfonts.sh` downloads them, checks them against [`ShippedFont::sha256`], and
+//! writes them into a [`LIBRARY_FOLDER`] directory. The release workflow runs it before it
+//! assembles each archive, and a developer runs it once.
+//!
+//! What is committed is this manifest — the name, the size, the digest and the licence — which is
+//! the part that has to be reviewable.
+//!
+//! # Where the font is looked for
+//!
+//! [`library_roots`] answers that, and the answer is deliberately several places: beside the
+//! executable is where a release archive puts it, `Contents/Resources` is where a macOS bundle
+//! does, a few directories above the executable is where a `cargo run` build finds the one a
+//! developer fetched into the checkout, and the configuration directory is where somebody who
+//! installed a font by hand would have put it. [`LIBRARY_DIR_VAR`] overrides the lot.
+//!
+//! Nothing here reads a font — a loaded font belongs to a session's bank and a path does not.
+//! [`Session`](crate::Session) reads what it finds here whenever a document is created or opened,
+//! unless [`SessionOptions::shipped_fonts`](crate::SessionOptions::shipped_fonts) says otherwise.
+
+use std::path::{Path, PathBuf};
+
+use crate::settings::config_dir;
+
+/// Environment variable naming the directory the shipped SoundFonts are installed in.
+///
+/// Set it and nothing else is searched, which is what makes a font kept on another volume — they
+/// are large enough for that to be a real arrangement — usable without moving it.
+pub const LIBRARY_DIR_VAR: &str = "AURIS_SOUNDFONTS";
+
+/// What the directory holding the shipped SoundFonts is called, wherever it turns up.
+pub const LIBRARY_FOLDER: &str = "SoundFonts";
+
+/// The id of the General MIDI font the composer reaches for.
+///
+/// MuseScore's, which is the FluidR3 set of Frank Wen's that everything else quotes, remastered
+/// and still under the same MIT licence. Choosing between the two is choosing between an original
+/// and a curated version of itself, and the curated one is smaller and better recorded.
+pub const GENERAL_MIDI: &str = "musescore-general";
+
+/// A SoundFont the application is packaged with.
+///
+/// Everything needed to fetch one, verify it and say where it came from — which is the whole of
+/// what a manifest is for. The bytes themselves are never in the repository; see the module
+/// documentation.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ShippedFont {
+    /// Short name a specification, a command line or [`shipped`] refers to it by.
+    pub id: &'static str,
+    /// What the file is called, wherever it is installed.
+    pub file: &'static str,
+    /// What to call it in an interface.
+    pub name: &'static str,
+    /// The licence it is redistributed under.
+    pub license: &'static str,
+    /// Where the licence text lives, fetched and installed beside the font.
+    ///
+    /// The MIT licence asks that the copyright notice travel with the work, and a font in a
+    /// release archive with no notice beside it would not be honouring that. It is fetched rather
+    /// than committed for one reason only — that it is the *font's* notice, and belongs next to
+    /// the font rather than in a source tree that may not have one.
+    pub license_url: &'static str,
+    /// Where the fetch script downloads it from.
+    pub url: &'static str,
+    /// Its length in bytes.
+    pub bytes: u64,
+    /// SHA-256 of the file, in lowercase hexadecimal.
+    ///
+    /// Checked by the fetch script, not by the application: a two-hundred-megabyte digest at
+    /// every start-up would cost more than it could ever catch, and a font that arrived corrupt
+    /// fails at the parser a moment later with a message naming the file.
+    pub sha256: &'static str,
+}
+
+/// Every font the fetch script knows how to install.
+pub const SHIPPED: &[ShippedFont] = &[ShippedFont {
+    id: GENERAL_MIDI,
+    file: "MuseScore_General.sf2",
+    name: "MuseScore General",
+    license: "MIT",
+    license_url: "https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/MuseScore_General_License.md",
+    url: "https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/MuseScore_General.sf2",
+    bytes: 215_614_036,
+    sha256: "ee51d2c4b1525e70f19a45909c4fd7a2e26d91d115fa89dbf5a6bc413d8b9bf3",
+}];
+
+/// The manifest entry with this id.
+pub fn shipped(id: &str) -> Option<&'static ShippedFont> {
+    SHIPPED.iter().find(|font| font.id == id)
+}
+
+/// Directories the shipped SoundFonts are looked for in, best first.
+pub fn library_roots() -> Vec<PathBuf> {
+    roots_from(
+        std::env::var_os(LIBRARY_DIR_VAR).map(PathBuf::from),
+        std::env::current_exe().ok().as_deref(),
+        &config_dir(),
+    )
+}
+
+/// How many directories *above* the executable are still searched.
+///
+/// A release archive puts the library beside the binary, so none would do there. A `cargo run`
+/// build puts the binary in `target/debug` and the fetched font at the top of the checkout — two —
+/// and a cross-compiled release adds `target/<triple>/release`, which is three. Five leaves room
+/// for a layout nobody has thought of yet and still stops well short of the file system root,
+/// where a stray `SoundFonts` directory would be somebody else's.
+const LIBRARY_SEARCH_DEPTH: usize = 5;
+
+/// [`library_roots`] with the environment passed in, so it can be tested without setting
+/// variables or moving the executable.
+///
+/// An empty override counts as unset, for the same reason [`config_dir`] treats one that way: a
+/// shell exporting `AURIS_SOUNDFONTS=` would otherwise search the file system root.
+fn roots_from(
+    override_dir: Option<PathBuf>,
+    executable: Option<&Path>,
+    config: &Path,
+) -> Vec<PathBuf> {
+    if let Some(dir) = override_dir.filter(|dir| !dir.as_os_str().is_empty()) {
+        return vec![dir];
+    }
+
+    let mut roots: Vec<PathBuf> = Vec::new();
+    let mut push = |dir: PathBuf| {
+        if !roots.contains(&dir) {
+            roots.push(dir);
+        }
+    };
+
+    if let Some(directory) = executable.and_then(Path::parent) {
+        push(directory.join(LIBRARY_FOLDER));
+        // Then a macOS bundle's resource directory, which is one *sideways* rather than up: a
+        // font in `Contents/MacOS` beside the executable is a font Gatekeeper complains about,
+        // so a packaged one goes in `Contents/Resources` and is reached from nowhere else.
+        if let Some(contents) = directory.parent() {
+            push(contents.join("Resources").join(LIBRARY_FOLDER));
+        }
+        for ancestor in directory.ancestors().skip(1).take(LIBRARY_SEARCH_DEPTH) {
+            push(ancestor.join(LIBRARY_FOLDER));
+        }
+    }
+    push(config.join(LIBRARY_FOLDER));
+    roots
+}
+
+/// Where this font is installed, or `None` when it is not.
+pub fn installed(font: &ShippedFont) -> Option<PathBuf> {
+    installed_in(font, &library_roots())
+}
+
+/// [`installed`] against a given set of directories.
+///
+/// A file is taken at face value rather than weighed against [`ShippedFont::bytes`]: somebody who
+/// put a font of their own under that name in the library directory meant to, and the size that
+/// would refuse it is a fact about a download rather than about the sound. What the size and the
+/// digest guard is the fetch, which writes to a temporary name and renames only once both agree —
+/// so a half-finished download is never a file this can find.
+pub fn installed_in(font: &ShippedFont, roots: &[PathBuf]) -> Option<PathBuf> {
+    roots
+        .iter()
+        .map(|root| root.join(font.file))
+        .find(|candidate| candidate.is_file())
+}
+
+/// Every shipped font that is actually on this machine, with where it was found.
+pub fn installed_fonts() -> Vec<(&'static ShippedFont, PathBuf)> {
+    let roots = library_roots();
+    SHIPPED
+        .iter()
+        .filter_map(|font| installed_in(font, &roots).map(|path| (font, path)))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_manifest_describes_a_font_that_could_be_fetched() {
+        let font = shipped(GENERAL_MIDI).expect("the General MIDI font is shipped");
+        assert!(font.url.starts_with("https://"), "fetched over TLS");
+        assert!(
+            font.license_url.starts_with("https://"),
+            "and its notice with it, which the licence asks for"
+        );
+        assert!(font.file.ends_with(".sf2"), "and readable by the sampler");
+        assert_eq!(font.sha256.len(), 64, "a SHA-256 is sixty-four hex digits");
+        assert!(font.sha256.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(font.bytes > 0);
+        assert!(shipped("no-such-font").is_none());
+    }
+
+    #[test]
+    fn the_override_is_the_whole_answer() {
+        // The point of the variable is a font kept somewhere else entirely; searching on past it
+        // would quietly prefer a stale copy beside the executable.
+        let roots = roots_from(
+            Some(PathBuf::from("/volumes/samples")),
+            Some(Path::new("/apps/auris-studio")),
+            Path::new("/home/me/.config/auris-studio"),
+        );
+        assert_eq!(roots, vec![PathBuf::from("/volumes/samples")]);
+    }
+
+    #[test]
+    fn an_empty_override_is_not_an_override() {
+        let roots = roots_from(
+            Some(PathBuf::new()),
+            None,
+            Path::new("/home/me/.config/auris-studio"),
+        );
+        assert_eq!(
+            roots,
+            vec![PathBuf::from("/home/me/.config/auris-studio/SoundFonts")]
+        );
+    }
+
+    #[test]
+    fn a_release_archive_is_searched_before_anywhere_else() {
+        let roots = roots_from(
+            None,
+            Some(Path::new("/downloads/auris-studio-v0.1.0/auris-studio")),
+            Path::new("/home/me/.config/auris-studio"),
+        );
+        assert_eq!(
+            roots[0],
+            PathBuf::from("/downloads/auris-studio-v0.1.0/SoundFonts"),
+            "beside the binary, which is what the archive holds"
+        );
+        assert_eq!(
+            roots.last(),
+            Some(&PathBuf::from("/home/me/.config/auris-studio/SoundFonts"))
+        );
+    }
+
+    #[test]
+    fn a_macos_bundle_keeps_its_font_in_resources() {
+        let roots = roots_from(
+            None,
+            Some(Path::new(
+                "/Applications/Auris Studio.app/Contents/MacOS/auris-studio",
+            )),
+            Path::new("/Users/me/.config/auris-studio"),
+        );
+        assert!(
+            roots.contains(&PathBuf::from(
+                "/Applications/Auris Studio.app/Contents/Resources/SoundFonts"
+            )),
+            "the bundle's resource directory is where a packaged font goes: {roots:?}"
+        );
+    }
+
+    #[test]
+    fn a_cargo_build_finds_the_font_a_developer_fetched_into_the_checkout() {
+        // `cargo run` is two levels down, and a cross-compiled release build is three. Both have
+        // to reach the `SoundFonts` directory the fetch script writes at the top of the checkout,
+        // or a developer would have to copy two hundred megabytes into `target` after every
+        // `cargo clean`.
+        for executable in [
+            "/checkout/target/debug/auris-studio",
+            "/checkout/target/aarch64-apple-darwin/release/auris-studio",
+        ] {
+            let roots = roots_from(
+                None,
+                Some(Path::new(executable)),
+                Path::new("/home/me/.config/auris-studio"),
+            );
+            assert!(
+                roots.contains(&PathBuf::from("/checkout/SoundFonts")),
+                "{executable} should reach the checkout: {roots:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_root_is_named_once_however_many_ways_it_is_reached() {
+        // The walk upwards and the configuration directory can name the same place — a checkout
+        // that *is* somebody's config directory is unusual and entirely legal — and a directory
+        // searched twice is a second failed lookup for every font in the manifest.
+        let roots = roots_from(
+            None,
+            Some(Path::new("/checkout/target/debug/auris-studio")),
+            Path::new("/checkout"),
+        );
+        assert!(roots.contains(&PathBuf::from("/checkout/SoundFonts")));
+        let mut unique = roots.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), roots.len(), "{roots:?}");
+    }
+
+    #[test]
+    fn nothing_is_installed_when_nothing_is_there() {
+        let font = shipped(GENERAL_MIDI).expect("shipped");
+        assert_eq!(installed_in(font, &[]), None);
+        assert_eq!(
+            installed_in(font, &[PathBuf::from("/no/such/directory")]),
+            None
+        );
+    }
+}

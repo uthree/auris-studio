@@ -38,6 +38,13 @@ pub use soundfont::{
     SoundFontPreset, font_name, load_soundfont, preset_count, presets, soundfont_extensions,
 };
 
+/// A parsed SoundFont, as [`load_soundfont`] returns it.
+///
+/// Re-exported because a caller that holds one has to be able to name it — and because the type
+/// crosses a crate boundary to `auris-sampler`, so both sides naming the library themselves would
+/// be two resolved copies and two unrelated types.
+pub use rustysynth::SoundFont;
+
 #[cfg(test)]
 mod test_support {
     use std::path::{Path, PathBuf};

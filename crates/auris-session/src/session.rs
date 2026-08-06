@@ -27,8 +27,8 @@ use auris_engine::{
 };
 use auris_gpu::{GpuContext, WaveformPeaks, compute_peaks};
 use auris_io::{
-    AUDIO_DIR, IoError, SoundFontPreset, byte_size, copy_into, document_in_folder, find_named,
-    font_name, import_audio_file, load_project, load_soundfont, preset_count, presets,
+    AUDIO_DIR, IoError, SoundFont, SoundFontPreset, byte_size, copy_into, document_in_folder,
+    find_named, font_name, import_audio_file, load_project, load_soundfont, preset_count, presets,
     save_project,
 };
 use auris_sampler::{SAMPLER_ID, SharedSoundFonts, SoundFontBank, store_preset, stored_preset};
@@ -58,6 +58,13 @@ pub struct SessionOptions {
     pub audio_preferences: AudioPreferences,
     /// Sample rate for a new project.
     pub sample_rate: f64,
+    /// Read the SoundFonts the application ships with, so their sounds are in the library.
+    ///
+    /// `false` in a test, and for one reason: whether the library is installed is a fact about
+    /// the machine, and a document that holds a font on a developer's laptop and none on a CI
+    /// runner is a document two test runs would disagree about. It also saves reading two hundred
+    /// megabytes per session in a suite that opens hundreds of them.
+    pub shipped_fonts: bool,
 }
 
 impl Default for SessionOptions {
@@ -67,18 +74,30 @@ impl Default for SessionOptions {
             gpu: true,
             audio_preferences: AudioPreferences::default(),
             sample_rate: 48_000.0,
+            shipped_fonts: true,
         }
     }
 }
 
 impl SessionOptions {
-    /// No audio device and no GPU — for tests, batch rendering and headless tools.
+    /// No audio device, no GPU and no shipped library — for tests and for anything that wants a
+    /// session which behaves identically on every machine.
+    ///
+    /// A headless tool that is making *music* rather than checking a document — `auris compose`
+    /// is the one — wants the library back, and asks for it with [`Self::with_shipped_fonts`].
     pub fn headless() -> Self {
         Self {
             audio: false,
             gpu: false,
+            shipped_fonts: false,
             ..Self::default()
         }
+    }
+
+    /// Whether to read the SoundFonts the application ships with.
+    pub fn with_shipped_fonts(mut self, shipped_fonts: bool) -> Self {
+        self.shipped_fonts = shipped_fonts;
+        self
     }
 
     /// Sets the sample rate a new project is created at.
@@ -134,6 +153,16 @@ pub struct Session {
     /// Shared with the registry, whose sampler factory captured it — which is the only way sample
     /// data reaches an instrument the registry builds.
     fonts: SharedSoundFonts,
+    /// The fonts that came with the application, kept by the path they were read from.
+    ///
+    /// [`Self::fonts`] is emptied whenever the document is replaced, because it is keyed by ids
+    /// that belong to a document. These are not: the same file is the same samples whichever
+    /// project is open, and re-reading two hundred megabytes on every **File → New** is a stall
+    /// nobody would understand.
+    shipped: HashMap<PathBuf, Arc<SoundFont>>,
+    /// Whether this session reads the shipped library at all — see
+    /// [`SessionOptions::shipped_fonts`].
+    shipped_library: bool,
     registry: Arc<PluginRegistry>,
     engine: EngineHandle,
     device: Option<AudioDevice>,
@@ -271,6 +300,8 @@ impl Session {
             render_bank: AudioSourceBank::new(),
             render_bank_rate,
             fonts,
+            shipped: HashMap::new(),
+            shipped_library: options.shipped_fonts,
             registry,
             engine,
             device: Some(device),
@@ -288,6 +319,7 @@ impl Session {
             param_cache: HashMap::new(),
             waveforms: HashMap::new(),
         };
+        session.install_shipped_fonts();
         session.rebuild_graph();
         Ok(session)
     }
@@ -1704,6 +1736,7 @@ impl Session {
 
         self.record(Edit::Compose);
         self.replace_project(project);
+        self.install_shipped_fonts();
         self.dirty = true;
         Ok(report)
     }
@@ -3270,6 +3303,7 @@ impl Session {
         // decoded buffers would hold them for the rest of the process.
         self.clear_sources();
         self.replace_project(project);
+        self.install_shipped_fonts();
     }
 
     /// Reads a Standard MIDI File as a new document.
@@ -3365,6 +3399,7 @@ impl Session {
         self.path = None;
         self.clear_sources();
         self.replace_project(project);
+        self.install_shipped_fonts();
         // Dirty from the first frame: nothing on disk holds this document, and the `.mid` it came
         // from cannot hold it either.
         self.dirty = true;
@@ -3406,6 +3441,12 @@ impl Session {
         self.replace_project(project);
 
         let missing = self.reload_assets();
+        // After the search, not before it. A project saved on another machine names the shipped
+        // font at *that* machine's path; the search finds this machine's copy and writes the new
+        // path into the document, and only then does the id it already has match the file about
+        // to be installed. The other way round, the same font would arrive twice under two ids —
+        // and be held in memory twice, which for this font is four hundred megabytes.
+        self.install_shipped_fonts();
         self.rebuild_graph();
         Ok(missing)
     }
@@ -3633,6 +3674,68 @@ impl Session {
         Ok(id)
     }
 
+    /// Puts the SoundFonts the application ships with into the document, so their sounds are in
+    /// the library from the moment a project opens.
+    ///
+    /// Called wherever a document is created or opened rather than once at start-up, because a
+    /// document is what holds the reference and every new one needs its own.
+    ///
+    /// Not an edit. The built-in instruments are not in the history either, and for the same
+    /// reason: they are what this installation *has*, not something the user did. So no undo step
+    /// is recorded, the dirty flag is left exactly as it was, and a new document that has only
+    /// ever been looked at still counts as unmodified.
+    ///
+    /// A font already in the document under the same path keeps its id, which is what makes this
+    /// safe on a project that was saved with one.
+    ///
+    /// Nothing to install is the ordinary answer on a build nobody has run
+    /// `tools/fetch-soundfonts.sh` for, and the application runs on its own instruments.
+    fn install_shipped_fonts(&mut self) {
+        if !self.shipped_library {
+            return;
+        }
+        let dirty = self.dirty;
+        let mut installed_any = false;
+        for (font, path) in crate::library::installed_fonts() {
+            match self.adopt_font(&path) {
+                Some(_) => installed_any = true,
+                None => log::warn!("could not read the shipped {}", font.name),
+            }
+        }
+        self.dirty = dirty;
+        if installed_any {
+            self.invalidate_graph();
+        }
+    }
+
+    /// Reads a font from the shipped library into the document without recording an edit.
+    ///
+    /// The samples are cached by path in [`Self::shipped`], so the second call — after a
+    /// **File → New**, which empties the id-keyed bank — costs a map lookup rather than two
+    /// hundred megabytes of file.
+    fn adopt_font(&mut self, path: &Path) -> Option<SoundFontId> {
+        let font = match self.shipped.get(path) {
+            Some(font) => Arc::clone(font),
+            None => {
+                let font = load_soundfont(path)
+                    .inspect_err(|error| log::warn!("{}: {error}", path.display()))
+                    .ok()?;
+                self.shipped.insert(path.to_path_buf(), Arc::clone(&font));
+                font
+            }
+        };
+        let id = match self.project.soundfont_at(self.project_folder(), path) {
+            Some(existing) => existing,
+            None => {
+                let name = font_name(&font, path);
+                self.project
+                    .add_soundfont(name, AssetPath::external(path), byte_size(path))
+            }
+        };
+        self.fonts.insert(id, font);
+        Some(id)
+    }
+
     /// Every SoundFont the project knows about, whether or not its file is still there.
     pub fn soundfonts(&self) -> impl Iterator<Item = &SoundFontRef> {
         self.project.soundfonts.values()
@@ -3735,11 +3838,18 @@ impl Session {
     /// The project folder and its audio directory, which is where a file that travelled with the
     /// project will be. Callers add the directories that assets actually turn up in as they go,
     /// so a document naming twenty fonts in one folder finds all twenty once it has found one.
+    ///
+    /// Then the shipped library, because a project that names the SoundFont this application came
+    /// with names it at the path it had on the machine it was saved on. Every installation has
+    /// that file, somewhere of its own — so the one reference most likely to be broken by sending
+    /// a project to somebody else is also the one that always has an answer.
     fn search_path(&self) -> Vec<PathBuf> {
-        let Some(folder) = self.project_folder() else {
-            return Vec::new();
+        let mut roots = match self.project_folder() {
+            Some(folder) => vec![folder.join(AUDIO_DIR), folder.to_path_buf()],
+            None => Vec::new(),
         };
-        vec![folder.join(AUDIO_DIR), folder.to_path_buf()]
+        roots.extend(crate::library::library_roots());
+        roots
     }
 
     /// Looks again for the fonts the document could not find, now that `directory` is known to

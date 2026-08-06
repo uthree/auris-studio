@@ -565,7 +565,44 @@ groups rather than a flat list — the plugins by category, a font by the banks 
 branch remembers whether it was left open. Clicking an instrument sets it on the selected track,
 clicking an effect appends it to that track's chain.
 
-### SoundFonts
+### The SoundFont that comes with it
+
+Five oscillators are enough to hear the engine working and nowhere near enough to write anything,
+so a build ships with **MuseScore General** — a General MIDI set of 128 instruments and a
+percussion bank, under the MIT licence. It is FluidR3, Frank Wen's set that half the free software
+world quotes, remastered by S. Christian Collins; choosing between the two is choosing between an
+original and a curated version of itself. Every release archive carries it, and it is in the
+library panel from the moment the window opens, with no import step.
+
+The bytes are **not in this repository**. The file is two hundred megabytes, which is more than
+GitHub accepts in one piece and far more than every clone of a source tree should have to carry.
+What is version-controlled is the manifest — the URL, the size, the SHA-256 and the licence, in
+`auris_session::library` — and the file is fetched:
+
+```bash
+tools/fetch-soundfonts.sh
+```
+
+Run it once after cloning. It puts the font in `SoundFonts/` at the top of the checkout, where a
+`cargo run` build finds it; the release workflow runs the same script before assembling each
+archive. `auris soundfonts` says whether it is installed and where. The script asks
+`auris soundfonts --manifest` what to fetch rather than carrying its own copy of the list, so a
+digest cannot be changed in one place and left stale in the other.
+
+Where the application looks, in order: `$AURIS_SOUNDFONTS`, a `SoundFonts` directory beside the
+executable, a macOS bundle's `Contents/Resources/SoundFonts`, up to four directories above the
+executable — which is what reaches the checkout from `target/debug` — and finally
+`~/.config/auris-studio/SoundFonts`. A build with none of them installed starts perfectly well and
+has the built-in instruments, which is exactly what a CI runner does.
+
+The shipped font is put into the document rather than left beside it, because a document is what
+holds a reference. It is not an edit: no undo step, no dirty flag, and a new project that has only
+been looked at is still unmodified. And because a project saved on one machine names the font at
+*that* machine's path, the search for a moved asset looks in the library directories too — the
+reference most likely to break when a project is sent to somebody else is also the one that always
+has an answer.
+
+### Importing a SoundFont of your own
 
 **File → Import SoundFont…** — or dropping the file on the window — reads an `.sf2` and puts its
 sounds on the shelf. The library panel lists every imported font; opening one shows the banks it
@@ -737,6 +774,7 @@ compiling here.
 auris compose song.asong -o song.auris         # write a piece from a specification
 auris progressions                             # every chord progression known by name
 auris plugins                                  # every registered instrument and effect
+auris soundfonts                               # what this build ships with, and whether it is here
 auris new song.auris --bpm 128
 auris info song.auris                          # tracks, clips, duration
 auris render song.auris -o song.wav --bit-depth 24
@@ -752,6 +790,10 @@ Built binaries are on the [releases page](https://github.com/uthree/auris-studio
 `Auris Studio.app` and the `auris` command line tool for macOS, as one universal binary for
 Apple Silicon and Intel; both `.exe`s for Windows; the command line tool alone for Linux.
 
+Every archive carries the shipped SoundFont, which is most of its size and all of the instruments
+past the built-in five. On macOS it is inside the bundle, so dragging `Auris Studio.app` to
+/Applications takes the sounds with it.
+
 None of it is code-signed, so the first launch needs a word with the operating system. On macOS,
 open the app from its right-click menu once rather than by double-clicking it, or run `xattr -dr
 com.apple.quarantine "Auris Studio.app"`. On Windows, SmartScreen wants *More info → Run anyway*.
@@ -762,11 +804,17 @@ configuration files and every public API may change in any release, with no migr
 ## Building
 
 ```bash
+tools/fetch-soundfonts.sh
 cargo run --release
 ```
 
 macOS and Windows both build and run the desktop application; the backend and the command line
 tool build anywhere Rust does. CI covers all three.
+
+The first line is once per checkout and downloads the shipped SoundFont, which is not in the
+repository — see [The SoundFont that comes with it](#the-soundfont-that-comes-with-it). Skip it
+and everything still builds and runs; there are simply five instruments instead of a hundred and
+thirty.
 
 ### Windows
 

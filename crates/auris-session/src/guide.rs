@@ -562,6 +562,12 @@ pub mod documents {
     //! file wearing the same name is not quietly adopted — which is what
     //! [`SoundFontRef::byte_size`](auris_core::SoundFontRef::byte_size) is for.
     //!
+    //! The directories searched include the shipped library — see [`crate::library`] — because the
+    //! font that comes with the application is named by its path like any other, and that path is
+    //! whatever it was on the machine the project was saved on. Every installation has that file
+    //! somewhere, so the reference most likely to break when a project changes hands is the one
+    //! reference that always has an answer.
+    //!
     //! Anything found under a new path is written back into the document, so the search happens
     //! once rather than on every open. That leaves the project dirty, which is the honest
     //! signal: there is a repair to save. Anything genuinely gone is returned to the caller and
