@@ -34,11 +34,24 @@
 //! assert_eq!(sampler.active_voices(), 0);
 //! ```
 //!
+//! # Velocity, and a deliberate disagreement with the format
+//!
+//! A SoundFont synthesiser makes amplitude proportional to the *square* of MIDI velocity, which
+//! is what the format says and what every other player does. Auris is linear everywhere else —
+//! a built-in instrument multiplies its voice by the velocity — so a part written for one came
+//! out of the other with twice its dynamic range in decibels. [`Sampler`] pre-compensates for
+//! the squaring rather than living with two meanings for one word, and the price is that a
+//! velocity written here will not sound the same in another player. That trade is taken
+//! knowingly; see [`Sampler`] for what it costs in layer switching, and for what a chord peaks
+//! at now that the sampler is calibrated against the built-in instruments rather than against
+//! the library's idea of unity.
+//!
 //! # Realtime behaviour
 //!
 //! Everything expensive happens in [`Instrument::prepare`](auris_core::Instrument::prepare):
 //! resolving the font, building the synthesiser, sizing its buffers. `process` renders through
-//! them and never locks the bank, allocates or touches a file.
+//! them and never locks the bank, allocates or touches a file. The velocity correction is one
+//! square root per note-on, which is arithmetic and costs nothing per sample.
 
 #![warn(missing_docs)]
 

@@ -42,10 +42,53 @@ const MAX_VOICES: usize = 128;
 /// wheel resolving under a thousandth of a semitone.
 const BEND_RANGE: i32 = 12;
 
-/// What the library calls unity — half of full scale, to leave a chord some headroom.
+/// The gain that puts a General MIDI program where a built-in instrument sits.
 ///
-/// The `level` parameter is measured from here, so 0 dB is the sound the font was voiced for.
-const NOMINAL_VOLUME: f32 = 0.5;
+/// Four times what the library calls unity, which is +12.04 dB. The number is measured rather
+/// than chosen: one note at velocity 1.0 with the gain flat peaks at -6.0 dBFS through the
+/// built-in `Chiptune` at its defaults, and the median of the 128 melodic programs of MuseScore
+/// General peaked 11.45 dB below that at the library's own unity — 11.87 dB below over a played
+/// phrase rather than one held note. Rounding that to a whole factor of four leaves the median
+/// program within 0.6 dB of the built-ins.
+///
+/// The `level` parameter is measured from here, so 0 dB is *the level the rest of the
+/// application answers a note with*, which is not the same promise the old constant made: it
+/// used to mean "the sound the font was voiced for", and a font voiced for a player that reads
+/// the format's own attenuation conventions came out far quieter than everything around it.
+///
+/// This leaves no headroom, and is not supposed to: a built-in instrument does not limit itself
+/// either, and its own triad already reaches +3.0 dBFS. See [`Sampler`] for what a chord peaks
+/// at and where that bites.
+const NOMINAL_VOLUME: f32 = 2.0;
+
+/// Turns a note's velocity into the MIDI velocity that makes the synthesiser answer it linearly.
+///
+/// A SoundFont synthesiser makes amplitude proportional to the *square* of MIDI velocity — the
+/// format's default velocity-to-attenuation curve, which rustysynth implements as a fixed
+/// `2 * 20 * log10(velocity / 127)` decibels and which no font can override, because the
+/// modulator chunks that could are discarded when the font is read. Everything else in Auris is
+/// linear: the built-in instruments' voice allocator assigns `level = velocity`, and a built-in
+/// part rendered at 0.56 instead of 1.0 measures -5.04 dB against the sampler's -10.10 dB for
+/// the same part.
+///
+/// Two laws for one word is the bug. Taking the square root here cancels the squaring, so a
+/// velocity means the same thing on both paths and a composed part keeps the dynamic range it
+/// was written with rather than twice it. The cost is that Auris now disagrees with other
+/// SoundFont players about what a velocity sounds like, which is the honest trade: the
+/// application's own consistency is worth more than agreeing with a convention no part of it
+/// follows anywhere else.
+///
+/// The correction is exact up to the integer the synthesiser takes: the rounding leaves at most
+/// `40 * log10(1 + 0.5 / midi)` decibels of error, which is 0.22 dB at velocity 0.1 and less
+/// above it. Quiet notes are actually served *better* than before, because a velocity of 0.01
+/// now arrives as MIDI 13 rather than MIDI 1, where a single step is the whole signal.
+///
+/// Velocity 0 is a note-off in MIDI, so a note written silently rounds up to 1 rather than
+/// releasing itself.
+fn midi_velocity(velocity: f32) -> i32 {
+    let compensated = velocity.clamp(0.0, 1.0).sqrt();
+    ((compensated * 127.0).round() as i32).max(1)
+}
 
 // MIDI messages, by their wire values, so the calls below read as what they are.
 const CONTROL_CHANGE: i32 = 0xB0;
@@ -117,6 +160,29 @@ pub fn register_sampler(registry: &mut PluginRegistry, fonts: SharedSoundFonts) 
 /// Note events are honoured by splitting the block at each event's frame, so timing does not
 /// depend on the host's buffer size — down to the synthesiser's own internal block, which is
 /// what actually bounds it.
+///
+/// # What a velocity means, and what it costs
+///
+/// Velocity is linear here, as it is everywhere else in Auris: doubling a note's velocity
+/// doubles its amplitude, which is not what the SoundFont format says and is what every other
+/// instrument in the application does. Two consequences are worth knowing before reaching for
+/// the mixer.
+///
+/// A velocity chooses a *sample*, not only a level. Raising the number handed to the
+/// synthesiser moves a multi-sampled program up its velocity layers, so a kit or a piano
+/// answers a mid-strength note with a harder recorded hit than it did before — a change of
+/// timbre and not only of level. Of the 142 programs measured in MuseScore General, 19 depart
+/// from the smooth law by more than 1 dB at some velocity and 9 by more than 3 dB, but those
+/// same programs departed by the same amounts before: what linearising moves is the written
+/// velocity each discontinuity sits at, not how large it is.
+///
+/// A chord can exceed full scale, and is meant to be able to. One note at velocity 1.0 with the
+/// gain flat peaks around -6 dBFS on a typical program, a triad around -1, and ten fingers
+/// around +2 — against a built-in instrument's +3 for the same triad and +10.5 for the same ten.
+/// Percussion is the exception that stays uncomfortable: the font's kits are voiced hotter than
+/// its pitched programs by 7 dB or so, and the loudest single kick in the shipped font peaks at
+/// +6.5 dBFS on its own. That is the font's own program-to-program balance, which one constant
+/// cannot correct and should not try to; it belongs to the mixer.
 pub struct Sampler {
     fonts: SharedSoundFonts,
     params: Vec<ParamDescriptor>,
@@ -273,10 +339,9 @@ impl Sampler {
             NoteEvent::NoteOn {
                 pitch, velocity, ..
             } => {
-                // Velocity 0 *is* a note-off in MIDI, so a note written very quietly has to
-                // round up to 1 rather than silently releasing itself.
-                let velocity = (velocity.clamp(0.0, 1.0) * 127.0).round() as i32;
-                synth.note_on(CHANNEL, pitch as i32, velocity.max(1));
+                // See `midi_velocity`: the number handed over is pre-compensated, because the
+                // synthesiser squares it and the rest of the application does not.
+                synth.note_on(CHANNEL, pitch as i32, midi_velocity(velocity));
                 *held = held.saturating_add(1);
             }
             NoteEvent::NoteOff { pitch, .. } => {
@@ -1005,6 +1070,156 @@ mod tests {
             }
         });
         assert_eq!(allocations, 0, "the sampler allocated while rendering");
+    }
+
+    // ------------------------------------------------------------ what a velocity means
+
+    /// The sustained level of one note at `velocity`, on the test font's loud preset.
+    ///
+    /// Measured past the halfway point so the attack is behind it and the tone is steady, which
+    /// is the only part of the note whose level is a property of the velocity rather than of the
+    /// envelope.
+    fn level_at(bank: &crate::bank::SharedSoundFonts, velocity: f32) -> f32 {
+        let frames = 1_024;
+        let mut sampler = playing(bank.clone(), 0, frames);
+        let mut out = AudioBuffer::stereo(frames, RATE);
+        let ctx = ProcessContext::realtime(RATE, frames, 0, 120.0, true);
+        sampler.process(
+            &[NoteEvent::NoteOn {
+                frame: 0,
+                pitch: crate::test_support::ROOT_KEY,
+                velocity,
+            }],
+            &mut out,
+            &ctx,
+        );
+        rms(&out.channel(0)[frames / 2..])
+    }
+
+    #[test]
+    fn a_velocity_is_linear_in_amplitude() {
+        // The test that would have caught the whole thing. A SoundFont synthesiser squares the
+        // velocity it is given, so without the correction in `midi_velocity` this measures the
+        // square of every ratio below — 0.25 where it wants 0.5 — and a part written for a
+        // built-in instrument comes out with twice the dynamic range through the sampler.
+        //
+        // The tolerance is the quantisation, not slop. The synthesiser takes an integer, so the
+        // best any correction can do is `40 * log10(1 + 0.5 / midi)` decibels: 0.22 dB at
+        // velocity 0.1, less above it. 0.5 dB leaves room for that and for the tone's own
+        // measurement noise without leaving room for the square law, which is 6 dB out at 0.5.
+        let bank = stocked();
+        let full = level_at(&bank, 1.0);
+        assert!(full > 0.01, "the reference note made no sound");
+
+        for velocity in [0.9f32, 0.75, 0.5, 0.35, 0.2, 0.1] {
+            let measured = level_at(&bank, velocity) / full;
+            let error = 20.0 * (measured / velocity).log10();
+            assert!(
+                error.abs() < 0.5,
+                "velocity {velocity} should scale the amplitude by {velocity}, \
+                 not by {measured} — {error:.2} dB out"
+            );
+        }
+    }
+
+    #[test]
+    fn the_sampler_answers_a_velocity_the_way_a_built_in_instrument_does() {
+        // `auris-sampler` and `auris-synth` are siblings and neither may depend on the other, so
+        // this states the built-in law rather than importing it: `VoiceAllocator::note_on` sets
+        // `slot.level = velocity` and the level multiplies the voice, so a built-in part at 0.56
+        // measures 20*log10(0.56) = -5.04 dB. The number below is that law written out, and the
+        // assertion is that the sampler answers the same velocity with the same relative level.
+        //
+        // The two crates meeting for real wants a test in `auris-session`, which is the layer
+        // that owns both through the registry; this one cannot see far enough to be that test,
+        // only far enough to fail when the sampler is the half that drifts.
+        let bank = stocked();
+        let full = level_at(&bank, 1.0);
+
+        let velocity = 0.56f32;
+        let built_in_db = 20.0 * velocity.log10();
+        let measured_db = 20.0 * (level_at(&bank, velocity) / full).log10();
+        assert!(
+            (measured_db - built_in_db).abs() < 0.5,
+            "a built-in instrument answers velocity {velocity} with {built_in_db:.2} dB \
+             and the sampler answered {measured_db:.2} dB"
+        );
+    }
+
+    #[test]
+    fn a_written_part_keeps_the_dynamic_range_it_was_written_with() {
+        // The complaint, as a number. A composed part spans MIDI 26 to 126, which a built-in
+        // instrument renders as 20*log10(126/26) = 13.7 dB. Through the squared law the same
+        // part measured 27.4 dB, and "the velocity variation is severe" is what that sounds like.
+        let bank = stocked();
+        let quiet = level_at(&bank, 26.0 / 127.0);
+        let loud = level_at(&bank, 126.0 / 127.0);
+        let span = 20.0 * (loud / quiet).log10();
+        let want = 20.0 * (126.0f32 / 26.0).log10();
+        assert!(
+            (span - want).abs() < 0.5,
+            "the part should span {want:.2} dB as it does on a built-in instrument, not {span:.2}"
+        );
+    }
+
+    #[test]
+    fn the_quietest_note_still_sounds_rather_than_releasing_itself() {
+        // Velocity 0 is a note-off in MIDI, so the floor of 1 is what keeps a note written
+        // silently from cancelling itself. Worth its own case because the square root moves
+        // every other velocity and could have taken the floor with it.
+        assert_eq!(midi_velocity(0.0), 1);
+        assert_eq!(midi_velocity(-1.0), 1);
+        assert_eq!(midi_velocity(1.0), 127);
+        assert_eq!(midi_velocity(2.0), 127);
+        // And the correction is what it claims: the square of the fraction handed over is the
+        // velocity asked for, which is the whole of the arithmetic.
+        for velocity in [0.1f32, 0.25, 0.5, 0.75] {
+            let fraction = midi_velocity(velocity) as f32 / 127.0;
+            let error = 20.0 * (fraction * fraction / velocity).log10();
+            assert!(
+                error.abs() < 0.5,
+                "velocity {velocity} became MIDI {}, which squares to {}",
+                midi_velocity(velocity),
+                fraction * fraction
+            );
+        }
+    }
+
+    #[test]
+    fn nominal_is_four_times_what_the_library_calls_unity() {
+        // What the doc comment on `NOMINAL_VOLUME` now promises, measured against the thing it
+        // is a multiple of rather than asserted against itself: the library's own master volume
+        // default is 0.5, and 0 dB on the `level` parameter has to come out four times that.
+        let bank = stocked();
+        let frames = 1_024;
+        let ctx = ProcessContext::realtime(RATE, frames, 0, 120.0, true);
+
+        let mut sampler = playing(bank, 0, frames);
+        let mut out = AudioBuffer::stereo(frames, RATE);
+        sampler.process(&[note_on(0)], &mut out, &ctx);
+        let ours = rms(&out.channel(0)[frames / 2..]);
+
+        // The same note through a synthesiser left at the library's defaults.
+        let font = crate::test_support::two_tone_font(RATE as i32);
+        let mut settings = SynthesizerSettings::new(RATE as i32);
+        settings.block_size = INTERNAL_BLOCK;
+        settings.maximum_polyphony = MAX_VOICES;
+        settings.enable_reverb_and_chorus = false;
+        let mut theirs = Synthesizer::new(&font, &settings).expect("the font this crate writes");
+        let library_unity = theirs.get_master_volume();
+        theirs.note_on(CHANNEL, crate::test_support::ROOT_KEY as i32, 127);
+        let mut left = vec![0.0; frames];
+        let mut right = vec![0.0; frames];
+        theirs.render(&mut left, &mut right);
+        let reference = rms(&left[frames / 2..]);
+
+        assert_eq!(library_unity, 0.5, "the library moved its own unity");
+        let ratio = ours / reference;
+        assert!(
+            (ratio - 4.0).abs() < 0.05,
+            "0 dB should be four times the library's unity, not {ratio}"
+        );
+        assert_eq!(NOMINAL_VOLUME, 4.0 * library_unity);
     }
 
     #[test]
