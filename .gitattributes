@@ -1,0 +1,4 @@
+# Shell scripts are run by CI on Linux and macOS. A CRLF checked in would make the interpreter
+# line read `#!/usr/bin/env bash\r` and the job fail with "bad interpreter", which is a confusing
+# way to find out a file was edited on Windows.
+*.sh text eol=lf
