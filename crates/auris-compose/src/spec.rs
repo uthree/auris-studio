@@ -333,7 +333,13 @@ pub struct PartSpec {
     pub role: Role,
     /// The plugin that plays it.
     pub instrument: String,
-    /// Which octave it sits in.
+    /// Which octave it sits in, as an **absolute** MIDI octave rather than an offset.
+    ///
+    /// A melody's default is 5, so 6 moves it up one and 1 moves it down four. Worth saying
+    /// plainly, because the other octave in this system —
+    /// [`ClipRecipe::octave`](auris_core::ClipRecipe::octave), the dial on a generated clip — is
+    /// a *relative* ±2 from wherever its preset sits, and the two are easy to write for each
+    /// other. [`Self::range`] is where the difference from the role's default becomes a shift.
     pub octave: i32,
     /// How busy it is, as a fraction of the available steps.
     pub density: Option<f32>,

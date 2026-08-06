@@ -68,10 +68,14 @@ parts:     pad bass
 # A part's name implies its role, so `[part bass]` needs no `role:` line. Everything a role
 # implies — its register, its level, how long it holds a note — is a default the part is free
 # to override.
+#
+# `octave:` is the **absolute** octave the part sits in, not an offset: a melody's default is 5,
+# so writing 6 moves it up one and writing 1 moves it down four. (The octave dial on a *clip* is
+# the other thing — that one is ±2 from wherever its preset sits.) Left out here, because the
+# registers the roles come with already keep the parts out of each other's way.
 
 [part lead]
 instrument: auris.synth.chiptune
-octave:     1
 density:    0.55
 gate:       0.85
 
@@ -84,14 +88,12 @@ density:     0.45
 [part pad]
 role:       pad
 instrument: auris.synth.fm2
-octave:     -1
 
 [part arp]
 role:        arp
 instrument:  auris.synth.chiptune
 subdivision: 16
 density:     0.75
-octave:      1
 
 [part bass]
 instrument: auris.synth.fm2
