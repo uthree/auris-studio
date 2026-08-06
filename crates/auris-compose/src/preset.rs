@@ -505,13 +505,19 @@ program = "TR-808 Kit"
 "#;
 
 /// No kit, no lead: three sustained voices and a bell that is nearly a melody.
+///
+/// Its chords are the mode's own, and they have to be: lydian raises the fourth, so `IVmaj7` here
+/// is F#maj7, a tritone from the tonic with three of its four tones outside the key — and a chart
+/// written out by hand is played exactly as typed, so nothing corrects it. `II` is the chord where
+/// that raised fourth is a chord tone rather than a clash, and two bars of the tonic answered by
+/// two of `II` is the floating that lydian was chosen for.
 const AMBIENT: &str = r#"
 title       = "Ambient"
 key         = "C lydian"
 tempo       = 64
 mood        = "calm"
 groove      = "sparse"
-chords      = "| Imaj7 | Imaj7 | IVmaj7 | IVmaj7 |"
+chords      = "| Imaj7 | Imaj7 | II | II |"
 humanize    = 0.55
 dynamics    = 0.5
 fill        = 0.0
@@ -567,6 +573,8 @@ mod tests {
     use super::*;
     use crate::render::compose;
     use crate::spec::Role;
+    use crate::theory::chord_scale::ChordScale;
+    use auris_core::time::{TICKS_PER_QUARTER, Ticks};
 
     #[test]
     fn every_preset_parses_and_writes_a_piece() {
@@ -605,6 +613,54 @@ mod tests {
                 "{} does not round-trip",
                 preset.name
             );
+        }
+    }
+
+    #[test]
+    fn every_preset_writes_chords_its_own_key_can_hold() {
+        // A preset chooses a key and a progression in two separate lines and nothing makes them
+        // agree: a chart written out by hand is played exactly as typed, so a degree that means
+        // something else in the declared mode is simply played wrong and never corrected. The
+        // ambient preset asked for IVmaj7 in C lydian, where the fourth is raised — F#maj7, a
+        // tritone from the tonic, three of whose four tones the key does not have.
+        //
+        // One chromatic tone is the ordinary colour of a secondary dominant, which is what 丸サ
+        // 進行's III7 is for. Two or three is a chord out of another key, and the scale a part
+        // would improvise on collapses with it: the six notes below are what is left of the seven
+        // after the alteration takes the degree it altered, and five means two degrees went.
+        //
+        // The bar length only decides where the chords fall, so any of them does — this is about
+        // what the chords are.
+        let bar = Ticks(TICKS_PER_QUARTER * 4);
+        for preset in PRESETS {
+            let spec = preset.spec();
+            let key = spec.key;
+            for (name, chart) in &spec.charts {
+                for event in chart.spelled_in(key).resolve(key, bar) {
+                    let outside = event
+                        .chord
+                        .classes()
+                        .into_iter()
+                        .filter(|class| !key.scale.contains(key.tonic, *class))
+                        .count();
+                    assert!(
+                        outside <= 1,
+                        "{} · {name}: {} has {outside} tones outside {}",
+                        preset.name,
+                        event.name(),
+                        key.to_text()
+                    );
+                    let scale = ChordScale::new(key, event.chord);
+                    assert!(
+                        scale.degree_count() >= 6,
+                        "{} · {name}: {} leaves {} playable notes in {}",
+                        preset.name,
+                        event.name(),
+                        scale.degree_count(),
+                        key.to_text()
+                    );
+                }
+            }
         }
     }
 

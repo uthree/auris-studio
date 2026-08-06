@@ -666,9 +666,10 @@ mod tests {
             out.push_str(" |");
             for event in &section.events {
                 // Both, and not only one: `name()` reads the numeral, which is what the timeline
-                // will store, while `chord` is what the colouring pass actually produced and what
-                // is heard. The whole difficulty of this split is that today they can disagree,
-                // so a fingerprint that showed one of them would hide it.
+                // will store, while `chord` is what the colouring pass produced and what is
+                // heard. Colouring keeps the two saying the same chord, so an arrow here is the
+                // shape of that going wrong again — and a fingerprint showing one of them would
+                // hide it.
                 let numeral = event.name();
                 let sounding = event.chord.name_in(event.key);
                 if numeral == sounding {
@@ -811,14 +812,17 @@ mod tests {
                     bars = 8
                     "#
             ),
-            "verse·1 C major | C→Cmaj7 G Am F→Fmaj7 C→Cmaj7 G→Gmaj7 Am→Am9 F |\n\
+            "verse·1 C major | Cmaj7 G Am Fmaj7 Cmaj7 Gmaj7 Am9 F |\n\
              163 notes, digest e56e38402c7ada74\n"
         );
 
-        // The same in a minor key. `Fm→Gbm` is the borrow that has no spelling: `vi` read in the
-        // parallel major is an F sharp minor, and in A minor no combination of degree and
-        // accidental names an F sharp at all — `degree_class` measures from the key's own scale
-        // at zero and from the major scale otherwise, and F sharp falls between the two.
+        // The same in a minor key, where one chord is a borrow that moves the root: `vi` read in
+        // the parallel major is an F sharp minor, and the numeral goes with it. What it becomes
+        // is `bbvii`, which looks strange and is the only pair that names that note —
+        // `degree_class` measures from the key's own scale at zero and from the major scale
+        // otherwise, so F sharp is out of reach of the sixth degree and is named from the seventh
+        // instead. Strange and right beats plain and wrong: `vi` left as it was said F minor over
+        // parts playing F sharp minor.
         //
         // This and the transposed 丸サ below are the two of the four whose digest moved when the
         // melody started reading the scale each chord implies rather than the key's own, and
@@ -836,7 +840,7 @@ mod tests {
                     bars = 8
                     "#
             ),
-            "verse·1 A minor | A→Amaj7 E Fm→Fm7 D A→Amaj7 E→Emaj7 Fm→Gbm D→Dmaj7 |\n\
+            "verse·1 A minor | Amaj7 E Fm7 D Amaj7 Emaj7 Gbm Dmaj7 |\n\
              227 notes, digest 35b52587bd16e2ac\n"
         );
 

@@ -151,6 +151,12 @@ pub fn plan(spec: &SongSpec) -> Frame {
 ///
 /// Every roll is drawn whether or not it can be applied, so pinning one chord's quality does not
 /// shift the colour of every chord after it.
+///
+/// The numeral is brought along with the chord. An event carries both, and they are not two
+/// spellings of one fact for the fun of it: the chord is what every part plays, and the numeral is
+/// what gets written down — the harmony lane names it, and a Chords clip generated later resolves
+/// it again. Colouring one and leaving the other saying what the chord used to be is a document
+/// that contradicts its own audio, and it saves that way.
 fn colour(events: &mut [HarmonicEvent], mood: Mood, seed: u64, section: &str, instance: usize) {
     let mut rng = Rng::stream(
         seed,
@@ -168,6 +174,13 @@ fn colour(events: &mut [HarmonicEvent], mood: Mood, seed: u64, section: &str, in
         if !event.numeral.is_colourable() {
             continue;
         }
+        // The parallel mode's version of the same degree: this is where a minor iv in a major
+        // key comes from, and it is the cheapest colour in the book.
+        let parallel = event.key.parallel();
+        // Whether the chord ended up being the parallel mode's rather than this key's. That is
+        // the one colour that can move the root, and so the one the numeral cannot follow by
+        // having a quality written on it.
+        let mut from_parallel = false;
         if seventh {
             event.chord.quality = event.chord.quality.with_seventh();
         }
@@ -175,13 +188,21 @@ fn colour(events: &mut [HarmonicEvent], mood: Mood, seed: u64, section: &str, in
             event.chord.quality = event.chord.quality.with_ninth();
         }
         if borrow {
-            // The parallel mode's version of the same degree: this is where a minor iv in a
-            // major key comes from, and it is the cheapest colour in the book.
-            let parallel = event.key.parallel();
             let borrowed = event.numeral.chord_in(parallel);
             if borrowed.root != event.chord.root || borrowed.quality != event.chord.quality {
                 event.chord = borrowed;
+                from_parallel = true;
             }
+        }
+        // Read off the chord that came out, at the end, rather than patched alongside each
+        // change — which is what makes `event.chord == event.numeral.chord_in(event.key)` true
+        // by construction instead of true as long as three branches agree with each other.
+        if event.chord != event.numeral.chord_in(event.key) {
+            event.numeral = if from_parallel {
+                event.numeral.respelled_in(parallel, event.key)
+            } else {
+                event.numeral.with_quality(event.chord.quality)
+            };
         }
     }
 }
@@ -423,6 +444,55 @@ mod tests {
                 ["Fmaj7", "E7", "Am7", "C7"],
                 "tension {tension} rewrote a quoted chart"
             );
+        }
+    }
+
+    #[test]
+    fn colouring_carries_the_numeral_along_with_the_chord() {
+        // An event holds both, and different halves of the program read them: every part plays
+        // the chord, while the numeral is what the document stores, what the harmony lane names
+        // and what a Chords clip is written from. Colouring one and leaving the other saying what
+        // the chord used to be is a lane painting Fm over parts playing F#m, and it saves that
+        // way — so the two naming the same chord is the property, not any particular chord.
+        let song = |mood: &str, extra: &str| {
+            format!(
+                r#"
+                form = "verse"
+                mood = "{mood}"
+                {extra}
+
+                [section.verse]
+                bars = 8
+                "#
+            )
+        };
+        // Nothing is coloured at a tension of zero, so this is the chart as written, and the
+        // count below is how many chords the mood really moved.
+        let plain: Vec<String> = plan(&spec(&song("neutral", "tension = 0.0"))).sections[0]
+            .events
+            .iter()
+            .map(|event| event.chord.to_string())
+            .collect();
+
+        for mood in ["neutral", "tense"] {
+            let frame = plan(&spec(&song(mood, "")));
+            let section = &frame.sections[0];
+            for event in &section.events {
+                assert_eq!(
+                    event.chord,
+                    event.numeral.chord_in(event.key),
+                    "{mood}: the lane writes {} where the parts play {}",
+                    event.name(),
+                    event.chord
+                );
+            }
+            let moved = section
+                .events
+                .iter()
+                .zip(&plain)
+                .filter(|(event, before)| event.chord.to_string() != **before)
+                .count();
+            assert!(moved > 0, "{mood} coloured nothing, so this proves nothing");
         }
     }
 
