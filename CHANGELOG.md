@@ -9,6 +9,40 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### The composer keeps time, and a velocity means one thing
+
+* **The kit does not wander.** Timing humanisation applied to every role including the drums,
+  which is not what a kit does — the shipped presets scattered theirs by 4.9 to 14.0 ms, with
+  single hits reaching 28.8. The kick, the snare and the hat now sit exactly on the grid. They
+  keep their *lean* — the hat a little early, the snare a little late, the same whole number of
+  ticks in every bar — because that is a player leaning and not a player being unreliable.
+* **The dial reaches zero, and means the same thing at any tempo.** The wander was
+  `6 + 19 × humanize` ticks, and the six was multiplied by nothing, so the dial was a step
+  function with no setting between "quantised" and "±6 ticks". It is now **15 ms at the top of
+  the dial**, converted through the tempo — so ambient at 64 BPM stops being three times looser
+  than rock at 148 for no reason anybody chose. A generated clip reads the tempo underneath it
+  rather than assuming 120.
+* **A velocity means the same thing on every instrument.** The built-in voices were linear and
+  the SoundFont sampler was squared, which is the SF2 default and what rustysynth implements —
+  so the composer, which writes velocities for a linear instrument, got twice the dynamic range
+  in decibels through the font. A part written MIDI 26 to 126 measured **27.4 dB through the
+  sampler against 13.7 through a built-in voice**; it is now 13.8. This is a deliberate
+  disagreement with other SoundFont players: a DAW where one number means two things depending
+  on what is loaded is worse than one that is consistent with itself.
+* **A composed piece is audible.** The sampler was voiced 11.5 dB below the rest of the
+  application, so a composed mix landed 14 to 19 dB under a finished record. Composed mixes are
+  now **13 to 16 dB louder**. They are still 1.5 to 8.3 dB short of a mastered piece, which is a
+  crest-factor problem — arrangement and bus compression — and not something a gain constant can
+  reach.
+* **The shipped font's drum kits are brought level with each other.** They sit 7.95 dB apart at
+  unity, which is calibration noise rather than a musical statement, and once everything got
+  louder that error landed above full scale — city-pop clipped once a bar. A measured per-kit
+  trim is applied where a composed part resolves to a kit, and a composed document carries a
+  limiter on its master at −0.3 dB: dormant on 121 of 128 seeds of the one preset that needs it,
+  and never touched by any other.
+* Existing projects that use the sampler will be about 12 dB louder and half as wide in decibels.
+  Nothing needs converting; the faders are where they always were.
+
 ### What a review of the whole thing found
 
 Nineteen defects, from an adversarial read of every crate. The pattern worth naming is
