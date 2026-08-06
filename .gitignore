@@ -29,5 +29,10 @@ target
 /exports
 *.wav.tmp
 
+# Projects composed while trying something out. The specifications in `examples/` are the
+# source; a `.auris` beside them is the output, and a two-hundred-kilobyte note list is not
+# something to review a diff of.
+*.auris
+
 # macOS
 .DS_Store
