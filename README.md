@@ -496,6 +496,17 @@ Deliberately simple chiptune voices, enough to hear the engine working:
 
 Square and saw are PolyBLEP band-limited, so high notes stay clean instead of aliasing.
 
+A plugin carrying all four of attack, decay, sustain and release draws them as **the shape they
+are**, above its sliders: a polyline with a handle on each corner, dragged the way Logic drags one.
+The attack and release corners move along the time axis and the middle one moves in both — sideways
+is how long the fall takes, upwards is how far it falls to, which is the pair a hand is reaching for
+anyway. The time axis is cube-rooted rather than proportional, because a default five-millisecond
+attack against a two-second range is a quarter of one per cent, and a handle a pixel wide is a
+control that does not exist. The sliders stay: a graph is how a shape is found and a number is how
+it is said, and neither answers for the other. All four or none — the drum synth has a decay and
+nothing else, and inventing two corners for it would be a picture of something that is not
+happening.
+
 The library panel is a tree: instruments, SoundFonts and effects, each opening into
 groups rather than a flat list — the plugins by category, a font by the banks it declares. Every
 branch remembers whether it was left open. Clicking an instrument sets it on the selected track,

@@ -10,6 +10,7 @@ pub mod commands;
 pub mod compose_sheet;
 pub mod context_menu;
 pub mod drop;
+pub mod envelope;
 pub mod icons;
 pub mod inspector;
 pub mod library;

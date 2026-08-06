@@ -318,6 +318,21 @@ pub enum Drag {
         /// Pointer x when the drag began.
         start_x: Pixels,
     },
+    /// Dragging a corner of the envelope graph.
+    ///
+    /// Absolute rather than measured from where the drag began, unlike [`Drag::Param`]: a corner
+    /// follows the pointer because it is *at* the pointer, and the press only lands at all when it
+    /// was already within a few pixels of one. The parameters are looked up again on every move,
+    /// so nothing here can go stale under an undo or a change of plugin.
+    EnvelopeHandle {
+        /// Whose envelope.
+        subject: crate::ui::plugin_window::PluginSubject,
+        /// Which corner.
+        handle: crate::ui::envelope::Handle,
+        /// The parameter the whole drag is filed under, which for the decay corner is one of the
+        /// two it moves.
+        target: ParamTarget,
+    },
     /// Dragging a section boundary along the structure lane.
     SectionLabel {
         /// The change being moved, by where it currently sits.
@@ -440,6 +455,9 @@ impl Drag {
             Drag::NoteResize { .. } => Some(Edit::ResizeNote),
             Drag::NoteVelocity { .. } => Some(Edit::SetNoteVelocity),
             Drag::Param { target, .. } => Some(Edit::AdjustParameter(*target)),
+            // The decay corner moves two parameters and this names one of them. The undo step is
+            // one either way — the whole drag is a transaction — so this only decides the label.
+            Drag::EnvelopeHandle { target, .. } => Some(Edit::AdjustParameter(*target)),
             // One undo step for the whole sweep, and the same label the right-click menu's
             // "Write It Again" uses — moving a dial is writing the part again with one thing
             // changed, and a stack full of "Adjusted parameter" would say nothing about which.
@@ -584,6 +602,8 @@ pub struct CanvasBounds {
     pub lanes: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The piano roll's note grid.
     pub roll: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The envelope graph in the open plugin window.
+    pub envelope: Rc<Cell<Option<Bounds<Pixels>>>>,
 }
 
 /// Waveform peaks keyed by audio source, shared by every lane in a frame.

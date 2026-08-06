@@ -718,6 +718,9 @@ impl AurisApp {
                 let delta = f32::from(event.position.x - start_x);
                 self.drag_param(target, start_value, delta);
             }
+            Drag::EnvelopeHandle {
+                subject, handle, ..
+            } => self.drag_envelope_handle(subject, handle, event.position),
             Drag::PartDial {
                 clip,
                 dial,

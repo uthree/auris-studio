@@ -352,6 +352,7 @@ impl AurisApp {
             self.session.stop_watching();
         }
         let spectrum = analyses_spectrum(&plugin_id).then(|| self.spectrum_bins());
+        let envelope = self.envelope_of(subject, &plugin_id);
 
         let theme = self.theme.clone();
         let name = self.plugin_label(&plugin_id);
@@ -426,6 +427,7 @@ impl AurisApp {
                         )),
                 )
                 .children(spectrum.map(|bins| spectrum_display(bins, &theme)))
+                .children(envelope.map(|env| self.envelope_display(subject, env, cx)))
                 .child(
                     div()
                         .id("pw-body")
@@ -445,7 +447,7 @@ impl AurisApp {
     /// The plugin id a subject names, and whether it is switched in.
     ///
     /// `None` once the thing it named has gone, which is what closes the window.
-    fn resolve_plugin(&self, subject: PluginSubject) -> Option<(String, bool)> {
+    pub(crate) fn resolve_plugin(&self, subject: PluginSubject) -> Option<(String, bool)> {
         match subject {
             PluginSubject::Instrument(track) => {
                 let inner = self.project().track(track)?.kind.as_instrument()?;
