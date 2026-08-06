@@ -29,6 +29,14 @@ pub struct SectionPlan {
     pub bars: usize,
     /// The key it is in, after any transposition.
     pub key: Key,
+    /// The tempo it is played at, resolved: its own, or the song's.
+    ///
+    /// Resolved here rather than left as the `Option` a specification holds, because everything
+    /// that reads it wants a number — the humanisation converting a wander in milliseconds into
+    /// ticks, and the tempo map the finished piece hands to a document. A part looking up "the
+    /// tempo" and finding `None` would have to know what to fall back to, and that would be the
+    /// second place in the program that knows.
+    pub tempo: f64,
     /// How hard it is played.
     pub intensity: f32,
     /// Its chords, positioned from the section's own start.
@@ -129,6 +137,7 @@ pub fn plan(spec: &SongSpec) -> Frame {
             length,
             bars: section.bars,
             key,
+            tempo: spec.tempo_of(section),
             intensity: section.intensity,
             events,
             skeleton,

@@ -188,6 +188,18 @@ pub struct SectionSpec {
     pub parts: Vec<String>,
     /// Semitones to transpose this section by.
     pub transpose: i32,
+    /// Beats per minute here, or the song's when `None`.
+    ///
+    /// A **step**, in force from this section's first bar to whatever changes it next, because a
+    /// section is the shortest thing this format can talk about and a step is the only shape that
+    /// fits it. Slowing *through* a passage — the ritardando an orchestra ends on — is a
+    /// continuous change, and neither this nor
+    /// [`TempoMap`](auris_core::time::TempoMap), which is piecewise-constant, can say it. Nothing
+    /// here pretends otherwise.
+    ///
+    /// A property of the section and so of every playing of it: a chorus that lifts to 132 lifts
+    /// on both times round, which is what makes it the same chorus.
+    pub tempo: Option<f64>,
 }
 
 impl SectionSpec {
@@ -212,6 +224,7 @@ impl SectionSpec {
             intensity,
             parts: Vec::new(),
             transpose: 0,
+            tempo: None,
         }
     }
 }
@@ -340,6 +353,11 @@ impl SongSpec {
             .or_else(|| self.charts.values().next())
             .cloned()
             .unwrap_or_else(|| Chart::new(Vec::new(), ChartOrigin::Given))
+    }
+
+    /// The tempo a section is played at: its own, or the song's.
+    pub fn tempo_of(&self, section: &SectionSpec) -> f64 {
+        section.tempo.unwrap_or(self.tempo)
     }
 
     /// The parts that play in a section.

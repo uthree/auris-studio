@@ -86,14 +86,6 @@ pub struct PartDraft {
 pub struct ScoreSettings {
     /// How the music should feel, which sets density and syncopation.
     pub mood: Mood,
-    /// How fast the piece goes, in beats per minute.
-    ///
-    /// Not because a part is written in seconds — everything here is in ticks, and a tick is a
-    /// fraction of a bar — but because the timing wander is a *time*, and a time has to know the
-    /// tempo before it can become a number of ticks. It is read here rather than off the
-    /// [`Frame`], which is a plan of bars and chords and has never needed to know how fast they go
-    /// by.
-    pub tempo: f64,
     /// How far the offbeats are delayed, as a percentage where 50 is straight.
     pub swing: u8,
     /// How far timing and velocity wander, from 0 for a machine to 1 for a sloppy band.
@@ -121,7 +113,6 @@ impl From<&SongSpec> for ScoreSettings {
     fn from(spec: &SongSpec) -> Self {
         Self {
             mood: spec.mood,
-            tempo: spec.tempo,
             swing: spec.swing,
             humanize: spec.humanize,
             dynamics: spec.dynamics,
@@ -251,8 +242,18 @@ fn humanise(settings: &ScoreSettings, frame: &Frame, part: &PartSpec, notes: &mu
     // number of ticks is a fixed *fraction of a beat*, and the same fraction is nearly twice as
     // long a wait at 64 BPM as at 120 — which is how one dial came to read "a bit loose" for the
     // rock preset and "nobody is together" for the ambient one.
-    let ticks_per_ms = TICKS_PER_QUARTER as f64 * settings.tempo.max(0.0) / 60_000.0;
-    let sigma = WANDER_MS * settings.humanize * ticks_per_ms as f32;
+    //
+    // Per section, because the tempo is: a piece that lifts into its chorus would otherwise have
+    // the wander of the section it left, and the whole promise here is that one dial is one feel
+    // at whatever speed the music happens to be going. A section the note does not belong to
+    // cannot happen — a draft is written *by* section — and answers no wander rather than a
+    // guessed tempo, since there is nothing true to convert against.
+    let sigma = |section: usize| {
+        frame.sections.get(section).map_or(0.0, |plan| {
+            let ticks_per_ms = TICKS_PER_QUARTER as f64 * plan.tempo.max(0.0) / 60_000.0;
+            WANDER_MS * settings.humanize * ticks_per_ms as f32
+        })
+    };
 
     for note in notes.iter_mut() {
         let bar_position = note.start.raw().rem_euclid(grid.bar_ticks().raw().max(1));
@@ -274,7 +275,7 @@ fn humanise(settings: &ScoreSettings, frame: &Frame, part: &PartSpec, notes: &mu
             // Drawn whether this note can use it or not, which is the roll-anyway rule: the
             // velocity below is the next number out of the same stream, and silencing the kit's
             // timing should not also have restruck it.
-            let wander = rng.jitter(sigma);
+            let wander = rng.jitter(sigma(note.section));
             // A drum does not wander. Everything else in the band is loose *against* somebody
             // keeping the time, and if the kit moves too there is nothing to be loose against.
             //
@@ -469,6 +470,53 @@ mod tests {
                 "{tempo} BPM: {measured:.2} ms against the {wanted:.2} ms asked for"
             );
         }
+    }
+
+    #[test]
+    fn a_section_that_lifts_the_tempo_lifts_the_wander_with_it() {
+        // The dial asks for a wander in milliseconds and the conversion into ticks needs a tempo.
+        // Once a section can name its own, taking the song's would scatter a chorus by the number
+        // of ticks its *verse* wanted — at 60 against 180 that is three times the time asked for,
+        // which is the whole failure the millisecond conversion was written to stop.
+        //
+        // Measured in ticks and not in milliseconds on purpose: in milliseconds a right answer
+        // and a wrong one both come out as one number twice over, and only the ratio of the ticks
+        // says which conversion was used.
+        let text = |seed: u64, humanize: f32| {
+            format!(
+                r#"
+                form     = "verse chorus"
+                chords   = "@axis"
+                seed     = {seed}
+                tempo    = 60
+                humanize = {humanize:.4}
+                swing    = 50
+                [section.verse]
+                bars = 8
+                [section.chorus]
+                bars  = 8
+                tempo = 180
+                "#
+            )
+        };
+        let mut moved: [Vec<f32>; 2] = [Vec::new(), Vec::new()];
+        for seed in 0..SEEDS {
+            let (_, _, loose) = draft(&text(seed, 0.5));
+            let (_, _, machine) = draft(&text(seed, 0.0));
+            let played = by_pitch(part(&loose, "lead"));
+            let written = by_pitch(part(&machine, "lead"));
+            assert_eq!(played.len(), written.len(), "seed {seed} changed the notes");
+            for (played, written) in played.iter().zip(&written) {
+                moved[played.section.min(1)].push((played.start - written.start).raw() as f32);
+            }
+        }
+        let (verse, chorus) = (spread(&moved[0]), spread(&moved[1]));
+        let ratio = chorus / verse;
+        assert!(
+            (ratio - 3.0).abs() < 0.3,
+            "the chorus runs three times the verse's tempo and wandered {chorus:.1} ticks against \
+             {verse:.1}, a ratio of {ratio:.2}"
+        );
     }
 
     #[test]

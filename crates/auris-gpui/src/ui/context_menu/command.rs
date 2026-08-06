@@ -76,6 +76,13 @@ pub enum MenuCommand {
         /// How far, in semitones.
         steps: i32,
     },
+    /// Pin one section of the song sheet to a tempo, or let it follow the song's.
+    SongSectionTempo {
+        /// Which section, by position in the sheet's list.
+        section: usize,
+        /// The tempo it plays at, or `None` to follow the song.
+        bpm: Option<f64>,
+    },
     /// Turn one part of the roster on or off for one section of the song sheet.
     SongSectionPart {
         /// Which section, by position in the sheet's list.
@@ -497,6 +504,15 @@ impl AurisApp {
                     .and_then(|dials| dials.sections.get_mut(section))
                 {
                     section.transpose = steps;
+                }
+            }
+            MenuCommand::SongSectionTempo { section, bpm } => {
+                if let Some(section) = self
+                    .song_sheet
+                    .as_mut()
+                    .and_then(|dials| dials.sections.get_mut(section))
+                {
+                    section.tempo = bpm;
                 }
             }
             MenuCommand::SongSectionPart { section, part } => {

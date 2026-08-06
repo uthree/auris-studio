@@ -5,7 +5,7 @@ use auris_core::harmony::{ChordMap, ChordPoint, Harmony, KeyMap, KeyPoint};
 use auris_core::plugin::PluginState;
 use auris_core::project::Color;
 use auris_core::structure::{SectionMap, SectionPoint};
-use auris_core::time::{Ticks, TimeSignature};
+use auris_core::time::{TempoMap, TempoPoint, Ticks, TimeSignature};
 
 use crate::frame::{Frame, plan};
 use crate::parts::{PartDraft, ScoreSettings, write_parts};
@@ -113,9 +113,23 @@ pub struct BusEffectDraft {
 pub struct Composition {
     /// What the piece is called.
     pub title: String,
-    /// Beats per minute.
-    pub tempo: f64,
+    /// The tempo, on the song's own timeline.
+    ///
+    /// A map rather than a number because a section may lift or drop away from the song's tempo,
+    /// and the document already holds one — handing over the core type means nothing translates
+    /// it, the same trade [`Self::harmony`] and [`Self::sections`] make.
+    ///
+    /// It is piecewise-constant, and that is the honest shape of what the composer can say: a
+    /// specification names a tempo per *section*, and a section is a stretch of bars rather than a
+    /// moment. Slowing through a passage is a continuous change and neither this nor the
+    /// specification pretends to have one.
+    pub tempo_map: TempoMap,
     /// The time signature.
+    ///
+    /// One for the whole piece. A specification says `meter = "6/8"` once, and there is no
+    /// vocabulary for changing it part way through — unlike the tempo, where a section can. The
+    /// difference is not arbitrary: a change of meter changes the length of a bar, and every part
+    /// is written against one grid.
     pub meter: TimeSignature,
     /// How long the piece is.
     pub length: Ticks,
@@ -167,7 +181,7 @@ impl Composition {
         let mut out = format!(
             "{} · {:.0} BPM · {}/{} · {} bars · seed {}\n",
             self.title,
-            self.tempo,
+            self.tempo_map.initial_bpm(),
             self.meter.numerator,
             self.meter.denominator,
             self.length.raw() / self.meter.ticks_per_bar().raw().max(1),
@@ -319,7 +333,7 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
 
     Composition {
         title: spec.title.clone(),
-        tempo: spec.tempo,
+        tempo_map: tempo_of(frame, spec.tempo),
         meter: spec.meter,
         length: frame.length,
         seed: spec.seed,
@@ -478,6 +492,28 @@ fn routing_for(role: Role, buses: &[BusDraft]) -> (Option<usize>, Vec<SendDraft>
         .into_iter()
         .collect();
     (output, sends)
+}
+
+/// The frame's tempo, as the map a document holds.
+///
+/// Only where it changes, on the same rule the key lane follows: every section carries a tempo and
+/// most pieces are at one throughout, so a point per section would fill the tempo lane with
+/// changes that change nothing and leave a person hunting for the one that does.
+///
+/// A frame with no sections still answers a map — `TempoMap` cannot be empty and the piece has to
+/// play at *something* — so the fallback is the tempo the specification named, which is the only
+/// number there is.
+fn tempo_of(frame: &Frame, song: f64) -> TempoMap {
+    let mut points: Vec<TempoPoint> = Vec::new();
+    for section in &frame.sections {
+        if points.last().is_none_or(|last| last.bpm != section.tempo) {
+            points.push(TempoPoint {
+                tick: section.start,
+                bpm: section.tempo,
+            });
+        }
+    }
+    TempoMap::try_from(points).unwrap_or_else(|_| TempoMap::constant(song))
 }
 
 /// The frame's harmony, moved onto the song's own timeline.
@@ -1118,7 +1154,49 @@ mod tests {
             "only {} notes",
             piece.note_count()
         );
-        assert_eq!(piece.tempo, 120.0);
+        assert_eq!(piece.tempo_map, TempoMap::constant(120.0));
+    }
+
+    #[test]
+    fn a_section_that_names_a_tempo_becomes_a_change_on_the_timeline() {
+        let piece = compose_text(
+            r#"
+            tempo = 120
+            form  = "verse chorus verse"
+
+            [section.verse]
+            bars = 4
+            [section.chorus]
+            bars  = 4
+            tempo = 132
+            "#,
+        );
+        let bar = piece.meter.ticks_per_bar();
+        assert_eq!(piece.tempo_map.bpm_at(Ticks::ZERO), 120.0);
+        assert_eq!(piece.tempo_map.bpm_at(bar * 4), 132.0);
+        assert_eq!(
+            piece.tempo_map.bpm_at(bar * 8),
+            120.0,
+            "the second verse goes back to the song's own tempo"
+        );
+    }
+
+    #[test]
+    fn a_piece_at_one_tempo_writes_one_point() {
+        // The same rule the key lane follows. A point per section would fill the tempo lane with
+        // changes that change nothing, and leave a person hunting for the one that does.
+        let piece = compose_text(r#"form = "verse chorus verse chorus outro""#);
+        assert_eq!(piece.tempo_map.points().len(), 1);
+
+        // And a section that lifts and drops back writes two rather than one per section.
+        let piece = compose_text(
+            r#"
+            form = "verse chorus verse"
+            [section.chorus]
+            tempo = 90
+            "#,
+        );
+        assert_eq!(piece.tempo_map.points().len(), 3);
     }
 
     #[test]

@@ -138,7 +138,10 @@ impl Session {
             .to_string();
 
         let mut project = Project::new(&composition.title, self.project.sample_rate);
-        project.set_bpm(composition.tempo);
+        // The composer's own map, handed over rather than flattened: a section may lift or drop
+        // away from the song's tempo, and a piece that arrived as one number would play its
+        // chorus at the tempo of its verse.
+        project.tempo_map = composition.tempo_map.clone();
         // One meter for the whole piece: a specification says `meter: 6/8` once, and the composer
         // has no vocabulary for changing it part way through. Nothing stops the meter being
         // edited afterwards — the document holds a map either way.
@@ -395,6 +398,30 @@ mod tests {
         assert_eq!(session.undo(), Some(Edit::Compose));
         assert_eq!(session.project().tracks.len(), 1);
         assert_eq!(session.project().tracks[0].name, "Old");
+    }
+
+    #[test]
+    fn a_chorus_that_lifts_the_tempo_lifts_it_on_the_timeline() {
+        // The composer writes a map and the document holds one, so this seam is a move rather
+        // than a conversion. It used to be `set_bpm(composition.tempo)`, which is the shape that
+        // would silently keep working while playing every section at the first one's tempo.
+        let mut session = session();
+        let spec = auris_compose::SongSpec::parse(
+            r#"
+                tempo = 120
+                form  = "verse chorus"
+
+                [section.chorus]
+                tempo = 132
+                "#,
+        )
+        .unwrap();
+        session.compose(&auris_compose::compose(&spec)).unwrap();
+
+        let project = session.project();
+        let bar = project.signatures.signature_at(Ticks::ZERO).ticks_per_bar();
+        assert_eq!(project.tempo_map.bpm_at(Ticks::ZERO), 120.0);
+        assert_eq!(project.tempo_map.bpm_at(bar * 8), 132.0);
     }
 
     #[test]

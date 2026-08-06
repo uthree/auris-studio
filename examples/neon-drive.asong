@@ -57,10 +57,15 @@ parts     = "lead chords bass kick snare hat"
 [section.chorus]
 bars      = 8
 intensity = 0.95
+# A tempo of its own, in force from this section's first bar until something changes it back. A
+# step and not a slope: a section is a stretch of bars rather than a moment, so a ritardando —
+# which slows *through* a passage — is not something this can say.
+tempo     = 132
 # `transpose` would move this section by a number of semitones — but it belongs to the *section*,
 # and both choruses are the same section, so it would move both. A last chorus a tone higher than
 # the first needs a section of its own today, which then gets figures of its own because material
-# is keyed by the label. Modulating a repeat is on the list.
+# is keyed by the label. Modulating a repeat is on the list. The tempo above has the same shape:
+# both choruses lift, because they are one chorus played twice.
 
 [section.outro]
 bars      = 4

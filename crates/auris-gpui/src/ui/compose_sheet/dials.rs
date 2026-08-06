@@ -469,6 +469,27 @@ pub fn remove_part(dials: &mut SongDials, index: usize) -> bool {
     true
 }
 
+/// How far a section's tempo may be lifted or dropped from the song's, in beats per minute.
+///
+/// Not a continuous dial, for the reason [`TRANSPOSES`] is not one: a section that plays faster is
+/// a *choice*, and the ones anybody reaches for are a nudge, a noticeable lift or a different
+/// speed. The list is offsets and what is stored is the tempo they arrive at — the section pins a
+/// number rather than tracking the song, which is what makes a chorus at 132 stay at 132 when the
+/// verse is slowed down to try something.
+pub const SECTION_TEMPOS: [f64; 8] = [-16.0, -8.0, -4.0, -2.0, 2.0, 4.0, 8.0, 16.0];
+
+/// How a section's tempo is written on its button.
+///
+/// An em dash for a section that has not pinned one. Printing the song's tempo there instead would
+/// be four sections all reading `120` with no way to see which of them would follow the song if it
+/// changed — which is the one thing this control is about.
+pub fn section_tempo_label(section: &SectionSpec) -> String {
+    match section.tempo {
+        Some(bpm) => format!("{bpm:.0}"),
+        None => "—".to_string(),
+    }
+}
+
 /// Whether a part plays in a section.
 ///
 /// An empty list means *everything*, so this is not the same question as whether the part is named.
@@ -1102,6 +1123,42 @@ mod tests {
         let written = song_spec(&dials).to_toml();
         let back = song_dials(&SongSpec::parse(&written).expect("the sheet writes valid TOML"));
         assert_eq!(playing(&back, 0), before, "\n{written}");
+        assert_eq!(back, dials);
+    }
+
+    #[test]
+    fn a_section_pinned_to_a_tempo_says_so_and_one_following_the_song_does_not() {
+        // The em dash is the point. Printing the song's tempo on a section that has not pinned
+        // one would be four rows all reading `120` with no way to see which of them would move if
+        // the song did, which is the one thing the control is about.
+        let mut dials = SongDials::default();
+        assert_eq!(section_tempo_label(&dials.sections[0]), "—");
+        dials.sections[0].tempo = Some(132.0);
+        assert_eq!(section_tempo_label(&dials.sections[0]), "132");
+    }
+
+    #[test]
+    fn a_pinned_section_tempo_reaches_the_specification_and_comes_back() {
+        // The sheet holds an `Option` and the format writes a line only when there is one, so a
+        // section following the song has to come back following it rather than pinned to whatever
+        // the song happened to be at the moment it was saved.
+        let mut dials = SongDials {
+            tempo: 96.0,
+            ..SongDials::default()
+        };
+        dials.sections[1].tempo = Some(132.0);
+
+        let spec = song_spec(&dials);
+        assert_eq!(
+            spec.tempo_of(&spec.sections[&dials.sections[1].name]),
+            132.0
+        );
+        assert_eq!(spec.tempo_of(&spec.sections[&dials.sections[0].name]), 96.0);
+
+        let written = spec.to_toml();
+        let back = song_dials(&SongSpec::parse(&written).expect("the sheet writes valid TOML"));
+        assert_eq!(back.sections[1].tempo, Some(132.0));
+        assert_eq!(back.sections[0].tempo, None, "\n{written}");
         assert_eq!(back, dials);
     }
 

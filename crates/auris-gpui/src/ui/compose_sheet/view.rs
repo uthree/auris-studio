@@ -439,6 +439,22 @@ impl AurisApp {
                     }),
                 )));
             }
+            // Beside the dials rather than up in the row of names: the top row is already a name,
+            // a progression, a transposition and a roster wide, and how fast a section goes is the
+            // same kind of thing as how long it is and how hard it is played.
+            dial_row = dial_row.child(div().w(px(52.0)).child(button(
+                ("song-section-tempo", place),
+                section_tempo_label(section),
+                ButtonStyle::Normal,
+                false,
+                theme.accent,
+                &theme,
+                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                    let menu = this.song_section_tempo_menu(event.position(), index);
+                    this.open_menu(menu);
+                    cx.notify();
+                }),
+            )));
 
             rows.push(
                 div()

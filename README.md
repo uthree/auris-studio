@@ -387,6 +387,14 @@ the same chorus. The section picker offers the song's own names first — choosi
 repeat — and under a rule a fresh one of each: once there is a verse, `verse 2` is one click, which
 is how a song gets two verses that are not the same eight bars.
 
+**A section can play at a tempo of its own**, which is the difference between a chorus that lifts
+and one that is only louder. Its button on the dial row reads `—` for a section that follows the
+song and the tempo itself for one that does not, and the menu offers the song's tempo either side.
+It is a **step**, in force from that section's first bar until something changes it back — a
+ritardando slows *through* a passage, and neither the specification nor the document's tempo map,
+which is piecewise-constant, can say that. Nothing pretends otherwise. A composed piece arrives
+with the changes already on the timeline's tempo lane, where they can be dragged like any others.
+
 **Who plays is chosen per section**, which is what stops a piece being the same six instruments
 from the first bar to the last. The `7/7` button lists the roster with a tick against the parts
 that come in; turning the pad off in the verse is one click. The last part left cannot be switched
@@ -437,6 +445,7 @@ form   = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
 [section.chorus]
 bars      = 8
 intensity = 0.95
+tempo     = 132
 
 [[part]]
 name       = "lead"

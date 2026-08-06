@@ -438,13 +438,18 @@ pub mod composition {
     //!     [section.chorus]
     //!     bars      = 8
     //!     intensity = 0.95
+    //!     tempo     = 132
     //!     "#,
     //! )
     //! .expect("the specification above parses");
     //!
     //! let piece = compose(&spec);
-    //! assert_eq!(piece.tempo, 128.0);
     //! assert!(piece.note_count() > 0);
+    //!
+    //! // The tempo arrives as the map a document holds, because a section may lift away from the
+    //! // song's own tempo — and this chorus does.
+    //! assert_eq!(piece.tempo_map.initial_bpm(), 128.0);
+    //! assert_eq!(piece.tempo_map.points().len(), 5);
     //!
     //! // Everything is a pure function of the document and its seed, so this holds however many
     //! // times it is asked.

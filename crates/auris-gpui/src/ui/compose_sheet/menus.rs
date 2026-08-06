@@ -150,6 +150,48 @@ impl AurisApp {
         menu
     }
 
+    /// The tempo a section plays at: the song's, or one of a short list around it.
+    ///
+    /// The rows are labelled with the tempo they arrive at rather than with the offset that
+    /// reaches it, because a tempo is the thing a musician has an opinion about and `+8` is
+    /// arithmetic somebody would have to do. What is stored is that number: a section pins a
+    /// tempo rather than tracking the song, so a chorus at 132 stays at 132 while the verse is
+    /// slowed down to try something.
+    pub(super) fn song_section_tempo_menu(
+        &self,
+        anchor: gpui::Point<gpui::Pixels>,
+        section: usize,
+    ) -> ContextMenu {
+        let mut menu = ContextMenu::new(anchor, self.t(Key::SongSectionTempo));
+        let Some(dials) = self.song_sheet.as_ref() else {
+            return menu;
+        };
+        menu = menu.toggle(
+            self.t(Key::SongSectionTempoFollows),
+            MenuCommand::SongSectionTempo { section, bpm: None },
+            dials
+                .sections
+                .get(section)
+                .is_some_and(|section| section.tempo.is_none()),
+        );
+        menu = menu.separator();
+        for offset in SECTION_TEMPOS {
+            let bpm = (dials.tempo + offset).clamp(*TEMPO.start(), *TEMPO.end());
+            menu = menu.toggle(
+                format!("{bpm:.0}"),
+                MenuCommand::SongSectionTempo {
+                    section,
+                    bpm: Some(bpm),
+                },
+                dials
+                    .sections
+                    .get(section)
+                    .is_some_and(|section| section.tempo == Some(bpm)),
+            );
+        }
+        menu
+    }
+
     /// Which parts of the roster play in a section.
     ///
     /// One row per part with a tick against the ones that play, rather than a list to edit: the

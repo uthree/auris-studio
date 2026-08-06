@@ -299,6 +299,8 @@ struct SectionDoc {
     intensity: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     transpose: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tempo: Option<f64>,
     #[serde(
         default,
         deserialize_with = "words_or_list",
@@ -595,6 +597,17 @@ impl SectionDoc {
                 )));
             }
         }
+        if let Some(tempo) = self.tempo {
+            // The same range the song's own tempo is held to, said the same way: a section that
+            // could be asked for 900 BPM would be a change the transport cannot follow.
+            if (20.0..=400.0).contains(&tempo) {
+                section.tempo = Some(tempo);
+            } else {
+                errors.push(SpecError::about(format!(
+                    "section `{name}`: a tempo of {tempo} is outside 20..400"
+                )));
+            }
+        }
         if let Some(parts) = self.parts {
             // `*` is how the line-oriented format said "everything", which is what an empty
             // list already means. Still accepted, so nobody's document breaks over a star.
@@ -783,6 +796,7 @@ impl SectionDoc {
             chords: (section.chords != plain.chords).then(|| section.chords.clone()),
             intensity: (section.intensity != plain.intensity).then_some(section.intensity),
             transpose: (section.transpose != 0).then_some(section.transpose),
+            tempo: section.tempo,
             parts: (!section.parts.is_empty()).then(|| section.parts.clone()),
         }
     }
@@ -1110,6 +1124,35 @@ mod tests {
             "a section named in the form but not described still exists"
         );
         assert_eq!(spec.total_bars(), 4 + 8 + 16);
+    }
+
+    #[test]
+    fn a_section_can_name_a_tempo_of_its_own() {
+        let spec = SongSpec::parse(
+            r#"
+            tempo = 120
+            form  = "verse chorus"
+
+            [section.chorus]
+            tempo = 132
+            "#,
+        )
+        .unwrap();
+        assert_eq!(spec.sections["chorus"].tempo, Some(132.0));
+        assert_eq!(
+            spec.sections["verse"].tempo, None,
+            "a section that does not say follows the song"
+        );
+        assert_eq!(spec.tempo_of(&spec.sections["chorus"]), 132.0);
+        assert_eq!(spec.tempo_of(&spec.sections["verse"]), 120.0);
+        assert_eq!(SongSpec::parse(&spec.to_toml()), Ok(spec));
+
+        // The same range the song's own tempo is held to, and complained about the same way.
+        let errors = SongSpec::parse("form = \"verse\"\n[section.verse]\ntempo = 900").unwrap_err();
+        assert!(
+            errors.iter().any(|error| error.to_string().contains("900")),
+            "{errors:?}"
+        );
     }
 
     #[test]

@@ -133,6 +133,11 @@ pub fn write_phrase(
             length,
             bars,
             key,
+            // Held to the range a timeline can hold rather than taken on trust. This is the one
+            // setting that does not come off the recipe, so a caller with no map to read is the
+            // way a nonsense tempo gets in, and `TempoMap` is where what counts as nonsense is
+            // decided.
+            tempo: tempo.clamp(TempoMap::MIN_BPM, TempoMap::MAX_BPM),
             intensity: recipe.intensity.clamp(0.0, 1.0),
             events,
             skeleton,
@@ -148,10 +153,6 @@ pub fn write_phrase(
 
     let settings = ScoreSettings {
         mood: frame.mood,
-        // Held to the range a timeline can hold rather than taken on trust. This is the one
-        // setting that does not come off the recipe, so a caller with no map to read is the way
-        // a nonsense tempo gets in, and `TempoMap` is where what counts as nonsense is decided.
-        tempo: tempo.clamp(TempoMap::MIN_BPM, TempoMap::MAX_BPM),
         swing: recipe.swing,
         humanize: recipe.humanize.clamp(0.0, 1.0),
         dynamics: recipe.dynamics.clamp(0.0, 1.0),

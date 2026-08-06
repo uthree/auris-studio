@@ -135,6 +135,7 @@ mod tests {
                 length: Ticks::ZERO,
                 bars: 4,
                 key: crate::theory::key::Key::parse("C major").unwrap(),
+                tempo: 120.0,
                 intensity: *intensity,
                 events: Vec::new(),
                 skeleton: Vec::new(),

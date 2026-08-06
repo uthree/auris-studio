@@ -9,6 +9,26 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### A section can play at a tempo of its own
+
+* **`[section.chorus] tempo = 132`.** A composed piece ran at one speed from the first bar to the
+  last: the specification had a single `tempo`, and the whole thing arrived at the document as
+  `set_bpm`. A section now names its own, the composer hands over a `TempoMap` rather than a
+  number, and the changes are on the timeline's tempo lane where they can be dragged like any
+  others. A point is written only where the tempo actually changes, on the same rule the key lane
+  already followed.
+* The wander follows it. Humanisation asks for a scatter in *milliseconds* and has to convert that
+  into ticks, which needs a tempo — so the conversion is now per section. A chorus lifting from 60
+  to 180 would otherwise have been scattered by the verse's number of ticks, which is three times
+  the time the dial asked for, and that is exactly the failure the millisecond conversion was
+  written to stop. `ScoreSettings` no longer carries a tempo at all: it lives on the section plan,
+  in one place, so the two cannot disagree.
+* It is a **step**, and that is stated rather than glossed. A ritardando slows *through* a passage;
+  a section is a stretch of bars. Neither the specification nor `TempoMap`, which is
+  piecewise-constant, can express a continuous change, and none of this pretends to.
+* The meter is still one for the whole piece. Unlike the tempo, changing it changes the length of
+  a bar, and every part is written against one grid.
+
 ### A section chooses who plays it
 
 * **The song sheet can sit a part out.** `[section.x] parts = "…"` has been in the format the whole
