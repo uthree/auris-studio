@@ -1107,6 +1107,19 @@ pub fn curve_of_row(which: ClipCurve, row: f32) -> f32 {
     }
 }
 
+/// `CURVE_GRAB` as a duration, so the zone is the same handful of pixels at any zoom.
+///
+/// A radius is a *length*, which is why this is `width_to_duration` and can never be `x_to_tick`:
+/// the latter answers where a pixel column is, and so adds the scroll. Five bars along, seven
+/// pixels came back as some nineteen thousand ticks — a press on empty strip took hold of a point
+/// a bar or more away and the first move of the pointer flung it across the clip, an alt-click
+/// deleted a point nowhere near it, and a curve that had one point could never be given a second
+/// anywhere on screen. Never less than a tick, so that zoomed far enough out the zone is at least
+/// the point itself.
+fn curve_grab_radius(view: &TimelineView) -> Ticks {
+    Ticks(view.width_to_duration(px(CURVE_GRAB)).raw().abs().max(1))
+}
+
 /// The point within `radius` ticks of `at`, nearest first.
 ///
 /// In ticks rather than pixels so the answer does not change with the zoom in a way the caller has
@@ -1245,9 +1258,7 @@ impl AurisApp {
             event.modifiers,
         ) - clip_start)
             .max_zero();
-        // The grab zone in ticks, so it is the same handful of pixels at any zoom.
-        let radius = Ticks(self.timeline.x_to_tick(px(CURVE_GRAB)).raw().abs().max(1));
-        let grabbed = curve_point_at(&points, at, radius);
+        let grabbed = curve_point_at(&points, at, curve_grab_radius(&self.timeline));
 
         if let Some(existing) = grabbed
             && self.pointer.delete.matches(event)
@@ -1556,6 +1567,61 @@ mod curve_tests {
             Some(Ticks(480))
         );
         assert_eq!(curve_point_at(&[], Ticks(0), radius), None);
+    }
+
+    #[test]
+    fn the_grab_zone_is_a_length_and_stays_one_however_far_the_view_has_scrolled() {
+        // Every other test in this file sits at the start of the song, which is the one place a
+        // length and a position are the same number — and so the one place this could not be
+        // seen. The radius was read out of `x_to_tick`, which adds the scroll, so five bars in
+        // the seven-pixel zone had swollen to the better part of twenty thousand ticks.
+        let per_beat = 48.0;
+        let at_start = TimelineView {
+            pixels_per_beat: per_beat,
+            scroll_ticks: Ticks::ZERO,
+        };
+        let five_bars_in = TimelineView {
+            pixels_per_beat: per_beat,
+            scroll_ticks: Ticks(TICKS_PER_QUARTER * 20),
+        };
+        assert_eq!(
+            curve_grab_radius(&five_bars_in),
+            curve_grab_radius(&at_start),
+            "scrolling the view must not widen the zone",
+        );
+        // And it is the seven pixels it claims to be: a quarter note is drawn 48 across, so the
+        // zone reaches seven forty-eighths of one either way.
+        assert_eq!(
+            curve_grab_radius(&five_bars_in),
+            Ticks((TICKS_PER_QUARTER as f32 * CURVE_GRAB / per_beat) as i64),
+        );
+
+        // Which is what keeps a second point writable. One point at the clip's start, a press a
+        // beat later: near enough to reach only if the zone has grown, and if it has, the press
+        // grabs that point and drags it instead of writing a new one.
+        let points = vec![CurvePoint {
+            at: Ticks::ZERO,
+            value: 0.0,
+        }];
+        let radius = curve_grab_radius(&five_bars_in);
+        assert_eq!(
+            curve_point_at(&points, Ticks::ZERO, radius),
+            Some(Ticks::ZERO),
+            "a press on the point itself still takes hold of it",
+        );
+        assert_eq!(
+            curve_point_at(&points, Ticks(TICKS_PER_QUARTER), radius),
+            None,
+            "a beat away is empty strip, and a press there writes a point of its own",
+        );
+
+        // Zoomed all the way out a tick is far narrower than a pixel, and the zone must not round
+        // down to nothing: a zero radius is a point that can be drawn and never grabbed again.
+        let far_out = TimelineView {
+            pixels_per_beat: TimelineView::MIN_PIXELS_PER_BEAT,
+            scroll_ticks: Ticks(TICKS_PER_QUARTER * 20),
+        };
+        assert!(curve_grab_radius(&far_out) >= Ticks(1));
     }
 
     #[test]
