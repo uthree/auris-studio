@@ -1,0 +1,432 @@
+//! The text a piece is asked for in.
+//!
+//! One document describes a whole song: its key, its tempo, its progression, its form and its
+//! parts. It is deliberately a *specification* rather than a notation — it says what to write,
+//! not what was written — because that is the layer where an instruction like "make the chorus
+//! busier" is one word rather than four hundred edited notes.
+//!
+//! ```
+//! # use auris_compose::spec::SongSpec;
+//! let spec = SongSpec::parse(r#"
+//!     key    = "C minor"
+//!     tempo  = 128
+//!     chords = "@marusa"
+//! "#).unwrap();
+//! assert_eq!(spec.tempo, 128.0);
+//! ```
+//!
+//! # Why TOML
+//!
+//! The syntax is TOML and the extension is `.asong`, exactly as a project file is JSON inside
+//! `.auris`. Three reasons it is not a format of its own:
+//!
+//! * A hand-written parser can only ever be read; serde can also **write**. A dialog that sets a
+//!   song's dials has to be able to save what it was set to, and a format that has no serialiser
+//!   makes that a second implementation of the same grammar, free to disagree with the first.
+//! * It is not indentation-sensitive, which is the property a file a musician edits by hand
+//!   most needs and the reason YAML was not chosen.
+//! * `[section.chorus]` is a table and `[[part]]` is an array of tables, which is nearly the
+//!   shape the format already had.
+//!
+//! Sections are a table keyed by name because their order means nothing — `form` decides what
+//! plays when. Parts are an array because theirs means something: it is the order the tracks
+//! are created in, and a map would sort `bass` above `lead` and quietly rearrange the mixer.
+//!
+//! # What is reported, and when
+//!
+//! Two kinds of complaint, reported differently on purpose.
+//!
+//! **Syntax** — a misspelt field, a number where a string belongs, a bracket that does not
+//! close — is caught by `toml`, which stops at the first and says which line and column it is
+//! on. Unknown fields are refused rather than ignored, because silently dropping a line would
+//! mean the piece quietly ignores an instruction.
+//!
+//! **Meaning** — a key that is not a key, a fraction outside 0 to 1, a `form` naming a section
+//! that does not exist — is caught after the document has stopped being text, and every such
+//! complaint is reported at once. They have no line number for that reason; each names the
+//! field, section or part it is about instead.
+//!
+//! # Where things are
+//!
+//! The model is here: [`SongSpec`], [`SectionSpec`], [`PartSpec`] and the queries that read them.
+//! [`Role`] and [`Mood`] are the vocabulary one is written in, and each keeps a file of its own
+//! because each is mostly a table — the levels, the pans, the colours, the four dials a mood word
+//! means — that somebody edits without wanting to read a parser. The parser, the serialiser and
+//! every complaint they raise are in `doc`, on the far side of the seam this module is named for:
+//! what a song is, apart from how it is written down.
+
+mod doc;
+mod mood;
+mod role;
+
+use std::collections::BTreeMap;
+
+use auris_core::Subdivision;
+use auris_core::time::TimeSignature;
+
+use crate::gm;
+use crate::rhythm::Pattern;
+use crate::theory::chart::{Chart, ChartOrigin};
+use crate::theory::key::Key;
+
+// Re-exported, so `spec::Role` and the rest are the paths they have always been: which file an
+// item is written in is not part of the vocabulary a specification is read with.
+pub use self::doc::SpecError;
+pub use self::mood::Mood;
+pub use self::role::Role;
+
+/// One part of the arrangement.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PartSpec {
+    /// The name it takes in the document and on its track.
+    pub name: String,
+    /// What it plays.
+    pub role: Role,
+    /// The plugin that plays it, when no [`Self::program`] names a SoundFont sound.
+    pub instrument: String,
+    /// The General MIDI sound it asks for: a program on a pitched part, a kit on a drum one.
+    ///
+    /// `None` — the default — leaves the part on [`Self::instrument`], which is why the built-in
+    /// pieces are still built-in voices. Set, it puts the part on the sampler playing that sound
+    /// out of whichever General MIDI font is installed.
+    ///
+    /// The two coexist rather than replacing one another, and that is the point: a build with no
+    /// SoundFont installed falls back to the plugin the part also names, so a specification asking
+    /// for a violin comes out as an oscillator rather than as silence.
+    pub program: Option<gm::Program>,
+    /// Which octave it sits in, as an **absolute** MIDI octave rather than an offset.
+    ///
+    /// A melody's default is 5, so 6 moves it up one and 1 moves it down four. Worth saying
+    /// plainly, because the other octave in this system —
+    /// [`ClipRecipe::octave`](auris_core::ClipRecipe::octave), the dial on a generated clip — is
+    /// a *relative* ±2 from wherever its preset sits, and the two are easy to write for each
+    /// other. [`Self::range`] is where the difference from the role's default becomes a shift.
+    pub octave: i32,
+    /// How busy it is, as a fraction of the available steps.
+    pub density: Option<f32>,
+    /// How finely this part divides the beat.
+    ///
+    /// Per part rather than per song: a stab hammering triplets over a straight kit is a sound
+    /// somebody wants, and the bar is the same length either way, so the parts still line up.
+    /// A drum part ignores it — a groove is written in sixteenths.
+    pub subdivision: Subdivision,
+    /// How long a note is held, as a fraction of the gap to the one after it.
+    pub gate: f32,
+    /// A rhythm written out by hand, which overrides the generated one.
+    pub rhythm: Option<Pattern>,
+    /// Which MIDI note a drum part strikes, when it is not the General MIDI one.
+    ///
+    /// GM is the only agreement there is about which number is a kick, and a SoundFont is under
+    /// no obligation to keep it — a kit that puts its snare somewhere else comes out silent or
+    /// playing a cowbell, and there was nothing to say otherwise. A pitched part ignores this:
+    /// its notes come from the harmony.
+    pub note: Option<u8>,
+    /// Level trim in decibels.
+    pub gain_db: f32,
+    /// Stereo position from -1 to 1.
+    pub pan: f32,
+}
+
+impl PartSpec {
+    /// A part with everything its role implies.
+    pub fn of_role(name: impl Into<String>, role: Role) -> Self {
+        Self {
+            name: name.into(),
+            role,
+            instrument: role.default_instrument().to_string(),
+            program: None,
+            octave: role.default_octave(),
+            density: None,
+            subdivision: Subdivision::default(),
+            gate: role.default_gate(),
+            rhythm: None,
+            note: None,
+            gain_db: role.default_gain_db(),
+            pan: role.default_pan(),
+        }
+    }
+
+    /// The SoundFont sound this part asks for, or `None` when it stays on its plugin.
+    ///
+    /// Which of General MIDI's two readings the number gets is decided here, by the role, and
+    /// nowhere else: a kit on a drum part, a program on everything else.
+    pub fn sound(&self) -> Option<gm::Sound> {
+        self.program
+            .map(|program| program.sound(self.role.is_drum()))
+    }
+
+    /// The MIDI note this part strikes, or `None` when it is not a drum.
+    ///
+    /// What the part says, or what General MIDI says its role is. One place, so the sheet's
+    /// picker and the writer cannot disagree about which note a kit is about to play.
+    pub fn drum_note(&self) -> Option<u8> {
+        self.role
+            .drum_voice()
+            .map(|voice| self.note.unwrap_or_else(|| voice.pitch()))
+    }
+
+    /// The MIDI range this part should stay inside, moved by its octave.
+    pub fn range(&self) -> (i32, i32) {
+        let (low, high) = self.role.range();
+        let shift = (self.octave - self.role.default_octave()) * 12;
+        (low + shift, high + shift)
+    }
+}
+
+/// One section of the form.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SectionSpec {
+    /// The name used in `form:` and on the clips.
+    pub name: String,
+    /// How many bars it lasts.
+    pub bars: usize,
+    /// Which chart it plays, by name.
+    pub chords: String,
+    /// How hard the section is played, from 0 to 1.
+    pub intensity: f32,
+    /// Which parts play; empty means all of them.
+    pub parts: Vec<String>,
+    /// Semitones to transpose this section by.
+    pub transpose: i32,
+}
+
+impl SectionSpec {
+    /// A section with the defaults its name implies.
+    pub fn named(name: impl Into<String>) -> Self {
+        let name = name.into();
+        let intensity = match name.as_str() {
+            "intro" => 0.30,
+            "verse" => 0.55,
+            "pre" => 0.70,
+            "chorus" => 0.90,
+            "bridge" => 0.60,
+            "break" => 0.35,
+            "solo" => 0.75,
+            "outro" => 0.25,
+            _ => 0.60,
+        };
+        Self {
+            name,
+            bars: 8,
+            chords: "main".to_string(),
+            intensity,
+            parts: Vec::new(),
+            transpose: 0,
+        }
+    }
+}
+
+/// A whole song, as asked for.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SongSpec {
+    /// What the piece is called.
+    pub title: String,
+    /// Beats per minute.
+    pub tempo: f64,
+    /// The time signature.
+    pub meter: TimeSignature,
+    /// The key everything is measured from.
+    pub key: Key,
+    /// How the piece should feel.
+    pub mood: Mood,
+    /// The seed every random decision is drawn from.
+    pub seed: u64,
+    /// How much the offbeats are delayed, as a percentage where 50 is straight.
+    pub swing: u8,
+    /// How far timing and velocity wander, from 0 for a machine to 1 for a sloppy band.
+    ///
+    /// The timing half is a *time* and not a number of ticks: at 1 a pitched note lands within a
+    /// standard deviation of fifteen milliseconds of where it was written, and at the default of
+    /// 0.35 within about five, at whatever tempo the piece is played. That is what makes one
+    /// setting mean one thing — the same dial used to read as a slight looseness at 148 BPM and as
+    /// nobody being together at 64, because the wander was a fraction of a beat and a beat is not
+    /// a fixed length of time.
+    ///
+    /// It scales the whole way down, so a small setting is a small wander rather than the first
+    /// step of a staircase.
+    ///
+    /// The kit is exempt from the wander and only from the wander. A drummer holding the time is
+    /// what the rest of the band is loose *against*, so the kick, the snare and the hat land
+    /// exactly where they were written; what they keep is their constant lean — the hat a little
+    /// early, the snare a little late, by the same amount in every bar — and how much this dial
+    /// varies the strength of the stroke.
+    pub humanize: f32,
+    /// How far apart the hardest and softest notes are struck, from 0 to 1.
+    ///
+    /// How much the playing varies, where [`Self::mood`]'s energy says how hard it is played at
+    /// all. At 0 every note is struck alike — a sequencer, which is sometimes the point.
+    pub dynamics: f32,
+    /// How much of a section's last bar the snare runs as a fill, from 0 to 1.
+    pub fill: f32,
+    /// How much a repeat departs from what the section played the first time.
+    ///
+    /// At 0 a second chorus is note for note the first one, which is what makes it recognisable
+    /// as the same chorus. At 1 every playing is written afresh, which is what the composer used
+    /// to do always — the result had no repetition anywhere in it and so nothing to remember.
+    /// The default leaves most of the material alone and rewrites the occasional bar.
+    pub variation: f32,
+    /// The drum groove.
+    pub groove: String,
+    /// The charts, by name. `main` is the one a section gets when it does not say.
+    pub charts: BTreeMap<String, Chart>,
+    /// The sections, by name.
+    pub sections: BTreeMap<String, SectionSpec>,
+    /// The order the sections play in.
+    pub form: Vec<String>,
+    /// The parts, in the order their tracks are created.
+    pub parts: Vec<PartSpec>,
+}
+
+impl Default for SongSpec {
+    fn default() -> Self {
+        let mut charts = BTreeMap::new();
+        // Marked generated, not quoted: a progression the user did not ask for is the composer's
+        // own, so the mood is free to colour it. A chart anyone typed or named is left alone.
+        let default_chart = Chart::parse("@axis")
+            .map(|chart| Chart::new(chart.bars, ChartOrigin::Generated))
+            .unwrap_or_else(|| Chart::new(Vec::new(), ChartOrigin::Generated));
+        charts.insert("main".to_string(), default_chart);
+        let mut sections = BTreeMap::new();
+        for name in ["intro", "verse", "chorus", "outro"] {
+            sections.insert(name.to_string(), SectionSpec::named(name));
+        }
+        Self {
+            title: "Untitled".to_string(),
+            tempo: 120.0,
+            meter: TimeSignature::default(),
+            key: Key::parse("C major").expect("C major is a key"),
+            mood: Mood::default(),
+            seed: 0,
+            swing: 50,
+            humanize: 0.35,
+            dynamics: 1.0,
+            fill: 0.5,
+            variation: 0.25,
+            groove: "basic-rock".to_string(),
+            charts,
+            sections,
+            form: ["intro", "verse", "chorus", "verse", "chorus", "outro"]
+                .iter()
+                .map(|name| name.to_string())
+                .collect(),
+            parts: vec![
+                PartSpec::of_role("lead", Role::Melody),
+                PartSpec::of_role("chords", Role::Chords),
+                PartSpec::of_role("bass", Role::Bass),
+                PartSpec::of_role("kick", Role::Kick),
+                PartSpec::of_role("snare", Role::Snare),
+                PartSpec::of_role("hat", Role::Hat),
+            ],
+        }
+    }
+}
+
+/// How long the whole piece is, in bars.
+impl SongSpec {
+    /// Total length in bars.
+    pub fn total_bars(&self) -> usize {
+        self.form
+            .iter()
+            .filter_map(|name| self.sections.get(name))
+            .map(|section| section.bars)
+            .sum()
+    }
+
+    /// The chart a section plays, falling back to `main` and then to anything at all.
+    pub fn chart_for(&self, section: &SectionSpec) -> Chart {
+        self.charts
+            .get(&section.chords)
+            .or_else(|| self.charts.get("main"))
+            .or_else(|| self.charts.values().next())
+            .cloned()
+            .unwrap_or_else(|| Chart::new(Vec::new(), ChartOrigin::Given))
+    }
+
+    /// The parts that play in a section.
+    pub fn parts_in(&self, section: &SectionSpec) -> Vec<&PartSpec> {
+        self.parts
+            .iter()
+            .filter(|part| section.parts.is_empty() || section.parts.contains(&part.name))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_default_roster_is_mixed_rather_than_stacked() {
+        // Six parts at unity sum past full scale; the defaults have to leave headroom.
+        let spec = SongSpec::default();
+        assert!(spec.parts.iter().all(|part| part.gain_db < 0.0));
+        let lead = spec.parts.iter().find(|p| p.role == Role::Melody).unwrap();
+        let hat = spec.parts.iter().find(|p| p.role == Role::Hat).unwrap();
+        assert!(
+            hat.gain_db < lead.gain_db,
+            "the hat should sit under the tune"
+        );
+    }
+
+    #[test]
+    fn a_section_intensity_follows_its_name() {
+        let spec = SongSpec::parse("form = [\"intro\", \"chorus\", \"outro\"]").unwrap();
+        assert!(spec.sections["intro"].intensity < spec.sections["chorus"].intensity);
+        assert!(spec.sections["outro"].intensity < spec.sections["chorus"].intensity);
+    }
+
+    #[test]
+    fn a_program_is_a_kit_on_a_drum_part_and_a_program_on_every_other() {
+        // The same number means two unrelated things in General MIDI, and which one it means is
+        // never a guess: the role has already said. Read wrongly, a violin part would play
+        // whatever kit patch 40 is and a snare part would play a violin.
+        let violin = PartSpec {
+            program: Some(gm::Program(40)),
+            ..PartSpec::of_role("lead", Role::Melody)
+        };
+        assert_eq!(violin.sound(), Some(gm::Sound { bank: 0, patch: 40 }));
+
+        let brushes = PartSpec {
+            program: Some(gm::Program(40)),
+            ..PartSpec::of_role("snare", Role::Snare)
+        };
+        assert_eq!(
+            brushes.sound(),
+            Some(gm::Sound {
+                bank: gm::DRUM_BANK,
+                patch: 40
+            })
+        );
+
+        // And a part that named none stays on its plugin, which is what keeps a piece written on
+        // the built-in voices written on them.
+        assert_eq!(PartSpec::of_role("lead", Role::Melody).sound(), None);
+    }
+
+    #[test]
+    fn a_section_can_name_which_parts_play() {
+        let spec = SongSpec::parse(
+            r#"
+            form = ["intro", "chorus"]
+
+            [section.intro]
+            parts = ["bass", "kick"]
+            "#,
+        )
+        .unwrap();
+        let intro = &spec.sections["intro"];
+        let playing: Vec<&str> = spec
+            .parts_in(intro)
+            .iter()
+            .map(|part| part.name.as_str())
+            .collect();
+        assert_eq!(playing, ["bass", "kick"]);
+
+        let chorus = &spec.sections["chorus"];
+        assert_eq!(
+            spec.parts_in(chorus).len(),
+            spec.parts.len(),
+            "a section that does not say plays everything"
+        );
+    }
+}
