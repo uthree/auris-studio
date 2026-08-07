@@ -85,12 +85,10 @@ impl AurisApp {
             )
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                    let x = event.position.x - this.timeline_origin().x;
+                AurisApp::opens_menu(cx, |this, at| {
+                    let x = at.x - this.timeline_origin().x;
                     let tick = this.timeline.x_to_tick(x).max_zero();
-                    let menu = this.structure_menu(event.position, tick);
-                    this.open_menu(menu);
-                    cx.notify();
+                    this.structure_menu(at, tick)
                 }),
             )
             .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
@@ -181,12 +179,10 @@ impl AurisApp {
             )
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                    let x = event.position.x - this.timeline_origin().x;
+                AurisApp::opens_menu(cx, |this, at| {
+                    let x = at.x - this.timeline_origin().x;
                     let tick = this.timeline.x_to_tick(x).max_zero();
-                    let menu = this.harmony_menu(event.position, tick);
-                    this.open_menu(menu);
-                    cx.notify();
+                    this.harmony_menu(at, tick)
                 }),
             )
             // The chords sit above the clips they belong to and share their horizontal scale, so

@@ -126,11 +126,7 @@ impl AurisApp {
             // still on screen, so it is the only thing a "put that over there" can be aimed at.
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                    let menu = this.panel_menu(panel, event.position);
-                    this.open_menu(menu);
-                    cx.notify();
-                }),
+                Self::opens_menu(cx, move |this, at| this.panel_menu(panel, at)),
             )
     }
 

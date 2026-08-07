@@ -181,13 +181,11 @@ impl AurisApp {
                     )
                     .on_mouse_down(
                         MouseButton::Right,
-                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                        AurisApp::opens_menu(cx, move |this, at| {
                             // Selecting first means the menu and the panels agree about what is
                             // being acted on, the way a right-click does everywhere else.
                             this.select_track(id);
-                            let menu = this.track_menu(event.position, id);
-                            this.open_menu(menu);
-                            cx.notify();
+                            this.track_menu(at, id)
                         }),
                     )
                     // A colour stripe is the fastest way to match a header to its clips.

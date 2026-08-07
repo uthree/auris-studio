@@ -16,12 +16,14 @@ use auris_session::prelude::*;
 use crate::app::{AurisApp, Drag};
 use crate::theme::{Metrics, Theme};
 use crate::ui::prompt::{Prompt, PromptTarget};
-use crate::ui::widgets::{ButtonStyle, SliderFill, button, divider, value_slider};
+use crate::ui::widgets::{
+    ButtonStyle, RowColumn, SliderFill, button, divider, picker_row, value_slider,
+};
 
 use super::dials::*;
 
 /// How wide the label at the start of a row is drawn.
-const LABEL_WIDTH: f32 = 116.0;
+const LABEL_WIDTH: gpui::Pixels = px(116.0);
 
 impl AurisApp {
     /// Opens the song sheet: on the song it was last set to, on the one the document was written
@@ -226,11 +228,7 @@ impl AurisApp {
                 "song-style",
                 Key::SongStyle,
                 self.t(Key::SongStyleChoose).to_string(),
-                cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
-                    let menu = this.song_preset_menu(event.position());
-                    this.open_menu(menu);
-                    cx.notify();
-                }),
+                Self::opens_menu(cx, |this, at| this.song_preset_menu(at)),
             )
             .into_any_element(),
         );
@@ -273,11 +271,7 @@ impl AurisApp {
                 "song-meter",
                 Key::SongMeter,
                 format!("{}/{}", dials.meter.numerator, dials.meter.denominator),
-                cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
-                    let menu = this.song_meter_menu(event.position());
-                    this.open_menu(menu);
-                    cx.notify();
-                }),
+                Self::opens_menu(cx, |this, at| this.song_meter_menu(at)),
             )
             .into_any_element(),
         );
@@ -289,11 +283,7 @@ impl AurisApp {
                     Some(name) => this_word(self, name),
                     None => self.t(Key::SongMoodCustom).to_string(),
                 },
-                cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
-                    let menu = this.song_mood_menu(event.position());
-                    this.open_menu(menu);
-                    cx.notify();
-                }),
+                Self::opens_menu(cx, |this, at| this.song_mood_menu(at)),
             )
             .into_any_element(),
         );
@@ -302,11 +292,7 @@ impl AurisApp {
                 "song-groove",
                 Key::PartGroove,
                 dials.groove.clone(),
-                cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
-                    let menu = this.song_groove_menu(event.position());
-                    this.open_menu(menu);
-                    cx.notify();
-                }),
+                Self::opens_menu(cx, |this, at| this.song_groove_menu(at)),
             )
             .into_any_element(),
         );
@@ -384,14 +370,12 @@ impl AurisApp {
                     false,
                     theme.accent,
                     &theme,
-                    cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                    Self::opens_menu(cx, |this, at| {
                         let places = this
                             .song_sheet
                             .as_ref()
                             .map_or(0, |dials| dials.form.len().saturating_sub(1));
-                        let menu = this.song_section_menu(event.position(), places);
-                        this.open_menu(menu);
-                        cx.notify();
+                        this.song_section_menu(at, places)
                     }),
                 ))
                 .into_any_element(),
@@ -444,11 +428,7 @@ impl AurisApp {
                 false,
                 theme.accent,
                 &theme,
-                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                    let menu = this.song_section_tempo_menu(event.position(), index);
-                    this.open_menu(menu);
-                    cx.notify();
-                }),
+                Self::opens_menu(cx, move |this, at| this.song_section_tempo_menu(at, index)),
             )));
 
             rows.push(
@@ -471,10 +451,8 @@ impl AurisApp {
                                 false,
                                 theme.accent,
                                 &theme,
-                                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                                    let menu = this.song_form_name_menu(event.position(), place);
-                                    this.open_menu(menu);
-                                    cx.notify();
+                                Self::opens_menu(cx, move |this, at| {
+                                    this.song_form_name_menu(at, place)
                                 }),
                             )))
                             .child(div().flex_1().min_w_0().child(button(
@@ -484,10 +462,8 @@ impl AurisApp {
                                 false,
                                 theme.accent,
                                 &theme,
-                                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                                    let menu = this.song_chords_menu(event.position(), index);
-                                    this.open_menu(menu);
-                                    cx.notify();
+                                Self::opens_menu(cx, move |this, at| {
+                                    this.song_chords_menu(at, index)
                                 }),
                             )))
                             .child(div().w(px(44.0)).child(button(
@@ -497,10 +473,8 @@ impl AurisApp {
                                 false,
                                 theme.accent,
                                 &theme,
-                                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                                    let menu = this.song_transpose_menu(event.position(), index);
-                                    this.open_menu(menu);
-                                    cx.notify();
+                                Self::opens_menu(cx, move |this, at| {
+                                    this.song_transpose_menu(at, index)
                                 }),
                             )))
                             .child(div().w(px(44.0)).child(button(
@@ -510,11 +484,8 @@ impl AurisApp {
                                 false,
                                 theme.accent,
                                 &theme,
-                                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                                    let menu =
-                                        this.song_section_parts_menu(event.position(), index);
-                                    this.open_menu(menu);
-                                    cx.notify();
+                                Self::opens_menu(cx, move |this, at| {
+                                    this.song_section_parts_menu(at, index)
                                 }),
                             )))
                             .child(div().w(px(22.0)).child(button(
@@ -594,11 +565,7 @@ impl AurisApp {
                     false,
                     theme.accent,
                     &theme,
-                    cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
-                        let menu = this.song_add_part_menu(event.position());
-                        this.open_menu(menu);
-                        cx.notify();
-                    }),
+                    Self::opens_menu(cx, |this, at| this.song_add_part_menu(at)),
                 ))
                 .into_any_element(),
         ];
@@ -692,10 +659,8 @@ impl AurisApp {
                                 false,
                                 theme.accent,
                                 &theme,
-                                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                                    let menu = this.song_role_menu(event.position(), index);
-                                    this.open_menu(menu);
-                                    cx.notify();
+                                Self::opens_menu(cx, move |this, at| {
+                                    this.song_role_menu(at, index)
                                 }),
                             )))
                             .child(div().flex_1().min_w_0().child(button(
@@ -705,10 +670,8 @@ impl AurisApp {
                                 false,
                                 theme.accent,
                                 &theme,
-                                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                                    let menu = this.song_instrument_menu(event.position(), index);
-                                    this.open_menu(menu);
-                                    cx.notify();
+                                Self::opens_menu(cx, move |this, at| {
+                                    this.song_instrument_menu(at, index)
                                 }),
                             )))
                             // A drum part has no octave — its pitches are drum numbers rather
@@ -727,13 +690,9 @@ impl AurisApp {
                                     false,
                                     theme.accent,
                                     &theme,
-                                    cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                                        let menu = match drum.is_some() {
-                                            true => this.song_note_menu(event.position(), index),
-                                            false => this.song_octave_menu(event.position(), index),
-                                        };
-                                        this.open_menu(menu);
-                                        cx.notify();
+                                    Self::opens_menu(cx, move |this, at| match drum.is_some() {
+                                        true => this.song_note_menu(at, index),
+                                        false => this.song_octave_menu(at, index),
                                     }),
                                 )
                             }))
@@ -766,6 +725,11 @@ impl AurisApp {
     }
 
     /// A row with a label at the start and a button holding the value.
+    ///
+    /// The same control as the inspector's rows and a plugin's choice parameters — drawn by
+    /// [`crate::ui::widgets::picker_row`] — turned the other way round. This column is a fixed
+    /// 320 wide and its values are long: a key, a groove, a whole progression. Pinning the label
+    /// instead of the button is what leaves them room.
     fn sheet_picker<I, F>(
         &self,
         id: I,
@@ -777,37 +741,26 @@ impl AurisApp {
         I: Into<gpui::ElementId>,
         F: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     {
-        let theme = self.theme.clone();
-        div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .h(Metrics::CONTROL_HEIGHT)
-            .child(
-                div()
-                    .w(px(LABEL_WIDTH))
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .truncate()
-                    .child(self.t(label)),
-            )
-            .child(div().flex_1().min_w_0().child(button(
-                id,
-                value,
-                ButtonStyle::Normal,
-                false,
-                theme.accent,
-                &theme,
-                on_click,
-            )))
+        picker_row(
+            id,
+            self.t(label),
+            value,
+            RowColumn::Label(LABEL_WIDTH),
+            false,
+            &self.theme,
+            on_click,
+        )
     }
 
     /// Moves one of the sheet's dials, from a drag.
+    ///
+    /// The travel every other bar in the application has, because it is the same bar: see
+    /// [`crate::ui::widgets::DRAG_RANGE_PIXELS`].
     pub(crate) fn drag_song_dial(&mut self, target: DialTarget, start_fraction: f32, delta: f32) {
         let Some(dials) = self.song_sheet.as_mut() else {
             return;
         };
-        target.set(dials, dragged(start_fraction, delta));
+        target.set(dials, crate::ui::widgets::dragged(start_fraction, delta));
     }
 
     /// Writes the piece the sheet describes, replacing the document.

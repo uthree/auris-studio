@@ -8,13 +8,19 @@
 use auris_i18n::Key;
 use auris_session::prelude::*;
 
-use gpui::{AnyElement, IntoElement, MouseDownEvent, div, prelude::*, px};
+use gpui::{AnyElement, IntoElement, MouseDownEvent, Pixels, div, prelude::*, px};
 
 use crate::app::{AurisApp, Drag};
 use crate::theme::Metrics;
-use crate::ui::plugin_editor::DRAG_RANGE_PIXELS;
 use crate::ui::prompt::{Prompt, PromptTarget};
-use crate::ui::widgets::{ButtonStyle, SliderFill, button, divider, value_slider};
+use crate::ui::widgets::{
+    ButtonStyle, RowColumn, SliderFill, button, divider, dragged, picker_row, value_slider,
+};
+
+/// How wide the value button in one of this panel's rows is drawn.
+///
+/// A column, so the buttons line up down a panel whose width is the user's to change.
+const VALUE_WIDTH: Pixels = px(128.0);
 
 /// Straight eighths. Anything less would rush the offbeat, which is not a feel anybody asks for.
 pub const SWING_MIN: u8 = 50;
@@ -295,11 +301,7 @@ impl AurisApp {
                 Key::PartPreset,
                 self.t(crate::ui::context_menu::preset_key(recipe.preset))
                     .to_string(),
-                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                    let menu = this.clip_preset_menu(event.position(), clip);
-                    this.open_menu(menu);
-                    cx.notify();
-                }),
+                Self::opens_menu(cx, move |this, at| this.clip_preset_menu(at, clip)),
             )
             .into_any_element(),
         ];
@@ -311,11 +313,7 @@ impl AurisApp {
                     Key::PartSubdivision,
                     self.t(crate::ui::context_menu::subdivision_key(recipe.subdivision))
                         .to_string(),
-                    cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                        let menu = this.clip_subdivision_menu(event.position(), clip);
-                        this.open_menu(menu);
-                        cx.notify();
-                    }),
+                    Self::opens_menu(cx, move |this, at| this.clip_subdivision_menu(at, clip)),
                 )
                 .into_any_element(),
             );
@@ -327,11 +325,7 @@ impl AurisApp {
                     "part-octave",
                     Key::PartOctave,
                     octave_text(recipe.octave),
-                    cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                        let menu = this.clip_octave_menu(event.position(), clip);
-                        this.open_menu(menu);
-                        cx.notify();
-                    }),
+                    Self::opens_menu(cx, move |this, at| this.clip_octave_menu(at, clip)),
                 )
                 .into_any_element(),
             );
@@ -368,11 +362,7 @@ impl AurisApp {
                     "part-groove",
                     Key::PartGroove,
                     recipe.groove.clone(),
-                    cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                        let menu = this.clip_groove_menu(event.position(), clip);
-                        this.open_menu(menu);
-                        cx.notify();
-                    }),
+                    Self::opens_menu(cx, move |this, at| this.clip_groove_menu(at, clip)),
                 )
                 .into_any_element(),
             );
@@ -445,9 +435,11 @@ impl AurisApp {
 
     /// A labelled row whose value is a button opening a menu of the alternatives.
     ///
-    /// The same shape as the instrument row above it, deliberately: both are "this is what it is,
-    /// press to choose another", and a second shape for the same idea would only be a second thing
-    /// to learn.
+    /// The same shape as the instrument row above it and as a plugin's own choice parameters,
+    /// deliberately: all of them are "this is what it is, press to choose another", and a second
+    /// shape for the same idea would only be a second thing to learn. Drawn by
+    /// [`crate::ui::widgets::picker_row`]; what is decided here is the panel's proportions and
+    /// the language.
     fn picker_row<F>(
         &self,
         id: &'static str,
@@ -458,28 +450,15 @@ impl AurisApp {
     where
         F: Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
     {
-        let theme = self.theme.clone();
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_2()
-            .h(Metrics::CONTROL_HEIGHT)
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(self.t(label)),
-            )
-            .child(div().w(px(128.0)).child(button(
-                id,
-                value,
-                ButtonStyle::Normal,
-                false,
-                theme.accent,
-                &theme,
-                on_click,
-            )))
+        picker_row(
+            id,
+            self.t(label),
+            value,
+            RowColumn::Value(VALUE_WIDTH),
+            false,
+            &self.theme,
+            on_click,
+        )
     }
 
     /// Moves one dial and writes the clip again.
@@ -504,11 +483,11 @@ impl AurisApp {
 
     /// Applies a dial drag, measured in pixels from where it began.
     ///
-    /// The same travel as a plugin parameter, deliberately: these bars sit in the same panel as
-    /// the instrument's own controls and are dragged the same way, so a hand that has learned one
-    /// should not have to learn the other.
+    /// The same travel as a plugin parameter, and now by construction rather than by agreement:
+    /// these bars sit in the same panel as the instrument's own controls and are dragged the same
+    /// way, so a hand that has learned one should not have to learn the other.
     pub(crate) fn drag_dial(&mut self, clip: ClipId, dial: Dial, start_fraction: f32, delta: f32) {
-        self.set_dial(clip, dial, start_fraction + delta / DRAG_RANGE_PIXELS);
+        self.set_dial(clip, dial, dragged(start_fraction, delta));
     }
 }
 

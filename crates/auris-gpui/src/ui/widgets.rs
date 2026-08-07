@@ -239,6 +239,76 @@ where
     .on_mouse_down(gpui::MouseButton::Left, on_drag_start)
 }
 
+/// Which half of a labelled row is a fixed column. The other half takes what is left.
+///
+/// The two shapes a row of "this is what it is, press to choose another" comes in, and the choice
+/// is about the panel rather than about the control. Both are drawn by [`picker_row`].
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum RowColumn {
+    /// The label is a column this wide. For a panel of a fixed width whose values are long — a
+    /// key, a groove, a progression — where the button wants every pixel the label does not.
+    Label(Pixels),
+    /// The value button is a column this wide. For a panel the user can resize, where buttons
+    /// that all end in the same place read as a column and a label free to stretch never
+    /// squeezes one.
+    Value(Pixels),
+}
+
+/// A labelled row whose value is a button: this is what it is, press to choose another.
+///
+/// Every picker in the application, from a plugin's discrete parameters to the song sheet's key.
+/// One shape deliberately: they all ask the same thing, and a second shape for the same idea
+/// would only be a second thing to learn.
+///
+/// `label` and `value` arrive already translated, as [`button`]'s do. `active` fills the button
+/// with the accent, for the rows that are a switch rather than a menu.
+pub fn picker_row<I, L, V, F>(
+    id: I,
+    label: L,
+    value: V,
+    column: RowColumn,
+    active: bool,
+    theme: &Theme,
+    on_click: F,
+) -> impl IntoElement + use<I, L, V, F>
+where
+    I: Into<ElementId>,
+    L: Into<SharedString>,
+    V: Into<SharedString>,
+    F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+{
+    // Truncating rather than wrapping or pushing: the row is one control high, and a label long
+    // enough to need a second line would take the button off the end of it.
+    let caption = div()
+        .text_xs()
+        .text_color(theme.text_muted)
+        .truncate()
+        .child(label.into());
+    let control = button(
+        id,
+        value.into(),
+        ButtonStyle::Normal,
+        active,
+        theme.accent,
+        theme,
+        on_click,
+    );
+
+    let row = div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .h(Metrics::CONTROL_HEIGHT);
+    match column {
+        RowColumn::Label(width) => row
+            .child(caption.w(width))
+            .child(div().flex_1().min_w_0().child(control)),
+        RowColumn::Value(width) => row
+            .child(caption.flex_1().min_w_0())
+            .child(div().w(width).child(control)),
+    }
+}
+
 /// A readout with a caption above it, as a hardware transport displays one.
 pub fn readout<C: Into<SharedString>, V: Into<SharedString>>(
     caption: C,
@@ -276,6 +346,22 @@ pub fn readout<C: Into<SharedString>, V: Into<SharedString>>(
 
 /// How wide a zoom slider is drawn, and therefore how far a full sweep of it drags.
 pub const ZOOM_SLIDER_WIDTH: Pixels = px(96.0);
+
+/// How far a drag travels before a [`value_slider`] has been swept end to end, in pixels.
+///
+/// Wide enough that a parameter can be dialled in precisely, short enough that sweeping a filter
+/// end to end does not need two swipes. It belongs to the widget rather than to any one panel:
+/// a plugin's parameters, a clip's dials and the song sheet's are the same bar, and a plugin that
+/// answered a drag twice as fast as the sheet did would be a bar that means something different
+/// depending on where it was drawn.
+pub const DRAG_RANGE_PIXELS: f32 = 220.0;
+
+/// Where a drag that began at `start` and has travelled `delta` pixels leaves a slider.
+///
+/// In the bar's own 0..1, so a caller with a range or a curve applies it afterwards.
+pub fn dragged(start: f32, delta: f32) -> f32 {
+    (start + delta / DRAG_RANGE_PIXELS).clamp(0.0, 1.0)
+}
 
 /// Where a slider's fill grows from.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -580,6 +666,20 @@ mod tests {
         assert!((db_to_meter_position(-12.0) - 0.5).abs() < 1e-6);
         assert!((db_to_meter_position(0.0) - 0.833).abs() < 1e-3);
         assert_eq!(db_to_meter_position(f32::NEG_INFINITY), 0.0);
+    }
+
+    #[test]
+    fn a_full_sweep_of_a_bar_is_the_drag_range_and_stops_at_both_ends() {
+        // Every bar in the application is dragged through this, so the number here is what makes
+        // a plugin's filter and the song sheet's tempo answer a hand at the same rate.
+        assert!((dragged(0.0, DRAG_RANGE_PIXELS) - 1.0).abs() < 1e-6);
+        assert!((dragged(1.0, -DRAG_RANGE_PIXELS)).abs() < 1e-6);
+        assert!((dragged(0.5, DRAG_RANGE_PIXELS / 2.0) - 1.0).abs() < 1e-6);
+        // Past either end the bar stays where it is rather than running off it, so a drag that
+        // overshot comes back the moment the pointer does.
+        assert_eq!(dragged(0.5, DRAG_RANGE_PIXELS * 10.0), 1.0);
+        assert_eq!(dragged(0.5, -DRAG_RANGE_PIXELS * 10.0), 0.0);
+        assert_eq!(dragged(0.25, 0.0), 0.25);
     }
 
     #[test]

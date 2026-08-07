@@ -291,11 +291,65 @@ impl ContextMenu {
     }
 }
 
+/// The pointer position a mouse event carries.
+///
+/// One trait rather than two helpers, because a menu is opened two ways and neither is the odd
+/// one out: a picker button opens one on a click, and a surface — the ruler, a track header, a
+/// mixer strip — opens one on a right-press. gpui hands those to handlers of different event
+/// types, and the only thing either handler wants from the event is where it happened.
+pub(crate) trait MenuAt {
+    /// Where the pointer was, in window coordinates.
+    fn menu_at(&self) -> Point<Pixels>;
+}
+
+impl MenuAt for gpui::ClickEvent {
+    fn menu_at(&self) -> Point<Pixels> {
+        self.position()
+    }
+}
+
+impl MenuAt for MouseDownEvent {
+    fn menu_at(&self) -> Point<Pixels> {
+        self.position
+    }
+}
+
 impl AurisApp {
     /// Shows a menu, unless it has nothing to offer.
     pub(crate) fn open_menu(&mut self, menu: ContextMenu) {
         if !menu.is_empty() {
             self.menu = Some(menu);
+        }
+    }
+
+    /// A handler that opens the menu `build` makes, anchored where the pointer is.
+    ///
+    /// Nearly thirty controls in this application open a menu, and every one of them wants the
+    /// same three lines: build it at the pointer, show it, redraw. Spelling those out at each
+    /// site is how one of them ends up forgetting the redraw and opening a menu that only appears
+    /// once something else asks for a frame.
+    ///
+    /// `build` is handed the application, so a control that has to do something else first — a
+    /// mixer strip selects its track before offering the menu for it — still can.
+    pub(crate) fn opens_menu<E, F>(
+        cx: &Context<Self>,
+        build: F,
+    ) -> impl Fn(&E, &mut Window, &mut gpui::App) + use<E, F>
+    where
+        E: MenuAt + 'static,
+        F: Fn(&mut Self, Point<Pixels>) -> ContextMenu + 'static,
+    {
+        // What `Context::listener` does, written out. Its return type borrows the context it was
+        // made from, and a handler hung on an element has to outlive the frame that built it.
+        let view = cx.entity().downgrade();
+        move |event: &E, _: &mut Window, cx: &mut gpui::App| {
+            let at = event.menu_at();
+            view.update(cx, |this, cx| {
+                let menu = build(this, at);
+                this.open_menu(menu);
+                cx.notify();
+            })
+            .ok();
         }
     }
 

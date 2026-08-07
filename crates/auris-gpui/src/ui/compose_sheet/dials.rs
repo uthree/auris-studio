@@ -26,9 +26,6 @@ pub const SWING: std::ops::RangeInclusive<u8> = 50..=75;
 /// How far a part's level trim reaches, in decibels.
 pub const GAIN_DB: std::ops::RangeInclusive<f32> = -30.0..=0.0;
 
-/// How far a drag travels before a dial has been turned end to end.
-const DRAG_RANGE_PIXELS: f32 = 220.0;
-
 /// The section names a form is offered, in the order a song usually reaches them.
 ///
 /// A vocabulary rather than a rule: any name at all is legal in the file, and these are the ones
@@ -858,11 +855,6 @@ impl PartDial {
             other => percent(other.fraction(part)),
         }
     }
-}
-
-/// Where a drag that began at `start` and has travelled `delta` pixels puts a dial.
-pub fn dragged(start: f32, delta: f32) -> f32 {
-    (start + delta / DRAG_RANGE_PIXELS).clamp(0.0, 1.0)
 }
 
 /// Where `value` sits between `low` and `high`, from 0 to 1.

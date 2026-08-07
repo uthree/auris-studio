@@ -6,12 +6,14 @@
 
 use auris_session::prelude::*;
 use gpui::{
-    App, ClickEvent, ElementId, Hsla, IntoElement, MouseDownEvent, SharedString, Window, div,
-    prelude::*, px,
+    App, ClickEvent, ElementId, Hsla, IntoElement, MouseDownEvent, Pixels, SharedString, Window,
+    div, prelude::*, px,
 };
 
-use crate::theme::{Metrics, Theme};
-use crate::ui::widgets::{ButtonStyle, SliderFill, button, value_slider};
+use crate::theme::Theme;
+use crate::ui::widgets::{
+    ButtonStyle, RowColumn, SliderFill, button, dragged, picker_row, value_slider,
+};
 
 /// Which control shape suits a parameter.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -32,12 +34,6 @@ pub fn control_for(descriptor: &ParamDescriptor) -> ParamControl {
         _ => ParamControl::Slider,
     }
 }
-
-/// How far a full-scale drag has to travel, in pixels.
-///
-/// Wide enough that a parameter can be dialled in precisely, short enough that sweeping a filter
-/// end to end does not need two swipes.
-pub const DRAG_RANGE_PIXELS: f32 = 220.0;
 
 /// A drag-to-edit row for a continuous parameter.
 ///
@@ -86,7 +82,16 @@ pub fn slider_fill_for(descriptor: &ParamDescriptor) -> SliderFill {
     }
 }
 
+/// How wide the value button in a parameter row is drawn.
+///
+/// A column, so a plugin's rows line up down the panel however long their names are.
+const VALUE_WIDTH: Pixels = px(104.0);
+
 /// A button row for a toggle or choice parameter.
+///
+/// The shared [`picker_row`], plus the one thing that is the parameter's rather than the row's:
+/// a toggle in its on position is latched and lights up, where a choice merely names where it
+/// stands.
 #[allow(clippy::too_many_arguments)]
 pub fn button_row<I, F>(
     id: I,
@@ -102,27 +107,15 @@ where
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
     let engaged = matches!(control_for(descriptor), ParamControl::Toggle) && value >= 0.5;
-    div()
-        .flex()
-        .items_center()
-        .gap_2()
-        .h(Metrics::CONTROL_HEIGHT)
-        .child(
-            div()
-                .flex_1()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .child(label),
-        )
-        .child(div().w(px(104.0)).child(button(
-            id,
-            value_text,
-            ButtonStyle::Normal,
-            engaged,
-            theme.accent,
-            theme,
-            on_click,
-        )))
+    picker_row(
+        id,
+        label,
+        value_text,
+        RowColumn::Value(VALUE_WIDTH),
+        engaged,
+        theme,
+        on_click,
+    )
 }
 
 /// How many positions a discrete parameter has.
@@ -164,8 +157,7 @@ pub fn next_discrete_value(descriptor: &ParamDescriptor, current: f32) -> f32 {
 /// The drag moves the *normalised* position, so a logarithmic frequency control keeps a
 /// constant musical interval per pixel across its whole range.
 pub fn value_after_drag(descriptor: &ParamDescriptor, start_value: f32, delta_pixels: f32) -> f32 {
-    let start = descriptor.normalize(start_value);
-    descriptor.denormalize(start + delta_pixels / DRAG_RANGE_PIXELS)
+    descriptor.denormalize(dragged(descriptor.normalize(start_value), delta_pixels))
 }
 
 /// A compact heading for a plugin in the inspector, with a bypass button.
@@ -213,6 +205,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::widgets::DRAG_RANGE_PIXELS;
 
     fn frequency() -> ParamDescriptor {
         ParamDescriptor::hertz(0u32, "freq", "Frequency", 20.0, 20_000.0, 1_000.0)

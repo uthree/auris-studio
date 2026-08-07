@@ -62,12 +62,8 @@ impl AurisApp {
             )
             .on_mouse_down(
                 gpui::MouseButton::Right,
-                cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
-                    // Right-clicking past the last strip is still a request to add a track.
-                    let menu = this.arrangement_menu(event.position);
-                    this.open_menu(menu);
-                    cx.notify();
-                }),
+                // Right-clicking past the last strip is still a request to add a track.
+                Self::opens_menu(cx, |this, at| this.arrangement_menu(at)),
             )
     }
 
@@ -150,11 +146,9 @@ impl AurisApp {
             )
             .on_mouse_down(
                 gpui::MouseButton::Right,
-                cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                Self::opens_menu(cx, move |this, at| {
                     this.select_track(track_id);
-                    let menu = this.track_menu(event.position, track_id);
-                    this.open_menu(menu);
-                    cx.notify();
+                    this.track_menu(at, track_id)
                 }),
             )
             .child(
@@ -283,11 +277,7 @@ impl AurisApp {
                 false,
                 theme.accent_soft,
                 &theme,
-                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                    let menu = this.output_menu(event.position(), track_id);
-                    this.open_menu(menu);
-                    cx.notify();
-                }),
+                Self::opens_menu(cx, move |this, at| this.output_menu(at, track_id)),
             )))
             .child(button(
                 ("mixer-add-send", index),
@@ -296,11 +286,7 @@ impl AurisApp {
                 false,
                 theme.accent_soft,
                 &theme,
-                cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                    let menu = this.send_picker_menu(event.position(), track_id);
-                    this.open_menu(menu);
-                    cx.notify();
-                }),
+                Self::opens_menu(cx, move |this, at| this.send_picker_menu(at, track_id)),
             ))
             .into_any_element()
     }
@@ -490,14 +476,10 @@ impl AurisApp {
                 Icon::Plus,
                 self.t(Key::Effect),
                 &theme,
-                cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
-                    // Aimed at the master bus by name. This used to clear `selected_track` so
-                    // that whatever was picked next would land there, which silently deselected
-                    // whatever the user was working on.
-                    let menu = this.effect_picker_menu(event.position(), None);
-                    this.open_menu(menu);
-                    cx.notify();
-                }),
+                // Aimed at the master bus by name. This used to clear `selected_track` so that
+                // whatever was picked next would land there, which silently deselected whatever
+                // the user was working on.
+                Self::opens_menu(cx, |this, at| this.effect_picker_menu(at, None)),
             ))
             .child(
                 div()

@@ -442,22 +442,25 @@ impl AurisApp {
                     )
                     .on_mouse_down(
                         MouseButton::Right,
-                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                        Self::opens_menu(cx, move |this, at| {
                             // Taking points off one at a time is the ⌥-click; this is the way
-                            // back from a curve that got away from somebody.
-                            let Some(clip) = this.selected_clip else {
-                                return;
-                            };
+                            // back from a curve that got away from somebody. With nothing
+                            // selected there is nothing to straighten, and an empty menu is a
+                            // menu `open_menu` declines to show.
                             let menu = crate::ui::context_menu::ContextMenu::new(
-                                event.position,
+                                at,
                                 this.t(curve_label(which)),
-                            )
-                            .item(
-                                this.t(Key::StraightenCurve),
-                                crate::ui::context_menu::MenuCommand::ClearCurve { clip, which },
                             );
-                            this.open_menu(menu);
-                            cx.notify();
+                            match this.selected_clip {
+                                Some(clip) => menu.item(
+                                    this.t(Key::StraightenCurve),
+                                    crate::ui::context_menu::MenuCommand::ClearCurve {
+                                        clip,
+                                        which,
+                                    },
+                                ),
+                                None => menu,
+                            }
                         }),
                     )
                     .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {

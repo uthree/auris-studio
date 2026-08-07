@@ -245,11 +245,8 @@ impl AurisApp {
                             Icon::Plus,
                             self.t(Key::Effect),
                             &theme,
-                            cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                                let menu =
-                                    this.effect_picker_menu(event.position(), Some(track_id));
-                                this.open_menu(menu);
-                                cx.notify();
+                            Self::opens_menu(cx, move |this, at| {
+                                this.effect_picker_menu(at, Some(track_id))
                             }),
                         )
                         .into_any_element(),
@@ -423,10 +420,8 @@ impl AurisApp {
                             value_text,
                             value,
                             &theme,
-                            cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                                let menu = this.param_choice_menu(event.position(), target, &owned);
-                                this.open_menu(menu);
-                                cx.notify();
+                            Self::opens_menu(cx, move |this, at| {
+                                this.param_choice_menu(at, target, &owned)
                             }),
                         )
                         .into_any_element()
