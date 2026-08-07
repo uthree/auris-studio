@@ -37,6 +37,11 @@ resolves `windows` to 0.61 while `wgpu-hal` uses 0.62. Windows runs `auris-gpu` 
 
 ## Layout
 
+The rules below are the short form, kept here because they are needed on every task and a page
+that has to be opened is a page that gets guessed at instead. The *account* — why each boundary is
+where it is, the two threads, the realtime contract — is `auris_session::guide`, and that is where
+it gets edited first: when the two disagree, the guide is right and this is stale.
+
 ```
 Cargo.toml               virtual manifest; `default-members` points at the desktop app
 crates/auris-core        types, music theory, plugin traits, project model — no local dependencies

@@ -3,17 +3,17 @@
 How the workspace is laid out, how to build it on each platform, and how to add an
 instrument or an effect.
 
-## Layout
+## Where things are
 
 ```
 BACKEND — no UI dependency of any kind
-  crates/auris-core     types, plugin traits, project model — no local dependencies at all
+  crates/auris-core     types, music theory, plugin traits, project model — no local dependencies
   crates/auris-dsp      effects and DSP primitives
   crates/auris-synth    built-in instruments
   crates/auris-sampler  SoundFont playback: the font bank and the sampler instrument
   crates/auris-engine   render graph, transport, cpal output, offline renderer
   crates/auris-io       audio file import/export, project save/load
-  crates/auris-gpu      wgpu compute for offline analysis
+  crates/auris-gpu      optional wgpu compute for offline analysis
   crates/auris-compose  score-based automatic composition: a text spec in, notes out
   crates/auris-i18n     interface text in every language, and nothing else
   crates/auris-session  the document, the engine and every command a frontend needs
@@ -23,25 +23,22 @@ FRONTEND
   crates/auris-cli      the command line tool    (binary: auris)
 ```
 
-Dependencies run strictly downhill and the boundary is enforced by what each crate is allowed
-to name. `auris-core` depends on nothing local. `auris-engine` does *not* depend on
-`auris-dsp`, `auris-synth` or `auris-sampler` — it drives plugins purely through the
-`auris-core` traits, which is what keeps the plugin system honest. And `auris-gpui` depends on
-`auris-session` and gpui
-and nothing else in the workspace: if it ever needs `auris-engine` directly, something that
-belongs in the session layer has leaked into the UI.
+Dependencies run strictly downhill, and the boundary is enforced by what each crate is *allowed
+to name* rather than by convention.
 
-### What lives where
+The tree above is a map of the repository. The account of how the workspace actually fits together
+is **`auris_session::guide`** — the layering rules and why each boundary is where it is, the two
+threads and how they hand work to each other, the realtime contract, writing a plugin, the
+composition format, and where the two platforms differ.
 
-Keeping the *rendering* backend UI-free is the easy part. The piece that usually leaks is the
-orchestration around it — building the registry, rebuilding the render graph after an edit,
-deciding which changes need a whole new graph and which fit in a command, tracking undo,
-resolving a parameter to the plugin that owns it. All of that is in `auris-session`, so a
-second frontend reuses it instead of reimplementing it slightly differently.
+```bash
+cargo doc -p auris-session --no-deps --open
+```
 
-Gestures are handled with transactions: a pointer drag opens one, makes as many edits as it
-likes, and closes it. The result is one undo step and one graph rebuild — and none of either
-when the drag changed nothing.
+It lives there because `auris-session` is the only crate depending on every other, and so the only
+place a link to each of them resolves — which is also why it does not live here. A second copy of
+it in this file would be wrong by the next crate anybody adds; the one line of this tree that had
+already gone stale while it sat in the README is how that goes.
 
 ## Building on each platform
 
@@ -75,41 +72,22 @@ builds on a machine without a 15 GB download.
 
 ## Adding a sound source
 
-Implement two traits and register a factory. That is the whole procedure.
+Implement two traits and register a factory. That is the whole procedure: `Parameterized`, which
+declares the parameters and reads and writes them by id, and then `Instrument` or `Effect`. The
+parameters you declare *become the editor* — the UI is generated from the descriptors, with the
+right widget, range, unit and scaling, rather than hand-written per plugin.
 
-```rust
-use auris_core::prelude::*;
+The worked example is in **`auris_session::guide::plugins`**, along with what belongs in `prepare`
+against what may happen in `process`, how to register a whole pack of them, and what to do when a
+plugin needs something a factory closure cannot carry.
 
-struct MySynth { /* ... */ }
-
-impl Parameterized for MySynth {
-    fn parameters(&self) -> &[ParamDescriptor] { /* ... */ }
-    fn param(&self, id: ParamId) -> f32 { /* ... */ }
-    fn set_param(&mut self, id: ParamId, value: f32) { /* ... */ }
-}
-
-impl Instrument for MySynth {
-    fn descriptor(&self) -> PluginDescriptor {
-        PluginDescriptor::instrument(
-            "mine.synth.example",
-            "Example",
-            "A worked example",
-            PluginCategory::Synth,
-        )
-    }
-    fn prepare(&mut self, ctx: &PrepareContext) { /* allocate here */ }
-    fn reset(&mut self) { /* ... */ }
-    fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
-        /* never allocate here */
-    }
-}
-
-registry.register_instrument(|| Box::new(MySynth::new()));
+```bash
+cargo doc -p auris-session --no-deps --open
 ```
 
-The parameters you declare become UI controls automatically, with the right widget, range,
-unit and scaling — the editor is generated from `ParamDescriptor`, not hand-written per plugin.
-Effects work identically through the `Effect` trait.
+It is there rather than here because it is **compiled**: the guide's example is a doctest and the
+test suite runs it, so a plugin snippet that stopped matching the traits would fail the build
+instead of quietly misleading whoever copied it.
 
 ## The commands
 
@@ -122,10 +100,6 @@ cargo doc --workspace --no-deps --open    # the API documentation
 
 Every crate carries `#![warn(missing_docs)]` and CI builds the documentation with warnings denied,
 so a public item without a doc comment and a link that does not resolve are both build failures.
-
-The workspace has no root crate, so the account of how the twelve of them fit together lives in
-`auris_session::guide` — it is the only crate that depends on every other, and so the only one
-whose links to them all resolve. It covers the architecture and the layering rules, the realtime
-contract, writing a plugin (with a worked example that is compiled as a test), the composition
-format, and where the two platforms differ.
+That is also what keeps `auris_session::guide` honest: its examples are doctests, so the account
+of the system cannot drift away from the system without the build saying so.
 
