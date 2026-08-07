@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::chord::{Chord, Quality};
 use super::key::Key;
 use super::pitch::{OCTAVE, PitchClass};
+use super::scale::ScaleId;
 
 /// A chord named by scale degree.
 ///
@@ -37,8 +38,10 @@ pub struct Numeral {
     /// what triad it sits on, is the key's business. Collapsing it at parse time turned `vii7`
     /// into a minor seventh and quietly threw away the diminished fifth.
     pub extension: Option<u8>,
-    /// The degree this chord is the dominant of, and that degree's accidental, from a `/V`
-    /// suffix.
+    /// The degree this chord is applied to, and that degree's accidental, from a `/V` suffix.
+    ///
+    /// The rest of the numeral is then read in the key that degree would be the tonic of, which is
+    /// what makes `ii/V` the supertonic of the target rather than another spelling of `V7/V`.
     pub secondary_of: Option<(u8, i32)>,
     /// A bass degree from a `/3`-style suffix, one-based, and that degree's accidental.
     ///
@@ -153,7 +156,7 @@ impl Numeral {
         Ok(())
     }
 
-    /// Reads a numeral: `I`, `vi`, `bVII`, `V7`, `IVmaj7`, `V7/V`, `IV/5`, `v/b7`.
+    /// Reads a numeral: `I`, `vi`, `bVII`, `V7`, `IVmaj7`, `V7/V`, `ii/V`, `IV/5`, `v/b7`.
     pub fn parse(text: &str) -> Option<Self> {
         let text = text.trim();
         if text.is_empty() {
@@ -275,9 +278,24 @@ impl Numeral {
     /// The chord this numeral means in `key`.
     pub fn chord_in(self, key: Key) -> Chord {
         if let Some((target, alteration)) = self.secondary_of {
-            // The dominant of a degree: a major-minor seventh a fifth above that degree's root.
-            let target_root = degree_class(key, target, alteration);
-            return Chord::new(target_root.transposed(7), Quality::Dominant7);
+            // A chord applied to a degree is read in the key that degree would be the tonic of, so
+            // the numeral in front of the slash means there what it would mean anywhere: `ii/V` is
+            // that key's supertonic, `vii/V` its leading-tone chord. Major, because the slash
+            // *tonicises* — `/vi` borrows A as a tonic, and reading it as A minor would put the
+            // dominant of C major's sixth degree there instead of the dominant of A.
+            let applied = Key::new(degree_class(key, target, alteration), ScaleId::Major);
+            let head = Self {
+                secondary_of: None,
+                // A bare `V/x` is the applied *seventh*: the whole point of the notation is the
+                // tritone that pulls into the target, and nobody writing `V/vi` means a plain
+                // triad. Anything the writer spelled out is left as it was written.
+                extension: match (self.degree, self.minor_case, self.quality, self.extension) {
+                    (5, false, None, None) => Some(7),
+                    _ => self.extension,
+                },
+                ..self
+            };
+            return head.chord_in(applied);
         }
 
         let root = degree_class(key, self.degree, self.accidental);
@@ -359,8 +377,9 @@ impl Numeral {
     pub fn name_in(self, key: Key) -> String {
         let chord = self.chord_in(key);
         let degree = match self.secondary_of {
-            // A dominant stands a fifth above what it resolves to, which is four degrees up.
-            Some((target, _)) => target + 4,
+            // The applied chord's own degree, counted from the degree it was applied to: a
+            // dominant stands four degrees above what it resolves to, a `ii/V` one degree above.
+            Some((target, _)) => target + self.degree - 1,
             None => self.degree,
         };
         let Some(root) = spell_on_degree(key, degree, chord.root) else {
@@ -801,6 +820,28 @@ mod tests {
         assert_eq!(chord_of("V7/V", "C major"), "D7");
         assert_eq!(chord_of("V/vi", "C major"), "E7", "the dominant of A minor");
         assert_eq!(chord_of("V/IV", "C major"), "C7");
+    }
+
+    #[test]
+    fn an_applied_chord_is_read_in_the_key_it_is_applied_to() {
+        // The numeral in front of the slash used to be thrown away, so every one of these came
+        // out D7 — a chord nobody wrote, arriving without a word.
+        assert_eq!(chord_of("ii/V", "C major"), "Am", "the supertonic of G");
+        assert_eq!(chord_of("ii7/V", "C major"), "Am7");
+        assert_eq!(chord_of("vii/V", "C major"), "F#dim", "G's leading tone");
+        assert_eq!(chord_of("IV/V", "C major"), "C");
+        assert_eq!(chord_of("bVII/V", "C major"), "F");
+        // And the whole ii-V of the dominant, which is the reason the notation is wanted.
+        assert_eq!(chord_of("ii7/V", "C major"), "Am7");
+        assert_eq!(chord_of("V7/V", "C major"), "D7");
+    }
+
+    #[test]
+    fn an_applied_chord_is_named_from_its_own_degree() {
+        let name = |text: &str| Numeral::parse(text).unwrap().name_in(key("C major"));
+        assert_eq!(name("V7/V"), "D7");
+        assert_eq!(name("ii/V"), "Am");
+        assert_eq!(name("vii/V"), "F#dim");
     }
 
     #[test]
