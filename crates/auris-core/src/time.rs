@@ -275,8 +275,44 @@ impl TimeSignature {
     }
 
     /// Length of one notated beat in ticks.
+    ///
+    /// The note the denominator names: a quarter in 4/4, an eighth in 6/8. This is what a
+    /// *position* is counted in, which is why the ruler and [`Self::position`] use it — bar 2
+    /// beat 4 of 6/8 means the fourth eighth, and nothing else would be readable.
+    ///
+    /// It is not what a player *feels*. See [`Self::beat_ticks`].
     pub fn ticks_per_beat(&self) -> Ticks {
         Ticks::from_beats(4.0 / self.denominator as f64)
+    }
+
+    /// `true` when the beat divides into three rather than into two.
+    ///
+    /// 6/8, 9/8 and 12/8 are compound: written in eighths, felt in dotted quarters, two of them to
+    /// a bar of 6/8 rather than six. 3/8 is not — one dotted-quarter beat is a bar with no beats
+    /// in it, and 3/8 is counted in three the way 3/4 is.
+    pub fn is_compound(&self) -> bool {
+        self.denominator >= 8 && self.numerator > 3 && self.numerator.is_multiple_of(3)
+    }
+
+    /// Length of one *felt* beat in ticks: what a foot taps and a groove is written against.
+    ///
+    /// The same as [`Self::ticks_per_beat`] everywhere except compound time, where it is three of
+    /// them — the dotted quarter of a 6/8. The difference is the whole of why a drum pattern
+    /// written for 4/4 cannot simply be counted out in a bar of 6/8: it has four beats and that
+    /// bar has two.
+    pub fn beat_ticks(&self) -> Ticks {
+        match self.is_compound() {
+            true => self.ticks_per_beat() * 3,
+            false => self.ticks_per_beat(),
+        }
+    }
+
+    /// How many felt beats are in one bar.
+    pub fn felt_beats(&self) -> u32 {
+        match self.is_compound() {
+            true => self.numerator / 3,
+            false => self.numerator,
+        }
     }
 
     /// Where 1-based `bar` begins. Bar 1 is [`Ticks::ZERO`].
@@ -886,6 +922,42 @@ impl TempoMap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_compound_meter_is_felt_in_dotted_beats() {
+        let six_eight = TimeSignature::new(6, 8);
+        assert!(six_eight.is_compound());
+        // Two dotted quarters, not six eighths. The bar is the same length either way; what
+        // changes is how many beats are in it, which is what a groove is written against.
+        assert_eq!(six_eight.felt_beats(), 2);
+        assert_eq!(six_eight.beat_ticks(), Ticks(Ticks::QUARTER.raw() * 3 / 2));
+        assert_eq!(six_eight.ticks_per_beat(), Ticks(Ticks::QUARTER.raw() / 2));
+        assert_eq!(six_eight.beat_ticks() * 2, six_eight.ticks_per_bar());
+
+        for (numerator, beats) in [(9u32, 3u32), (12, 4)] {
+            let signature = TimeSignature::new(numerator, 8);
+            assert!(signature.is_compound(), "{numerator}/8");
+            assert_eq!(signature.felt_beats(), beats);
+            assert_eq!(
+                signature.beat_ticks() * i64::from(beats),
+                signature.ticks_per_bar()
+            );
+        }
+
+        // Simple meters feel the note the denominator names, and the two agree.
+        for signature in [
+            TimeSignature::new(4, 4),
+            TimeSignature::new(3, 4),
+            TimeSignature::new(5, 4),
+            TimeSignature::new(7, 8),
+            // Three of anything is counted in three: one dotted beat is a bar with no beats in it.
+            TimeSignature::new(3, 8),
+        ] {
+            assert!(!signature.is_compound(), "{signature:?}");
+            assert_eq!(signature.beat_ticks(), signature.ticks_per_beat());
+            assert_eq!(signature.felt_beats(), signature.numerator);
+        }
+    }
 
     #[test]
     fn constant_tempo_converts_both_ways() {
