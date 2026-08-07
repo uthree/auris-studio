@@ -1060,11 +1060,17 @@ mod tests {
     /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
     /// a bug or a decision, and this is what makes anyone look.
     ///
-    /// It last moved when the bass's octave figure started actually leaping one. All four digests
-    /// moved and not one chord or note count did, which is the whole report on that change: it
-    /// alters the pitch of some weak-beat bass notes and touches nothing else. The `Gmaj7 → G7`
-    /// and `Amaj7 → Am7` corrections below are from the change before it, and are described where
-    /// each fixture is.
+    /// It last moved when the melody stopped choosing each note without looking at the one before
+    /// it — see [`crate::melodic`], which is the measurement that change came out of. All four
+    /// digests moved, and not one chord or note count did: the tune's *pitches* and the length of
+    /// its phrase-ending notes are all that is different, and every other part is untouched. The
+    /// piece is the same piece with a singable line in it. A third of the composer's melodic
+    /// intervals used to be a fourth or wider; it is now one in seven.
+    ///
+    /// Before that it moved when the bass's octave figure started actually leaping one — the same
+    /// shape of report, pitches of some weak-beat bass notes and nothing else. The `Gmaj7 → G7`
+    /// and `Amaj7 → Am7` corrections below are older still, and are described where each fixture
+    /// is.
     ///
     /// Before that it moved when `colour` stopped adding sevenths through [`Quality::with_seventh`],
     /// which can only ever give a major triad a *major* seventh and so wrote `Vmaj7` where `V7`
@@ -1093,7 +1099,7 @@ mod tests {
                     "#
             ),
             "verse·1 C major | Cmaj7 Gm7 Am Fmaj7 Cmaj7 G7 Am9 F |\n\
-             164 notes, digest 9f659185fea49a95\n"
+             164 notes, digest ff280b35bf93267f\n"
         );
 
         // The same in a minor key, and the fixture that moved furthest when colouring stopped
@@ -1134,7 +1140,7 @@ mod tests {
                     "#
             ),
             "verse·1 A minor | Am7 E9 Fmaj7 Dm Am7 Em7 Gbm7 Dm7 |\n\
-             239 notes, digest 230cab900fb0b378\n"
+             239 notes, digest 495820c9e83359f6\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats — and the one fixture
@@ -1147,7 +1153,7 @@ mod tests {
             "intro·1 C major | C G Am F |\n\
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
-             629 notes, digest cc3436e003605d0c\n"
+             629 notes, digest f32c102e902b6cc0\n"
         );
 
         // A transposed section, which is a key change on the timeline — and the one fixture here
@@ -1174,7 +1180,7 @@ mod tests {
             ),
             "verse·1 C major | Fmaj7 E7 Am7 Bb7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
-             204 notes, digest 5808f00172ff4ff5\n"
+             204 notes, digest 3b4a02e9895279af\n"
         );
     }
 

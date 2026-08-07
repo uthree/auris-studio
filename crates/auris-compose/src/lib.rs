@@ -4,6 +4,7 @@
 
 pub mod frame;
 pub mod gm;
+pub mod melodic;
 pub mod parts;
 pub mod phrase;
 pub mod preset;

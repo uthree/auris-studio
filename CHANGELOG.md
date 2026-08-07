@@ -7,6 +7,27 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
+## Unreleased
+
+### The tune is a line rather than a walk
+
+* **A third of every melodic interval the composer wrote used to be a fourth or wider.** That is an
+  arpeggio's interval distribution, not a tune's, and it is why a composed melody sounded unnatural
+  while the accompaniment underneath it — which is a function of the chord and so is right or wrong
+  locally — sounded like players. It is now one in seven, against the one in five a corpus of real
+  melodies gives for leaps of *any* size.
+* The measurement, the literature it is read against, what each of the five rules is for and what
+  is still wrong are in **`auris_compose::melodic`**, which is a page of documentation and no code.
+  The constants in the melody writer are what it argues for; neither makes sense without the other.
+* What changed: the restated figure is *joined* to where the last bar left off instead of restarting
+  from its structural pitch — the single worst fault, and one nothing had chosen; the interval table
+  is the corpus distribution and has an entry for a repeated note, which it did not; the walk has a
+  memory, so a leap is filled in and a step tends to carry on; a dissonance left by a leap resolves;
+  and a phrase ends on a chord tone with a beat of air after it.
+* No chord and no note count moved in any of the four fingerprint fixtures, which is the report on
+  the change: the pieces are the same pieces with a singable line in them. Existing projects are
+  untouched — this writes new material and does not migrate old.
+
 ## 0.2.0 — 2026-08-07
 
 ### What an adversarial read of the composer's harmony found

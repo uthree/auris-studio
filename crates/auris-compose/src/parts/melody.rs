@@ -4,6 +4,11 @@
 //! over, which is what leaves a section with something an ear can hold on to. The motif, the way
 //! it is varied and the two scale walks it is stated through are all here because nothing else in
 //! the band writes one: this is the only part whose notes are a shape rather than a harmony.
+//!
+//! That is also why it is the hard part. Every other writer is told what to play by the chord
+//! under it; this one is only told where to hang. What the rules below are, where their numbers
+//! come from and what the line measured like before they existed is [`crate::melodic`] — read it
+//! first if any constant here looks arbitrary, because every one of them was argued there.
 
 use crate::frame::{Frame, SectionPlan};
 use crate::rhythm::{Accent, Grid, Pattern};
@@ -20,6 +25,126 @@ use super::{Draft, ScoreSettings};
 /// Three is the smallest number that can carry a shape: two notes are an interval, and one is a
 /// note. It is also the smallest [`vary_motif`] has anything to work with.
 const MOTIF_MINIMUM: usize = 3;
+
+/// The moves a figure may make, in scale steps, and how often each is drawn.
+///
+/// A scale step is a second, two is a third, three is a fourth — so this table *is* the melodic
+/// interval distribution, and it was measured against the corpus figures rather than guessed at.
+/// See [`crate::melodic`] for where the numbers come from and what the figure used to draw from,
+/// which was half seconds and a quarter *fourths*: an arpeggio's distribution rather than a
+/// tune's.
+///
+/// Zero is here because a repeated note is a melodic move like any other and one in nine of them
+/// is one. Without it every note had to go somewhere, and the repeats that did occur were
+/// accidents of the range clamp rather than anything anybody wrote.
+const MOVES: [i32; 7] = [-3, -2, -1, 0, 1, 2, 3];
+
+/// How often each of [`MOVES`] is drawn.
+const MOVE_WEIGHTS: [f32; 7] = [3.0, 7.5, 34.0, 11.0, 34.0, 7.5, 3.0];
+
+/// How often a figure keeps the move it drew rather than being turned by [`shaped`].
+///
+/// Neither of the two regularities is a law — a melody that filled in every one of its leaps
+/// would be as mechanical as one that never did — and this is the room left for the exceptions.
+/// Huron reports post-leap reversal at about seven times in ten, which is what this lands near
+/// once the drawn direction is taken into account.
+const HOLD: f32 = 0.3;
+
+/// The move a figure makes next, given the one it just made.
+///
+/// Two regularities that every corpus of tonal melody shows, and that a memoryless walk cannot
+/// have: after a leap the line turns and fills the gap in, and after a step it tends to carry on
+/// the same way. `drawn` is what the table gave; `hold` is the caller's roll for leaving it alone.
+///
+/// A drawn *leap* is never turned by the inertia rule, only a drawn step. That is what keeps the
+/// line from running to the end of its range: with every step redirected and no leap free to
+/// answer, a figure that started upward would only ever go up.
+fn shaped(previous: i32, drawn: i32, hold: bool) -> i32 {
+    if drawn == 0 || previous == 0 || hold {
+        return drawn;
+    }
+    if previous.abs() >= 2 {
+        // Gap-fill: a leap implies a turn, and what fills a gap is a step rather than a leap back.
+        -previous.signum() * drawn.abs().min(2)
+    } else if drawn.abs() == 1 {
+        // Step inertia.
+        previous.signum()
+    } else {
+        drawn
+    }
+}
+
+/// How far a figure may wander from its anchor before it is turned back.
+///
+/// Four scale steps is a sixth. The hard clamp is at six, and the point of turning earlier is
+/// that the walk never *reaches* the clamp: a walk held against a wall repeats the note it is
+/// standing on.
+const WANDER: i32 = 4;
+
+/// `move_by` turned back toward the anchor when the figure has wandered too far from it.
+///
+/// Melodic regression to the mean: pitches at the extremes of a melody's range are followed by
+/// pitches nearer the middle. It is also, on von Hippel and Huron's account, where most of
+/// post-leap reversal actually comes from — the gap-fill rule seen from one side.
+///
+/// It earns its place here for a blunter reason. Step inertia gives the walk a memory and so a
+/// direction, and a walk with a direction and a clamp ends up against the clamp: adding inertia
+/// on its own took the composer from six repeated notes in every hundred intervals to
+/// thirty-one, because a figure that reached its ceiling stood there until something turned it
+/// round. This is what turns it round.
+fn toward_middle(degree: i32, move_by: i32) -> i32 {
+    if degree.abs() >= WANDER && degree.signum() == move_by.signum() {
+        -move_by
+    } else {
+        move_by
+    }
+}
+
+/// Which offset a restated figure takes, so that it carries on from where the last bar left off.
+///
+/// `landings` are the pitches the figure's first note would sound at, one per offset the caller
+/// is willing to shift the whole figure by. The smoothest join wins; ties go to the smallest
+/// shift, which keeps the figure near the structural pitch it was written against.
+///
+/// Without this the figure restarted from its anchor every bar, and the join between one bar and
+/// the next was whatever fell out of the difference between two anchors — a leap of a fourth on
+/// average, nearly half of them wider than that, and not one of them chosen by anything.
+///
+/// A *step* is preferred to landing on the note the last bar ended on. Restating a figure from
+/// the note it just finished on is a real melodic move and not one to make a third of the time,
+/// which is what taking the nearest landing outright did: the smoothest join available is always
+/// the one that does not move.
+fn join_offset(previous: i32, landings: &[(i32, i32)]) -> i32 {
+    landings
+        .iter()
+        .min_by_key(|(offset, pitch)| {
+            let distance = (pitch - previous).abs();
+            let ranked = if distance == 0 { 3 } else { distance };
+            (ranked, offset.abs())
+        })
+        .map(|(offset, _)| *offset)
+        .unwrap_or(0)
+}
+
+/// How long the last note of a closing phrase sounds for, so that the phrase is let go of.
+///
+/// A beat of silence before the bar line, or the length it already had if that was shorter — a
+/// note is never *lengthened* here, because a figure that ends early ends early on purpose.
+/// Never shorter than one step, because a phrase ending in nothing at all is not an ending.
+///
+/// A beat and not two: this is a breath between phrases and not a rest between sections.
+fn breath(grid: Grid, step: usize, length: usize) -> usize {
+    let beat = grid.steps_per_beat().max(1);
+    let room = grid.steps_per_bar().saturating_sub(step + beat);
+    length.min(room).max(1)
+}
+
+/// How far a restated figure may be shifted to make its join, in scale steps.
+///
+/// Two is a third, which is enough to close almost any join and little enough that the figure is
+/// still sitting on the structural pitch the skeleton chose for it. Wider, and the arch the
+/// skeleton draws over the section stops being what the tune follows.
+const JOIN_REACH: i32 = 2;
 
 /// A short figure the melody is built out of.
 ///
@@ -73,13 +198,20 @@ fn motif(
 
     let mut cells = Vec::with_capacity(onsets.len());
     let mut degree = 0i32;
+    let mut previous_move = 0i32;
 
     for (position, (step, accent)) in onsets.iter().enumerate() {
         // Mostly steps with the occasional leap, and bounded either side of the anchor: a figure
         // that wandered off would not be recognisable when it came back.
         if position > 0 {
-            let move_by = *rng.pick(&[-2, -1, -1, 1, 1, 2, 3, -3]).unwrap_or(&1);
-            degree = (degree + move_by).clamp(-6, 6);
+            let drawn = MOVES[rng.weighted(&MOVE_WEIGHTS)];
+            let move_by = toward_middle(degree, shaped(previous_move, drawn, rng.chance(HOLD)));
+            let landed = (degree + move_by).clamp(-6, 6);
+            // What the figure *did*, not what it was asked to do. At the edge of the clamp the
+            // two differ, and remembering the request would have the next note fill in a leap
+            // that never happened.
+            previous_move = landed - degree;
+            degree = landed;
         }
         let next = onsets
             .get(position + 1)
@@ -165,6 +297,9 @@ pub(super) fn melody(
     );
 
     let mut notes = Vec::new();
+    // The pitch the last bar finished on, which the next one is joined to. `None` until the
+    // section has sounded a note, where the figure simply starts where its anchor puts it.
+    let mut left_off: Option<i32> = None;
     for bar in 0..section.bars {
         let mut rng = bar_stream(settings, frame, part, section, "melody", bar);
         // Four bars is the phrase almost everything is built in: state the figure, restate it,
@@ -177,7 +312,38 @@ pub(super) fn melody(
         };
         let bar_start = grid.bar_ticks() * bar as i64;
 
-        for cell in &cells.cells {
+        // Where the whole figure sits this bar. The shape is the figure's; the height is whatever
+        // joins it to the bar before, within `JOIN_REACH` of the structural pitch.
+        let offset = match (left_off, cells.cells.first()) {
+            (Some(previous), Some(first)) => {
+                let at = bar_start + grid.tick_of(first.step);
+                match section.chord_at(at) {
+                    Some(event) => {
+                        let scale = ChordScale::new(event.key, event.chord);
+                        let anchor = section
+                            .skeleton
+                            .get(section.event_index_at(at))
+                            .copied()
+                            .unwrap_or((low + high) / 2);
+                        let landings: Vec<(i32, i32)> = (-JOIN_REACH..=JOIN_REACH)
+                            .map(|offset| {
+                                (
+                                    offset,
+                                    shift_within(&scale, anchor, first.degree + offset, low, high),
+                                )
+                            })
+                            .collect();
+                        join_offset(previous, &landings)
+                    }
+                    None => 0,
+                }
+            }
+            _ => 0,
+        };
+
+        // The bar's pitches, before the harmony has its say over them.
+        let mut bar_notes: Vec<(usize, i32, i32)> = Vec::with_capacity(cells.cells.len());
+        for (position, cell) in cells.cells.iter().enumerate() {
             let at = bar_start + grid.tick_of(cell.step);
             let Some(event) = section.chord_at(at) else {
                 continue;
@@ -196,12 +362,82 @@ pub(super) fn melody(
             // and in the scale the *chord* implies there, so a borrowed note is not answered by
             // the degree it borrowed from.
             let scale = ChordScale::new(event.key, event.chord);
-            let mut pitch = shift_within(&scale, anchor, cell.degree, low, high);
+            let mut pitch = shift_within(&scale, anchor, cell.degree + offset, low, high);
             // A note on a strong step has to agree with the chord, or the figure's shape wins an
-            // argument with the harmony that it should not be having.
-            if weight >= 3 {
+            // argument with the harmony that it should not be having. The last note of a closing
+            // bar is treated as strong however weak its step: a phrase that ends on a passing note
+            // has not ended, it has stopped.
+            let cadence = closing && position + 1 == cells.cells.len();
+            if weight >= 3 || cadence {
                 pitch = fold_into(event.chord.nearest_tone(pitch), low, high);
             }
+            bar_notes.push((position, pitch, i32::from(weight)));
+        }
+
+        // A dissonance that is left by a leap is not heard as a dissonance leaning on its
+        // neighbour; it is heard as a wrong note. Either the note beside it is a step away or it
+        // has to be a note of the chord — and the figure's rhythm is what the ear is following, so
+        // the pitch is what gives way.
+        for position in 0..bar_notes.len() {
+            let (_, pitch, _) = bar_notes[position];
+            let Some(event) =
+                section.chord_at(bar_start + grid.tick_of(cells.cells[bar_notes[position].0].step))
+            else {
+                continue;
+            };
+            if event.chord.contains_midi(pitch) {
+                continue;
+            }
+            let leaves_by_leap = match bar_notes.get(position + 1) {
+                Some((_, next, _)) => (next - pitch).abs() > 2,
+                // The last note of the bar leaves into the next bar's first, and `join_offset`
+                // has already put that within a step or two — so it resolves, and pulling it onto
+                // a chord tone here only produced a note the next bar then repeated.
+                None => false,
+            };
+            if !leaves_by_leap {
+                continue;
+            }
+            let resolved = fold_into(event.chord.nearest_tone(pitch), low, high);
+            // Unless resolving it would make the figure stutter. A dissonance left by a leap is
+            // one wrong-sounding note; the same note struck twice in a row where the figure asked
+            // for two different ones is a fault the ear hears as the *rhythm* misfiring, which is
+            // worse. Measured: this rule on its own put three repeats in every hundred intervals.
+            let neighbours = [
+                position
+                    .checked_sub(1)
+                    .and_then(|before| bar_notes.get(before)),
+                bar_notes.get(position + 1),
+            ];
+            if neighbours
+                .iter()
+                .flatten()
+                .any(|(_, beside, _)| *beside == resolved)
+            {
+                continue;
+            }
+            bar_notes[position].1 = resolved;
+        }
+
+        for (index_in_bar, (position, pitch, weight)) in bar_notes.iter().enumerate() {
+            let cell = &cells.cells[*position];
+            let at = bar_start + grid.tick_of(cell.step);
+            let weight = *weight as u8;
+            let last_in_bar = index_in_bar + 1 == bar_notes.len();
+            if last_in_bar {
+                left_off = Some(*pitch);
+            }
+            let pitch = *pitch;
+            // A phrase has to be let go of. The figure already stops somewhere short of the bar
+            // line, but by as little as one step — and how much air it leaves was a draw rather
+            // than a decision, so about half of the composer's phrases ran on into the next one
+            // with nothing between them. At the end of a four-bar phrase it is a decision: the
+            // last note ends a beat before the bar does, or sooner if it was already shorter.
+            let length = if closing && last_in_bar {
+                breath(grid, cell.step, cell.length)
+            } else {
+                cell.length
+            };
 
             notes.push(Draft {
                 section: index,
@@ -211,7 +447,7 @@ pub(super) fn melody(
                     * phrase_shape(grid, section, at, settings.dynamics))
                 .clamp(0.05, 1.0),
                 start: section.start + at,
-                length: grid.step_ticks() * cell.length.max(1) as i64,
+                length: grid.step_ticks() * length.max(1) as i64,
             });
         }
     }
@@ -317,6 +553,98 @@ mod tests {
             "the longest rest in eight bars is {} ticks, under one beat of {}",
             longest_rest.raw(),
             beat.raw()
+        );
+    }
+
+    #[test]
+    fn a_leap_is_filled_in_and_a_step_carries_on() {
+        // The two regularities of `crate::melodic`. A memoryless walk has neither, and the
+        // composer's line had neither: it drew every move from the same table whatever it had
+        // just done.
+        assert_eq!(shaped(3, 2, false), -2, "a leap up is answered downward");
+        assert_eq!(shaped(-3, 1, false), 1, "and a leap down, upward");
+        assert_eq!(
+            shaped(2, 3, false),
+            -2,
+            "what fills a gap is a step, not a leap back"
+        );
+        assert_eq!(shaped(1, 1, false), 1, "a step up carries on up");
+        assert_eq!(shaped(-1, 1, false), -1, "a step down carries on down");
+        // A drawn leap after a step goes where it was drawn. Redirecting those too would leave a
+        // figure that started upward with nothing able to turn it round.
+        assert_eq!(shaped(1, -3, false), -3);
+        // Neither rule is absolute, a repeated note is always allowed, and the first move of a
+        // figure has nothing to answer.
+        assert_eq!(shaped(3, 2, true), 2);
+        assert_eq!(shaped(3, 0, false), 0);
+        assert_eq!(shaped(0, 3, false), 3);
+    }
+
+    #[test]
+    fn a_figure_that_has_wandered_is_turned_back() {
+        // Regression to the mean, and the reason it is here: inertia gives the walk a direction,
+        // and a walk with a direction meets the clamp and stands there repeating one note.
+        assert_eq!(toward_middle(WANDER, 1), -1);
+        assert_eq!(toward_middle(-WANDER, -2), 2);
+        // Near the anchor it says nothing at all, and it never turns a move already coming home.
+        assert_eq!(toward_middle(0, 3), 3);
+        assert_eq!(toward_middle(WANDER, -1), -1);
+    }
+
+    #[test]
+    fn a_restated_figure_joins_where_the_last_bar_left_off() {
+        // Offsets paired with the pitch the figure's first note would land on. The join wants a
+        // step, and the tie-break wants the smallest shift so the figure stays on its anchor.
+        assert_eq!(join_offset(60, &[(-1, 55), (0, 59), (1, 64)]), 0);
+        assert_eq!(join_offset(60, &[(-1, 62), (0, 67), (1, 71)]), -1);
+        // A landing on the very note the last bar ended on loses to a step away from it: the
+        // smoothest join available is always the one that does not move, and taking it outright
+        // restated a third of all bars from a repeated note.
+        assert_eq!(join_offset(60, &[(-1, 60), (0, 62), (1, 67)]), 0);
+        // Unless nothing else is near, where repeating the note beats leaping off it.
+        assert_eq!(join_offset(60, &[(-1, 60), (0, 65), (1, 69)]), -1);
+    }
+
+    #[test]
+    fn the_tune_moves_mostly_by_step() {
+        // The measurement the whole of `crate::melodic` is about, held at the size of one piece.
+        // Before the rules above, a third of every melodic interval the composer wrote was a
+        // fourth or wider — an arpeggio's distribution rather than a tune's.
+        let mut intervals: Vec<i32> = Vec::new();
+        for seed in 0..4u64 {
+            let (_, _, parts) = draft(&format!(
+                r#"
+                    form = "verse"
+                    chords = "@axis"
+                    humanize = 0
+                    seed = {seed}
+                    [section.verse]
+                    bars = 8
+                    [[part]]
+                    name = "lead"
+                    "#
+            ));
+            let lead = part(&parts, "lead");
+            let mut notes = lead.notes.clone();
+            notes.sort_by_key(|note| note.start.raw());
+            intervals.extend(
+                notes
+                    .windows(2)
+                    .map(|pair| i32::from(pair[1].pitch) - i32::from(pair[0].pitch)),
+            );
+        }
+        assert!(intervals.len() >= 64, "too few notes to say anything");
+
+        let wide = intervals.iter().filter(|i| i.abs() >= 5).count();
+        assert!(
+            wide * 4 <= intervals.len(),
+            "{wide} of {} intervals are a fourth or wider",
+            intervals.len()
+        );
+        let mean = intervals.iter().map(|i| i.abs()).sum::<i32>() as f32 / intervals.len() as f32;
+        assert!(
+            mean < 3.0,
+            "the mean melodic interval is {mean:.2} semitones"
         );
     }
 
