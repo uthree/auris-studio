@@ -25,9 +25,9 @@
     <string>6.0</string>
     <!-- Both rewritten at release time; the values here are what a local bundle gets. -->
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>0.2.0</string>
     <key>CFBundleVersion</key>
-    <string>0.1.0</string>
+    <string>0.2.0</string>
     <!-- gpui's Metal renderer, and the Apple Silicon half of the universal binary. -->
     <key>LSMinimumSystemVersion</key>
     <string>11.0</string>

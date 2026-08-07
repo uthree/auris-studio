@@ -7,7 +7,94 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
-## Unreleased
+## 0.2.0 — 2026-08-07
+
+### What an adversarial read of the composer's harmony found
+
+The music theory, gone through looking for chords the composer plays that nobody wrote. Every one
+of these was silent: the wrong chord sounded, the document recorded the numeral that was asked for,
+and nothing anywhere said the two had stopped agreeing.
+
+* **A numeral means the same chord wherever it is typed.** Colouring built its chords by hand
+  instead of asking the numeral, so a borrowed chord and a seventh took different paths to the same
+  question and answered differently. The whole of it now goes through `chord_in`, which is the one
+  place that knows what a numeral means.
+* **A seventh comes from the key rather than from the triad it lands on.** `vii7` in a harmonic
+  minor key came out half-diminished where the key builds it fully diminished — a distinction the
+  triad alone cannot make, and the leading-tone chord is where it matters most.
+* **A lead-in is a fifth above the tonic it arrives at, in every mode.** It was built from the
+  scale's fifth *degree*, which in phrygian and locrian is not a fifth above anything: a
+  modulation into a locrian section was prepared by a chord a tritone from where it was going.
+* **`ii/V` is the supertonic of V.** Everything in front of the slash was thrown away and every
+  applied chord came out as the dominant seventh of its target — `ii/V`, `vii/V` and `IV/V` all
+  parsed happily and all sounded as V7-of-V. An applied chord is now read in the key its target
+  would be the tonic of, which is what the notation has always meant. `V/x` still takes its
+  seventh: the tritone pulling into the target is the whole point of writing one.
+* **A sixth leaves the fifth under it alone.** `Major6` and `Minor6` both hold a *perfect* fifth
+  and the sixth was handed out on the strength of the third, so `vii6` came out with a perfect
+  fifth and was no longer diminished.
+* **A section ends where its progression ends.** A four-bar progression under a six-bar section
+  played bars 1–4 and then 1–2, stopping in the middle of the loop; it now plays the whole thing
+  and fills from the *end*, so the section lands on the chord the progression resolves to.
+* **The octave figure moves an octave.** The bass folded `root + OCTAVE` back into its range, and
+  the range is two octaves wide with the roots in the upper one — so for four of the seven degrees,
+  the subdominant and the dominant among them, the leap was subtracted straight back and the bass
+  restruck the note it was already on.
+* **The bass is the bottom of the arrangement.** The pad ran from C2 and the bass from E1, sharing
+  sixteen semitones, so a pad voicing could put a chord tone *under* the bass note — an inversion
+  nobody wrote, decided by whichever tone happened to fold lowest. The pad now runs C3 to C5, and a
+  test holds every pitched role above the bass's floor. No part may read another's notes, so the
+  ranges are where this has to be settled.
+* A tie between two scale degrees now rounds down rather than off the top of the scale.
+
+### Compound time is counted in dotted beats
+
+* **6/8 is two beats, not six.** The grid divided the note the denominator names, which made a
+  "sixteenth" in 6/8 a thirty-second — the grid came out twice as fine as everything placing notes
+  on it believed. A step is now a fixed note value in every meter, and the *felt* beat is derived:
+  six sixteenths to a dotted quarter. Every part that asks "am I on a beat" gets the answer the
+  meter actually has.
+* **The metric hierarchy no longer offers a compound beat a halfway point.** A dotted quarter
+  divides in three and in nothing else; its midpoint is a syncopation against the meter rather
+  than a position the meter offers, and weighting it as a beat handed real weight to the one step
+  in 6/8 that most needs to be heard as a departure. Swing is off in compound time for the same
+  reason: the shuffle is already there.
+* **A groove is mapped onto the bar rather than wrapped round it.** The built-in grooves are one
+  bar of 4/4, and under a 6/8 bar the pattern restarted partway through, putting a second downbeat
+  where the bar has no beat at all; under 3/4 the turnaround simply never played. The bar's first
+  beat now takes the groove's first and its last takes the groove's last, which is what a drummer
+  does with a pattern in a meter it was not written for.
+* **`six-eight` and `slow-blues`** are grooves written *in* compound time — in eighths of a dotted
+  beat rather than sixteenths of a plain one — so a song in 6/8 or 12/8 has a two-beat and a
+  four-beat idea to reach for instead of borrowing a four-beat one. A groove now carries how many
+  steps make one of its own beats. Nothing picks them automatically; a song names them the way it
+  names any other groove.
+* The bass reads the kick the same way the drummer does. It was reading the raw step index, which
+  wrapped a groove shorter than the bar and truncated a longer one — so in every meter the groove
+  was not written for, the bass followed a kick the kit was not striking.
+* A rhythm somebody writes by hand is still a repeating cell, because that is what writing four
+  steps under a 4/4 bar means.
+
+### The panels answer the pointer
+
+* **The song sheet's dials follow the mouse again.** The sheet is drawn on an occluding overlay,
+  and gpui's hit test stops at the first hitbox that blocks — so the root's pointer handlers, which
+  every drag in the application is tracked by, never saw a move over the sheet. A dial could be
+  pressed and would not turn.
+* **The piano roll draws the rest of the track.** The bars either side of the clip being edited
+  were empty grid, so there was no way to see what the phrase before it ended on or what the next
+  one starts from without closing the roll. The neighbours are now drawn behind it, flat and faint
+  — no velocity in the fill and no selection outline, because a ghost that read like a note would
+  be an invitation to edit something the roll will not edit.
+* **The mixer scrolls, and says so.** A flex item's `min-width` is `auto`, which is the width of
+  its content — so a panel holding fifteen channel strips asked the dock for the width of fifteen
+  channel strips and got it. Nothing overflowed, because nothing was ever too small; the strips ran
+  off the side of the window where no scroll could reach them. There is now a scrollbar under the
+  strips, drawn only when there is something to scroll, with the thumb draggable and the track
+  clickable to jump.
+* One picker row and one way to open a menu. The song sheet, the inspector and a plugin's choice
+  parameters were three copies of the same control, and twenty-eight call sites each wrote out the
+  same eight lines to open a context menu.
 
 ### A section can change how a part plays
 
