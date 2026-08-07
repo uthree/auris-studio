@@ -1060,7 +1060,13 @@ mod tests {
     /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
     /// a bug or a decision, and this is what makes anyone look.
     ///
-    /// It last moved when `colour` stopped adding sevenths through [`Quality::with_seventh`],
+    /// It last moved when the bass's octave figure started actually leaping one. All four digests
+    /// moved and not one chord or note count did, which is the whole report on that change: it
+    /// alters the pitch of some weak-beat bass notes and touches nothing else. The `Gmaj7 → G7`
+    /// and `Amaj7 → Am7` corrections below are from the change before it, and are described where
+    /// each fixture is.
+    ///
+    /// Before that it moved when `colour` stopped adding sevenths through [`Quality::with_seventh`],
     /// which can only ever give a major triad a *major* seventh and so wrote `Vmaj7` where `V7`
     /// belongs, and when a borrow started asking the parallel mode for its own chord on the degree
     /// instead of replaying the numeral's case at it.
@@ -1087,7 +1093,7 @@ mod tests {
                     "#
             ),
             "verse·1 C major | Cmaj7 Gm7 Am Fmaj7 Cmaj7 G7 Am9 F |\n\
-             164 notes, digest be32784b2a05a0fd\n"
+             164 notes, digest 9f659185fea49a95\n"
         );
 
         // The same in a minor key, and the fixture that moved furthest when colouring stopped
@@ -1128,19 +1134,20 @@ mod tests {
                     "#
             ),
             "verse·1 A minor | Am7 E9 Fmaj7 Dm Am7 Em7 Gbm7 Dm7 |\n\
-             239 notes, digest d9b0dd5afc8df349\n"
+             239 notes, digest 230cab900fb0b378\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats — and the one fixture
-        // here that writes `humanize = 0`. Its digest has not moved and must not: a dial at zero
-        // was the identity before this change and still is, so this line is what says the wander
-        // was reshaped rather than the writing underneath it.
+        // here that writes `humanize = 0`, so nothing it holds has ever been moved by the wander.
+        // Its chords are therefore the assertion that colouring reaches no quoted chart: they have
+        // not changed through any of this. Its digest has, because the bass leaps where it used to
+        // restrike.
         assert_eq!(
             fingerprint(BASE),
             "intro·1 C major | C G Am F |\n\
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
-             629 notes, digest 320d8793d96fc1d4\n"
+             629 notes, digest cc3436e003605d0c\n"
         );
 
         // A transposed section, which is a key change on the timeline — and the one fixture here
@@ -1167,7 +1174,7 @@ mod tests {
             ),
             "verse·1 C major | Fmaj7 E7 Am7 Bb7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
-             204 notes, digest 61300f163a80c19e\n"
+             204 notes, digest 5808f00172ff4ff5\n"
         );
     }
 

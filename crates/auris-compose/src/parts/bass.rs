@@ -17,6 +17,29 @@ use crate::theory::pitch::{OCTAVE, PitchClass, fold_into};
 use super::writer::{bar_stream, density, part_grid, phrase_shape, velocity};
 use super::{Draft, ScoreSettings};
 
+/// The octave a bass leaps to from `root`, staying inside `low..=high`.
+///
+/// Up where there is room and down where there is not, which is what a player does: the octave
+/// above a high root is off the end of the instrument and the one below is right there.
+///
+/// It used to fold `root + OCTAVE` back into the range, and the range is exactly two octaves wide
+/// with the roster's roots sitting in the upper one — so for every root from F upward the octave
+/// above fell outside, `fold_into` subtracted it straight back, and the answer was the root
+/// itself. The figure silently stopped being an octave for four of the seven diatonic degrees,
+/// the subdominant and the dominant among them: the bass restruck the note it was already on
+/// while the recipe said it was leaping.
+fn octave_leap(root: i32, low: i32, high: i32) -> i32 {
+    if root + OCTAVE <= high {
+        root + OCTAVE
+    } else if root - OCTAVE >= low {
+        root - OCTAVE
+    } else {
+        // A range narrower than an octave holds no leap at all. Restriking the root is the honest
+        // answer, and the only one left.
+        root
+    }
+}
+
 /// The shape of a bass line through a bar.
 ///
 /// Same reason as [`CompFigure`](super::comp::CompFigure): the bass followed the kick and
@@ -153,7 +176,7 @@ pub(super) fn bass(
                     if strong {
                         root
                     } else {
-                        fold_into(root + OCTAVE, low, high)
+                        octave_leap(root, low, high)
                     }
                 }
                 // Stepping into whatever comes next, on the last hit before it. A bass player
@@ -203,6 +226,49 @@ pub(super) fn bass(
 mod tests {
     use super::*;
     use crate::parts::fixture::{BASE, draft, part};
+
+    #[test]
+    fn the_octave_figure_always_moves_an_octave() {
+        // The range a bass actually writes in, which is exactly two octaves wide.
+        let (low, high) = crate::spec::Role::Bass.range();
+        assert_eq!(
+            high - low,
+            2 * OCTAVE,
+            "the range this test is about changed"
+        );
+
+        // Every root the roster can sit on — `Role::Bass` puts them in octave 2, so 36..=47.
+        for root in 36..=47 {
+            let leapt = octave_leap(root, low, high);
+            assert_eq!(
+                (leapt - root).abs(),
+                OCTAVE,
+                "the root {root} did not move an octave"
+            );
+            assert!(
+                (low..=high).contains(&leapt),
+                "the root {root} leapt out of the range"
+            );
+        }
+
+        // Which way it goes: up while there is room above, down once there is not. Both are an
+        // octave and both are what a player would reach for.
+        assert_eq!(octave_leap(36, low, high), 48);
+        assert_eq!(octave_leap(40, low, high), 52);
+        assert_eq!(
+            octave_leap(41, low, high),
+            29,
+            "F used to answer with itself"
+        );
+        assert_eq!(
+            octave_leap(47, low, high),
+            35,
+            "B used to answer with itself"
+        );
+
+        // A window with no octave in it has no leap, and says so rather than pretending.
+        assert_eq!(octave_leap(40, 36, 44), 40);
+    }
 
     #[test]
     fn the_bass_sounds_every_chord_change() {
