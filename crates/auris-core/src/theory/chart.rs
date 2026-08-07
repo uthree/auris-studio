@@ -188,10 +188,32 @@ impl Chart {
     /// Repeating rather than stretching: a four-bar loop under an eight-bar verse is played
     /// twice, which is what every band does and what every listener expects.
     pub fn fit_to(&self, bars: usize) -> Self {
-        let fitted = if self.bars.is_empty() || bars == 0 {
+        let length = self.bars.len();
+        let fitted = if length == 0 || bars == 0 {
             Vec::new()
+        } else if bars <= length {
+            // Shorter than the chart, so this is a fragment of it, and a fragment starts at the
+            // beginning: a section opening on the tonic sits where a section should, and there is
+            // no cadence to preserve in two bars anyway.
+            self.bars[..bars].to_vec()
         } else {
-            self.bars.iter().cycle().take(bars).cloned().collect()
+            // Longer. As many whole passes as fit, and the odd bars taken from the *end* of the
+            // chart rather than its start — so the section finishes on the chord the progression
+            // finishes on, whatever its length. Cycling straight through instead left the last
+            // bar wherever the arithmetic put it: six bars of a four-bar chart ended on its
+            // second chord, mid-phrase, with the fill and any lead-in landing on a chord that was
+            // still going somewhere. Repeating the approach to the cadence is what an arranger
+            // does with the spare bars, and it keeps one chord to the bar while doing it.
+            let remainder = bars % length;
+            let mut fitted: Vec<_> = self
+                .bars
+                .iter()
+                .cycle()
+                .take(bars - remainder)
+                .cloned()
+                .collect();
+            fitted.extend_from_slice(&self.bars[length - remainder..]);
+            fitted
         };
         Self {
             bars: fitted,
@@ -524,6 +546,52 @@ mod tests {
         assert_eq!(events.last().unwrap().end(), BAR);
         let total: i64 = events.iter().map(|event| event.length.raw()).sum();
         assert_eq!(total, BAR.raw());
+    }
+
+    #[test]
+    fn an_odd_length_section_still_ends_where_the_progression_ends() {
+        // The spare bars come off the *end* of the chart, so the last bar of a section is the last
+        // bar of the progression however many bars the section has. Cycling straight through left
+        // it wherever the arithmetic put it — six bars of a four-bar chart ended on its second
+        // chord, with the fill and any lead-in landing mid-phrase.
+        let axis = catalog("axis").unwrap();
+        assert_eq!(chord_names(&axis, "C major"), ["C", "G", "Am", "F"]);
+
+        // One whole pass, then the approach to the cadence again.
+        assert_eq!(
+            chord_names(&axis.fit_to(6), "C major"),
+            ["C", "G", "Am", "F", "Am", "F"]
+        );
+        assert_eq!(
+            chord_names(&axis.fit_to(7), "C major"),
+            ["C", "G", "Am", "F", "G", "Am", "F"]
+        );
+        assert_eq!(
+            chord_names(&axis.fit_to(5), "C major"),
+            ["C", "G", "Am", "F", "F"]
+        );
+
+        // An exact multiple is untouched, which is the ordinary case and every fixture.
+        assert_eq!(
+            chord_names(&axis.fit_to(8), "C major"),
+            ["C", "G", "Am", "F", "C", "G", "Am", "F"]
+        );
+
+        // Shorter than the chart is a fragment, and a fragment starts at the beginning.
+        assert_eq!(chord_names(&axis.fit_to(2), "C major"), ["C", "G"]);
+        assert_eq!(chord_names(&axis.fit_to(1), "C major"), ["C"]);
+
+        // Whatever the length, the section ends on the chord the progression ends on — except
+        // where it was cut short deliberately.
+        for bars in 4..=32 {
+            let fitted = axis.fit_to(bars);
+            assert_eq!(fitted.bar_count(), bars);
+            assert_eq!(
+                fitted.bars.last(),
+                axis.bars.last(),
+                "{bars} bars did not land on the chart's last chord"
+            );
+        }
     }
 
     #[test]
