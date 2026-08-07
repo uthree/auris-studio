@@ -35,6 +35,11 @@ impl AurisApp {
             .flex_col()
             .flex_1()
             .min_h(px(80.0))
+            // A flex item's `min-width` is `auto`, which is its *content's* width — so a panel
+            // holding fifteen channel strips claimed the width of fifteen channel strips and the
+            // dock handed it over. Nothing overflowed, because nothing was too small; the strips
+            // simply ran off the side of the window where no scroll could reach them.
+            .min_w_0()
             .bg(theme.surface_sunken)
             .child(
                 div()
@@ -55,6 +60,11 @@ impl AurisApp {
                     .flex()
                     .flex_1()
                     .min_h_0()
+                    // And the same for the row itself, which is the one that actually scrolls:
+                    // `w_full` holds it to the panel and `min_w_0` lets it be held there. Without
+                    // the pair `overflow_x_scroll` is a promise about a row that never overflows.
+                    .w_full()
+                    .min_w_0()
                     .gap_1()
                     .p_1()
                     .overflow_x_scroll()
