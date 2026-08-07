@@ -90,7 +90,61 @@ pub enum PromptTarget {
     KeepProgression(usize),
 }
 
+/// What a field is written in, as opposed to where it is being written.
+///
+/// The distinction the sheet turns on. A key typed into the harmony lane and a key typed into the
+/// song sheet are one question asked in two places: the same rules, the same parser, the same
+/// refusal — and for a while the timeline's had a completion list under it and the sheet's had
+/// nothing, because the list was chosen by the *target* rather than by what the target takes.
+///
+/// Naming the notation is what stops the third place that asks for a key having to remember to
+/// ask the same way.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Notation {
+    /// A key, `F# minor` or `D dorian`.
+    Key,
+    /// One chord as a roman numeral, `V7` or `bVII`.
+    Chord,
+    /// A whole progression, bar by bar: `| IVmaj7 | III7 | vi7 | I7 |`.
+    Progression,
+    /// The name of a section of the song.
+    Section,
+    /// A time signature, `6/8`.
+    Signature,
+    /// The number a take is drawn from.
+    Seed,
+    /// Beats per minute.
+    Tempo,
+    /// A level in decibels.
+    Gain,
+    /// A place in the song, as bar, beat and hundredth.
+    Position,
+}
+
 impl PromptTarget {
+    /// What this field is written in, or `None` when it takes a name.
+    ///
+    /// A name is not a notation: it has no rules to state, nothing to complete against, and
+    /// nothing to refuse.
+    pub fn notation(self) -> Option<Notation> {
+        Some(match self {
+            PromptTarget::Key(_) | PromptTarget::SongKey => Notation::Key,
+            PromptTarget::Chord(_) => Notation::Chord,
+            PromptTarget::SongSectionChart(_) => Notation::Progression,
+            PromptTarget::Section(_) => Notation::Section,
+            PromptTarget::Signature(_) | PromptTarget::SignatureFrom(_) => Notation::Signature,
+            PromptTarget::Seed(_) | PromptTarget::SongSeed => Notation::Seed,
+            PromptTarget::Tempo(_) | PromptTarget::TempoFrom(_) => Notation::Tempo,
+            PromptTarget::ClipGain(_) => Notation::Gain,
+            PromptTarget::Position => Notation::Position,
+            PromptTarget::Track(_)
+            | PromptTarget::Clip(_)
+            | PromptTarget::SongTitle
+            | PromptTarget::SongPartName(_)
+            | PromptTarget::KeepProgression(_) => return None,
+        })
+    }
+
     /// The line under the field saying what would be a valid answer.
     ///
     /// A name explains itself; everything else here is a small notation with rules, and an empty
@@ -98,23 +152,67 @@ impl PromptTarget {
     /// said that the case of a numeral is what makes it major or minor, so the only way to find
     /// out was to type something, have it refused, and read the refusal.
     pub fn hint(self) -> Option<Key> {
-        Some(match self {
-            PromptTarget::Key(_) => Key::HintKey,
-            PromptTarget::Chord(_) => Key::HintChord,
-            PromptTarget::Section(_) => Key::HintSection,
-            PromptTarget::Seed(_) => Key::HintSeed,
-            PromptTarget::Tempo(_) | PromptTarget::TempoFrom(_) => Key::HintTempo,
-            PromptTarget::Signature(_) | PromptTarget::SignatureFrom(_) => Key::HintSignature,
-            PromptTarget::ClipGain(_) => Key::HintClipGain,
-            PromptTarget::Position => Key::HintPosition,
-            PromptTarget::SongKey => Key::HintKey,
-            PromptTarget::SongSeed => Key::HintSeed,
-            PromptTarget::SongSectionChart(_) => Key::HintProgression,
-            PromptTarget::SongTitle
-            | PromptTarget::SongPartName(_)
-            | PromptTarget::KeepProgression(_) => return None,
-            PromptTarget::Track(_) | PromptTarget::Clip(_) => return None,
-        })
+        self.notation().map(Notation::hint)
+    }
+}
+
+impl Notation {
+    /// The line under the field saying what would be a valid answer.
+    pub fn hint(self) -> Key {
+        match self {
+            Notation::Key => Key::HintKey,
+            Notation::Chord => Key::HintChord,
+            Notation::Progression => Key::HintProgression,
+            Notation::Section => Key::HintSection,
+            Notation::Signature => Key::HintSignature,
+            Notation::Seed => Key::HintSeed,
+            Notation::Tempo => Key::HintTempo,
+            Notation::Gain => Key::HintClipGain,
+            Notation::Position => Key::HintPosition,
+        }
+    }
+
+    /// The words offered under the field, or nothing where the answer is a number.
+    ///
+    /// A progression shares the chord field's list, because a progression *is* chords: the same
+    /// vocabulary, offered one chord at a time. Two lists would be one place learning `bVII` and
+    /// the other not.
+    fn vocabulary(self) -> &'static [&'static str] {
+        match self {
+            Notation::Key => KEY_VOCABULARY,
+            Notation::Chord | Notation::Progression => CHORD_VOCABULARY,
+            Notation::Section => SECTION_VOCABULARY,
+            Notation::Signature => SIGNATURE_VOCABULARY,
+            // 174 is not on any list worth reading.
+            Notation::Seed | Notation::Tempo | Notation::Gain | Notation::Position => &[],
+        }
+    }
+
+    /// Whether choosing a completion answers the whole question.
+    ///
+    /// A key, a chord, a meter: choosing one *is* the answer, so the sheet closes on it. A
+    /// progression is a line of chords, and a chord chosen partway through it is one word of an
+    /// answer nobody has finished writing.
+    pub fn completes_whole_field(self) -> bool {
+        !matches!(self, Notation::Progression)
+    }
+
+    /// The stretch of `typed` a completion would replace.
+    ///
+    /// Everything, for the notations whose whole answer is one word from the list. For a
+    /// progression it is the chord being written — from the last bar line or space to the end —
+    /// so that completing `b` into `bVII` at the end of `| I | V | vi | b` leaves the three bars
+    /// in front of it exactly where they were.
+    pub fn completing_range(self, typed: &str) -> Range<usize> {
+        if self.completes_whole_field() {
+            return 0..typed.len();
+        }
+        let start = typed
+            .char_indices()
+            .rev()
+            .find(|(_, character)| *character == '|' || character.is_whitespace())
+            .map_or(0, |(at, character)| at + character.len_utf8());
+        start..typed.len()
     }
 }
 
@@ -196,15 +294,20 @@ const COMPLETION_LIMIT: usize = 8;
 /// typing `v` still leads with `V` rather than with whatever sorts first. Case is ignored for the
 /// matching and kept in the answer: `vi` and `VI` are different chords, and half the point of the
 /// list is to show that both exist.
+///
+/// Matched against the stretch a completion would replace rather than against the whole box, so a
+/// progression offers chords for the one being written instead of trying to match the line.
 pub fn completions(target: PromptTarget, typed: &str) -> Vec<&'static str> {
-    let vocabulary = match target {
-        PromptTarget::Chord(_) => CHORD_VOCABULARY,
-        PromptTarget::Key(_) => KEY_VOCABULARY,
-        PromptTarget::Section(_) => SECTION_VOCABULARY,
-        PromptTarget::Signature(_) | PromptTarget::SignatureFrom(_) => SIGNATURE_VOCABULARY,
-        _ => return Vec::new(),
+    let Some(notation) = target.notation() else {
+        return Vec::new();
     };
-    let needle = typed.trim().to_ascii_lowercase();
+    let vocabulary = notation.vocabulary();
+    if vocabulary.is_empty() {
+        return Vec::new();
+    }
+    let needle = typed[notation.completing_range(typed)]
+        .trim()
+        .to_ascii_lowercase();
     let mut offered: Vec<&'static str> = Vec::new();
     let mut contained: Vec<&'static str> = Vec::new();
     for entry in vocabulary {
@@ -364,6 +467,14 @@ impl Prompt {
         }
     }
 
+    /// What the text will be written to, when this sheet is asking for text.
+    pub fn target(&self) -> Option<PromptTarget> {
+        match &self.body {
+            PromptBody::Text { target, .. } => Some(*target),
+            PromptBody::Ask(_) | PromptBody::Notice(_) => None,
+        }
+    }
+
     /// The same field, to type into.
     ///
     /// Taking it ends any Tab walk in progress, because the next Tab should complete what is in
@@ -387,19 +498,26 @@ impl Prompt {
         let PromptBody::Text { target, field } = &self.body else {
             return false;
         };
+        let target = *target;
+        let Some(notation) = target.notation() else {
+            return false;
+        };
         let (from, next) = match &self.completing {
             Some((from, index)) => (from.clone(), index + 1),
             None => (field.content().to_string(), 0),
         };
-        let offered = completions(*target, &from);
+        let offered = completions(target, &from);
         if offered.is_empty() {
             return false;
         }
         let index = next % offered.len();
         let chosen = offered[index];
         if let PromptBody::Text { field, .. } = &mut self.body {
-            let whole = 0..field.content().len();
-            field.replace(whole, chosen);
+            // From where the word being completed began, to the end of whatever the last step of
+            // the walk left there. The text in front of it is untouched by the walk, so its start
+            // is still the one the original text gave.
+            let word = notation.completing_range(&from).start;
+            field.replace(word..field.content().len(), chosen);
         }
         self.completing = Some((from, index));
         true
@@ -1037,18 +1155,31 @@ impl AurisApp {
         )
     }
 
-    /// Answers the open prompt with `text`.
+    /// Writes `text` into the open prompt, and answers with it where it is the whole answer.
+    ///
+    /// A chip that only filled the box would be asking for a second press to do what the first
+    /// one already said — unless the box takes more than one word. On a progression the press
+    /// wrote one chord of a line the user is still in the middle of, so the sheet stays up.
     pub(crate) fn complete_prompt(
         &mut self,
         text: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let notation = self
+            .prompt
+            .as_ref()
+            .and_then(Prompt::target)
+            .and_then(PromptTarget::notation);
         if let Some(field) = self.prompt.as_mut().and_then(Prompt::field_mut) {
-            let whole = 0..field.content().len();
-            field.replace(whole, text);
+            let word = notation.map_or(0, |notation| {
+                notation.completing_range(field.content()).start
+            });
+            field.replace(word..field.content().len(), text);
         }
-        self.commit_prompt(window, cx);
+        if notation.is_none_or(Notation::completes_whole_field) {
+            self.commit_prompt(window, cx);
+        }
     }
 
     /// The row of answers: always Cancel, sometimes a destructive one, then the default.
@@ -1317,6 +1448,7 @@ mod tests {
             PromptTarget::Clip(ClipId(1)),
             PromptTarget::Key(AT),
             PromptTarget::Chord(AT),
+            PromptTarget::Section(AT),
             PromptTarget::Seed(ClipId(1)),
             PromptTarget::Tempo(AT),
             PromptTarget::TempoFrom(AT),
@@ -1324,7 +1456,25 @@ mod tests {
             PromptTarget::SignatureFrom(AT),
             PromptTarget::ClipGain(ClipId(1)),
             PromptTarget::Position,
+            PromptTarget::SongTitle,
+            PromptTarget::SongKey,
+            PromptTarget::SongSeed,
+            PromptTarget::SongPartName(0),
+            PromptTarget::SongSectionChart(0),
+            PromptTarget::KeepProgression(0),
         ]
+    }
+
+    /// The targets that take a name rather than a notation.
+    fn is_a_name(target: PromptTarget) -> bool {
+        matches!(
+            target,
+            PromptTarget::Track(_)
+                | PromptTarget::Clip(_)
+                | PromptTarget::SongTitle
+                | PromptTarget::SongPartName(_)
+                | PromptTarget::KeepProgression(_)
+        )
     }
 
     #[test]
@@ -1332,13 +1482,95 @@ mod tests {
         // A name explains itself. Everything else is a small notation with rules that an empty
         // box states none of, which is exactly the complaint the hints answer.
         for target in every_target() {
-            let named = matches!(target, PromptTarget::Track(_) | PromptTarget::Clip(_));
             assert_eq!(
                 target.hint().is_none(),
-                named,
+                is_a_name(target),
                 "{target:?} has the wrong idea about needing a hint"
             );
+            assert_eq!(
+                target.notation().is_none(),
+                is_a_name(target),
+                "{target:?} has the wrong idea about being a notation"
+            );
         }
+    }
+
+    #[test]
+    fn the_song_sheet_asks_for_a_key_the_same_way_the_timeline_does() {
+        // The bug this whole arrangement exists to make unrepeatable. Both fields parse with
+        // `MusicalKey::parse` and refuse with the same message, and both said `like C major` —
+        // but the list was chosen by the target, so the sheet's key field offered nothing at all
+        // and the timeline's offered the circle.
+        assert_eq!(
+            PromptTarget::SongKey.notation(),
+            PromptTarget::Key(AT).notation()
+        );
+        assert_eq!(PromptTarget::SongKey.hint(), PromptTarget::Key(AT).hint());
+        for typed in ["", "c", "min", "dorian"] {
+            assert_eq!(
+                completions(PromptTarget::SongKey, typed),
+                completions(PromptTarget::Key(AT), typed),
+                "the two key fields differ on `{typed}`"
+            );
+        }
+        assert!(!completions(PromptTarget::SongKey, "").is_empty());
+        // And the same for the seed, which is the other question the sheet asks twice.
+        assert_eq!(
+            PromptTarget::SongSeed.notation(),
+            PromptTarget::Seed(ClipId(1)).notation()
+        );
+    }
+
+    #[test]
+    fn a_progression_completes_the_chord_being_written_and_leaves_the_bars_alone() {
+        // A progression is a line of chords, so the list under it is the chord list — offered
+        // for the chord being written. Completing the whole box would have thrown away every bar
+        // already typed, which is why the field had no completion at all before.
+        let written = "| I | V | vi | b";
+        let offered = completions(PromptTarget::SongSectionChart(0), written);
+        assert_eq!(offered, ["bIII", "bVI", "bVII", "bVII7"], "{offered:?}");
+
+        let mut prompt = Prompt::new("", PromptTarget::SongSectionChart(0), written);
+        assert!(prompt.complete_next());
+        assert_eq!(prompt.field().unwrap().content(), "| I | V | vi | bIII");
+        // And the walk goes on replacing that one chord rather than growing the line.
+        assert!(prompt.complete_next());
+        assert_eq!(prompt.field().unwrap().content(), "| I | V | vi | bVI");
+
+        // A bar line with nothing after it yet offers the whole vocabulary.
+        assert_eq!(
+            completions(PromptTarget::SongSectionChart(0), "| I |"),
+            completions(PromptTarget::Chord(AT), "")
+        );
+
+        // The chord field itself still takes the whole box: one chord is the whole answer there,
+        // and the sheet closes on choosing one.
+        assert!(
+            PromptTarget::Chord(AT)
+                .notation()
+                .unwrap()
+                .completes_whole_field()
+        );
+        assert!(
+            !PromptTarget::SongSectionChart(0)
+                .notation()
+                .unwrap()
+                .completes_whole_field()
+        );
+    }
+
+    #[test]
+    fn a_progression_completes_after_a_separator_of_any_width() {
+        // The word being completed starts after the last bar line or space, found by character
+        // rather than by byte — a Japanese section name or an ideographic space in the box would
+        // otherwise cut a completion into the middle of one.
+        let progression = Notation::Progression;
+        assert_eq!(progression.completing_range("| I | b"), 6..7);
+        assert_eq!(progression.completing_range("b"), 0..1);
+        assert_eq!(progression.completing_range("| I |"), 5..5);
+        assert_eq!(progression.completing_range("　V"), "　".len().."　V".len());
+        // Everything else replaces the box, which is what makes choosing one the answer.
+        assert_eq!(Notation::Key.completing_range("C ma"), 0..4);
     }
 
     #[test]
@@ -1350,6 +1582,13 @@ mod tests {
             assert!(
                 Numeral::parse(entry).is_some(),
                 "`{entry}` is offered under the chord field and is not a chord"
+            );
+            // The same list is offered inside a progression now, where a different parser reads
+            // it. One that took a numeral the chart refused would write a line the sheet then
+            // turns away, with the offending chord chosen from its own list.
+            assert!(
+                Chart::parse(&format!("| {entry} |")).is_some(),
+                "`{entry}` is offered inside a progression and is not one"
             );
         }
         for entry in KEY_VOCABULARY {
