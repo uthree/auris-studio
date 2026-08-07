@@ -11,9 +11,9 @@ use crate::rhythm::{Grid, Pattern};
 use crate::rng::{Key as RngKey, Rng};
 use crate::spec::{LeadIn, Mood, SectionSpec, SongSpec};
 use crate::theory::chart::{ChartOrigin, HarmonicEvent};
-use crate::theory::chord::Quality;
+use crate::theory::chord::{Chord, Quality};
 use crate::theory::key::Key;
-use crate::theory::numeral::diatonic_seventh;
+use crate::theory::numeral::{Numeral, degree_of, diatonic_seventh};
 
 /// One playing of one section.
 #[derive(Clone, Debug)]
@@ -297,13 +297,23 @@ fn lead_into(events: &mut [HarmonicEvent], from: Key, to: Key) {
     let Some(last) = events.last_mut() else {
         return;
     };
-    // `V7` of the key being arrived at, which is a chord rather than a spelling — the numeral it
-    // gets is whatever names that chord in the key the section is still in.
-    let Some(dominant) = crate::theory::numeral::Numeral::parse("V7") else {
-        return;
-    };
-    last.chord = dominant.chord_in(to);
-    last.numeral = dominant.respelled_in(to, from);
+    // A perfect fifth above the tonic being arrived at, built as a dominant seventh. Measured in
+    // semitones rather than taken as the arriving key's fifth *degree*, because a degree is only
+    // a fifth in a scale that has one: `V7` read in a Locrian key named a root a tritone above
+    // the tonic, and in a major-pentatonic one a major sixth above it. Neither prepares anything.
+    // What a dominant *is* does not vary with the mode of the key it belongs to.
+    // The same construction `chord_in` uses for a secondary dominant, which is the same idea.
+    let dominant = Chord::new(to.tonic.transposed(7), Quality::Dominant7);
+    // Named against the key still in force, so the harmony lane shows one key change at the bar
+    // where it happens with a chromatic chord leaning into it.
+    let (degree, accidental) = degree_of(to, dominant.root);
+    last.numeral = Numeral {
+        accidental,
+        ..Numeral::new(degree, false)
+    }
+    .with_quality(Quality::Dominant7)
+    .respelled_in(to, from);
+    last.chord = dominant;
 }
 
 /// One structural pitch per chord, chosen so the line makes musical sense as a whole.
@@ -491,6 +501,61 @@ mod tests {
         let frame = plan(&spec(r#"form = "verse chorus verse chorus""#));
         let instances: Vec<usize> = frame.sections.iter().map(|s| s.instance).collect();
         assert_eq!(instances, [1, 1, 2, 2]);
+    }
+
+    #[test]
+    fn a_lead_in_is_a_fifth_above_the_tonic_it_arrives_at_in_every_mode() {
+        // A dominant is a perfect fifth above the tonic and a major-minor seventh on top of it.
+        // That is what the chord *is*, and it does not vary with the mode of the key it belongs
+        // to — but it used to be read as the arriving key's fifth *degree*, and a degree is only
+        // a fifth in a scale that has one. Locrian's fifth is a tritone and a major pentatonic's
+        // is a major sixth, so the bar meant to prepare the change named a root that prepares
+        // nothing.
+        for scale in [
+            "major",
+            "minor",
+            "dorian",
+            "locrian",
+            "major-pentatonic",
+            "whole-tone",
+        ] {
+            let frame = plan(&spec(&format!(
+                r#"
+                form = "verse chorus"
+                key = "C {scale}"
+                [section.verse]
+                bars = 2
+                [section.chorus]
+                bars = 2
+                transpose = 2
+                "#
+            )));
+            let arriving = frame.sections[1].key;
+            let leading = frame.sections[0]
+                .events
+                .last()
+                .expect("the verse has chords")
+                .chord;
+            assert_eq!(
+                arriving.tonic.distance_up_to(leading.root),
+                7,
+                "in C {scale} the lead-in was not a fifth above the arriving tonic"
+            );
+            assert_eq!(leading.quality, Quality::Dominant7, "in C {scale}");
+        }
+    }
+
+    #[test]
+    fn a_section_that_does_not_modulate_keeps_its_last_chord() {
+        // The lead-in rewrites a bar, which nothing else here does, so it must fire only where a
+        // key change was actually asked for.
+        let frame = plan(&spec(r#"form = "verse chorus""#));
+        let last = frame.sections[0].events.last().expect("chords").chord;
+        let unchanged = plan(&spec(r#"form = "verse""#));
+        assert_eq!(
+            last,
+            unchanged.sections[0].events.last().expect("chords").chord
+        );
     }
 
     #[test]

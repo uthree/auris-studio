@@ -127,23 +127,14 @@ impl ScaleId {
         self.steps().contains(&3)
     }
 
-    /// A brightness ordering, from darkest to brightest.
-    ///
-    /// This is the ordering by how flat the scale's degrees sit against the major scale, which
-    /// is the usual way to lay the modes out and the one a "mood" control wants to move along.
-    pub fn brightness(self) -> f32 {
-        let major = ScaleId::Major.steps();
-        let steps = self.steps();
-        // Compare degree by degree where both scales have one; a pentatonic simply has fewer.
-        let mut offset = 0;
-        for (index, step) in steps.iter().enumerate() {
-            if let Some(reference) = major.get(index) {
-                offset += step - reference;
-            }
-        }
-        // Locrian sits at -6 and Lydian at +1, so this lands roughly in 0..1.
-        ((offset as f32 + 6.0) / 7.0).clamp(0.0, 1.0)
-    }
+    // There was a `brightness` here, ordering the scales by how flat their degrees sit against
+    // the major scale. It compared the two step lists *by index*, so a scale with fewer than
+    // seven degrees was lined up against the wrong reference from its first gap onward: minor
+    // pentatonic came out brighter than the major scale and tied with Lydian. Its one caller was
+    // `Mood::scale`, which chose a mode for a brightness in a case that could not arise and has
+    // since gone. A wrong answer nothing asks for is a trap for whoever asks next, so it is gone
+    // too — the ordering it was reaching for is a real idea, and worth writing properly against
+    // scale degrees rather than array positions when something needs it.
 
     /// Semitones above the tonic for `degree`, which may run past the octave or below zero.
     pub fn semitone(self, degree: i32) -> i32 {
@@ -177,12 +168,21 @@ impl ScaleId {
         let octaves = semitones.div_euclid(OCTAVE);
         let mut best = 0;
         let mut best_distance = i32::MAX;
+        let mut best_pitch = i32::MAX;
         for (index, step) in steps.iter().enumerate() {
             // Compare against the next octave too, so B is nearer to C above than to A below.
             for candidate in [*step, step + OCTAVE] {
                 let distance = (candidate - within).abs();
-                if distance < best_distance {
+                // Rounding down on a tie is the lower *pitch*, not whichever degree the loop
+                // happened to reach first. The two agree everywhere except at the top of the
+                // scale: the octave above the tonic is examined at index 0, long before the
+                // degree sitting a semitone below the query, so the octave used to win a tie it
+                // should have lost. In C minor a passing B snapped up to C instead of down to B
+                // flat, in the eight of thirteen scales whose top step is a flat seventh.
+                if distance < best_distance || (distance == best_distance && candidate < best_pitch)
+                {
                     best_distance = distance;
+                    best_pitch = candidate;
                     best = index as i32
                         + if candidate > within && *step < within {
                             count
@@ -312,21 +312,39 @@ mod tests {
     }
 
     #[test]
-    fn brightness_orders_the_modes_the_way_theory_does() {
-        let order = [
-            ScaleId::Locrian,
-            ScaleId::Phrygian,
+    fn a_tie_at_the_top_of_the_scale_rounds_down_like_every_other_tie() {
+        // Eight of the thirteen scales end on a flat seventh, so a semitone below the tonic is
+        // exactly as far from that seventh as from the octave above. The walk examines the octave
+        // first — it belongs to index 0 — and used to keep it, which is the opposite of the
+        // documented tie-break and of what the in-octave case does. In C minor a passing B jumped
+        // up to C instead of settling down onto B flat.
+        for scale in [
             ScaleId::Minor,
             ScaleId::Dorian,
+            ScaleId::Phrygian,
             ScaleId::Mixolydian,
-            ScaleId::Major,
-            ScaleId::Lydian,
-        ];
-        let brightnesses: Vec<f32> = order.iter().map(|scale| scale.brightness()).collect();
-        assert!(
-            brightnesses.windows(2).all(|pair| pair[0] < pair[1]),
-            "modes are out of order: {brightnesses:?}"
-        );
+            ScaleId::Locrian,
+            ScaleId::MinorPentatonic,
+            ScaleId::Blues,
+            ScaleId::WholeTone,
+        ] {
+            let degree = scale.nearest_degree(11);
+            assert_eq!(
+                scale.semitone(degree),
+                10,
+                "{} rounded a tie upward",
+                scale.name()
+            );
+        }
+
+        // The scales that end on a leading tone have no tie to break there, and answer with it.
+        for scale in [ScaleId::Major, ScaleId::HarmonicMinor, ScaleId::Lydian] {
+            assert_eq!(scale.semitone(scale.nearest_degree(11)), 11);
+        }
+
+        // And the in-octave tie the rule was always right about is still right.
+        assert_eq!(ScaleId::Major.semitone(ScaleId::Major.nearest_degree(1)), 0);
+        assert_eq!(ScaleId::Major.semitone(ScaleId::Major.nearest_degree(6)), 5);
     }
 
     #[test]

@@ -113,12 +113,18 @@ impl ChordScale {
         let octaves = semitones.div_euclid(OCTAVE);
         let mut best = 0;
         let mut best_distance = i32::MAX;
+        let mut best_pitch = i32::MAX;
         for (index, step) in self.steps.iter().enumerate() {
             // The next octave too, so B is nearer to the C above than to the A below.
             for candidate in [*step, step + OCTAVE] {
                 let distance = (candidate - within).abs();
-                if distance < best_distance {
+                // The lower pitch takes a tie, for the reason `ScaleId::nearest_degree` gives:
+                // the octave above the tonic is reached first and used to win ties against the
+                // degree a semitone below the query. This is the copy the melody actually calls.
+                if distance < best_distance || (distance == best_distance && candidate < best_pitch)
+                {
                     best_distance = distance;
+                    best_pitch = candidate;
                     best = index as i32 + i32::from(candidate > within && *step < within) * count;
                 }
             }
