@@ -66,7 +66,14 @@ pub(super) fn drums(
         let mut played = vec![false; grid.steps_per_bar()];
         for (step, sounded) in played.iter_mut().enumerate() {
             let weight = grid.weight(step);
-            let accent = match pattern.at(step) {
+            // A groove is a bar and is mapped onto this bar; a rhythm somebody wrote is a cell and
+            // repeats. See `Pattern::at_in_bar` for what a sixteen-step groove used to do to a
+            // bar that is not 4/4.
+            let accent = match if written {
+                pattern.at(step)
+            } else {
+                pattern.at_in_bar(step, grid.steps_per_bar(), grid.steps_per_beat as usize)
+            } {
                 Some(accent) => {
                     // A quiet section thins the pattern out rather than playing it softly, which
                     // is what a drummer does. The downbeat is never thinned, or the bar loses its

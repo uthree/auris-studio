@@ -186,6 +186,54 @@ impl Pattern {
         self.steps[step % self.steps.len()]
     }
 
+    /// The accent at `step` for a pattern that is a whole *bar* rather than a repeating cell.
+    ///
+    /// [`Self::at`] wraps, which is right for the four-step cell somebody writes under a bar four
+    /// times its length and wrong for a groove. A groove is one bar of drumming — a downbeat at
+    /// the top, a turnaround at the end — and the built-in ones are all sixteen steps, which is a
+    /// bar of 4/4 and a bar of nothing else. Wrapped under a 6/8 bar of twenty-four steps it
+    /// restarted at the fifth eighth, putting a second downbeat where the bar has no beat at all;
+    /// under 5/4 and 7/8 the same, and under 3/4 the turnaround simply never played.
+    ///
+    /// So the bar's first beat takes the groove's first, its last beat takes the groove's last,
+    /// and the beats between cycle through the middle. A shorter bar drops middle beats and a
+    /// longer one repeats them, which is what a drummer does with a pattern in a meter it was not
+    /// written for.
+    ///
+    /// It is not a substitute for a groove written in the meter. A 4/4 rock beat mapped onto 6/8
+    /// keeps its footing but it is still a four-beat idea in a two-beat bar; compound time wants
+    /// its own patterns, and this is what stops the absence of them sounding like a fault.
+    pub fn at_in_bar(
+        &self,
+        step: usize,
+        steps_per_bar: usize,
+        steps_per_beat: usize,
+    ) -> Option<Accent> {
+        let steps_per_beat = steps_per_beat.max(1);
+        if self.steps.is_empty() || steps_per_bar == 0 {
+            return None;
+        }
+        let pattern_beats = self.steps.len().div_ceil(steps_per_beat);
+        let bar_beats = steps_per_bar.div_ceil(steps_per_beat);
+        // Same length, or too short for a first and a last to be different beats: the plain wrap
+        // is already the right answer, and is what a one-beat cell wants in any meter.
+        if pattern_beats == bar_beats || pattern_beats < 2 || bar_beats < 2 {
+            return self.at(step);
+        }
+        let beat = step / steps_per_beat;
+        let middle = pattern_beats.saturating_sub(2);
+        let mapped = if beat == 0 {
+            0
+        } else if beat + 1 >= bar_beats {
+            pattern_beats - 1
+        } else if middle == 0 {
+            0
+        } else {
+            1 + (beat - 1) % middle
+        };
+        self.at(mapped * steps_per_beat + step % steps_per_beat)
+    }
+
     /// How many hits the pattern has.
     pub fn hits(&self) -> usize {
         self.steps.iter().filter(|accent| accent.is_some()).count()
@@ -550,6 +598,60 @@ mod tests {
             euclid(3, 8, 8).onsets(),
             euclid(3, 8, 0).onsets(),
             "a full turn"
+        );
+    }
+
+    #[test]
+    fn a_groove_is_mapped_onto_the_bar_rather_than_wrapped_round_it() {
+        // A bar-long pattern with the downbeat and the turnaround marked, and nothing between.
+        let groove = Pattern::parse("x ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ x ~ ~ ~").expect("parses");
+        let hits = |steps_per_bar: usize| -> Vec<usize> {
+            (0..steps_per_bar)
+                .filter(|step| groove.at_in_bar(*step, steps_per_bar, 4).is_some())
+                .collect()
+        };
+
+        // 4/4 is the meter it was written in, so nothing moves.
+        assert_eq!(hits(16), [0, 12]);
+
+        // 6/8 is twenty-four steps. Wrapping put the groove's *downbeat* back at step 16 — a
+        // second bar line two thirds of the way through the bar, which is the thing a listener
+        // hears as the drummer losing the meter.
+        assert_eq!(
+            groove.at(16),
+            Some(Accent::Normal),
+            "the plain wrap is what this test exists to be different from"
+        );
+        assert_eq!(hits(24), [0, 20], "6/8 grew a downbeat mid-bar");
+
+        // 5/4 and 7/8 the same, and 3/4 keeps the turnaround it used to lose entirely.
+        assert_eq!(hits(20), [0, 16], "5/4");
+        assert_eq!(hits(28), [0, 24], "7/8");
+        assert_eq!(hits(12), [0, 8], "3/4 dropped its turnaround");
+
+        // The first and last beat of the bar always carry the first and last beat of the groove,
+        // in every meter, which is the property the mapping is for.
+        for steps_per_bar in [8, 12, 16, 20, 24, 28] {
+            let bar = hits(steps_per_bar);
+            assert_eq!(bar.first(), Some(&0), "no downbeat in {steps_per_bar}");
+            assert_eq!(
+                bar.last(),
+                Some(&(steps_per_bar - 4)),
+                "no turnaround in {steps_per_bar}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_written_rhythm_is_a_cell_and_still_repeats() {
+        // The counterpart. Somebody who writes four steps means them four times under a 4/4 bar,
+        // and mapping that onto the bar would play it once and pad the rest.
+        let cell = Pattern::parse("x ~ x ~").expect("parses");
+        assert_eq!(
+            (0..16)
+                .filter(|step| cell.at(*step).is_some())
+                .collect::<Vec<_>>(),
+            [0, 2, 4, 6, 8, 10, 12, 14]
         );
     }
 

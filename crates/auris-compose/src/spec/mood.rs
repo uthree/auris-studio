@@ -2,10 +2,8 @@
 //!
 //! The other half of the vocabulary a specification is written in, and kept apart from the model
 //! for the same reason [`Role`](super::Role) is: a mood is a small table of dials, and what those
-//! dials mean — how often a chord gains a seventh, how many notes a bar wants, which scale a
-//! brightness picks — is arithmetic that nothing about reading or writing a document belongs in.
-
-use crate::theory::scale::ScaleId;
+//! dials mean — how often a chord gains a seventh, how many notes a bar wants, how high the
+//! melody sits — is arithmetic that nothing about reading or writing a document belongs in.
 
 /// How the piece should feel.
 ///
@@ -13,7 +11,17 @@ use crate::theory::scale::ScaleId;
 /// number can be nudged. Every one runs from 0 to 1.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Mood {
-    /// Dark to bright. Chooses the scale when one is not named, and the register.
+    /// Dark to bright. Slides the register the melodic skeleton is written in.
+    ///
+    /// It used to be documented as choosing the scale when none was named, through a ladder of
+    /// modes from Phrygian to Lydian. Nothing ever called it: a specification always carries a
+    /// key, and a clip generated against the document reads the harmony lane's — so there was no
+    /// path where a scale had not been named, and the dial moved nothing at all. Overriding a key
+    /// the user did choose is not a repair, it is a different and worse feature.
+    ///
+    /// Register is the other thing "bright" says about a melody, it is audible immediately, and
+    /// it composes with the key instead of fighting it. The melodic skeleton reads it, and every
+    /// part hangs off that skeleton.
     pub brightness: f32,
     /// Calm to driving. Sets note density and how hard the drums hit.
     pub energy: f32,
@@ -118,21 +126,5 @@ impl Mood {
     /// How many notes a bar wants, as a fraction of the available steps.
     pub fn density(self) -> f32 {
         0.15 + self.energy * 0.5
-    }
-
-    /// The scale that best matches this brightness, when none was named.
-    pub fn scale(self) -> ScaleId {
-        // Ordered dark to bright; the same ordering `ScaleId::brightness` reports.
-        const LADDER: [ScaleId; 7] = [
-            ScaleId::Phrygian,
-            ScaleId::Minor,
-            ScaleId::Dorian,
-            ScaleId::MinorPentatonic,
-            ScaleId::Mixolydian,
-            ScaleId::Major,
-            ScaleId::Lydian,
-        ];
-        let index = (self.brightness * LADDER.len() as f32) as usize;
-        LADDER[index.min(LADDER.len() - 1)]
     }
 }

@@ -79,6 +79,26 @@ impl Numeral {
         }
     }
 
+    /// The same numeral, cased as `key` itself builds that degree.
+    ///
+    /// [`Self::chord_in`] lets the case override the key's own triad, because writing `IV` in a
+    /// minor key is how a borrowed major subdominant is *asked for*. That override is exactly
+    /// wrong for a caller doing the borrowing rather than writing one down: carrying C major's
+    /// `vi` over to C minor is a request for the sixth degree **of C minor**, which is A♭ major,
+    /// and the override answered A♭ minor — a chord neither mode builds there.
+    ///
+    /// A degree with an accidental on it is returned untouched. `bVII` names a chromatic root the
+    /// key has no triad for, so its case is the only thing saying what quality was meant.
+    pub fn as_diatonic(self, key: Key) -> Self {
+        if self.accidental != 0 {
+            return self;
+        }
+        Self {
+            minor_case: diatonic_quality(key, self.degree).is_minor(),
+            ..self
+        }
+    }
+
     /// How the numeral is written down for storage.
     ///
     /// This is [`Display`](fmt::Display) except in one place, and the exception is the whole

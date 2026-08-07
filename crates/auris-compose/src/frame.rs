@@ -13,6 +13,7 @@ use crate::spec::{LeadIn, Mood, SectionSpec, SongSpec};
 use crate::theory::chart::{ChartOrigin, HarmonicEvent};
 use crate::theory::chord::Quality;
 use crate::theory::key::Key;
+use crate::theory::numeral::diatonic_seventh;
 
 /// One playing of one section.
 #[derive(Clone, Debug)]
@@ -168,7 +169,7 @@ pub fn plan(spec: &SongSpec) -> Frame {
         }
 
         let length = grid.bar_ticks() * section.bars as i64;
-        let skeleton = skeleton(&events, spec.seed, name, instance);
+        let skeleton = skeleton(&events, spec.seed, name, instance, spec.mood.brightness);
 
         sections.push(SectionPlan {
             name: name.clone(),
@@ -224,36 +225,45 @@ fn colour(events: &mut [HarmonicEvent], mood: Mood, seed: u64, section: &str, in
         if !event.numeral.is_colourable() {
             continue;
         }
-        // The parallel mode's version of the same degree: this is where a minor iv in a major
-        // key comes from, and it is the cheapest colour in the book.
-        let parallel = event.key.parallel();
-        // Whether the chord ended up being the parallel mode's rather than this key's. That is
-        // the one colour that can move the root, and so the one the numeral cannot follow by
-        // having a quality written on it.
-        let mut from_parallel = false;
+        // Which mode the degree is taken from. A borrow moves it into the parallel one, which is
+        // where a minor iv in a major key comes from and the cheapest colour in the book.
+        let source = if borrow {
+            event.key.parallel()
+        } else {
+            event.key
+        };
+        // Asked for as the source mode's *own* chord on that degree — see `Numeral::as_diatonic`
+        // for why replaying the numeral's case instead answered A♭ minor for a borrowed vi, and
+        // never answered anything at all for a borrowed I, IV or V.
+        let mut chord = event.numeral.as_diatonic(source).chord_in(source);
         if seventh {
-            event.chord.quality = event.chord.quality.with_seventh();
-        }
-        if ninth {
-            event.chord.quality = event.chord.quality.with_ninth();
-        }
-        if borrow {
-            let borrowed = event.numeral.chord_in(parallel);
-            if borrowed.root != event.chord.root || borrowed.quality != event.chord.quality {
-                event.chord = borrowed;
-                from_parallel = true;
+            // The seventh the *key* stacks on that degree, which is the only thing that knows a
+            // dominant from a tonic. `Quality::with_seventh` sees a major triad and can only give
+            // it a major seventh, so this used to write Vmaj7 — an F♯ in the key of C — on the
+            // one chord where the seventh matters most.
+            chord.quality = Some(event.numeral)
+                .filter(|numeral| numeral.accidental == 0)
+                .and_then(|numeral| diatonic_seventh(source, numeral.degree))
+                .unwrap_or_else(|| chord.quality.with_seventh());
+            // Only over a seventh, which is what `Mood::ninth_rate` already says it is. On its
+            // own it made an add9 of a major triad and nothing whatever of a minor one.
+            if ninth {
+                chord.quality = chord.quality.with_ninth();
             }
         }
-        // Read off the chord that came out, at the end, rather than patched alongside each
-        // change — which is what makes `event.chord == event.numeral.chord_in(event.key)` true
-        // by construction instead of true as long as three branches agree with each other.
-        if event.chord != event.numeral.chord_in(event.key) {
-            event.numeral = if from_parallel {
-                event.numeral.respelled_in(parallel, event.key)
-            } else {
-                event.numeral.with_quality(event.chord.quality)
-            };
+        if chord == event.chord {
+            continue;
         }
+        // Named against the key still in force, from a numeral that means this chord in the mode
+        // it was taken from. Resolving and renaming through one value is what makes
+        // `event.chord == event.numeral.chord_in(event.key)` true by construction rather than
+        // true as long as three branches agree with each other.
+        event.numeral = event
+            .numeral
+            .as_diatonic(source)
+            .with_quality(chord.quality)
+            .respelled_in(source, event.key);
+        event.chord = chord;
     }
 }
 
@@ -306,6 +316,7 @@ pub(crate) fn skeleton(
     seed: u64,
     section: &str,
     instance: usize,
+    brightness: f32,
 ) -> Vec<i32> {
     if events.is_empty() {
         return Vec::new();
@@ -357,7 +368,11 @@ pub(crate) fn skeleton(
         } else {
             1.0 - (position - peak) / (1.0 - peak).max(0.001)
         };
-        let target = low as f32 + (high - low) as f32 * (0.25 + 0.5 * height);
+        // Where in the role's range the arch sits. The arch spans half the range and brightness
+        // slides that half: 0 writes the line low, 1 writes it high, and 0.5 leaves it exactly
+        // where it has always been. See `Mood::brightness` for why this is what that dial does.
+        let floor = 0.5 * brightness.clamp(0.0, 1.0);
+        let target = low as f32 + (high - low) as f32 * (floor + 0.5 * height);
         let final_event = index + 1 == candidates.len();
 
         let mut row = Vec::with_capacity(options.len());

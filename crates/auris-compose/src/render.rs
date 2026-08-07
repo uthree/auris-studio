@@ -1060,14 +1060,17 @@ mod tests {
     /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
     /// a bug or a decision, and this is what makes anyone look.
     ///
-    /// It last moved when the timing humanisation became a time rather than a count of ticks, lost
-    /// its floor, and stopped reaching the kit. Three of the four fixtures moved and the fourth is
-    /// `BASE`, which writes `humanize = 0` and so is the one piece here the dial never touched —
-    /// that it did not move is the assertion that nothing else did. All four counts are exactly
-    /// what they were, which is the property to check first: this edit moves notes and must never
-    /// add or drop one. Nor does it restrike any — the wander is drawn whether or not it is used,
-    /// so every velocity in all four is the number it always was, and every difference in the
-    /// three digests that moved is a start time.
+    /// It last moved when `colour` stopped adding sevenths through [`Quality::with_seventh`],
+    /// which can only ever give a major triad a *major* seventh and so wrote `Vmaj7` where `V7`
+    /// belongs, and when a borrow started asking the parallel mode for its own chord on the degree
+    /// instead of replaying the numeral's case at it.
+    ///
+    /// The two fixtures that moved are the two whose charts the composer wrote itself. The other
+    /// two quote `@axis` and `@marusa`, and a quoted chart is never coloured — that they did not
+    /// move is the assertion that the trade is still exactly what it was documented to be, and
+    /// that nothing outside the colouring changed. Both counts rose, which is the property to
+    /// check here: the edit adds chord tones that were being written wrongly or dropped, so notes
+    /// may appear, but no chord may move to a degree the chart did not name.
     #[test]
     fn the_composer_writes_what_it_wrote_before() {
         // A chart nobody asked for is the composer's own, and so the only kind it colours. In a
@@ -1083,23 +1086,36 @@ mod tests {
                     bars = 8
                     "#
             ),
-            "verse·1 C major | Cmaj7 G Am Fmaj7 Cmaj7 Gmaj7 Am9 F |\n\
-             163 notes, digest a275095187edb4bd\n"
+            "verse·1 C major | Cmaj7 Gm7 Am Fmaj7 Cmaj7 G7 Am9 F |\n\
+             164 notes, digest be32784b2a05a0fd\n"
         );
 
-        // The same in a minor key, where one chord is a borrow that moves the root: `vi` read in
-        // the parallel major is an F sharp minor, and the numeral goes with it. What it becomes
-        // is `bbvii`, which looks strange and is the only pair that names that note —
-        // `degree_class` measures from the key's own scale at zero and from the major scale
-        // otherwise, so F sharp is out of reach of the sixth degree and is named from the seventh
-        // instead. Strange and right beats plain and wrong: `vi` left as it was said F minor over
-        // parts playing F sharp minor.
+        // The same in a minor key, and the fixture that moved furthest when colouring stopped
+        // reaching for `Quality::with_seventh`. It used to read
         //
-        // This and the transposed 丸サ below are the two of the four whose digest moved when the
-        // melody started reading the scale each chord implies rather than the key's own, and
-        // that is the whole report on the blast radius: they are the two whose chords borrow.
-        // The chords, the count and the shape are what they were; some melody notes stepped onto
-        // the altered degree instead of onto the one it replaced.
+        //     Amaj7 E Fm7 D Amaj7 Emaj7 Gbm Dmaj7
+        //
+        // in **A minor** — a tonic spelled A C♯ E G♯, a subdominant spelled D F♯ A C♯ and a
+        // dominant carrying D♯. Four of the eight bars were chromatic in a way nobody asked for,
+        // because a seventh added to a triad's *quality* is always the major one and the key was
+        // never consulted. It now takes the seventh the key stacks on that degree, so the tonic
+        // is `Am7`, the subdominant `Dm`, and the dominant `E9` — major third, minor seventh, the
+        // one chord in a minor key that is supposed to be chromatic and the only one that is.
+        //
+        // One chord is still a borrow that moves the root: `vi` read in the parallel major is an
+        // F sharp minor, and the numeral goes with it. What it becomes is `bbvii`, which looks
+        // strange and is the only pair that names that note — `degree_class` measures from the
+        // key's own scale at zero and from the major scale otherwise, so F sharp is out of reach
+        // of the sixth degree and is named from the seventh instead. Strange and right beats
+        // plain and wrong.
+        //
+        // The count rose from 227 because a borrow used to *discard* a seventh already added in
+        // the same pass, and now composes with it.
+        //
+        // This is also the only fixture whose mood names a brightness away from the middle —
+        // `tense` writes 0.2 — so it is the only one the register slide reaches. That it moved the
+        // digest and not the chords, and not the count, is the whole assertion about that change:
+        // brightness decides how high the skeleton sits and nothing else.
         assert_eq!(
             fingerprint(
                 r#"
@@ -1111,8 +1127,8 @@ mod tests {
                     bars = 8
                     "#
             ),
-            "verse·1 A minor | Amaj7 E Fm7 D Amaj7 Emaj7 Gbm Dmaj7 |\n\
-             227 notes, digest 1cee42201fccefc1\n"
+            "verse·1 A minor | Am7 E9 Fmaj7 Dm Am7 Em7 Gbm7 Dm7 |\n\
+             239 notes, digest d9b0dd5afc8df349\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats — and the one fixture

@@ -122,7 +122,10 @@ pub fn write_phrase(
         Some((label, instance)) => (label, instance.max(1)),
         None => (recipe.preset.name(), 1),
     };
-    let skeleton = skeleton(&events, recipe.seed, section_key, instance);
+    // A clip is generated from a recipe, which has dials of its own and no mood — so the register
+    // is the neutral one, exactly where the arch sat before brightness could move it. A recipe
+    // that grows a brightness of its own is what would change this.
+    let skeleton = skeleton(&events, recipe.seed, section_key, instance, 0.5);
 
     let frame = Frame {
         grid,
