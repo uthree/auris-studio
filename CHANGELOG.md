@@ -9,6 +9,46 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### A note can be placed without holding anything
+
+* **Create can be a plain click.** ⌘-click is Logic's, and it is still the default, but holding a
+  modifier to write a note is a thing you have to be told — and the first person to try this
+  without being told said so. The Pointer section of Settings now offers the bare click alongside
+  the three modifier gestures.
+* Choosing it moves the rubber band to ⇧-drag, and a click on empty arrangement then makes a clip
+  rather than moving the playhead. The settings page says both at the moment you choose it, and
+  they are why the modifier is still the default. ⇧ already means *extend the selection* on every
+  other press, so the gesture was there to be used rather than invented for the occasion.
+* **Deleting cannot be a plain click**, and is not offered. Creating on a bare click leaves
+  something you can see and undo; deleting on one would remove every note you reached for, and
+  would leave no gesture anywhere meaning "just this one".
+
+### Sixteen more commands you can put a key on
+
+* Mute, solo and duplicate for a track; duplicate, split-at-playhead and mute for a clip; select
+  all, duplicate, and transposition by a semitone or an octave for notes; add a bus. Every one of
+  them was already in a right-click menu and reachable from nowhere else, which meant that
+  working from the keyboard stopped at the point of actually editing anything.
+* **A command can now ship with no key at all** and still be in the list. Mute wants M, solo wants
+  S, and the mixer and the structure lane hold both; inventing ⌥⇧K so the row had *something*
+  would take that chord from whoever wanted it and bury the commands that earned their key. The
+  row is there with a dash on it, and one press puts your key on it.
+* ⌘A and ⌘D mean the notes in the piano roll and the clips in the arrangement — the same key,
+  scoped to where the keyboard is, which is what the panel outline has been telling you all along.
+  ⌥↑ and ⌥↓ transpose by a semitone, ⇧⌥↑ and ⇧⌥↓ by an octave, ⌥X splits a clip, ⌘B adds a bus.
+* The settings page groups them as **Notes** and **Clip** rather than as a second **Edit**
+  section, which is what a second run of the same group would have printed.
+
+### Composing has a menu
+
+* **A Compose menu**, holding the song sheet and the specification file. It was one row in the
+  middle of File, between Open Project and Save — and that row carried the label of the
+  *specification file* route while dispatching the song sheet, so the way in that needs no file
+  was announced as "Compose from Specification…" and the file route was in no menu at all.
+* **The Transport menu is 再生 in Japanese**, not 「トランスポート」. The transliteration says
+  nothing to anyone who has not already met the English word, on the menu holding play and stop.
+  The English is unchanged: "Transport" is what the word means in English.
+
 ### The tune is a line rather than a walk
 
 * **A third of every melodic interval the composer wrote used to be a fourth or wider.** That is an

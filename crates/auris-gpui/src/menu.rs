@@ -89,13 +89,6 @@ pub fn model(language: Language) -> Vec<MenuSection> {
             actions::OpenProject,
             "file.open",
         ),
-        // With New and Open rather than off on its own: all three replace the document, and
-        // that is what a person needs to know before choosing one.
-        command(
-            t(Key::MenuComposeItem),
-            actions::ComposeSong,
-            "file.compose",
-        ),
         MenuRow::Separator,
         command(t(Key::CmdSave), actions::SaveProject, "file.save"),
         command(
@@ -161,7 +154,55 @@ pub fn model(language: Language) -> Vec<MenuSection> {
             command(t(Key::CmdUndo), actions::Undo, "edit.undo"),
             command(t(Key::CmdRedo), actions::Redo, "edit.redo"),
             MenuRow::Separator,
+            // The note commands and the clip commands sit together, in pairs, because they are
+            // the same command asked of two different things — and each pair shares a keystroke,
+            // scoped so that whichever panel has the keyboard answers. Saying so on the menu is
+            // how a person finds out that ⌘A did not do nothing, it did the other one.
+            command(
+                t(Key::CmdSelectAllNotes),
+                actions::SelectAllNotes,
+                "edit.select_all",
+            ),
+            command(
+                t(Key::CmdSelectAllClips),
+                actions::SelectAllClips,
+                "clip.select_all",
+            ),
+            command(
+                t(Key::CmdDuplicateNotes),
+                actions::DuplicateNotes,
+                "edit.duplicate",
+            ),
+            command(
+                t(Key::CmdDuplicateClip),
+                actions::DuplicateClip,
+                "clip.duplicate",
+            ),
             command(t(Key::MenuDelete), actions::DeleteSelection, "edit.delete"),
+            MenuRow::Separator,
+            command(
+                t(Key::CmdTransposeUp),
+                actions::TransposeUp,
+                "edit.transpose_up",
+            ),
+            command(
+                t(Key::CmdTransposeDown),
+                actions::TransposeDown,
+                "edit.transpose_down",
+            ),
+            command(t(Key::CmdOctaveUp), actions::OctaveUp, "edit.octave_up"),
+            command(
+                t(Key::CmdOctaveDown),
+                actions::OctaveDown,
+                "edit.octave_down",
+            ),
+            MenuRow::Separator,
+            command(t(Key::CmdSplitClip), actions::SplitClip, "clip.split"),
+            command(
+                t(Key::CmdToggleClipMute),
+                actions::ToggleClipMute,
+                "clip.mute",
+            ),
             MenuRow::Separator,
             command(t(Key::CmdNextTool), actions::NextTool, "edit.next_tool"),
             MenuRow::Separator,
@@ -190,8 +231,46 @@ pub fn model(language: Language) -> Vec<MenuSection> {
                 actions::AddAudioTrack,
                 "track.add_audio",
             ),
+            command(
+                t(Key::CmdAddBusTrack),
+                actions::AddBusTrack,
+                "track.add_bus",
+            ),
             MenuRow::Separator,
+            command(
+                t(Key::CmdToggleTrackMute),
+                actions::ToggleTrackMute,
+                "track.mute",
+            ),
+            command(
+                t(Key::CmdToggleTrackSolo),
+                actions::ToggleTrackSolo,
+                "track.solo",
+            ),
+            MenuRow::Separator,
+            command(
+                t(Key::CmdDuplicateTrack),
+                actions::DuplicateTrack,
+                "track.duplicate",
+            ),
             command(t(Key::CmdDeleteTrack), actions::DeleteTrack, "track.delete"),
+        ],
+    });
+
+    // A menu of its own, and named for what it does rather than for how it is fed. Composing was
+    // one row in the middle of File, between Open Project and Save, carrying the label of the
+    // *specification file* route — so the sheet, which is the way in that needs no file at all,
+    // was announced as "Compose from Specification…" and the file route was in no menu whatever.
+    // Nobody who had not been told was going to find either.
+    sections.push(MenuSection {
+        name: t(Key::GroupCompose),
+        rows: vec![
+            command(t(Key::CmdComposeSong), actions::ComposeSong, "file.compose"),
+            command(
+                t(Key::CmdComposeFromSpec),
+                actions::ComposeFromSpec,
+                "file.compose_spec",
+            ),
         ],
     });
 
@@ -374,23 +453,33 @@ mod tests {
     }
 
     #[test]
-    fn composing_is_reachable_without_the_command_line() {
+    fn both_ways_into_the_composer_are_in_a_menu_of_their_own() {
         // `Session::compose` was written with the composer and the desktop application never
-        // called it, so the whole feature existed only for `auris compose`. A menu row is what
-        // makes it exist for everyone else.
-        let labels: Vec<String> = model(Language::English)
+        // called it, so the whole feature existed only for `auris compose`. Then it was one row
+        // in File — carrying the label of the specification-file route, while dispatching the
+        // song sheet, and with the file route itself in no menu at all. Both are named for what
+        // they are now, under a heading somebody looking for the composer would open.
+        let compose = model(Language::English)
             .into_iter()
-            .flat_map(|section| section.rows)
+            .find(|section| section.name == Key::GroupCompose.get(Language::English))
+            .expect("composing has a menu of its own");
+        let labels: Vec<String> = compose
+            .rows
+            .iter()
             .filter_map(|row| match row {
                 MenuRow::Command { label, .. } => Some(label.to_string()),
                 _ => None,
             })
             .collect();
-        let expected = Key::MenuComposeItem.get(Language::English);
-        assert!(
-            labels.iter().any(|label| label == expected),
-            "`{expected}` is in no menu"
-        );
+        for expected in [
+            Key::CmdComposeSong.get(Language::English),
+            Key::CmdComposeFromSpec.get(Language::English),
+        ] {
+            assert!(
+                labels.iter().any(|label| label == expected),
+                "`{expected}` is not in the Compose menu"
+            );
+        }
     }
 
     #[test]

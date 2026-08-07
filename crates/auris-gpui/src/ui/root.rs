@@ -14,6 +14,7 @@ use crate::dock::{Dock, Panel};
 use crate::gestures::past_drag_threshold;
 use crate::menu::MenuRow;
 use crate::theme::Theme;
+use crate::ui::context_menu::MenuCommand;
 use crate::ui::drop::{drop_action, lanes_offset};
 use crate::ui::menu_bar;
 use crate::ui::widgets::splitter;
@@ -120,8 +121,22 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_export_cycle))
             .on_action(cx.listener(Self::on_add_instrument_track))
             .on_action(cx.listener(Self::on_add_audio_track))
+            .on_action(cx.listener(Self::on_add_bus_track))
+            .on_action(cx.listener(Self::on_duplicate_track))
+            .on_action(cx.listener(Self::on_toggle_track_mute))
+            .on_action(cx.listener(Self::on_toggle_track_solo))
             .on_action(cx.listener(Self::on_delete_track))
             .on_action(cx.listener(Self::on_delete_selection))
+            .on_action(cx.listener(Self::on_select_all_notes))
+            .on_action(cx.listener(Self::on_duplicate_notes))
+            .on_action(cx.listener(Self::on_transpose_up))
+            .on_action(cx.listener(Self::on_transpose_down))
+            .on_action(cx.listener(Self::on_octave_up))
+            .on_action(cx.listener(Self::on_octave_down))
+            .on_action(cx.listener(Self::on_select_all_clips))
+            .on_action(cx.listener(Self::on_duplicate_clip))
+            .on_action(cx.listener(Self::on_split_clip))
+            .on_action(cx.listener(Self::on_toggle_clip_mute))
             .on_action(cx.listener(Self::on_next_tool))
             .on_action(cx.listener(Self::on_set_tempo))
             .on_action(cx.listener(Self::on_set_time_signature))
@@ -1203,6 +1218,194 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.delete_selection();
+        cx.notify();
+    }
+
+    // ---------------------------------------------------------------- from the context menus
+    //
+    // Each of these ran the same [`MenuCommand`] a right-click already ran, and did so by calling
+    // `run_menu_command` rather than by reimplementing it: a keystroke and a menu row that mean
+    // the same thing must *be* the same thing, or the pair drift and one of them starts leaving
+    // the selection somewhere the other does not.
+    //
+    // What they act on is the selection, because a keystroke has no pointer to be under. The
+    // clip commands take `selected_clip`, which is what the arrangement's own menu passes when it
+    // is opened over a clip that is already selected.
+
+    fn on_add_bus_track(
+        &mut self,
+        _: &actions::AddBusTrack,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.add_bus_track();
+        cx.notify();
+    }
+
+    fn on_duplicate_track(
+        &mut self,
+        _: &actions::DuplicateTrack,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(track) = self.selected_track {
+            self.run_menu_command(MenuCommand::DuplicateTrack(track), cx);
+        }
+        cx.notify();
+    }
+
+    fn on_toggle_track_mute(
+        &mut self,
+        _: &actions::ToggleTrackMute,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(track) = self.selected_track {
+            self.toggle_mute(track);
+        }
+        cx.notify();
+    }
+
+    fn on_toggle_track_solo(
+        &mut self,
+        _: &actions::ToggleTrackSolo,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(track) = self.selected_track {
+            self.toggle_solo(track);
+        }
+        cx.notify();
+    }
+
+    fn on_select_all_notes(
+        &mut self,
+        _: &actions::SelectAllNotes,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_menu_command(MenuCommand::SelectAllNotes, cx);
+        cx.notify();
+    }
+
+    fn on_duplicate_notes(
+        &mut self,
+        _: &actions::DuplicateNotes,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_menu_command(MenuCommand::DuplicateNotes, cx);
+        cx.notify();
+    }
+
+    fn on_transpose_up(
+        &mut self,
+        _: &actions::TransposeUp,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_menu_command(MenuCommand::TransposeNotes(1), cx);
+        cx.notify();
+    }
+
+    fn on_transpose_down(
+        &mut self,
+        _: &actions::TransposeDown,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_menu_command(MenuCommand::TransposeNotes(-1), cx);
+        cx.notify();
+    }
+
+    fn on_octave_up(
+        &mut self,
+        _: &actions::OctaveUp,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_menu_command(MenuCommand::TransposeNotes(12), cx);
+        cx.notify();
+    }
+
+    fn on_octave_down(
+        &mut self,
+        _: &actions::OctaveDown,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_menu_command(MenuCommand::TransposeNotes(-12), cx);
+        cx.notify();
+    }
+
+    /// Selects every clip in the song, on every track.
+    ///
+    /// Not only the clips of the selected track: ⌘A means everything in the thing you are looking
+    /// at, and what the arrangement shows is the whole song.
+    fn on_select_all_clips(
+        &mut self,
+        _: &actions::SelectAllClips,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let clips: std::collections::BTreeSet<ClipId> = self
+            .project()
+            .tracks
+            .iter()
+            .flat_map(|track| {
+                let midi = track
+                    .kind
+                    .as_instrument()
+                    .into_iter()
+                    .flat_map(|instrument| instrument.clips.iter().map(|clip| clip.id));
+                let audio = track
+                    .kind
+                    .as_audio()
+                    .into_iter()
+                    .flat_map(|audio| audio.clips.iter().map(|clip| clip.id));
+                midi.chain(audio)
+            })
+            .collect();
+        // The editors keep pointing at the clip they were on, so selecting everything does not
+        // swap the piano roll out from under the user.
+        let primary = self.selected_clip.filter(|id| clips.contains(id));
+        self.select_clips(clips, primary);
+        cx.notify();
+    }
+
+    fn on_duplicate_clip(
+        &mut self,
+        _: &actions::DuplicateClip,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(clip) = self.selected_clip {
+            self.run_menu_command(MenuCommand::DuplicateClip(clip), cx);
+        }
+        cx.notify();
+    }
+
+    fn on_split_clip(
+        &mut self,
+        _: &actions::SplitClip,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(clip) = self.selected_clip {
+            self.run_menu_command(MenuCommand::SplitClipAtPlayhead(clip), cx);
+        }
+        cx.notify();
+    }
+
+    fn on_toggle_clip_mute(
+        &mut self,
+        _: &actions::ToggleClipMute,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(clip) = self.selected_clip {
+            self.run_menu_command(MenuCommand::ToggleClipMute(clip), cx);
+        }
         cx.notify();
     }
 

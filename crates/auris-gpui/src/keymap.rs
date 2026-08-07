@@ -180,12 +180,15 @@ impl Keymap {
 
     /// Every keystroke bound to `command`, whether default or overridden.
     ///
-    /// Empty when the user has deliberately unbound it. As stored, which for an untouched command
-    /// is the `secondary-` spelling — use [`Keymap::display`] for anything a person reads.
+    /// Empty when the user has deliberately unbound it, and equally when the command ships with
+    /// no key — the two are the same to everything downstream, which is the point: a row with no
+    /// keystroke beside it renders, conflicts with nothing, and binds nothing. As stored, which
+    /// for an untouched command is the `secondary-` spelling — use [`Keymap::display`] for
+    /// anything a person reads.
     pub fn keystrokes(&self, command: &Bindable) -> Vec<&str> {
         match self.overrides.get(command.id) {
             Some(keystrokes) => keystrokes.iter().map(String::as_str).collect(),
-            None => vec![command.default],
+            None => command.default.into_iter().collect(),
         }
     }
 
@@ -223,11 +226,14 @@ impl Keymap {
         self.overrides.contains_key(command.id)
     }
 
-    /// `true` when the user has deliberately left this command with no keystroke at all.
+    /// `true` when this command answers to no keystroke at all.
+    ///
+    /// Whether that is the user's doing or the command's own default. The settings row it drives
+    /// says "this has no key", which is equally true either way — asking instead whether an
+    /// override exists would leave a command that ships unbound looking bound to nothing in
+    /// particular.
     pub fn is_unbound(&self, command: &Bindable) -> bool {
-        self.overrides
-            .get(command.id)
-            .is_some_and(|keystrokes| keystrokes.is_empty())
+        self.keystrokes(command).is_empty()
     }
 
     /// Replaces the keystroke in one slot, leaving the command's other keystrokes alone.
@@ -301,12 +307,19 @@ impl Keymap {
     /// `secondary-s`. Comparing them raw would write an override every time someone pressed a
     /// default back in, freezing today's defaults into their file.
     ///
-    /// An empty list is stored rather than dropped: that is the user saying "no key at all", and
-    /// dropping it would put the default back on the next launch.
+    /// An empty list is stored rather than dropped — that is the user saying "no key at all", and
+    /// dropping it would put the default back on the next launch — *unless* the command ships
+    /// with no key, where the empty list already is the default and storing it would write an
+    /// override that says nothing.
     fn store(&mut self, command: &Bindable, keystrokes: Vec<String>) {
-        let is_default = keystrokes.len() == 1
-            && actions::normalise_keystroke(&keystrokes[0])
-                == actions::normalise_keystroke(command.default);
+        let is_default = match command.default {
+            Some(default) => {
+                keystrokes.len() == 1
+                    && actions::normalise_keystroke(&keystrokes[0])
+                        == actions::normalise_keystroke(default)
+            }
+            None => keystrokes.is_empty(),
+        };
         if is_default {
             self.overrides.remove(command.id);
         } else {
@@ -319,8 +332,11 @@ impl Keymap {
     /// Distinct from [`Keymap::clear`], which puts the default back. Without this there was no way
     /// to say "not this one" — a user who did not want `space` to start playback could only move
     /// it somewhere else and hope that somewhere was out of the way.
+    ///
+    /// Through [`Keymap::store`], so unbinding a command that already ships unbound writes
+    /// nothing: that override would say exactly what the default says.
     pub fn unbind(&mut self, command: &Bindable) {
-        self.overrides.insert(command.id.to_string(), Vec::new());
+        self.store(command, Vec::new());
     }
 
     /// Restores one command to its default.
@@ -382,11 +398,22 @@ mod tests {
         actions::bindable(id).expect("test refers to a real command")
     }
 
+    /// The keystroke a command ships with.
+    ///
+    /// Every test below picks a command *because* it has one — the rules being checked are about
+    /// what happens around a default, and a command that ships without one has no "back to the
+    /// default" to be moved away from and returned to.
+    fn preset(command: &'static Bindable) -> &'static str {
+        command
+            .default
+            .expect("this test needs a command that ships with a key")
+    }
+
     #[test]
     fn an_empty_keymap_reports_the_defaults() {
         let keymap = Keymap::default();
         let play = command("transport.play");
-        assert_eq!(keymap.keystroke(play), Some(play.default));
+        assert_eq!(keymap.keystroke(play), Some(preset(play)));
         assert!(!keymap.is_overridden(play));
     }
 
@@ -399,7 +426,7 @@ mod tests {
         assert_eq!(keymap.keystroke(play), Some("cmd-p"));
         assert!(keymap.is_overridden(play));
 
-        assert!(keymap.set_at(play, 0, play.default));
+        assert!(keymap.set_at(play, 0, preset(play)));
         assert!(
             !keymap.is_overridden(play),
             "an override equal to the default would freeze today's default into the file"
@@ -439,7 +466,7 @@ mod tests {
         assert!(keymap.set_at(save, 0, "shift-f7"));
         assert!(keymap.is_overridden(save));
 
-        assert!(keymap.set_at(save, 0, &actions::normalise_keystroke(save.default)));
+        assert!(keymap.set_at(save, 0, &actions::normalise_keystroke(preset(save))));
         assert!(
             !keymap.is_overridden(save),
             "a default pressed on the keyboard was stored as an override"
@@ -453,7 +480,7 @@ mod tests {
         let undo = command("edit.undo");
         // `file.save` is bound to the default `secondary-s`; asking about it in the form the
         // keyboard produces must still find it.
-        let clash = keymap.conflicts(&actions::normalise_keystroke(save.default), undo);
+        let clash = keymap.conflicts(&actions::normalise_keystroke(preset(save)), undo);
         assert_eq!(clash.len(), 1);
         assert_eq!(clash[0].id, save.id);
     }
@@ -479,7 +506,7 @@ mod tests {
         let mut keymap = Keymap::default();
         let play = command("transport.play");
         assert!(!keymap.set_at(play, 0, "notakey-x"));
-        assert_eq!(keymap.keystroke(play), Some(play.default));
+        assert_eq!(keymap.keystroke(play), Some(preset(play)));
     }
 
     #[test]
@@ -488,16 +515,16 @@ mod tests {
         let play = command("transport.play");
         let undo = command("edit.undo");
 
-        assert!(keymap.conflicts(play.default, play).is_empty());
+        assert!(keymap.conflicts(preset(play), play).is_empty());
 
-        keymap.set_at(undo, 0, play.default);
-        let clash = keymap.conflicts(play.default, play);
+        keymap.set_at(undo, 0, preset(play));
+        let clash = keymap.conflicts(preset(play), play);
         assert_eq!(clash.len(), 1);
         assert_eq!(clash[0].id, undo.id);
         // And the command doing the asking is never its own conflict.
         assert!(
             keymap
-                .conflicts(play.default, undo)
+                .conflicts(preset(play), undo)
                 .iter()
                 .all(|c| c.id != undo.id)
         );
@@ -578,10 +605,10 @@ mod tests {
         let play = command("transport.play");
 
         assert!(keymap.add(play, "f5"));
-        assert_eq!(keymap.keystrokes(play), vec![play.default, "f5"]);
+        assert_eq!(keymap.keystrokes(play), vec![preset(play), "f5"]);
         assert_eq!(
             keymap.keystroke(play),
-            Some(play.default),
+            Some(preset(play)),
             "the menu shows the first; an alternate is an alternate"
         );
 
@@ -590,11 +617,11 @@ mod tests {
             "the same key twice would grow the list on every press"
         );
         assert!(
-            !keymap.add(play, &actions::normalise_keystroke(play.default)),
+            !keymap.add(play, &actions::normalise_keystroke(preset(play))),
             "and so would the default pressed back in through its platform spelling"
         );
         assert!(!keymap.add(play, "notakey-x"));
-        assert_eq!(keymap.keystrokes(play), vec![play.default, "f5"]);
+        assert_eq!(keymap.keystrokes(play), vec![preset(play), "f5"]);
     }
 
     #[test]
@@ -605,14 +632,14 @@ mod tests {
         keymap.add(play, "f6");
 
         assert!(keymap.set_at(play, 1, "f7"));
-        assert_eq!(keymap.keystrokes(play), vec![play.default, "f7", "f6"]);
+        assert_eq!(keymap.keystrokes(play), vec![preset(play), "f7", "f6"]);
 
         keymap.remove_at(play, 1);
-        assert_eq!(keymap.keystrokes(play), vec![play.default, "f6"]);
+        assert_eq!(keymap.keystrokes(play), vec![preset(play), "f6"]);
         keymap.remove_at(play, 9);
         assert_eq!(
             keymap.keystrokes(play),
-            vec![play.default, "f6"],
+            vec![preset(play), "f6"],
             "a slot that is not there changes nothing"
         );
 
@@ -620,7 +647,7 @@ mod tests {
         // default would freeze today's default into the user's file.
         keymap.remove_at(play, 1);
         assert!(!keymap.is_overridden(play));
-        assert_eq!(keymap.keystrokes(play), vec![play.default]);
+        assert_eq!(keymap.keystrokes(play), vec![preset(play)]);
 
         // And down from *one* leaves it unbound rather than back on the default, because that is
         // the only thing removing the last key can mean.
@@ -644,13 +671,13 @@ mod tests {
 
         assert!(
             keymap
-                .conflicts(play.default, command("edit.undo"))
+                .conflicts(preset(play), command("edit.undo"))
                 .is_empty(),
             "and it stops clashing with anything, because it answers to nothing"
         );
 
         keymap.clear(play);
-        assert_eq!(keymap.keystroke(play), Some(play.default));
+        assert_eq!(keymap.keystroke(play), Some(preset(play)));
     }
 
     #[test]
@@ -664,8 +691,8 @@ mod tests {
         assert_eq!(tool.context, crate::actions::context::ROLL);
         assert_eq!(undo.context, crate::actions::context::WINDOW);
 
-        keymap.set_at(undo, 0, tool.default);
-        let clash = keymap.conflicts(tool.default, tool);
+        keymap.set_at(undo, 0, preset(tool));
+        let clash = keymap.conflicts(preset(tool), tool);
         assert_eq!(
             clash.len(),
             1,
@@ -718,8 +745,47 @@ mod tests {
         keymap.set_at(command("edit.undo"), 0, "cmd-shift-u");
         keymap.reset();
         for entry in BINDABLE {
-            assert_eq!(keymap.keystroke(entry), Some(entry.default));
+            // Including the commands whose default *is* no key, which read back as `None`
+            // rather than being skipped: reset means every row is where it started.
+            assert_eq!(keymap.keystroke(entry), entry.default, "`{}`", entry.id);
         }
+    }
+
+    #[test]
+    fn a_command_that_ships_with_no_key_can_be_given_one_and_handed_back() {
+        // The row exists so a user can put a key on a command that did not earn a default. It has
+        // to behave like any other row from there: bindable, conflicting, resettable — and the
+        // "unbound" it starts in is the same unbound `unbind` produces, not a third state.
+        let mut keymap = Keymap::default();
+        let mute = BINDABLE
+            .iter()
+            .find(|entry| entry.default.is_none())
+            .expect("some commands ship with no key");
+
+        assert!(keymap.keystrokes(mute).is_empty());
+        assert!(keymap.is_unbound(mute));
+        assert!(!keymap.is_overridden(mute));
+        assert_eq!(keymap.display(mute), "");
+        assert!(
+            keymap.conflicts("f8", mute).is_empty(),
+            "and it collides with nothing until it is given a key"
+        );
+
+        assert!(keymap.set_at(mute, 0, "f8"));
+        assert_eq!(keymap.keystrokes(mute), vec!["f8"]);
+        assert!(keymap.is_overridden(mute));
+        assert!(!keymap.is_unbound(mute));
+
+        // Taking the key away again is a return to the default, not an override that says "no
+        // key" — the default already said that, and writing it would freeze it into the file.
+        keymap.remove_at(mute, 0);
+        assert!(keymap.is_unbound(mute));
+        assert!(
+            !keymap.is_overridden(mute),
+            "an override identical to the default was written"
+        );
+        keymap.unbind(mute);
+        assert!(!keymap.is_overridden(mute), "and so was one from `unbind`");
     }
 
     #[test]
@@ -733,7 +799,7 @@ mod tests {
         keymap.set_at(save, 0, "f6");
 
         keymap.reset_group(save.group);
-        assert_eq!(keymap.keystroke(save), Some(save.default));
+        assert_eq!(keymap.keystroke(save), Some(preset(save)));
         assert_eq!(keymap.keystroke(play), Some("f5"));
     }
 }

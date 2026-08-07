@@ -5,7 +5,7 @@ under them change. The rest of the application is in [Features](features.md).
 
 ## The song specification
 
-**File → Compose a Song…** opens the song sheet, in three columns: the **song** — key, tempo,
+**Compose → Compose a Song…** opens the song sheet, in three columns: the **song** — key, tempo,
 meter, mood, groove, seed and the feel dials; the **form** — one row per playing of a section,
 each with its length, how hard it is played, what progression it plays, how far it is moved from
 the key and which parts play it; and the **parts** — one row each, with role, instrument, octave
@@ -105,7 +105,7 @@ the song rather than on the defaults after a save and a reload, and **Another Ta
 whose `.asong` nobody kept still gives another take of *that* song.
 
 The sheet and the file are two faces of one `SongSpec`, so neither can drift from the other:
-**File → Compose from Specification…**, or `auris compose song.asong`, writes a piece from the same
+**Compose → Compose from Specification…**, or `auris compose song.asong`, writes a piece from the same
 thing in a TOML document — key, scale, tempo, mood, chord progression, form and parts — that an
 agent can write and a person can edit one line of.
 

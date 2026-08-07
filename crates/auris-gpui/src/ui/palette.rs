@@ -565,7 +565,7 @@ mod tests {
     #[test]
     fn the_whole_list_is_offered_before_anything_is_typed() {
         let all = entries(auris_i18n::Language::English, |command| {
-            command.default.to_string()
+            command.default.unwrap_or_default().to_string()
         });
         assert_eq!(matches(&all, "").len(), all.len());
         assert!(
@@ -585,7 +585,9 @@ mod tests {
         // Four things reachable only through a window or a corner of the transport bar until the
         // palette learned to carry a value. Each list has to be the whole list, or the palette
         // becomes a place where some of the grid divisions live.
-        let all = entries(Language::English, |command| command.default.to_string());
+        let all = entries(Language::English, |command| {
+            command.default.unwrap_or_default().to_string()
+        });
         let commands: Vec<PaletteCommand> = all.iter().map(|entry| entry.command).collect();
 
         for (_, ticks) in crate::ui::transport_bar::GRID_CHOICES {
@@ -609,7 +611,9 @@ mod tests {
     fn a_value_is_found_by_typing_the_value() {
         // The point of putting them here: `6/8` reaches the meter without anybody knowing that
         // the meter is set from a field in the middle of the transport bar.
-        let all = entries(Language::English, |command| command.default.to_string());
+        let all = entries(Language::English, |command| {
+            command.default.unwrap_or_default().to_string()
+        });
         let first = |query: &str| all[matches(&all, query)[0]].command;
 
         assert_eq!(
@@ -634,7 +638,7 @@ mod tests {
     #[test]
     fn a_query_narrows_the_list_and_keeps_what_it_should() {
         let all = entries(auris_i18n::Language::English, |command| {
-            command.default.to_string()
+            command.default.unwrap_or_default().to_string()
         });
         let found = matches(&all, "track");
         assert!(!found.is_empty());

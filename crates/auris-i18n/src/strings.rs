@@ -180,6 +180,9 @@ strings! {
     PointerHeading { en: "Pointer", ja: "ポインタ操作" }
     PointerCreate { en: "Create a note or clip", ja: "ノート・クリップを作成" }
     PointerDelete { en: "Delete what is under the pointer", ja: "ポインタ位置のものを削除" }
+    // Named "Click" rather than "plain click" or "no modifier": it is the shortest true thing,
+    // and the row it sits in already says what it does.
+    GesturePlainClick { en: "Click", ja: "クリック" }
     // Two names for each modifier gesture: the frontend picks by platform, because the glyphs
     // are Apple's and a Windows keyboard has neither of them printed on it.
     GestureCommandClick { en: "⌘-click", ja: "⌘＋クリック" }
@@ -216,12 +219,29 @@ strings! {
         en: "The two cannot share a gesture; picking one that is taken swaps them.",
         ja: "2 つに同じ操作は割り当てられません。使用中のものを選ぶと入れ替わります。"
     }
+    // Under the create row, because that is where somebody is standing when they choose it and
+    // find their range selections gone. Deleting is not offered on a bare click at all, so this
+    // row needs no such warning.
+    PointerClickNote {
+        en: "Range selection moves to ⇧-drag, and a click on an empty lane makes a clip rather than moving the playhead.",
+        ja: "範囲選択は ⇧＋ドラッグになり、空のレーンをクリックすると再生位置の移動ではなくクリップ作成になります。"
+    }
 
     // ------------------------------------------------------------------ command groups
-    GroupTransport { en: "Transport", ja: "トランスポート" }
+    // "Transport" is the tape machine the word came off, and it is the name every English DAW
+    // still uses. Its transliteration is not: 「トランスポート」 says nothing to anybody who has
+    // not already met the English word, on the menu holding play and stop — which is the first
+    // menu somebody opens. 「再生」 is what the menu is *for*, and it is a word.
+    GroupTransport { en: "Transport", ja: "再生" }
     GroupFile { en: "File", ja: "ファイル" }
     GroupEdit { en: "Edit", ja: "編集" }
+    GroupNotes { en: "Notes", ja: "ノート" }
+    GroupClip { en: "Clip", ja: "クリップ" }
     GroupTrack { en: "Track", ja: "トラック" }
+    // Composing is a menu of its own rather than three rows in File. It is the thing this
+    // application does that others do not, and it was reachable only from the middle of a list
+    // of file operations, under a label that named the *file* route to it.
+    GroupCompose { en: "Compose", ja: "作曲" }
     GroupView { en: "View", ja: "表示" }
 
     // ------------------------------------------------------------------ commands
@@ -252,7 +272,22 @@ strings! {
     CmdSetTrackOutput { en: "Route Track", ja: "出力先を変更" }
     CmdAddSend { en: "Add Send", ja: "センドを追加" }
     CmdRemoveSend { en: "Remove Send", ja: "センドを削除" }
+    CmdDuplicateTrack { en: "Duplicate Track", ja: "トラックを複製" }
+    CmdToggleTrackMute { en: "Mute Track", ja: "トラックをミュート" }
+    CmdToggleTrackSolo { en: "Solo Track", ja: "トラックをソロ" }
     CmdDeleteTrack { en: "Delete Track", ja: "トラックを削除" }
+    // The note and clip commands. Each pair says which of the two it means, because both are on
+    // the same keystroke and the settings window lists them one under the other.
+    CmdSelectAllNotes { en: "Select All Notes", ja: "すべてのノートを選択" }
+    CmdDuplicateNotes { en: "Duplicate Notes", ja: "ノートを複製" }
+    CmdTransposeUp { en: "Transpose Up a Semitone", ja: "半音上げる" }
+    CmdTransposeDown { en: "Transpose Down a Semitone", ja: "半音下げる" }
+    CmdOctaveUp { en: "Transpose Up an Octave", ja: "1 オクターブ上げる" }
+    CmdOctaveDown { en: "Transpose Down an Octave", ja: "1 オクターブ下げる" }
+    CmdSelectAllClips { en: "Select All Clips", ja: "すべてのクリップを選択" }
+    CmdDuplicateClip { en: "Duplicate Clip", ja: "クリップを複製" }
+    CmdSplitClip { en: "Split Clip at Playhead", ja: "再生位置でクリップを分割" }
+    CmdToggleClipMute { en: "Mute Clip", ja: "クリップをミュート" }
     // "Show" was a lie on a toggle with no state beside it: choosing Show Inspector hid the
     // inspector. These say what the command does either way.
     CmdShowLibrary { en: "Library", ja: "ライブラリ" }

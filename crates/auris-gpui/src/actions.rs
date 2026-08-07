@@ -49,8 +49,36 @@ actions!(
         AddAudioTrack,
         /// Delete the selected track.
         DeleteTrack,
+        /// Add a bus to mix other tracks through.
+        AddBusTrack,
+        /// Duplicate the selected track, its sound and its clips.
+        DuplicateTrack,
+        /// Mute or unmute the selected track.
+        ToggleTrackMute,
+        /// Solo or unsolo the selected track.
+        ToggleTrackSolo,
         /// Delete the current selection.
         DeleteSelection,
+        /// Select every note in the clip being edited.
+        SelectAllNotes,
+        /// Lay a copy of the selected notes down after them.
+        DuplicateNotes,
+        /// Raise the selected notes by a semitone.
+        TransposeUp,
+        /// Lower the selected notes by a semitone.
+        TransposeDown,
+        /// Raise the selected notes by an octave.
+        OctaveUp,
+        /// Lower the selected notes by an octave.
+        OctaveDown,
+        /// Select every clip in the song.
+        SelectAllClips,
+        /// Lay a copy of the selected clips down after them.
+        DuplicateClip,
+        /// Cut the selected clip in two where the playhead is.
+        SplitClip,
+        /// Mute or unmute the selected clip.
+        ToggleClipMute,
         /// Put the next of the piano roll's tools in hand.
         NextTool,
         /// Type the tempo of the stretch the playhead is in.
@@ -146,8 +174,17 @@ pub struct Bindable {
     pub label: Key,
     /// Where the command can be reached from. One of the names in [`context`].
     pub context: &'static str,
-    /// Keystroke used when the user has not chosen one.
-    pub default: &'static str,
+    /// Keystroke used when the user has not chosen one, or `None` for a command that ships with
+    /// no key.
+    ///
+    /// `None` is not "we forgot". A command reachable from a menu or a context menu is already
+    /// usable, and a keystroke is only worth spending on one somebody reaches for often enough
+    /// to want it under a finger. The keyboard has far fewer chords than this table has rows, and
+    /// squatting on `⌥⇧K` because a command needed *some* default is worse than leaving the row
+    /// blank: it makes the chord unavailable to the person who did have a use for it, and buries
+    /// the commands that earned their key among ones nobody asked for. The row is still in the
+    /// settings window, still in the palette, and one click from a key of the user's choosing.
+    pub default: Option<&'static str>,
     bind: fn(&str) -> KeyBinding,
     make: fn() -> Box<dyn Action>,
 }
@@ -204,7 +241,9 @@ macro_rules! bindable {
                 group: Key::$group,
                 label: Key::$label,
                 context: $context,
-                default: $default,
+                // `""` in the table rather than `None`, so every row stays one line of the same
+                // shape and the column of keystrokes reads down the page.
+                default: if $default.is_empty() { None } else { Some($default) },
                 bind: |keys| KeyBinding::new(keys, $action, Some($context)),
                 make: || Box::new($action),
             },)*)*
@@ -227,10 +266,6 @@ bindable! {
 
         "file.new",             GroupFile,      CmdNewProject,         "secondary-n" => NewProject;
         "file.open",            GroupFile,      CmdOpenProject,        "secondary-o" => OpenProject;
-        "file.compose",         GroupFile,      CmdComposeSong,        "secondary-shift-c" => ComposeSong;
-        // The sheet is the primary way in and keeps the plain shift; the file picker is what an
-        // agent-written or hand-edited document goes through, one modifier further out.
-        "file.compose_spec",    GroupFile,      CmdComposeFromSpec,    "secondary-alt-c" => ComposeFromSpec;
         "file.save",            GroupFile,      CmdSave,               "secondary-s" => SaveProject;
         "file.save_as",         GroupFile,      CmdSaveAs,             "secondary-shift-s" => SaveProjectAs;
         "file.import",          GroupFile,      CmdImportAudio,        "secondary-i" => ImportAudio;
@@ -245,6 +280,14 @@ bindable! {
         "file.export_cycle",    GroupFile,      CmdExportCycle,        "secondary-shift-e" => ExportCycle;
         "file.quit",            GroupFile,      CmdQuit,               "secondary-q" => Quit;
 
+        // Their ids still begin `file.` because an id is written into settings files and never
+        // changes once released. The *group* is what a person reads, and these two are not file
+        // operations — one of them opens a form with no file in sight.
+        "file.compose",         GroupCompose,   CmdComposeSong,        "secondary-shift-c" => ComposeSong;
+        // The sheet is the primary way in and keeps the plain shift; the file picker is what an
+        // agent-written or hand-edited document goes through, one modifier further out.
+        "file.compose_spec",    GroupCompose,   CmdComposeFromSpec,    "secondary-alt-c" => ComposeFromSpec;
+
         "edit.undo",            GroupEdit,      CmdUndo,               "secondary-z" => Undo;
         "edit.redo",            GroupEdit,      CmdRedo,               "secondary-shift-z" => Redo;
         "edit.delete",          GroupEdit,      CmdDeleteSelection,    "backspace"   => DeleteSelection;
@@ -256,7 +299,17 @@ bindable! {
 
         "track.add_instrument", GroupTrack,     CmdAddInstrumentTrack, "secondary-t" => AddInstrumentTrack;
         "track.add_audio",      GroupTrack,     CmdAddAudioTrack,      "secondary-shift-t" => AddAudioTrack;
+        // B for bus, and it is the one plain letter of the three that was still free.
+        "track.add_bus",        GroupTrack,     CmdAddBusTrack,        "secondary-b" => AddBusTrack;
         "track.delete",         GroupTrack,     CmdDeleteTrack,        "secondary-backspace" => DeleteTrack;
+        // The four below reached the track under the pointer through its context menu and
+        // nothing else, so a person working from the keyboard could not mute a track at all.
+        // They ship with no key: mute and solo want M and S, which the mixer and the structure
+        // lane hold, and inventing a chord nobody would guess is worse than an empty row a
+        // person can fill in with the one they do want.
+        "track.duplicate",      GroupTrack,     CmdDuplicateTrack,     ""            => DuplicateTrack;
+        "track.mute",           GroupTrack,     CmdToggleTrackMute,    ""            => ToggleTrackMute;
+        "track.solo",           GroupTrack,     CmdToggleTrackSolo,    ""            => ToggleTrackSolo;
 
         // `y` is Logic's own Library key, and it is free here.
         "view.library",         GroupView,      CmdShowLibrary,        "y"           => ToggleLibrary;
@@ -293,8 +346,35 @@ bindable! {
     // at the mixer. It is Logic's own tool key, where pressing it twice swaps back to the tool
     // before — with two tools that is exactly a cycle, so it is one command rather than one per
     // tool.
+    //
+    // The note commands are scoped here for the other reason contexts exist: ⌘A and ⌘D mean the
+    // notes in the roll and the clips in the arrangement, and which one a user meant is answered
+    // by where they are looking. Both spellings are below, on the same keys, and neither
+    // shadows the other — see `Bindable::shares_reach_with`.
+    //
+    // Grouped as "Notes" rather than under Edit, which the window's own block already heads: the
+    // settings page walks this table in order and starts a section wherever the group changes, so
+    // a second run of `GroupEdit` down here would print a second Edit heading with no way to tell
+    // the two apart.
     context::ROLL => {
-        "edit.next_tool",       GroupEdit,      CmdNextTool,           "t"           => NextTool;
+        "edit.next_tool",       GroupNotes,     CmdNextTool,           "t"           => NextTool;
+        "edit.select_all",      GroupNotes,     CmdSelectAllNotes,     "secondary-a" => SelectAllNotes;
+        "edit.duplicate",       GroupNotes,     CmdDuplicateNotes,     "secondary-d" => DuplicateNotes;
+        // Logic's own four, and the arrow keys are the one part of the keyboard where ⌥ and a
+        // letter cannot collide with the character that letter would have typed.
+        "edit.transpose_up",    GroupNotes,     CmdTransposeUp,        "alt-up"      => TransposeUp;
+        "edit.transpose_down",  GroupNotes,     CmdTransposeDown,      "alt-down"    => TransposeDown;
+        "edit.octave_up",       GroupNotes,     CmdOctaveUp,           "alt-shift-up" => OctaveUp;
+        "edit.octave_down",     GroupNotes,     CmdOctaveDown,         "alt-shift-down" => OctaveDown;
+    }
+
+    context::ARRANGEMENT => {
+        "clip.select_all",      GroupClip,      CmdSelectAllClips,     "secondary-a" => SelectAllClips;
+        "clip.duplicate",       GroupClip,      CmdDuplicateClip,      "secondary-d" => DuplicateClip;
+        // X is the scissors everywhere that has a pair. Not ⌘T, which Logic splits with and
+        // which is the instrument track here.
+        "clip.split",           GroupClip,      CmdSplitClip,          "alt-x"       => SplitClip;
+        "clip.mute",            GroupClip,      CmdToggleClipMute,     ""            => ToggleClipMute;
     }
 }
 
@@ -518,19 +598,44 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
+    /// Every command that ships with a keystroke, as its id and that keystroke.
+    ///
+    /// The sweeps below are all about what a default *says*, and a command with no default says
+    /// nothing — skipping them here rather than in each loop keeps the assertions about the
+    /// keystroke rather than about whether there is one.
+    fn defaults() -> impl Iterator<Item = (&'static str, &'static str)> {
+        BINDABLE
+            .iter()
+            .filter_map(|entry| Some((entry.id, entry.default?)))
+    }
+
     #[test]
     fn every_bindable_id_and_default_is_usable() {
         let mut ids = BTreeSet::new();
         for entry in BINDABLE {
             assert!(ids.insert(entry.id), "duplicate id `{}`", entry.id);
-            assert!(
-                is_valid_keystroke(entry.default),
-                "`{}` has an unparseable default `{}`",
-                entry.id,
-                entry.default
-            );
+            if let Some(default) = entry.default {
+                assert!(
+                    is_valid_keystroke(default),
+                    "`{}` has an unparseable default `{default}`",
+                    entry.id,
+                );
+            }
             assert_eq!(bindable(entry.id).map(|e| e.id), Some(entry.id));
         }
+    }
+
+    #[test]
+    fn a_blank_default_reads_back_as_no_key_rather_than_as_a_keystroke() {
+        // The table spells "no key" as `""` so every row stays one line of the same shape. If
+        // that ever stopped becoming `None`, `KeyBinding::new` would be handed an empty string
+        // and panic on the way up.
+        let unbound = BINDABLE
+            .iter()
+            .find(|entry| entry.default.is_none())
+            .expect("some commands ship with no key");
+        assert!(!is_valid_keystroke(""));
+        assert_eq!(unbound.default, None);
     }
 
     #[test]
@@ -538,21 +643,48 @@ mod tests {
         // Compared as this platform writes them: two defaults spelled differently could still
         // resolve to the same physical keys. Scoped as well, because two panes are never focused
         // at once — the same key meaning one thing in the roll and another in the mixer is the
-        // point of having contexts, not a collision.
+        // point of having contexts, not a collision. A command with no default collides with
+        // nothing, which is one of the things having no default is for.
         for (index, entry) in BINDABLE.iter().enumerate() {
             for other in &BINDABLE[index + 1..] {
                 if !entry.shares_reach_with(other) {
                     continue;
                 }
+                let (Some(one), Some(two)) = (entry.default, other.default) else {
+                    continue;
+                };
                 assert_ne!(
-                    normalise_keystroke(entry.default),
-                    normalise_keystroke(other.default),
-                    "`{}` collides with `{}` on `{}`",
+                    normalise_keystroke(one),
+                    normalise_keystroke(two),
+                    "`{}` collides with `{}` on `{one}`",
                     entry.id,
                     other.id,
-                    entry.default
                 );
             }
+        }
+    }
+
+    #[test]
+    fn the_note_and_clip_pairs_are_deliberately_on_the_same_keys() {
+        // Select All and Duplicate mean the notes in the roll and the clips in the arrangement,
+        // and share a key on purpose — which is a claim about the *contexts*, not a coincidence
+        // of the table. If either moved to the window's context the pair would become a genuine
+        // conflict, and the sibling test above would catch it. This one catches the other
+        // direction: somebody "fixing" the duplicate keystroke by moving one of them off.
+        for (notes, clips) in [
+            ("edit.select_all", "clip.select_all"),
+            ("edit.duplicate", "clip.duplicate"),
+        ] {
+            let notes = bindable(notes).expect("a real command");
+            let clips = bindable(clips).expect("a real command");
+            assert_eq!(notes.context, context::ROLL);
+            assert_eq!(clips.context, context::ARRANGEMENT);
+            assert_eq!(
+                notes.default, clips.default,
+                "`{}` and `{}` are meant to be the same key in two panes",
+                notes.id, clips.id
+            );
+            assert!(!notes.shares_reach_with(clips));
         }
     }
 
@@ -612,13 +744,12 @@ mod tests {
     fn no_default_names_a_key_this_platform_lacks() {
         // `cmd` is gpui's *platform* modifier, which off a Mac is the Windows or Super key —
         // reserved by the shell, so the binding would simply never fire.
-        for entry in BINDABLE {
+        for (id, default) in defaults() {
             assert!(
-                !entry.default.contains("cmd-")
-                    && !entry.default.contains("super-")
-                    && !entry.default.contains("win-"),
-                "`{}` binds a platform key directly; use `secondary-`",
-                entry.id
+                !default.contains("cmd-")
+                    && !default.contains("super-")
+                    && !default.contains("win-"),
+                "`{id}` binds a platform key directly; use `secondary-`",
             );
         }
     }
@@ -636,18 +767,16 @@ mod tests {
         assert_eq!(normalise_keystroke(native), native);
         assert_eq!(normalise_keystroke("g g"), "g g");
         // Every default survives the round trip, punctuation and all.
-        for entry in BINDABLE {
-            let once = normalise_keystroke(entry.default);
+        for (id, default) in defaults() {
+            let once = normalise_keystroke(default);
             assert_eq!(
                 normalise_keystroke(&once),
                 once,
-                "`{}` does not normalise to a fixed point",
-                entry.id
+                "`{id}` does not normalise to a fixed point",
             );
             assert!(
                 is_valid_keystroke(&once),
-                "`{}` normalises to an unbindable `{once}`",
-                entry.id
+                "`{id}` normalises to an unbindable `{once}`",
             );
         }
     }
@@ -710,22 +839,16 @@ mod tests {
 
     #[test]
     fn every_default_prints_as_something_a_person_can_read() {
-        for entry in BINDABLE {
-            let printed = menu_keystroke(entry.default);
-            assert!(
-                !printed.is_empty(),
-                "`{}` prints as nothing at all",
-                entry.id
-            );
+        for (id, default) in defaults() {
+            let printed = menu_keystroke(default);
+            assert!(!printed.is_empty(), "`{id}` prints as nothing at all");
             assert!(
                 !printed.contains('-') || printed.contains("Ctrl+-") || printed.ends_with('-'),
-                "`{}` still prints in gpui's own syntax: `{printed}`",
-                entry.id
+                "`{id}` still prints in gpui's own syntax: `{printed}`",
             );
             assert!(
                 !printed.contains("secondary"),
-                "`{}` leaks the portable spelling into the menu: `{printed}`",
-                entry.id
+                "`{id}` leaks the portable spelling into the menu: `{printed}`",
             );
         }
     }

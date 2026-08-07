@@ -371,17 +371,14 @@ impl AurisApp {
                     });
                 }
             }
-            None => {
-                if self.pointer.create.matches(event) {
+            None => match crate::gestures::empty_press(self.pointer, event) {
+                crate::gestures::EmptyPress::Create => {
                     self.create_clip_at(track_id, self.snap(tick));
-                } else {
-                    self.begin_rubber_band(
-                        crate::app::BandSurface::Lanes,
-                        event.position,
-                        event.modifiers.shift,
-                    );
                 }
-            }
+                crate::gestures::EmptyPress::Band { extend } => {
+                    self.begin_rubber_band(crate::app::BandSurface::Lanes, event.position, extend);
+                }
+            },
         }
         cx.notify();
     }

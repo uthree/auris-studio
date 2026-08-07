@@ -129,11 +129,16 @@ impl SettingsWindow {
     }
 
     /// A row of gesture buttons for one of the two actions.
+    ///
+    /// `offered` is what the row lists, which is not the same for both: the bare click may create
+    /// and may not delete, and a button that swapped the two into an arrangement
+    /// [`PointerGestures::set_delete`] refuses would look like the panel ignoring a click.
     fn gesture_row(
         &self,
         id: &'static str,
         label: Key,
         current: PointerGesture,
+        offered: fn(PointerGesture) -> bool,
         assign: fn(&mut PointerGestures, PointerGesture),
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -153,6 +158,7 @@ impl SettingsWindow {
             .children(
                 PointerGesture::ALL
                     .into_iter()
+                    .filter(|gesture| offered(*gesture))
                     .enumerate()
                     .map(|(index, gesture)| {
                         button(
@@ -352,6 +358,7 @@ impl SettingsWindow {
                 "pointer-create",
                 Key::PointerCreate,
                 self.pointer.create,
+                |_| true,
                 PointerGestures::set_create,
                 cx,
             ))
@@ -359,6 +366,7 @@ impl SettingsWindow {
                 "pointer-delete",
                 Key::PointerDelete,
                 self.pointer.delete,
+                PointerGesture::may_delete,
                 PointerGestures::set_delete,
                 cx,
             ))
@@ -368,6 +376,16 @@ impl SettingsWindow {
                     .text_color(theme.text_muted)
                     .child(self.t(Key::PointerNote)),
             )
+            // Only while it applies. A standing warning about a setting nobody has chosen is a
+            // line every user reads once and no user acts on.
+            .when(self.pointer.create == PointerGesture::Click, |this| {
+                this.child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .child(self.t(Key::PointerClickNote)),
+                )
+            })
             .into_any_element()
     }
 

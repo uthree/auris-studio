@@ -74,6 +74,14 @@ use serde::{Deserialize, Serialize};
 // variant called `Option`, which in Rust reads as something else entirely.
 #[allow(clippy::enum_variant_names)]
 pub enum PointerGesture {
+    /// Press with nothing held down.
+    ///
+    /// The gesture somebody who has not read anything will try first, and the reason it is here:
+    /// holding a modifier to write a note is a thing you have to be told, and the person being
+    /// told is halfway through deciding whether this application is worth learning. It costs the
+    /// rubber band over empty space, which is why it is a choice and not the default — see
+    /// [`empty_press`], which keeps ⇧-drag sweeping whatever create is set to.
+    Click,
     /// Hold the platform's command modifier — ⌘ on macOS, Ctrl elsewhere — and click.
     CommandClick,
     /// Hold the option key — ⌥ on macOS, Alt elsewhere — and click.
@@ -84,7 +92,8 @@ pub enum PointerGesture {
 
 impl PointerGesture {
     /// Every gesture, in the order a picker should list them.
-    pub const ALL: [PointerGesture; 3] = [
+    pub const ALL: [PointerGesture; 4] = [
+        PointerGesture::Click,
         PointerGesture::CommandClick,
         PointerGesture::OptionClick,
         PointerGesture::DoubleClick,
@@ -96,6 +105,15 @@ impl PointerGesture {
     /// ⌘-clicks, and refusing the second one would look like a dropped input.
     pub fn matches(self, event: &MouseDownEvent) -> bool {
         match self {
+            // Every modifier is refused rather than only the two that name gestures. ⇧ is the
+            // extend-a-selection key everywhere in the application, and a plain-click *create*
+            // that also claimed ⇧-click would leave no way at all to sweep a rubber band.
+            PointerGesture::Click => {
+                event.click_count == 1
+                    && !event.modifiers.secondary()
+                    && !event.modifiers.alt
+                    && !event.modifiers.shift
+            }
             PointerGesture::CommandClick => event.modifiers.secondary(),
             PointerGesture::OptionClick => event.modifiers.alt,
             // A modified double-click belongs to whichever modifier gesture claims it, so that a
@@ -106,17 +124,61 @@ impl PointerGesture {
         }
     }
 
+    /// Whether this gesture may be the one that *deletes*.
+    ///
+    /// [`PointerGesture::Click`] may not. Selecting and destroying would then be the same press:
+    /// every attempt to pick a note up would remove it instead, and there would be no gesture
+    /// left anywhere that means "just this one, please". Creating on a bare click is recoverable
+    /// — the note is there to be seen and undone — and deleting on one is not.
+    pub fn may_delete(self) -> bool {
+        self != PointerGesture::Click
+    }
+
     /// How the gesture is written in the settings window.
     ///
     /// ⌘ and ⌥ are Apple's glyphs and appear on Apple's keyboards. Naming them at a Windows or
     /// Linux user would be asking them to press a key they cannot find.
     pub fn label(self) -> Key {
         match self {
+            PointerGesture::Click => Key::GesturePlainClick,
             PointerGesture::CommandClick if cfg!(target_os = "macos") => Key::GestureCommandClick,
             PointerGesture::CommandClick => Key::GestureControlClick,
             PointerGesture::OptionClick if cfg!(target_os = "macos") => Key::GestureOptionClick,
             PointerGesture::OptionClick => Key::GestureAltClick,
             PointerGesture::DoubleClick => Key::GestureDoubleClick,
+        }
+    }
+}
+
+/// What a press on empty space means: make something, or sweep the selection.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum EmptyPress {
+    /// Write a note here, or a clip on this lane.
+    Create,
+    /// Sweep a rubber band.
+    Band {
+        /// Add what it catches to the selection rather than replacing it.
+        extend: bool,
+    },
+}
+
+/// Which of the two a press on empty grid or an empty lane is asking for.
+///
+/// Free rather than decided at each of the two call sites because it is the rule that decides
+/// whether a bare click can create at all. Before it, both sites read "create if the create
+/// gesture matches, otherwise band", which is fine while create needs a modifier and silently
+/// costs the rubber band the moment it does not — the drag that selects and the click that
+/// creates would be the same press, and the roll would simply stop being able to select a range.
+///
+/// ⇧ is what resolves it: [`PointerGesture::Click`] refuses a shifted press, so ⇧-drag sweeps
+/// whatever create is set to. That is not a special case for one setting — ⇧ already means
+/// "extend the selection" on every other press in the application.
+pub fn empty_press(gestures: PointerGestures, event: &MouseDownEvent) -> EmptyPress {
+    if gestures.create.matches(event) {
+        EmptyPress::Create
+    } else {
+        EmptyPress::Band {
+            extend: event.modifiers.shift,
         }
     }
 }
@@ -153,19 +215,44 @@ impl PointerGestures {
     /// Swapping rather than refusing: two identical gestures would make one of them
     /// unreachable, and a settings panel that silently ignores a click is worse than one that
     /// rearranges itself.
+    ///
+    /// The swap cannot hand delete a gesture that [`PointerGesture::may_delete`] refuses, which
+    /// is the whole reason it is not one line. Create on the bare click and delete on the
+    /// double-click is a combination the picker allows; choosing the double-click for *create*
+    /// from there would have handed the bare click to delete, and a plain click would have
+    /// started deleting notes without anybody having asked for it.
     pub fn set_create(&mut self, gesture: PointerGesture) {
         if self.delete == gesture {
-            self.delete = self.create;
+            self.delete = if self.create.may_delete() {
+                self.create
+            } else {
+                Self::spare_delete(gesture)
+            };
         }
         self.create = gesture;
     }
 
     /// Assigns the delete gesture, swapping with create if that is where it already was.
+    ///
+    /// A gesture [`PointerGesture::may_delete`] refuses changes nothing. The settings window does
+    /// not offer one, so this is the second lock rather than the first — but the two are one
+    /// serialised struct, and a hand-edited `keymap.json` reaches this the same way.
     pub fn set_delete(&mut self, gesture: PointerGesture) {
+        if !gesture.may_delete() {
+            return;
+        }
         if self.create == gesture {
             self.create = self.delete;
         }
         self.delete = gesture;
+    }
+
+    /// A gesture that may delete and is not `taken`.
+    fn spare_delete(taken: PointerGesture) -> PointerGesture {
+        PointerGesture::ALL
+            .into_iter()
+            .find(|gesture| gesture.may_delete() && *gesture != taken)
+            .expect("three gestures may delete, so one is always free of any single other")
     }
 }
 
@@ -236,15 +323,95 @@ mod tests {
     }
 
     #[test]
-    fn a_plain_click_is_never_a_gesture() {
-        // Otherwise clicking empty space to move the playhead would also create a note.
+    fn a_plain_click_is_claimed_by_exactly_one_gesture() {
+        // Only the one that *is* a plain click. Every other has to leave it alone, or clicking
+        // empty space to sweep a selection would create a note as well.
         let plain = click(Modifiers::none(), 1);
         for gesture in PointerGesture::ALL {
-            assert!(
-                !gesture.matches(&plain),
-                "{gesture:?} claimed a plain click"
+            assert_eq!(
+                gesture.matches(&plain),
+                gesture == PointerGesture::Click,
+                "{gesture:?} is wrong about a plain click"
             );
         }
+    }
+
+    #[test]
+    fn a_bare_click_is_a_gesture_only_while_nothing_is_held() {
+        // ⇧ is the extend-a-selection key, and `empty_press` leans on this to keep the rubber
+        // band reachable when create is a bare click. A `Click` that claimed a shifted press
+        // would take the last way of sweeping a range with it.
+        let mut shifted = Modifiers::none();
+        shifted.shift = true;
+        assert!(!PointerGesture::Click.matches(&click(shifted, 1)));
+        assert!(!PointerGesture::Click.matches(&click(Modifiers::alt(), 1)));
+        assert!(!PointerGesture::Click.matches(&click(Modifiers::secondary_key(), 1)));
+        // And the second press of a double-click is not a third bare click on top of it.
+        assert!(!PointerGesture::Click.matches(&click(Modifiers::none(), 2)));
+    }
+
+    #[test]
+    fn nothing_but_a_modifier_gesture_may_delete() {
+        // Deleting on a bare click would make selecting and destroying the same press: every
+        // attempt to pick a note up would remove it, with no gesture left that means "this one".
+        assert!(!PointerGesture::Click.may_delete());
+        for gesture in PointerGesture::ALL {
+            assert_eq!(gesture.may_delete(), gesture != PointerGesture::Click);
+        }
+
+        let mut gestures = PointerGestures::default();
+        let delete = gestures.delete;
+        gestures.set_delete(PointerGesture::Click);
+        assert_eq!(gestures.delete, delete, "the bare click was accepted");
+    }
+
+    #[test]
+    fn taking_the_delete_gesture_for_create_never_hands_back_a_bare_click() {
+        // Create on the bare click, delete on the double-click — both offered. Choosing the
+        // double-click for create from there used to swap the bare click into delete, and a
+        // plain click would have started removing notes with nobody having asked for it.
+        let mut gestures = PointerGestures::default();
+        gestures.set_create(PointerGesture::Click);
+        gestures.set_delete(PointerGesture::DoubleClick);
+
+        gestures.set_create(PointerGesture::DoubleClick);
+        assert_eq!(gestures.create, PointerGesture::DoubleClick);
+        assert!(
+            gestures.delete.may_delete(),
+            "delete was handed {:?}",
+            gestures.delete
+        );
+        assert_ne!(gestures.create, gestures.delete);
+    }
+
+    #[test]
+    fn a_bare_click_creates_and_still_leaves_a_way_to_sweep() {
+        // What makes the bare click offerable at all. Without the ⇧ escape the roll would simply
+        // lose range selection the moment somebody chose it.
+        let mut gestures = PointerGestures::default();
+        gestures.set_create(PointerGesture::Click);
+
+        let mut shifted = Modifiers::none();
+        shifted.shift = true;
+        assert_eq!(
+            empty_press(gestures, &click(Modifiers::none(), 1)),
+            EmptyPress::Create
+        );
+        assert_eq!(
+            empty_press(gestures, &click(shifted, 1)),
+            EmptyPress::Band { extend: true }
+        );
+
+        // And under the default the bare click still sweeps, as it always has.
+        let defaults = PointerGestures::default();
+        assert_eq!(
+            empty_press(defaults, &click(Modifiers::none(), 1)),
+            EmptyPress::Band { extend: false }
+        );
+        assert_eq!(
+            empty_press(defaults, &click(Modifiers::secondary_key(), 1)),
+            EmptyPress::Create
+        );
     }
 
     #[test]

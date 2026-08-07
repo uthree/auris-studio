@@ -10,6 +10,7 @@ use gpui::{
 
 use crate::app::{AurisApp, Drag};
 use crate::dock::Dock;
+use crate::gestures::{EmptyPress, empty_press};
 use crate::theme::{Metrics, Theme};
 use crate::ui::paint;
 use crate::ui::timeline::{PitchView, TimelineView};
@@ -637,8 +638,8 @@ impl AurisApp {
                     self.audition(pitch);
                 }
             }
-            None => {
-                if self.pointer.create.matches(event) {
+            None => match empty_press(self.pointer, event) {
+                EmptyPress::Create => {
                     let start = self.snap(local_tick).max_zero();
                     let length = default_note_length(self.project().grid);
                     // The new note and the resize that follows it are one gesture, so the
@@ -663,16 +664,13 @@ impl AurisApp {
                     self.selected_notes.clear();
                     self.selected_notes.insert(index);
                     self.audition(pitch);
-                } else {
-                    // A drag on empty grid sweeps a selection; a press that never moves ends up
-                    // selecting nothing, which is the deselect it looks like.
-                    self.begin_rubber_band(
-                        crate::app::BandSurface::Roll,
-                        event.position,
-                        event.modifiers.shift,
-                    );
                 }
-            }
+                // A drag on empty grid sweeps a selection; a press that never moves ends up
+                // selecting nothing, which is the deselect it looks like.
+                EmptyPress::Band { extend } => {
+                    self.begin_rubber_band(crate::app::BandSurface::Roll, event.position, extend);
+                }
+            },
         }
         cx.notify();
     }

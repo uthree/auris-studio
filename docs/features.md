@@ -83,6 +83,15 @@ selection moves, duplicates and deletes as one. A press on empty arrangement tha
 was a *click* rather than a sweep, and moves the playhead there — the ruler is no longer the only
 place that will take one.
 
+**Create can be a plain click**, for anyone who would rather not hold a modifier to write a note.
+Choosing it moves the rubber band to ⇧-drag, which is said on the settings page as you choose it —
+⇧ already means *extend the selection* on every other press, so the gesture was there rather than
+invented for the occasion. It applies to both surfaces, so a click on an empty lane then makes a
+clip instead of moving the playhead; that is the other half of what a bare click costs, and the
+reason the modifier remains the default. Deleting cannot be a plain click and is not offered:
+creating on a bare click leaves something you can see and undo, and deleting on one would remove
+every note you tried to pick up.
+
 The wheel over the arrangement moves down the tracks; ⇧ turns it sideways along the song, and
 **Ctrl or ⌥** zooms the time axis about the pointer, so the bar being looked at stays where it is.
 
@@ -511,6 +520,12 @@ Every command is rebindable, and the settings window is where. Press a key onto 
 that key; ＋ gives the same command a second one; — leaves it with no key at all, which is a
 different answer from putting the default back and used to be one nothing could say. Only what you
 change is written to `keymap.json`, so a later change to a default still reaches you.
+
+**Some rows start with no key.** Muting a track, soloing it, duplicating it, muting a clip: things
+a right-click already reaches, common enough to want under a finger and not common enough to be
+worth taking a chord away from everyone who wanted it for something else. The row is there, and
+one press puts your key on it. It is the same "no key at all" that — produces, so a command you
+gave a key and then took it back from settles where it started rather than in a third state.
 
 A binding is captured the way *this* keyboard reported it and stored the way both keyboards spell
 it, so a `keymap.json` kept in a dotfiles repository binds ⌘ on the Mac and Ctrl on the Windows
