@@ -489,7 +489,15 @@ impl AurisApp {
         self.accept_drop(paths.paths().to_vec(), start, cx);
     }
 
-    fn on_mouse_move(
+    /// Follows the gesture in progress, wherever the pointer has got to.
+    ///
+    /// Registered on the root so a drag survives the pointer leaving the control that began it,
+    /// which is what makes a fader usable. **An overlay that occludes has to register it again**:
+    /// the hit test stops at the first blocking hitbox, so everything painted before that one —
+    /// the root among them — reads as un-hovered, and gpui runs a bubble-phase `on_mouse_move`
+    /// only on a hitbox that is hovered. Without it a slider inside the overlay takes the press
+    /// and then sits still however far the pointer travels.
+    pub(crate) fn on_mouse_move(
         &mut self,
         event: &MouseMoveEvent,
         _window: &mut Window,
@@ -806,7 +814,15 @@ impl AurisApp {
         cx.notify();
     }
 
-    fn on_mouse_up(&mut self, _event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+    /// Ends the gesture in progress. Re-registered by an occluding overlay for the reason
+    /// [`Self::on_mouse_move`] is, so that a drag begun in one finishes where it was let go
+    /// rather than through the root's out-of-bounds path.
+    pub(crate) fn on_mouse_up(
+        &mut self,
+        _event: &MouseUpEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.stop_audition();
         self.end_drag(window, cx);
         cx.notify();

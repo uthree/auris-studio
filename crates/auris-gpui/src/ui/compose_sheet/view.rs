@@ -78,6 +78,13 @@ impl AurisApp {
                 .justify_center()
                 .bg(Theme::translucent(theme.background, 0.72))
                 .occlude()
+                // …and occluding is what stopped the dials working. A drag is followed on the
+                // root, and the hit test stops dead at the first blocking hitbox — so while this
+                // is up the root reads as un-hovered and never sees another pointer move. Every
+                // dial took its press and then sat still, however far the pointer travelled. An
+                // overlay that occludes carries the drag itself; see `AurisApp::on_mouse_move`.
+                .on_mouse_move(cx.listener(AurisApp::on_mouse_move))
+                .on_mouse_up(gpui::MouseButton::Left, cx.listener(AurisApp::on_mouse_up))
                 .child(
                     div()
                         .flex()
