@@ -45,9 +45,6 @@ format rather than a convention: `## <version> — <date>`.
   middle of File, between Open Project and Save — and that row carried the label of the
   *specification file* route while dispatching the song sheet, so the way in that needs no file
   was announced as "Compose from Specification…" and the file route was in no menu at all.
-* **The Transport menu is 再生 in Japanese**, not 「トランスポート」. The transliteration says
-  nothing to anyone who has not already met the English word, on the menu holding play and stop.
-  The English is unchanged: "Transport" is what the word means in English.
 
 ### The tune is a line rather than a walk
 

@@ -228,11 +228,13 @@ strings! {
     }
 
     // ------------------------------------------------------------------ command groups
-    // "Transport" is the tape machine the word came off, and it is the name every English DAW
-    // still uses. Its transliteration is not: 「トランスポート」 says nothing to anybody who has
-    // not already met the English word, on the menu holding play and stop — which is the first
-    // menu somebody opens. 「再生」 is what the menu is *for*, and it is a word.
-    GroupTransport { en: "Transport", ja: "再生" }
+    // 「トランスポート」 reads as nothing at all to somebody who has never used a DAW, and it was
+    // briefly 「再生」 for that reason. It is back, because that argument weighs the wrong reader:
+    // Cubase, Studio One and SONAR all ship this menu under that name in Japanese, so it is the
+    // word a Japanese DAW user *arrives with* — the same rule the tool names and the gesture
+    // names already follow. Plain language wins where there is no established term; where there
+    // is one, matching it is what lets somebody use this without being taught.
+    GroupTransport { en: "Transport", ja: "トランスポート" }
     GroupFile { en: "File", ja: "ファイル" }
     GroupEdit { en: "Edit", ja: "編集" }
     GroupNotes { en: "Notes", ja: "ノート" }
