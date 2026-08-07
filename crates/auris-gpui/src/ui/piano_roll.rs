@@ -120,6 +120,24 @@ fn default_note_length(grid: Ticks) -> Ticks {
     Ticks(grid.raw().max(1))
 }
 
+/// Which of a track's clips are drawn faintly behind the one being edited.
+///
+/// Every *other* clip on the track with any part of itself on screen. Not only the two touching
+/// it: the roll scrolls and zooms anywhere, so "the next clip along" stops being the next one the
+/// moment the view moves, and a roll showing an empty stretch where a clip plainly is would be
+/// lying about the track.
+///
+/// A clip is taken as half-open, the way a clip's end is the tick the next one may start on, so
+/// one ending exactly where the view begins has nothing inside it to draw and is left out.
+fn ghosted(clips: &[(ClipId, Ticks, Ticks)], editing: ClipId, view: (Ticks, Ticks)) -> Vec<ClipId> {
+    let (from, to) = view;
+    clips
+        .iter()
+        .filter(|(id, start, end)| *id != editing && *end > from && *start < to)
+        .map(|(id, _, _)| *id)
+        .collect()
+}
+
 impl AurisApp {
     /// Renders the piano roll panel.
     pub(crate) fn render_piano_roll(
@@ -152,6 +170,7 @@ impl AurisApp {
         let clip_start = clip.start;
         let clip_length = clip.length;
         let notes = clip.notes.clone();
+        let ghosts = self.neighbouring_notes();
         let note_ends = self.note_end_zones(clip_start, &notes);
         let selected: Vec<usize> = self.selected_notes.iter().copied().collect();
         let clip_name = clip.name.clone();
@@ -310,6 +329,17 @@ impl AurisApp {
                                                 &view,
                                                 clip_start,
                                                 clip_length,
+                                                &theme,
+                                            );
+                                            // Under the clip in hand and over the shade, so the
+                                            // neighbours read as further away without being
+                                            // dimmed twice into invisibility.
+                                            paint_ghost_notes(
+                                                window,
+                                                bounds,
+                                                &ghosts,
+                                                &view,
+                                                &pitch_view,
                                                 &theme,
                                             );
                                             paint_notes(
@@ -772,6 +802,51 @@ impl AurisApp {
             .collect()
     }
 
+    /// The notes of the clips either side of the one being edited, each with its clip's start.
+    ///
+    /// Gathered from the document rather than remembered, because a neighbour can be moved,
+    /// trimmed or written to from the arrangement while the roll is open, and a cached copy would
+    /// show where a phrase used to be.
+    fn neighbouring_notes(&self) -> Vec<(Ticks, Vec<Note>)> {
+        let Some(editing) = self.selected_clip else {
+            return Vec::new();
+        };
+        let Some(track) = self.project().track_of_clip(editing) else {
+            return Vec::new();
+        };
+        let Some(clips) = self
+            .project()
+            .track(track)
+            .and_then(|track| track.kind.as_instrument())
+            .map(|track| &track.clips)
+        else {
+            return Vec::new();
+        };
+        // The stretch of song on screen, from the grid as it was last painted. Before the first
+        // paint there is no width to ask about, and the whole song is the honest answer — the
+        // painter culls per note anyway, so the worst of being wrong here is arithmetic.
+        let width = self
+            .canvas
+            .roll
+            .get()
+            .map(|bounds| bounds.size.width)
+            .unwrap_or(px(4096.0));
+        let view = (
+            self.timeline.x_to_tick(px(0.0)),
+            self.timeline.x_to_tick(width),
+        );
+        let spans: Vec<(ClipId, Ticks, Ticks)> = clips
+            .iter()
+            .map(|clip| (clip.id, clip.start, clip.start + clip.length))
+            .collect();
+        let drawn = ghosted(&spans, editing, view);
+        clips
+            .iter()
+            .filter(|clip| drawn.contains(&clip.id))
+            .map(|clip| (clip.start, clip.notes.clone()))
+            .collect()
+    }
+
     /// Index of the note at a clip-relative position.
     fn note_at(&self, clip: ClipId, tick: Ticks, pitch: u8) -> Option<usize> {
         let clip = self.session.midi_clip(clip)?;
@@ -892,6 +967,53 @@ fn paint_clip_extent(
     }
     paint::vline(window, bounds, start_x, px(1.0), theme.accent);
     paint::vline(window, bounds, end_x, px(1.0), theme.accent);
+}
+
+/// How solid a neighbouring clip's notes are drawn.
+///
+/// Faint enough to read as another clip at a glance and not as something to reach for, solid
+/// enough to make out a phrase against the rows behind it.
+const GHOST_ALPHA: f32 = 0.34;
+
+/// The notes of the clips either side, drawn flat and faint.
+///
+/// No velocity in the fill and no selection outline, both of which the clip in hand has: these
+/// cannot be edited from here, and a ghost that read like a note would be an invitation to try.
+/// What they are for is the shape on either side — where the phrase before this one ended, and
+/// what the next one starts on.
+fn paint_ghost_notes(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    ghosts: &[(Ticks, Vec<Note>)],
+    view: &TimelineView,
+    pitch_view: &PitchView,
+    theme: &Theme,
+) {
+    let colour = Theme::translucent(theme.text_muted, GHOST_ALPHA);
+    for (clip_start, notes) in ghosts {
+        for note in notes {
+            let x = bounds.origin.x + view.tick_to_x(*clip_start + note.start);
+            let width = view.duration_to_width(note.length).max(px(2.0));
+            if x + width < bounds.origin.x || x > bounds.origin.x + bounds.size.width {
+                continue;
+            }
+            let y = bounds.origin.y + pitch_view.pitch_to_y(note.pitch);
+            if y + px(pitch_view.row_height) < bounds.origin.y
+                || y > bounds.origin.y + bounds.size.height
+            {
+                continue;
+            }
+            paint::rounded_rect(
+                window,
+                Bounds {
+                    origin: point(x, y + px(1.0)),
+                    size: size(width, px((pitch_view.row_height - 2.0).max(2.0))),
+                },
+                Metrics::RADIUS_XS,
+                colour,
+            );
+        }
+    }
 }
 
 /// Distance from a note's ends to the velocity bar inside it.
@@ -1321,6 +1443,32 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_roll_ghosts_the_rest_of_the_track_and_never_the_clip_in_hand() {
+        let bar = Ticks::QUARTER * 4;
+        let id = ClipId;
+        let clips = [
+            (id(1), Ticks::ZERO, bar),
+            (id(2), bar, bar * 2),
+            (id(3), bar * 2, bar * 3),
+            (id(4), bar * 8, bar * 9),
+        ];
+
+        // Editing the second: the ones either side of it, and not itself. Drawing the edited clip
+        // twice would put a grey copy of every note under the note being dragged.
+        let view = (Ticks::ZERO, bar * 4);
+        assert_eq!(ghosted(&clips, id(2), view), vec![id(1), id(3)]);
+
+        // Far off to the right and outside the view, so not drawn — and once the view reaches it,
+        // drawn, without the roll having to know which clip is "next".
+        assert!(!ghosted(&clips, id(2), view).contains(&id(4)));
+        assert!(ghosted(&clips, id(2), (bar * 7, bar * 10)).contains(&id(4)));
+
+        // A clip ending exactly where the view starts has nothing inside it to draw: a clip's end
+        // is the tick the next one may begin on, so the two would otherwise both claim it.
+        assert!(ghosted(&clips, id(2), (bar, bar * 2)).is_empty());
+    }
 
     #[test]
     fn a_note_can_always_be_moved_however_short_it_is() {

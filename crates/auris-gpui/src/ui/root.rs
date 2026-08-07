@@ -555,6 +555,19 @@ impl AurisApp {
                     }
                 }
             }
+            Drag::MixerScroll {
+                start_x,
+                start_offset,
+            } => {
+                let offset = crate::ui::widgets::scrollbar_dragged(
+                    f32::from(start_offset),
+                    f32::from(event.position.x - start_x),
+                    f32::from(self.mixer_scroll.max_offset().width),
+                    f32::from(self.mixer_scroll.bounds().size.width),
+                );
+                self.mixer_scroll
+                    .set_offset(gpui::point(px(offset), self.mixer_scroll.offset().y));
+            }
             Drag::LoopRegion { anchor } => {
                 let x = event.position.x - self.timeline_origin().x;
                 let tick = self

@@ -315,6 +315,14 @@ pub enum Drag {
         /// drawing a brand-new note, whose end starts on the grid and should follow at once.
         pressed_at: Option<Point<Pixels>>,
     },
+    /// Carrying the mixer's scrollbar along its track.
+    MixerScroll {
+        /// Pointer x when the drag began.
+        start_x: Pixels,
+        /// The scroll offset then, which every move is measured against rather than against
+        /// wherever the strips are now — the same reason a fader remembers where it was grabbed.
+        start_offset: Pixels,
+    },
     /// Turning a parameter.
     Param {
         /// What is being changed.
@@ -461,6 +469,8 @@ impl Drag {
     fn edit(&self) -> Option<Edit> {
         match self {
             Drag::Playhead => None,
+            // Where a panel is looking is not something to undo.
+            Drag::MixerScroll { .. } => None,
             Drag::LoopRegion { .. } => Some(Edit::SetLoopRegion),
             Drag::ClipMove { .. } => Some(Edit::MoveClip),
             Drag::TrackReorder { .. } => Some(Edit::MoveTrack),
@@ -619,6 +629,8 @@ pub struct CanvasBounds {
     pub lanes: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The piano roll's note grid.
     pub roll: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The mixer's scrollbar, whose width is also the width of the strips it scrolls.
+    pub mixer_scrollbar: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The envelope graph in the open plugin window.
     pub envelope: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The pitch bend strip under the piano roll.
@@ -690,6 +702,13 @@ pub struct AurisApp {
     pub(crate) arrangement_width: Pixels,
     /// Rectangles the canvases were painted into last frame.
     pub(crate) canvas: CanvasBounds,
+    /// How far the mixer's strips have been scrolled sideways.
+    ///
+    /// gpui keeps this for a scrolling container by itself; it is held here as well so that the
+    /// scrollbar under the strips can read where the wheel left them and write where a drag puts
+    /// them. Without the handle the two would be separate scroll positions that happen to look
+    /// alike until somebody used both.
+    pub(crate) mixer_scroll: gpui::ScrollHandle,
     /// The open right-click menu, if any.
     pub(crate) menu: Option<ContextMenu>,
     /// Which menu-bar menu is open, on the platforms that draw their own bar.
@@ -817,6 +836,7 @@ impl AurisApp {
             viewport_height: px(900.0),
             arrangement_width: px(900.0),
             canvas: CanvasBounds::default(),
+            mixer_scroll: gpui::ScrollHandle::new(),
             menu: None,
             menu_bar: None,
             prompt: None,

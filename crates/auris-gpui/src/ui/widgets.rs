@@ -363,6 +363,115 @@ pub fn dragged(start: f32, delta: f32) -> f32 {
     (start + delta / DRAG_RANGE_PIXELS).clamp(0.0, 1.0)
 }
 
+/// How short a scrollbar's thumb may get, as a fraction of its track.
+///
+/// A thumb is sized by how much of the content is on screen, and with enough content that
+/// honest fraction is a few pixels — something that says where you are and cannot be taken hold
+/// of. Below this the thumb stops shrinking and starts lying slightly about the proportion,
+/// which is the trade every scrollbar makes.
+const MIN_THUMB: f32 = 0.12;
+
+/// Where a scrollbar's thumb sits, as fractions of its track: where it starts, and how long.
+///
+/// `offset` and `max_offset` are gpui's own: a scroll container's offset is zero at the start and
+/// `-max_offset` at the end, because it measures how far the *content* has been moved rather than
+/// how far the view has travelled. `viewport` is the visible extent, so `viewport + max_offset` is
+/// the whole content and the thumb is as long a share of the track as the view is of the content.
+///
+/// `None` when there is nothing to scroll, which is what says the bar should not be drawn at all —
+/// a scrollbar with a full-length thumb is furniture that answers no question.
+pub fn scrollbar_thumb(offset: f32, max_offset: f32, viewport: f32) -> Option<(f32, f32)> {
+    if max_offset <= 0.0 || viewport <= 0.0 {
+        return None;
+    }
+    let length = (viewport / (viewport + max_offset)).clamp(MIN_THUMB, 1.0);
+    let travelled = (-offset / max_offset).clamp(0.0, 1.0);
+    Some((travelled * (1.0 - length), length))
+}
+
+/// The offset a thumb dragged `delta` pixels from where it was grabbed asks for.
+///
+/// The thumb only travels the part of the track it does not itself occupy, so a pixel of pointer
+/// buys more than a pixel of content — by exactly the factor that makes the far end of the track
+/// the far end of the content. Measured from `grabbed_at`, the offset when the drag began, so the
+/// gesture is one rewrite and a drag past the end and back leaves the view where it was.
+pub fn scrollbar_dragged(grabbed_at: f32, delta: f32, max_offset: f32, viewport: f32) -> f32 {
+    let Some((_, length)) = scrollbar_thumb(grabbed_at, max_offset, viewport) else {
+        return grabbed_at;
+    };
+    let track = viewport * (1.0 - length);
+    if track <= 0.0 {
+        return grabbed_at;
+    }
+    (grabbed_at - delta * max_offset / track).clamp(-max_offset, 0.0)
+}
+
+/// The offset a press `fraction` of the way along a scrollbar asks for.
+///
+/// A press on the thumb takes hold of it and moves nothing, which is what makes the drag that
+/// follows feel attached to it. A press anywhere else jumps the thumb to the pointer first: with
+/// forty channel strips the alternative is dragging the whole way, and the one gesture a
+/// scrollbar exists to offer is going somewhere directly.
+pub fn scrollbar_pressed(fraction: f32, offset: f32, max_offset: f32, viewport: f32) -> f32 {
+    let Some((start, length)) = scrollbar_thumb(offset, max_offset, viewport) else {
+        return offset;
+    };
+    if (start..start + length).contains(&fraction) {
+        return offset;
+    }
+    let travelled = ((fraction - length / 2.0) / (1.0 - length)).clamp(0.0, 1.0);
+    -travelled * max_offset
+}
+
+/// How thick a scrollbar is drawn.
+pub const SCROLLBAR_THICKNESS: Pixels = px(9.0);
+
+/// A horizontal scrollbar for a container that scrolls sideways.
+///
+/// Drawn as elements rather than painted on a canvas so that the thumb is a real hitbox: the
+/// press has to be told apart from a press on the track beside it, and comparing pointer
+/// positions against a remembered rectangle is the thing [`crate::app::CanvasBounds`] exists
+/// because the application kept getting wrong.
+///
+/// The caller passes gpui's own `offset` and `max_offset` and is handed back the *fraction* a
+/// press landed at; what that means for the offset is [`scrollbar_pressed`]'s to say.
+pub fn horizontal_scrollbar<I, F>(
+    id: I,
+    offset: f32,
+    max_offset: f32,
+    viewport: f32,
+    theme: &Theme,
+    on_press: F,
+) -> impl IntoElement + use<I, F>
+where
+    I: Into<ElementId>,
+    F: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+{
+    let thumb = scrollbar_thumb(offset, max_offset, viewport);
+    div()
+        .id(id)
+        .w_full()
+        .flex_shrink_0()
+        // Height and all, only when there is something to scroll: a bar that is always there is
+        // a strip of the panel spent on saying that the panel fits.
+        .when_some(thumb, |track, (start, length)| {
+            track
+                .h(SCROLLBAR_THICKNESS)
+                .bg(theme.surface_sunken)
+                .child(
+                    div()
+                        .absolute()
+                        .left(relative(start))
+                        .w(relative(length))
+                        .h(SCROLLBAR_THICKNESS)
+                        .rounded(Metrics::RADIUS_XS)
+                        .bg(theme.border),
+                )
+                .on_mouse_down(gpui::MouseButton::Left, on_press)
+        })
+        .relative()
+}
+
 /// Where a slider's fill grows from.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SliderFill {
@@ -680,6 +789,56 @@ mod tests {
         assert_eq!(dragged(0.5, DRAG_RANGE_PIXELS * 10.0), 1.0);
         assert_eq!(dragged(0.5, -DRAG_RANGE_PIXELS * 10.0), 0.0);
         assert_eq!(dragged(0.25, 0.0), 0.25);
+    }
+
+    #[test]
+    fn a_scrollbar_thumb_is_as_much_of_the_track_as_the_view_is_of_the_content() {
+        // Nothing to scroll: no bar. A full-length thumb is furniture, and drawing one would
+        // take a strip of the mixer away from the strips in every project small enough to fit.
+        assert_eq!(scrollbar_thumb(0.0, 0.0, 400.0), None);
+
+        // Four hundred pixels of view over twelve hundred of content: a third of the track.
+        let (start, length) = scrollbar_thumb(0.0, 800.0, 400.0).expect("scrollable");
+        assert!((length - 1.0 / 3.0).abs() < 1e-6);
+        assert_eq!(
+            start, 0.0,
+            "at the top of the content, at the top of the bar"
+        );
+
+        // And at the far end the thumb's *end* is the end of the track, not its start.
+        let (start, length) = scrollbar_thumb(-800.0, 800.0, 400.0).expect("scrollable");
+        assert!((start + length - 1.0).abs() < 1e-6);
+
+        // A thumb never shrinks past the point of being grabbable, however long the content.
+        let (_, length) = scrollbar_thumb(0.0, 100_000.0, 400.0).expect("scrollable");
+        assert_eq!(length, MIN_THUMB);
+    }
+
+    #[test]
+    fn dragging_a_thumb_to_the_end_of_its_track_reaches_the_end_of_the_content() {
+        // The thumb travels the track less its own length, so that much pointer has to buy the
+        // whole of `max_offset`. Getting this factor wrong is invisible until the last strip
+        // turns out to be unreachable.
+        let (_, length) = scrollbar_thumb(0.0, 800.0, 400.0).expect("scrollable");
+        let travel = 400.0 * (1.0 - length);
+        assert_eq!(scrollbar_dragged(0.0, travel, 800.0, 400.0), -800.0);
+        assert_eq!(scrollbar_dragged(-800.0, -travel, 800.0, 400.0), 0.0);
+        // Past either end it stops rather than running off, so overshooting and coming back
+        // leaves the view where the pointer says it is.
+        assert_eq!(scrollbar_dragged(0.0, travel * 10.0, 800.0, 400.0), -800.0);
+        assert_eq!(scrollbar_dragged(0.0, -travel, 800.0, 400.0), 0.0);
+    }
+
+    #[test]
+    fn a_press_on_the_thumb_holds_it_and_a_press_beside_it_jumps() {
+        // At rest the thumb covers the first third of the track.
+        assert_eq!(scrollbar_pressed(0.1, 0.0, 800.0, 400.0), 0.0);
+        // Past its end, and the thumb comes to the pointer — centred on it, so what was pressed
+        // is what ends up under the pointer to be dragged from.
+        assert_eq!(scrollbar_pressed(1.0, 0.0, 800.0, 400.0), -800.0);
+        assert_eq!(scrollbar_pressed(0.0, -800.0, 800.0, 400.0), 0.0);
+        // And a bar with nothing to scroll answers no press at all.
+        assert_eq!(scrollbar_pressed(0.5, 0.0, 0.0, 400.0), 0.0);
     }
 
     #[test]
