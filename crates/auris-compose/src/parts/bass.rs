@@ -114,7 +114,7 @@ pub(super) fn bass(
                     .filter(|offset| {
                         kick_at(event.start + grid.tick_of(*offset))
                             || ((first + offset) % per_bar)
-                                .is_multiple_of((grid.steps_per_beat as usize).max(1))
+                                .is_multiple_of(grid.steps_per_beat().max(1))
                     })
                     .collect(),
             },

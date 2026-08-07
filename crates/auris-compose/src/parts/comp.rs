@@ -237,7 +237,7 @@ pub(super) fn comp(
         let onsets: Vec<usize> = if figure == CompFigure::Held {
             vec![0]
         } else {
-            let beat = (grid.steps_per_beat as usize).max(1);
+            let beat = grid.steps_per_beat().max(1);
             let half = (beat / 2).max(1);
             let per_bar = grid.steps_per_bar().max(1);
             let from = grid.step_of(event.start);

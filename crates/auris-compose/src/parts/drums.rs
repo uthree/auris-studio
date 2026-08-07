@@ -9,7 +9,7 @@
 use auris_core::time::Ticks;
 
 use crate::frame::{Frame, SectionPlan};
-use crate::rhythm::{Accent, DrumVoice};
+use crate::rhythm::{Accent, DrumVoice, GROOVE_STEPS_PER_BEAT};
 use crate::spec::PartSpec;
 
 use super::writer::{bar_stream, dynamic, part_grid, phrase_shape, velocity};
@@ -72,7 +72,12 @@ pub(super) fn drums(
             let accent = match if written {
                 pattern.at(step)
             } else {
-                pattern.at_in_bar(step, grid.steps_per_bar(), grid.steps_per_beat as usize)
+                pattern.at_in_bar(
+                    step,
+                    grid.steps_per_bar(),
+                    grid.steps_per_beat(),
+                    GROOVE_STEPS_PER_BEAT,
+                )
             } {
                 Some(accent) => {
                     // A quiet section thins the pattern out rather than playing it softly, which
@@ -158,7 +163,7 @@ fn fill(
 
     let grid = part_grid(frame, part);
     let steps = grid.steps_per_bar();
-    let per_beat = grid.steps_per_beat as usize;
+    let per_beat = grid.steps_per_beat();
     // How much of the bar runs, from none to two beats. The section's intensity still leans on
     // it, so a quiet section fills shorter than a loud one at the same setting — the dial says
     // how much of a fill this piece wants, not how much this one bar gets.

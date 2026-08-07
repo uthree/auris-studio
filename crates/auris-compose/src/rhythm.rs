@@ -10,36 +10,50 @@ use auris_core::time::{Ticks, TimeSignature};
 pub struct Grid {
     /// The time signature the bar is counted in.
     pub signature: TimeSignature,
-    /// How many steps one beat divides into.
-    pub steps_per_beat: u32,
+    /// How many steps one *quarter note* divides into.
+    ///
+    /// Held against the quarter and not against the beat, so that a step is a fixed note value in
+    /// every meter: four is a sixteenth whether the bar is 4/4 or 6/8. It used to divide the note
+    /// the denominator names, which made a "sixteenth" in 6/8 a thirty-second — the grid came out
+    /// twice as fine as everything placing notes on it believed.
+    pub steps_per_quarter: u32,
 }
 
 impl Default for Grid {
     fn default() -> Self {
         Self {
             signature: TimeSignature::default(),
-            steps_per_beat: 4,
+            steps_per_quarter: 4,
         }
     }
 }
 
 impl Grid {
-    /// A grid in `signature` at `steps_per_beat`.
-    pub fn new(signature: TimeSignature, steps_per_beat: u32) -> Self {
+    /// A grid in `signature` whose step is a quarter note divided `steps_per_quarter` ways.
+    pub fn new(signature: TimeSignature, steps_per_quarter: u32) -> Self {
         Self {
             signature,
-            steps_per_beat: steps_per_beat.max(1),
+            steps_per_quarter: steps_per_quarter.max(1),
         }
     }
 
     /// Ticks in one step.
     pub fn step_ticks(self) -> Ticks {
-        Ticks(self.signature.ticks_per_beat().raw() / i64::from(self.steps_per_beat))
+        Ticks(Ticks::QUARTER.raw() / i64::from(self.steps_per_quarter))
     }
 
     /// Ticks in one bar.
     pub fn bar_ticks(self) -> Ticks {
         self.signature.ticks_per_bar()
+    }
+
+    /// How many steps make up one *felt* beat — six sixteenths to a dotted quarter of 6/8.
+    ///
+    /// A derived number rather than a stored one, because it is a fact about the meter and the
+    /// step together. Every part that asks "am I on a beat" asks this.
+    pub fn steps_per_beat(self) -> usize {
+        let step = self.step_ticks().raw().max(1);
+        (self.signature.beat_ticks().raw() / step).max(1) as usize
     }
 
     /// How many steps make up one bar.
@@ -59,9 +73,14 @@ impl Grid {
         (tick.raw().max(0) / step) as usize
     }
 
-    /// `true` when the beat divides in three rather than in two.
+    /// `true` when the *step* is a triplet of the quarter rather than a division by two.
+    ///
+    /// Asked of the subdivision and not of the meter. A compound bar also has three steps to the
+    /// eighth, but that is the meter being compound and not a triplet grid laid over it — reading
+    /// this off `steps_per_beat` would call every 6/8 a triplet and switch swing off in 12/8 for
+    /// the wrong reason.
     pub fn is_triplet(self) -> bool {
-        self.steps_per_beat.is_multiple_of(3)
+        self.steps_per_quarter.is_multiple_of(3)
     }
 
     /// How strong a beat this step is, from 0 for the weakest to 4 for the downbeat.
@@ -76,7 +95,7 @@ impl Grid {
         if position == 0 {
             return 4;
         }
-        let per_beat = self.steps_per_beat as usize;
+        let per_beat = self.steps_per_beat();
         if position.is_multiple_of(per_beat) {
             // A beat, with the halfway point of the bar stronger than the rest.
             let beat = position / per_beat;
@@ -88,10 +107,15 @@ impl Grid {
             };
         }
         // Inside a beat: a step landing on a simpler division of it is stronger than one that
-        // only exists at the finest level. Both families are asked, because a beat of six divides
-        // in half *and* in thirds and both of those are real positions a player feels.
+        // only exists at the finest level.
         let inside = position % per_beat;
-        let halves = per_beat.is_multiple_of(2) && inside.is_multiple_of(per_beat / 2);
+        // A compound beat divides in three and in nothing else. Its halfway point is a *dotted*
+        // eighth into a dotted quarter — a syncopation against the meter, not a position the
+        // meter offers — so asking the halves family there would hand a real beat's weight to the
+        // one step in 6/8 that most needs to be heard as a departure.
+        let halves = !self.signature.is_compound()
+            && per_beat.is_multiple_of(2)
+            && inside.is_multiple_of(per_beat / 2);
         let thirds = per_beat.is_multiple_of(3) && inside.is_multiple_of(per_beat / 3);
         if halves || thirds { 1 } else { 0 }
     }
@@ -208,12 +232,24 @@ impl Pattern {
         step: usize,
         steps_per_bar: usize,
         steps_per_beat: usize,
+        own_steps_per_beat: usize,
     ) -> Option<Accent> {
         let steps_per_beat = steps_per_beat.max(1);
+        let own = own_steps_per_beat.max(1);
         if self.steps.is_empty() || steps_per_bar == 0 {
             return None;
         }
-        let pattern_beats = self.steps.len().div_ceil(steps_per_beat);
+        // A step inside the bar's beat, expressed inside the pattern's. They are the same length
+        // in a simple meter and they are not in a compound one — a dotted quarter holds six
+        // sixteenths where the groove's beat holds four — so the pattern is stretched over the
+        // longer beat rather than counted out in it and running off the end.
+        let across = |step: usize| (step % steps_per_beat) * own / steps_per_beat;
+        // Stretching lands two bar steps on one pattern step. Only the first of them strikes, or
+        // a single hit would come out as a flam nobody wrote.
+        if !step.is_multiple_of(steps_per_beat) && across(step) == across(step - 1) {
+            return None;
+        }
+        let pattern_beats = self.steps.len().div_ceil(own);
         let bar_beats = steps_per_bar.div_ceil(steps_per_beat);
         // Same length, or too short for a first and a last to be different beats: the plain wrap
         // is already the right answer, and is what a one-beat cell wants in any meter.
@@ -231,7 +267,7 @@ impl Pattern {
         } else {
             1 + (beat - 1) % middle
         };
-        self.at(mapped * steps_per_beat + step % steps_per_beat)
+        self.at(mapped * own + across(step))
     }
 
     /// How many hits the pattern has.
@@ -341,7 +377,17 @@ impl Groove {
     }
 }
 
+/// How many steps of a groove make one of its beats.
+///
+/// Every groove below is sixteen steps of 4/4, which is four beats of four sixteenths. It is the
+/// pattern's own beat rather than the bar's, and the two differ in compound time — see
+/// [`Pattern::at_in_bar`], which needs both to lay one over the other.
+pub const GROOVE_STEPS_PER_BEAT: usize = 4;
+
 /// Every groove the composer knows by name.
+///
+/// Quoted rather than derived: these are the patterns a kit actually plays, and the whole value of
+/// naming one is that it comes out sounding like itself.
 pub const GROOVES: &[Groove] = &[
     Groove {
         name: "basic-rock",
@@ -436,8 +482,15 @@ pub fn swing_offset(grid: Grid, step: usize, percent: u8) -> Ticks {
     if grid.is_triplet() {
         return Ticks::ZERO;
     }
+    // Compound time is already the shuffle a swing dial is reaching for: a 6/8 beat *is* three
+    // eighths, which is where swinging a 4/4 beat is trying to get to. There is no straight pair
+    // left to delay, and delaying the middle of three would push the beat about rather than swing
+    // it. The dial goes quiet here for the same reason it does over a triplet grid.
+    if grid.signature.is_compound() {
+        return Ticks::ZERO;
+    }
     // Half a beat, in steps: the unit that gets swung.
-    let unit = (grid.steps_per_beat as usize / 2).max(1);
+    let unit = (grid.steps_per_beat() / 2).max(1);
     if (step / unit).is_multiple_of(2) {
         return Ticks::ZERO;
     }
@@ -602,12 +655,57 @@ mod tests {
     }
 
     #[test]
+    fn a_compound_bar_is_counted_in_dotted_beats_of_real_sixteenths() {
+        // Four steps to the quarter is a sixteenth in any meter. A 6/8 bar is three quarters, so
+        // twelve of them — it used to be twenty-four, because the step divided the *eighth* the
+        // denominator names and came out a thirty-second.
+        let six_eight = Grid::new(TimeSignature::new(6, 8), 4);
+        assert_eq!(six_eight.step_ticks(), Ticks(Ticks::QUARTER.raw() / 4));
+        assert_eq!(six_eight.steps_per_bar(), 12);
+        assert_eq!(
+            six_eight.steps_per_beat(),
+            6,
+            "a dotted quarter of sixteenths"
+        );
+        assert_eq!(six_eight.steps_per_bar() / six_eight.steps_per_beat(), 2);
+
+        // The metric hierarchy of those twelve steps. Two beats; the eighths inside each are real
+        // positions; the step halfway through a dotted quarter is not one the meter offers.
+        let weights: Vec<u8> = (0..12).map(|step| six_eight.weight(step)).collect();
+        assert_eq!(weights, [4, 0, 1, 0, 1, 0, 3, 0, 1, 0, 1, 0]);
+
+        // 12/8 is four of the same beat.
+        let twelve_eight = Grid::new(TimeSignature::new(12, 8), 4);
+        assert_eq!(twelve_eight.steps_per_bar(), 24);
+        assert_eq!(twelve_eight.steps_per_beat(), 6);
+
+        // 4/4 is what it always was, which is why every fixture held.
+        let four_four = Grid::new(TimeSignature::default(), 4);
+        assert_eq!(four_four.steps_per_bar(), 16);
+        assert_eq!(four_four.steps_per_beat(), 4);
+        assert_eq!(
+            (0..16)
+                .map(|step| four_four.weight(step))
+                .collect::<Vec<_>>(),
+            [4, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0]
+        );
+
+        // And a compound meter is not a triplet grid: the subdivision is what decides that.
+        assert!(!six_eight.is_triplet());
+        assert!(Grid::new(TimeSignature::new(6, 8), 3).is_triplet());
+
+        // Swing is silent in compound time — the bar is already the shuffle it aims at.
+        assert_eq!(swing_offset(six_eight, 3, 67), Ticks::ZERO);
+        assert_ne!(swing_offset(four_four, 2, 67), Ticks::ZERO);
+    }
+
+    #[test]
     fn a_groove_is_mapped_onto_the_bar_rather_than_wrapped_round_it() {
         // A bar-long pattern with the downbeat and the turnaround marked, and nothing between.
         let groove = Pattern::parse("x ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ x ~ ~ ~").expect("parses");
         let hits = |steps_per_bar: usize| -> Vec<usize> {
             (0..steps_per_bar)
-                .filter(|step| groove.at_in_bar(*step, steps_per_bar, 4).is_some())
+                .filter(|step| groove.at_in_bar(*step, steps_per_bar, 4, 4).is_some())
                 .collect()
         };
 
@@ -628,6 +726,18 @@ mod tests {
         assert_eq!(hits(20), [0, 16], "5/4");
         assert_eq!(hits(28), [0, 24], "7/8");
         assert_eq!(hits(12), [0, 8], "3/4 dropped its turnaround");
+
+        // And a real 6/8 bar, which is twelve sixteenths in two dotted-quarter beats while the
+        // groove is sixteen sixteenths in four beats of four. The groove's beat is stretched over
+        // the longer one, and each of its steps strikes once — so the bar comes out with the
+        // downbeat on its first beat and the turnaround on its second, which is what two beats of
+        // a 4/4 pattern reduce to and what a drummer would play.
+        assert_eq!(
+            (0..12)
+                .filter(|step| groove.at_in_bar(*step, 12, 6, 4).is_some())
+                .collect::<Vec<_>>(),
+            [0, 6]
+        );
 
         // The first and last beat of the bar always carry the first and last beat of the groove,
         // in every meter, which is the property the mapping is for.
