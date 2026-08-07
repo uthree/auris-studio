@@ -463,10 +463,9 @@ pub fn groove_pattern(groove: &str, voice: crate::rhythm::DrumVoice) -> Pattern 
 /// the compound grooves count their beats in threes, and a reader that assumed four would play
 /// them at two thirds of the length they were written at.
 pub fn groove_steps_per_beat(groove: &str) -> usize {
-    crate::rhythm::groove(groove)
-        .map_or(crate::rhythm::GROOVE_STEPS_PER_BEAT, |groove| {
-            groove.steps_per_beat
-        })
+    crate::rhythm::groove(groove).map_or(crate::rhythm::GROOVE_STEPS_PER_BEAT, |groove| {
+        groove.steps_per_beat
+    })
 }
 
 /// Whether a chord is one a cadence would want to land on.

@@ -318,17 +318,21 @@ impl Numeral {
         let borrowed = self.quality.is_some() || self.accidental != 0 || triad != diatonic;
         let quality = match self.extension {
             None => triad,
-            // An upper-case numeral with a bare seven is a dominant — `V7`, `I7`, `IV7` — which
-            // is what makes the last chord of 丸サ進行 a secondary dominant rather than a tonic.
+            // A sixth sits on a plain triad and on nothing else. `Major6` and `Minor6` both hold a
+            // *perfect* fifth, so handing one to a diminished or augmented triad on the strength
+            // of its third alone quietly straightened the fifth the numeral was written for:
+            // `vii6` came out with a perfect fifth and was no longer diminished at all. There is
+            // no name in this vocabulary for the chord that was asked for, and the triad as
+            // written is a nearer answer than a different triad.
+            Some(6) => match triad {
+                Quality::Minor => Quality::Minor6,
+                Quality::Major => Quality::Major6,
+                other => other,
+            },
+            // An upper-case numeral with a bare seven is a dominant — `V7`, `I7`, `IV7` — which is
+            // what makes the last chord of 丸サ進行 a secondary dominant rather than a tonic.
             // Everything else takes the seventh its own triad implies, so `vii7` keeps its
             // diminished fifth and comes out half-diminished.
-            Some(6) => {
-                if triad.is_minor() {
-                    Quality::Minor6
-                } else {
-                    Quality::Major6
-                }
-            }
             Some(extension) => {
                 // An upper-case numeral on a major triad takes a *dominant* seventh, which is
                 // the convention. A numeral playing the key's own triad takes the seventh the
@@ -834,6 +838,16 @@ mod tests {
         // And the whole ii-V of the dominant, which is the reason the notation is wanted.
         assert_eq!(chord_of("ii7/V", "C major"), "Am7");
         assert_eq!(chord_of("V7/V", "C major"), "D7");
+    }
+
+    #[test]
+    fn a_sixth_never_straightens_the_fifth_under_it() {
+        // A plain triad takes its sixth as written.
+        assert_eq!(chord_of("I6", "C major"), "C6");
+        assert_eq!(chord_of("vi6", "C major"), "Am6");
+        // A diminished triad has no sixth in this vocabulary, and used to be given a *perfect*
+        // fifth along with one: `vii6` came out Bm6 and was no longer diminished.
+        assert_eq!(chord_of("vii6", "C major"), "Bdim");
     }
 
     #[test]

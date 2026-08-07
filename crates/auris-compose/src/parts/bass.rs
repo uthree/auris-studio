@@ -82,13 +82,8 @@ pub(super) fn bass(
     let own = crate::frame::groove_steps_per_beat(&settings.groove);
     let kick_at = |at: Ticks| {
         let step = drums.step_of(Ticks(at.raw().rem_euclid(drum_bar)));
-        kick.at_in_bar(
-            step,
-            drums.steps_per_bar(),
-            drums.steps_per_beat(),
-            own,
-        )
-        .is_some()
+        kick.at_in_bar(step, drums.steps_per_bar(), drums.steps_per_beat(), own)
+            .is_some()
     };
     let mut notes = Vec::new();
 
