@@ -222,7 +222,13 @@ impl Role {
             // for attention rather than filling in underneath it, and a wide voicing struck
             // sixteen times a bar would bury everything else in the mix.
             Role::Stab => (60, 84),
-            Role::Pad => (36, 64),
+            // C3 to C5, which is where a pad is written, and above where the bass lives. It used
+            // to start at C2 and share sixteen semitones with the bass: a voicing folded into
+            // that could put a chord tone *under* the bass note, which is not a muddy mix but a
+            // different chord — an inversion nobody wrote, decided by whichever note happened to
+            // fold lowest. No part may read another's notes, so the ranges are the only place the
+            // bass can be kept at the bottom.
+            Role::Pad => (48, 72),
             Role::Bass => (28, 52),
             _ => (0, 127),
         }
@@ -249,6 +255,31 @@ mod tests {
             assert!(
                 (70.0..=225.0).contains(&luma),
                 "{} is {luma:.0} bright, which is a track nobody can pick out of the lanes",
+                role.name()
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_pitched_is_written_below_the_bass() {
+        // The bass is the bottom of the arrangement, and no part can look at another's notes to
+        // find that out — the ranges are where it is decided. A pitched part whose floor sits
+        // under the bass's own may sound below it, and a chord tone under the bass root is an
+        // inversion the numeral never asked for.
+        let (bass_low, bass_high) = Role::Bass.range();
+        for role in Role::ALL {
+            if role == Role::Bass || role.drum_voice().is_some() {
+                continue;
+            }
+            let (low, _) = role.range();
+            assert!(
+                low > bass_low,
+                "{} may be written below the bass's own floor",
+                role.name()
+            );
+            assert!(
+                low + 12 > bass_high,
+                "{} shares more than an octave with the bass",
                 role.name()
             );
         }
