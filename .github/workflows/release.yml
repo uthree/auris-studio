@@ -80,6 +80,9 @@ jobs:
           ln -s "Auris Studio.app/Contents/Resources/SoundFonts" "$stage/SoundFonts"
 
           cp README.md CHANGELOG.md LICENSE "$stage/"
+          # The README links into `docs/`, so an archive without it has dead links in the
+          # first file anybody opens.
+          cp -R docs "$stage/docs"
           tar -czf "$stage.tar.gz" "$stage"
 
       - uses: actions/upload-artifact@v4
@@ -113,6 +116,9 @@ jobs:
           # Beside the binaries, which is the first place `auris_session::library` looks.
           cp -R SoundFonts "$stage/SoundFonts"
           cp README.md CHANGELOG.md LICENSE "$stage/"
+          # The README links into `docs/`, so an archive without it has dead links in the
+          # first file anybody opens.
+          cp -R docs "$stage/docs"
           7z a "$stage.zip" "$stage"
 
       - uses: actions/upload-artifact@v4
@@ -155,6 +161,9 @@ jobs:
           # in three oscillators on one platform and an orchestra on the others.
           cp -R SoundFonts "$stage/SoundFonts"
           cp README.md CHANGELOG.md LICENSE "$stage/"
+          # The README links into `docs/`, so an archive without it has dead links in the
+          # first file anybody opens.
+          cp -R docs "$stage/docs"
           tar -czf "$stage.tar.gz" "$stage"
 
       - uses: actions/upload-artifact@v4
