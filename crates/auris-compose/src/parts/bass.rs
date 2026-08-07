@@ -70,14 +70,25 @@ pub(super) fn bass(
     let (low, high) = part.range();
     let grid = part_grid(frame, part);
     let kick = crate::frame::groove_pattern(&settings.groove, DrumVoice::Kick);
-    // Asked in ticks and answered on the *drums'* grid, not the bass's. A groove is sixteen steps
-    // and is read by index, so a bass dividing its beats any other way would have wrapped the
-    // pattern partway through the bar and followed a kick nobody was playing.
+    // Asked in ticks and answered on the *drums'* grid, not the bass's. A groove is read by index,
+    // so a bass dividing its beats any other way would have wrapped the pattern partway through
+    // the bar and followed a kick nobody was playing.
+    //
+    // Mapped onto the bar the same way the drummer maps it, too. Reading the raw index instead
+    // wrapped a groove shorter than the bar and truncated one longer, so in every meter the
+    // groove was not written for the bass followed a kick the kit was not striking.
     let drums = frame.grid;
     let drum_bar = drums.bar_ticks().raw().max(1);
+    let own = crate::frame::groove_steps_per_beat(&settings.groove);
     let kick_at = |at: Ticks| {
-        kick.at(drums.step_of(Ticks(at.raw().rem_euclid(drum_bar))))
-            .is_some()
+        let step = drums.step_of(Ticks(at.raw().rem_euclid(drum_bar)));
+        kick.at_in_bar(
+            step,
+            drums.steps_per_bar(),
+            drums.steps_per_beat(),
+            own,
+        )
+        .is_some()
     };
     let mut notes = Vec::new();
 

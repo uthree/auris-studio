@@ -251,14 +251,16 @@ impl Pattern {
         }
         let pattern_beats = self.steps.len().div_ceil(own);
         let bar_beats = steps_per_bar.div_ceil(steps_per_beat);
-        // Same length, or too short for a first and a last to be different beats: the plain wrap
-        // is already the right answer, and is what a one-beat cell wants in any meter.
-        if pattern_beats == bar_beats || pattern_beats < 2 || bar_beats < 2 {
-            return self.at(step);
-        }
         let beat = step / steps_per_beat;
         let middle = pattern_beats.saturating_sub(2);
-        let mapped = if beat == 0 {
+        let mapped = if pattern_beats == bar_beats || pattern_beats < 2 || bar_beats < 2 {
+            // Same count of beats, or too short for a first and a last to be different beats:
+            // beat for beat is already the right answer, and is what a one-beat cell wants in any
+            // meter. The step *inside* the beat is still stretched, which is the whole difference
+            // between this and a plain wrap — a groove in eighths under a bar counted in
+            // sixteenths lines up beat with beat and then reads its own eighths within them.
+            beat
+        } else if beat == 0 {
             0
         } else if beat + 1 >= bar_beats {
             pattern_beats - 1
@@ -362,6 +364,13 @@ pub struct Groove {
     pub hat: &'static str,
     /// How much to swing the offbeats, as a percentage where 50 is straight.
     pub swing: u8,
+    /// How many steps of this groove make one of *its* beats.
+    ///
+    /// Not the bar's beat, and the two differ in compound time: a groove in sixteenths of a simple
+    /// beat counts four, one in eighths of a dotted beat counts three. It is what
+    /// [`Pattern::at_in_bar`] needs to lay one over the other, and it is a property of the pattern
+    /// rather than of the song, which is why it is written here beside the pattern it describes.
+    pub steps_per_beat: usize,
 }
 
 impl Groove {
@@ -377,11 +386,11 @@ impl Groove {
     }
 }
 
-/// How many steps of a groove make one of its beats.
+/// How many steps a pattern of unknown provenance is assumed to count to its beat.
 ///
-/// Every groove below is sixteen steps of 4/4, which is four beats of four sixteenths. It is the
-/// pattern's own beat rather than the bar's, and the two differ in compound time — see
-/// [`Pattern::at_in_bar`], which needs both to lay one over the other.
+/// Sixteenths, because that is what a drum pattern is written in and what every simple-meter
+/// groove below uses. A groove states its own in [`Groove::steps_per_beat`]; this is the answer
+/// for a name that matches none of them.
 pub const GROOVE_STEPS_PER_BEAT: usize = 4;
 
 /// Every groove the composer knows by name.
@@ -396,6 +405,7 @@ pub const GROOVES: &[Groove] = &[
         snare: "~ ~ ~ ~ X ~ ~ ~ ~ ~ ~ ~ X ~ ~ ~",
         hat: "x ~ o ~ x ~ o ~ x ~ o ~ x ~ o ~",
         swing: 50,
+        steps_per_beat: 4,
     },
     Groove {
         name: "eight-beat",
@@ -404,6 +414,7 @@ pub const GROOVES: &[Groove] = &[
         snare: "~ ~ ~ ~ X ~ ~ ~ ~ ~ ~ ~ X ~ ~ ~",
         hat: "x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~",
         swing: 50,
+        steps_per_beat: 4,
     },
     Groove {
         name: "sixteen-beat",
@@ -412,6 +423,7 @@ pub const GROOVES: &[Groove] = &[
         snare: "~ ~ ~ ~ X ~ ~ o ~ ~ ~ ~ X ~ o ~",
         hat: "x o x o x o x o x o x o x o x o",
         swing: 50,
+        steps_per_beat: 4,
     },
     Groove {
         name: "four-on-the-floor",
@@ -420,6 +432,7 @@ pub const GROOVES: &[Groove] = &[
         snare: "~ ~ ~ ~ X ~ ~ ~ ~ ~ ~ ~ X ~ ~ ~",
         hat: "~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~",
         swing: 50,
+        steps_per_beat: 4,
     },
     Groove {
         name: "shuffle",
@@ -428,6 +441,7 @@ pub const GROOVES: &[Groove] = &[
         snare: "~ ~ ~ ~ X ~ ~ ~ ~ ~ ~ ~ X ~ ~ ~",
         hat: "x ~ o ~ x ~ o ~ x ~ o ~ x ~ o ~",
         swing: 66,
+        steps_per_beat: 4,
     },
     Groove {
         name: "breakbeat",
@@ -436,6 +450,7 @@ pub const GROOVES: &[Groove] = &[
         snare: "~ ~ ~ ~ X ~ ~ o ~ ~ ~ o X ~ ~ o",
         hat: "x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~",
         swing: 50,
+        steps_per_beat: 4,
     },
     Groove {
         name: "bossa-nova",
@@ -444,6 +459,7 @@ pub const GROOVES: &[Groove] = &[
         snare: "x ~ ~ x ~ ~ x ~ ~ ~ x ~ x ~ ~ ~",
         hat: "x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~",
         swing: 50,
+        steps_per_beat: 4,
     },
     Groove {
         name: "half-time",
@@ -452,6 +468,7 @@ pub const GROOVES: &[Groove] = &[
         snare: "~ ~ ~ ~ ~ ~ ~ ~ X ~ ~ ~ ~ ~ ~ ~",
         hat: "x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~",
         swing: 50,
+        steps_per_beat: 4,
     },
     Groove {
         name: "sparse",
@@ -460,6 +477,29 @@ pub const GROOVES: &[Groove] = &[
         snare: "~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~",
         hat: "x ~ ~ ~ ~ ~ ~ ~ x ~ ~ ~ ~ ~ ~ ~",
         swing: 50,
+        steps_per_beat: 4,
+    },
+    // The compound ones, counted in eighths of a dotted beat rather than sixteenths of a plain
+    // one. Mapping a 4/4 groove onto 6/8 keeps its footing but stays a four-beat idea in a
+    // two-beat bar; these are the two-beat and four-beat ideas themselves. Nothing chooses one
+    // automatically — a song in 6/8 has to name it, the way it names any other groove.
+    Groove {
+        name: "six-eight",
+        description: "Two dotted beats, with the hat counting the eighths between them",
+        kick: "x ~ ~ ~ ~ ~",
+        snare: "~ ~ ~ X ~ ~",
+        hat: "x o o x o o",
+        swing: 50,
+        steps_per_beat: 3,
+    },
+    Groove {
+        name: "slow-blues",
+        description: "The 12/8 shuffle: a backbeat under a ride that skips",
+        kick: "x ~ ~ ~ ~ ~ x ~ ~ ~ ~ ~",
+        snare: "~ ~ ~ X ~ ~ ~ ~ ~ X ~ ~",
+        hat: "x ~ o x ~ o x ~ o x ~ o",
+        swing: 50,
+        steps_per_beat: 3,
     },
 ];
 
@@ -775,12 +815,22 @@ mod tests {
                 groove.name
             );
             seen.push(groove.name);
+            // One bar, and the same bar for every voice. The length itself is the groove's own
+            // business — sixteen sixteenths of 4/4, six eighths of 6/8 — but a snare longer than
+            // the kick under it would be a groove that drifts against itself.
+            let bar = groove.pattern(DrumVoice::Kick).len();
+            assert!(
+                bar.is_multiple_of(groove.steps_per_beat),
+                "`{}` is {bar} steps, which is not a whole number of its {}-step beats",
+                groove.name,
+                groove.steps_per_beat
+            );
             for voice in [DrumVoice::Kick, DrumVoice::Snare, DrumVoice::ClosedHat] {
                 let pattern = groove.pattern(voice);
                 assert_eq!(
                     pattern.len(),
-                    16,
-                    "`{}` has a {voice:?} pattern of {} steps",
+                    bar,
+                    "`{}` has a {voice:?} pattern of {} steps against a bar of {bar}",
                     groove.name,
                     pattern.len()
                 );
@@ -794,6 +844,45 @@ mod tests {
         }
         assert!(groove("basic-rock").is_some());
         assert!(groove("nonsense").is_none());
+    }
+
+    #[test]
+    fn a_compound_groove_lands_on_the_dotted_beats_of_the_bar_it_was_written_for() {
+        let blues = groove("slow-blues").expect("listed");
+        assert_eq!(blues.steps_per_beat, 3);
+        // Twelve eighths: four dotted beats, the backbeat on the second and fourth of them.
+        assert_eq!(blues.pattern(DrumVoice::Snare).onsets(), vec![3, 9]);
+
+        // And laid over a real 12/8 bar of sixteenths, where a dotted beat is six steps and the
+        // groove's eighth is two of them. The backbeat has to stay on the dotted beats.
+        let grid = Grid::new(TimeSignature::new(12, 8), 4);
+        assert_eq!(grid.steps_per_beat(), 6);
+        let snare = blues.pattern(DrumVoice::Snare);
+        let struck: Vec<_> = (0..grid.steps_per_bar())
+            .filter(|step| {
+                snare
+                    .at_in_bar(*step, grid.steps_per_bar(), grid.steps_per_beat(), 3)
+                    .is_some()
+            })
+            .collect();
+        assert_eq!(struck, vec![6, 18], "the second and fourth dotted beats");
+    }
+
+    #[test]
+    fn a_compound_groove_is_not_stretched_into_a_bar_that_does_not_want_it() {
+        // Six eighths under a 6/8 bar of sixteenths: two dotted beats either way, so the mapping
+        // is a plain doubling and the hat still counts every eighth.
+        let six = groove("six-eight").expect("listed");
+        let grid = Grid::new(TimeSignature::new(6, 8), 4);
+        assert_eq!(grid.steps_per_bar(), 12);
+        let hat = six.pattern(DrumVoice::ClosedHat);
+        let struck: Vec<_> = (0..grid.steps_per_bar())
+            .filter(|step| {
+                hat.at_in_bar(*step, grid.steps_per_bar(), grid.steps_per_beat(), 3)
+                    .is_some()
+            })
+            .collect();
+        assert_eq!(struck, vec![0, 2, 4, 6, 8, 10]);
     }
 
     #[test]

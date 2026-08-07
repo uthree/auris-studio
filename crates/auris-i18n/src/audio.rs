@@ -411,6 +411,14 @@ const THEORY_DESCRIPTIONS: &[(&str, &str)] = &[
         "Almost nothing: for intros and ambient sections",
         "ほとんど何も鳴らさない。イントロやアンビエントな場面に",
     ),
+    (
+        "Two dotted beats, with the hat counting the eighths between them",
+        "付点 2 拍。あいだの 8 分をハットが刻む",
+    ),
+    (
+        "The 12/8 shuffle: a backbeat under a ride that skips",
+        "12/8 のシャッフル。跳ねるライドの下にバックビート",
+    ),
 ];
 
 /// Japanese names for the browser's category headings.

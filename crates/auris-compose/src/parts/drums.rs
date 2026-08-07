@@ -9,7 +9,7 @@
 use auris_core::time::Ticks;
 
 use crate::frame::{Frame, SectionPlan};
-use crate::rhythm::{Accent, DrumVoice, GROOVE_STEPS_PER_BEAT};
+use crate::rhythm::{Accent, DrumVoice};
 use crate::spec::PartSpec;
 
 use super::writer::{bar_stream, dynamic, part_grid, phrase_shape, velocity};
@@ -76,7 +76,7 @@ pub(super) fn drums(
                     step,
                     grid.steps_per_bar(),
                     grid.steps_per_beat(),
-                    GROOVE_STEPS_PER_BEAT,
+                    crate::frame::groove_steps_per_beat(&settings.groove),
                 )
             } {
                 Some(accent) => {
