@@ -68,7 +68,9 @@ impl RenderAudioClip {
 /// Flattens one MIDI clip's notes into absolute timeline events.
 ///
 /// Notes starting past the clip's end are dropped and notes running past it are cut short, which
-/// is what the arrangement shows: the clip's length is the gate.
+/// is what the arrangement shows: the clip's length is the gate. A looped clip goes through the
+/// same gate once per pass — looping is expanded here, at build time, so nothing on the audio
+/// thread has to know it happened.
 pub(super) fn schedule_clip(
     clip: &MidiClip,
     tempo_map: &TempoMap,
@@ -81,7 +83,7 @@ pub(super) fn schedule_clip(
     // Which notes a clip actually plays is `MidiClip`'s own rule, asked rather than repeated: the
     // MIDI writer asks the same question, and an export that answered it differently from the
     // renderer would write a file that is not the piece you can hear.
-    for note in clip.playable_notes() {
+    for note in clip.sounding_notes() {
         let start_tick = clip.start + note.start;
         let end_tick = clip.start + note.end();
         let start = tempo_map.ticks_to_samples(start_tick, sample_rate).raw();
@@ -110,7 +112,7 @@ pub(super) fn schedule_clip(
     // The two curves, sampled the same way and by the same rule — asked of the clip rather than
     // worked out here, so the roll drawing a curve and the renderer playing it read one answer.
     for which in auris_core::project::ClipCurve::ALL {
-        for (at, value) in clip.curve_events(which, auris_core::project::CURVE_STEP) {
+        for (at, value) in clip.sounding_curve_events(which, auris_core::project::CURVE_STEP) {
             let frame = tempo_map
                 .ticks_to_samples(clip.start + at, sample_rate)
                 .raw();
@@ -151,7 +153,7 @@ pub(super) fn sort_events(events: &mut [ScheduledEvent]) {
     events.sort_by_key(|scheduled| (scheduled.frame, event_rank(&scheduled.event)));
 }
 
-/// Resolves a project audio clip against the sample bank.
+/// Resolves a project audio clip against the sample bank, one entry per pass it makes.
 ///
 /// `source_rate` is the rate the clip's frame counts — its trim, its length, its fades — are
 /// expressed in, which is the rate the file was decoded at. `sample_rate` is the rate this graph
@@ -159,15 +161,25 @@ pub(super) fn sort_events(events: &mut [ScheduledEvent]) {
 /// under a 48 kHz project, and an export can be asked for any rate at all. Every frame count is
 /// therefore converted on the way in, and the caller is expected to have handed the bank buffers
 /// at the render rate to match.
+///
+/// A looped clip becomes several entries rather than one entry that knows it repeats, for the
+/// reason [`schedule_clip`] expands its passes too: the renderer walks a flat list of windows
+/// onto buffers, and a window that had to work out which repeat it was in would be arithmetic on
+/// the audio thread in aid of nothing.
+///
+/// The **fades stay on the clip's own edges**: the fade-in shapes the first pass and the fade-out
+/// the last, and the joins between repeats run flat. A fade-out at the end of every pass would
+/// pump once a bar, which is not what somebody who drew one fade meant.
 pub(super) fn resolve_audio_clip(
     clip: &AudioClip,
     bank: &AudioSourceBank,
     tempo_map: &TempoMap,
     sample_rate: f64,
     source_rate: f64,
-) -> Option<RenderAudioClip> {
+    out: &mut Vec<RenderAudioClip>,
+) {
     if clip.muted {
-        return None;
+        return;
     }
     let Some(buffer) = bank.get(clip.source) else {
         log::warn!(
@@ -175,7 +187,7 @@ pub(super) fn resolve_audio_clip(
             clip.name,
             clip.source.0
         );
-        return None;
+        return;
     };
     // A nonsense rate in the document would otherwise scale every position to zero or to NaN.
     let ratio = if source_rate.is_finite() && source_rate > 0.0 {
@@ -191,19 +203,50 @@ pub(super) fn resolve_audio_clip(
     let source_offset = convert(clip.offset_frames).min(available);
     let length = convert(clip.length_frames).min(available - source_offset);
     if length == 0 {
-        return None;
+        return;
     }
-    Some(RenderAudioClip {
-        buffer: Arc::clone(buffer),
-        start_frame: tempo_map
-            .ticks_to_samples(clip.start.max_zero(), sample_rate)
-            .raw(),
-        source_offset,
-        length,
-        gain: db_to_gain(clip.gain_db),
-        fade_in: convert(clip.fade_in_frames),
-        fade_out: convert(clip.fade_out_frames),
-    })
+    let start = clip.start.max_zero();
+    // How long one pass is on the musical grid, which is what `loop_end` is measured against.
+    let content = tempo_map.seconds_to_ticks(auris_core::time::Seconds(
+        tempo_map.ticks_to_seconds(start).0 + length as f64 / sample_rate.max(1.0),
+    )) - start;
+    let passes: Vec<(Ticks, Ticks)> =
+        auris_core::project::loop_passes(content, clip.loop_end).collect();
+    let last = passes.len().saturating_sub(1);
+    for (index, (offset, span)) in passes.into_iter().enumerate() {
+        let from = tempo_map
+            .ticks_to_samples(start + offset, sample_rate)
+            .raw();
+        // The pass's own length in frames, which is the trim except where the loop cuts through
+        // it — and a tempo change under a repeat makes even a whole pass a different number of
+        // frames from the one before, so it is measured rather than carried.
+        let frames = match span < content {
+            true => tempo_map
+                .ticks_to_samples(start + offset + span, sample_rate)
+                .raw()
+                .saturating_sub(from)
+                .min(length),
+            false => length,
+        };
+        if frames == 0 {
+            continue;
+        }
+        out.push(RenderAudioClip {
+            buffer: Arc::clone(buffer),
+            start_frame: from,
+            source_offset,
+            length: frames,
+            gain: db_to_gain(clip.gain_db),
+            fade_in: match index == 0 {
+                true => convert(clip.fade_in_frames).min(frames),
+                false => 0,
+            },
+            fade_out: match index == last {
+                true => convert(clip.fade_out_frames).min(frames),
+                false => 0,
+            },
+        });
+    }
 }
 
 /// Largest number of events that can fall inside any window of `window` frames.
@@ -380,6 +423,89 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].frame, 0);
         assert_eq!(events[1].frame, 24_000);
+    }
+
+    #[test]
+    fn a_looped_midi_clip_is_expanded_into_its_repeats() {
+        // Looping is flattened at build time. Nothing on the audio thread knows a clip repeats,
+        // which is the only way it can be free of the arithmetic.
+        let mut project = quarter_note_project();
+        let clip = project.tracks[0]
+            .kind
+            .as_instrument()
+            .expect("an instrument track")
+            .clips[0]
+            .id;
+        let (length, was) = {
+            let (_, midi) = project.midi_clip(clip).expect("the clip");
+            (midi.length, midi.notes.len())
+        };
+        assert_eq!(was, 1, "the fixture is one note");
+        project.midi_clip_mut(clip).expect("the clip").loop_end = length * 3;
+
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        let RenderSource::Instrument { events, .. } = &graph.tracks()[0].source else {
+            panic!("expected an instrument source");
+        };
+        // Three passes of one note: three strikes and three releases, and the document still
+        // holds exactly the one note somebody played.
+        assert_eq!(events.len(), 6);
+        assert_eq!(project.midi_clip(clip).expect("the clip").1.notes.len(), 1);
+        let strikes: Vec<u64> = events
+            .iter()
+            .filter(|scheduled| matches!(scheduled.event, NoteEvent::NoteOn { .. }))
+            .map(|scheduled| scheduled.frame)
+            .collect();
+        // The fixture's clip is four quarters long, which at 120 BPM and 48 kHz is 96 000 frames
+        // a pass, and its note sits one quarter into each one.
+        assert_eq!(strikes, vec![24_000, 120_000, 216_000]);
+    }
+
+    #[test]
+    fn a_looped_audio_clip_becomes_one_window_per_pass() {
+        let mut project = Project::new("Graph", 48_000.0);
+        let track = project.add_audio_track("Drums");
+        let source = project.add_audio_source(
+            "loop",
+            auris_core::AssetPath::inside("Audio/loop.wav"),
+            48_000,
+            48_000.0,
+            2,
+        );
+        let clip = project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
+        {
+            let clip = project.audio_clip_mut(clip).unwrap();
+            // One second — one bar at 120 BPM is two seconds, so this is half a bar.
+            clip.length_frames = 48_000;
+            clip.fade_in_frames = 480;
+            clip.fade_out_frames = 480;
+            // Two and a half passes.
+            clip.loop_end = Ticks::QUARTER * 5;
+        }
+        let mut bank = AudioSourceBank::new();
+        bank.insert(source, Arc::new(AudioBuffer::stereo(48_000, 48_000.0)));
+
+        let graph = RenderGraph::build(&project, &bank, &testkit::registry(), 512);
+        let RenderSource::Audio { clips } = &graph.tracks()[0].source else {
+            panic!("expected an audio source");
+        };
+        assert_eq!(clips.len(), 3);
+        assert_eq!(
+            clips
+                .iter()
+                .map(|clip| clip.start_frame)
+                .collect::<Vec<_>>(),
+            vec![0, 48_000, 96_000]
+        );
+        // Every pass reads the same window of the source: a repeat is the same material again.
+        assert!(clips.iter().all(|clip| clip.source_offset == 0));
+        assert_eq!(clips[0].length, 48_000);
+        assert_eq!(clips[2].length, 24_000, "the last pass is cut by the loop");
+        // The fades belong to the clip's own edges, and nothing pumps at the joins.
+        assert_eq!((clips[0].fade_in, clips[0].fade_out), (480, 0));
+        assert_eq!((clips[1].fade_in, clips[1].fade_out), (0, 0));
+        assert_eq!((clips[2].fade_in, clips[2].fade_out), (0, 480));
     }
 
     #[test]

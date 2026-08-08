@@ -288,6 +288,49 @@ impl AurisApp {
         self.center_roll_on_selection();
     }
 
+    /// Repeats a clip out past its own end, or stops it repeating.
+    ///
+    /// Every selected clip when the one asked about is inside the selection, the way every other
+    /// clip command works — and each is toggled from *its own* state rather than from the one
+    /// that was clicked, because a mixed selection has no single answer to flip.
+    pub(crate) fn toggle_clip_loop(&mut self, clip: ClipId) {
+        let chosen = self.clips_for_command(clip);
+        let mut looped = 0usize;
+        self.session.begin_transaction(Edit::LoopClip);
+        for clip in &chosen {
+            if self.session.toggle_clip_loop(*clip).unwrap_or(false) {
+                looped += 1;
+            }
+        }
+        self.session.end_transaction();
+        self.set_status(self.t(match looped > 0 {
+            true => Key::ClipLooped,
+            false => Key::ClipUnlooped,
+        }));
+    }
+
+    /// Snaps the selected notes onto the grid the arrangement is showing.
+    ///
+    /// The editing grid rather than a value of its own: quantising to a division nobody can see
+    /// is a jump with no explanation, and the grid is already on screen, already cycled by a
+    /// keystroke, and already what every other snap in the application obeys.
+    pub(crate) fn quantize_selected_notes(&mut self, what: Quantize) {
+        let Some(clip) = self.selected_clip else {
+            return;
+        };
+        let chosen: Vec<usize> = self.selected_notes.iter().copied().collect();
+        if chosen.is_empty() {
+            self.set_status(self.t(Key::NothingSelected));
+            return;
+        }
+        let grid = self.project().grid;
+        match self.session.quantize_notes(clip, &chosen, grid, what) {
+            Ok(0) => self.set_status(self.t(Key::AlreadyOnTheGrid)),
+            Ok(moved) => self.set_status(messages::notes_quantised(self.language(), moved)),
+            Err(error) => self.set_failed_status(self.failure(Key::CmdQuantize, &error)),
+        }
+    }
+
     /// Deletes whatever the current selection covers.
     pub(crate) fn delete_selection(&mut self) {
         if let Some(clip) = self.selected_clip

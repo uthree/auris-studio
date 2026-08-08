@@ -220,15 +220,14 @@ impl RenderGraph {
                             .audio_sources
                             .get(&clip.source)
                             .map_or(project.sample_rate, |source| source.sample_rate);
-                        if let Some(resolved) = resolve_audio_clip(
+                        resolve_audio_clip(
                             clip,
                             bank,
                             &project.tempo_map,
                             sample_rate,
                             source_rate,
-                        ) {
-                            clips.push(resolved);
-                        }
+                            &mut clips,
+                        );
                     }
                     clips.sort_by_key(|clip| clip.start_frame);
                     RenderSource::Audio { clips }

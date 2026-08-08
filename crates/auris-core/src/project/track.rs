@@ -180,10 +180,13 @@ impl Track {
     /// Audio clip lengths depend on the tempo map, so it is passed in.
     pub fn end_tick(&self, tempo_map: &TempoMap, sample_rate: f64) -> Ticks {
         match &self.kind {
+            // The *sounding* end of each clip, repeats included. A track whose last clip is
+            // looped goes on playing past the clip's own end, and an export measured from that
+            // end would cut the repeats off the file.
             TrackKind::Instrument(track) => track
                 .clips
                 .iter()
-                .map(MidiClip::end)
+                .map(MidiClip::sounding_end)
                 .max()
                 .unwrap_or(Ticks::ZERO),
             TrackKind::Audio(track) => track
@@ -193,8 +196,9 @@ impl Track {
                     // The shared helper, not inline arithmetic: it guards the sample rate, and
                     // a second copy of the conversion is a second place for the guard to be
                     // forgotten — which is exactly how this one came to divide by zero.
-                    clip.start
-                        + audio_length_ticks(tempo_map, sample_rate, clip.start, clip.length_frames)
+                    let length =
+                        audio_length_ticks(tempo_map, sample_rate, clip.start, clip.length_frames);
+                    clip.start + super::clip::sounding_length(length, clip.loop_end)
                 })
                 .max()
                 .unwrap_or(Ticks::ZERO),

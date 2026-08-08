@@ -359,7 +359,10 @@ fn build_tracks(project: &Project) -> (Vec<Vec<TrackEvent<'static>>>, usize) {
             if clip.muted {
                 continue;
             }
-            for note in clip.playable_notes() {
+            // The *sounding* notes, repeats and all. A MIDI file has no notion of a region that
+            // repeats, so a loop is written out as the notes it plays — which is also the only
+            // reading that matches what the renderer does with the same clip.
+            for note in clip.sounding_notes() {
                 count += 1;
                 let start = clip.start + note.start;
                 events.push((start, message(channel, note.pitch, velocity(note.velocity))));
@@ -371,10 +374,10 @@ fn build_tracks(project: &Project) -> (Vec<Vec<TrackEvent<'static>>>, usize) {
             // The curves, sampled by the clip's own rule rather than by one of this file's. What
             // the wire carries — fourteen bits of bend, seven of controller — is this file's
             // business and stops here; the document works in semitones and in a fraction.
-            for (at, semitones) in clip.curve_events(ClipCurve::Bend, CURVE_STEP) {
+            for (at, semitones) in clip.sounding_curve_events(ClipCurve::Bend, CURVE_STEP) {
                 events.push((clip.start + at, bend_message(channel, semitones)));
             }
-            for (at, amount) in clip.curve_events(ClipCurve::Modulation, CURVE_STEP) {
+            for (at, amount) in clip.sounding_curve_events(ClipCurve::Modulation, CURVE_STEP) {
                 events.push((clip.start + at, modulation_message(channel, amount)));
             }
         }

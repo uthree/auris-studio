@@ -253,6 +253,16 @@ pub enum Drag {
         /// leaves the end where it is.
         edge: ClipEdge,
     },
+    /// Dragging the far end of a clip's repeats.
+    ///
+    /// Separate from [`Drag::ClipResize`] because it changes a different thing: the resize edge
+    /// says what the clip *is*, and this one says how many times it is heard. Dragged back over
+    /// the clip's own end it stops the repeats, which is the same gesture run the other way
+    /// rather than a second thing to know about.
+    ClipLoop {
+        /// Clip whose repeats are being stretched.
+        clip: ClipId,
+    },
     /// Shaping an audio clip's fade by its handle.
     ClipFade {
         /// Clip whose fade is being drawn.
@@ -475,6 +485,7 @@ impl Drag {
             Drag::ClipMove { .. } => Some(Edit::MoveClip),
             Drag::TrackReorder { .. } => Some(Edit::MoveTrack),
             Drag::ClipResize { .. } => Some(Edit::ResizeClip),
+            Drag::ClipLoop { .. } => Some(Edit::LoopClip),
             Drag::ClipFade { .. } => Some(Edit::SetClipFade),
             Drag::AutomationPoint { target, .. } => Some(Edit::WriteAutomation(*target)),
             Drag::CurvePoint { clip, which, .. } => Some(Edit::write_curve(*which, *clip)),

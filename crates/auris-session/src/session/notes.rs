@@ -16,6 +16,64 @@ use crate::history::Edit;
 
 use super::Session;
 
+/// Which of a note's two numbers a quantise pass moves.
+///
+/// Separate because they are separately wrong. A part played a little ahead of the beat wants its
+/// starts tidied and its phrasing left alone; a part played with ragged releases wants the
+/// opposite, and doing both to a performance that only needed one is how a take stops sounding
+/// like anybody played it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Quantize {
+    /// Where each note begins.
+    Starts,
+    /// How long each note is held.
+    Lengths,
+    /// Both at once.
+    Both,
+}
+
+impl Quantize {
+    /// Whether this pass moves where a note begins.
+    pub fn moves_starts(self) -> bool {
+        matches!(self, Quantize::Starts | Quantize::Both)
+    }
+
+    /// Whether this pass changes how long a note is held.
+    pub fn moves_lengths(self) -> bool {
+        matches!(self, Quantize::Lengths | Quantize::Both)
+    }
+}
+
+/// Where one note lands when it is snapped to `grid`.
+///
+/// Free rather than a method on the command so the rule can be read and checked on its own, which
+/// is the whole of what quantising is: nearest division either way, for both numbers.
+///
+/// A **length never rounds down to nothing**. Snapping to the nearest division would delete every
+/// note shorter than half of one, and a note that vanishes because it was played crisply is not a
+/// tidying-up. One division is the floor, so a sixteenth-note grid turns a clipped grace note into
+/// a sixteenth rather than into silence.
+///
+/// Nothing here bounds the note against the clip. A note quantised past the end is
+/// [`MidiClip::playable_notes`]' business, and it answers the same way it does for a note somebody
+/// dragged there: the clip is a window, and dragging its edge back out brings the note back.
+pub fn quantized(note: Note, grid: Ticks, what: Quantize) -> Note {
+    let grid = Ticks(grid.raw().max(1));
+    let start = match what.moves_starts() {
+        true => note.start.max_zero().snap_nearest(grid),
+        false => note.start,
+    };
+    let length = match what.moves_lengths() {
+        true => note.length.snap_nearest(grid).max(grid),
+        false => note.length,
+    };
+    Note {
+        start,
+        length,
+        ..note
+    }
+}
+
 impl Session {
     /// Adds a note to a MIDI clip, returning its index.
     pub fn add_note(&mut self, clip: ClipId, note: Note) -> Result<usize, SessionError> {
@@ -274,6 +332,57 @@ impl Session {
         Ok(())
     }
 
+    /// Snaps notes onto a division of the beat, returning how many of them moved.
+    ///
+    /// `grid` is asked for rather than read off the project so that a frontend offering a
+    /// quantise *value* — the thing a person picks in a menu — does not have to move the editing
+    /// grid to get it, and so the command line can name a division outright. What the desktop
+    /// passes is the grid on screen, because quantising to a division you cannot see is a jump
+    /// with no explanation.
+    ///
+    /// The arithmetic is [`quantized`]'s and this is the bookkeeping around it: an index naming no
+    /// note is skipped, a pass that moves nothing records no undo step, and the clip grows to fit
+    /// whatever the pass pushed past its end — the same three rules every other note command here
+    /// follows.
+    pub fn quantize_notes(
+        &mut self,
+        clip: ClipId,
+        indices: &[usize],
+        grid: Ticks,
+        what: Quantize,
+    ) -> Result<usize, SessionError> {
+        let Some((_, target)) = self.project.midi_clip(clip) else {
+            return Err(SessionError::UnknownClip(clip.0));
+        };
+        let moving: Vec<usize> = indices
+            .iter()
+            .copied()
+            .filter(|index| {
+                target
+                    .notes
+                    .get(*index)
+                    .is_some_and(|note| quantized(*note, grid, what) != *note)
+            })
+            .collect();
+        if moving.is_empty() {
+            return Ok(0);
+        }
+
+        self.record(Edit::QuantizeNotes);
+        let project_grid = self.project.grid;
+        let Some(target) = self.project.midi_clip_mut(clip) else {
+            return Err(SessionError::UnknownClip(clip.0));
+        };
+        for index in &moving {
+            if let Some(note) = target.notes.get_mut(*index) {
+                *note = quantized(*note, grid, what);
+            }
+        }
+        target.fit_length_to_notes(project_grid);
+        self.invalidate_graph();
+        Ok(moving.len())
+    }
+
     /// A MIDI clip anywhere in the project.
     pub fn midi_clip(&self, clip: ClipId) -> Option<&MidiClip> {
         self.project.midi_clip(clip).map(|(_, clip)| clip)
@@ -441,6 +550,107 @@ mod tests {
         assert_eq!(notes[2].pitch, 60);
         assert_eq!(notes[3].start, Ticks::from_beats(3.0));
         assert_eq!(notes[3].pitch, 64);
+    }
+
+    #[test]
+    fn quantising_snaps_each_number_to_the_nearest_division() {
+        let sixteenth = Ticks::QUARTER;
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::from_beats(8.0))
+            .unwrap();
+        // Played a little late and held a little long.
+        let late = session
+            .add_note(clip, Note::new(60, Ticks(1_010), Ticks(1_050)))
+            .unwrap();
+        // Played early, and clipped short.
+        let early = session
+            .add_note(clip, Note::new(64, Ticks(1_870), Ticks(300)))
+            .unwrap();
+
+        let moved = session
+            .quantize_notes(clip, &[late, early], sixteenth, Quantize::Both)
+            .unwrap();
+        assert_eq!(moved, 2);
+        let notes = &session.midi_clip(clip).unwrap().notes;
+        assert_eq!((notes[0].start, notes[0].length), (Ticks(960), Ticks(960)));
+        assert_eq!(
+            (notes[1].start, notes[1].length),
+            (Ticks(1_920), Ticks(960)),
+            "a note shorter than half a division becomes one, not nothing"
+        );
+
+        // Quantising what is already on the grid moves nothing and is not an undo step.
+        let depth = undo_depth(&mut session);
+        assert_eq!(
+            session
+                .quantize_notes(clip, &[late, early], sixteenth, Quantize::Both)
+                .unwrap(),
+            0
+        );
+        assert_eq!(undo_depth(&mut session), depth);
+
+        assert!(matches!(
+            session.quantize_notes(ClipId(9_999), &[0], sixteenth, Quantize::Both),
+            Err(SessionError::UnknownClip(_))
+        ));
+    }
+
+    #[test]
+    fn quantising_lengths_leaves_the_playing_where_it_was() {
+        // The point of separating the two: a part played a shade ahead of the beat keeps its
+        // feel, and only the ragged releases are tidied. Doing both to a take that needed one
+        // is how it stops sounding like anybody played it.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::from_beats(8.0))
+            .unwrap();
+        let index = session
+            .add_note(clip, Note::new(60, Ticks(910), Ticks(1_050)))
+            .unwrap();
+
+        session
+            .quantize_notes(clip, &[index], Ticks::QUARTER, Quantize::Lengths)
+            .unwrap();
+        let note = session.midi_clip(clip).unwrap().notes[index];
+        assert_eq!(note.start, Ticks(910), "the playing was moved");
+        assert_eq!(note.length, Ticks(960));
+
+        // And the other way round.
+        session
+            .quantize_notes(clip, &[index], Ticks::QUARTER, Quantize::Starts)
+            .unwrap();
+        let note = session.midi_clip(clip).unwrap().notes[index];
+        assert_eq!(note.start, Ticks(960));
+        assert_eq!(note.length, Ticks(960));
+
+        assert_eq!(session.undo(), Some(Edit::QuantizeNotes));
+    }
+
+    #[test]
+    fn quantising_skips_an_index_that_names_no_note() {
+        // A selection is held by position, so one deleted note must not fail the whole pass.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::from_beats(4.0))
+            .unwrap();
+        let index = session
+            .add_note(clip, Note::new(60, Ticks(37), Ticks::QUARTER))
+            .unwrap();
+
+        assert_eq!(
+            session
+                .quantize_notes(clip, &[index, 99], Ticks::QUARTER, Quantize::Starts)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            session.midi_clip(clip).unwrap().notes[index].start,
+            Ticks(0)
+        );
     }
 
     #[test]

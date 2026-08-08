@@ -47,6 +47,7 @@ mod fixtures;
 pub use accompany::{AccompanyReport, DEFAULT_PARTS};
 pub use clipboard::{Clipboard, CopiedClip, CopiedContent};
 pub use compose::{composed_gain_db, kit_trim_db};
+pub use notes::{Quantize, quantized};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

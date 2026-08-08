@@ -12,10 +12,10 @@ use auris_session::prelude::*;
 
 use gpui::{Bounds, MouseDownEvent, Pixels, point, px, size};
 
-use crate::app::{AurisApp, ClipEdge, Drag, FadeEdge};
+use crate::app::{AurisApp, Drag, FadeEdge};
 use crate::ui::automation::{self, LaneRow};
 
-use super::geometry::{CLIP_INSET, fade_handle_at, resize_grab, selection_without};
+use super::geometry::{CLIP_INSET, ClipGrab, clip_grab_at, fade_handle_at, selection_without};
 
 impl AurisApp {
     /// Where every selected clip starts, captured before a move begins.
@@ -344,31 +344,38 @@ impl AurisApp {
                 self.selected_notes.clear();
                 let clip_start_x = self.timeline.tick_to_x(clip_start);
                 let clip_end_x = self.timeline.tick_to_x(clip_start + clip_length);
-                let grab = resize_grab(clip_end_x - clip_start_x);
-                // The end is asked about first: a clip narrow enough for both zones to reach the
-                // middle would otherwise be all front-trim, and the end is the edge people drag.
-                if f32::from(clip_end_x - local.x).abs() <= grab {
-                    self.begin_drag(Drag::ClipResize {
+                let loop_end_x = self.timeline.tick_to_x(
+                    clip_start
+                        + self
+                            .session
+                            .clip_sounding_length(clip_id)
+                            .unwrap_or(clip_length),
+                );
+                match clip_grab_at(
+                    clip_start_x,
+                    clip_end_x,
+                    loop_end_x,
+                    local.x,
+                    local.y - lane_top - CLIP_INSET,
+                ) {
+                    Some(ClipGrab::Loop) => self.begin_drag(Drag::ClipLoop { clip: clip_id }),
+                    Some(ClipGrab::Resize(edge)) => self.begin_drag(Drag::ClipResize {
                         clip: clip_id,
-                        edge: ClipEdge::End,
-                    });
-                } else if f32::from(local.x - clip_start_x).abs() <= grab {
-                    self.begin_drag(Drag::ClipResize {
-                        clip: clip_id,
-                        edge: ClipEdge::Start,
-                    });
-                } else {
-                    let origins = self.selected_clip_origins();
-                    let origin_lanes = self.selected_clip_lanes();
-                    let grab_lane = self.project().track_index(track_id).unwrap_or(0);
-                    self.begin_drag(Drag::ClipMove {
-                        clip: clip_id,
-                        grab_offset: tick - clip_start,
-                        origins,
-                        origin_lanes,
-                        grab_lane,
-                        pressed_at: Some(event.position),
-                    });
+                        edge,
+                    }),
+                    None => {
+                        let origins = self.selected_clip_origins();
+                        let origin_lanes = self.selected_clip_lanes();
+                        let grab_lane = self.project().track_index(track_id).unwrap_or(0);
+                        self.begin_drag(Drag::ClipMove {
+                            clip: clip_id,
+                            grab_offset: tick - clip_start,
+                            origins,
+                            origin_lanes,
+                            grab_lane,
+                            pressed_at: Some(event.position),
+                        });
+                    }
                 }
             }
             None => match crate::gestures::empty_press(self.pointer, event) {
@@ -443,7 +450,12 @@ impl AurisApp {
         cx.notify();
     }
 
-    /// Clip on `track` covering `tick`, with its start and length.
+    /// Clip on `track` covering `tick`, with its start and its length, repeats not counted.
+    ///
+    /// The *reach* includes the repeats — a press on a looped clip's third bar is a press on that
+    /// clip, and clicking one only to select nothing would be an answer nobody could read off the
+    /// screen — while the length returned is one pass, because that is what the resize edge and
+    /// the move offset are measured against.
     ///
     /// Searched backwards, because [`paint_lane`](super::lane_paint::paint_lane) draws the list
     /// forwards: where two clips overlap the later one is on top, and a hit test that walked the
@@ -456,14 +468,23 @@ impl AurisApp {
                 .clips
                 .iter()
                 .rev()
-                .find(|clip| tick >= clip.start && tick < clip.end())
+                .find(|clip| tick >= clip.start && tick < clip.sounding_end())
                 .map(|clip| (clip.id, clip.start, clip.length)),
             TrackKind::Audio(inner) => inner
                 .clips
                 .iter()
                 .rev()
-                .map(|clip| (clip.id, clip.start, self.audio_clip_length_ticks(clip)))
-                .find(|(_, start, length)| tick >= *start && tick < *start + *length),
+                .map(|clip| {
+                    let length = self.audio_clip_length_ticks(clip);
+                    (
+                        clip.id,
+                        clip.start,
+                        length,
+                        sounding_length(length, clip.loop_end),
+                    )
+                })
+                .find(|(_, start, _, reach)| tick >= *start && tick < *start + *reach)
+                .map(|(id, start, length, _)| (id, start, length)),
             TrackKind::Bus => None,
         }
     }

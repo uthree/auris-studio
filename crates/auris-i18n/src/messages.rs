@@ -92,6 +92,16 @@ messages! {
         ja: "ノート {count} 個"
     }
 
+    /// How many notes a quantise pass actually moved.
+    ///
+    /// The count rather than "done": a pass that moved four notes out of a selection of twenty is
+    /// telling you the other sixteen were already where they should be, which is the one thing
+    /// worth knowing afterwards.
+    fn notes_quantised(count: usize) {
+        en: "Quantised {count} notes",
+        ja: "ノート {count} 個をクオンタイズしました"
+    }
+
     /// Title of a menu acting on more than one clip.
     fn clip_count(count: usize) {
         en: "{count} clips",

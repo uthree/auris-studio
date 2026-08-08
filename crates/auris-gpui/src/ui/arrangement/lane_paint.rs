@@ -9,6 +9,7 @@
 //! because the edges a pointer is offered have to be the edges that were drawn.
 
 use auris_i18n::Key;
+use auris_session::prelude::loop_passes;
 
 use gpui::{Bounds, Corners, Pixels, Window, point, px, size};
 
@@ -96,7 +97,9 @@ pub(super) fn paint_lane(
 ) {
     for clip in &lane.clips {
         let x = bounds.origin.x + view.tick_to_x(clip.start);
-        let width = view.duration_to_width(clip.length);
+        // The block covers the repeats too: a looped clip is one thing on the timeline, with one
+        // outline, one name and one selection, however many times it says itself.
+        let width = view.duration_to_width(clip.sounding_length());
         if x + width < bounds.origin.x || x > bounds.origin.x + bounds.size.width {
             continue;
         }
@@ -162,57 +165,96 @@ pub(super) fn paint_lane(
             );
         }
 
-        let content_bounds = Bounds {
-            origin: point(clip_bounds.origin.x, clip_bounds.origin.y + TITLE_HEIGHT),
-            size: size(
-                clip_bounds.size.width,
-                clip_bounds.size.height - TITLE_HEIGHT,
-            ),
-        };
-        match &clip.content {
-            ClipContent::Notes(notes) => {
-                paint::clip_notes(window, content_bounds, notes, clip.length, theme.text);
+        // One pass at a time, and a clip that does not repeat is one pass — so the ordinary case
+        // goes through exactly the code the looped one does. Each pass is drawn at the content's
+        // full width inside a mask its own width, which is what cuts the last repeat off wherever
+        // the loop ends rather than squeezing it.
+        let content_width = view.duration_to_width(clip.length);
+        for (index, (offset, span)) in loop_passes(clip.length, clip.loop_end).enumerate() {
+            let pass_x = bounds.origin.x + view.tick_to_x(clip.start + offset);
+            let visible = Bounds {
+                origin: point(pass_x, clip_bounds.origin.y + TITLE_HEIGHT),
+                size: size(
+                    view.duration_to_width(span),
+                    clip_bounds.size.height - TITLE_HEIGHT,
+                ),
+            };
+            let content_bounds = Bounds {
+                origin: visible.origin,
+                size: size(content_width, visible.size.height),
+            };
+            // A repeat is drawn a shade back from the phrase it repeats, so which part of the
+            // block was played and which is the echo of it reads without clicking anything.
+            let ink = if index == 0 {
+                theme.text
+            } else {
+                theme.text_faint
+            };
+            if index > 0 {
+                paint::vline(window, clip_bounds, pass_x, px(1.0), theme.text_faint);
             }
-            ClipContent::Waveform {
-                source,
-                offset_frames,
-                length_frames,
-                fade_in_frames,
-                fade_out_frames,
-                ..
-            } => {
-                if let Some(peaks) = peaks.get(source) {
-                    // Peaks are stored channel-major, so take the first channel's run only —
-                    // passing the whole vector would draw the right channel's data as if it
-                    // were the tail of the left.
-                    let per_channel = peaks.bucket_count();
-                    if per_channel > 0 {
-                        let per_bucket = peaks.samples_per_bucket.max(1) as f64;
-                        let first = (*offset_frames as f64 / per_bucket) as usize;
-                        let buckets = (*length_frames as f64 / per_bucket).max(1.0);
-                        let columns = f32::from(content_bounds.size.width).max(1.0);
-                        paint::waveform(
+            paint::clipped(window, visible, |window| match &clip.content {
+                ClipContent::Notes(notes) => {
+                    paint::clip_notes(window, content_bounds, notes, clip.length, ink);
+                }
+                ClipContent::Waveform {
+                    source,
+                    offset_frames,
+                    length_frames,
+                    fade_in_frames,
+                    fade_out_frames,
+                    ..
+                } => {
+                    if let Some(peaks) = peaks.get(source) {
+                        // Peaks are stored channel-major, so take the first channel's run only —
+                        // passing the whole vector would draw the right channel's data as if it
+                        // were the tail of the left.
+                        let per_channel = peaks.bucket_count();
+                        if per_channel > 0 {
+                            let per_bucket = peaks.samples_per_bucket.max(1) as f64;
+                            let first = (*offset_frames as f64 / per_bucket) as usize;
+                            let buckets = (*length_frames as f64 / per_bucket).max(1.0);
+                            let columns = f32::from(content_bounds.size.width).max(1.0);
+                            paint::waveform(
+                                window,
+                                content_bounds,
+                                &peaks.min[..per_channel],
+                                &peaks.max[..per_channel],
+                                first,
+                                (buckets / columns as f64) as f32,
+                                ink,
+                            );
+                        }
+                    }
+                    // Fades are drawn as a fraction of the clip's frames, exactly as the waveform
+                    // above spreads its frames across the width — the ramp ends over the sample it
+                    // ends on. Handles only where there is room to grab them; the hit test reads
+                    // the same constant. On the first pass and the last, which is where the fades
+                    // sound: the renderer runs the joins between repeats flat.
+                    if f32::from(content_width) > FADE_HANDLE_MIN_WIDTH && *length_frames > 0 {
+                        let width = f32::from(content_bounds.size.width);
+                        let fraction =
+                            |frames: u64| width * (frames as f64 / *length_frames as f64) as f32;
+                        let last =
+                            clip.start + offset + span >= clip.start + clip.sounding_length();
+                        paint::clip_fades(
                             window,
                             content_bounds,
-                            &peaks.min[..per_channel],
-                            &peaks.max[..per_channel],
-                            first,
-                            (buckets / columns as f64) as f32,
-                            theme.text,
+                            if index == 0 {
+                                fraction(*fade_in_frames)
+                            } else {
+                                0.0
+                            },
+                            if last {
+                                fraction(*fade_out_frames)
+                            } else {
+                                0.0
+                            },
+                            theme,
                         );
                     }
                 }
-                // Fades are drawn as a fraction of the clip's frames, exactly as the waveform
-                // above spreads its frames across the width — the ramp ends over the sample it
-                // ends on. Handles only where there is room to grab them; the hit test reads
-                // the same constant.
-                if f32::from(clip_bounds.size.width) > FADE_HANDLE_MIN_WIDTH && *length_frames > 0 {
-                    let width = f32::from(content_bounds.size.width);
-                    let fade_in = width * (*fade_in_frames as f64 / *length_frames as f64) as f32;
-                    let fade_out = width * (*fade_out_frames as f64 / *length_frames as f64) as f32;
-                    paint::clip_fades(window, content_bounds, fade_in, fade_out, theme);
-                }
-            }
+            });
         }
 
         if f32::from(clip_bounds.size.width) > 28.0 {

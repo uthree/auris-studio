@@ -301,6 +301,13 @@ strings! {
     CmdDuplicateClip { en: "Duplicate Clip", ja: "クリップを複製" }
     CmdSplitClip { en: "Split Clip at Playhead", ja: "再生位置でクリップを分割" }
     CmdToggleClipMute { en: "Mute Clip", ja: "クリップをミュート" }
+    CmdToggleClipLoop { en: "Loop Clip", ja: "クリップをループ" }
+    // "Quantise" alone means the starts, which is what everybody reaches for it expecting. The
+    // other two say which half of the note they move, because a person who wants one of them
+    // specifically is the only person who will ever look for them.
+    CmdQuantize { en: "Quantise", ja: "クオンタイズ" }
+    CmdQuantizeLengths { en: "Quantise Note Lengths", ja: "音価をクオンタイズ" }
+    CmdQuantizeBoth { en: "Quantise Starts and Lengths", ja: "発音位置と音価をクオンタイズ" }
     // "Show" was a lie on a toggle with no state beside it: choosing Show Inspector hid the
     // inspector. These say what the command does either way.
     CmdShowLibrary { en: "Library", ja: "ライブラリ" }
@@ -368,6 +375,10 @@ strings! {
     MenuAccompany { en: "Accompany This Melody", ja: "この旋律に伴奏をつける" }
     MenuSplitAtPlayhead { en: "Split at Playhead", ja: "再生位置で分割" }
     MenuMuteClip { en: "Mute Clip", ja: "クリップをミュート" }
+    MenuLoopClip { en: "Loop Clip", ja: "クリップをループ" }
+    MenuQuantizeStarts { en: "Quantise Starts", ja: "発音位置をクオンタイズ" }
+    MenuQuantizeLengths { en: "Quantise Lengths", ja: "音価をクオンタイズ" }
+    MenuQuantizeBoth { en: "Quantise Both", ja: "両方をクオンタイズ" }
     MenuCycleOverClip { en: "Cycle over Clip", ja: "クリップをサイクル範囲に" }
     MenuEditInPianoRoll { en: "Edit in Piano Roll", ja: "ピアノロールで編集" }
     MenuNewClipHere { en: "New Clip Here", ja: "ここに新規クリップ" }
@@ -649,6 +660,10 @@ strings! {
     SplitClipStatus { en: "Split clip", ja: "クリップを分割しました" }
     CopiedToClipboard { en: "Copied", ja: "コピーしました" }
     CutToClipboard { en: "Cut", ja: "切り取りました" }
+    ClipLooped { en: "Clip looped", ja: "クリップをループしました" }
+    ClipUnlooped { en: "Clip no longer loops", ja: "クリップのループを解除しました" }
+    NothingSelected { en: "Nothing is selected", ja: "何も選択されていません" }
+    AlreadyOnTheGrid { en: "Already on the grid", ja: "すでにグリッド上にあります" }
     PastedFromClipboard { en: "Pasted", ja: "貼り付けました" }
     NothingToPaste { en: "Nothing to paste", ja: "貼り付けるものがありません" }
     NoClipToAccompany { en: "Select a clip holding the melody first", ja: "先に旋律の入ったクリップを選択してください" }
@@ -696,6 +711,7 @@ strings! {
     EditMuteClip { en: "muting a clip", ja: "クリップのミュート" }
     EditMoveClip { en: "moving a clip", ja: "クリップの移動" }
     EditResizeClip { en: "resizing a clip", ja: "クリップの長さ変更" }
+    EditLoopClip { en: "looping a clip", ja: "クリップのループ" }
     EditAddNote { en: "adding a note", ja: "ノートの追加" }
     EditDeleteNotes { en: "deleting notes", ja: "ノートの削除" }
     EditCutNotes { en: "cutting notes", ja: "ノートの切り取り" }
@@ -705,6 +721,7 @@ strings! {
     EditSetNoteVelocity { en: "changing note velocity", ja: "ノートの強さの変更" }
     EditMoveNotes { en: "moving notes", ja: "ノートの移動" }
     EditResizeNote { en: "resizing a note", ja: "ノートの長さ変更" }
+    EditQuantizeNotes { en: "quantising", ja: "クオンタイズ" }
     EditAddEffect { en: "adding an effect", ja: "エフェクトの追加" }
     EditRemoveEffect { en: "removing an effect", ja: "エフェクトの削除" }
     EditBypassEffect { en: "bypassing an effect", ja: "エフェクトのバイパス" }

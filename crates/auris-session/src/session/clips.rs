@@ -632,9 +632,122 @@ impl Session {
         })
     }
 
-    /// Length of an audio clip on the musical timeline.
+    /// Length of an audio clip on the musical timeline, repeats not counted.
     pub fn audio_clip_length_ticks(&self, clip: &auris_core::AudioClip) -> Ticks {
         self.project.audio_clip_length_ticks(clip)
+    }
+
+    /// How long one pass of a clip of either kind is, before any repeats.
+    pub fn clip_content_length(&self, clip: ClipId) -> Option<Ticks> {
+        if let Some((_, midi)) = self.project.midi_clip(clip) {
+            return Some(midi.length);
+        }
+        let audio = self.project.audio_clip(clip)?;
+        Some(self.project.audio_clip_length_ticks(audio))
+    }
+
+    /// How far a clip of either kind reaches on the timeline, repeats included.
+    pub fn clip_sounding_length(&self, clip: ClipId) -> Option<Ticks> {
+        if let Some((_, midi)) = self.project.midi_clip(clip) {
+            return Some(midi.sounding_length());
+        }
+        let audio = self.project.audio_clip(clip)?;
+        Some(self.project.audio_clip_sounding_ticks(audio))
+    }
+
+    /// Where a clip's content repeats out to, measured from its own start.
+    ///
+    /// [`Ticks::ZERO`] for a clip that does not repeat, and never anything a caller has to
+    /// compare against the clip's length itself — ask [`Self::clip_is_looped`] for that.
+    pub fn clip_loop_end(&self, clip: ClipId) -> Ticks {
+        if let Some((_, midi)) = self.project.midi_clip(clip) {
+            return midi.loop_end;
+        }
+        self.project
+            .audio_clip(clip)
+            .map(|audio| audio.loop_end)
+            .unwrap_or(Ticks::ZERO)
+    }
+
+    /// `true` when the clip's content repeats past its own end.
+    pub fn clip_is_looped(&self, clip: ClipId) -> bool {
+        self.clip_content_length(clip)
+            .is_some_and(|content| self.clip_loop_end(clip) > content)
+    }
+
+    /// Where the next clip on the same lane begins, if there is one.
+    ///
+    /// What "next" means is the next *start* rather than the next clip that does not overlap:
+    /// clips on a lane may sit on top of one another, and a loop dragged under a neighbour would
+    /// be repeating into material already sounding there.
+    pub fn next_clip_start(&self, clip: ClipId) -> Option<Ticks> {
+        let track = self.project.track_of_clip(clip)?;
+        let here = self.clip_start(clip)?;
+        let starts: Box<dyn Iterator<Item = Ticks> + '_> = match &self.project.track(track)?.kind {
+            auris_core::TrackKind::Instrument(inner) => {
+                Box::new(inner.clips.iter().map(|clip| clip.start))
+            }
+            auris_core::TrackKind::Audio(inner) => Box::new(inner.clips.iter().map(|c| c.start)),
+            auris_core::TrackKind::Bus => return None,
+        };
+        starts.filter(|start| *start > here).min()
+    }
+
+    /// Where a clip of either kind begins.
+    pub fn clip_start(&self, clip: ClipId) -> Option<Ticks> {
+        if let Some((_, midi)) = self.project.midi_clip(clip) {
+            return Some(midi.start);
+        }
+        self.project.audio_clip(clip).map(|audio| audio.start)
+    }
+
+    /// Sets how far a clip's content repeats past its own end, measured from the clip's start.
+    ///
+    /// Anything no longer than the clip itself turns looping off, which is what makes dragging
+    /// the loop edge back over the clip's own end the way to stop it repeating — the same gesture
+    /// that started it, run the other way, rather than a second thing to know about.
+    ///
+    /// Both kinds of clip, and one command: a repeat is a repeat whether what is being said again
+    /// is a bar of notes or a bar of a recording.
+    pub fn set_clip_loop(&mut self, clip: ClipId, loop_end: Ticks) -> Result<(), SessionError> {
+        self.require_clip(clip)?;
+        let content = self.clip_content_length(clip).unwrap_or(Ticks::ZERO);
+        let loop_end = match loop_end > content {
+            true => loop_end,
+            false => Ticks::ZERO,
+        };
+        if self.clip_loop_end(clip) == loop_end {
+            // A drag that has run back over the clip's own end keeps sending the same answer,
+            // and every frame of it arrives here. Not an edit.
+            return Ok(());
+        }
+        self.record(Edit::LoopClip);
+        if let Some(midi) = self.project.midi_clip_mut(clip) {
+            midi.loop_end = loop_end;
+        } else if let Some(audio) = self.project.audio_clip_mut(clip) {
+            audio.loop_end = loop_end;
+        }
+        self.invalidate_graph();
+        Ok(())
+    }
+
+    /// Turns a clip's loop on or off, returning whether it now repeats.
+    ///
+    /// On, it reaches as far as [`auris_core::default_loop_end`] says — the next clip on the lane,
+    /// or one extra pass where there is none. Off, the length is forgotten rather than remembered
+    /// for next time: a loop is a length, and half of a stored one showing up again under a clip
+    /// that has since been resized would be a length nobody chose.
+    pub fn toggle_clip_loop(&mut self, clip: ClipId) -> Result<bool, SessionError> {
+        self.require_clip(clip)?;
+        if self.clip_is_looped(clip) {
+            self.set_clip_loop(clip, Ticks::ZERO)?;
+            return Ok(false);
+        }
+        let start = self.clip_start(clip).unwrap_or(Ticks::ZERO);
+        let content = self.clip_content_length(clip).unwrap_or(Ticks::ZERO);
+        let next = self.next_clip_start(clip);
+        self.set_clip_loop(clip, auris_core::default_loop_end(start, content, next))?;
+        Ok(true)
     }
 }
 
@@ -643,6 +756,91 @@ mod tests {
     use super::*;
     use crate::session::fixtures::{BAR, numeral, session, session_with_clip, undo_depth};
     use auris_core::{AssetPath, ClipPreset, ClipRecipe, Note};
+
+    #[test]
+    fn a_loop_reaches_the_next_clip_and_switches_off_again() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").expect("track");
+        let first = session
+            .add_midi_clip(track, "A", Ticks::ZERO, BAR)
+            .expect("clip");
+        session
+            .add_midi_clip(track, "B", BAR * 4, BAR)
+            .expect("clip");
+
+        assert!(!session.clip_is_looped(first));
+        assert_eq!(session.clip_sounding_length(first), Some(BAR));
+
+        assert_eq!(session.toggle_clip_loop(first).ok(), Some(true));
+        assert!(session.clip_is_looped(first));
+        assert_eq!(
+            session.clip_sounding_length(first),
+            Some(BAR * 4),
+            "the loop should fill the gap in front of the clip"
+        );
+        // The clip itself has not changed; only how many times it is said.
+        assert_eq!(session.midi_clip(first).expect("clip").length, BAR);
+
+        assert_eq!(session.toggle_clip_loop(first).ok(), Some(false));
+        assert!(!session.clip_is_looped(first));
+        assert_eq!(session.clip_loop_end(first), Ticks::ZERO);
+
+        assert!(matches!(
+            session.toggle_clip_loop(ClipId(9_999)),
+            Err(SessionError::UnknownClip(_))
+        ));
+    }
+
+    #[test]
+    fn dragging_the_loop_back_over_the_clip_stops_it_repeating() {
+        // The same gesture that started the loop, run the other way. Anything landing inside the
+        // clip's own length means "no repeats" rather than a loop shorter than one pass, which
+        // would be a trim wearing the wrong edge.
+        let (mut session, _, clip) = session_with_clip();
+        let content = session.clip_content_length(clip).expect("a length");
+
+        session.set_clip_loop(clip, content * 3).expect("looped");
+        assert!(session.clip_is_looped(clip));
+
+        session
+            .set_clip_loop(clip, content - Ticks::QUARTER)
+            .expect("unlooped");
+        assert_eq!(session.clip_loop_end(clip), Ticks::ZERO);
+        // Exactly on the clip's end is not a repeat either.
+        session.set_clip_loop(clip, content * 3).expect("looped");
+        session.set_clip_loop(clip, content).expect("unlooped");
+        assert!(!session.clip_is_looped(clip));
+    }
+
+    #[test]
+    fn a_loop_that_changes_nothing_is_not_an_undo_step() {
+        // A drag sends the same answer on every frame once it has run out of travel.
+        let (mut session, _, clip) = session_with_clip();
+        session.set_clip_loop(clip, BAR * 4).expect("looped");
+        let depth = undo_depth(&mut session);
+        session.set_clip_loop(clip, BAR * 4).expect("again");
+        assert_eq!(undo_depth(&mut session), depth);
+
+        assert_eq!(session.undo(), Some(Edit::LoopClip));
+        assert!(!session.clip_is_looped(clip));
+    }
+
+    #[test]
+    fn an_audio_clip_loops_on_the_grid_rather_than_in_frames() {
+        // A repeat lands on the musical grid, so the length is in ticks even though the trim
+        // beside it is in source frames.
+        let mut session = session();
+        // 96 000 frames at 48 kHz is two seconds, which at 120 BPM is one bar.
+        let clip = audio_clip(&mut session, 96_000);
+
+        assert_eq!(session.clip_content_length(clip), Some(BAR));
+        assert_eq!(session.toggle_clip_loop(clip).ok(), Some(true));
+        assert_eq!(
+            session.clip_sounding_length(clip),
+            Some(BAR * 2),
+            "with nothing in front of it, one extra pass"
+        );
+    }
 
     #[test]
     fn a_selection_dragged_across_lanes_moves_together_or_not_at_all() {

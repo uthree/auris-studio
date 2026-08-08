@@ -9,6 +9,48 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### A clip can be looped
+
+* **Drag the right edge of a clip's name bar**, or *Loop Clip* on its right-click menu, on the Edit
+  menu, or **L**. The clip goes on saying itself for as long as the edge is pulled, in faded
+  repeats divided by a hairline. Dragging back over the clip's own end stops it — the same gesture
+  run the other way, rather than a second thing to know about.
+* The **name bar's** edge, and only it. The edge below still resizes, so how long the phrase is and
+  how many times it is played stay two separate things you can change. On a clip nobody has looped
+  yet the two sit on the same pixel, which is what makes the gesture findable at all.
+* A loop is a **length rather than a count**, so the last repeat is cut off wherever the edge was
+  let go. That is what makes the drag continuous, and it means a loop can stop half way through a
+  bar because that is where the next clip starts.
+* Both kinds of clip. On audio the fades stay on the clip's own two edges and the joins between
+  repeats run flat: a fade-out at the end of every pass would pump once a bar.
+* The repeats are **flattened when the graph is built**, so the audio thread never learns that a
+  clip repeats — it plays a list it cannot tell from a song somebody duplicated by hand. Exports
+  carry the repeats too, WAV and MIDI both, since a MIDI file has no notion of a region that
+  repeats and the notes are the only honest way to write one down.
+* Splitting a looped clip leaves neither half looping, because the repeats were of a block that no
+  longer exists. Duplicating one puts the copy past the repeats rather than on top of them.
+* **`FORMAT_VERSION` is 10.** The field carries backwards on a default, which normally does not move
+  the number — but a version 9 build would open a song whose drum loop runs thirty-two bars, play
+  the one bar, and write that back on the next save with the other thirty-one gone. Refusing at the
+  door is the only honest answer.
+
+### Notes can be quantised
+
+* **Quantise Starts (Q), Quantise Lengths, and Quantise Both**, on the piano roll's right-click menu
+  and on the Edit menu. Nothing could put a played part back on the grid after the fact; snapping
+  applied while something was being dragged and not one moment later.
+* Three commands rather than one with a setting, because the two numbers a note has are separately
+  wrong. A part played a shade ahead of the beat wants its ragged lengths evened out and its feel
+  left alone, and doing both to a take that needed one is how it stops sounding like anybody played
+  it.
+* They snap to the **division the grid button is showing**, which is on screen above the notes being
+  moved: quantising to a value nobody can see is a jump with no explanation.
+* A length never rounds down to nothing. On a sixteenth grid a clipped grace note becomes a
+  sixteenth rather than silence — a note vanishing because it was played crisply is not a
+  tidying-up.
+* The status line says how many notes actually moved, which is the one thing worth knowing
+  afterwards: four out of twenty means the other sixteen were already where they should be.
+
 ### There is a metronome
 
 * **The button beside the cycle button, Transport → Metronome, or K.** A click on every beat while

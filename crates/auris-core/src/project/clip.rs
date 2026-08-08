@@ -60,6 +60,56 @@ impl Note {
     }
 }
 
+/// Every pass a looped clip makes: where each begins, and how much of it sounds.
+///
+/// `content` is how long one pass is — a MIDI clip's length, an audio clip's trim measured in
+/// ticks — and `loop_end` the field of that name on either kind. Offsets are from the clip's own
+/// start; a `span` shorter than `content` is the last pass, cut off wherever the loop ends.
+///
+/// **A clip that does not repeat is one pass**, so the renderer, the exporter and the arrangement
+/// all walk this without ever asking whether looping is on. That is the whole point of the shape:
+/// a loop is a length rather than a count, which is what makes dragging its edge continuous, and
+/// there is exactly one place that turns that length into passes.
+///
+/// A `content` of zero or less would divide by nothing, and yields a single degenerate pass
+/// rather than looping forever.
+pub fn loop_passes(content: Ticks, loop_end: Ticks) -> impl Iterator<Item = (Ticks, Ticks)> {
+    let span = content.raw().max(1);
+    let total = loop_end.raw().max(span);
+    (0..).map_while(move |pass| {
+        let offset = pass * span;
+        (offset < total).then(|| (Ticks(offset), Ticks(span.min(total - offset))))
+    })
+}
+
+/// How far a clip reaches on the timeline, repeats included.
+///
+/// Never shorter than the content itself: a `loop_end` inside the clip means it does not repeat,
+/// which is how every document written before the field existed reads.
+pub fn sounding_length(content: Ticks, loop_end: Ticks) -> Ticks {
+    loop_end.max(content)
+}
+
+/// Where turning a loop on should reach out to, for a clip of `content` starting at `start`.
+///
+/// Out to the next clip on the same lane, so switching looping on fills the gap somebody left in
+/// front of the phrase — which is what the command is nearly always for, and what Logic's own
+/// Loop does. Where that gap is not a whole number of passes the last one is cut, because the
+/// alternative is stopping short of the neighbour and leaving a silence nobody asked for.
+///
+/// With no neighbour there is no gap to read, and one extra pass is the honest default: it is
+/// visibly a loop, it can be dragged from, and it invents no length the user did not choose.
+/// Same answer when the neighbour is too close to fit anything — a loop shorter than the clip is
+/// not a loop.
+pub fn default_loop_end(start: Ticks, content: Ticks, next: Option<Ticks>) -> Ticks {
+    let content = Ticks(content.raw().max(1));
+    let twice = content * 2;
+    match next {
+        Some(next) if next - start > content => next - start,
+        _ => twice,
+    }
+}
+
 /// A block of notes placed on an instrument track.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MidiClip {
@@ -107,6 +157,12 @@ pub struct MidiClip {
     /// itself, with nothing on screen to explain it.
     #[serde(default)]
     pub length_is_explicit: bool,
+    /// How far the clip's content keeps repeating, measured from the clip's own start.
+    ///
+    /// See [`loop_passes`], which is the one reading of this field and the only thing that
+    /// should ever divide it up.
+    #[serde(default)]
+    pub loop_end: Ticks,
 }
 
 impl MidiClip {
@@ -125,6 +181,7 @@ impl MidiClip {
             // A new clip's length is a default, not a decision, so notes written past it still
             // grow it. Dragging its edge is what makes it a decision.
             length_is_explicit: false,
+            loop_end: Ticks::ZERO,
         }
     }
 
@@ -155,9 +212,45 @@ impl MidiClip {
             })
     }
 
-    /// Position just past the end of the clip.
+    /// Position just past the end of the clip's own content, repeats not counted.
     pub fn end(&self) -> Ticks {
         self.start + self.length
+    }
+
+    /// `true` when the content repeats past the clip's own end.
+    pub fn is_looped(&self) -> bool {
+        self.loop_end > self.length
+    }
+
+    /// How far the clip reaches on the timeline, repeats included.
+    pub fn sounding_length(&self) -> Ticks {
+        sounding_length(self.length, self.loop_end)
+    }
+
+    /// Position just past the last repeat.
+    pub fn sounding_end(&self) -> Ticks {
+        self.start + self.sounding_length()
+    }
+
+    /// Every note the clip plays, repeats included, each measured from the clip's own start.
+    ///
+    /// [`Self::playable_notes`] laid down once per pass, which is the whole of what looping means
+    /// for a block of notes. The renderer and the MIDI writer both ask this rather than repeating
+    /// the arithmetic, for the reason they both ask `playable_notes`: two readings of "what does
+    /// this clip play" is a file that exports something other than what you can hear.
+    ///
+    /// A pass the loop cuts through keeps the notes that have begun by then and cuts them at the
+    /// end, exactly as the clip's own length cuts the pass before it.
+    pub fn sounding_notes(&self) -> impl Iterator<Item = Note> + '_ {
+        loop_passes(self.length, self.loop_end).flat_map(move |(offset, span)| {
+            self.playable_notes()
+                .filter(move |note| note.start < span)
+                .map(move |note| Note {
+                    start: note.start + offset,
+                    length: note.length.min(span - note.start),
+                    ..note
+                })
+        })
     }
 
     /// One of the clip's two curves.
@@ -184,6 +277,26 @@ impl MidiClip {
     /// A curve sampled into the events an instrument reads, from the clip's own start.
     pub fn curve_events(&self, which: ClipCurve, step: Ticks) -> Vec<(Ticks, f32)> {
         curve_events(self.curve(which), self.length, step)
+    }
+
+    /// A curve sampled across every pass the clip makes, repeats included.
+    ///
+    /// The curves repeat because they belong to the phrase rather than to the timeline — the same
+    /// reason they are stored on the clip at all. A wheel opened across a bar opens again on the
+    /// bar's repeat, which is what a person who drew it and then dragged the loop out meant.
+    pub fn sounding_curve_events(&self, which: ClipCurve, step: Ticks) -> Vec<(Ticks, f32)> {
+        let mut out = Vec::new();
+        for (offset, span) in loop_passes(self.length, self.loop_end) {
+            let mut pass = curve_events(self.curve(which), span, step);
+            // A pass the loop cuts through has to let go of whatever it was holding, for the
+            // reason `curve_events` releases a whole one: a curve is channel state, and the
+            // release it writes is aimed at the clip's length rather than at this cut.
+            if pass.last().is_some_and(|(_, value)| *value != 0.0) {
+                pass.push((span, 0.0));
+            }
+            out.extend(pass.into_iter().map(|(at, value)| (at + offset, value)));
+        }
+        out
     }
 
     /// Grows the clip so that every note fits inside it, rounded up to `grid`.
@@ -247,6 +360,14 @@ pub struct AudioClip {
     /// Whether the clip is skipped during playback.
     #[serde(default)]
     pub muted: bool,
+    /// How far the clip's content keeps repeating, measured from the clip's own start.
+    ///
+    /// In *ticks* while the trim beside it is in source frames, and deliberately: a repeat lands
+    /// on the musical grid, so a loop that survives a tempo change is measured the way the grid
+    /// is. What that means for the clip's own length is [`Project::audio_clip_length_ticks`],
+    /// which is the number this is divided up against — see [`loop_passes`].
+    #[serde(default)]
+    pub loop_end: Ticks,
 }
 
 impl AudioClip {
@@ -263,6 +384,7 @@ impl AudioClip {
             fade_in_frames: 0,
             fade_out_frames: 0,
             muted: false,
+            loop_end: Ticks::ZERO,
         }
     }
 
@@ -368,7 +490,8 @@ impl Project {
     /// Copies a clip onto its own track, placed immediately after the original.
     ///
     /// Butting the copy up against the original is what makes repeated duplication lay out a
-    /// loop, which is the reason the command exists.
+    /// loop, which is the reason the command exists. Past the *repeats* when the original has
+    /// any: landing on top of them would bury material that is already sounding there.
     pub fn duplicate_clip(&mut self, id: ClipId) -> Option<ClipId> {
         let new_id = ClipId(self.allocate_id());
         for track in &mut self.tracks {
@@ -377,7 +500,7 @@ impl Project {
                     if let Some(source) = inner.clips.iter().find(|clip| clip.id == id) {
                         let mut copy = source.clone();
                         copy.id = new_id;
-                        copy.start = source.end();
+                        copy.start = source.sounding_end();
                         inner.clips.push(copy);
                         return Some(new_id);
                     }
@@ -396,7 +519,7 @@ impl Project {
                         );
                         let mut copy = source;
                         copy.id = new_id;
-                        copy.start = start + length;
+                        copy.start = start + sounding_length(length, copy.loop_end);
                         inner.clips.push(copy);
                         return Some(new_id);
                     }
@@ -412,7 +535,12 @@ impl Project {
     /// Splits a clip in two at a timeline position, returning the new right-hand piece.
     ///
     /// Returns `None` when `at` is not strictly inside the clip: a split at either edge would
-    /// produce an empty piece, which is a worse outcome than doing nothing.
+    /// produce an empty piece, which is a worse outcome than doing nothing. "Inside" means the
+    /// clip's own content, so a looped clip can only be cut in its first pass — the repeats are
+    /// not material sitting on the timeline, they are the same bar said again.
+    ///
+    /// Both pieces come out unlooped. The repeats were repeats of a block that no longer exists,
+    /// and carrying the length over would have each half saying the whole phrase again.
     pub fn split_clip(&mut self, id: ClipId, at: Ticks) -> Option<ClipId> {
         // Both branches take an owned copy before touching the id allocator: holding a borrow
         // of the original clip across `allocate_id` would borrow `self` twice.
@@ -429,11 +557,13 @@ impl Project {
             right.start = at;
             right.length = clip.end() - at;
             right.notes = split_notes_right(&clip.notes, offset);
+            right.loop_end = Ticks::ZERO;
 
             let new_id = right.id;
             let left = self.midi_clip_mut(id)?;
             left.notes = split_notes_left(&clip.notes, offset);
             left.length = offset;
+            left.loop_end = Ticks::ZERO;
             self.track_mut(track_id)?
                 .kind
                 .as_instrument_mut()?
@@ -471,10 +601,12 @@ impl Project {
         // would be an artefact the user never asked for.
         right.fade_in_frames = 0;
         right.fade_out_frames = clip.fade_out_frames.min(right.length_frames);
+        right.loop_end = Ticks::ZERO;
 
         let new_id = right.id;
         let left = self.audio_clip_mut(id)?;
         left.length_frames = frames;
+        left.loop_end = Ticks::ZERO;
         left.fade_out_frames = 0;
         left.fade_in_frames = left.fade_in_frames.min(frames);
         self.track_mut(track_id)?
@@ -485,7 +617,7 @@ impl Project {
         Some(new_id)
     }
 
-    /// Length of an audio clip on the musical timeline.
+    /// Length of an audio clip on the musical timeline, repeats not counted.
     ///
     /// A clip's trim is in source frames, so its length in ticks depends on where it sits: the
     /// same number of frames spans fewer ticks in a faster passage.
@@ -496,6 +628,11 @@ impl Project {
             clip.start,
             clip.length_frames,
         )
+    }
+
+    /// How far an audio clip reaches on the timeline, repeats included.
+    pub fn audio_clip_sounding_ticks(&self, clip: &AudioClip) -> Ticks {
+        sounding_length(self.audio_clip_length_ticks(clip), clip.loop_end)
     }
 
     /// Adds a MIDI clip to an instrument track.
@@ -876,6 +1013,146 @@ mod tests {
 
         assert!(!project.move_clip_to_track(clip, bus));
         assert_eq!(project.track_of_clip(clip), Some(audio));
+    }
+
+    #[test]
+    fn a_clip_that_does_not_repeat_is_exactly_one_pass() {
+        // The property the whole feature rests on: every reader walks `loop_passes` without
+        // asking whether looping is on, so the unlooped case has to come out unchanged.
+        let bar = Ticks::from_beats(4.0);
+        assert_eq!(
+            loop_passes(bar, Ticks::ZERO).collect::<Vec<_>>(),
+            vec![(Ticks::ZERO, bar)]
+        );
+        // A loop end inside the clip is not a loop, and neither is one exactly on its end.
+        assert_eq!(loop_passes(bar, Ticks::QUARTER).count(), 1);
+        assert_eq!(loop_passes(bar, bar).count(), 1);
+        // A length of nothing would divide by nothing. A tick per pass, not an endless one.
+        assert_eq!(loop_passes(Ticks::ZERO, Ticks(3)).count(), 3);
+        assert_eq!(loop_passes(Ticks::ZERO, Ticks::ZERO).count(), 1);
+    }
+
+    #[test]
+    fn the_last_pass_is_cut_wherever_the_loop_ends() {
+        // A loop is a length rather than a count, which is what makes dragging its edge
+        // continuous — so two and a half passes is a real answer, not a rounding error.
+        let bar = Ticks::from_beats(4.0);
+        let passes: Vec<_> = loop_passes(bar, bar * 2 + Ticks::from_beats(2.0)).collect();
+        assert_eq!(
+            passes,
+            vec![
+                (Ticks::ZERO, bar),
+                (bar, bar),
+                (bar * 2, Ticks::from_beats(2.0)),
+            ]
+        );
+        assert_eq!(sounding_length(bar, bar * 3), bar * 3);
+        assert_eq!(
+            sounding_length(bar, Ticks::ZERO),
+            bar,
+            "not shorter than it"
+        );
+    }
+
+    #[test]
+    fn a_looped_clip_says_its_notes_again_and_cuts_the_half_pass() {
+        let mut clip = MidiClip::new(
+            ClipId(1),
+            "riff",
+            Ticks::from_beats(8.0),
+            Ticks::QUARTER * 2,
+        );
+        clip.notes.push(Note::new(60, Ticks::ZERO, Ticks::QUARTER));
+        clip.notes
+            .push(Note::new(64, Ticks::QUARTER, Ticks::QUARTER));
+        // Two and a half passes: five notes, the last of which is the first note of pass three.
+        clip.loop_end = Ticks::QUARTER * 5;
+
+        assert!(clip.is_looped());
+        assert_eq!(clip.sounding_length(), Ticks::QUARTER * 5);
+        assert_eq!(
+            clip.sounding_end(),
+            Ticks::from_beats(8.0) + Ticks::QUARTER * 5
+        );
+        let sounding: Vec<(u8, Ticks)> = clip
+            .sounding_notes()
+            .map(|note| (note.pitch, note.start))
+            .collect();
+        assert_eq!(
+            sounding,
+            vec![
+                (60, Ticks::ZERO),
+                (64, Ticks::QUARTER),
+                (60, Ticks::QUARTER * 2),
+                (64, Ticks::QUARTER * 3),
+                (60, Ticks::QUARTER * 4),
+            ]
+        );
+        // Positions stay relative to the clip, as `playable_notes` leaves them: only the caller
+        // knows whether it wants them on the timeline.
+        assert!(
+            sounding
+                .iter()
+                .all(|(_, start)| *start < Ticks::QUARTER * 5)
+        );
+
+        // And with looping off it is exactly `playable_notes` again.
+        clip.loop_end = Ticks::ZERO;
+        assert_eq!(
+            clip.sounding_notes().collect::<Vec<_>>(),
+            clip.playable_notes().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_note_the_loop_cuts_through_is_shortened_rather_than_dropped() {
+        // The rule the clip's own length already follows for its last note, applied to the cut
+        // the loop makes. A held note vanishing at the loop end would be a hole in the sound.
+        let mut clip = MidiClip::new(ClipId(1), "held", Ticks::ZERO, Ticks::QUARTER * 4);
+        clip.notes
+            .push(Note::new(60, Ticks::ZERO, Ticks::QUARTER * 4));
+        clip.loop_end = Ticks::QUARTER * 6;
+
+        let lengths: Vec<Ticks> = clip.sounding_notes().map(|note| note.length).collect();
+        assert_eq!(lengths, vec![Ticks::QUARTER * 4, Ticks::QUARTER * 2]);
+    }
+
+    #[test]
+    fn turning_a_loop_on_reaches_the_next_clip_or_doubles() {
+        let bar = Ticks::from_beats(4.0);
+        // Out to the neighbour, filling the gap in front of the phrase.
+        assert_eq!(default_loop_end(bar, bar, Some(bar * 5)), bar * 4);
+        // Nothing in front: one extra pass, which invents no length nobody chose.
+        assert_eq!(default_loop_end(bar, bar, None), bar * 2);
+        // A neighbour too close to fit a pass is no gap at all — a loop shorter than the clip
+        // is not a loop, and would read as a trim.
+        assert_eq!(default_loop_end(bar, bar, Some(bar * 2)), bar * 2);
+        assert_eq!(default_loop_end(bar, bar, Some(bar)), bar * 2);
+    }
+
+    #[test]
+    fn splitting_a_looped_clip_leaves_neither_half_looped() {
+        let mut project = demo_project();
+        let clip = project.tracks[0].kind.as_instrument().unwrap().clips[0].id;
+        project.midi_clip_mut(clip).unwrap().loop_end = Ticks::from_beats(16.0);
+
+        let right = project.split_clip(clip, Ticks::from_beats(2.0)).unwrap();
+        assert!(!project.midi_clip(clip).unwrap().1.is_looped());
+        assert!(!project.midi_clip(right).unwrap().1.is_looped());
+    }
+
+    #[test]
+    fn a_duplicate_lands_past_the_repeats_rather_than_on_them() {
+        let mut project = demo_project();
+        let original = project.tracks[0].kind.as_instrument().unwrap().clips[0].id;
+        project.midi_clip_mut(original).unwrap().loop_end = Ticks::from_beats(16.0);
+        let start = project.midi_clip(original).unwrap().1.start;
+
+        let copy = project.duplicate_clip(original).unwrap();
+        assert_eq!(
+            project.midi_clip(copy).unwrap().1.start,
+            start + Ticks::from_beats(16.0)
+        );
     }
 
     #[test]

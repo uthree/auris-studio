@@ -15,7 +15,7 @@ use auris_session::prelude::*;
 
 use gpui::{Bounds, Pixels, point, px, size};
 
-use crate::app::FadeEdge;
+use crate::app::{ClipEdge, FadeEdge};
 use crate::ui::paint;
 
 /// Width of the grab zone on a clip's right edge, in pixels.
@@ -202,6 +202,54 @@ pub(super) fn fade_handle_at(
     })
 }
 
+/// Which of a clip's three edge handles a press took hold of.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(super) enum ClipGrab {
+    /// The far end of the repeats, which says how many times the clip is heard.
+    Loop,
+    /// One end of the clip itself, which says what the clip is.
+    Resize(ClipEdge),
+}
+
+/// The handle a press at `x`, `y_in_clip` took hold of, on a clip drawn from `start_x` to `end_x`
+/// whose repeats reach `loop_x`.
+///
+/// The three questions in the order they have to be asked, which *is* the behaviour:
+///
+/// 1. **The loop edge, but only in the name bar.** On a clip that has never been looped `loop_x`
+///    and `end_x` are the same pixel, and the strip with the name on it is the half that starts a
+///    loop — the way it is in Logic, and the only arrangement under which a clip nobody has
+///    looped yet offers the gesture at all.
+/// 2. **The end**, at any height, which is the edge people drag. Only the loop is confined to the
+///    name bar; taking the resize away from the rest of the clip's height to match would cost the
+///    common gesture far more than the rare one gains.
+/// 3. **The start**, last, because a clip narrow enough for both zones to reach the middle would
+///    otherwise be all front-trim.
+///
+/// Free rather than a method for the reason everything else in this file is: the order above is
+/// the difference between stretching a phrase and repeating it, and a rule that decides that
+/// belongs where it can be read and checked without a window.
+pub(super) fn clip_grab_at(
+    start_x: Pixels,
+    end_x: Pixels,
+    loop_x: Pixels,
+    x: Pixels,
+    y_in_clip: Pixels,
+) -> Option<ClipGrab> {
+    let grab = resize_grab(end_x - start_x);
+    let within = |edge: Pixels| f32::from(edge - x).abs() <= grab;
+    if y_in_clip < TITLE_HEIGHT && within(loop_x) {
+        return Some(ClipGrab::Loop);
+    }
+    if within(end_x) {
+        return Some(ClipGrab::Resize(ClipEdge::End));
+    }
+    if within(start_x) {
+        return Some(ClipGrab::Resize(ClipEdge::Start));
+    }
+    None
+}
+
 /// What is left of a clip selection once `removed` has been deleted from the document, as the
 /// surviving set and the clip the editors should point at.
 ///
@@ -238,6 +286,47 @@ mod tests {
             pixels_per_beat: 48.0,
             scroll_ticks: Ticks::ZERO,
         }
+    }
+
+    #[test]
+    fn the_name_bar_starts_a_loop_where_the_body_below_it_stretches_the_clip() {
+        // The one rule the whole loop gesture rests on. Both edges sit on the same pixel until a
+        // clip is looped, so which one a press means is answered entirely by its height — and if
+        // the resize won that tie no clip could ever be looped by the mouse at all.
+        let (start, end) = (px(100.0), px(300.0));
+        let below = TITLE_HEIGHT + px(4.0);
+
+        assert_eq!(
+            clip_grab_at(start, end, end, end, px(2.0)),
+            Some(ClipGrab::Loop)
+        );
+        assert_eq!(
+            clip_grab_at(start, end, end, end, below),
+            Some(ClipGrab::Resize(ClipEdge::End))
+        );
+        // The far edge of a clip that *is* looped is the loop's, and the clip's own end — now in
+        // the middle of the block — is still the resize edge.
+        let looped = px(700.0);
+        assert_eq!(
+            clip_grab_at(start, end, looped, looped, px(2.0)),
+            Some(ClipGrab::Loop)
+        );
+        assert_eq!(
+            clip_grab_at(start, end, looped, end, below),
+            Some(ClipGrab::Resize(ClipEdge::End))
+        );
+        // Only the *loop* is confined to the name bar. The clip's own end answers at every
+        // height, including inside the strip, because that is the edge people reach for.
+        assert_eq!(
+            clip_grab_at(start, end, looped, end, px(2.0)),
+            Some(ClipGrab::Resize(ClipEdge::End))
+        );
+        // The front trims, and the middle is neither — that is where a move begins.
+        assert_eq!(
+            clip_grab_at(start, end, looped, start, below),
+            Some(ClipGrab::Resize(ClipEdge::Start))
+        );
+        assert_eq!(clip_grab_at(start, end, looped, px(200.0), below), None);
     }
 
     #[test]

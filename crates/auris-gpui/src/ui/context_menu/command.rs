@@ -226,6 +226,8 @@ pub enum MenuCommand {
     SplitClipAtPlayhead(ClipId),
     /// Set the cycle region to a clip's extent.
     LoopOverClip(ClipId),
+    /// Repeat a clip out to the next one on its lane, or stop it repeating.
+    ToggleClipLoop(ClipId),
     /// Open a clip in the piano roll.
     EditClip(ClipId),
     /// Create an empty clip on a track.
@@ -250,6 +252,8 @@ pub enum MenuCommand {
     TransposeNotes(i32),
     /// Sets how hard the selected notes are struck, as a dynamic marking's MIDI velocity.
     SetNoteVelocity(u8),
+    /// Snap the selected notes onto the editing grid.
+    QuantizeNotes(Quantize),
     /// Select every note in the clip being edited.
     SelectAllNotes,
     /// Add one note.
@@ -738,14 +742,21 @@ impl AurisApp {
                 }
             }
             MenuCommand::LoopOverClip(clip) => {
-                if let Some((start, end)) = self.clip_extent(clip) {
-                    self.session.set_loop_region(start, end);
+                // The *sounding* extent, repeats included: cycling over a looped clip and
+                // hearing only its first bar would be a cycle region nobody could explain.
+                if let (Some(start), Some(length)) = (
+                    self.session.clip_start(clip),
+                    self.session.clip_sounding_length(clip),
+                ) {
+                    self.session.set_loop_region(start, start + length);
                     self.session.set_loop_enabled(true);
                 }
             }
+            MenuCommand::ToggleClipLoop(clip) => self.toggle_clip_loop(clip),
             MenuCommand::EditClip(clip) => self.open_clip_in_editor(clip),
             MenuCommand::NewClip { track, start } => self.create_clip_at(track, start),
 
+            MenuCommand::QuantizeNotes(what) => self.quantize_selected_notes(what),
             MenuCommand::DuplicateNotes => {
                 let Some(clip) = self.selected_clip else {
                     return;

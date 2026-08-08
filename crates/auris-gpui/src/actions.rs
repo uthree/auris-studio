@@ -95,6 +95,14 @@ actions!(
         SplitClip,
         /// Mute or unmute the selected clip.
         ToggleClipMute,
+        /// Repeat the selected clip out to the next one, or stop it repeating.
+        ToggleClipLoop,
+        /// Snap the selected notes' starts onto the editing grid.
+        QuantizeNoteStarts,
+        /// Snap the selected notes' lengths onto the editing grid.
+        QuantizeNoteLengths,
+        /// Snap both of the selected notes' numbers onto the editing grid.
+        QuantizeNotes,
         /// Put the next of the piano roll's tools in hand.
         NextTool,
         /// Type the tempo of the stretch the playhead is in.
@@ -397,6 +405,14 @@ bindable! {
         "edit.transpose_down",  GroupNotes,     CmdTransposeDown,      "alt-down"    => TransposeDown;
         "edit.octave_up",       GroupNotes,     CmdOctaveUp,           "alt-shift-up" => OctaveUp;
         "edit.octave_down",     GroupNotes,     CmdOctaveDown,         "alt-shift-down" => OctaveDown;
+        // Q is what every sequencer since the first one has quantised with, and it means the
+        // starts — which is what "quantise" means when nobody says which. The other two are the
+        // same command with a different half of the note in it, and take no key: the table's
+        // policy is that a chord nobody would guess is worth less than a row somebody can fill
+        // in, and both are a right-click away in the roll.
+        "edit.quantize",        GroupNotes,     CmdQuantize,           "q"           => QuantizeNoteStarts;
+        "edit.quantize_lengths", GroupNotes,    CmdQuantizeLengths,    ""            => QuantizeNoteLengths;
+        "edit.quantize_both",   GroupNotes,     CmdQuantizeBoth,       ""            => QuantizeNotes;
     }
 
     context::ARRANGEMENT => {
@@ -409,6 +425,9 @@ bindable! {
         // which is the instrument track here.
         "clip.split",           GroupClip,      CmdSplitClip,          "alt-x"       => SplitClip;
         "clip.mute",            GroupClip,      CmdToggleClipMute,     ""            => ToggleClipMute;
+        // Logic's own key for looping a region, and a bare letter is free here for the reason
+        // `edit.next_tool` is: the arrangement is not a place anything types.
+        "clip.loop",            GroupClip,      CmdToggleClipLoop,     "l"           => ToggleClipLoop;
     }
 }
 

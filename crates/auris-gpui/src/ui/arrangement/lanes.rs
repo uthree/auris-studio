@@ -23,7 +23,9 @@ use crate::theme::Metrics;
 use crate::ui::automation;
 use crate::ui::paint;
 
-use super::geometry::{CLIP_INSET, FADE_HANDLE_MIN_WIDTH, edge_zone_rows, resize_grab};
+use super::geometry::{
+    CLIP_INSET, FADE_HANDLE_MIN_WIDTH, TITLE_HEIGHT, edge_zone_rows, resize_grab,
+};
 use super::lane_paint::{paint_automation, paint_lane};
 
 impl AurisApp {
@@ -283,6 +285,7 @@ impl AurisApp {
             for clip in &lane.clips {
                 let left = self.timeline.tick_to_x(clip.start);
                 let right = self.timeline.tick_to_x(clip.start + clip.length);
+                let looped = self.timeline.tick_to_x(clip.start + clip.sounding_length());
                 let grab = px(resize_grab(right - left));
                 if grab <= px(0.0) {
                     continue;
@@ -296,6 +299,14 @@ impl AurisApp {
                 for x in [left, right - grab] {
                     zones.extend(edge_zone_rows(x, grab, top, bottom, fades));
                 }
+                // The loop edge is the name bar's own, at the far end of the repeats. On an
+                // unlooped clip that is the same place the resize edge is, and the name bar is
+                // the strip the loop takes there too — which is what makes a clip that has never
+                // been looped offer the gesture that starts one.
+                zones.push(Bounds {
+                    origin: point(looped - grab, top),
+                    size: size(grab, TITLE_HEIGHT.min(bottom - top)),
+                });
             }
         }
         zones
@@ -356,6 +367,7 @@ impl AurisApp {
                             name: clip.name.clone(),
                             start: clip.start,
                             length: clip.length,
+                            loop_end: clip.loop_end,
                             muted: clip.muted,
                             generated: clip.is_generated(),
                             content: ClipContent::Notes(clip.notes.clone()),
@@ -371,6 +383,7 @@ impl AurisApp {
                                 name: clip.name.clone(),
                                 start: clip.start,
                                 length,
+                                loop_end: clip.loop_end,
                                 muted: clip.muted,
                                 // Audio is recorded or imported; nothing writes it.
                                 generated: false,
@@ -441,11 +454,21 @@ pub(super) struct ClipPaint {
     pub(super) id: ClipId,
     pub(super) name: String,
     pub(super) start: Ticks,
+    /// How long one pass is: the clip's own content, repeats not counted.
     pub(super) length: Ticks,
+    /// How far the content repeats, from the clip's start. See [`loop_passes`].
+    pub(super) loop_end: Ticks,
     pub(super) muted: bool,
     /// Written by the composer rather than played, which the clip says on its own face.
     pub(super) generated: bool,
     pub(super) content: ClipContent,
+}
+
+impl ClipPaint {
+    /// How far the clip reaches on the timeline, repeats included.
+    pub(super) fn sounding_length(&self) -> Ticks {
+        sounding_length(self.length, self.loop_end)
+    }
 }
 
 pub(super) enum ClipContent {

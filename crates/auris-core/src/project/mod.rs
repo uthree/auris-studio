@@ -40,7 +40,10 @@ mod track;
 #[cfg(test)]
 mod fixtures;
 
-pub use clip::{AudioClip, AudioSource, AudioSourceBank, MidiClip, Note, notes_trimmed_from_front};
+pub use clip::{
+    AudioClip, AudioSource, AudioSourceBank, MidiClip, Note, default_loop_end, loop_passes,
+    notes_trimmed_from_front, sounding_length,
+};
 pub use curve::{
     BEND_LIMIT, CURVE_STEP, ClipCurve, CurvePoint, MODULATION_LIMIT, curve_at, curve_events,
 };
@@ -295,7 +298,14 @@ impl Project {
     /// secondary-dominant branch, finds no roman numeral there, and rejects the numeral — which
     /// fails the whole document rather than the one chord. That is the honest answer, but the
     /// version is what makes it happen at the door instead of halfway through a harmony lane.
-    pub const FORMAT_VERSION: u32 = 9;
+    ///
+    /// 10 since a clip gained [`loop_end`](MidiClip::loop_end). Version 5's case again, and the
+    /// distinction it drew is the whole of why this one moves and the metronome flag beside it did
+    /// not: a field an older build ignores costs nothing when ignoring it plays the same music, and
+    /// costs the work when it does not. A version 9 build would open a song whose drum loop runs
+    /// thirty-two bars, play the one bar, and write that back on the next save with the other
+    /// thirty-one gone and nothing on screen having said so.
+    pub const FORMAT_VERSION: u32 = 10;
 
     /// An empty project.
     ///

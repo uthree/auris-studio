@@ -61,7 +61,7 @@ pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob};
 pub use session::{
     AccompanyReport, AudioStatus, Clipboard, ComposeReport, CopiedClip, CopiedContent,
-    DEFAULT_PARTS, SaveReport, Session, SessionOptions,
+    DEFAULT_PARTS, Quantize, SaveReport, Session, SessionOptions, quantized,
 };
 pub use settings::{AudioPreferences, CONFIG_DIR_VAR, Settings, config_dir, migrate_legacy_config};
 
@@ -125,7 +125,7 @@ pub mod prelude {
         AudioBuffer, AudioClip, AudioSource, AuxSend, ClipId, ClipPreset, ClipRecipe, Color,
         EffectSlotId, MidiClip, MixerStrip, Note, Output, PluginRegistry, PresetRef, Project,
         SectionMap, SectionPoint, SectionSpan, SendId, SoundFontId, SoundFontRef, SourceId,
-        Subdivision, Track, TrackId, TrackKind,
+        Subdivision, Track, TrackId, TrackKind, default_loop_end, loop_passes, sounding_length,
     };
     // The curves a clip carries, and how far each may go. A frontend drawing one has to know the
     // range it is drawing against, and may not reach past this crate to find out.
@@ -152,7 +152,7 @@ pub mod prelude {
 
     pub use crate::{
         AccompanyReport, AudioPreferences, Clipboard, ComposeReport, CopiedClip, CopiedContent,
-        DEFAULT_PARTS, Edit, ExportSummary, ParamTarget, RenderJob, SaveReport, Session,
+        DEFAULT_PARTS, Edit, ExportSummary, ParamTarget, Quantize, RenderJob, SaveReport, Session,
         SessionError, SessionOptions, Settings,
     };
 }

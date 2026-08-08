@@ -140,6 +140,17 @@ which is as fine as the document gets. Holding ⌘ (Ctrl on Windows) suspends sn
 length of a drag, for when one thing has to sit off the beat. A double-click on any fader or knob
 puts it back to its default: 0 dB on a volume, centre on a pan.
 
+**Quantise** puts notes that were played back onto that same grid, after the fact. It comes in
+three, because the two numbers a note has are separately wrong: *Quantise Starts* (**Q**) tidies
+where the notes begin, *Quantise Lengths* tidies how long they are held, and *Quantise Both* does
+the two together. A part played a shade ahead of the beat wants its lengths evened out and its feel
+left alone; doing both to a take that only needed one is how it stops sounding like anybody played
+it. All three are on the roll's right-click menu and on the Edit menu, they act on the selected
+notes, and they snap to the division the grid button is showing — quantising to something you
+cannot see is a jump with no explanation. A length never rounds down to nothing: on a sixteenth
+grid a clipped grace note becomes a sixteenth rather than disappearing. The status line says how
+many notes actually moved, which tells you how straight the rest of them already were.
+
 Either edge of a clip is a handle, and the pointer turns into a ↔ over one so you can see that
 before you press. Dragging one changes the clip's length, and what that means depends on what the
 clip is. An **audio** clip is trimmed, and the trim stops where the material
@@ -149,6 +160,23 @@ clip somebody **played** keeps every note exactly where it is. A clip that **wro
 written again over the stretch it now covers, since it is its recipe rather than its notes: pull
 it out and it fills the bars it gained, pull it in and it stops where it stops. Nothing is lost
 by that — the recipe still says what the clip is, so dragging back out writes the material back.
+
+**A clip can loop.** The right edge of a clip's *name bar* is a second handle, sitting on top of
+the resize handle until it is used: drag it out and the clip goes on saying itself for as long as
+you pull, in faded repeats divided by a hairline, and drag it back over the clip's own end to stop.
+The clip itself is untouched by any of it — one block, one name, one selection, however many times
+it is heard — and the edge below the name bar still resizes, so the phrase and the number of times
+it is played are two different things you can change. *Loop Clip* on the right-click menu, on the
+Edit menu, and on **L**, does the same thing without the mouse: on, it reaches out to the next clip
+on the lane, or doubles where there is nothing in front of it.
+
+Both kinds loop. The last repeat is cut off wherever the loop ends rather than being rounded to a
+whole pass, so a loop can stop half way through a bar; on an audio clip the fades stay on the
+clip's own two edges and the joins between repeats run flat, because a fade-out at the end of every
+pass would pump once a bar. Splitting a looped clip stops both halves repeating — the repeats were
+of a block that no longer exists — and duplicating one lands the copy past the repeats rather than
+on top of them. An exported file, WAV or MIDI, contains the repeats: nothing about a loop stops at
+playback.
 
 An audio clip fades in and out by its handles: the pair sits in a band just under the clip's
 name bar, one at each end, and dragging one draws the fade as a dimmed wedge over the waveform

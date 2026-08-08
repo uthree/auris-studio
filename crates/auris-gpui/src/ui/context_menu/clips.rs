@@ -64,6 +64,14 @@ impl AurisApp {
                 MenuCommand::ToggleClipMute(clip),
                 self.clip_is_muted(clip),
             )
+            // Beside Mute rather than beside Cycle, because that is what it is: a switch on the
+            // clip. "Cycle over Clip" a row below moves the *transport's* loop, and the two
+            // reading as versions of one another is exactly the confusion to avoid.
+            .toggle(
+                self.t(Key::MenuLoopClip),
+                MenuCommand::ToggleClipLoop(clip),
+                self.session.clip_is_looped(clip),
+            )
             .item(
                 self.t(Key::MenuCycleOverClip),
                 MenuCommand::LoopOverClip(clip),
@@ -175,6 +183,25 @@ impl AurisApp {
                 MenuCommand::TransposeNotes(-1),
             )
             .separator()
+            // The three quantise passes, spelt out rather than hidden behind one row that moves
+            // whichever number the last person chose. They snap to the editing grid, which is on
+            // screen above the notes being snapped.
+            .item_if(
+                has_selection,
+                self.t(Key::MenuQuantizeStarts),
+                MenuCommand::QuantizeNotes(Quantize::Starts),
+            )
+            .item_if(
+                has_selection,
+                self.t(Key::MenuQuantizeLengths),
+                MenuCommand::QuantizeNotes(Quantize::Lengths),
+            )
+            .item_if(
+                has_selection,
+                self.t(Key::MenuQuantizeBoth),
+                MenuCommand::QuantizeNotes(Quantize::Both),
+            )
+            .separator()
             // Dynamics rather than a number, because that is what a musician means by "softer".
             // The roll has coloured notes by velocity since it was written and nothing could
             // change one; six markings cover the range a part is actually written in.
@@ -199,7 +226,7 @@ impl AurisApp {
     ///
     /// A command aimed at a clip inside the selection takes the whole selection with it, which
     /// is what selecting several of them was for; one aimed elsewhere acts alone.
-    pub(super) fn clips_for_command(&self, clip: ClipId) -> Vec<ClipId> {
+    pub(crate) fn clips_for_command(&self, clip: ClipId) -> Vec<ClipId> {
         if self.selected_clips.contains(&clip) {
             self.selected_clips.iter().copied().collect()
         } else {

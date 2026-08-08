@@ -208,11 +208,34 @@ pub fn model(language: Language) -> Vec<MenuSection> {
                 "edit.octave_down",
             ),
             MenuRow::Separator,
+            // The three quantise passes together, in the order a person thinks of them: the
+            // plain one, then each half of the note on its own.
+            command(
+                t(Key::CmdQuantize),
+                actions::QuantizeNoteStarts,
+                "edit.quantize",
+            ),
+            command(
+                t(Key::CmdQuantizeLengths),
+                actions::QuantizeNoteLengths,
+                "edit.quantize_lengths",
+            ),
+            command(
+                t(Key::CmdQuantizeBoth),
+                actions::QuantizeNotes,
+                "edit.quantize_both",
+            ),
+            MenuRow::Separator,
             command(t(Key::CmdSplitClip), actions::SplitClip, "clip.split"),
             command(
                 t(Key::CmdToggleClipMute),
                 actions::ToggleClipMute,
                 "clip.mute",
+            ),
+            command(
+                t(Key::CmdToggleClipLoop),
+                actions::ToggleClipLoop,
+                "clip.loop",
             ),
             MenuRow::Separator,
             command(t(Key::CmdNextTool), actions::NextTool, "edit.next_tool"),

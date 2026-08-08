@@ -145,6 +145,10 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_duplicate_clip))
             .on_action(cx.listener(Self::on_split_clip))
             .on_action(cx.listener(Self::on_toggle_clip_mute))
+            .on_action(cx.listener(Self::on_toggle_clip_loop))
+            .on_action(cx.listener(Self::on_quantize_starts))
+            .on_action(cx.listener(Self::on_quantize_lengths))
+            .on_action(cx.listener(Self::on_quantize_notes))
             .on_action(cx.listener(Self::on_next_tool))
             .on_action(cx.listener(Self::on_set_tempo))
             .on_action(cx.listener(Self::on_set_time_signature))
@@ -659,6 +663,16 @@ impl AurisApp {
                 };
                 if done.is_ok() && rewritten {
                     self.forget_rewritten_notes(clip);
+                }
+            }
+            Drag::ClipLoop { clip } => {
+                let x = event.position.x - self.lanes_origin().x;
+                let tick = self.snap_unless_held(self.timeline.x_to_tick(x), event.modifiers);
+                // Measured from the clip's own start, which is what the field means. Nothing is
+                // clamped here: dragged back inside the clip the session reads it as "no
+                // repeats", which is how the gesture turns the loop off again.
+                if let Some(start) = self.session.clip_start(clip) {
+                    let _ = self.session.set_clip_loop(clip, tick - start);
                 }
             }
             Drag::AutomationPoint { target, at } => {
@@ -1529,6 +1543,48 @@ impl AurisApp {
         if let Some(clip) = self.selected_clip {
             self.run_menu_command(MenuCommand::ToggleClipMute(clip), cx);
         }
+        cx.notify();
+    }
+
+    fn on_toggle_clip_loop(
+        &mut self,
+        _: &actions::ToggleClipLoop,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(clip) = self.selected_clip {
+            self.run_menu_command(MenuCommand::ToggleClipLoop(clip), cx);
+        }
+        cx.notify();
+    }
+
+    fn on_quantize_starts(
+        &mut self,
+        _: &actions::QuantizeNoteStarts,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_menu_command(MenuCommand::QuantizeNotes(Quantize::Starts), cx);
+        cx.notify();
+    }
+
+    fn on_quantize_lengths(
+        &mut self,
+        _: &actions::QuantizeNoteLengths,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_menu_command(MenuCommand::QuantizeNotes(Quantize::Lengths), cx);
+        cx.notify();
+    }
+
+    fn on_quantize_notes(
+        &mut self,
+        _: &actions::QuantizeNotes,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_menu_command(MenuCommand::QuantizeNotes(Quantize::Both), cx);
         cx.notify();
     }
 

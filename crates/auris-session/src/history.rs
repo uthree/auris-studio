@@ -100,6 +100,12 @@ pub enum Edit {
     MoveClip,
     /// A clip's length changed.
     ResizeClip,
+    /// A clip was set to repeat, or stopped repeating.
+    ///
+    /// Its own variant rather than [`Edit::ResizeClip`] because the two edges do different things
+    /// and undo has to say which one is coming back: a resize changes what the clip *is*, and this
+    /// changes only how many times it is said.
+    LoopClip,
     /// An audio clip's own gain changed.
     SetClipGain,
     /// An audio clip's fade-in or fade-out changed.
@@ -122,6 +128,8 @@ pub enum Edit {
     MoveNotes,
     /// A note's length changed.
     ResizeNote,
+    /// Notes were snapped onto a division of the beat.
+    QuantizeNotes,
     /// An effect was added to a chain.
     AddEffect,
     /// An effect was removed from a chain.

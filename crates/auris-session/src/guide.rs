@@ -239,6 +239,26 @@ pub mod realtime {
     //! Both figures come from plugins, so the arithmetic that combines them saturates rather than
     //! wrapping: a plugin reporting an absurd tail should pad an export, not overflow it.
     //!
+    //! # A repeat is flattened, not remembered
+    //!
+    //! A clip may be looped: [`loop_end`](auris_core::MidiClip::loop_end) says how far past its own
+    //! end the content keeps being laid down. The audio thread never learns that. Building the
+    //! graph walks [`loop_passes`](auris_core::loop_passes) and writes each pass out as though a
+    //! person had duplicated the clip by hand — a MIDI clip becomes note events at every repeat, an
+    //! audio clip becomes one window onto its buffer per repeat — and the renderer plays a flat
+    //! list it cannot tell from an unlooped song.
+    //!
+    //! That is not an optimisation, it is the only shape the rule above permits. A source that knew
+    //! it repeated would have to answer "which pass is frame *n* in" inside the callback, on every
+    //! block, for every track; the same question asked once at build time costs a `Vec` push per
+    //! repeat and is asked on a thread that may allocate.
+    //!
+    //! It also settles what a loop *is*. `loop_passes` yields **one pass for a clip that does not
+    //! repeat**, so there is no looped code path and unlooped code path to keep in step — the
+    //! renderer, the MIDI exporter and the arrangement painter all walk passes and the ordinary
+    //! case falls out of the general one. And a loop is a *length* rather than a count, which is
+    //! what lets its edge be dragged continuously and its last pass be cut half way through.
+    //!
     //! # How the rule is enforced
     //!
     //! `auris-engine`'s test suite installs a counting global allocator and asserts that a run of
