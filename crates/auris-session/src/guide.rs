@@ -432,12 +432,23 @@ pub mod plugins {
     //! own has to be given a channel of its own: fifteen of the library's sixteen, one note each.
     //!
     //! That trade is real — fifteen notes instead of 128 voices, and a drum kit's choke groups
-    //! only work between notes sharing a channel — so it is paid only when it buys something.
-    //! With the four controls at their defaults the envelope multiplies every note by one from
-    //! beginning to end, and the sampler skips the mechanism entirely and plays the font as it is
-    //! written. The rule is worth generalising: **a feature that costs something should cost it
-    //! only when it is used**, and the test for "used" belongs in a free function
-    //! (`auris_sampler`'s `shaping`) where it can be read and asserted on.
+    //! only work between notes sharing a channel — so the whole mechanism sits behind a switch:
+    //! an `envelope` toggle, off by default, and while it is off the sampler plays the font
+    //! exactly as it is written. Two rules came out of it, and both generalise:
+    //!
+    //! **A feature that costs something is switched on explicitly, not inferred.** An earlier
+    //! version turned the mechanism on when any of the four sliders left its default, which is
+    //! tidier and wrong: a control that arms itself when you nudge it to see what it does is a
+    //! control nobody can disarm with confidence. The test for "on" is a free function
+    //! (`auris_sampler`'s `shaping`), so it can be read and asserted on rather than inferred from
+    //! the audio.
+    //!
+    //! **A cost the user cannot see is a cost the window has to say out loud.** Missing polyphony
+    //! shows up as "the top note of my chord dropped out", which is the kind of symptom that gets
+    //! blamed on anything but the switch that caused it, so the plugin window carries a caution
+    //! strip for as long as the envelope is on. Which plugin warns, and about what, is decided in
+    //! `auris_gpui::ui::plugin_window::caution` — the frontend, for the same reason it decides
+    //! which plugin gets a curve.
     //!
     //! # Where a new plugin goes
     //!

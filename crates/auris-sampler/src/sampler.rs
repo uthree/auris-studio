@@ -135,24 +135,25 @@ const CC_EXPRESSION_FINE: i32 = 0x2B;
 const PRESET_KEY: &str = "preset";
 
 const LEVEL: usize = 0;
-const ATTACK: usize = 1;
-const DECAY: usize = 2;
-const SUSTAIN: usize = 3;
-const RELEASE: usize = 4;
-const PARAM_COUNT: usize = 5;
+const ENVELOPE: usize = 1;
+const ATTACK: usize = 2;
+const DECAY: usize = 3;
+const SUSTAIN: usize = 4;
+const RELEASE: usize = 5;
+const PARAM_COUNT: usize = 6;
+
+/// The key of the switch, so a frontend can find it without knowing where it sits.
+pub const ENVELOPE_KEY: &str = "envelope";
 
 /// Whether these parameter values ask the sampler to shape a note at all.
 ///
-/// The defaults are the answer "no": rise instantly, hold at full, and let go the moment the
-/// note does. An envelope in that position multiplies every note by one from beginning to end,
-/// so the sampler skips the whole mechanism and plays the font exactly as it is written —
-/// including the choke groups a drum kit relies on, which only work between notes sharing a
-/// channel.
-///
-/// The decay is not consulted. A decay falls from full level *to the sustain level*, so with the
-/// sustain at full it has nowhere to travel and changes nothing on its own.
+/// One switch, and nothing else. It could have been inferred — an attack of zero holding at full
+/// and letting go at once multiplies every note by one — but a feature that turns itself on when
+/// a slider moves is a feature nobody can turn off with confidence, and this one has a price to
+/// warn about. Off means the sampler skips the mechanism entirely and plays the font exactly as
+/// it is written, choke groups and all 128 voices included; on means it does not.
 fn shaping(values: &[f32; PARAM_COUNT]) -> bool {
-    values[ATTACK] > 0.0 || values[SUSTAIN] < 1.0 || values[RELEASE] > 0.0
+    values[ENVELOPE] >= 0.5
 }
 
 /// Writes a preset choice into the state a project stores for a track's instrument.
@@ -307,10 +308,16 @@ impl Sampler {
         //
         // The four envelope controls carry the same keys, ranges and curves as the built-in
         // instruments', so the same picture is drawn over them and dragging a corner means the
-        // same thing wherever it is done. Only the defaults differ, and they differ for a
-        // reason: theirs describe a sound, these describe *leaving the font's own alone*.
+        // same thing wherever it is done.
+        //
+        // Their defaults are what turning the switch on sounds like, and they are chosen to be a
+        // small step rather than none: flat while the key is down, with a fifth of a second of
+        // release so a note is let go rather than chopped. A release of zero would be the closest
+        // thing to "the font untouched", and it is also the one setting that would make the first
+        // thing anybody hears after finding the switch sound broken.
         let params = vec![
             ParamDescriptor::decibels(LEVEL as u32, "level", "Level", -60.0, 12.0, 0.0),
+            ParamDescriptor::toggle(ENVELOPE as u32, ENVELOPE_KEY, "Envelope", false),
             ParamDescriptor::new(ATTACK as u32, "attack", "Attack", 0.0, 2.0, 0.0)
                 .with_unit(ParamUnit::Seconds)
                 .with_curve(ParamValueCurve::Power(3.0)),
@@ -318,7 +325,7 @@ impl Sampler {
                 .with_unit(ParamUnit::Seconds)
                 .with_curve(ParamValueCurve::Power(3.0)),
             ParamDescriptor::percent(SUSTAIN as u32, "sustain", "Sustain", 1.0),
-            ParamDescriptor::new(RELEASE as u32, "release", "Release", 0.0, 4.0, 0.0)
+            ParamDescriptor::new(RELEASE as u32, "release", "Release", 0.0, 4.0, 0.2)
                 .with_unit(ParamUnit::Seconds)
                 .with_curve(ParamValueCurve::Power(3.0)),
         ];
@@ -497,9 +504,12 @@ impl Sampler {
                     synth.set_master_volume(NOMINAL_VOLUME * db_to_gain(value));
                 }
             }
-            ATTACK | DECAY | SUSTAIN | RELEASE => {
+            ENVELOPE | ATTACK | DECAY | SUSTAIN | RELEASE => {
                 self.reshape();
                 if !self.shaped() {
+                    // Switched off, possibly mid-fade. Every note the envelope was holding open
+                    // goes back to the font and every channel goes back to full, or the sampler
+                    // would keep playing under a gain nothing is moving any more.
                     self.release_the_slots();
                 }
             }
@@ -1400,33 +1410,43 @@ mod tests {
     }
 
     #[test]
-    fn the_envelope_leaves_the_font_alone_until_it_is_touched() {
-        // The whole design rests on this: an untouched envelope has to cost nothing, because the
-        // shaped path trades a drum kit's choke groups and 113 voices of polyphony for the fade.
-        // Nobody who never opened the window should pay that.
+    fn the_sampler_starts_with_the_envelope_switched_out() {
+        // The whole design rests on this: the shaped path trades a drum kit's choke groups and 113
+        // voices of polyphony for the fade, and nobody who has not asked for it should pay that.
         assert!(!shaping(&defaults()));
-
-        for index in [ATTACK, SUSTAIN, RELEASE] {
-            let mut values = defaults();
-            values[index] = if index == SUSTAIN { 0.9 } else { 0.1 };
-            assert!(
-                shaping(&values),
-                "parameter {index} should have turned the envelope on"
-            );
-        }
     }
 
     #[test]
-    fn a_decay_with_nowhere_to_fall_is_not_shaping() {
-        // A decay travels from full level down to the sustain level. With the sustain at full it
-        // has no distance to cover, and switching the sampler into its shaped path for a control
-        // that cannot be heard would be a regression bought for nothing.
-        let mut values = defaults();
-        values[DECAY] = 2.0;
-        assert!(!shaping(&values));
+    fn nothing_but_the_switch_switches_the_envelope_on() {
+        // The reason this is a test and not an implementation detail: a version of `shaping` that
+        // read the four sliders would turn the mechanism on the moment somebody nudged one to see
+        // what it did, and there would be no way to turn it off again with any confidence.
+        for index in [ATTACK, DECAY, SUSTAIN, RELEASE] {
+            let mut values = defaults();
+            values[index] = if index == SUSTAIN { 0.0 } else { 2.0 };
+            assert!(
+                !shaping(&values),
+                "parameter {index} turned the envelope on by itself"
+            );
+        }
 
-        values[SUSTAIN] = 0.5;
+        let mut values = defaults();
+        values[ENVELOPE] = 1.0;
         assert!(shaping(&values));
+    }
+
+    #[test]
+    fn the_switch_is_a_parameter_a_frontend_can_find_by_name() {
+        // The warning strip in the plugin window is drawn from this, so a rename that only
+        // happened here would silently stop it appearing.
+        let sampler = sampler();
+        let switch = sampler
+            .parameters()
+            .iter()
+            .find(|param| param.key == ENVELOPE_KEY)
+            .expect("the envelope switch");
+        assert_eq!(switch.unit, ParamUnit::Toggle);
+        assert_eq!(switch.default, 0.0);
     }
 
     /// Slots in a stated order of use, none of them holding a key.
@@ -1476,6 +1496,7 @@ mod tests {
         let bank = stocked();
         let opening = |attack: f32| {
             let mut sampler = playing(bank.clone(), 0, 512);
+            sampler.set_param_by_key(ENVELOPE_KEY, 1.0);
             sampler.set_param_by_key("attack", attack);
             let mut out = AudioBuffer::stereo(512, RATE);
             let ctx = ProcessContext::realtime(RATE, 512, 0, 120.0, true);
@@ -1484,8 +1505,8 @@ mod tests {
         };
 
         // The font has an opening of its own — two milliseconds of delay and attack, which is
-        // what the defaults in a SoundFont's envelope generators come to — so the untouched
-        // sampler is the reference rather than a flat line.
+        // what the defaults in a SoundFont's envelope generators come to — so a switched-on
+        // envelope with no attack is the reference rather than a flat line.
         let (flat_early, flat_late) = opening(0.0);
         let (slow_early, slow_late) = opening(0.2);
         assert!(
@@ -1505,6 +1526,7 @@ mod tests {
         let bank = stocked();
         let ringing = |release: f32| {
             let mut sampler = playing(bank.clone(), 0, 512);
+            sampler.set_param_by_key(ENVELOPE_KEY, 1.0);
             sampler.set_param_by_key("release", release);
             let mut out = AudioBuffer::stereo(512, RATE);
             let ctx = ProcessContext::realtime(RATE, 512, 0, 120.0, true);
@@ -1538,18 +1560,20 @@ mod tests {
 
     #[test]
     fn turning_the_envelope_back_off_does_not_leave_the_sampler_quiet() {
-        // The channels carry the fade, so a sampler put back to its defaults halfway through a
-        // fade would otherwise go on playing at whatever gain that fade had reached.
+        // The channels carry the fade, so a sampler switched off halfway through one would
+        // otherwise go on playing at whatever gain that fade had reached. This is the whole
+        // reason the switch has to be able to undo itself rather than only stop being applied.
         let bank = stocked();
         let mut sampler = playing(bank, 0, 512);
         let mut out = AudioBuffer::stereo(512, RATE);
         let ctx = ProcessContext::realtime(RATE, 512, 0, 120.0, true);
 
+        sampler.set_param_by_key(ENVELOPE_KEY, 1.0);
         sampler.set_param_by_key("attack", 2.0);
         sampler.process(&[note_on(0)], &mut out, &ctx);
         let fading = rms(out.channel(0));
 
-        sampler.set_param_by_key("attack", 0.0);
+        sampler.set_param_by_key(ENVELOPE_KEY, 0.0);
         sampler.process(&[note_on(0)], &mut out, &ctx);
         assert!(
             rms(out.channel(0)) > fading * 10.0,
@@ -1568,8 +1592,8 @@ mod tests {
             let mut sampler = playing(bank.clone(), 0, frames);
             if shape {
                 // Shaping, but arriving at full level well inside the window measured below.
+                sampler.set_param_by_key(ENVELOPE_KEY, 1.0);
                 sampler.set_param_by_key("attack", 0.001);
-                sampler.set_param_by_key("release", 0.5);
             }
             let mut out = AudioBuffer::stereo(frames, RATE);
             let ctx = ProcessContext::realtime(RATE, frames, 0, 120.0, true);
@@ -1589,6 +1613,7 @@ mod tests {
         // `nothing_on_the_audio_path_allocates` covers the plain path; this is the same contract
         // for the one that steps fifteen envelopes and writes controllers while it renders.
         let mut sampler = playing(stocked(), 0, 512);
+        sampler.set_param_by_key(ENVELOPE_KEY, 1.0);
         sampler.set_param_by_key("attack", 0.05);
         sampler.set_param_by_key("sustain", 0.6);
         sampler.set_param_by_key("release", 0.4);

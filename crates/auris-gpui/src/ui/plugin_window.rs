@@ -17,7 +17,7 @@ use auris_session::prelude::*;
 use gpui::{AnyElement, Pixels, Point, Size, div, point, prelude::*, px, size};
 
 use crate::app::{AurisApp, Drag};
-use crate::theme::Metrics;
+use crate::theme::{Metrics, Theme};
 use crate::ui::icons::Icon;
 use crate::ui::plugin_editor::plugin_header;
 use crate::ui::widgets::chain_button;
@@ -67,6 +67,45 @@ impl PluginSubject {
     }
 }
 
+/// How tall the caution strip is drawn.
+const CAUTION_HEIGHT: Pixels = px(30.0);
+
+/// What a plugin's window has to warn about, given the state of its switch.
+///
+/// One plugin and one switch, and both are named here rather than asked of the plugin, for the
+/// reason `auris_session::guide::plugins` gives about the equalizer's curve: a `warning` method on
+/// the `Instrument` trait would put a frontend's concern into the plugin contract, and the
+/// sentence is a frontend's to translate in any case.
+///
+/// Why it exists at all: turning the sampler's envelope on is the one control in the application
+/// that *takes something away* — polyphony, and a drum kit's choke groups — and it takes it away
+/// somewhere the person who flipped the switch cannot see. A cost that only shows up as "the
+/// sixteenth note of my chord went missing" is a cost that gets blamed on the wrong thing.
+pub fn caution(plugin_id: &str, envelope_on: bool) -> Option<Key> {
+    match plugin_id == SAMPLER_ID && envelope_on {
+        true => Some(Key::SamplerEnvelopeOn),
+        false => None,
+    }
+}
+
+/// The caution strip, under whatever picture the window is carrying.
+fn caution_strip(text: &'static str, theme: &Theme) -> AnyElement {
+    div()
+        .h(CAUTION_HEIGHT)
+        .w_full()
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .px_2()
+        .border_b_1()
+        .border_color(theme.border)
+        .bg(Theme::translucent(theme.warning, 0.12))
+        .text_xs()
+        .text_color(theme.warning)
+        .child(text)
+        .into_any_element()
+}
+
 /// An open plugin editor.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct PluginWindow {
@@ -103,30 +142,31 @@ impl PluginWindow {
     /// the whole reason this is not the estimate below — a ceiling that is too low clips, and an
     /// estimate that is too low only moves the window a few pixels.
     ///
-    /// A graph is outside the scrolling body and keeps its full height, so `graphs` is added to
-    /// the ceiling rather than taken out of it — otherwise giving a plugin a picture would have
-    /// taken a third of its sliders away with it.
-    pub fn frame(has_curve: bool, graphs: Pixels) -> Size<Pixels> {
+    /// `above` is everything drawn between the title bar and the list — graphs and cautions. None
+    /// of it scrolls, so it is added to the ceiling rather than taken out of it: otherwise giving
+    /// a plugin a picture would have taken a third of its sliders away with it, and a warning
+    /// would have cost a control the moment it appeared.
+    pub fn frame(has_curve: bool, above: Pixels) -> Size<Pixels> {
         size(
             match has_curve {
                 true => Self::CURVE_WIDTH,
                 false => Self::WIDTH,
             },
-            Self::MAX_LIST_HEIGHT + graphs,
+            Self::MAX_LIST_HEIGHT + above,
         )
     }
 
-    /// How tall a window with `param_count` controls and `graphs` pixels of picture comes out,
-    /// for deciding where it will fit.
+    /// How tall a window with `param_count` controls and `above` pixels over them comes out, for
+    /// deciding where it will fit.
     ///
     /// Only ever used to nudge the window inside the viewport, which is why an estimate is
     /// allowed to be one here at all.
-    pub fn height(param_count: usize, has_curve: bool, graphs: Pixels) -> Pixels {
+    pub fn height(param_count: usize, has_curve: bool, above: Pixels) -> Pixels {
         let rows = param_count.max(1) as f32;
         let body = Metrics::CONTROL_HEIGHT * rows
             + Self::ROW_GAP * (rows - 1.0)
             + Self::BODY_PADDING * 2.0;
-        (Metrics::PANEL_HEADER_HEIGHT + body + graphs).min(Self::frame(has_curve, graphs).height)
+        (Metrics::PANEL_HEADER_HEIGHT + body + above).min(Self::frame(has_curve, above).height)
     }
 
     /// Where the window is actually drawn, given the viewport it has to fit in.
@@ -189,26 +229,33 @@ impl AurisApp {
         }
         let analyser = equalizer.map(|view| self.analyser_display(subject, view, cx));
         let envelope = self.envelope_of(subject, &plugin_id);
+        let caution = caution(
+            &plugin_id,
+            self.switch_is_on(subject, &plugin_id, SAMPLER_ENVELOPE_KEY),
+        );
 
         let theme = self.theme.clone();
         let name = self.plugin_label(&plugin_id);
         let descriptors = self.session.param_descriptors(&plugin_id);
         let has_curve = analyser.is_some();
-        // Both pictures sit above the list and neither of them scrolls, so both are room the
+        // Everything above the scrolling list, none of which scrolls, so all of it is room the
         // window needs on top of whatever the controls come to.
-        let graphs = match has_curve {
+        let above = match has_curve {
             true => px(crate::ui::analyser::HEIGHT),
             false => px(0.0),
         } + match envelope.is_some() {
             true => px(crate::ui::envelope::GRAPH_HEIGHT),
             false => px(0.0),
+        } + match caution.is_some() {
+            true => CAUTION_HEIGHT,
+            false => px(0.0),
         };
-        let frame = PluginWindow::frame(has_curve, graphs);
+        let frame = PluginWindow::frame(has_curve, above);
         let origin = window.origin(
             viewport,
             size(
                 frame.width,
-                PluginWindow::height(descriptors.len(), has_curve, graphs),
+                PluginWindow::height(descriptors.len(), has_curve, above),
             ),
         );
         let controls = self.param_controls(
@@ -292,6 +339,7 @@ impl AurisApp {
                 )
                 .children(analyser)
                 .children(envelope.map(|env| self.envelope_display(subject, env, cx)))
+                .children(caution.map(|key| caution_strip(self.t(key), &theme)))
                 .child(
                     div()
                         .id("pw-body")
@@ -306,6 +354,21 @@ impl AurisApp {
                 )
                 .into_any_element(),
         )
+    }
+
+    /// Whether a named toggle parameter of this plugin is switched on.
+    ///
+    /// `false` when the plugin has no such parameter, which is every plugin but one.
+    fn switch_is_on(&mut self, subject: PluginSubject, plugin_id: &str, key: &str) -> bool {
+        let descriptors = self.session.param_descriptors(plugin_id);
+        descriptors
+            .iter()
+            .find(|descriptor| descriptor.key == key)
+            .is_some_and(|descriptor| {
+                self.session
+                    .param_value(subject.param_target(descriptor.id), descriptor)
+                    >= 0.5
+            })
     }
 
     /// The plugin id a subject names, and whether it is switched in.
@@ -468,6 +531,28 @@ mod tests {
         assert_eq!(
             PluginWindow::height(5, false, envelope) - PluginWindow::height(5, false, NO_GRAPH),
             envelope
+        );
+    }
+
+    #[test]
+    fn the_only_switch_that_warns_is_the_one_that_costs_something() {
+        // The sampler's envelope takes polyphony and a drum kit's choke groups away from a user
+        // who cannot see either going. Every other toggle in the application does what it says.
+        assert_eq!(caution(SAMPLER_ID, true), Some(Key::SamplerEnvelopeOn));
+        assert_eq!(caution(SAMPLER_ID, false), None);
+        assert_eq!(caution("auris.synth.chiptune", true), None);
+        assert_eq!(caution("auris.fx.eq", true), None);
+    }
+
+    #[test]
+    fn the_warning_makes_room_for_itself() {
+        // Same lesson as the compressor's clipped row: anything drawn above the scrolling list is
+        // height the window needs, and a strip that appeared without being counted would push the
+        // last control out of sight the moment the switch went on.
+        assert_eq!(
+            PluginWindow::height(6, false, CAUTION_HEIGHT)
+                - PluginWindow::height(6, false, NO_GRAPH),
+            CAUTION_HEIGHT
         );
     }
 }

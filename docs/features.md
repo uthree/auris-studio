@@ -553,17 +553,22 @@ release — and the same draggable envelope above them. They sit *on top of* the
 rather than replacing it: a piano's hammer is still a hammer, but you can fade it in, hold it
 under its own decay, or let it ring long after the key has gone.
 
-They start where they do nothing. Attack and release at zero, sustain at full, and the sampler
-plays the font exactly as it is written. That default is load-bearing rather than tidy. Channel
-expression is the only per-note gain the library exposes and it applies to a whole channel, so a
-note that is to be faded on its own needs a channel to itself — fifteen of the sixteen there are.
-Touching a control buys the fade and spends the polyphony, and it also spends a drum kit's choke
-groups, which only work between notes sharing a channel. Leaving them alone spends nothing: an
-untouched envelope is not a multiply-by-one on the audio path, it is no path at all.
+**It is off until you switch it on.** The `Envelope` toggle in the window is the whole of it, and
+while it is off the four sliders do nothing at all — the sampler is not multiplying every note by
+one, it is not running the mechanism. That matters because switching it on **costs** something:
 
-A release of zero means the note stops when the key does, which is what the graph shows — a
-vertical drop with no tail. If you raise the attack and find your notes cutting off, that corner
-is the one to drag.
+* **Polyphony drops to fifteen notes.** Channel expression is the only per-note gain the
+  synthesiser exposes and it applies to a whole MIDI channel, so a note that is to be faded on its
+  own needs a channel to itself. There are sixteen and one is reserved.
+* **A drum kit's choke groups stop working** — an open hi-hat is no longer cut off by a closed one.
+  The choke is only checked between notes sharing a channel, and now they do not.
+
+The window says so, in a strip under the graph, for as long as the switch is on. Turning it back
+off restores everything immediately, mid-note if need be.
+
+Once it is on, the envelope owns the note. A release of zero means the note stops when the key
+does, and the graph shows exactly that — a vertical drop with no tail. The default is a fifth of a
+second, which is close to how a General MIDI patch already behaves.
 
 ## Built-in effects
 

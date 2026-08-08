@@ -15,15 +15,19 @@ format rather than a convention: `## <version> — <date>`.
   sustain, release — and the same draggable graph above them. They shape the font rather than
   replace it: a piano's hammer is still a hammer, and now you can fade it in, hold it under its own
   decay, or let it ring long after the key has gone.
-* **They start where they do nothing.** Attack and release at zero and sustain at full leave the
-  font playing exactly as it is written, and the mechanism is not merely neutral — it is skipped.
-  That is the point rather than the tidiness: a shaped note needs a MIDI channel to itself, because
-  channel expression is the only per-note gain the library exposes, so shaping trades 128 voices
-  for fifteen notes and gives up the choke groups a drum kit's hi-hat relies on. Reaching for a
-  control buys the fade and pays that; leaving them alone pays nothing.
-* A release of zero means the note stops when the key does, and the graph draws exactly that — a
-  vertical drop with no tail. If raising the attack starts cutting your notes off, that is the
-  corner to drag.
+* **It is off until you switch it on**, with an `Envelope` toggle and nothing else. While it is off
+  the four sliders do nothing at all — the mechanism is not neutral, it is skipped, and the font
+  plays exactly as it is written.
+* **Switching it on costs something, and the window says so.** A shaped note needs a MIDI channel
+  to itself, because channel expression is the only per-note gain the library exposes: polyphony
+  drops to fifteen notes, and a drum kit's choke groups stop working — an open hi-hat is no longer
+  cut off by a closed one. A caution strip sits under the graph for as long as the switch is on,
+  because missing polyphony shows up as "the top note of my chord dropped out", which is a symptom
+  that gets blamed on anything but the switch that caused it. Turning it back off restores
+  everything at once, mid-note if need be.
+* Once it is on, the envelope owns the note. A release of zero means the note stops when the key
+  does, and the graph draws exactly that — a vertical drop with no tail. The default is a fifth of
+  a second, which is close to what a General MIDI patch already does.
 * A shaped note at full level is **exactly as loud** as an unshaped one, and the envelope is
   square-rooted on its way into the channel because the format squares it again — the same
   correction the sampler already made for velocity, and for the same reason. A release stated as

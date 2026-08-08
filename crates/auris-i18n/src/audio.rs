@@ -186,6 +186,7 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Decay", "ディケイ"),
     ("Detune", "デチューン"),
     ("Drive", "ドライブ"),
+    ("Envelope", "エンベロープ"),
     ("Feedback", "フィードバック"),
     ("Gain", "ゲイン"),
     ("Glide", "グライド"),

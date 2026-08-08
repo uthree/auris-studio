@@ -159,7 +159,7 @@ pub mod prelude {
     pub use auris_engine::{OfflineOptions, OutputDeviceInfo};
     pub use auris_gpu::WaveformPeaks;
     pub use auris_io::{SoundFontPreset, WavBitDepth, WavExportSettings};
-    pub use auris_sampler::SAMPLER_ID;
+    pub use auris_sampler::{SAMPLER_ENVELOPE_KEY, SAMPLER_ID};
 
     pub use crate::{
         AccompanyReport, AudioPreferences, Clipboard, ComposeReport, CopiedClip, CopiedContent,
