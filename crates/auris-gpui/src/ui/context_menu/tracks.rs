@@ -161,6 +161,14 @@ impl AurisApp {
                     anchor,
                 },
             )
+            // *Here* rather than Paste, because this is the one place a paste has a position
+            // behind it: the pointer landed somewhere, and that is where the material goes
+            // instead of wherever the playhead happens to be parked.
+            .item_if(
+                !self.session.clipboard().is_empty(),
+                self.t(Key::MenuPasteHere),
+                MenuCommand::PasteClips { track, at: start },
+            )
             .separator()
             .item(
                 self.t(Key::MenuDuplicateTrack),

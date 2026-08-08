@@ -305,6 +305,18 @@ impl Session {
     ///
     /// Ids that do not exist are ignored, so a stale selection cannot fail the whole delete.
     pub fn remove_clips(&mut self, clips: &[ClipId]) -> Result<(), SessionError> {
+        self.remove_clips_as(Edit::DeleteClip, clips)
+    }
+
+    /// [`Self::remove_clips`] under a named edit, so a cut undoes as a cut.
+    ///
+    /// The two are the same removal and differ only in what Undo is called afterwards, which is
+    /// worth a parameter and not worth a second copy of the loop.
+    pub(super) fn remove_clips_as(
+        &mut self,
+        edit: Edit,
+        clips: &[ClipId],
+    ) -> Result<(), SessionError> {
         let present: Vec<ClipId> = clips
             .iter()
             .copied()
@@ -313,7 +325,7 @@ impl Session {
         if present.is_empty() {
             return Ok(());
         }
-        self.record(Edit::DeleteClip);
+        self.record(edit);
         for clip in present {
             self.project.remove_clip(clip);
         }

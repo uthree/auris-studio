@@ -120,6 +120,21 @@ Logic offers that gesture on ⌃⌥-drag as well as on the tool, and that half c
 across: on macOS a ⌃-click becomes a right-click before the window sees it — ⌃ stripped off on
 the way — so it would arrive as a request for the context menu rather than as a drag.
 
+**Cut, copy and paste** are ⌘X, ⌘C and ⌘V, and they mean notes in the piano roll and clips in
+the arrangement — the same three keys, scoped to wherever the keyboard is, exactly as ⌘A and ⌘D
+already are. Both are on the Edit menu in pairs so it is possible to find out which one you just
+got. A paste lands at the playhead; a right-click on an empty lane offers *Paste Here* instead,
+because that is the one place a paste has a position of its own behind it.
+
+What is on the clipboard is a *shape* rather than a place. Notes come back with the gaps between
+them intact; a block of clips copied off four tracks lands on four consecutive tracks starting
+wherever you aim it, and goes on doing so after the tracks it came from have been renamed,
+reordered or deleted. What arrives becomes the selection, so it can be dragged straight away
+without hunting for it. A paste that fits nowhere — a MIDI clip aimed at an audio track, or a
+block whose lower rows run off the bottom of the track list — lands what it can and says so. This
+is Auris Studio's own clipboard and not the system's: nothing here goes to another application,
+and nothing copied in one arrives here.
+
 Everything placed snaps to the grid button's division, which cycles down to *free* — one tick,
 which is as fine as the document gets. Holding ⌘ (Ctrl on Windows) suspends snapping for the
 length of a drag, for when one thing has to sit off the beat. A double-click on any fader or knob
@@ -281,6 +296,28 @@ that invariant has to hold across the whole song. Nothing else moves: notes, cli
 sections are stored in ticks, so changing the meter moves the bar lines over them and not one
 sample of what you hear. Undo takes it back in one step.
 
+## The metronome
+
+The button beside the cycle button in the transport, **Transport → Metronome**, or **K** — Logic's
+key for it. It clicks on every beat while the transport is rolling, an octave higher on the bar
+line so the downbeat is findable without counting.
+
+The beat it clicks is the one you *feel*, not the one the meter is written in: a bar of 6/8 gets
+two clicks rather than six, because 6/8 is counted in two dotted quarters. Meter changes and tempo
+changes are both followed, so a piece that moves from 4/4 into 7/8 at bar nine has its accents move
+with it.
+
+The click is laid over the mix rather than mixed into it. It is past the master fader, past the
+master mute and past the meters — so it cannot be turned down by accident, it is audible with every
+strip in the project muted, and switching it on does not move a single number on a level meter. It
+**never appears in an export**: an offline render takes the same code path as playback in every
+other respect, and this is the one line that differs, which is what guarantees a bounce cannot
+contain it.
+
+Whether it is on is stored with the project, like the cycle region, because whether a piece wants
+counting in is a fact about the piece. It is not an undo step: a practice pass is a run of toggles,
+and putting those on the stack would push the edits the pass was checking off the end of it.
+
 ## Languages
 
 The interface is available in English and Japanese, chosen under Settings → General or followed
@@ -324,6 +361,12 @@ on screen was saying.
 A chord is stored as a roman numeral, not as `Fmaj7`, so changing the key transposes the whole
 progression and a modulation halfway through a section reharmonises the rest of it without a
 single chord being rewritten. What the lane shows is both: `IVmaj7 · Fmaj7`.
+
+The lane can also be **filled in from a melody you played**. Right-click a clip holding a tune and
+choose *Accompany This Melody*: its key and one chord per bar are written here, and a bass, a comp
+and a kit are added as tracks beside it. The melody itself is not touched, everything it guessed is
+here to be corrected, and the parts regenerate around a correction — see
+[composition.md](composition.md) for what it reads and what it cannot know.
 
 ## The structure lane
 
@@ -402,6 +445,19 @@ The library panel is a tree: instruments, SoundFonts and effects, each opening i
 groups rather than a flat list — the plugins by category, a font by the banks it declares. Every
 branch remembers whether it was left open. Clicking an instrument sets it on the selected track,
 clicking an effect appends it to that track's chain.
+
+**Every row carries a colour mark**, and the marks line up into a column down the left of the
+panel. A plugin wears its category's colour and the category heading wears it too, so where one
+group ends and the next begins is answerable without reading a word. A font's sounds are banded
+eight at a time, which is General MIDI's own division into sixteen families — Piano, Organ,
+Guitar, Bass — and is what makes a hundred and twenty-eight rows of small grey text into something
+an eye can find a place in. The percussion bank is one band rather than sixteen: its patches are
+kits, not programs.
+
+Nothing in the panel *depends* on the colour. Every coloured row has its name and its number
+beside the mark, the mark is never the text, and the hues are placed as far apart on the wheel as
+their count allows and then walked outwards until each one clears 3:1 against the surface it is
+drawn on — in all four colour schemes, which is checked rather than eyeballed.
 
 ## The SoundFont that comes with it
 

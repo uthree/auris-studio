@@ -452,6 +452,40 @@ impl Theme {
         }
     }
 
+    /// The colour standing for one group of a list, at `hue`.
+    ///
+    /// Only the hue is asked for, because the groups are told apart *by* hue: sixteen hues at one
+    /// lightness read as sixteen labels, and the same sixteen at sixteen lightnesses read as a
+    /// gradient with no labels in it. The lightness starts where this scheme puts the colours that
+    /// have to show against its background — the same place a meter sits — and moves only as far
+    /// as the hue makes it, which is the one thing that has to give.
+    ///
+    /// Never put text in this. It is a mark beside a name, not the name — the hues that make the
+    /// best labels are the ones that make the worst body text, and the two jobs cannot be done by
+    /// one colour without one of them being done badly.
+    pub fn group_color(&self, hue: f32) -> Hsla {
+        let hue = hue.rem_euclid(1.0);
+        let toward = if self.background.l < 0.5 { 1.0 } else { -1.0 };
+        let mut lightness = if toward > 0.0 { 0.62 } else { 0.46 };
+        // Walked outwards until the mark can actually be seen, the way `readable_shade` walks the
+        // grey ramp, and for a sharper version of the same reason: lightness is not luminance, and
+        // the gap between the two is *widest* across the hues. Pure blue at the lightness that
+        // makes yellow comfortable carries about a quarter of yellow's luminance — which is how a
+        // fixed lightness came out at 2.7:1 on Midnight's hovered rows for one group in ten while
+        // the other nine were fine.
+        //
+        // 3.2 rather than 3.0, so the colour clears the threshold it is measured against instead of
+        // landing on it and rounding under.
+        for _ in 0..60 {
+            let candidate = hsla(hue, 0.58, lightness, 1.0);
+            if contrast_ratio(candidate, self.surface_hover) >= 3.2 {
+                return candidate;
+            }
+            lightness = (lightness + 0.01 * toward).clamp(0.0, 1.0);
+        }
+        hsla(hue, 0.58, lightness, 1.0)
+    }
+
     /// Colour for a meter or clip indicator at `level_db`.
     pub fn meter_color(&self, level_db: f32) -> Hsla {
         if level_db >= -3.0 {
@@ -709,6 +743,32 @@ mod tests {
             (0.15..0.45).contains(&middle),
             "half velocity came out at hue {middle}, which is not on the warm side of green"
         );
+    }
+
+    #[test]
+    fn a_group_mark_can_be_seen_at_every_hue_in_every_scheme() {
+        // The library walks the whole wheel, so the hue is not a colour somebody chose against a
+        // particular background — it is whichever one the walk landed on. A mark is not text, so
+        // 3:1 is the threshold; below it a group's colour is a group nobody can see.
+        for entry in SCHEMES {
+            let theme = Theme::from_scheme(entry);
+            for step in 0..36 {
+                let color = theme.group_color(step as f32 / 36.0);
+                for (name, behind) in [("surface", theme.surface), ("hover", theme.surface_hover)] {
+                    let ratio = contrast_ratio(color, behind);
+                    assert!(
+                        ratio >= 3.0,
+                        "{}: hue {} on {name} is {ratio:.2}:1",
+                        entry.name,
+                        step as f32 / 36.0
+                    );
+                }
+            }
+        }
+        // The hue is taken all the way round, so a walk that runs past 1.0 wraps rather than
+        // clamping every group past the end onto one colour.
+        let theme = Theme::dark();
+        assert_eq!(theme.group_color(1.25), theme.group_color(0.25));
     }
 
     #[test]

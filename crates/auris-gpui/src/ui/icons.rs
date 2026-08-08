@@ -23,6 +23,8 @@ pub enum Icon {
     Stop,
     /// Toggle the cycle region.
     Loop,
+    /// Toggle the click: the wedge and its pendulum.
+    Metronome,
     /// Add something.
     Plus,
     /// Move up in a list.
@@ -169,6 +171,23 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
             if let Ok(path) = builder.build() {
                 window.paint_path(path, color);
             }
+        }
+        Icon::Metronome => {
+            // The wedge and the rod. Every metronome anybody has seen is this shape, and at
+            // eleven pixels it is the only drawing that still reads as one: a wedge on its own
+            // is a tent, and a rod on its own is a slash.
+            let stroke = px((side * 0.09).max(1.25));
+            let mut builder = PathBuilder::stroke(stroke);
+            builder.move_to(at(0.40, 0.16));
+            builder.line_to(at(0.18, 0.84));
+            builder.line_to(at(0.82, 0.84));
+            builder.line_to(at(0.60, 0.16));
+            builder.line_to(at(0.40, 0.16));
+            if let Ok(path) = builder.build() {
+                window.paint_path(path, color);
+            }
+            // Leaning, because a rod standing upright in the middle is a pole in a tent.
+            stroke_line(window, at(0.50, 0.80), at(0.66, 0.28), stroke, color);
         }
         Icon::Plus => {
             bar(window, 0.43, 0.22, 0.57, 0.78);

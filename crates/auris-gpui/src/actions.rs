@@ -19,6 +19,8 @@ actions!(
         ComposeSong,
         /// Write a piece from a song specification file, replacing the document.
         ComposeFromSpec,
+        /// Read the selected clip's melody and write a band behind it.
+        AccompanyMelody,
         /// Save the current project.
         SaveProject,
         /// Save the current project under a new name.
@@ -43,6 +45,8 @@ actions!(
         ReturnToZero,
         /// Toggle looping over the loop region.
         ToggleLoop,
+        /// Turn the click on or off.
+        ToggleMetronome,
         /// Add an instrument track.
         AddInstrumentTrack,
         /// Add an audio track.
@@ -63,6 +67,12 @@ actions!(
         SelectAllNotes,
         /// Lay a copy of the selected notes down after them.
         DuplicateNotes,
+        /// Put the selected notes on the clipboard and remove them.
+        CutNotes,
+        /// Put the selected notes on the clipboard.
+        CopyNotes,
+        /// Lay the clipboard's notes into the clip being edited, at the playhead.
+        PasteNotes,
         /// Raise the selected notes by a semitone.
         TransposeUp,
         /// Lower the selected notes by a semitone.
@@ -75,6 +85,12 @@ actions!(
         SelectAllClips,
         /// Lay a copy of the selected clips down after them.
         DuplicateClip,
+        /// Put the selected clips on the clipboard and remove them.
+        CutClips,
+        /// Put the selected clips on the clipboard.
+        CopyClips,
+        /// Lay the clipboard's clips onto the selected track, at the playhead.
+        PasteClips,
         /// Cut the selected clip in two where the playhead is.
         SplitClip,
         /// Mute or unmute the selected clip.
@@ -259,6 +275,10 @@ bindable! {
         "transport.play",       GroupTransport, CmdPlayStop,           "space"       => TogglePlay;
         "transport.return",     GroupTransport, CmdReturnToZero,       "enter"       => ReturnToZero;
         "transport.loop",       GroupTransport, CmdToggleCycle,        "secondary-l" => ToggleLoop;
+        // Logic's own key for the click, and free here. A bare letter at the window's context is
+        // the same bargain the panel toggles above already take: nothing types into the window,
+        // and a sheet or a prompt is a context of its own where nothing at all is bound.
+        "transport.metronome",  GroupTransport, CmdToggleMetronome,    "k"           => ToggleMetronome;
         "transport.panic",      GroupTransport, CmdPanic,              "escape"      => PanicStop;
         // The readouts in the middle of the transport bar answer to the mouse and, until now, to
         // nothing else. `g` for go, which is what every editor calls this.
@@ -287,6 +307,10 @@ bindable! {
         // The sheet is the primary way in and keeps the plain shift; the file picker is what an
         // agent-written or hand-edited document goes through, one modifier further out.
         "file.compose_spec",    GroupCompose,   CmdComposeFromSpec,    "secondary-alt-c" => ComposeFromSpec;
+        // No default. The two above take the chord that is free and the mnemonic that is obvious;
+        // this one has neither, and squatting on a third combination would take it from whoever
+        // wanted it more. The row is here so it can be given one.
+        "file.accompany",       GroupCompose,   CmdAccompanyMelody,    ""            => AccompanyMelody;
 
         "edit.undo",            GroupEdit,      CmdUndo,               "secondary-z" => Undo;
         "edit.redo",            GroupEdit,      CmdRedo,               "secondary-shift-z" => Redo;
@@ -360,6 +384,13 @@ bindable! {
         "edit.next_tool",       GroupNotes,     CmdNextTool,           "t"           => NextTool;
         "edit.select_all",      GroupNotes,     CmdSelectAllNotes,     "secondary-a" => SelectAllNotes;
         "edit.duplicate",       GroupNotes,     CmdDuplicateNotes,     "secondary-d" => DuplicateNotes;
+        // The three keystrokes nobody has to be told. Scoped to the roll, and paired with the
+        // clip row of the same name below, for the reason `edit.select_all` is: two panes are
+        // never focused at once, so ⌘C means "these notes" or "these clips" depending on where
+        // the eye already is — which is the only reading either could have.
+        "edit.cut",             GroupNotes,     CmdCutNotes,           "secondary-x" => CutNotes;
+        "edit.copy",            GroupNotes,     CmdCopyNotes,          "secondary-c" => CopyNotes;
+        "edit.paste",           GroupNotes,     CmdPasteNotes,         "secondary-v" => PasteNotes;
         // Logic's own four, and the arrow keys are the one part of the keyboard where ⌥ and a
         // letter cannot collide with the character that letter would have typed.
         "edit.transpose_up",    GroupNotes,     CmdTransposeUp,        "alt-up"      => TransposeUp;
@@ -371,6 +402,9 @@ bindable! {
     context::ARRANGEMENT => {
         "clip.select_all",      GroupClip,      CmdSelectAllClips,     "secondary-a" => SelectAllClips;
         "clip.duplicate",       GroupClip,      CmdDuplicateClip,      "secondary-d" => DuplicateClip;
+        "clip.cut",             GroupClip,      CmdCutClips,           "secondary-x" => CutClips;
+        "clip.copy",            GroupClip,      CmdCopyClips,          "secondary-c" => CopyClips;
+        "clip.paste",           GroupClip,      CmdPasteClips,         "secondary-v" => PasteClips;
         // X is the scissors everywhere that has a pair. Not ⌘T, which Logic splits with and
         // which is the instrument track here.
         "clip.split",           GroupClip,      CmdSplitClip,          "alt-x"       => SplitClip;
@@ -674,6 +708,9 @@ mod tests {
         for (notes, clips) in [
             ("edit.select_all", "clip.select_all"),
             ("edit.duplicate", "clip.duplicate"),
+            ("edit.cut", "clip.cut"),
+            ("edit.copy", "clip.copy"),
+            ("edit.paste", "clip.paste"),
         ] {
             let notes = bindable(notes).expect("a real command");
             let clips = bindable(clips).expect("a real command");

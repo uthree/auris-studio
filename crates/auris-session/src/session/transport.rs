@@ -11,6 +11,13 @@
 //! ticks into samples, and neither asks how many beats are in a bar. Editing this moves the bar
 //! lines and not one sample.
 //!
+//! The click is the one exception, and it is a narrow one. A metronome accents bar lines, so the
+//! engine holds a copy of the signature map for exactly that — nothing else down there reads it.
+//! Rather than give the meter commands a rebuild that would be pure waste on every project where
+//! the click is off, a meter change is *remembered* ([`Session::meter_is_stale`]) and republished
+//! the moment something is listening: now, if the click is already on, and otherwise not until it
+//! is switched on.
+//!
 //! Where the tempo commands take any position, these land on bar lines — see
 //! [`SignatureMap`](auris_core::time::SignatureMap) for why a change that did not would leave
 //! the bars after it uncountable.
@@ -116,6 +123,47 @@ impl Session {
         });
     }
 
+    /// Whether a click is heard on every beat while the transport rolls.
+    pub fn metronome(&self) -> bool {
+        self.project.metronome
+    }
+
+    /// Turns the click on or off.
+    ///
+    /// Deliberately not recorded, for the reason [`Self::set_loop_enabled`] is not: playing along
+    /// to a click is how a user listens rather than something they write, and a practice pass
+    /// would otherwise fill the undo stack with toggles. It is a stored document field all the
+    /// same, so it has to reach the file — unmarked, a click switched on and the document closed
+    /// went without the unsaved prompt and was quietly lost.
+    pub fn set_metronome(&mut self, enabled: bool) {
+        if self.project.metronome == enabled {
+            return;
+        }
+        self.project.metronome = enabled;
+        self.dirty = true;
+        // A switch is a switch and costs nothing; what may be out of date is the map the accents
+        // are counted against. Paid for here, once, rather than by every meter change made while
+        // nobody was listening.
+        if enabled && self.meter_is_stale {
+            self.invalidate_graph();
+        } else {
+            self.send(EngineCommand::SetMetronome(enabled));
+        }
+    }
+
+    /// Starts or stops the click.
+    pub fn toggle_metronome(&mut self) {
+        self.set_metronome(!self.project.metronome);
+    }
+
+    /// Remembers that the bar lines have moved, and republishes them if anything is listening.
+    fn meter_changed(&mut self) {
+        self.meter_is_stale = true;
+        if self.project.metronome {
+            self.invalidate_graph();
+        }
+    }
+
     /// Sets the project tempo at the start of the timeline.
     ///
     /// The whole-song knob: it turns the stretch that begins at tick zero and leaves any tempo
@@ -204,6 +252,7 @@ impl Session {
         }
         self.record_repeating(Edit::ChangeSignature(at));
         self.project.signatures = probe;
+        self.meter_changed();
     }
 
     /// Sets the signature from `at` onwards, writing a change on the bar `at` rounds to.
@@ -219,6 +268,7 @@ impl Session {
         }
         self.record(Edit::SetSignaturePoint);
         self.project.signatures = probe;
+        self.meter_changed();
     }
 
     /// Removes the signature change in force at `at`, letting the meter before it run through.
@@ -232,6 +282,7 @@ impl Session {
         }
         self.record(Edit::RemoveSignaturePoint);
         self.project.signatures.remove_point(at);
+        self.meter_changed();
     }
 
     /// Sets the editing grid.
@@ -440,6 +491,59 @@ mod tests {
             seconds,
             "the song got longer or shorter when the meter changed"
         );
+    }
+
+    #[test]
+    fn the_click_is_listening_rather_than_writing_and_still_reaches_the_file() {
+        let mut session = session();
+        session.add_default_instrument_track("Lead").unwrap();
+        assert!(!session.metronome());
+
+        session.toggle_metronome();
+        assert!(session.metronome());
+        assert!(
+            session.is_dirty(),
+            "a click switched on has to survive being closed and reopened"
+        );
+        // A practice pass is a run of toggles, and none of them is an edit — or the notes the
+        // pass was checking would be pushed off the end of the undo stack by it.
+        for _ in 0..8 {
+            session.toggle_metronome();
+        }
+        assert_eq!(session.undo(), Some(Edit::AddInstrumentTrack));
+
+        // Setting it to what it already is does nothing at all.
+        session.forget_history();
+        session.set_metronome(session.metronome());
+        assert!(!session.is_dirty());
+    }
+
+    #[test]
+    fn the_bar_lines_reach_the_click_however_the_two_are_ordered() {
+        // The engine holds a copy of the signature map so the click knows which beat to accent,
+        // and a meter change is otherwise none of its business. So the change is remembered while
+        // nothing is listening and republished the moment something is — whichever way round the
+        // two happen.
+        let mut session = session();
+        assert!(!session.meter_is_stale);
+
+        // Meter first, click afterwards: the stale map is paid for when the click is switched on.
+        session.set_signature_point(BAR * 4, TimeSignature::new(3, 4));
+        assert!(session.meter_is_stale, "the engine's copy is out of date");
+        session.set_metronome(true);
+        assert!(
+            !session.meter_is_stale,
+            "the click was switched on against bar lines that had moved"
+        );
+
+        // Click first, meter afterwards: the change republishes at once.
+        session.set_signature_point(BAR * 8, TimeSignature::new(5, 4));
+        assert!(!session.meter_is_stale);
+
+        // And with the click off again, a meter change costs the engine nothing.
+        session.set_metronome(false);
+        session.remove_signature_point(BAR * 8);
+        assert!(session.meter_is_stale);
     }
 
     #[test]

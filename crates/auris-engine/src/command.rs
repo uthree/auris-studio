@@ -104,6 +104,8 @@ pub enum EngineCommand {
         /// MIDI note number.
         pitch: u8,
     },
+    /// Turns the click on or off.
+    SetMetronome(bool),
     /// Silences everything: voices, delay lines and filter memory.
     Panic,
 }
@@ -193,6 +195,7 @@ impl std::fmt::Debug for EngineCommand {
                 .field("track", track)
                 .field("pitch", pitch)
                 .finish(),
+            Self::SetMetronome(enabled) => f.debug_tuple("SetMetronome").field(enabled).finish(),
             Self::Panic => f.write_str("Panic"),
         }
     }

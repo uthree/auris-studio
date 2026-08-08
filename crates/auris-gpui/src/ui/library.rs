@@ -11,6 +11,20 @@
 //! happens after somebody has is [`LibraryTree`]. The two are separate because the sensible
 //! default is not the same everywhere: the plugins want to be visible, the hundred and
 //! twenty-eight sounds want to be asked for.
+//!
+//! # Why the rows are coloured
+//!
+//! Opening a branch is not the whole of the scale problem. A bank of a General MIDI font is a
+//! hundred and twenty-eight rows of small grey text at one indent, and grouping alone does not
+//! make that a thing an eye can find a place in — every row looks exactly like the row above it,
+//! so finding the strings means reading names one at a time from the top.
+//!
+//! So every leaf row carries a mark in its group's colour, and the marks line up into a column
+//! that says where one group ends and the next begins without a word being read. [`group_hue`] is
+//! where the colours come from and [`Theme::group_color`](crate::theme::Theme::group_color) turns
+//! one into a colour this scheme can show. The mark is beside the name and never *is* the name:
+//! the hues that make the best labels make the worst body text, and a row whose meaning depends on
+//! its colour is a row somebody colour-blind cannot read at all.
 
 use std::collections::HashMap;
 
@@ -159,6 +173,84 @@ fn indent(depth: usize) -> Pixels {
     INDENT * depth as f32
 }
 
+/// Where the first group's colour sits on the wheel.
+///
+/// Off pure red, which the interface already spends on clipping and on failure, and off the
+/// accent, which every scheme puts somewhere in the blues.
+const FIRST_HUE: f32 = 0.08;
+
+/// Where group `index` of `count` sits on the colour wheel.
+///
+/// An even walk rather than a hand-picked list. Picking by hand reads better for the first six and
+/// then turns into a search for a seventh colour that is not one of the six — which is the point
+/// at which somebody picks two that are nearly the same. Spreading them evenly is the arrangement
+/// that makes the smallest gap as large as it can be, and it is the only one that stays true when
+/// a category is added.
+fn group_hue(index: usize, count: usize) -> f32 {
+    if count == 0 {
+        return FIRST_HUE;
+    }
+    FIRST_HUE + index as f32 / count as f32
+}
+
+/// The colour that stands for a category of plugin.
+///
+/// Instruments and effects walk one wheel between them rather than one each, so no reverb shares a
+/// hue with a synth. They are in different sections, but the sections are one scrolling column.
+fn category_hue(category: PluginCategory) -> f32 {
+    group_hue(browser_order(category), PluginCategory::ALL.len())
+}
+
+/// How many of a font's sounds share one colour band.
+///
+/// General MIDI's own division: the hundred and twenty-eight programs come in sixteen families of
+/// eight — Piano, Organ, Guitar, Bass — which is the grouping every chord chart and every hardware
+/// panel a musician has seen already uses. A font that is not General MIDI gets bands of eight
+/// standing for nothing in particular, and they still do the half of this that matters: a column
+/// of a hundred and twenty-eight names is unreadable, and the same column in bands is not.
+const BAND: i32 = 8;
+
+/// The colour that stands for one sound of a font.
+///
+/// The percussion bank is one band rather than sixteen. Its patches are kits — 0, 8, 16, 24 — so
+/// dividing them by eight would give each of the handful a colour of its own and claim they are as
+/// far apart as a piano is from a trumpet. It gets a seventeenth band instead of one of the
+/// families' so that a font with both banks open never draws a kit in a melodic family's colour.
+fn preset_hue(bank: i32, patch: i32) -> f32 {
+    let families = gm::FAMILIES.len();
+    let band = if bank == PERCUSSION_BANK {
+        families
+    } else {
+        // Wrapped, so a font declaring patches past the General MIDI range stays inside the
+        // melodic wheel instead of landing on the percussion colour.
+        (patch.max(0) / BAND) as usize % families
+    };
+    group_hue(band, families + 1)
+}
+
+/// The mark that carries a row's group colour.
+///
+/// A bar rather than a dot, and at the head of the row rather than beside the name: the bars line
+/// up into a column, and a column is what an eye runs down. Dots at varying indents would not.
+fn swatch(color: gpui::Hsla) -> impl IntoElement {
+    div().w(px(3.0)).h(px(10.0)).rounded(px(1.5)).bg(color)
+}
+
+/// The gap a row with no mark leaves where one would have been, so its name still lines up with
+/// the names of the rows that have one.
+fn no_swatch() -> impl IntoElement {
+    div().w(px(3.0))
+}
+
+/// How a branch row is drawn.
+#[derive(Copy, Clone, Debug, PartialEq)]
+struct RowStyle {
+    /// Colour of the name.
+    label: gpui::Hsla,
+    /// The group this row stands for, when it stands for one.
+    accent: Option<gpui::Hsla>,
+}
+
 impl AurisApp {
     /// The left-hand library: everything the session can play, ready to load.
     ///
@@ -259,6 +351,7 @@ impl AurisApp {
                 rows.push(self.plugin_row(
                     &plugin,
                     Icon::Keyboard,
+                    category,
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                         this.set_track_instrument(&id);
                         cx.notify();
@@ -318,6 +411,7 @@ impl AurisApp {
                 rows.push(self.plugin_row(
                     &plugin,
                     Icon::Knob,
+                    category,
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                         this.add_effect_to_selection(&id);
                         cx.notify();
@@ -377,7 +471,7 @@ impl AurisApp {
                     None,
                     name,
                     detail,
-                    if loaded { theme.text } else { theme.text_muted },
+                    self.row_style(if loaded { theme.text } else { theme.text_muted }, None),
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                         this.library.set_open(branch, !open);
                         cx.notify();
@@ -409,7 +503,7 @@ impl AurisApp {
                         None,
                         self.bank_label(bank),
                         presets.len().to_string(),
-                        theme.text,
+                        self.row_style(theme.text, None),
                         cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                             this.library.set_open(branch, !open);
                             cx.notify();
@@ -468,7 +562,9 @@ impl AurisApp {
             Some(kind),
             self.t(label).to_string(),
             count.to_string(),
-            theme.text_muted,
+            // No mark: a section is the heading over the colours rather than one of them, and a
+            // fourth colour above three groups would read as a fourth group.
+            self.row_style(theme.text_muted, None),
             cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                 this.library.set_open(branch, !open);
                 cx.notify();
@@ -495,13 +591,24 @@ impl AurisApp {
             None,
             self.category_label(category),
             count.to_string(),
-            theme.text,
+            self.row_style(theme.text, Some(category_hue(category))),
             cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                 this.library.set_open(branch, !open);
                 cx.notify();
             }),
         )
         .into_any_element()
+    }
+
+    /// How a row is drawn: what colour its name is, and which group it belongs to.
+    ///
+    /// Two fields rather than two arguments, because [`Self::branch_row`] already carries as many
+    /// as anybody can read.
+    fn row_style(&self, label: gpui::Hsla, accent: Option<f32>) -> RowStyle {
+        RowStyle {
+            label,
+            accent: accent.map(|hue| self.theme.group_color(hue)),
+        }
     }
 
     /// A branch: a disclosure triangle, a name, and how much is inside.
@@ -515,7 +622,7 @@ impl AurisApp {
         kind: Option<Icon>,
         label: String,
         detail: String,
-        label_color: gpui::Hsla,
+        style: RowStyle,
         on_click: F,
     ) -> impl IntoElement + use<I, F>
     where
@@ -523,6 +630,7 @@ impl AurisApp {
         F: Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
     {
         let theme = self.theme.clone();
+        let label_color = style.label;
         div()
             .id(id.into())
             .flex()
@@ -538,6 +646,10 @@ impl AurisApp {
             .when(enabled, |this| {
                 this.cursor_pointer()
                     .hover(|this| this.bg(theme.surface_hover))
+            })
+            .map(|this| match style.accent {
+                Some(color) => this.child(swatch(color)),
+                None => this.child(no_swatch()),
             })
             .child(crate::ui::icons::icon(
                 // A shut branch points at what opening it would reveal, an open one down at what
@@ -577,13 +689,22 @@ impl AurisApp {
     /// Name and summary on one line rather than two. The summary is worth having and is not worth
     /// doubling the height of every row in the panel for — set beside the name and allowed to run
     /// off the end, it costs nothing and still answers "which reverb is that one".
-    fn plugin_row<F>(&self, plugin: &LibraryPlugin, kind: Icon, on_click: F) -> AnyElement
+    fn plugin_row<F>(
+        &self,
+        plugin: &LibraryPlugin,
+        kind: Icon,
+        category: PluginCategory,
+        on_click: F,
+    ) -> AnyElement
     where
         F: Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
     {
         let theme = self.theme.clone();
+        let accent = theme.group_color(category_hue(category));
         // The category is the heading above rather than a label on the row: it was on every row
-        // when the list was flat, and repeating it under its own name is noise.
+        // when the list was flat, and repeating it under its own name is noise. Its *colour* is
+        // on every row, which is the part that costs nothing to repeat and answers "where does
+        // this group end" without the heading having to be back on screen.
         div()
             .id(gpui::SharedString::from(format!("lib-{}", plugin.id)))
             .flex()
@@ -595,7 +716,8 @@ impl AurisApp {
             .rounded(Metrics::RADIUS_SM)
             .cursor_pointer()
             .hover(|this| this.bg(theme.surface_hover))
-            .child(crate::ui::icons::icon(kind, px(11.0), theme.text_muted))
+            .child(swatch(accent))
+            .child(crate::ui::icons::icon(kind, px(11.0), accent))
             .child(
                 div()
                     .text_xs()
@@ -621,6 +743,7 @@ impl AurisApp {
         F: Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
     {
         let theme = self.theme.clone();
+        let accent = theme.group_color(preset_hue(preset.bank, preset.patch));
         div()
             .id(gpui::SharedString::from(format!(
                 "lib-preset-{}-{}-{}",
@@ -635,11 +758,8 @@ impl AurisApp {
             .rounded(Metrics::RADIUS_SM)
             .cursor_pointer()
             .hover(|this| this.bg(theme.surface_hover))
-            .child(crate::ui::icons::icon(
-                Icon::Wave,
-                px(11.0),
-                theme.text_muted,
-            ))
+            .child(swatch(accent))
+            .child(crate::ui::icons::icon(Icon::Wave, px(11.0), accent))
             .child(
                 div()
                     .flex_1()
@@ -843,6 +963,64 @@ mod tests {
         tree.set_open(font, true);
         tree.set_open(font, true);
         assert!(tree.is_open(font));
+    }
+
+    /// How far apart two hues are, going whichever way round the wheel is shorter.
+    fn apart(a: f32, b: f32) -> f32 {
+        let gap = (a.rem_euclid(1.0) - b.rem_euclid(1.0)).abs();
+        gap.min(1.0 - gap)
+    }
+
+    #[test]
+    fn no_two_categories_wear_the_same_colour() {
+        // The mark is the whole of what tells one group from another at a glance, so two
+        // categories a hair apart on the wheel are two groups that read as one.
+        let hues: Vec<f32> = PluginCategory::ALL.into_iter().map(category_hue).collect();
+        let least = 1.0 / PluginCategory::ALL.len() as f32;
+        for (index, hue) in hues.iter().enumerate() {
+            for other in &hues[index + 1..] {
+                assert!(
+                    apart(*hue, *other) >= least - 1e-4,
+                    "{hue} and {other} are {} apart, wanted {least}",
+                    apart(*hue, *other)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_font_s_sounds_change_colour_exactly_where_general_midi_changes_family() {
+        // Eight to a band because that is General MIDI's own division, so the colour breaks fall
+        // where the names do: program 7 is the last harpsichord and program 8 the first tuned
+        // percussion.
+        assert_eq!(preset_hue(0, 0), preset_hue(0, 7));
+        assert_ne!(preset_hue(0, 7), preset_hue(0, 8));
+        assert_eq!(preset_hue(0, 8), preset_hue(0, 15));
+        // Sixteen families, and the sixteenth is not the first again.
+        assert_ne!(preset_hue(0, 0), preset_hue(0, 120));
+    }
+
+    #[test]
+    fn the_kits_never_wear_a_melodic_family_s_colour() {
+        // Both banks can be open at once, and a kit drawn in the strings' colour would be saying
+        // something untrue about a row three lines below a violin.
+        let kits = preset_hue(PERCUSSION_BANK, 0);
+        assert_eq!(
+            kits,
+            preset_hue(PERCUSSION_BANK, 48),
+            "one bank, one band: the kits are not sixteen families"
+        );
+        for patch in 0..128 {
+            assert!(
+                apart(kits, preset_hue(0, patch)) > 1e-4,
+                "kit colour collides with melodic patch {patch}"
+            );
+        }
+        // A font that declares patches past General MIDI's range wraps back into the melodic
+        // wheel rather than landing on the kits.
+        for patch in [128, 200, 1_000] {
+            assert!(apart(kits, preset_hue(0, patch)) > 1e-4, "patch {patch}");
+        }
     }
 
     #[test]

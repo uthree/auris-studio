@@ -756,6 +756,11 @@ impl AudioEngine {
                     graph.note_off(track, pitch);
                 }
             }
+            EngineCommand::SetMetronome(enabled) => {
+                if let Some(graph) = &mut self.graph {
+                    graph.set_metronome(enabled);
+                }
+            }
             EngineCommand::Panic => {
                 if let Some(graph) = &mut self.graph {
                     graph.panic();

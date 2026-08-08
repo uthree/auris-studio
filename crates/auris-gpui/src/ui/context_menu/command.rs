@@ -205,6 +205,17 @@ pub enum MenuCommand {
 
     /// Copy a clip, immediately after the original.
     DuplicateClip(ClipId),
+    /// Put a clip — or the whole selection it belongs to — on the clipboard, and remove it.
+    CutClips(ClipId),
+    /// Put a clip, or the selection it belongs to, on the clipboard.
+    CopyClips(ClipId),
+    /// Lay the clipboard's clips onto a track, starting at a position.
+    PasteClips {
+        /// Where the topmost copied clip lands.
+        track: TrackId,
+        /// Where it starts.
+        at: Ticks,
+    },
     /// Rename a clip.
     RenameClip(ClipId),
     /// Delete a clip.
@@ -227,6 +238,12 @@ pub enum MenuCommand {
 
     /// Copy the selected notes.
     DuplicateNotes,
+    /// Put the selected notes on the clipboard and take them out of the clip.
+    CutNotes,
+    /// Put the selected notes on the clipboard.
+    CopyNotes,
+    /// Lay the clipboard's notes into the clip being edited, at the playhead.
+    PasteNotes,
     /// Delete the selected notes.
     DeleteNotes,
     /// Shift the selected notes in pitch.
@@ -356,6 +373,8 @@ pub enum MenuCommand {
         /// What the clip should be.
         preset: ClipPreset,
     },
+    /// Read a melody's harmony and write a band behind it.
+    AccompanyClip(ClipId),
     /// Write a generated clip's notes again, from the harmony as it now stands.
     RegenerateClip(ClipId),
     /// Write another take of a generated clip.
@@ -648,6 +667,44 @@ impl AurisApp {
                     }
                 }
             }
+            MenuCommand::CutClips(clip) | MenuCommand::CopyClips(clip) => {
+                let cutting = matches!(command, MenuCommand::CutClips(_));
+                let chosen = self.clips_for_command(clip);
+                let taken = match cutting {
+                    true => self.session.cut_clips(&chosen).unwrap_or(0),
+                    false => self.session.copy_clips(&chosen),
+                };
+                if taken == 0 {
+                    return;
+                }
+                if cutting {
+                    self.select_clip(None);
+                    self.selected_notes.clear();
+                }
+                self.set_status(self.t(match cutting {
+                    true => Key::CutToClipboard,
+                    false => Key::CopiedToClipboard,
+                }));
+            }
+            MenuCommand::PasteClips { track, at } => {
+                if self.session.clipboard().is_empty() {
+                    self.set_status(self.t(Key::NothingToPaste));
+                    return;
+                }
+                match self.session.paste_clips(track, at) {
+                    Ok(pasted) if !pasted.is_empty() => {
+                        // The arrivals become the selection, for the reason a duplicate's copies
+                        // do: dragging straight afterwards should move what was just laid down.
+                        self.select_clips(pasted.into_iter().collect(), None);
+                        self.selected_notes.clear();
+                        self.set_status(self.t(Key::PastedFromClipboard));
+                    }
+                    // A paste that fits nowhere — every copied clip is the wrong kind for the
+                    // tracks under it, or the rows below the target have run out.
+                    Ok(_) => self.set_status(self.t(Key::NothingToPaste)),
+                    Err(error) => self.set_failed_status(self.failure(Key::CmdPasteClips, &error)),
+                }
+            }
             MenuCommand::RenameClip(clip) => {
                 let name = self
                     .clip_name(clip)
@@ -698,6 +755,53 @@ impl AurisApp {
                     // The copies become the selection, so the same command can be run again to
                     // lay out a third and a fourth.
                     self.selected_notes = copies.into_iter().collect();
+                }
+            }
+            MenuCommand::CutNotes | MenuCommand::CopyNotes => {
+                let cutting = command == MenuCommand::CutNotes;
+                let Some(clip) = self.selected_clip else {
+                    return;
+                };
+                let chosen: Vec<usize> = self.selected_notes.iter().copied().collect();
+                let taken = match cutting {
+                    true => self.session.cut_notes(clip, &chosen).unwrap_or(0),
+                    false => self.session.copy_notes(clip, &chosen),
+                };
+                if taken == 0 {
+                    return;
+                }
+                if cutting {
+                    // The indices are gone with the notes, and a selection still naming them
+                    // would point at whatever slid into their places.
+                    self.selected_notes.clear();
+                }
+                self.set_status(self.t(match cutting {
+                    true => Key::CutToClipboard,
+                    false => Key::CopiedToClipboard,
+                }));
+            }
+            MenuCommand::PasteNotes => {
+                let Some(clip) = self.selected_clip else {
+                    self.set_status(self.t(Key::NoClipToPasteInto));
+                    return;
+                };
+                if self.session.clipboard().is_empty() {
+                    self.set_status(self.t(Key::NothingToPaste));
+                    return;
+                }
+                // Clip-relative, because a note position is. A playhead parked before the clip
+                // pastes at its beginning, which `paste_notes` clamps for us.
+                let start = self.session.midi_clip(clip).map(|midi| midi.start);
+                let at = self.playhead_ticks() - start.unwrap_or_default();
+                match self.session.paste_notes(clip, at) {
+                    Ok(pasted) if !pasted.is_empty() => {
+                        // The arrivals become the selection, so they can be dragged straight
+                        // away without hunting for them among what was already there.
+                        self.selected_notes = pasted.into_iter().collect();
+                        self.set_status(self.t(Key::PastedFromClipboard));
+                    }
+                    Ok(_) => self.set_status(self.t(Key::NothingToPaste)),
+                    Err(error) => self.set_failed_status(self.failure(Key::CmdPasteNotes, &error)),
                 }
             }
             MenuCommand::DeleteNotes => self.delete_selection(),
@@ -788,6 +892,23 @@ impl AurisApp {
                     Err(error) => {
                         self.set_failed_status(self.failure(Key::MenuGenerateClip, &error))
                     }
+                }
+            }
+            MenuCommand::AccompanyClip(clip) => {
+                let seed = self.next_seed();
+                match self.session.accompany(clip, &DEFAULT_PARTS, seed) {
+                    Ok(report) => {
+                        // The melody stays selected. What was added is around it, and pointing the
+                        // editors at a bass line somebody did not ask to look at would be the
+                        // application deciding it knows better than the person who was mid-phrase.
+                        self.set_status(messages::accompaniment_written(
+                            self.language(),
+                            &report.key.to_text(),
+                            report.parts.len(),
+                            report.chords,
+                        ));
+                    }
+                    Err(error) => self.set_failed_status(self.failure(Key::MenuAccompany, &error)),
                 }
             }
             MenuCommand::RegenerateClip(clip) => match self.session.regenerate_clip(clip) {

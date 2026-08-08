@@ -74,10 +74,20 @@ pub enum Edit {
     SetSendPreFader,
     /// A track's instrument was replaced.
     ChangeInstrument,
+    /// A key, a progression and a set of parts were written around a melody.
+    Accompany,
     /// A clip was created.
     AddClip,
     /// A clip was deleted.
     DeleteClip,
+    /// Clips were taken to the clipboard.
+    ///
+    /// The same removal as [`Edit::DeleteClip`] and a variant of its own all the same: what Undo
+    /// is called decides whether somebody believes the material is gone or believes it is waiting
+    /// to be pasted, and those are different things to believe.
+    CutClips,
+    /// Clips were laid down from the clipboard.
+    PasteClips,
     /// A clip was copied.
     DuplicateClip,
     /// A clip was divided in two.
@@ -98,6 +108,10 @@ pub enum Edit {
     AddNote,
     /// Notes were deleted.
     DeleteNotes,
+    /// Notes were taken to the clipboard. See [`Edit::CutClips`] for why this is not a delete.
+    CutNotes,
+    /// Notes were laid down from the clipboard.
+    PasteNotes,
     /// Notes were copied.
     DuplicateNotes,
     /// Notes were shifted in pitch.

@@ -67,6 +67,7 @@ pub mod error;
 pub mod graph;
 pub mod handle;
 pub mod meter;
+pub mod metronome;
 pub mod offline;
 pub mod renderer;
 pub mod scope;
@@ -86,6 +87,7 @@ pub use graph::{
 };
 pub use handle::EngineHandle;
 pub use meter::MeterBank;
+pub use metronome::{Click, Metronome};
 pub use offline::{OfflineOptions, render_project, render_project_with_progress};
 pub use renderer::render_block;
 pub use scope::{SCOPE_WINDOW, Scope, ScopeSource};

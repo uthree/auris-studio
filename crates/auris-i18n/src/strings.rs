@@ -250,10 +250,15 @@ strings! {
     CmdPlayStop { en: "Play / Stop", ja: "再生 / 停止" }
     CmdReturnToZero { en: "Return to Zero", ja: "先頭に戻る" }
     CmdToggleCycle { en: "Toggle Cycle", ja: "サイクル切り替え" }
+    // 「メトロノーム」 rather than 「拍子木」 or any other translation, for the reason
+    // `GroupTransport` above gives: it is the word every Japanese DAW already prints on this
+    // button, so it is the word a user arrives with.
+    CmdToggleMetronome { en: "Metronome", ja: "メトロノーム" }
     CmdPanic { en: "Panic", ja: "パニック" }
     CmdNewProject { en: "New Project", ja: "新規プロジェクト" }
     CmdOpenProject { en: "Open Project", ja: "プロジェクトを開く" }
     CmdComposeSong { en: "Compose a Song…", ja: "曲を作る…" }
+    CmdAccompanyMelody { en: "Accompany the Melody", ja: "旋律に伴奏をつける" }
     CmdComposeFromSpec { en: "Compose from Specification…", ja: "仕様ファイルから作曲…" }
     CmdSave { en: "Save", ja: "保存" }
     CmdSaveAs { en: "Save As", ja: "名前を付けて保存" }
@@ -281,6 +286,12 @@ strings! {
     // The note and clip commands. Each pair says which of the two it means, because both are on
     // the same keystroke and the settings window lists them one under the other.
     CmdSelectAllNotes { en: "Select All Notes", ja: "すべてのノートを選択" }
+    CmdCutNotes { en: "Cut Notes", ja: "ノートを切り取り" }
+    CmdCopyNotes { en: "Copy Notes", ja: "ノートをコピー" }
+    CmdPasteNotes { en: "Paste Notes", ja: "ノートを貼り付け" }
+    CmdCutClips { en: "Cut Clips", ja: "クリップを切り取り" }
+    CmdCopyClips { en: "Copy Clips", ja: "クリップをコピー" }
+    CmdPasteClips { en: "Paste Clips", ja: "クリップを貼り付け" }
     CmdDuplicateNotes { en: "Duplicate Notes", ja: "ノートを複製" }
     CmdTransposeUp { en: "Transpose Up a Semitone", ja: "半音上げる" }
     CmdTransposeDown { en: "Transpose Down a Semitone", ja: "半音下げる" }
@@ -347,6 +358,14 @@ strings! {
     MenuRemoveSend { en: "Remove Send", ja: "センドを削除" }
     MenuSendPreFader { en: "Take Before the Fader", ja: "フェーダー前から取る" }
     MenuDuplicate { en: "Duplicate", ja: "複製" }
+    MenuCut { en: "Cut", ja: "切り取り" }
+    MenuCopy { en: "Copy", ja: "コピー" }
+    MenuPaste { en: "Paste", ja: "貼り付け" }
+    MenuPasteHere { en: "Paste Here", ja: "ここに貼り付け" }
+    // Named for what it does to the *melody*, not for what it adds. "Add Bass and Drums" would
+    // be a list of what this build happens to write; a person right-clicking a tune they just
+    // played is asking for the thing, not for its parts.
+    MenuAccompany { en: "Accompany This Melody", ja: "この旋律に伴奏をつける" }
     MenuSplitAtPlayhead { en: "Split at Playhead", ja: "再生位置で分割" }
     MenuMuteClip { en: "Mute Clip", ja: "クリップをミュート" }
     MenuCycleOverClip { en: "Cycle over Clip", ja: "クリップをサイクル範囲に" }
@@ -628,6 +647,15 @@ strings! {
     DuplicatedTrack { en: "Duplicated track", ja: "トラックを複製しました" }
     DuplicatedClip { en: "Duplicated clip", ja: "クリップを複製しました" }
     SplitClipStatus { en: "Split clip", ja: "クリップを分割しました" }
+    CopiedToClipboard { en: "Copied", ja: "コピーしました" }
+    CutToClipboard { en: "Cut", ja: "切り取りました" }
+    PastedFromClipboard { en: "Pasted", ja: "貼り付けました" }
+    NothingToPaste { en: "Nothing to paste", ja: "貼り付けるものがありません" }
+    NoClipToAccompany { en: "Select a clip holding the melody first", ja: "先に旋律の入ったクリップを選択してください" }
+    NoClipToPasteInto { en: "Open a clip in the piano roll first", ja: "先にピアノロールでクリップを開いてください" }
+    NoTrackToPasteOnto { en: "Select a track first", ja: "先にトラックを選択してください" }
+    MetronomeOn { en: "Metronome on", ja: "メトロノーム オン" }
+    MetronomeOff { en: "Metronome off", ja: "メトロノーム オフ" }
 
     // ------------------------------------------------------------------ undo labels
     // What the user sees after "Undid …". Nouns rather than imperatives, because that is how
@@ -658,7 +686,10 @@ strings! {
     EditSetSendPreFader { en: "where the send is taken from", ja: "センド位置の変更" }
     EditChangeInstrument { en: "changing the instrument", ja: "音源の変更" }
     EditAddClip { en: "adding a clip", ja: "クリップの追加" }
+    EditAccompany { en: "adding an accompaniment", ja: "伴奏の追加" }
     EditDeleteClip { en: "deleting a clip", ja: "クリップの削除" }
+    EditCutClips { en: "cutting clips", ja: "クリップの切り取り" }
+    EditPasteClips { en: "pasting clips", ja: "クリップの貼り付け" }
     EditDuplicateClip { en: "duplicating a clip", ja: "クリップの複製" }
     EditSplitClip { en: "splitting a clip", ja: "クリップの分割" }
     EditRenameClip { en: "renaming a clip", ja: "クリップ名の変更" }
@@ -667,6 +698,8 @@ strings! {
     EditResizeClip { en: "resizing a clip", ja: "クリップの長さ変更" }
     EditAddNote { en: "adding a note", ja: "ノートの追加" }
     EditDeleteNotes { en: "deleting notes", ja: "ノートの削除" }
+    EditCutNotes { en: "cutting notes", ja: "ノートの切り取り" }
+    EditPasteNotes { en: "pasting notes", ja: "ノートの貼り付け" }
     EditDuplicateNotes { en: "duplicating notes", ja: "ノートの複製" }
     EditTransposeNotes { en: "transposing notes", ja: "ノートの移調" }
     EditSetNoteVelocity { en: "changing note velocity", ja: "ノートの強さの変更" }
@@ -732,6 +765,10 @@ strings! {
     ErrorNotGenerated {
         en: "that clip was played rather than written, so there is nothing to write again",
         ja: "そのクリップは自動生成ではないので、書き直す元がありません"
+    }
+    ErrorNothingToAccompany {
+        en: "that clip has no notes in it, so there is no melody to read",
+        ja: "そのクリップにはノートがないので、読み取れる旋律がありません"
     }
     ErrorWrongTrackKind {
         en: "that command does not apply to this kind of track",

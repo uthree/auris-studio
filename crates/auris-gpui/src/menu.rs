@@ -154,6 +154,17 @@ pub fn model(language: Language) -> Vec<MenuSection> {
             command(t(Key::CmdUndo), actions::Undo, "edit.undo"),
             command(t(Key::CmdRedo), actions::Redo, "edit.redo"),
             MenuRow::Separator,
+            // Cut, copy and paste at the top of Edit, where every application on both platforms
+            // puts them, and in pairs for the same reason the two Select Alls below are: one
+            // keystroke, two meanings, and the menu is where a person finds out which one they
+            // just got.
+            command(t(Key::CmdCutNotes), actions::CutNotes, "edit.cut"),
+            command(t(Key::CmdCutClips), actions::CutClips, "clip.cut"),
+            command(t(Key::CmdCopyNotes), actions::CopyNotes, "edit.copy"),
+            command(t(Key::CmdCopyClips), actions::CopyClips, "clip.copy"),
+            command(t(Key::CmdPasteNotes), actions::PasteNotes, "edit.paste"),
+            command(t(Key::CmdPasteClips), actions::PasteClips, "clip.paste"),
+            MenuRow::Separator,
             // The note commands and the clip commands sit together, in pairs, because they are
             // the same command asked of two different things — and each pair shares a keystroke,
             // scoped so that whichever panel has the keyboard answers. Saying so on the menu is
@@ -271,6 +282,15 @@ pub fn model(language: Language) -> Vec<MenuSection> {
                 actions::ComposeFromSpec,
                 "file.compose_spec",
             ),
+            MenuRow::Separator,
+            // Under the same heading and below a rule, because it is the composer pointed the
+            // other way: the two above replace the document with a piece, and this one writes
+            // parts around a piece of it that is already there.
+            command(
+                t(Key::CmdAccompanyMelody),
+                actions::AccompanyMelody,
+                "file.accompany",
+            ),
         ],
     });
 
@@ -347,6 +367,11 @@ pub fn model(language: Language) -> Vec<MenuSection> {
                 t(Key::CmdToggleCycle),
                 actions::ToggleLoop,
                 "transport.loop",
+            ),
+            command(
+                t(Key::CmdToggleMetronome),
+                actions::ToggleMetronome,
+                "transport.metronome",
             ),
             MenuRow::Separator,
             command(

@@ -195,6 +195,22 @@ fn render_segment(
     graph.master_peak[0] = graph.master_peak[0].max(master_scratch.channel_peak(0));
     graph.master_peak[1] = graph.master_peak[1].max(master_scratch.channel_peak(1));
 
+    // The click, last of all and never offline. Everything above it is the mix; this is a thing
+    // laid over the top of the mix for somebody to play along to, so it is past the master fader,
+    // past the master mute, past the meters and past the spectrum — none of which should move
+    // because a metronome is on, and none of which can turn it down or hide it. An export takes
+    // the same path as playback through this whole function, and this line is the only thing that
+    // makes the two differ: it is what guarantees a bounce cannot contain the click.
+    if !offline {
+        graph.metronome.render(
+            master_scratch,
+            transport.playing,
+            transport.position_frames,
+            &graph.tempo_map,
+            ctx.sample_rate,
+        );
+    }
+
     write_segment(out, offset, master_scratch, frames);
 }
 

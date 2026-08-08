@@ -105,11 +105,13 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_stop))
             .on_action(cx.listener(Self::on_return_to_zero))
             .on_action(cx.listener(Self::on_toggle_loop))
+            .on_action(cx.listener(Self::on_toggle_metronome))
             .on_action(cx.listener(Self::on_new_project))
             .on_action(cx.listener(Self::on_open_project))
             .on_action(cx.listener(Self::on_quit))
             .on_action(cx.listener(Self::on_compose_song))
             .on_action(cx.listener(Self::on_compose_from_spec))
+            .on_action(cx.listener(Self::on_accompany_melody))
             .on_action(cx.listener(Self::on_save_project))
             .on_action(cx.listener(Self::on_save_project_as))
             .on_action(cx.listener(Self::on_import_audio))
@@ -129,6 +131,12 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_delete_selection))
             .on_action(cx.listener(Self::on_select_all_notes))
             .on_action(cx.listener(Self::on_duplicate_notes))
+            .on_action(cx.listener(Self::on_cut_notes))
+            .on_action(cx.listener(Self::on_copy_notes))
+            .on_action(cx.listener(Self::on_paste_notes))
+            .on_action(cx.listener(Self::on_cut_clips))
+            .on_action(cx.listener(Self::on_copy_clips))
+            .on_action(cx.listener(Self::on_paste_clips))
             .on_action(cx.listener(Self::on_transpose_up))
             .on_action(cx.listener(Self::on_transpose_down))
             .on_action(cx.listener(Self::on_octave_up))
@@ -1051,6 +1059,34 @@ impl AurisApp {
         cx.notify();
     }
 
+    /// Writes a band behind the selected clip's melody.
+    ///
+    /// The selected clip, because that is the one the editors are pointed at — this is aimed at
+    /// something a person is looking at rather than at the song as a whole, which is the whole
+    /// difference between it and the two commands above it in the menu.
+    fn on_accompany_melody(
+        &mut self,
+        _: &actions::AccompanyMelody,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self.selected_clip {
+            Some(clip) => self.run_menu_command(MenuCommand::AccompanyClip(clip), cx),
+            None => self.set_status(self.t(Key::NoClipToAccompany)),
+        }
+        cx.notify();
+    }
+
+    fn on_toggle_metronome(
+        &mut self,
+        _: &actions::ToggleMetronome,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_metronome();
+        cx.notify();
+    }
+
     fn on_new_project(
         &mut self,
         _: &actions::NewProject,
@@ -1296,6 +1332,93 @@ impl AurisApp {
     ) {
         self.run_menu_command(MenuCommand::DuplicateNotes, cx);
         cx.notify();
+    }
+
+    fn on_cut_notes(
+        &mut self,
+        _: &actions::CutNotes,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_menu_command(MenuCommand::CutNotes, cx);
+        cx.notify();
+    }
+
+    fn on_copy_notes(
+        &mut self,
+        _: &actions::CopyNotes,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_menu_command(MenuCommand::CopyNotes, cx);
+        cx.notify();
+    }
+
+    fn on_paste_notes(
+        &mut self,
+        _: &actions::PasteNotes,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_menu_command(MenuCommand::PasteNotes, cx);
+        cx.notify();
+    }
+
+    fn on_cut_clips(
+        &mut self,
+        _: &actions::CutClips,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(clip) = self.selected_clip {
+            self.run_menu_command(MenuCommand::CutClips(clip), cx);
+        }
+        cx.notify();
+    }
+
+    fn on_copy_clips(
+        &mut self,
+        _: &actions::CopyClips,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(clip) = self.selected_clip {
+            self.run_menu_command(MenuCommand::CopyClips(clip), cx);
+        }
+        cx.notify();
+    }
+
+    /// Lays the clipboard's clips onto the selected track, at the playhead.
+    ///
+    /// The playhead rather than where the clips came from, which is the one position a paste with
+    /// no pointer behind it can mean — and the selected track rather than the one the material was
+    /// copied off, so a block can be moved to another part of the arrangement in two keystrokes.
+    fn on_paste_clips(
+        &mut self,
+        _: &actions::PasteClips,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(track) = self.paste_target_track() else {
+            self.set_status(self.t(Key::NoTrackToPasteOnto));
+            cx.notify();
+            return;
+        };
+        let at = self.playhead_ticks();
+        self.run_menu_command(MenuCommand::PasteClips { track, at }, cx);
+        cx.notify();
+    }
+
+    /// Which track a keyboard paste lands on: the selected one, or the first that could hold it.
+    ///
+    /// The fallback is what makes ⌘V work on a project nobody has clicked in yet. It is the first
+    /// track rather than none at all because a paste that silently does nothing looks like a
+    /// broken keystroke, and the status line cannot say "nowhere" any more usefully than the
+    /// arrangement can show the material landing on row one.
+    fn paste_target_track(&self) -> Option<TrackId> {
+        self.selected_track
+            .filter(|id| self.project().track(*id).is_some())
+            .or_else(|| self.project().tracks.first().map(|track| track.id))
     }
 
     fn on_transpose_up(

@@ -97,6 +97,14 @@ pub enum SessionError {
     #[error("clip {0} was not written by the composer")]
     NotGenerated(u64),
 
+    /// The clip has no notes in it, so there is no melody to read a harmony off.
+    ///
+    /// An error rather than an empty accompaniment: a bass line and a comp written from a tune
+    /// nobody played would be an accompaniment to nothing, and answering "done" to that is worse
+    /// than saying which clip was empty.
+    #[error("clip {0} has no notes to accompany")]
+    NothingToAccompany(u64),
+
     /// The operation only applies to one kind of track.
     #[error("track {id} is {actual}, but this needs {expected}")]
     WrongTrackKind {

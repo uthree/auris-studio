@@ -19,14 +19,18 @@
 //! `generated` is the half of those that write themselves; `notes` is what is inside one;
 //! `mixer` is the strip, its parameters and the lanes that drive them; `files` is everything that
 //! reaches the disk and `assets` is how a saved document finds the files it only names;
-//! `compose` replaces the whole document with a written piece.
+//! `compose` replaces the whole document with a written piece and `accompany` writes parts around
+//! one clip of the document there already; `clipboard` is cut, copy and paste over both of the
+//! things a user can select.
 //!
 //! Every one of them is `impl Session`, so no path a caller writes changes. And because they are
 //! *children* of this module rather than neighbours of it, they read [`Session`]'s private fields
 //! as they always did — the split opened up nothing except a handful of helpers that two files
 //! now share.
 
+mod accompany;
 mod assets;
+mod clipboard;
 mod clips;
 mod compose;
 mod files;
@@ -40,6 +44,8 @@ mod transport;
 #[cfg(test)]
 mod fixtures;
 
+pub use accompany::{AccompanyReport, DEFAULT_PARTS};
+pub use clipboard::{Clipboard, CopiedClip, CopiedContent};
 pub use compose::{composed_gain_db, kit_trim_db};
 
 use std::collections::HashMap;
@@ -193,6 +199,13 @@ pub struct Session {
     history: History,
     transaction: Option<Transaction>,
     needs_rebuild: bool,
+    /// Whether the meter has moved since the render graph was built.
+    ///
+    /// The engine holds a copy of the signature map for one purpose — accenting the metronome's
+    /// bar lines — and a meter change is otherwise none of its business. So a change made while
+    /// the click is off is remembered here instead of costing a rebuild nobody would hear, and
+    /// paid for the moment the click is switched on. See [`Session::set_metronome`].
+    meter_is_stale: bool,
     /// The last edit recorded outside a transaction, and when, for [`Session::record_repeating`].
     last_record: Option<(Edit, Instant)>,
 
@@ -213,6 +226,13 @@ pub struct Session {
 
     param_cache: HashMap<String, Arc<Vec<ParamDescriptor>>>,
     waveforms: HashMap<SourceId, Arc<WaveformPeaks>>,
+
+    /// What was last cut or copied.
+    ///
+    /// Outside the document deliberately, and so outside undo: a clipboard that a document swap
+    /// emptied would lose its contents on every Undo, and taking a step back is exactly when
+    /// somebody is about to paste. See [`clipboard`].
+    clipboard: Clipboard,
 }
 
 /// What a Save As produced.
@@ -321,6 +341,7 @@ impl Session {
             history: History::default(),
             transaction: None,
             needs_rebuild: false,
+            meter_is_stale: false,
             last_record: None,
             path: None,
             dirty: false,
@@ -328,6 +349,7 @@ impl Session {
             analyzer: auris_dsp::SpectrumAnalyzer::new(auris_engine::SCOPE_WINDOW),
             param_cache: HashMap::new(),
             waveforms: HashMap::new(),
+            clipboard: Clipboard::default(),
         };
         session.install_shipped_fonts();
         session.rebuild_graph();
@@ -680,6 +702,8 @@ impl Session {
 
     /// Rebuilds the render graph and hands it to the audio thread.
     pub fn rebuild_graph(&mut self) {
+        // Whatever the meter now is, this is the copy the engine will be holding.
+        self.meter_is_stale = false;
         let rate = self.engine.sample_rate();
         // Only ever true just after the output device changed, which is also the only time
         // resampling every source is worth what it costs.

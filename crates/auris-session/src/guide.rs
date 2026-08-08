@@ -516,6 +516,26 @@ pub mod composition {
     //! whole piece, and one graph rebuild rather than one per note. A part naming an instrument
     //! the registry does not have falls back to the first registered one and is reported, because
     //! a missing plugin should cost a timbre rather than a whole piece.
+    //!
+    //! # The other direction
+    //!
+    //! [`auris_compose::analysis`] runs the same machinery backwards: notes in, harmony out. It
+    //! reads a key off a melody by correlating what the melody actually plays against the
+    //! probe-tone profiles, then picks one chord per bar by how much of the bar each of the key's
+    //! seven triads accounts for. Nothing in it draws a random number, so the same melody always
+    //! reads the same way.
+    //!
+    //! [`Session::accompany`](crate::Session::accompany) is what that is for. It writes the
+    //! detected key and the chart into the document's harmony lane and then generates parts over
+    //! the melody's span through the ordinary [`ClipRecipe`](auris_core::ClipRecipe) path — so the
+    //! parts it produces are indistinguishable from parts written by hand from a progression
+    //! written by hand, which is the point. What it guessed is *visible* and every part it wrote
+    //! can be rewritten, because a melody is one voice and one voice cannot settle every question
+    //! it raises: a tune in A minor and a tune in C major play the same notes.
+    //!
+    //! This is why the whole thing is one transaction rather than a document swap. Composing
+    //! replaces what is there; accompanying must not, because the melody is the part somebody
+    //! wrote.
 }
 
 pub mod documents {

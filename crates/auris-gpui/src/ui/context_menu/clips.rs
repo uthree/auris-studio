@@ -48,6 +48,8 @@ impl AurisApp {
         let is_midi = self.session.midi_clip(clip).is_some();
 
         let menu = ContextMenu::new(anchor, name)
+            .item(self.t(Key::MenuCut), MenuCommand::CutClips(clip))
+            .item(self.t(Key::MenuCopy), MenuCommand::CopyClips(clip))
             .item(self.t(Key::MenuDuplicate), MenuCommand::DuplicateClip(clip))
             .item(self.t(Key::MenuRename), MenuCommand::RenameClip(clip))
             .item(self.t(Key::MenuDelete), MenuCommand::DeleteClip(clip))
@@ -83,6 +85,15 @@ impl AurisApp {
                 is_midi,
                 self.t(Key::MenuEditInPianoRoll),
                 MenuCommand::EditClip(clip),
+            )
+            // Only where there is a melody to read. A clip with no notes in it has no harmony,
+            // and the command would refuse — which is a row that exists to say no.
+            .item_if(
+                self.session
+                    .midi_clip(clip)
+                    .is_some_and(|midi| !midi.notes.is_empty()),
+                self.t(Key::MenuAccompany),
+                MenuCommand::AccompanyClip(clip),
             );
         self.generated_clip_rows(menu, clip)
     }
@@ -123,6 +134,15 @@ impl AurisApp {
         let has_selection = selected > 0;
 
         ContextMenu::new(anchor, title)
+            .item_if(has_selection, self.t(Key::MenuCut), MenuCommand::CutNotes)
+            .item_if(has_selection, self.t(Key::MenuCopy), MenuCommand::CopyNotes)
+            // Offered whenever there is something to paste, selection or no selection: a paste
+            // is aimed at the playhead rather than at whatever happens to be picked out.
+            .item_if(
+                !self.session.clipboard().is_empty(),
+                self.t(Key::MenuPaste),
+                MenuCommand::PasteNotes,
+            )
             .item_if(
                 has_selection,
                 self.t(Key::MenuDuplicate),

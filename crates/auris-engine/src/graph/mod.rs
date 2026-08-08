@@ -106,7 +106,7 @@ pub struct RenderGraph {
     /// than as a total, because two plugins can trade latency between them and leave the total
     /// alone while the tracks fall out of step with each other.
     built_latencies: Vec<usize>,
-    tempo_map: TempoMap,
+    pub(crate) tempo_map: TempoMap,
     /// The document's automation, resolved to positions in this graph.
     ///
     /// Empty for a project nobody has automated, which is what makes the whole feature free when
@@ -120,6 +120,12 @@ pub struct RenderGraph {
     /// that part of the fade at once, and ramping there from wherever the fader was left is a
     /// swell nobody wrote. `None` on a fresh graph, so the first segment always arrives.
     automation_from: Option<u64>,
+    /// The click, which is not a track and does not go through one.
+    ///
+    /// In the graph rather than beside it so that it survives the same way everything else does:
+    /// a rebuild happens on every structural edit, and a metronome the UI held would have to be
+    /// re-sent after each of them or fall silent halfway through a session.
+    pub(crate) metronome: crate::metronome::Metronome,
     pub(crate) master_scratch: AudioBuffer,
     pub(crate) master_peak: [f32; 2],
     /// Where a spectrum display, if one is open, gets its samples.
@@ -349,6 +355,11 @@ impl RenderGraph {
             tempo_map: project.tempo_map.clone(),
             automation: resolve_automation(project),
             automation_from: None,
+            metronome: {
+                let mut metronome = crate::metronome::Metronome::new(project.signatures.clone());
+                metronome.set_enabled(project.metronome);
+                metronome
+            },
             master_scratch,
             master_peak: [0.0, 0.0],
             scope: Arc::new(crate::scope::Scope::new()),
@@ -645,10 +656,27 @@ impl RenderGraph {
     /// Drops every sounding voice without touching effect tails.
     ///
     /// This is what a stop or a seek does: notes must not hang, but a reverb should keep ringing.
+    ///
+    /// The click is left alone here, alongside the tails and for the same reason: forty
+    /// milliseconds of it may be in the air, and cutting that short is a step to silence — the one
+    /// noise a click exists not to make.
     pub fn reset_voices(&mut self) {
         for track in &mut self.tracks {
             track.reset_voices();
         }
+    }
+
+    /// Whether the click is heard.
+    pub fn metronome_enabled(&self) -> bool {
+        self.metronome.is_enabled()
+    }
+
+    /// Turns the click on or off without rebuilding.
+    ///
+    /// A rebuild would carry it too — the document holds the switch — but a rebuild instantiates
+    /// every plugin in the project, and this is a button somebody presses mid-take.
+    pub fn set_metronome(&mut self, enabled: bool) {
+        self.metronome.set_enabled(enabled);
     }
 
     /// Silences everything: voices, delay lines and filter memory.
@@ -656,6 +684,7 @@ impl RenderGraph {
     /// Notes stay off until the next note-on rather than being chased back, because a panic that
     /// immediately restored what it had just killed would be useless.
     pub fn panic(&mut self) {
+        self.metronome.reset();
         for track in &mut self.tracks {
             track.silence_voices();
             track.strip.reset();

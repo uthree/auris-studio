@@ -537,6 +537,21 @@ impl Session {
         Some(id)
     }
 
+    /// The same font, into the document that is already open.
+    ///
+    /// [`Self::accompany`] is the caller: it adds parts *beside* what a person has written rather
+    /// than replacing the document, so its tracks need a font the open project names. Through
+    /// [`Self::adopt_font`], so pressing it twice finds the font already there instead of writing
+    /// a second reference to the same two hundred megabytes.
+    pub(super) fn adopt_general_midi_here(&mut self) -> Option<SoundFontId> {
+        if !self.shipped_library {
+            return None;
+        }
+        let font = crate::library::shipped(crate::library::GENERAL_MIDI)?;
+        let path = crate::library::installed(font)?;
+        self.adopt_font(&path)
+    }
+
     /// Every SoundFont the project knows about, whether or not its file is still there.
     pub fn soundfonts(&self) -> impl Iterator<Item = &SoundFontRef> {
         self.project.soundfonts.values()

@@ -293,3 +293,43 @@ subdivision = "16t"
 gate        = 0.25
 ```
 
+
+## Accompanying something you played
+
+The composer read backwards. Write a melody into a clip — by hand, from a MIDI file, on the
+keyboard — then right-click it and choose **Accompany This Melody**, or use **Compose → Accompany
+the Melody** with it selected.
+
+What happens is three things, in one undo step:
+
+1. The melody's **key** is worked out and written into the harmony lane at the clip's start.
+2. One **chord per bar** is written under it, for as many bars as the melody covers.
+3. **Bass, chords and drums** are added as tracks beside it — not over it. The melody is not
+   touched.
+
+The parts are ordinary generated clips: they carry recipes, so every dial in the table above
+applies to them, **Another Take** gives a different band, and **Write It Again** follows the chords
+when they move. If the shipped General MIDI font is installed each part gets a fitting sound —
+finger bass, piano, standard kit — and if it is not, they play the built-in oscillators and the
+status line says so.
+
+### What it can and cannot know
+
+The key comes from correlating what the melody actually plays, weighted by how long each note is
+held and how hard it is struck, against the probe-tone profiles Krumhansl and Kessler measured in
+1982 — the standard basis for machine key-finding, and listeners' ratings rather than a theory of
+the scale. Each bar's chord is then whichever of the key's seven triads accounts for most of that
+bar, with a thumb on the scale for what the bar *arrives* on and a little inertia so the
+progression does not change on every coin toss. Nothing draws a random number: the same melody
+always reads the same way, so changing one note and pressing it again tells you what that note was
+doing to the harmony.
+
+A melody is one voice, and one voice cannot settle every question it raises. The two failures to
+expect are a **relative-key swap** — a tune in A minor read as C major, which shares every note —
+and a **bar of passing notes** read as the chord they pass through. Both are nudged rather than
+solved, and neither is a dead end: what it guessed is in the harmony lane where you can see it and
+retype it, and every part it wrote regenerates around the correction. It is a first draft to argue
+with.
+
+A clip with no notes in it is refused rather than accompanied — there is no melody there to read,
+and a bass line written from nothing would be an accompaniment to nothing.

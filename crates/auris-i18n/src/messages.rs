@@ -392,6 +392,15 @@ messages! {
         ja: "`{name}` のコード {chords} 個を書き込みました"
     }
 
+    /// An accompaniment was written around a melody.
+    ///
+    /// The key leads, because it is the guess everything else rests on: somebody who does not
+    /// recognise it has just found out why the rest sounds wrong, without having to go looking.
+    fn accompaniment_written(key: &str, parts: usize, chords: usize) {
+        en: "Read as {key}: {chords} chord(s), {parts} part(s)",
+        ja: "{key} と判断しました: コード {chords} 個、パート {parts} 個"
+    }
+
     /// A part was written from the harmony under it.
     fn clip_written(preset: &str, notes: usize) {
         en: "{preset}: {notes} note(s) written",

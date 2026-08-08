@@ -2,6 +2,7 @@
 
 #![warn(missing_docs)]
 
+pub mod analysis;
 pub mod frame;
 pub mod gm;
 pub mod melodic;
@@ -22,6 +23,7 @@ pub mod spec;
 #[doc(no_inline)]
 pub use auris_core::theory;
 
+pub use analysis::{Reading, detect_key, harmonise, read_melody};
 pub use phrase::{default_instrument, roles_of, write_phrase};
 pub use preset::{PRESETS, SongPreset, preset};
 pub use render::{ClipDraft, Composition, TrackDraft, compose};

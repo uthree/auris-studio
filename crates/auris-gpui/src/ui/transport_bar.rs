@@ -105,6 +105,7 @@ impl AurisApp {
         let theme = self.theme.clone();
         let playing = self.is_playing();
         let looping = self.project().loop_enabled;
+        let clicking = self.session.metronome();
         let playhead = self.playhead_ticks();
         let position = format_position(playhead, &self.project().signatures);
         let seconds = self.project().tempo_map.ticks_to_seconds(playhead);
@@ -235,6 +236,20 @@ impl AurisApp {
                                 &theme,
                                 cx.listener(|this, _, _, cx| {
                                     this.toggle_loop();
+                                    cx.notify();
+                                }),
+                            ))
+                            // Beside the cycle button because the two are the same kind of
+                            // switch: neither writes anything, both change how a pass sounds
+                            // while somebody is listening to it.
+                            .child(icon_button(
+                                "metronome",
+                                Icon::Metronome,
+                                clicking,
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.toggle_metronome();
                                     cx.notify();
                                 }),
                             )),
@@ -478,6 +493,20 @@ impl AurisApp {
     pub(crate) fn toggle_loop(&mut self) {
         let enabled = self.project().loop_enabled;
         self.session.set_loop_enabled(!enabled);
+    }
+
+    /// Turns the click on or off, and says which it now is.
+    ///
+    /// The status line is the whole of the feedback when the transport is stopped: the button
+    /// lights up, but a click that only makes a sound once playback starts is otherwise a
+    /// press with no answer to it.
+    pub(crate) fn toggle_metronome(&mut self) {
+        self.session.toggle_metronome();
+        let key = match self.session.metronome() {
+            true => Key::MetronomeOn,
+            false => Key::MetronomeOff,
+        };
+        self.set_status(self.t(key));
     }
 
     /// Steps the editing grid to the next finer division, wrapping at the end.

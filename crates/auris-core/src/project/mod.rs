@@ -203,6 +203,22 @@ pub struct Project {
     /// Whether playback loops over [`Self::loop_region`].
     #[serde(default)]
     pub loop_enabled: bool,
+    /// Whether a click is heard on every beat while the transport rolls.
+    ///
+    /// A property of the document rather than of the application, for the same reason the loop
+    /// region is one: whether a piece wants counting in is a fact about the piece. A song written
+    /// in 7/8 is one somebody comes back to wanting the click, and one they exported last week is
+    /// one they do not — and neither of those is a preference that should follow them into the
+    /// next project they open.
+    ///
+    /// The click is never rendered offline and never passes through the master strip, so this
+    /// changes nothing about what an export contains — the engine's `metronome` module is where
+    /// that is arranged, and this crate may not name it.
+    ///
+    /// Not a bump: a build that has never heard of this field opens the document and plays every
+    /// note of it correctly, with the click off.
+    #[serde(default)]
+    pub metronome: bool,
     /// Editing grid size, in ticks.
     #[serde(default = "default_grid")]
     pub grid: Ticks,
@@ -307,6 +323,7 @@ impl Project {
             soundfonts: BTreeMap::new(),
             loop_region: None,
             loop_enabled: false,
+            metronome: false,
             grid: default_grid(),
             song_spec: None,
             next_id: 1,

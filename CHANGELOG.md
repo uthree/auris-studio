@@ -9,6 +9,75 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### There is a metronome
+
+* **The button beside the cycle button, Transport → Metronome, or K.** A click on every beat while
+  the transport rolls, an octave higher on the bar line. The application has had a tempo map, a
+  meter map and a bar ruler since it was written, and no way at all to hear any of them.
+* It clicks the beat you **feel** rather than the one the meter is written in: a bar of 6/8 gets
+  two clicks, not six. Meter and tempo changes are both followed, so a piece that moves into 7/8
+  at bar nine has its accents move with it.
+* The click is laid **over** the mix — past the master fader, past the master mute, past the meters
+  — so it cannot be turned down by accident, it is audible with every strip muted, and switching it
+  on does not move a level meter. It **never reaches an export**: playback and an offline render
+  take the same code path in every other respect, and this is the one line that differs.
+* Stored with the project, like the cycle region, because whether a piece wants counting in is a
+  fact about the piece. Not an undo step, for the reason cycling is not: a practice pass is a run
+  of toggles, and those would push the edits the pass was checking off the end of the stack.
+
+### Cut, copy and paste
+
+* **⌘X, ⌘C and ⌘V**, meaning notes in the piano roll and clips in the arrangement — the same three
+  keys scoped to wherever the keyboard is, exactly as ⌘A and ⌘D already were. On the Edit menu in
+  pairs, and on the right-click menus of both surfaces. Duplicate has existed since the beginning
+  and only ever laid a copy down *next to* the original; there was no way to move material
+  anywhere else at all.
+* What is on the clipboard is a **shape** rather than a place. Notes keep the gaps between them; a
+  block of clips copied off four tracks lands on four consecutive tracks wherever you aim it, and
+  goes on doing so after the tracks it came from have been reordered or deleted, because it was
+  never holding those tracks' ids.
+* A paste lands at the playhead; *Paste Here* on an empty lane lands it under the pointer, which is
+  the one place a paste has a position of its own. What arrives becomes the selection. A paste that
+  fits nowhere — the wrong kind of track, or rows running off the bottom of the list — lands what
+  it can rather than failing whole.
+* Its own clipboard, not the system's. Nothing here reaches another application and nothing copied
+  in one arrives here.
+
+### A melody can be given an accompaniment
+
+* **Right-click a clip holding a tune → Accompany This Melody**, or Compose → Accompany the Melody.
+  Its key is worked out and written into the harmony lane, one chord per bar is written under it,
+  and bass, chords and drums are added as tracks *beside* it. The melody is not touched. One undo
+  step for the lot.
+* The composer could write a whole song from a specification and could write one part from chords
+  that were already there. What it could not do is the thing a person actually has in front of
+  them: sixteen bars they played, and no idea what goes underneath.
+* The key comes from correlating what the melody plays — weighted by note length and by how hard
+  each is struck — against Krumhansl and Kessler's probe-tone profiles. Each bar takes whichever of
+  the key's seven triads accounts for most of it, with a thumb on the scale for what the bar
+  *arrives* on and a little inertia so the progression does not change on every coin toss. Nothing
+  draws a random number, so changing one note and pressing it again says what that note was doing.
+* **It will be wrong sometimes, and it is built to be argued with.** A melody is one voice: a tune
+  in A minor and a tune in C major play the same notes, and a bar of passing notes reads as the
+  chord it passes through. So everything it guessed goes into the harmony lane where it can be seen
+  and retyped, and every part it writes carries a recipe — correct a chord, press *Write It Again*,
+  and the band follows.
+* Each part gets a fitting General MIDI sound where the shipped font is installed, and the built-in
+  oscillators where it is not, which the status line says.
+
+### The library list is readable
+
+* **Every row carries a colour mark**, and the marks line up into a column down the panel. A plugin
+  wears its category's colour and so does the heading above it. A font's sounds are banded eight at
+  a time — General MIDI's own sixteen families, Piano, Organ, Guitar, Bass — which is what turns a
+  hundred and twenty-eight rows of small grey text into something an eye can find a place in. The
+  percussion bank is one band rather than sixteen: its patches are kits, not programs.
+* Nothing depends on the colour. Every coloured row still has its name and its number beside the
+  mark, the mark is never the text, and the hues are spread as far apart as their count allows and
+  then walked outwards until each clears 3:1 against the surface it sits on — in all four schemes,
+  which is checked rather than eyeballed. A fixed lightness put one group in ten at 2.7:1 on
+  Midnight, because lightness is not luminance and the gap between them is widest across the hues.
+
 ### A note can be placed without holding anything
 
 * **Create can be a plain click.** ⌘-click is Logic's, and it is still the default, but holding a

@@ -41,13 +41,26 @@ impl Session {
 
     /// Removes notes by index. Indices that do not exist are ignored.
     pub fn remove_notes(&mut self, clip: ClipId, indices: &[usize]) -> Result<(), SessionError> {
+        self.remove_notes_as(Edit::DeleteNotes, clip, indices)
+    }
+
+    /// [`Self::remove_notes`] under a named edit, so a cut undoes as a cut.
+    ///
+    /// The two are the same removal and differ only in what Undo is called afterwards, which is
+    /// worth a parameter and not worth a second copy of the loop.
+    pub(super) fn remove_notes_as(
+        &mut self,
+        edit: Edit,
+        clip: ClipId,
+        indices: &[usize],
+    ) -> Result<(), SessionError> {
         if self.project.midi_clip(clip).is_none() {
             return Err(SessionError::UnknownClip(clip.0));
         }
         if indices.is_empty() {
             return Ok(());
         }
-        self.record(Edit::DeleteNotes);
+        self.record(edit);
         let mut doomed: Vec<usize> = indices.to_vec();
         doomed.sort_unstable();
         doomed.dedup();

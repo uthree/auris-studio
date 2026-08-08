@@ -99,8 +99,11 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::RemoveSend => Key::EditRemoveSend,
         Edit::SetSendPreFader => Key::EditSetSendPreFader,
         Edit::ChangeInstrument => Key::EditChangeInstrument,
+        Edit::Accompany => Key::EditAccompany,
         Edit::AddClip => Key::EditAddClip,
         Edit::DeleteClip => Key::EditDeleteClip,
+        Edit::CutClips => Key::EditCutClips,
+        Edit::PasteClips => Key::EditPasteClips,
         Edit::DuplicateClip => Key::EditDuplicateClip,
         Edit::SplitClip => Key::EditSplitClip,
         Edit::RenameClip => Key::EditRenameClip,
@@ -111,6 +114,8 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::SetClipFade => Key::EditSetClipFade,
         Edit::AddNote => Key::EditAddNote,
         Edit::DeleteNotes => Key::EditDeleteNotes,
+        Edit::CutNotes => Key::EditCutNotes,
+        Edit::PasteNotes => Key::EditPasteNotes,
         Edit::DuplicateNotes => Key::EditDuplicateNotes,
         Edit::TransposeNotes => Key::EditTransposeNotes,
         Edit::SetNoteVelocity => Key::EditSetNoteVelocity,
@@ -176,6 +181,9 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::NotAudio(_) => Key::ErrorNotAudio.get(language).to_string(),
         SessionError::NotFinite(_) => Key::ErrorNotFinite.get(language).to_string(),
         SessionError::NotGenerated(_) => Key::ErrorNotGenerated.get(language).to_string(),
+        SessionError::NothingToAccompany(_) => {
+            Key::ErrorNothingToAccompany.get(language).to_string()
+        }
         SessionError::WrongTrackKind { .. } => Key::ErrorWrongTrackKind.get(language).to_string(),
         SessionError::NoPath => Key::ErrorNoPath.get(language).to_string(),
         SessionError::SettingsWrite { path, source } => messages::settings_write_failed(
