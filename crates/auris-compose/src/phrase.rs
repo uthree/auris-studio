@@ -40,6 +40,124 @@ pub fn roles_of(preset: ClipPreset) -> &'static [Role] {
     }
 }
 
+/// The preset that writes exactly one role, which is [`roles_of`] read backwards.
+///
+/// `None` for [`Role::Crash`], which is the one role no preset names: a crash is written against
+/// the *joins of the form* — it asks whether arriving at a section is worth striking something for
+/// — and that is a question about a whole piece rather than about a clip. A clip preset for it
+/// would be a picker entry that wrote nothing whenever the range it was given had no arrival in
+/// it, which is most ranges.
+///
+/// [`ClipPreset::Drums`] is not the answer for anything here, and deliberately: it is three roles
+/// in one clip, so no single role maps back to it. A whole song keeps its kick, snare and hat on
+/// tracks of their own — that is what makes a kit mixable — and each of those maps to the preset
+/// of the same name.
+pub fn preset_of(role: Role) -> Option<ClipPreset> {
+    Some(match role {
+        Role::Melody => ClipPreset::Lead,
+        Role::Chords => ClipPreset::Chords,
+        Role::Pad => ClipPreset::Pad,
+        Role::Arp => ClipPreset::Arp,
+        Role::Stab => ClipPreset::Stab,
+        Role::Bass => ClipPreset::Bass,
+        Role::Kick => ClipPreset::Kick,
+        Role::Snare => ClipPreset::Snare,
+        Role::Hat => ClipPreset::Hat,
+        Role::Crash => return None,
+    })
+}
+
+/// The seed one clip of a composed piece is written from.
+///
+/// A stream of the song's own seed named by the part and the stretch it plays, so it is
+/// reproducible from the specification and **different for every clip**. That is what makes a
+/// composed piece re-takeable one clip at a time: asking the chorus bass for another take moves
+/// the chorus bass and leaves the verse bass, and the chorus drums, exactly where they were.
+///
+/// The whole song's seed on every clip would have been simpler and wrong twice over — one clip
+/// re-rolled would land on the seed the *next* re-roll of its neighbour would land on, so two
+/// takes of two different parts could not be told apart by their numbers.
+///
+/// Held to [`SEED_RANGE`] rather than handed out at the full width of the stream. A seed is a
+/// number a person reads off a panel and types back in to get a take they liked, and nineteen
+/// digits is not one — the field it lands in is an editable one, and a value nobody can retype is
+/// a value nobody can go back to. Six digits is enough that a piece of thirty clips has no
+/// realistic chance of drawing one twice, and two clips that did would still write different
+/// notes: they are different parts, over different chords, at different densities.
+pub fn clip_seed(song_seed: u64, part: &str, section: &str, instance: usize) -> u64 {
+    let drawn = crate::rng::Rng::stream(
+        song_seed,
+        &[
+            crate::rng::Key::Word("clip"),
+            crate::rng::Key::Word(part),
+            crate::rng::Key::Word(section),
+            crate::rng::Key::Index(instance as u64),
+        ],
+    )
+    .next_u64();
+    1 + drawn % SEED_RANGE
+}
+
+/// How many seeds a composed clip may be given, counting from one.
+///
+/// Six digits: long enough that a collision inside one piece is not worth guarding against, short
+/// enough to be read off a panel and typed back in.
+pub const SEED_RANGE: u64 = 999_999;
+
+/// The recipe describing one section of one part, as the whole-song writer played it.
+///
+/// The inverse of what [`write_phrase`] does, as far as the inverse goes: every dial a recipe has
+/// is read back off the specification, the part and the section, so that a composed clip arrives
+/// in the document knowing what it is. `part` must be the part **as that section plays it** —
+/// [`SectionPlan::played`](crate::frame::SectionPlan) — because a section is free to patch a part
+/// busier or an octave up, and a recipe that recorded the roster's answer would describe a clip
+/// that is not the one on the timeline.
+///
+/// `None` where no preset names the role: see [`preset_of`]. Such a clip arrives with no recipe
+/// and behaves exactly as a clip somebody played, which is the honest answer — nothing here can
+/// write it again.
+///
+/// # What it does not promise
+///
+/// It does **not** promise that [`write_phrase`] with this recipe writes the notes the clip
+/// arrived with. It cannot: a whole song is planned with things a clip has no room for — how far
+/// a repeated section departs from its first playing, what leads into what, the arch of intensity
+/// across the form — and a recipe that carried all of them would be a song specification wearing
+/// a clip's name. What it promises is the useful thing: another take of this clip is the same
+/// part, in the same register, at the same density, over the same chords, played the same way.
+pub fn recipe_for(
+    settings: &ScoreSettings,
+    part: &PartSpec,
+    section: &SectionPlan,
+    song_seed: u64,
+) -> Option<ClipRecipe> {
+    let preset = preset_of(part.role)?;
+    Some(ClipRecipe {
+        preset,
+        seed: clip_seed(song_seed, &part.name, &section.name, section.instance),
+        // The *base* density, before `parts::writer::density` scales it by the role and by the
+        // section's intensity — because writing this clip again puts it through that same scaling.
+        // Recording the scaled figure would compound it, and a chorus re-taken twice would come
+        // back busier each time.
+        density: part.density.unwrap_or_else(|| settings.mood.density()),
+        intensity: section.intensity,
+        groove: settings.groove.clone(),
+        swing: settings.swing,
+        humanize: settings.humanize,
+        subdivision: part.subdivision,
+        gate: part.gate,
+        dynamics: settings.dynamics,
+        // The mood's, which is where a clip's syncopation comes from in the other direction too:
+        // `mood_for` builds a Mood out of the recipe, and this is that field read back.
+        syncopation: settings.mood.syncopation,
+        // A part's octave is absolute and a recipe's is a shift from where the preset sits, so
+        // the difference is the number. Clamped to what the dial can hold: a part written four
+        // octaves off its role would otherwise come back as a recipe nobody could edit back.
+        octave: (part.octave - part.role.default_octave()).clamp(-2, 2),
+        fill: settings.fill,
+    })
+}
+
 /// The instrument a preset's clips should be played by, when the track has none yet.
 pub fn default_instrument(preset: ClipPreset) -> &'static str {
     roles_of(preset)

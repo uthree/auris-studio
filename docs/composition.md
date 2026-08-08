@@ -293,6 +293,29 @@ subdivision = "16t"
 gate        = 0.25
 ```
 
+### A whole song is clips that write themselves too
+
+Everything above applies to **Compose a Song** as well. Each clip a composed piece arrives with
+carries the recipe that describes it, so a piece is re-takeable one clip at a time: right-click the
+chorus bass, choose Another Take, and the chorus bass changes while the verse bass and the chorus
+drums stay exactly where they are. The dial panel opens on any of them, the preset can be swapped,
+and Keep This One takes a clip out of reach when it is right. Each clip gets its own six-digit seed,
+derived from the song's, so a take you liked can be typed back in.
+
+The recipe is read off the part **as that section played it** — a chorus that lifted the bass an
+octave gives a chorus clip that says so — and it is what the clip is, not a recording of how it was
+made. That distinction has one visible consequence, and it is worth knowing rather than being
+surprised by:
+
+> **Writing a composed clip again does not give back the notes it arrived with.** A whole song is
+> planned with things a single clip has no room for — how far a repeated section departs from its
+> first playing, what leads into what, the arch of intensity across the form — so re-writing hands
+> that one clip to the same writer *Write a Part Here…* uses, which knows the document's chords and
+> not the plan. What holds is everything the clip *means*: the same part, the same register, the
+> same density, over the same chords, played the same way. What moves is the phrase.
+
+The same is true of dragging a composed clip's edge, since that is a request to write it over a new
+stretch — exactly as it is for a clip written by hand. If a take is the keeper, Keep This One first.
 
 ## Accompanying something you played
 

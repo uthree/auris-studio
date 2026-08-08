@@ -296,6 +296,17 @@ impl Session {
                 };
                 if let Some(target) = project.midi_clip_mut(clip_id) {
                     target.notes = clip.notes.clone();
+                    // What the composer played, in the vocabulary a person can edit. This is the
+                    // whole of what makes a composed piece re-takeable one clip at a time: every
+                    // command a clip written by hand answers to — another take, write it again,
+                    // the recipe panel, keep this one — reads exactly this field, so nothing
+                    // downstream had to learn about composed songs to work on them.
+                    target.recipe = clip.recipe.clone();
+                    // The length is the section's and was decided by the form, not grown to fit
+                    // what happened to be written into it. Without this the first note edit on a
+                    // composed clip would let `fit_length_to_notes` stretch it past the section it
+                    // belongs to.
+                    target.length_is_explicit = true;
                     report.notes += clip.notes.len();
                 }
                 report.clips += 1;
@@ -361,7 +372,7 @@ mod tests {
     use super::*;
     use crate::param::ParamTarget;
     use crate::session::fixtures::session;
-    use auris_core::{ClipPreset, ClipRecipe};
+    use auris_core::{ClipId, ClipPreset, ClipRecipe};
 
     #[test]
     fn composing_replaces_the_document_in_one_undo_step() {
@@ -398,6 +409,155 @@ mod tests {
         assert_eq!(session.undo(), Some(Edit::Compose));
         assert_eq!(session.project().tracks.len(), 1);
         assert_eq!(session.project().tracks[0].name, "Old");
+    }
+
+    #[test]
+    fn a_composed_piece_can_be_re_taken_one_clip_at_a_time() {
+        // What "Write a Part Here…" has always offered, now on the piece the composer wrote. The
+        // commands are the ones a hand-written clip already answered to — nothing downstream had
+        // to learn what a composed song is, because the recipe is the whole interface.
+        let mut session = session();
+        let spec = auris_compose::SongSpec::parse(
+            r#"
+                title = "Retakeable"
+                form = "verse chorus verse"
+                chords = "@axis"
+                [section.verse]
+                bars = 4
+                [section.chorus]
+                bars = 4
+                "#,
+        )
+        .unwrap();
+        session.compose(&auris_compose::compose(&spec)).unwrap();
+
+        // Every clip the composer wrote, in timeline order, so a neighbour can be checked.
+        let clips: Vec<ClipId> = session
+            .project()
+            .tracks
+            .iter()
+            .filter_map(|track| track.kind.as_instrument())
+            .flat_map(|inner| inner.clips.iter().map(|clip| clip.id))
+            .collect();
+        assert!(clips.len() > 3, "not enough clips to say anything");
+        let generated: Vec<ClipId> = clips
+            .iter()
+            .copied()
+            .filter(|clip| session.clip_recipe(*clip).is_some())
+            .collect();
+        assert_eq!(
+            generated.len(),
+            clips.len(),
+            "a composed clip arrived without a recipe"
+        );
+
+        let notes_of = |session: &Session, clip: ClipId| {
+            session.midi_clip(clip).expect("the clip").notes.clone()
+        };
+        let target = generated[0];
+        let neighbour = generated[1];
+        let (before, beside) = (notes_of(&session, target), notes_of(&session, neighbour));
+        let seed = session.clip_recipe(target).unwrap().seed;
+
+        assert!(session.reroll_clip(target).unwrap() > 0);
+        assert_ne!(
+            notes_of(&session, target),
+            before,
+            "the take did not change"
+        );
+        assert_eq!(
+            notes_of(&session, neighbour),
+            beside,
+            "re-taking one clip moved another"
+        );
+        assert_eq!(session.clip_recipe(target).unwrap().seed, seed + 1);
+
+        // And one step takes the take back — not the whole piece.
+        assert_eq!(session.undo(), Some(Edit::GenerateClip));
+        assert_eq!(notes_of(&session, target), before);
+
+        // Every clip, not only the one above: a recipe that named a preset which writes nothing
+        // over the harmony the composer left in the document would be a menu row that does
+        // nothing, on most of the song, with no error to explain it.
+        for clip in &generated {
+            assert!(
+                session.reroll_clip(*clip).unwrap() > 0,
+                "another take of `{}` wrote nothing",
+                session.midi_clip(*clip).map_or("?", |midi| &midi.name)
+            );
+        }
+    }
+
+    #[test]
+    fn a_frozen_composed_clip_stops_being_rewritten() {
+        // The other half of carrying a recipe: a take somebody likes can be taken out of reach.
+        let mut session = session();
+        let spec = auris_compose::SongSpec::parse(
+            r#"
+                title = "Frozen"
+                form = "verse"
+                chords = "@axis"
+                [section.verse]
+                bars = 4
+                "#,
+        )
+        .unwrap();
+        session.compose(&auris_compose::compose(&spec)).unwrap();
+
+        let clip = session
+            .project()
+            .tracks
+            .iter()
+            .filter_map(|track| track.kind.as_instrument())
+            .flat_map(|inner| inner.clips.iter())
+            .find(|clip| clip.is_generated())
+            .expect("a composed clip")
+            .id;
+        let kept = session.midi_clip(clip).unwrap().notes.clone();
+
+        session.freeze_clip(clip).unwrap();
+        assert_eq!(session.midi_clip(clip).unwrap().notes, kept);
+        assert!(matches!(
+            session.reroll_clip(clip),
+            Err(SessionError::NotGenerated(_))
+        ));
+    }
+
+    #[test]
+    fn a_composed_clip_keeps_the_length_the_form_gave_it() {
+        // A section's length was decided by the form. Without `length_is_explicit` the first note
+        // edit would let `fit_length_to_notes` grow the clip past the section it belongs to, which
+        // on a composed song is every clip that has a note near its end.
+        let mut session = session();
+        let spec = auris_compose::SongSpec::parse(
+            r#"
+                title = "Lengths"
+                form = "verse"
+                chords = "@axis"
+                [section.verse]
+                bars = 4
+                "#,
+        )
+        .unwrap();
+        session.compose(&auris_compose::compose(&spec)).unwrap();
+
+        let (clip, length) = session
+            .project()
+            .tracks
+            .iter()
+            .filter_map(|track| track.kind.as_instrument())
+            .flat_map(|inner| inner.clips.iter())
+            .map(|clip| (clip.id, clip.length))
+            .next()
+            .expect("a composed clip");
+
+        session
+            .add_note(
+                clip,
+                auris_core::Note::new(60, length - Ticks(1), Ticks::QUARTER * 8),
+            )
+            .unwrap();
+        assert_eq!(session.midi_clip(clip).unwrap().length, length);
     }
 
     #[test]

@@ -537,6 +537,39 @@ pub mod composition {
     //! the registry does not have falls back to the first registered one and is reported, because
     //! a missing plugin should cost a timbre rather than a whole piece.
     //!
+    //! # Every clip knows what it is
+    //!
+    //! Each clip a piece arrives with carries a [`ClipRecipe`](auris_core::ClipRecipe), derived by
+    //! [`recipe_for`](auris_compose::recipe_for) from the part *as that section played it* — a
+    //! chorus that patched the bass an octave up produces a clip whose recipe says so. That one
+    //! field is the whole of the feature: another take, write it again, the dial panel and keep
+    //! this one all read [`Session::clip_recipe`](crate::Session::clip_recipe) and nothing else, so
+    //! not one line downstream had to learn what a composed song is. A composed piece used to be
+    //! several hundred anonymous notes whose only granularity was composing the whole thing again.
+    //!
+    //! Each clip's seed is a stream of the song's seed named by the part and the stretch —
+    //! [`clip_seed`](auris_compose::clip_seed) — so it is reproducible from the specification and
+    //! different for every clip, which is what makes "individually" mean anything. It is held to
+    //! six digits because a seed is a number a person reads off a panel and types back in.
+    //!
+    //! **A recipe describes a clip; it does not reproduce it.** The two writers are not one
+    //! machine and this is where that shows. A whole song is planned with things one clip has no
+    //! room for — how far a repeated section departs from its first playing, what leads into what,
+    //! the arch of intensity across the form — so writing a composed clip again hands it to
+    //! [`write_phrase`](auris_compose::write_phrase), which knows the document's harmony and not
+    //! the plan. The notes move. What holds is everything a person meant by the clip: the same
+    //! part, the same register, the same density, over the same chords, played the same way.
+    //!
+    //! The alternative was making `compose` write its clips *through* `write_phrase` so the two
+    //! agreed exactly. That trades the composer's output for a button's arithmetic, and the output
+    //! is the product. Regenerating from the stored [`Project::song_spec`](auris_core::Project) was
+    //! the other one, and it fails the thing regeneration is *for*: it would hand back the
+    //! specification's chords over a harmony lane somebody had since edited by hand.
+    //!
+    //! One consequence to know rather than to be surprised by: a composed clip is a generated clip
+    //! in every respect, so dragging its edge rewrites it, exactly as it does for a clip written by
+    //! hand. Keep This One is how a take stops being at the mercy of a gesture.
+    //!
     //! # The other direction
     //!
     //! [`auris_compose::analysis`] runs the same machinery backwards: notes in, harmony out. It

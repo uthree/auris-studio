@@ -24,7 +24,9 @@ pub mod spec;
 pub use auris_core::theory;
 
 pub use analysis::{Reading, detect_key, harmonise, read_melody};
-pub use phrase::{default_instrument, roles_of, write_phrase};
+pub use phrase::{
+    SEED_RANGE, clip_seed, default_instrument, preset_of, recipe_for, roles_of, write_phrase,
+};
 pub use preset::{PRESETS, SongPreset, preset};
 pub use render::{ClipDraft, Composition, TrackDraft, compose};
 pub use spec::{Mood, PartSpec, Role, SectionSpec, SongSpec, SpecError};

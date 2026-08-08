@@ -9,6 +9,31 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### A composed song is re-takeable one clip at a time
+
+* Every clip **Compose a Song** writes now carries the recipe that describes it, so the commands a
+  clip from *Write a Part Here…* has always answered to — Another Take, Write It Again, the dial
+  panel, Keep This One — work on a whole composed piece. Right-click the chorus bass, ask for
+  another take, and the chorus bass changes while the verse bass and the chorus drums stay where
+  they are.
+* That one field is the entire feature. Nothing downstream had to learn what a composed song is:
+  the menu, the inspector panel and the painter's "this was written" mark all read
+  `Session::clip_recipe` and nothing else, so they all started working at once.
+* The recipe is read off the part **as that section played it**, not off the roster — a chorus that
+  patched the bass an octave up produces a clip whose recipe says so.
+* Each clip gets a seed of its own, a stream of the song's named by the part and the stretch: it is
+  reproducible from the specification, different for every clip, and six digits, because a seed is a
+  number a person reads off a panel and types back in.
+* **A recipe describes a clip; it does not reproduce it.** A whole song is planned with things one
+  clip has no room for — how far a repeated section departs from its first playing, what leads into
+  what, the arch of intensity across the form — so writing a composed clip again hands it to the
+  one-clip writer, which knows the document's chords and not the plan. The part, the register, the
+  density, the chords and the feel all hold; the phrase moves. The same is true of dragging its
+  edge, which is the same request. Keep This One is how a take stops being at the mercy of either.
+* The alternative was making the composer write its clips through the one-clip writer so the two
+  agreed exactly. That trades the composer's output — section variation, the joins between
+  sections, the intensity arch — for a button's arithmetic, and the output is the product.
+
 ### A clip can be looped
 
 * **Drag the right edge of a clip's name bar**, or *Loop Clip* on its right-click menu, on the Edit

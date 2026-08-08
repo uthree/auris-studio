@@ -1,15 +1,18 @@
 //! Turning the parts into clips a document can hold.
 
-use auris_core::Note;
 use auris_core::harmony::{ChordMap, ChordPoint, Harmony, KeyMap, KeyPoint};
 use auris_core::plugin::PluginState;
 use auris_core::project::Color;
 use auris_core::structure::{SectionMap, SectionPoint};
 use auris_core::time::{TempoMap, TempoPoint, Ticks, TimeSignature};
+use auris_core::{ClipRecipe, Note};
 
 use crate::frame::{Frame, plan};
 use crate::parts::{PartDraft, ScoreSettings, write_parts};
-use crate::spec::{Role, SongSpec};
+#[cfg(test)]
+use crate::phrase::SEED_RANGE;
+use crate::phrase::recipe_for;
+use crate::spec::{PartSpec, Role, SongSpec};
 
 /// The bus a whole kit sits under, so one fader moves the drums.
 const DRUM_BUS: &str = "Drums";
@@ -31,6 +34,18 @@ pub struct ClipDraft {
     pub length: Ticks,
     /// Its notes, positioned from the clip's own start.
     pub notes: Vec<Note>,
+    /// What the clip is, in the vocabulary a person can edit.
+    ///
+    /// Carried so that a composed piece arrives as clips that know how they were played, and can
+    /// therefore be re-taken, re-dialled and frozen one at a time — the same commands a clip
+    /// written by hand from *Write a Part Here…* answers to. Before this a composed song was four
+    /// hundred notes with nothing to say about themselves, and the only granularity on offer was
+    /// composing the whole piece again.
+    ///
+    /// `None` for a part no preset names — the crash, which is written against the joins of the
+    /// form rather than from a recipe. See [`recipe_for`], which is also where the limits of what
+    /// this promises are set out.
+    pub recipe: Option<ClipRecipe>,
 }
 
 /// One track: an instrument and the clips it plays.
@@ -225,7 +240,16 @@ pub fn compose(spec: &SongSpec) -> Composition {
 ///
 /// Empty when the part never plays. That is not a strange case: a groove is free to leave a voice
 /// out — `sparse` writes no snare at all — so a part can be declared, written, and produce nothing.
-fn clips_of(draft: &PartDraft, frame: &Frame) -> Vec<ClipDraft> {
+///
+/// `part` is the roster entry the draft came from, which each section may patch before playing;
+/// the recipe every clip carries is derived from the patched one, so a chorus that asked for the
+/// bass an octave up arrives as a clip that says so.
+fn clips_of(
+    settings: &ScoreSettings,
+    part: Option<&PartSpec>,
+    draft: &PartDraft,
+    frame: &Frame,
+) -> Vec<ClipDraft> {
     let mut clips = Vec::new();
     for (index, section) in frame.sections.iter().enumerate() {
         let mut notes: Vec<Note> = draft
@@ -266,6 +290,9 @@ fn clips_of(draft: &PartDraft, frame: &Frame) -> Vec<ClipDraft> {
             start: section.start,
             length: section.length,
             notes,
+            recipe: part
+                .map(|part| section.played(part))
+                .and_then(|played| recipe_for(settings, &played, section, frame.seed)),
         });
     }
     clips
@@ -273,15 +300,13 @@ fn clips_of(draft: &PartDraft, frame: &Frame) -> Vec<ClipDraft> {
 
 /// Turns a planned frame and its parts into tracks of clips.
 fn render(spec: &SongSpec, frame: &Frame) -> Composition {
-    let drafts = write_parts(&ScoreSettings::from(spec), &spec.parts, frame);
-    // The roster's roles, so the mix can be laid out before a single track exists. A draft carries
-    // its part's name and not its role, and the name is what ties the two together.
-    let role_of = |name: &str| {
-        spec.parts
-            .iter()
-            .find(|part| part.name == name)
-            .map(|part| part.role)
-    };
+    let settings = ScoreSettings::from(spec);
+    let drafts = write_parts(&settings, &spec.parts, frame);
+    // The roster entry each draft came from. A draft carries its part's name and not the part, and
+    // the name is what ties the two together — which is enough, because a roster may not hold two
+    // parts of one name.
+    let part_of = |name: &str| spec.parts.iter().find(|part| part.name == name);
+    let role_of = |name: &str| part_of(name).map(|part| part.role);
     // The parts that actually play, and their clips. A part that never plays leaves no track at
     // all — a groove is free to leave a voice out, and `sparse` writes no snare.
     //
@@ -293,7 +318,7 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
     let played: Vec<(PartDraft, Vec<ClipDraft>)> = drafts
         .into_iter()
         .map(|draft| {
-            let clips = clips_of(&draft, frame);
+            let clips = clips_of(&settings, part_of(&draft.name), &draft, frame);
             (draft, clips)
         })
         .filter(|(_, clips)| !clips.is_empty())
@@ -601,6 +626,106 @@ mod tests {
         [section.chorus]
         bars = 8
     "#;
+
+    #[test]
+    fn every_clip_a_piece_arrives_with_knows_what_it_is() {
+        // The whole point: a composed song is clips that can be re-taken one at a time, not four
+        // hundred anonymous notes whose only granularity is composing the piece again.
+        let piece = compose_text(BASE);
+        for track in &piece.tracks {
+            for clip in &track.clips {
+                let Some(recipe) = &clip.recipe else {
+                    // The crash is the one part no preset names; nothing else may be missing one.
+                    assert_eq!(
+                        track.name, "crash",
+                        "`{}` arrived with no recipe",
+                        track.name
+                    );
+                    continue;
+                };
+                assert!(recipe.density > 0.0, "`{}` has no density", track.name);
+                assert!((-2..=2).contains(&recipe.octave));
+            }
+        }
+    }
+
+    #[test]
+    fn each_clip_gets_a_seed_of_its_own_and_the_same_one_every_time() {
+        // A seed per clip is what "individually" means. The song's own seed on every clip would
+        // have made one re-roll land on the number its neighbour's next re-roll would take.
+        let seeds = |text: &str| -> Vec<(String, String, u64)> {
+            compose_text(text)
+                .tracks
+                .iter()
+                .flat_map(|track| {
+                    track.clips.iter().filter_map(move |clip| {
+                        Some((
+                            track.name.clone(),
+                            clip.name.clone(),
+                            clip.recipe.as_ref()?.seed,
+                        ))
+                    })
+                })
+                .collect()
+        };
+
+        let first = seeds(BASE);
+        assert!(first.len() > 4, "not enough clips to say anything");
+        let distinct: std::collections::BTreeSet<u64> =
+            first.iter().map(|(_, _, seed)| *seed).collect();
+        assert_eq!(
+            distinct.len(),
+            first.len(),
+            "two clips of one piece share a seed"
+        );
+        // And it is a function of the specification, like everything else here.
+        assert_eq!(first, seeds(BASE));
+        // Short enough to be read off the recipe panel and typed back in, which is the only way
+        // a take somebody liked can be got back to.
+        assert!(
+            first
+                .iter()
+                .all(|(_, _, seed)| (1..=SEED_RANGE).contains(seed)),
+            "a seed nobody could retype: {first:?}"
+        );
+    }
+
+    #[test]
+    fn a_section_that_patches_a_part_is_described_by_the_patched_recipe() {
+        // A recipe recording the roster's answer would describe a clip that is not the one on the
+        // timeline. What a chorus asked for is what the chorus clip says it is.
+        let piece = compose_text(
+            r#"
+            title = "Patched"
+            form = "verse chorus"
+            chords = "@axis"
+            [section.verse]
+            bars = 4
+            [section.chorus]
+            bars = 4
+            [section.chorus.part.bass]
+            octave = 4
+            "#,
+        );
+        let bass = piece
+            .tracks
+            .iter()
+            .find(|track| track.name == "bass")
+            .expect("the default roster has a bass");
+        let octave_of = |section: &str| {
+            bass.clips
+                .iter()
+                .find(|clip| clip.name.starts_with(section))
+                .and_then(|clip| clip.recipe.as_ref())
+                .map(|recipe| recipe.octave)
+                .unwrap_or_else(|| panic!("no {section} clip"))
+        };
+        assert_ne!(
+            octave_of("chorus"),
+            octave_of("verse"),
+            "the chorus lifted the bass and its clip does not say so"
+        );
+    }
 
     #[test]
     fn a_piece_arrives_with_a_kit_under_one_fader_and_a_room_to_share() {
