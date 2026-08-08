@@ -46,8 +46,9 @@ it gets edited first: when the two disagree, the guide is right and this is stal
 Cargo.toml               virtual manifest; `default-members` points at the desktop app
 crates/auris-core        types, music theory, plugin traits, project model — no local dependencies
 crates/auris-dsp         effects and DSP primitives
-crates/auris-synth       built-in chiptune instruments
-crates/auris-sampler     SoundFont playback: the font bank and the sampler instrument
+crates/auris-synth       built-in chiptune instruments; depends on auris-dsp
+crates/auris-sampler     SoundFont playback: the font bank and the sampler instrument;
+                         depends on auris-dsp
 crates/auris-engine      render graph, transport, cpal output, offline renderer
 crates/auris-io          audio file import/export, project save/load
 crates/auris-gpu         optional wgpu compute for offline analysis
@@ -67,6 +68,9 @@ Dependency direction is strictly downhill and the frontend boundary matters:
   because the document holds a key and a chord progression, and the document model may not name a
   crate above it. `auris-compose` re-exports the module, so `crate::theory::…` still resolves there.
   It is the composer's vocabulary, not the composer's property.
+* Both instrument crates take their primitives from `auris-dsp`, not their effects. `auris_dsp::Adsr`
+  is the one that matters: the built-in voices and the sampler's per-note fade are the same
+  generator, so an attack of five milliseconds means the same thing on both.
 * Sample data cannot travel through a `PluginState`, which is a map of `f32`. `auris-sampler`
   therefore keeps a `SoundFontBank` that the session owns and the registry's factory closure
   captures; a track names a sound by font id, bank and patch, never by position.

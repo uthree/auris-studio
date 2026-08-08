@@ -178,7 +178,7 @@ use crate::ui::paint::unit_of;
 use crate::ui::plugin_window::PluginSubject;
 
 /// How tall the graph is drawn.
-const GRAPH_HEIGHT: f32 = 84.0;
+pub(crate) const GRAPH_HEIGHT: f32 = 84.0;
 
 /// How near a corner a press has to land to take hold of it, in pixels.
 const GRAB: f32 = 9.0;

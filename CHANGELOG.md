@@ -9,6 +9,31 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### A SoundFont has an envelope now
+
+* The sampler carries the **same four controls the built-in instruments do** — attack, decay,
+  sustain, release — and the same draggable graph above them. They shape the font rather than
+  replace it: a piano's hammer is still a hammer, and now you can fade it in, hold it under its own
+  decay, or let it ring long after the key has gone.
+* **They start where they do nothing.** Attack and release at zero and sustain at full leave the
+  font playing exactly as it is written, and the mechanism is not merely neutral — it is skipped.
+  That is the point rather than the tidiness: a shaped note needs a MIDI channel to itself, because
+  channel expression is the only per-note gain the library exposes, so shaping trades 128 voices
+  for fifteen notes and gives up the choke groups a drum kit's hi-hat relies on. Reaching for a
+  control buys the fade and pays that; leaving them alone pays nothing.
+* A release of zero means the note stops when the key does, and the graph draws exactly that — a
+  vertical drop with no tail. If raising the attack starts cutting your notes off, that is the
+  corner to drag.
+* A shaped note at full level is **exactly as loud** as an unshaped one, and the envelope is
+  square-rooted on its way into the channel because the format squares it again — the same
+  correction the sampler already made for velocity, and for the same reason. A release stated as
+  half a second is half a second.
+* The envelope generator moved from `auris-synth` to `auris-dsp`, so both instrument crates fade a
+  note with the same code. Two definitions of what an attack of five milliseconds sounds like would
+  have agreed right up until one of them was corrected.
+* The envelope graph now counts towards the window's height the way the equalizer's curve does, so
+  a plugin that has one does not lose sliders to it.
+
 ### The equalizer has a curve you can grab
 
 * The window drew the spectrum going in and left you to aim at it with twenty-four sliders. It now

@@ -45,8 +45,8 @@ pub mod architecture {
     //! BACKEND — no UI dependency of any kind
     //!   auris-core      types, music theory, plugin traits, project model — no local dependencies
     //!   auris-dsp       effects and DSP primitives
-    //!   auris-synth     built-in instruments
-    //!   auris-sampler   SoundFont playback: the font bank and the sampler instrument
+    //!   auris-synth     built-in instruments                      → auris-dsp
+    //!   auris-sampler   SoundFont playback: the bank and the sampler instrument → auris-dsp
     //!   auris-engine    render graph, transport, cpal output, offline renderer
     //!   auris-io        audio file import/export, project save/load
     //!   auris-gpu       optional wgpu compute for offline analysis
@@ -71,6 +71,11 @@ pub mod architecture {
     //! numerals started in the composer, where they were used; they came down when the document
     //! itself gained a key and a chord progression, because the document model may not name a crate
     //! above it. [`auris_compose`] re-exports the module, so the composer's own paths are unchanged.
+    //!
+    //! Both instrument crates depend on [`auris_dsp`], for its primitives and not its effects.
+    //! [`auris_dsp::Adsr`] is the one that matters: the built-in voices and the sampler's
+    //! per-note fade are the same generator, so an attack of five milliseconds means the same
+    //! thing on both, and it will go on meaning the same thing after the next correction.
     //!
     //! **[`auris_engine`] does not depend on [`auris_dsp`] or [`auris_synth`].** It drives plugins
     //! purely through the `auris-core` traits. That is what keeps the plugin system honest: if the
@@ -411,6 +416,28 @@ pub mod plugins {
     //! `auris_gpui::ui::analyser`. Asking every plugin author about a window they have never seen
     //! would put a frontend's concern into the plugin contract, and a `draws_a_curve` method on
     //! the [`Effect`](auris_core::plugin::Effect) trait is exactly that.
+    //!
+    //! The envelope graph is the same idea without the id: any plugin declaring all four of
+    //! `attack`, `decay`, `sustain` and `release` is drawn one, and dragging its corners writes
+    //! those four parameters. All four or none — three of them is not an envelope with a piece
+    //! missing but a different shape, and the drum synth's lone decay would be drawn as a ramp
+    //! with two corners invented for it. That is why [`auris_sampler`] gained the picture the day
+    //! it gained the parameters, without a line changing in the frontend.
+    //!
+    //! # An envelope over a sound that already has one
+    //!
+    //! [`auris_sampler`] does not synthesise its own voices — a font's regions carry their own
+    //! volume envelopes, and rustysynth neither exposes them nor lets a caller reach a voice. The
+    //! one per-note gain there is, is *channel expression*, so a note that is to be faded on its
+    //! own has to be given a channel of its own: fifteen of the library's sixteen, one note each.
+    //!
+    //! That trade is real — fifteen notes instead of 128 voices, and a drum kit's choke groups
+    //! only work between notes sharing a channel — so it is paid only when it buys something.
+    //! With the four controls at their defaults the envelope multiplies every note by one from
+    //! beginning to end, and the sampler skips the mechanism entirely and plays the font as it is
+    //! written. The rule is worth generalising: **a feature that costs something should cost it
+    //! only when it is used**, and the test for "used" belongs in a free function
+    //! (`auris_sampler`'s `shaping`) where it can be read and asserted on.
     //!
     //! # Where a new plugin goes
     //!

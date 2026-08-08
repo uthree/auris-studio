@@ -4,7 +4,9 @@
 //!
 //! * [`Oscillator`] — band-limited sine, pulse, saw and triangle plus an NES-style noise
 //!   register.
-//! * [`Adsr`] — a sample-accurate envelope with a de-click ramp for force-silenced voices.
+//! * [`Adsr`](auris_dsp::Adsr) — a sample-accurate envelope with a de-click ramp for
+//!   force-silenced voices. It lives in `auris-dsp` with the other primitives, because the
+//!   sampler shapes a SoundFont with the same one.
 //! * [`VoiceAllocator`] — a fixed voice pool with a steal-the-quietest policy.
 //!
 //! On top of those sit [`Chiptune`] (the general-purpose synth), [`Fm2`] (two-operator phase
@@ -38,7 +40,6 @@
 #![warn(missing_docs)]
 
 pub mod chiptune;
-pub mod envelope;
 pub mod fm2;
 pub mod lfo;
 pub mod noisedrum;
@@ -52,7 +53,6 @@ pub mod voice;
 mod test_support;
 
 pub use chiptune::Chiptune;
-pub use envelope::{Adsr, EnvelopeStage};
 pub use fm2::Fm2;
 pub use noisedrum::NoiseDrum;
 pub use oscillator::{Oscillator, Waveform};

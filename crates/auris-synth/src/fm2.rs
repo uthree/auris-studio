@@ -7,12 +7,12 @@ use auris_core::{
     Parameterized, PluginCategory, PluginDescriptor, PrepareContext, ProcessContext,
 };
 
-use crate::envelope::Adsr;
 use crate::lfo::Lfo;
 use crate::oscillator::{Oscillator, RADIANS_TO_CYCLES, Waveform};
 use crate::params::{ParamBank, finite_or};
 use crate::render::{SegmentRenderer, render_segments, spread_to_all_channels};
 use crate::voice::VoiceAllocator;
+use auris_dsp::Adsr;
 
 /// Voices in the pool.
 const VOICE_COUNT: usize = 8;

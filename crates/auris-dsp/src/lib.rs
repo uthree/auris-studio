@@ -2,9 +2,9 @@
 //!
 //! The crate is split in two halves:
 //!
-//! * **Primitives** — [`biquad`], [`delay_line`], [`envelope`] and [`smooth`] are plain DSP
-//!   building blocks with no plugin machinery attached. Instruments in `auris-synth` use them
-//!   too.
+//! * **Primitives** — [`adsr`], [`biquad`], [`delay_line`], [`envelope`] and [`smooth`] are plain
+//!   DSP building blocks with no plugin machinery attached. Instruments in `auris-synth` and
+//!   `auris-sampler` use them too.
 //! * **Effects** — one type per [`auris_core::plugin::Effect`] implementation, all bundled by
 //!   [`DspPack`] so an application installs the whole set with
 //!   `registry.install::<DspPack>()`.
@@ -25,6 +25,7 @@ mod bank;
 /// 480, and a delay set to a whole number of samples would then interpolate between two taps.
 pub(crate) const MILLISECONDS_PER_SECOND: f32 = 1_000.0;
 
+pub mod adsr;
 pub mod biquad;
 pub mod compressor;
 pub mod delay;
@@ -39,6 +40,7 @@ pub mod reverb;
 pub mod smooth;
 pub mod spectrum;
 
+pub use adsr::{Adsr, EnvelopeStage};
 pub use biquad::{Biquad, BiquadCoefficients};
 pub use compressor::Compressor;
 pub use delay::Delay;

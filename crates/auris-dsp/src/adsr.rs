@@ -10,17 +10,22 @@
 //! the target, at which point the envelope snaps to it. That definition is what makes the
 //! release testable: one release time after a note off the envelope is at or below -80 dB of
 //! the level it started from, and the voice is free.
+//!
+//! It sits here rather than with the instruments that started it because two crates now shape a
+//! note with it: `auris-synth` gives every built-in voice one, and `auris-sampler` puts one over
+//! whatever envelope a SoundFont brought with it. One definition of what an attack of five
+//! milliseconds sounds like is the whole point of the move.
 
 /// Level at or below which a fading envelope is treated as having arrived: -80 dBFS, quiet
 /// enough to be inaudible under anything else in a mix.
-const SILENCE_LEVEL: f32 = 1.0e-4;
+pub const SILENCE_LEVEL: f32 = 1.0e-4;
 
 /// Time constants an exponential segment runs for.
 ///
 /// Reaching [`SILENCE_LEVEL`] takes `ln(1/1e-4) = 9.2103` of them; the extra 3 % here means the
 /// arrival test has already fired by the time the stated duration is up, instead of landing
 /// exactly on the boundary where rounding decides the outcome.
-pub(crate) const SEGMENT_TIME_CONSTANTS: f32 = 9.4907;
+pub const SEGMENT_TIME_CONSTANTS: f32 = 9.4907;
 
 /// Length of the de-click ramp used when a voice is force-silenced.
 ///

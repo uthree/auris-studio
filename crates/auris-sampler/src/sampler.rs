@@ -2,13 +2,14 @@
 
 use std::sync::Arc;
 
-use auris_core::param::{ParamDescriptor, ParamId, db_to_gain};
+use auris_core::param::{ParamDescriptor, ParamId, ParamUnit, ParamValueCurve, db_to_gain};
 use auris_core::plugin::{
     Instrument, NoteEvent, Parameterized, PluginCategory, PluginDescriptor, PluginState,
     PrepareContext, ProcessContext,
 };
 use auris_core::registry::PluginRegistry;
 use auris_core::{AudioBuffer, PresetRef};
+use auris_dsp::Adsr;
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 
 use crate::bank::SharedSoundFonts;
@@ -16,9 +17,34 @@ use crate::bank::SharedSoundFonts;
 /// The sampler's plugin id, as a project file stores it.
 pub const SAMPLER_ID: &str = "auris.sampler.soundfont";
 
-/// Everything is played on one MIDI channel: a track is one sound, and the bank and patch that
-/// choose it are set on the channel rather than carried by each note.
+/// The channel a note is played on when the envelope is leaving the font alone.
+///
+/// A track is one sound, and the bank and patch that choose it are set on the channel rather
+/// than carried by each note, so one channel is all an unshaped sampler needs.
 const CHANNEL: i32 = 0;
+
+/// The channels a *shaped* note may be given, one note to a channel.
+///
+/// Channel expression is the only per-note gain rustysynth exposes, and it applies to every
+/// voice on its channel — so a note that is to be faded on its own has to have a channel to
+/// itself, and the number of channels is the polyphony. Fifteen notes is thin next to the 128
+/// voices the library will hold, which is the price of shaping and the reason an untouched
+/// envelope does not pay it.
+///
+/// Channel 9 is missing on purpose: rustysynth treats it as the percussion channel and adds 128
+/// to whatever bank is selected there, so a slot on it would play a different sound from the
+/// other fourteen. [`CHANNEL`] is the first of these, so the two paths agree about where an
+/// unshaped note goes.
+const SLOTS: [i32; 15] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15];
+
+/// Expression the library's own channel reset leaves behind, and so the number that means "as
+/// loud as this sampler is with no envelope over it".
+///
+/// The envelope is scaled into this rather than into the controller's full 16383, so a shaped
+/// note at full level is *exactly* as loud as an unshaped one. Everything measured for
+/// [`NOMINAL_VOLUME`] was measured through this value, and a fifteenth of a decibel that only
+/// appears once you touch a control is the kind of difference nobody ever tracks down.
+const FULL_EXPRESSION: i32 = 127 << 7;
 
 /// Frames the synthesiser computes at a time, internally.
 ///
@@ -99,6 +125,8 @@ const CC_MODULATION: i32 = 0x01;
 const CC_DATA_ENTRY: i32 = 0x06;
 const CC_RPN_LSB: i32 = 0x64;
 const CC_RPN_MSB: i32 = 0x65;
+const CC_EXPRESSION: i32 = 0x0B;
+const CC_EXPRESSION_FINE: i32 = 0x2B;
 
 /// Where a preset choice lives inside [`PluginState::extra`].
 ///
@@ -107,7 +135,25 @@ const CC_RPN_MSB: i32 = 0x65;
 const PRESET_KEY: &str = "preset";
 
 const LEVEL: usize = 0;
-const PARAM_COUNT: usize = 1;
+const ATTACK: usize = 1;
+const DECAY: usize = 2;
+const SUSTAIN: usize = 3;
+const RELEASE: usize = 4;
+const PARAM_COUNT: usize = 5;
+
+/// Whether these parameter values ask the sampler to shape a note at all.
+///
+/// The defaults are the answer "no": rise instantly, hold at full, and let go the moment the
+/// note does. An envelope in that position multiplies every note by one from beginning to end,
+/// so the sampler skips the whole mechanism and plays the font exactly as it is written —
+/// including the choke groups a drum kit relies on, which only work between notes sharing a
+/// channel.
+///
+/// The decay is not consulted. A decay falls from full level *to the sustain level*, so with the
+/// sustain at full it has nowhere to travel and changes nothing on its own.
+fn shaping(values: &[f32; PARAM_COUNT]) -> bool {
+    values[ATTACK] > 0.0 || values[SUSTAIN] < 1.0 || values[RELEASE] > 0.0
+}
 
 /// Writes a preset choice into the state a project stores for a track's instrument.
 ///
@@ -205,30 +251,91 @@ pub struct Sampler {
     /// Only used to fold stereo into a host that asked for one channel.
     scratch_left: Vec<f32>,
     scratch_right: Vec<f32>,
+    /// One per entry of [`SLOTS`], holding the envelope of whatever note is on that channel.
+    ///
+    /// Built once in [`Sampler::new`] and never resized, because it is indexed from the audio
+    /// thread.
+    slots: Vec<Slot>,
+    /// Counts up as slots are taken, so the smallest number is the one least recently used.
+    clock: u64,
     /// Keys held, for the activity indicator.
     held: u32,
+}
+
+/// One channel's worth of shaped note.
+#[derive(Debug)]
+struct Slot {
+    envelope: Adsr,
+    /// The key sounding here, until the envelope has taken it to silence and handed the
+    /// note-off to the font. `None` means the channel is free, tail or no tail.
+    key: Option<u8>,
+    /// [`Sampler::clock`] when this slot was last taken.
+    used: u64,
+    /// The expression last written to this channel, so an unchanged level costs nothing.
+    expression: i32,
+}
+
+/// The slot a new note should take.
+///
+/// A channel nobody is holding is preferred, least recently taken first: a font's own release
+/// tail keeps sounding on a channel after the note-off has gone, and going round the houses gives
+/// it fourteen other notes of grace before anything lands on top of it. When every channel is
+/// held, the quietest note is the one whose loss is least heard.
+fn claim(slots: &[Slot]) -> usize {
+    slots
+        .iter()
+        .enumerate()
+        .filter(|(_, slot)| slot.key.is_none())
+        .min_by_key(|(_, slot)| slot.used)
+        .or_else(|| {
+            slots
+                .iter()
+                .enumerate()
+                .min_by(|(_, a), (_, b)| a.envelope.level().total_cmp(&b.envelope.level()))
+        })
+        .map_or(0, |(index, _)| index)
 }
 
 impl Sampler {
     /// A sampler reading fonts from `fonts`.
     pub fn new(fonts: SharedSoundFonts) -> Self {
-        // One control, because the font is the sound. Anything else a track wants doing to it —
-        // ambience above all — belongs in its effect chain, where the offline renderer knows to
-        // keep rendering until the tail has fallen silent. An instrument reports no tail at all,
-        // so a reverb built into this one would be cut off at the end of every export.
-        let params = vec![ParamDescriptor::decibels(
-            LEVEL as u32,
-            "level",
-            "Level",
-            -60.0,
-            12.0,
-            0.0,
-        )];
+        // A level and an envelope, because the font is the sound. Anything else a track wants
+        // doing to it — ambience above all — belongs in its effect chain, where the offline
+        // renderer knows to keep rendering until the tail has fallen silent. An instrument
+        // reports no tail at all, so a reverb built into this one would be cut off at the end of
+        // every export.
+        //
+        // The four envelope controls carry the same keys, ranges and curves as the built-in
+        // instruments', so the same picture is drawn over them and dragging a corner means the
+        // same thing wherever it is done. Only the defaults differ, and they differ for a
+        // reason: theirs describe a sound, these describe *leaving the font's own alone*.
+        let params = vec![
+            ParamDescriptor::decibels(LEVEL as u32, "level", "Level", -60.0, 12.0, 0.0),
+            ParamDescriptor::new(ATTACK as u32, "attack", "Attack", 0.0, 2.0, 0.0)
+                .with_unit(ParamUnit::Seconds)
+                .with_curve(ParamValueCurve::Power(3.0)),
+            ParamDescriptor::new(DECAY as u32, "decay", "Decay", 0.0, 4.0, 0.0)
+                .with_unit(ParamUnit::Seconds)
+                .with_curve(ParamValueCurve::Power(3.0)),
+            ParamDescriptor::percent(SUSTAIN as u32, "sustain", "Sustain", 1.0),
+            ParamDescriptor::new(RELEASE as u32, "release", "Release", 0.0, 4.0, 0.0)
+                .with_unit(ParamUnit::Seconds)
+                .with_curve(ParamValueCurve::Power(3.0)),
+        ];
         let mut values = [0.0; PARAM_COUNT];
         for (slot, descriptor) in values.iter_mut().zip(&params) {
             *slot = descriptor.default;
         }
-        Self {
+        let slots = SLOTS
+            .iter()
+            .map(|_| Slot {
+                envelope: Adsr::new(),
+                key: None,
+                used: 0,
+                expression: FULL_EXPRESSION,
+            })
+            .collect();
+        let mut sampler = Self {
             fonts,
             params,
             values,
@@ -238,8 +345,30 @@ impl Sampler {
             poisoned: false,
             scratch_left: Vec::new(),
             scratch_right: Vec::new(),
+            slots,
+            clock: 0,
             held: 0,
+        };
+        sampler.reshape();
+        sampler
+    }
+
+    /// Restates the envelope's four times on every slot, from the current parameter values.
+    fn reshape(&mut self) {
+        let (attack, decay, sustain, release) = (
+            self.values[ATTACK],
+            self.values[DECAY],
+            self.values[SUSTAIN],
+            self.values[RELEASE],
+        );
+        for slot in &mut self.slots {
+            slot.envelope.set_adsr(attack, decay, sustain, release);
         }
+    }
+
+    /// Whether the envelope is doing anything to the font's own sound. See [`shaping`].
+    fn shaped(&self) -> bool {
+        shaping(&self.values)
     }
 
     /// Which sound this sampler has been told to play.
@@ -289,28 +418,92 @@ impl Sampler {
     ///
     /// Called after every reset as well as after building: resetting the synthesiser resets its
     /// channels too, which would otherwise leave the track playing bank 0 patch 0.
+    /// Every slot channel is set up, not only the one in use, so that turning the envelope on
+    /// halfway through a take does not need a channel configured from the audio thread.
     fn select(&mut self, preset: PresetRef) {
         let Some(synth) = self.synth.as_mut() else {
             return;
         };
-        synth.process_midi_message(CHANNEL, CONTROL_CHANGE, CC_BANK_SELECT, preset.bank);
-        synth.process_midi_message(CHANNEL, PROGRAM_CHANGE, preset.patch, 0);
-        // Registered parameter 0 is the bend range; it takes both halves of the selection.
-        synth.process_midi_message(CHANNEL, CONTROL_CHANGE, CC_RPN_MSB, 0);
-        synth.process_midi_message(CHANNEL, CONTROL_CHANGE, CC_RPN_LSB, 0);
-        synth.process_midi_message(CHANNEL, CONTROL_CHANGE, CC_DATA_ENTRY, BEND_RANGE);
+        for channel in SLOTS {
+            synth.process_midi_message(channel, CONTROL_CHANGE, CC_BANK_SELECT, preset.bank);
+            synth.process_midi_message(channel, PROGRAM_CHANGE, preset.patch, 0);
+            // Registered parameter 0 is the bend range; it takes both halves of the selection.
+            synth.process_midi_message(channel, CONTROL_CHANGE, CC_RPN_MSB, 0);
+            synth.process_midi_message(channel, CONTROL_CHANGE, CC_RPN_LSB, 0);
+            synth.process_midi_message(channel, CONTROL_CHANGE, CC_DATA_ENTRY, BEND_RANGE);
+        }
     }
 
-    /// Sends one parameter's current value to the synthesiser.
+    /// Sends one slot's envelope level to its channel, if it has moved since the last write.
+    ///
+    /// Square-rooted on the way out, for the reason [`midi_velocity`] is: the library follows the
+    /// General MIDI spec and *squares* the channel's volume and expression before a voice is
+    /// multiplied by it. Writing the level straight through would make a fade that says it is at
+    /// half fall to a quarter, and a release stated in seconds arrive twice as fast as it reads.
+    fn write_expression(&mut self, index: usize) {
+        let level = self.slots[index].envelope.level().clamp(0.0, 1.0);
+        self.write_raw_expression(
+            index,
+            (level.sqrt() * FULL_EXPRESSION as f32).round() as i32,
+        );
+    }
+
+    /// Writes a 14-bit expression value to a slot's channel, unless it is already there.
+    fn write_raw_expression(&mut self, index: usize, raw: i32) {
+        if self.slots[index].expression == raw {
+            return;
+        }
+        self.slots[index].expression = raw;
+        let channel = SLOTS[index];
+        if let Some(synth) = self.synth.as_mut() {
+            // Coarse first: the library keeps the two halves of the controller in one 14-bit
+            // number, and writing the low half second is what leaves the whole of it set.
+            synth.process_midi_message(channel, CONTROL_CHANGE, CC_EXPRESSION, raw >> 7);
+            synth.process_midi_message(channel, CONTROL_CHANGE, CC_EXPRESSION_FINE, raw & 0x7F);
+        }
+    }
+
+    /// Hands every shaped note back to the font and puts every channel to full.
+    ///
+    /// Run when the envelope stops shaping. Without it, the controls going back to their
+    /// defaults would leave whatever gain the last fade ended on written into the channel — and
+    /// worse, a note the envelope was holding open would have nothing left to close it.
+    fn release_the_slots(&mut self) {
+        for index in 0..self.slots.len() {
+            self.slots[index].envelope.silence();
+            self.hand_back(index);
+            self.write_raw_expression(index, FULL_EXPRESSION);
+        }
+    }
+
+    /// Tells the font the note on a slot is over, if the slot is holding one.
+    ///
+    /// Every path that ends a shaped note goes through here, because a slot whose key is cleared
+    /// without the note-off being sent is a voice the library will hold open forever.
+    fn hand_back(&mut self, index: usize) {
+        if let Some(key) = self.slots[index].key.take()
+            && let Some(synth) = self.synth.as_mut()
+        {
+            synth.note_off(SLOTS[index], key as i32);
+        }
+    }
+
+    /// Sends one parameter's current value wherever it has to go.
     fn push(&mut self, index: usize) {
-        let Some(synth) = self.synth.as_mut() else {
-            return;
-        };
-        let Some(value) = self.values.get(index).copied() else {
-            return;
-        };
-        if index == LEVEL {
-            synth.set_master_volume(NOMINAL_VOLUME * db_to_gain(value));
+        match index {
+            LEVEL => {
+                let value = self.values[LEVEL];
+                if let Some(synth) = self.synth.as_mut() {
+                    synth.set_master_volume(NOMINAL_VOLUME * db_to_gain(value));
+                }
+            }
+            ATTACK | DECAY | SUSTAIN | RELEASE => {
+                self.reshape();
+                if !self.shaped() {
+                    self.release_the_slots();
+                }
+            }
+            _ => {}
         }
     }
 
@@ -323,43 +516,29 @@ impl Sampler {
 
     /// Applies one event.
     fn dispatch(&mut self, event: NoteEvent) {
-        let Sampler {
-            synth,
-            held,
-            poisoned,
-            ..
-        } = self;
-        let Some(synth) = synth.as_mut() else {
-            return;
-        };
-        if *poisoned {
+        if self.synth.is_none() || self.poisoned {
             return;
         }
         match event {
             NoteEvent::NoteOn {
                 pitch, velocity, ..
-            } => {
-                // See `midi_velocity`: the number handed over is pre-compensated, because the
-                // synthesiser squares it and the rest of the application does not.
-                synth.note_on(CHANNEL, pitch as i32, midi_velocity(velocity));
-                *held = held.saturating_add(1);
-            }
-            NoteEvent::NoteOff { pitch, .. } => {
-                synth.note_off(CHANNEL, pitch as i32);
-                *held = held.saturating_sub(1);
-            }
-            NoteEvent::AllNotesOff { .. } => {
-                synth.note_off_all(false);
-                *held = 0;
-            }
-            NoteEvent::AllSoundOff { .. } => {
-                synth.note_off_all(true);
-                *held = 0;
-            }
+            } => self.start(pitch, velocity),
+            NoteEvent::NoteOff { pitch, .. } => self.let_go(pitch),
+            NoteEvent::AllNotesOff { .. } => self.stop_everything(false),
+            NoteEvent::AllSoundOff { .. } => self.stop_everything(true),
             NoteEvent::PitchBend { semitones, .. } => {
                 let travel = (semitones / BEND_RANGE as f32).clamp(-1.0, 1.0);
                 let raw = (8192.0 + travel * 8191.0).round().clamp(0.0, 16383.0) as i32;
-                synth.process_midi_message(CHANNEL, PITCH_BEND, raw & 0x7F, (raw >> 7) & 0x7F);
+                if let Some(synth) = self.synth.as_mut() {
+                    for channel in SLOTS {
+                        synth.process_midi_message(
+                            channel,
+                            PITCH_BEND,
+                            raw & 0x7F,
+                            (raw >> 7) & 0x7F,
+                        );
+                    }
+                }
             }
             NoteEvent::Modulation { amount, .. } => {
                 // Handed straight to the font rather than interpreted. A SoundFont declares its
@@ -367,13 +546,137 @@ impl Sampler {
                 // every General MIDI set — but a font is free to have wired it to a filter, and
                 // what it was authored to do is what it should do.
                 let raw = (amount.clamp(0.0, 1.0) * 127.0).round() as i32;
-                synth.process_midi_message(CHANNEL, CONTROL_CHANGE, CC_MODULATION, raw);
+                if let Some(synth) = self.synth.as_mut() {
+                    for channel in SLOTS {
+                        synth.process_midi_message(channel, CONTROL_CHANGE, CC_MODULATION, raw);
+                    }
+                }
             }
         }
     }
 
-    /// Renders `start..end` of the block.
+    /// Starts a note, on its own channel when the envelope has something to say about it.
+    fn start(&mut self, pitch: u8, velocity: f32) {
+        self.held = self.held.saturating_add(1);
+        // See `midi_velocity`: the number handed over is pre-compensated, because the
+        // synthesiser squares it and the rest of the application does not.
+        let velocity = midi_velocity(velocity);
+        if !self.shaped() {
+            if let Some(synth) = self.synth.as_mut() {
+                synth.note_on(CHANNEL, pitch as i32, velocity);
+            }
+            return;
+        }
+        let index = claim(&self.slots);
+        // Whatever was here is handed back before the channel changes hands, so the note being
+        // displaced ends rather than being re-shaped by the note that displaced it.
+        self.hand_back(index);
+        self.slots[index].envelope.silence();
+        self.slots[index].envelope.trigger();
+        self.slots[index].key = Some(pitch);
+        self.slots[index].used = self.clock;
+        self.clock = self.clock.wrapping_add(1);
+        // Before the note, so the first block it is heard in is already at the level the
+        // envelope says rather than at whatever the last note left behind.
+        self.write_expression(index);
+        if let Some(synth) = self.synth.as_mut() {
+            synth.note_on(SLOTS[index], pitch as i32, velocity);
+        }
+    }
+
+    /// Lets a note go: the envelope's release if it has one, the font's own otherwise.
+    fn let_go(&mut self, pitch: u8) {
+        self.held = self.held.saturating_sub(1);
+        // The newest note with this key. The same key struck twice while the first is still
+        // sounding is two notes, and the one being let go is the one that started last.
+        let held = self
+            .slots
+            .iter()
+            .enumerate()
+            .filter(|(_, slot)| slot.key == Some(pitch) && !slot.envelope.is_releasing())
+            .max_by_key(|(_, slot)| slot.used)
+            .map(|(index, _)| index);
+        match held {
+            // The font is not told yet: the envelope owns the fade, and telling the font now
+            // would start its own release underneath and cut the tail short. `step_envelopes`
+            // hands the note back when the level reaches silence.
+            Some(index) => self.slots[index].envelope.release(),
+            // No slot holds it, so it is a note from before the envelope was turned on.
+            None => {
+                if let Some(synth) = self.synth.as_mut() {
+                    synth.note_off(CHANNEL, pitch as i32);
+                }
+            }
+        }
+    }
+
+    /// Ends everything: `immediate` cuts, otherwise every note is let go at once.
+    fn stop_everything(&mut self, immediate: bool) {
+        self.held = 0;
+        for slot in &mut self.slots {
+            slot.key = None;
+            if immediate {
+                slot.envelope.silence();
+            } else {
+                slot.envelope.release();
+            }
+        }
+        if let Some(synth) = self.synth.as_mut() {
+            synth.note_off_all(immediate);
+        }
+        if immediate {
+            // Nothing is sounding, so the channels go back to full rather than staying wherever
+            // the envelopes were cut off.
+            for index in 0..self.slots.len() {
+                self.write_raw_expression(index, FULL_EXPRESSION);
+            }
+        }
+    }
+
+    /// Advances every sounding envelope by `frames` and writes the levels it arrives at.
+    ///
+    /// Called immediately before the frames it describes are rendered: the library ramps a
+    /// voice's gain from the previous block's value to this one across the block, so writing the
+    /// level the envelope *ends* at is what draws the segment rather than a staircase.
+    fn step_envelopes(&mut self, frames: usize) {
+        for index in 0..self.slots.len() {
+            if !self.slots[index].envelope.is_active() {
+                continue;
+            }
+            for _ in 0..frames {
+                self.slots[index].envelope.process();
+            }
+            self.write_expression(index);
+            if self.slots[index].envelope.is_finished() {
+                // The envelope has taken this note to silence, so the font can have its voices
+                // back. Its own release runs from here, under a channel gain of zero.
+                self.hand_back(index);
+            }
+        }
+    }
+
+    /// Renders `start..end` of the block, stepping the envelopes through it.
+    ///
+    /// An unshaped sampler renders the whole run in one call, exactly as it did before there was
+    /// an envelope. A shaped one walks it in [`INTERNAL_BLOCK`] steps, which is the length the
+    /// library renders and interpolates over anyway: shorter would buy resolution the voices
+    /// cannot use, and longer would turn a fast attack into a staircase.
     fn render_range(&mut self, out: &mut AudioBuffer, start: usize, end: usize) {
+        if !self.shaped() {
+            self.render_run(out, start, end);
+            return;
+        }
+        let mut cursor = start;
+        while cursor < end {
+            let stop = (cursor + INTERNAL_BLOCK).min(end);
+            self.step_envelopes(stop - cursor);
+            self.render_run(out, cursor, stop);
+            cursor = stop;
+        }
+    }
+
+    /// Renders `start..end` in one go, whatever the envelopes are doing.
+    fn render_run(&mut self, out: &mut AudioBuffer, start: usize, end: usize) {
         let Sampler {
             synth,
             poisoned,
@@ -511,6 +814,14 @@ impl Instrument for Sampler {
         self.synth = None;
         self.selected = None;
         self.held = 0;
+        for slot in &mut self.slots {
+            slot.envelope.set_sample_rate(ctx.sample_rate as f32);
+            slot.envelope.silence();
+            slot.key = None;
+            // A fresh synthesiser knows nothing about what was written to the old one, and its
+            // channels come up at full.
+            slot.expression = FULL_EXPRESSION;
+        }
 
         // Only a host asking for fewer than two channels needs anywhere to fold stereo down.
         let scratch = if ctx.channel_count >= 2 {
@@ -553,6 +864,12 @@ impl Instrument for Sampler {
 
     fn reset(&mut self) {
         self.held = 0;
+        for slot in &mut self.slots {
+            slot.envelope.silence();
+            slot.key = None;
+            // `Synthesizer::reset` puts every channel's controllers back, expression included.
+            slot.expression = FULL_EXPRESSION;
+        }
         if self.poisoned {
             // The synthesiser died rendering; whatever state it was left in is not one to
             // call back into. `prepare` will build a fresh one.
@@ -1070,6 +1387,235 @@ mod tests {
             }
         });
         assert_eq!(allocations, 0, "the sampler allocated while rendering");
+    }
+
+    // ------------------------------------------------------------ shaping the font
+
+    fn defaults() -> [f32; PARAM_COUNT] {
+        let mut values = [0.0; PARAM_COUNT];
+        for (slot, descriptor) in values.iter_mut().zip(&sampler().params) {
+            *slot = descriptor.default;
+        }
+        values
+    }
+
+    #[test]
+    fn the_envelope_leaves_the_font_alone_until_it_is_touched() {
+        // The whole design rests on this: an untouched envelope has to cost nothing, because the
+        // shaped path trades a drum kit's choke groups and 113 voices of polyphony for the fade.
+        // Nobody who never opened the window should pay that.
+        assert!(!shaping(&defaults()));
+
+        for index in [ATTACK, SUSTAIN, RELEASE] {
+            let mut values = defaults();
+            values[index] = if index == SUSTAIN { 0.9 } else { 0.1 };
+            assert!(
+                shaping(&values),
+                "parameter {index} should have turned the envelope on"
+            );
+        }
+    }
+
+    #[test]
+    fn a_decay_with_nowhere_to_fall_is_not_shaping() {
+        // A decay travels from full level down to the sustain level. With the sustain at full it
+        // has no distance to cover, and switching the sampler into its shaped path for a control
+        // that cannot be heard would be a regression bought for nothing.
+        let mut values = defaults();
+        values[DECAY] = 2.0;
+        assert!(!shaping(&values));
+
+        values[SUSTAIN] = 0.5;
+        assert!(shaping(&values));
+    }
+
+    /// Slots in a stated order of use, none of them holding a key.
+    fn free_slots(used: &[u64]) -> Vec<Slot> {
+        used.iter()
+            .map(|used| Slot {
+                envelope: Adsr::new(),
+                key: None,
+                used: *used,
+                expression: FULL_EXPRESSION,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_new_note_takes_the_channel_that_has_been_idle_longest() {
+        // Round the houses rather than back to the front: the font's own release tail is still
+        // sounding on a channel after its note has gone, and every slot passed over before
+        // coming back to it is a note's worth of grace for that tail.
+        let slots = free_slots(&[7, 2, 9, 4]);
+        assert_eq!(claim(&slots), 1);
+    }
+
+    #[test]
+    fn a_note_that_finds_every_channel_held_displaces_the_quietest() {
+        let mut slots = free_slots(&[0, 1, 2, 3]);
+        for (index, slot) in slots.iter_mut().enumerate() {
+            slot.key = Some(60 + index as u8);
+            slot.envelope.trigger();
+            // Level 1, 2, 3, 4 attack steps in: the first is the quietest.
+            for _ in 0..=index {
+                slot.envelope.process();
+            }
+        }
+        assert_eq!(claim(&slots), 0);
+
+        // And once one is let go it is taken instead, however loud it still is.
+        slots[3].key = None;
+        assert_eq!(claim(&slots), 3);
+    }
+
+    #[test]
+    fn an_attack_fades_a_note_the_font_starts_at_once() {
+        // The test that would fail if the envelope were computed and never reached the audio:
+        // expression is the only per-note gain the library exposes, and this is the proof that
+        // writing it does something.
+        let bank = stocked();
+        let opening = |attack: f32| {
+            let mut sampler = playing(bank.clone(), 0, 512);
+            sampler.set_param_by_key("attack", attack);
+            let mut out = AudioBuffer::stereo(512, RATE);
+            let ctx = ProcessContext::realtime(RATE, 512, 0, 120.0, true);
+            sampler.process(&[note_on(0)], &mut out, &ctx);
+            (rms(&out.channel(0)[..64]), rms(&out.channel(0)[448..]))
+        };
+
+        // The font has an opening of its own — two milliseconds of delay and attack, which is
+        // what the defaults in a SoundFont's envelope generators come to — so the untouched
+        // sampler is the reference rather than a flat line.
+        let (flat_early, flat_late) = opening(0.0);
+        let (slow_early, slow_late) = opening(0.2);
+        assert!(
+            slow_early < flat_early / 5.0,
+            "the attack did not fade the note in: {slow_early} against the font's own {flat_early}"
+        );
+        assert!(
+            slow_late < flat_late / 2.0,
+            "a fifth of a second in, the note should still be climbing, not at {slow_late}"
+        );
+    }
+
+    #[test]
+    fn a_release_holds_a_note_the_font_would_have_dropped() {
+        // The font's own release is a millisecond, so anything still sounding thirty
+        // milliseconds after the key is let go is the envelope's doing and nothing else.
+        let bank = stocked();
+        let ringing = |release: f32| {
+            let mut sampler = playing(bank.clone(), 0, 512);
+            sampler.set_param_by_key("release", release);
+            let mut out = AudioBuffer::stereo(512, RATE);
+            let ctx = ProcessContext::realtime(RATE, 512, 0, 120.0, true);
+            sampler.process(&[note_on(0)], &mut out, &ctx);
+            let sounding = rms(out.channel(0));
+            sampler.process(
+                &[NoteEvent::NoteOff {
+                    frame: 0,
+                    pitch: crate::test_support::ROOT_KEY,
+                }],
+                &mut out,
+                &ctx,
+            );
+            sampler.process(&[], &mut out, &ctx);
+            (sounding, rms(out.channel(0)))
+        };
+
+        let (sounding, after) = ringing(0.0);
+        assert!(sounding > 0.01, "the reference note made no sound");
+        assert!(
+            after < sounding / 100.0,
+            "with no release the font should have dropped the note already, not {after}"
+        );
+
+        let (sounding, after) = ringing(0.3);
+        assert!(
+            after > sounding / 2.0,
+            "the release let the note go early: {after} against {sounding}"
+        );
+    }
+
+    #[test]
+    fn turning_the_envelope_back_off_does_not_leave_the_sampler_quiet() {
+        // The channels carry the fade, so a sampler put back to its defaults halfway through a
+        // fade would otherwise go on playing at whatever gain that fade had reached.
+        let bank = stocked();
+        let mut sampler = playing(bank, 0, 512);
+        let mut out = AudioBuffer::stereo(512, RATE);
+        let ctx = ProcessContext::realtime(RATE, 512, 0, 120.0, true);
+
+        sampler.set_param_by_key("attack", 2.0);
+        sampler.process(&[note_on(0)], &mut out, &ctx);
+        let fading = rms(out.channel(0));
+
+        sampler.set_param_by_key("attack", 0.0);
+        sampler.process(&[note_on(0)], &mut out, &ctx);
+        assert!(
+            rms(out.channel(0)) > fading * 10.0,
+            "the sampler stayed under the fade it was told to stop applying"
+        );
+    }
+
+    #[test]
+    fn a_shaped_note_at_full_level_is_as_loud_as_an_unshaped_one() {
+        // The envelope is scaled into the expression the library's own reset leaves behind, so
+        // that reaching for a control never quietly moves the whole track. Everything measured
+        // for `NOMINAL_VOLUME` was measured at that value.
+        let bank = stocked();
+        let sustained = |shape: bool| {
+            let frames = 2_048;
+            let mut sampler = playing(bank.clone(), 0, frames);
+            if shape {
+                // Shaping, but arriving at full level well inside the window measured below.
+                sampler.set_param_by_key("attack", 0.001);
+                sampler.set_param_by_key("release", 0.5);
+            }
+            let mut out = AudioBuffer::stereo(frames, RATE);
+            let ctx = ProcessContext::realtime(RATE, frames, 0, 120.0, true);
+            sampler.process(&[note_on(0)], &mut out, &ctx);
+            rms(&out.channel(0)[frames / 2..])
+        };
+
+        let ratio = sustained(true) / sustained(false);
+        assert!(
+            (ratio - 1.0).abs() < 0.01,
+            "shaping moved the level by a factor of {ratio}"
+        );
+    }
+
+    #[test]
+    fn the_shaped_path_does_not_allocate_either() {
+        // `nothing_on_the_audio_path_allocates` covers the plain path; this is the same contract
+        // for the one that steps fifteen envelopes and writes controllers while it renders.
+        let mut sampler = playing(stocked(), 0, 512);
+        sampler.set_param_by_key("attack", 0.05);
+        sampler.set_param_by_key("sustain", 0.6);
+        sampler.set_param_by_key("release", 0.4);
+        let mut out = AudioBuffer::stereo(512, RATE);
+        let ctx = ProcessContext::realtime(RATE, 512, 0, 120.0, true);
+        let events = [
+            note_on(0),
+            NoteEvent::NoteOff {
+                frame: 128,
+                pitch: crate::test_support::ROOT_KEY,
+            },
+            NoteEvent::PitchBend {
+                frame: 200,
+                semitones: 2.0,
+            },
+            NoteEvent::AllNotesOff { frame: 400 },
+        ];
+        sampler.process(&events, &mut out, &ctx);
+
+        let allocations = crate::test_support::count_allocations(|| {
+            for _ in 0..64 {
+                sampler.process(&events, &mut out, &ctx);
+                sampler.set_param_by_key("release", 0.3);
+                sampler.reset();
+            }
+        });
+        assert_eq!(allocations, 0, "the sampler allocated while shaping");
     }
 
     // ------------------------------------------------------------ what a velocity means

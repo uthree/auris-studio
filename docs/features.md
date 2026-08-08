@@ -546,6 +546,25 @@ document keeps instead is enough to recognise the file again if it moves: its na
 Playback is `rustysynth`, which both parses the format and renders it. Building the synthesiser
 happens off the audio thread; what runs on it allocates nothing.
 
+### Shaping a font
+
+The sampler carries the same four controls the built-in instruments do — attack, decay, sustain,
+release — and the same draggable envelope above them. They sit *on top of* the font's own shape
+rather than replacing it: a piano's hammer is still a hammer, but you can fade it in, hold it
+under its own decay, or let it ring long after the key has gone.
+
+They start where they do nothing. Attack and release at zero, sustain at full, and the sampler
+plays the font exactly as it is written. That default is load-bearing rather than tidy. Channel
+expression is the only per-note gain the library exposes and it applies to a whole channel, so a
+note that is to be faded on its own needs a channel to itself — fifteen of the sixteen there are.
+Touching a control buys the fade and spends the polyphony, and it also spends a drum kit's choke
+groups, which only work between notes sharing a channel. Leaving them alone spends nothing: an
+untouched envelope is not a multiply-by-one on the audio path, it is no path at all.
+
+A release of zero means the note stops when the key does, which is what the graph shows — a
+vertical drop with no tail. If you raise the attack and find your notes cutting off, that corner
+is the one to drag.
+
 ## Built-in effects
 
 | Id | Name | Notes |

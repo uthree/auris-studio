@@ -648,6 +648,7 @@ name = "auris-sampler"
 version = "0.2.0"
 dependencies = [
  "auris-core",
+ "auris-dsp",
  "log",
  "rustysynth",
  "serde_json",
@@ -677,6 +678,7 @@ name = "auris-synth"
 version = "0.2.0"
 dependencies = [
  "auris-core",
+ "auris-dsp",
  "serde",
 ]
 

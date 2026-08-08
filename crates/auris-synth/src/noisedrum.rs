@@ -6,11 +6,11 @@ use auris_core::{
     Parameterized, PluginCategory, PluginDescriptor, PrepareContext, ProcessContext,
 };
 
-use crate::envelope::Adsr;
 use crate::oscillator::{Oscillator, Waveform};
 use crate::params::{ParamBank, finite_or};
 use crate::render::{SegmentRenderer, render_segments, spread_to_all_channels};
 use crate::voice::VoiceAllocator;
+use auris_dsp::Adsr;
 
 /// Voices in the pool. Drum parts overlap far less than melodic ones, but a ringing crash under
 /// a fast hat pattern still needs a few.
