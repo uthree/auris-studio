@@ -85,29 +85,56 @@ impl PluginWindow {
     /// eighteen kilohertz — under a pixel for the whole bottom octave. The extra width buys
     /// resolution nothing else in the window needs, which is why it is not simply the width.
     pub const CURVE_WIDTH: Pixels = px(440.0);
-    /// Tallest it may grow before its body scrolls instead.
-    pub const MAX_HEIGHT: Pixels = px(420.0);
+    /// Tallest the list of controls may grow before it scrolls instead.
+    pub const MAX_LIST_HEIGHT: Pixels = px(420.0);
 
-    /// How large a window with `param_count` controls wants to be.
+    /// The gap between two control rows, and the padding around the body holding them.
     ///
-    /// The graph is outside the scrolling body and keeps its full height, so a window that has
-    /// one is allowed to be that much taller before the list starts scrolling — otherwise adding
-    /// the curve would have taken a third of the sliders away with it.
-    pub fn size(param_count: usize, has_curve: bool) -> Size<Pixels> {
-        let body = Metrics::CONTROL_HEIGHT * param_count as f32;
-        // Title bar, the body, and the padding either side of it.
-        let wanted = Metrics::PANEL_HEADER_HEIGHT + body + px(16.0);
-        let graph = match has_curve {
-            true => px(crate::ui::analyser::HEIGHT),
-            false => px(0.0),
-        };
+    /// The body's `gap_1` and `p_2`, written down so [`PluginWindow::height`] can estimate the
+    /// same box the builder actually makes. They were the bug: the old estimate counted the rows
+    /// and forgot the four pixels between each pair, so a compressor came out twenty-seven pixels
+    /// short and its last control was cut through the middle.
+    const ROW_GAP: Pixels = px(4.0);
+    const BODY_PADDING: Pixels = px(8.0);
+
+    /// How wide the window is drawn, and the tallest it may grow.
+    ///
+    /// A *ceiling*, not a size: the body sizes itself to the rows it holds and stops here. That is
+    /// the whole reason this is not the estimate below — a ceiling that is too low clips, and an
+    /// estimate that is too low only moves the window a few pixels.
+    ///
+    /// The graph is outside the scrolling body and keeps its full height, so a window that has one
+    /// may be that much taller before the list starts scrolling — otherwise adding the curve would
+    /// have taken a third of the sliders away with it.
+    pub fn frame(has_curve: bool) -> Size<Pixels> {
         size(
             match has_curve {
                 true => Self::CURVE_WIDTH,
                 false => Self::WIDTH,
             },
-            (wanted + graph).min(Self::MAX_HEIGHT + graph),
+            Self::MAX_LIST_HEIGHT + Self::graph_height(has_curve),
         )
+    }
+
+    /// How tall a window with `param_count` controls comes out, for deciding where it will fit.
+    ///
+    /// Only ever used to nudge the window inside the viewport, which is why an estimate is
+    /// allowed to be one here at all.
+    pub fn height(param_count: usize, has_curve: bool) -> Pixels {
+        let rows = param_count.max(1) as f32;
+        let body = Metrics::CONTROL_HEIGHT * rows
+            + Self::ROW_GAP * (rows - 1.0)
+            + Self::BODY_PADDING * 2.0;
+        (Metrics::PANEL_HEADER_HEIGHT + body + Self::graph_height(has_curve))
+            .min(Self::frame(has_curve).height)
+    }
+
+    /// How much room the analyser takes above the controls, or none when there is not one.
+    fn graph_height(has_curve: bool) -> Pixels {
+        match has_curve {
+            true => px(crate::ui::analyser::HEIGHT),
+            false => px(0.0),
+        }
     }
 
     /// Where the window is actually drawn, given the viewport it has to fit in.
@@ -174,8 +201,15 @@ impl AurisApp {
         let theme = self.theme.clone();
         let name = self.plugin_label(&plugin_id);
         let descriptors = self.session.param_descriptors(&plugin_id);
-        let frame = PluginWindow::size(descriptors.len(), analyser.is_some());
-        let origin = window.origin(viewport, frame);
+        let has_curve = analyser.is_some();
+        let frame = PluginWindow::frame(has_curve);
+        let origin = window.origin(
+            viewport,
+            size(
+                frame.width,
+                PluginWindow::height(descriptors.len(), has_curve),
+            ),
+        );
         let controls = self.param_controls(
             &descriptors,
             move |param| subject.param_target(param),
@@ -337,10 +371,18 @@ mod tests {
         );
     }
 
+    /// A window of `count` controls, at the size the layout would give it.
+    fn frame_of(count: usize) -> Size<Pixels> {
+        size(
+            PluginWindow::frame(false).width,
+            PluginWindow::height(count, false),
+        )
+    }
+
     #[test]
     fn a_window_opened_at_the_edge_is_pushed_back_inside() {
         let viewport = size(px(800.0), px(600.0));
-        let wanted = PluginWindow::size(4, false);
+        let wanted = frame_of(4);
 
         let corner = PluginWindow {
             subject: PluginSubject::Instrument(TrackId(0)),
@@ -365,18 +407,36 @@ mod tests {
             subject: PluginSubject::Instrument(TrackId(0)),
             anchor: point(px(400.0), px(400.0)),
         };
-        assert_eq!(
-            window.origin(tiny, PluginWindow::size(8, false)),
-            point(px(0.0), px(0.0))
-        );
+        assert_eq!(window.origin(tiny, frame_of(8)), point(px(0.0), px(0.0)));
     }
 
     #[test]
     fn the_window_stops_growing_and_scrolls_instead() {
-        assert!(PluginWindow::size(1, false).height < PluginWindow::size(6, false).height);
+        assert!(PluginWindow::height(1, false) < PluginWindow::height(6, false));
         assert_eq!(
-            PluginWindow::size(400, false).height,
-            PluginWindow::MAX_HEIGHT
+            PluginWindow::height(400, false),
+            PluginWindow::MAX_LIST_HEIGHT
+        );
+    }
+
+    #[test]
+    fn a_row_costs_the_gap_beside_it_as_well_as_its_own_height() {
+        // The bug this replaced: the estimate counted six rows at twenty-two pixels and left the
+        // body's `gap_1` out, so a compressor's last control was cut through the middle.
+        let step = PluginWindow::height(7, false) - PluginWindow::height(6, false);
+        assert_eq!(step, Metrics::CONTROL_HEIGHT + PluginWindow::ROW_GAP);
+
+        // And the whole thing is at least as tall as what has to go in it. A window that has
+        // reached the ceiling is allowed to be shorter — that is what the scrollbar is for.
+        let rows = 7.0;
+        let needed = Metrics::PANEL_HEADER_HEIGHT
+            + Metrics::CONTROL_HEIGHT * rows
+            + PluginWindow::ROW_GAP * (rows - 1.0)
+            + PluginWindow::BODY_PADDING * 2.0;
+        assert!(PluginWindow::height(7, false) >= needed);
+        assert!(
+            needed < PluginWindow::MAX_LIST_HEIGHT,
+            "still short of the cap"
         );
     }
 
@@ -385,9 +445,9 @@ mod tests {
         // The graph sits outside the scrolling body, so counting it against the same ceiling
         // would have taken a third of the sliders away in exchange for drawing them a picture.
         let graph = px(crate::ui::analyser::HEIGHT);
-        let plain = PluginWindow::size(24, false);
-        let curved = PluginWindow::size(24, true);
-        assert_eq!(plain.height, PluginWindow::MAX_HEIGHT);
+        let plain = PluginWindow::frame(false);
+        let curved = PluginWindow::frame(true);
+        assert_eq!(plain.height, PluginWindow::MAX_LIST_HEIGHT);
         assert_eq!(curved.height, plain.height + graph);
         assert!(curved.width > plain.width, "and a curve is drawn wider");
     }

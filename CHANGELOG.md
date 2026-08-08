@@ -32,6 +32,15 @@ format rather than a convention: `## <version> — <date>`.
 * The equalizer's window is drawn wider, and the graph does not count against the height at which
   the slider list starts scrolling: the picture would otherwise have cost a third of the controls.
 
+### A plugin window is as tall as what is in it
+
+* **The last control was cut through the middle** — a compressor showed six and a half rows. The
+  window's height was worked out by counting the rows and multiplying, which left out the four
+  pixels between each pair and the padding around them, and it came out twenty-seven pixels short.
+* That number is now a *ceiling* rather than a size. The body sizes itself to the rows it holds and
+  stops at the ceiling, so a figure that is too small can only nudge where the window opens instead
+  of cutting a control in half.
+
 ### The plugin window no longer lets the pointer through
 
 * A press over a plugin's controls was reaching **whatever was behind the window as well**. gpui's

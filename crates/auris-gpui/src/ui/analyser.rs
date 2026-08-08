@@ -129,7 +129,11 @@ pub fn moved(band: EqBandSetting, at: (f32, f32), gain_limit: f32) -> EqBandSett
 /// Multiplied rather than added, because Q is read logarithmically: the step from 0.5 to 1.0 is
 /// the same musical change as the step from 4 to 8, and a fixed increment would crawl at the
 /// bottom of the range and leap at the top.
-const Q_PER_NOTCH: f32 = 1.12;
+///
+/// A quarter, which crosses the useful range — a broad 0.5 to a surgical 8 — in a dozen notches.
+/// A twelfth was the first guess and it was a control that looked broken: a notch moved a Q of
+/// 0.71 to 0.80, which on a curve three hundred pixels wide is nothing anybody can see happening.
+const Q_PER_NOTCH: f32 = 1.25;
 
 /// The band's Q after `notches` of the wheel over its node.
 ///
@@ -540,18 +544,16 @@ fn paint_analyser(
             at((across, up))
         })
         .collect();
+    // Grey where the curve is the accent colour, and no fainter than that: it is the thing being
+    // aimed at, and a target nobody can see is a graph with a decoration behind it. Drawn first,
+    // so where the two cross it is the curve that is on top.
     paint::area_under(
         window,
         &spectrum_points,
         baseline,
-        Theme::translucent(theme.text_faint, 0.30),
+        Theme::translucent(theme.text_muted, 0.35),
     );
-    paint::polyline(
-        window,
-        &spectrum_points,
-        px(1.0),
-        Theme::translucent(theme.text_faint, 0.85),
-    );
+    paint::polyline(window, &spectrum_points, px(1.0), theme.text_muted);
 
     // The curve, in the accent colour the nodes are in: it is the thing being edited, and the
     // spectrum behind it is what it is being aimed at.
@@ -721,6 +723,17 @@ mod tests {
         let high = resonance_after_scroll(8.0, 1.0, range) / 8.0;
         assert!((low - high).abs() < 1e-4, "{low} against {high}");
         assert!(low > 1.0, "the wheel forwards narrows the band");
+
+        // And one notch has to be a step somebody can see happen. A twelfth was the first guess:
+        // it took a default Q of 0.71 to 0.80, which on a curve this wide is nothing at all, and
+        // the control read as broken rather than as fine.
+        assert!(low >= 1.2, "one notch moved the band by {low}×");
+        // A dozen of them crosses the range anybody works in, from broad to surgical.
+        let mut q = 0.5;
+        for _ in 0..12 {
+            q = resonance_after_scroll(q, 1.0, range);
+        }
+        assert!(q > 6.0, "twelve notches only reached {q}");
 
         // And it comes back: a notch each way is where it started.
         let there = resonance_after_scroll(2.0, 3.0, range);
