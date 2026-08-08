@@ -14,12 +14,11 @@
 
 use auris_i18n::Key;
 use auris_session::prelude::*;
-use gpui::{AnyElement, Bounds, Pixels, Point, Size, Window, div, point, prelude::*, px, size};
+use gpui::{AnyElement, Pixels, Point, Size, div, point, prelude::*, px, size};
 
 use crate::app::{AurisApp, Drag};
 use crate::theme::Metrics;
 use crate::ui::icons::Icon;
-use crate::ui::paint;
 use crate::ui::plugin_editor::plugin_header;
 use crate::ui::widgets::chain_button;
 
@@ -78,17 +77,37 @@ pub struct PluginWindow {
 }
 
 impl PluginWindow {
-    /// How wide the window is drawn.
+    /// How wide a window of numbers is drawn.
     pub const WIDTH: Pixels = px(300.0);
+    /// How wide one carrying a curve is.
+    ///
+    /// A graph is a thing aimed at, and three hundred pixels of it spans thirty hertz to
+    /// eighteen kilohertz — under a pixel for the whole bottom octave. The extra width buys
+    /// resolution nothing else in the window needs, which is why it is not simply the width.
+    pub const CURVE_WIDTH: Pixels = px(440.0);
     /// Tallest it may grow before its body scrolls instead.
     pub const MAX_HEIGHT: Pixels = px(420.0);
 
-    /// How tall a window with `param_count` controls wants to be.
-    pub fn height(param_count: usize) -> Pixels {
+    /// How large a window with `param_count` controls wants to be.
+    ///
+    /// The graph is outside the scrolling body and keeps its full height, so a window that has
+    /// one is allowed to be that much taller before the list starts scrolling — otherwise adding
+    /// the curve would have taken a third of the sliders away with it.
+    pub fn size(param_count: usize, has_curve: bool) -> Size<Pixels> {
         let body = Metrics::CONTROL_HEIGHT * param_count as f32;
         // Title bar, the body, and the padding either side of it.
         let wanted = Metrics::PANEL_HEADER_HEIGHT + body + px(16.0);
-        wanted.min(Self::MAX_HEIGHT)
+        let graph = match has_curve {
+            true => px(crate::ui::analyser::HEIGHT),
+            false => px(0.0),
+        };
+        size(
+            match has_curve {
+                true => Self::CURVE_WIDTH,
+                false => Self::WIDTH,
+            },
+            (wanted + graph).min(Self::MAX_HEIGHT + graph),
+        )
     }
 
     /// Where the window is actually drawn, given the viewport it has to fit in.
@@ -98,225 +117,22 @@ impl PluginWindow {
     /// it; a window is not about to swallow a click, and flipping it would move the title bar out
     /// from under the hand that is reaching for it. A window larger than the viewport pins to the
     /// top-left, because that is the corner the title bar is in.
-    pub fn origin(&self, viewport: Size<Pixels>, height: Pixels) -> Point<Pixels> {
+    pub fn origin(&self, viewport: Size<Pixels>, window: Size<Pixels>) -> Point<Pixels> {
         let x = self
             .anchor
             .x
-            .min((viewport.width - Self::WIDTH).max(px(0.0)))
+            .min((viewport.width - window.width).max(px(0.0)))
             .max(px(0.0));
         let y = self
             .anchor
             .y
-            .min((viewport.height - height).max(px(0.0)))
+            .min((viewport.height - window.height).max(px(0.0)))
             .max(px(0.0));
         point(x, y)
     }
 }
 
-/// How many bars the spectrum is drawn as.
-///
-/// Far fewer than the window has bins. A display three hundred pixels wide cannot show five
-/// hundred of them, and a musician reads bands rather than bins — so the bins are gathered into
-/// this many, spaced by octave.
-const SPECTRUM_BANDS: usize = 48;
-
-/// Lowest frequency the display shows, in hertz.
-const SPECTRUM_LOW: f64 = 30.0;
-/// Highest frequency the display shows, in hertz.
-const SPECTRUM_HIGH: f64 = 18_000.0;
-/// Level at the bottom of the display, in dBFS.
-const SPECTRUM_FLOOR: f32 = -72.0;
-
-/// Whether this plugin is one whose editor shows what is passing through it.
-///
-/// A list rather than a method on the `Effect` trait: what a *display* offers is a property of
-/// the editor, not of the processor, and asking every plugin author about a window they have
-/// never seen would put a frontend's concern into the plugin contract. An equalizer is the one
-/// that needs it — its whole job is deciding where to put a curve, and the curve alone does not
-/// say where.
-fn analyses_spectrum(plugin_id: &str) -> bool {
-    plugin_id == "auris.fx.eq"
-}
-
-/// The frequencies the scale marks, and whether each carries its number.
-///
-/// Decades are named and the steps between them are only ruled. A line every octave with a
-/// number on it is a ruler; three numbers and a set of ticks is a scale somebody can read while
-/// looking at something else, which is what an analyser is for.
-const SPECTRUM_TICKS: [(f64, bool); 8] = [
-    (50.0, false),
-    (100.0, true),
-    (200.0, false),
-    (500.0, false),
-    (1_000.0, true),
-    (2_000.0, false),
-    (5_000.0, false),
-    (10_000.0, true),
-];
-
-/// How tall the strip carrying the numbers is.
-const SPECTRUM_SCALE_HEIGHT: f32 = 12.0;
-
-/// The longest run of unmeasured bands [`bridge_gaps`] will draw across.
-///
-/// Four at the very bottom of the display, where the gaps are widest; the number has one spare.
-const SPECTRUM_GAP: usize = 5;
-
-/// Where a frequency sits across the display, from 0 at the left edge to 1 at the right.
-///
-/// Logarithmic, because pitch is, and because that is how `auris_dsp::bands_from_bins` spaces the
-/// bands — the scale and the curve have to agree or the numbers under it are decoration.
-fn spectrum_x(hz: f64) -> f32 {
-    let span = (SPECTRUM_HIGH / SPECTRUM_LOW).ln();
-    ((hz / SPECTRUM_LOW).ln() / span).clamp(0.0, 1.0) as f32
-}
-
-/// How a frequency is written on the scale.
-fn hz_label(hz: f64) -> String {
-    if hz >= 1_000.0 {
-        format!("{:.0}k", hz / 1_000.0)
-    } else {
-        format!("{hz:.0}")
-    }
-}
-
-/// Bridges the gaps a logarithmic display leaves at the bottom of the spectrum.
-///
-/// At 30 Hz a band is four hertz wide and the analyser's bins are twenty-odd hertz apart, so most
-/// of the bottom octave has no bin in it at all and comes back at the floor. Drawn as bars nobody
-/// noticed; drawn as a line it is a comb, and the comb is a property of the display rather than
-/// of the sound.
-///
-/// So a *short* run at the floor between two measured bands is interpolated across: the analyser
-/// had nothing to say there, and a line that dives to the floor and back says "silence", which is
-/// a stronger claim than it made. A long run is left exactly where it is, because that is what a
-/// genuinely quiet part of the spectrum looks like — and so is a run at either end, which has
-/// nothing on one side to interpolate from.
-fn bridge_gaps(bands: &mut [f32], floor: f32, longest: usize) {
-    let mut at = 0;
-    while at < bands.len() {
-        if bands[at] > floor {
-            at += 1;
-            continue;
-        }
-        let mut end = at;
-        while end < bands.len() && bands[end] <= floor {
-            end += 1;
-        }
-        if end - at <= longest && at > 0 && end < bands.len() {
-            let (before, after) = (bands[at - 1], bands[end]);
-            let steps = (end - at + 1) as f32;
-            for (offset, index) in (at..end).enumerate() {
-                bands[index] = before + (after - before) * (offset + 1) as f32 / steps;
-            }
-        }
-        at = end;
-    }
-}
-
-/// The spectrum as a filled curve over a frequency scale, across the top of the window.
-///
-/// A curve rather than a bar chart. A bar chart of forty-eight bands is a picture of the
-/// *display's* resolution; what an ear hears and what an equalizer is about to move is a shape,
-/// and a shape is what a line draws. The numbers underneath are the other half of it — a bump was
-/// visible before and there was nothing on screen to say whether it was at 200 Hz or at 2 kHz,
-/// which is the only question anybody reaches for an analyser to answer.
-fn spectrum_display(mut bands: Vec<f32>, theme: &crate::theme::Theme) -> AnyElement {
-    bridge_gaps(&mut bands, Session::spectrum_silence(), SPECTRUM_GAP);
-    let theme = theme.clone();
-    div()
-        .h(px(76.0))
-        .w_full()
-        .flex_shrink_0()
-        .px_2()
-        .py_1()
-        .bg(theme.surface_sunken)
-        .border_b_1()
-        .border_color(theme.border)
-        .child(
-            gpui::canvas(
-                |_, _, _| (),
-                move |bounds, _, window, cx| paint_spectrum(window, cx, bounds, &bands, &theme),
-            )
-            .size_full(),
-        )
-        .into_any_element()
-}
-
-/// Draws the scale, then the curve over it.
-fn paint_spectrum(
-    window: &mut Window,
-    cx: &mut gpui::App,
-    bounds: Bounds<Pixels>,
-    bands: &[f32],
-    theme: &crate::theme::Theme,
-) {
-    let plot_height = (bounds.size.height - px(SPECTRUM_SCALE_HEIGHT)).max(px(1.0));
-    let baseline = bounds.origin.y + plot_height;
-    let left = f32::from(bounds.origin.x);
-    let width = f32::from(bounds.size.width);
-    let top = f32::from(bounds.origin.y);
-    let height = f32::from(plot_height);
-
-    for (hz, named) in SPECTRUM_TICKS {
-        let x = px(left + width * spectrum_x(hz));
-        paint::rect(
-            window,
-            Bounds {
-                origin: point(x, bounds.origin.y),
-                size: size(px(1.0), plot_height),
-            },
-            crate::theme::Theme::translucent(theme.border, if named { 1.0 } else { 0.5 }),
-        );
-        if named {
-            // Pulled back inside the panel where a decade would otherwise hang off the right
-            // edge: 10 kHz sits at ninety-one per cent of a display that ends at eighteen.
-            let at = (x + px(3.0)).min(bounds.origin.x + bounds.size.width - px(19.0));
-            paint::label(
-                window,
-                cx,
-                point(at, baseline + px(1.0)),
-                hz_label(hz),
-                px(9.0),
-                theme.text_faint,
-            );
-        }
-    }
-
-    let points: Vec<Point<Pixels>> = bands
-        .iter()
-        .enumerate()
-        .map(|(index, level)| {
-            // The middle of the band, because that is the frequency it stands for — the bands are
-            // spaced across the same log range the scale is, so the two line up by construction.
-            let across = (index as f32 + 0.5) / bands.len().max(1) as f32;
-            let up = ((level - SPECTRUM_FLOOR) / -SPECTRUM_FLOOR).clamp(0.0, 1.0);
-            point(px(left + width * across), px(top + height * (1.0 - up)))
-        })
-        .collect();
-
-    paint::area_under(
-        window,
-        &points,
-        baseline,
-        crate::theme::Theme::translucent(theme.accent, 0.25),
-    );
-    paint::polyline(window, &points, px(1.5), theme.accent);
-}
-
 impl AurisApp {
-    /// The current spectrum, gathered into bands ready to draw.
-    ///
-    /// A torn read — the audio thread wrote through the copy — returns the floor rather than a
-    /// window with a seam in it. The next repaint is sixteen milliseconds away and will find a
-    /// settled one, which is cheaper than making the audio thread wait for this.
-    fn spectrum_bins(&mut self) -> Vec<f32> {
-        let mut bands = vec![Session::spectrum_silence(); SPECTRUM_BANDS];
-        self.session
-            .spectrum(SPECTRUM_LOW, SPECTRUM_HIGH, &mut bands);
-        bands
-    }
-
     /// Opens the editor for one plugin, replacing whatever was open.
     pub(crate) fn open_plugin_window(&mut self, subject: PluginSubject, anchor: Point<Pixels>) {
         self.plugin_window = Some(PluginWindow { subject, anchor });
@@ -346,19 +162,20 @@ impl AurisApp {
         // Point the analysis at whichever strip this plugin sits on. Asked for every frame the
         // window is open, because a rebuild or a change of selection could otherwise leave it
         // reading a strip that has moved; it is one relaxed store.
-        if analyses_spectrum(&plugin_id) {
+        let equalizer = self.eq_view(subject, &plugin_id);
+        if equalizer.is_some() {
             self.session.watch_strip(subject.strip());
         } else {
             self.session.stop_watching();
         }
-        let spectrum = analyses_spectrum(&plugin_id).then(|| self.spectrum_bins());
+        let analyser = equalizer.map(|view| self.analyser_display(subject, view, cx));
         let envelope = self.envelope_of(subject, &plugin_id);
 
         let theme = self.theme.clone();
         let name = self.plugin_label(&plugin_id);
         let descriptors = self.session.param_descriptors(&plugin_id);
-        let height = PluginWindow::height(descriptors.len());
-        let origin = window.origin(viewport, height);
+        let frame = PluginWindow::size(descriptors.len(), analyser.is_some());
+        let origin = window.origin(viewport, frame);
         let controls = self.param_controls(
             &descriptors,
             move |param| subject.param_target(param),
@@ -371,8 +188,8 @@ impl AurisApp {
                 .absolute()
                 .left(origin.x)
                 .top(origin.y)
-                .w(PluginWindow::WIDTH)
-                .max_h(height)
+                .w(frame.width)
+                .max_h(frame.height)
                 .flex()
                 .flex_col()
                 .rounded(Metrics::RADIUS_LG)
@@ -380,6 +197,18 @@ impl AurisApp {
                 .border_1()
                 .border_color(theme.border)
                 .shadow_lg()
+                // A floating window that let the pointer through. gpui's hit test walks every
+                // hitbox under the pointer until one blocks, so a press over a plugin's slider
+                // was reaching the mixer strip behind it as well: the fader moved, and so did
+                // whatever the click landed on underneath.
+                .occlude()
+                // …and occluding is what would then stop the sliders working. A drag is followed
+                // on the root, and the hit test stops dead at the first blocking hitbox — so
+                // while this is up the root reads as un-hovered and never sees another pointer
+                // move. An overlay that occludes carries the drag itself; see
+                // `AurisApp::on_mouse_move`.
+                .on_mouse_move(cx.listener(AurisApp::on_mouse_move))
+                .on_mouse_up(gpui::MouseButton::Left, cx.listener(AurisApp::on_mouse_up))
                 .child(
                     div()
                         .flex()
@@ -426,7 +255,7 @@ impl AurisApp {
                             }),
                         )),
                 )
-                .children(spectrum.map(|bins| spectrum_display(bins, &theme)))
+                .children(analyser)
                 .children(envelope.map(|env| self.envelope_display(subject, env, cx)))
                 .child(
                     div()
@@ -470,62 +299,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_scale_and_the_curve_measure_the_same_axis() {
-        // The numbers under a curve are decoration unless they sit over the frequency they name.
-        // The bands are spaced across the log range by `bands_from_bins`, and the tick positions
-        // have to be worked out the same way or a 1 kHz mark lands on a 700 Hz band.
-        assert_eq!(spectrum_x(SPECTRUM_LOW), 0.0);
-        assert_eq!(spectrum_x(SPECTRUM_HIGH), 1.0);
-        assert_eq!(spectrum_x(1.0), 0.0, "below the display is its left edge");
-        assert_eq!(spectrum_x(40_000.0), 1.0, "and above it is the right");
-
-        // The middle of the display is the geometric mean, which is what makes it logarithmic:
-        // 30 Hz to 735 Hz is as wide as 735 Hz to 18 kHz, and both are half the panel.
-        let middle = (SPECTRUM_LOW * SPECTRUM_HIGH).sqrt();
-        assert!((spectrum_x(middle) - 0.5).abs() < 0.001, "{middle} Hz");
-
-        for (hz, _) in SPECTRUM_TICKS {
-            let at = spectrum_x(hz);
-            assert!(
-                (0.02..=0.98).contains(&at),
-                "the {hz} Hz tick is at {at}, which is on the frame rather than in the display"
-            );
-        }
-        assert_eq!(hz_label(100.0), "100");
-        assert_eq!(hz_label(10_000.0), "10k");
-    }
-
-    #[test]
-    fn a_short_gap_is_drawn_across_and_a_long_one_is_not() {
-        // The bottom octave has fewer bins than bands, so it comes back full of holes that are a
-        // property of the analyser rather than of the sound. A line that dives to the floor and
-        // back through one of them claims a silence nobody measured.
-        let floor = -90.0;
-        let mut bands = [-20.0, floor, floor, -24.0];
-        bridge_gaps(&mut bands, floor, 3);
-        assert!(
-            bands[1] < -20.0 && bands[1] > -24.0 && bands[2] < bands[1],
-            "the hole was not filled from its neighbours: {bands:?}"
-        );
-
-        // A long run is a quiet stretch of the spectrum and stays exactly where it is.
-        let mut long = [-20.0, floor, floor, floor, floor, -24.0];
-        bridge_gaps(&mut long, floor, 3);
-        assert_eq!(long, [-20.0, floor, floor, floor, floor, -24.0]);
-
-        // A run at either end has nothing on one side to interpolate from.
-        let mut edges = [floor, -20.0, floor];
-        bridge_gaps(&mut edges, floor, 3);
-        assert_eq!(edges, [floor, -20.0, floor]);
-
-        // Silence stays silence, whatever the length.
-        let mut silent = [floor; 8];
-        bridge_gaps(&mut silent, floor, 3);
-        assert_eq!(silent, [floor; 8]);
-        bridge_gaps(&mut [], floor, 3);
-    }
-
-    #[test]
     fn a_subject_names_the_parameter_it_edits() {
         assert_eq!(
             PluginSubject::Instrument(TrackId(1)).param_target(ParamId(2)),
@@ -567,22 +340,22 @@ mod tests {
     #[test]
     fn a_window_opened_at_the_edge_is_pushed_back_inside() {
         let viewport = size(px(800.0), px(600.0));
-        let height = PluginWindow::height(4);
+        let wanted = PluginWindow::size(4, false);
 
         let corner = PluginWindow {
             subject: PluginSubject::Instrument(TrackId(0)),
             anchor: point(px(780.0), px(590.0)),
         };
-        let origin = corner.origin(viewport, height);
-        assert!(origin.x + PluginWindow::WIDTH <= viewport.width);
-        assert!(origin.y + height <= viewport.height);
+        let origin = corner.origin(viewport, wanted);
+        assert!(origin.x + wanted.width <= viewport.width);
+        assert!(origin.y + wanted.height <= viewport.height);
 
         // One that already fits is left exactly where it was asked for.
         let roomy = PluginWindow {
             subject: PluginSubject::Instrument(TrackId(0)),
             anchor: point(px(100.0), px(80.0)),
         };
-        assert_eq!(roomy.origin(viewport, height), point(px(100.0), px(80.0)));
+        assert_eq!(roomy.origin(viewport, wanted), point(px(100.0), px(80.0)));
     }
 
     #[test]
@@ -593,14 +366,29 @@ mod tests {
             anchor: point(px(400.0), px(400.0)),
         };
         assert_eq!(
-            window.origin(tiny, PluginWindow::height(8)),
+            window.origin(tiny, PluginWindow::size(8, false)),
             point(px(0.0), px(0.0))
         );
     }
 
     #[test]
     fn the_window_stops_growing_and_scrolls_instead() {
-        assert!(PluginWindow::height(1) < PluginWindow::height(6));
-        assert_eq!(PluginWindow::height(400), PluginWindow::MAX_HEIGHT);
+        assert!(PluginWindow::size(1, false).height < PluginWindow::size(6, false).height);
+        assert_eq!(
+            PluginWindow::size(400, false).height,
+            PluginWindow::MAX_HEIGHT
+        );
+    }
+
+    #[test]
+    fn a_window_with_a_curve_keeps_the_list_it_would_have_had_without_one() {
+        // The graph sits outside the scrolling body, so counting it against the same ceiling
+        // would have taken a third of the sliders away in exchange for drawing them a picture.
+        let graph = px(crate::ui::analyser::HEIGHT);
+        let plain = PluginWindow::size(24, false);
+        let curved = PluginWindow::size(24, true);
+        assert_eq!(plain.height, PluginWindow::MAX_HEIGHT);
+        assert_eq!(curved.height, plain.height + graph);
+        assert!(curved.width > plain.width, "and a curve is drawn wider");
     }
 }

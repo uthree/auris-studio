@@ -9,6 +9,37 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### The equalizer has a curve you can grab
+
+* The window drew the spectrum going in and left you to aim at it with twenty-four sliders. It now
+  draws **the response the equalizer is making**, over that spectrum, with a node on each band that
+  is switched in. Drag a node: sideways is the frequency, up and down is the gain, and both at once
+  is the pair you were thinking about when you reached for it.
+* **The wheel over a node narrows the band.** Q is the third number a band has and there is nowhere
+  on a two-axis graph to put it; the wheel is where every equalizer with a curve has put it, and it
+  costs no screen — the graph sits outside the scrolling list, so the wheel over it meant nothing
+  before.
+* A **high-pass or low-pass node moves sideways only**, and its node sits on the centre line: those
+  shapes have a corner, not a level, and the gain a slider would let you set is a number the audio
+  never reads.
+* A band that is **switched off has no node** and is not on the curve. The toggle in the list below
+  is what switches it in — a handle floating over a shape it has no part in is a control that lies.
+* The curve is drawn by the same crate that makes the audio, from the same band table, at the rate
+  the engine is running at. A frontend that drew it itself would be a second implementation of the
+  cookbook filters, and the two would agree until the day one of them was corrected.
+* The sliders stay underneath. A graph is how a shape is *found* and a number is how it is *said* —
+  6 dB is a value you type, not a pixel you aim at — and neither answers for the other.
+* The equalizer's window is drawn wider, and the graph does not count against the height at which
+  the slider list starts scrolling: the picture would otherwise have cost a third of the controls.
+
+### The plugin window no longer lets the pointer through
+
+* A press over a plugin's controls was reaching **whatever was behind the window as well**. gpui's
+  hit test walks every box under the pointer until one blocks, and the floating editor blocked
+  nothing — so dragging a slider over the mixer moved the slider *and* the fader underneath it.
+* Dismissing a right-click menu had the same fault: the click that shut the menu also landed on the
+  arrangement behind it and moved the playhead to wherever the pointer happened to be.
+
 ### A composed song is re-takeable one clip at a time
 
 * Every clip **Compose a Song** writes now carries the recipe that describes it, so the commands a

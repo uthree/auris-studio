@@ -357,6 +357,15 @@ impl Session {
         Ok(session)
     }
 
+    /// The rate the engine is running at.
+    ///
+    /// A filter's response depends on it — the cookbook designs against the sample rate, and the
+    /// top of the spectrum is where the difference between 44.1 and 48 kHz shows — so a display
+    /// drawing an equalizer's curve has to draw it at the rate the audio is actually made at.
+    pub fn sample_rate(&self) -> f64 {
+        self.engine.sample_rate()
+    }
+
     /// What the audio backend ended up doing, for a status line.
     pub fn audio_status(&self) -> AudioStatus {
         AudioStatus {

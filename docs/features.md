@@ -563,6 +563,27 @@ does — hands its audio back late, so every other track is held back to match i
 in step with each other. An export renders the resulting lead-in and drops it, so the file still
 lines up with the timeline.
 
+Clicking an effect opens its controls in a floating window. Every control is built from the
+parameters the plugin declares, so a plugin you have never seen has an editor; two of them draw a
+picture as well.
+
+**The equalizer draws its curve.** The spectrum going into it sits behind, the response it is
+making is drawn over that, and each band that is switched in has a node on the curve:
+
+* **Drag a node.** Sideways is the frequency, up and down is the gain.
+* **The wheel over a node** narrows the band — forwards for tighter, back for wider.
+* A high-pass or low-pass node moves **sideways only**, and sits on the centre line. Those shapes
+  have a corner, not a level; the gain the slider offers is a number the audio never reads.
+* A band that is switched **off** has no node and is not on the curve. Its **On** button in the
+  list below is what puts it there.
+
+The sliders under the graph do everything the nodes do and reach a little further — a band can be
+set below the 30 Hz the display starts at, and Q is a number as well as a gesture. A graph is how a
+shape is found; a number is how it is said.
+
+**An instrument with an amplitude envelope draws that**, on the same principle: attack, decay,
+sustain and release are one shape with three corners to drag, not four numbers to imagine.
+
 ## The project folder
 
 A project is a folder, not a lone file. **Save As** creates it: choosing `MySong.auris` writes

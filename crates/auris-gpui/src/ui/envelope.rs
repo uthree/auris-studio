@@ -174,6 +174,7 @@ use gpui::{
 use crate::app::{AurisApp, Drag};
 use crate::theme::Theme;
 use crate::ui::paint;
+use crate::ui::paint::unit_of;
 use crate::ui::plugin_window::PluginSubject;
 
 /// How tall the graph is drawn.
@@ -323,16 +324,6 @@ impl AurisApp {
             }
         }
     }
-}
-
-/// A window position as a point in the graph's unit box, y running upwards.
-fn unit_of(bounds: Bounds<Pixels>, at: Point<Pixels>) -> (f32, f32) {
-    let width = f32::from(bounds.size.width).max(1.0);
-    let height = f32::from(bounds.size.height).max(1.0);
-    (
-        (f32::from(at.x - bounds.origin.x) / width).clamp(0.0, 1.0),
-        1.0 - (f32::from(at.y - bounds.origin.y) / height).clamp(0.0, 1.0),
-    )
 }
 
 /// Draws the envelope and its corners.

@@ -367,6 +367,20 @@ pub enum Drag {
         /// two it moves.
         target: ParamTarget,
     },
+    /// Dragging one band's node around the equalizer's curve.
+    ///
+    /// Absolute rather than measured from where the drag began, for [`Drag::EnvelopeHandle`]'s
+    /// reason: the node is *at* the pointer, and the press only lands at all when it was already
+    /// within a few pixels of one.
+    EqNode {
+        /// Whose equalizer.
+        subject: crate::ui::plugin_window::PluginSubject,
+        /// Which band, counting from the lowest.
+        band: usize,
+        /// The parameter the whole drag is filed under, which is the band's frequency — the one
+        /// number every shape's node moves.
+        target: ParamTarget,
+    },
     /// Dragging a section boundary along the structure lane.
     SectionLabel {
         /// The change being moved, by where it currently sits.
@@ -496,6 +510,9 @@ impl Drag {
             // The decay corner moves two parameters and this names one of them. The undo step is
             // one either way — the whole drag is a transaction — so this only decides the label.
             Drag::EnvelopeHandle { target, .. } => Some(Edit::AdjustParameter(*target)),
+            // The same arrangement: a node moves a frequency and a gain, and this names the one
+            // it always moves.
+            Drag::EqNode { target, .. } => Some(Edit::AdjustParameter(*target)),
             // One undo step for the whole sweep, and the same label the right-click menu's
             // "Write It Again" uses — moving a dial is writing the part again with one thing
             // changed, and a stack full of "Adjusted parameter" would say nothing about which.
@@ -644,6 +661,8 @@ pub struct CanvasBounds {
     pub mixer_scrollbar: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The envelope graph in the open plugin window.
     pub envelope: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The equalizer's graph in the open plugin window, above the strip of frequency numbers.
+    pub analyser: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The pitch bend strip under the piano roll.
     pub bend: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The modulation strip under it.

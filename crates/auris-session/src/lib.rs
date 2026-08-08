@@ -127,6 +127,17 @@ pub mod prelude {
         SectionMap, SectionPoint, SectionSpan, SendId, SoundFontId, SoundFontRef, SourceId,
         Subdivision, Track, TrackId, TrackKind, default_loop_end, loop_passes, sounding_length,
     };
+    /// The equalizer's band table, the settings a display reads out of one, and the curve those
+    /// settings make.
+    ///
+    /// A frontend that drew the response itself would be a second implementation of the cookbook
+    /// filters, and the two would agree until the day one of them was corrected — so the graph on
+    /// screen comes from the same crate the audio does. [`EQUALIZER_ID`] is here for the same
+    /// reason: an editor has to recognise the one effect that has a curve.
+    pub use auris_dsp::{
+        EQ_BAND_COUNT, EQ_LAYOUT, EQUALIZER_ID, EqBandKind, EqBandLayout, EqBandSetting,
+        eq_response_db,
+    };
     // The curves a clip carries, and how far each may go. A frontend drawing one has to know the
     // range it is drawing against, and may not reach past this crate to find out.
     pub use auris_core::project::{BEND_LIMIT, ClipCurve, CurvePoint, MODULATION_LIMIT};

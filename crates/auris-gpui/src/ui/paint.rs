@@ -109,10 +109,21 @@ pub fn hline(window: &mut Window, bounds: Bounds<Pixels>, y: Pixels, color: Hsla
     );
 }
 
-/// Paints a single line of text at `origin`, returning its width.
+/// A window position as a point in a graph's unit box, x rightwards and y *upwards* from 0.
 ///
-/// The caller gets the width back so labels can be laid out left to right without a second
-/// shaping pass.
+/// Upwards because that is what the numbers under a graph mean — a sustain level is a level and a
+/// band's gain is a boost — and turning it the way a screen wants is the last thing done before
+/// the pixels. Shared by the envelope and the analyser so a press and the thing it is aimed at
+/// cannot be measured two different ways.
+pub fn unit_of(bounds: Bounds<Pixels>, at: Point<Pixels>) -> (f32, f32) {
+    let width = f32::from(bounds.size.width).max(1.0);
+    let height = f32::from(bounds.size.height).max(1.0);
+    (
+        (f32::from(at.x - bounds.origin.x) / width).clamp(0.0, 1.0),
+        1.0 - (f32::from(at.y - bounds.origin.y) / height).clamp(0.0, 1.0),
+    )
+}
+
 /// Strokes a connected run of points.
 ///
 /// Nothing is drawn for fewer than two points, and a path that fails to build is dropped rather
@@ -160,6 +171,10 @@ pub fn area_under(window: &mut Window, points: &[Point<Pixels>], baseline: Pixel
     }
 }
 
+/// Paints a single line of text at `origin`, returning its width.
+///
+/// The caller gets the width back so labels can be laid out left to right without a second
+/// shaping pass.
 pub fn label(
     window: &mut Window,
     cx: &mut App,

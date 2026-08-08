@@ -12,6 +12,13 @@ use crate::biquad::{Biquad, BiquadCoefficients};
 /// Number of bands in the equaliser.
 pub const BAND_COUNT: usize = 6;
 
+/// The plugin id, so a display can recognise the one effect that has a curve to draw.
+///
+/// A constant rather than a string spelled again in the frontend: an editor that draws an
+/// equalizer's response has to know which plugin it is looking at, and a typo in that string is
+/// an editor that silently stops drawing.
+pub const ID: &str = "auris.fx.eq";
+
 /// Parameters exposed per band.
 const PARAMS_PER_BAND: u32 = 4;
 
@@ -37,6 +44,15 @@ pub enum EqBandKind {
 }
 
 impl EqBandKind {
+    /// Whether the band's gain parameter does anything.
+    ///
+    /// A pass filter has a corner, not a level, and `design` never hands its gain to the
+    /// cookbook. A display needs to know: a node dragged up and down on a high-pass would move
+    /// a number nothing reads, which looks exactly like a control that is broken.
+    pub const fn has_gain(self) -> bool {
+        !matches!(self, EqBandKind::HighPass | EqBandKind::LowPass)
+    }
+
     fn design(self, sample_rate: f64, frequency: f32, q: f32, gain_db: f32) -> BiquadCoefficients {
         match self {
             EqBandKind::HighPass => BiquadCoefficients::highpass(sample_rate, frequency, q),
@@ -126,11 +142,91 @@ const BANDS: [BandSpec; BAND_COUNT] = [
     },
 ];
 
-const MIN_FREQUENCY: f32 = 20.0;
-const MAX_FREQUENCY: f32 = 20_000.0;
-const MAX_GAIN_DB: f32 = 24.0;
-const MIN_Q: f32 = 0.1;
-const MAX_Q: f32 = 18.0;
+/// Where one band's parameters are, and what shape they make.
+///
+/// What an editor needs in order to draw a band without knowing anything else about the plugin:
+/// which four keys carry it, what it is called, and which of the five shapes it is.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct EqBandLayout {
+    /// The filter shape.
+    pub kind: EqBandKind,
+    /// What the band is called.
+    pub label: &'static str,
+    /// The keys of its four parameters, in the order on, frequency, gain, Q.
+    pub keys: [&'static str; 4],
+}
+
+/// The bands an [`Equalizer`] has, from the lowest to the highest.
+///
+/// Read off the same table the plugin designs its filters from, so a curve on screen and the
+/// audio it stands for cannot come apart: a band added to `BANDS` appears on the display without
+/// anything in a frontend being told about it.
+pub const LAYOUT: [EqBandLayout; BAND_COUNT] = layout();
+
+const fn layout() -> [EqBandLayout; BAND_COUNT] {
+    let mut out = [EqBandLayout {
+        kind: EqBandKind::Peaking,
+        label: "",
+        keys: [""; 4],
+    }; BAND_COUNT];
+    let mut band = 0;
+    while band < BAND_COUNT {
+        out[band] = EqBandLayout {
+            kind: BANDS[band].kind,
+            label: BANDS[band].label,
+            keys: BANDS[band].keys,
+        };
+        band += 1;
+    }
+    out
+}
+
+/// What one band is set to, as something outside the plugin reads it out of a document.
+///
+/// The plugin holds these as parameters and turns them into coefficients once; an editor holds
+/// them as numbers it is about to draw and hand back. [`response_db`] is the arithmetic both
+/// need, and it lives here for the same reason [`LAYOUT`] does.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct EqBandSetting {
+    /// The filter shape.
+    pub kind: EqBandKind,
+    /// Whether the band is switched in. One that is not contributes nothing to the curve.
+    pub enabled: bool,
+    /// Centre or corner frequency, in hertz.
+    pub frequency: f32,
+    /// Gain in dB, which the shapes [`EqBandKind::has_gain`] denies do not read.
+    pub gain_db: f32,
+    /// Resonance.
+    pub q: f32,
+}
+
+/// The combined response of `bands` at `frequency_hz`, in dB.
+///
+/// The same sum [`Equalizer::magnitude_db`] makes, from settings rather than from a running
+/// plugin — the bands are in series, so their responses multiply, which is an addition once
+/// expressed in dB.
+pub fn response_db(bands: &[EqBandSetting], sample_rate: f64, frequency_hz: f32) -> f32 {
+    bands
+        .iter()
+        .filter(|band| band.enabled)
+        .map(|band| {
+            band.kind
+                .design(sample_rate, band.frequency, band.q, band.gain_db)
+                .magnitude_db(frequency_hz, sample_rate)
+        })
+        .sum()
+}
+
+/// Lowest frequency a band may be set to, in hertz.
+pub const MIN_FREQUENCY: f32 = 20.0;
+/// Highest frequency a band may be set to, in hertz.
+pub const MAX_FREQUENCY: f32 = 20_000.0;
+/// How far a band's gain reaches either side of flat, in dB.
+pub const MAX_GAIN_DB: f32 = 24.0;
+/// Least resonant a band may be set.
+pub const MIN_Q: f32 = 0.1;
+/// Most resonant a band may be set.
+pub const MAX_Q: f32 = 18.0;
 
 /// A serial chain of six independently switchable filter bands.
 ///
@@ -272,7 +368,7 @@ impl Parameterized for Equalizer {
 impl Effect for Equalizer {
     fn descriptor(&self) -> PluginDescriptor {
         PluginDescriptor::effect(
-            "auris.fx.eq",
+            ID,
             "Equalizer",
             "Six band EQ: high-pass, low shelf, two bells, high shelf, low-pass",
             PluginCategory::Equalizer,
@@ -478,6 +574,98 @@ mod tests {
         );
         assert!(buffer.peak() < 2.0, "peaked at {}", buffer.peak());
         assert!(buffer.channel(0).iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn the_layout_names_parameters_the_plugin_actually_has() {
+        // An editor finds a band's four controls by these keys. A key that named nothing would
+        // leave that band off the curve entirely, and there is no way to see that from the table.
+        let plugin = Equalizer::new();
+        for (band, entry) in LAYOUT.iter().enumerate() {
+            assert_eq!(Some(entry.kind), Equalizer::band_kind(band));
+            assert_eq!(entry.label, Equalizer::band_label(band));
+            for key in entry.keys {
+                assert!(
+                    plugin.parameters().iter().any(|p| p.key == key),
+                    "{key} is on the display and not on the plugin"
+                );
+            }
+        }
+        // In the order the display reads them, which is the order they are documented in: a
+        // frequency taken for a gain would draw every node against the wrong axis.
+        assert_eq!(LAYOUT[2].keys, ["p1_enabled", "p1_freq", "p1_gain", "p1_q"]);
+    }
+
+    #[test]
+    fn only_the_shapes_with_a_level_have_a_gain() {
+        assert!(!EqBandKind::HighPass.has_gain());
+        assert!(!EqBandKind::LowPass.has_gain());
+        for kind in [
+            EqBandKind::LowShelf,
+            EqBandKind::Peaking,
+            EqBandKind::HighShelf,
+        ] {
+            assert!(kind.has_gain());
+        }
+
+        // And the claim is about the audio, not about the display: a pass filter handed a large
+        // gain has to sound exactly like one handed none, or a node that refuses to move
+        // vertically would be hiding a change rather than preventing one.
+        let mut plugin = prepared();
+        plugin.set_param_by_key("hp_enabled", 1.0);
+        plugin.set_param_by_key("hp_freq", 200.0);
+        let flat = plugin.magnitude_db(100.0);
+        plugin.set_param_by_key("hp_gain", 18.0);
+        assert_eq!(plugin.magnitude_db(100.0), flat);
+    }
+
+    #[test]
+    fn the_curve_a_display_draws_is_the_curve_the_plugin_makes() {
+        // Two pieces of code reading the same table: the plugin caches coefficients as parameters
+        // arrive, and `response_db` designs them on the spot from settings an editor is holding.
+        // They have to agree at every frequency or the graph is a drawing of something else.
+        let mut plugin = prepared();
+        let settings = [
+            ("hp", EqBandKind::HighPass, true, 80.0, 0.0, 0.707),
+            ("ls", EqBandKind::LowShelf, true, 200.0, 6.0, 0.707),
+            ("p1", EqBandKind::Peaking, true, 800.0, -8.0, 2.0),
+            ("p2", EqBandKind::Peaking, false, 2_500.0, 5.0, 1.0),
+            ("hs", EqBandKind::HighShelf, true, 7_000.0, -4.0, 0.707),
+            ("lp", EqBandKind::LowPass, true, 14_000.0, 0.0, 0.707),
+        ];
+        let bands: Vec<EqBandSetting> = settings
+            .iter()
+            .map(|&(prefix, kind, enabled, frequency, gain_db, q)| {
+                for (suffix, value) in [
+                    ("_enabled", f32::from(u8::from(enabled))),
+                    ("_freq", frequency),
+                    ("_gain", gain_db),
+                    ("_q", q),
+                ] {
+                    assert!(plugin.set_param_by_key(&format!("{prefix}{suffix}"), value));
+                }
+                EqBandSetting {
+                    kind,
+                    enabled,
+                    frequency,
+                    gain_db,
+                    q,
+                }
+            })
+            .collect();
+
+        for frequency in [30.0f32, 60.0, 200.0, 800.0, 2_500.0, 7_000.0, 18_000.0] {
+            let drawn = response_db(&bands, SR, frequency);
+            let played = plugin.magnitude_db(frequency);
+            assert!(
+                (drawn - played).abs() < 1e-3,
+                "{frequency} Hz: the display says {drawn} dB and the plugin {played} dB"
+            );
+        }
+
+        // A band that is switched off drops out of both, which is what lets a display draw the
+        // curve a user is about to hear rather than the one every band would make together.
+        assert_eq!(response_db(&[], SR, 1_000.0), 0.0);
     }
 
     #[test]

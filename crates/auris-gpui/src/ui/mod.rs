@@ -4,6 +4,7 @@
 //! gpui entity: the panels all read the same project, selection and engine handle, and one owner
 //! of that state is simpler than synchronising several.
 
+pub mod analyser;
 pub mod arrangement;
 pub mod automation;
 pub mod commands;

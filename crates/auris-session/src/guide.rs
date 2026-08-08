@@ -393,6 +393,25 @@ pub mod plugins {
     //! audible rather than cosmetic. A latency that depends on a parameter is allowed; the session
     //! notices the change and rebuilds the graph around it.
     //!
+    //! # A plugin that wants a picture
+    //!
+    //! Descriptors buy an editor, not a *display*. An equalizer's whole job is deciding where to
+    //! put a curve, and twenty-four numbers do not say where — so its window draws the response,
+    //! and each band that is switched in gets a node on it that follows the pointer.
+    //!
+    //! What that costs is one rule: **the picture is computed by the crate that makes the sound.**
+    //! [`auris_dsp::eq_response_db`] takes the settings a display is holding and returns the same
+    //! sum [`auris_dsp::Equalizer`] makes from its cached coefficients, over the same
+    //! [`auris_dsp::EQ_LAYOUT`] table; the frontend reads the band's four parameters by the keys
+    //! that table names and draws what comes back. A frontend that worked the curve out itself
+    //! would be a second implementation of the cookbook filters, and the two would agree until the
+    //! day one of them was corrected.
+    //!
+    //! Which plugin gets a picture is a *frontend's* decision and is spelled there — one id, in
+    //! `auris_gpui::ui::analyser`. Asking every plugin author about a window they have never seen
+    //! would put a frontend's concern into the plugin contract, and a `draws_a_curve` method on
+    //! the [`Effect`](auris_core::plugin::Effect) trait is exactly that.
+    //!
     //! # Where a new plugin goes
     //!
     //! Effects belong in [`auris_dsp`] and instruments in [`auris_synth`], unless the instrument

@@ -457,10 +457,13 @@ impl AurisApp {
 
         Some(
             // A full-window backdrop, so a click anywhere else dismisses the menu the way a
-            // native one does. It is transparent: this is a menu, not a modal.
+            // native one does. It is transparent to the eye and not to the pointer: a dismissing
+            // click used to reach whatever was behind it as well, so shutting a menu opened over
+            // the arrangement also moved the playhead to wherever the pointer happened to be.
             div()
                 .absolute()
                 .inset_0()
+                .occlude()
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _: &MouseDownEvent, _, cx| {

@@ -45,7 +45,10 @@ pub use delay::Delay;
 pub use delay_line::DelayLine;
 pub use distortion::{Distortion, DistortionMode};
 pub use envelope::{EnvelopeFollower, EnvelopeMode};
-pub use eq::{BAND_COUNT as EQ_BAND_COUNT, EqBandKind, Equalizer};
+pub use eq::{
+    BAND_COUNT as EQ_BAND_COUNT, EqBandKind, EqBandLayout, EqBandSetting, Equalizer,
+    ID as EQUALIZER_ID, LAYOUT as EQ_LAYOUT, response_db as eq_response_db,
+};
 pub use gain::GainPan;
 pub use limiter::Limiter;
 pub use pack::DspPack;

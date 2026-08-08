@@ -792,6 +792,7 @@ impl AurisApp {
             Drag::EnvelopeHandle {
                 subject, handle, ..
             } => self.drag_envelope_handle(subject, handle, event.position),
+            Drag::EqNode { subject, band, .. } => self.drag_eq_node(subject, band, event.position),
             Drag::PartDial {
                 clip,
                 dial,
