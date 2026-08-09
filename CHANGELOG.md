@@ -9,6 +9,20 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### The project saves itself
+
+* **A project with a folder is written back over itself about every thirty seconds**, when
+  something has changed and no drag is part way through. Nothing is announced — the unsaved mark in
+  the title bar going out is the feedback, and a status line that says "saved" twice a minute is
+  one that never holds anything else. A save that *fails* is reported every time.
+* **It never invents a place to save.** A document that has never been saved has no folder, and
+  choosing one on somebody's behalf puts their song where they did not put it. That first save is
+  still a question — but pressing **Record** on an unsaved project now *asks* it, rather than
+  refusing with "recording needs a project folder". The answer to a dead end is a dialog.
+* What it costs is written down rather than glossed over: this writes the real file, not a recovery
+  copy, so **closing without saving stops being a way to undo an afternoon**. Undo still is, while
+  the window is open. **Settings → General → Autosave** turns it off.
+
 ### Audio tracks can be recorded onto
 
 * **`TrackKind::Audio` has said "Recorded or imported audio" since the beginning, and only half of

@@ -30,6 +30,7 @@
 
 mod accompany;
 mod assets;
+mod autosave;
 mod clipboard;
 mod clips;
 mod compose;
@@ -46,6 +47,7 @@ mod transport;
 mod fixtures;
 
 pub use accompany::{AccompanyReport, DEFAULT_PARTS};
+pub use autosave::{AUTOSAVE_INTERVAL, AutosaveState, should_autosave};
 pub use clipboard::{Clipboard, CopiedClip, CopiedContent};
 pub use compose::{composed_gain_db, kit_trim_db};
 pub use notes::{Quantize, quantized};
@@ -92,6 +94,13 @@ pub struct SessionOptions {
     /// runner is a document two test runs would disagree about. It also saves reading two hundred
     /// megabytes per session in a suite that opens hundreds of them.
     pub shipped_fonts: bool,
+    /// Write the document back over itself as it changes, once it has somewhere to be written.
+    ///
+    /// On by default, and off for a headless session: a batch tool holds a document for a few
+    /// hundred milliseconds and saves it once at the end on purpose, and a background write in
+    /// the middle of that would be a file appearing that nobody asked for. See
+    /// [`should_autosave`] for what the feature costs when it is on.
+    pub autosave: bool,
 }
 
 impl Default for SessionOptions {
@@ -102,6 +111,7 @@ impl Default for SessionOptions {
             audio_preferences: AudioPreferences::default(),
             sample_rate: 48_000.0,
             shipped_fonts: true,
+            autosave: true,
         }
     }
 }
@@ -117,6 +127,7 @@ impl SessionOptions {
             audio: false,
             gpu: false,
             shipped_fonts: false,
+            autosave: false,
             ..Self::default()
         }
     }
@@ -214,6 +225,10 @@ pub struct Session {
 
     path: Option<PathBuf>,
     dirty: bool,
+    /// Whether the document is written back over itself as it changes. See [`should_autosave`].
+    autosave: bool,
+    /// When the document was last written, by any means. The autosave clock runs from here.
+    last_save: Instant,
 
     /// Where a spectrum display reads its samples.
     ///
@@ -357,6 +372,8 @@ impl Session {
             last_record: None,
             path: None,
             dirty: false,
+            autosave: options.autosave,
+            last_save: Instant::now(),
             scope: Arc::new(auris_engine::Scope::new()),
             analyzer: auris_dsp::SpectrumAnalyzer::new(auris_engine::SCOPE_WINDOW),
             param_cache: HashMap::new(),

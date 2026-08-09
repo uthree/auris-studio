@@ -254,8 +254,8 @@ impl AurisApp {
                                 recording,
                                 theme.record,
                                 &theme,
-                                cx.listener(|this, _, _, cx| {
-                                    this.toggle_recording();
+                                cx.listener(|this, _, window, cx| {
+                                    this.toggle_recording(window, cx);
                                     cx.notify();
                                 }),
                             ))
@@ -561,7 +561,11 @@ impl AurisApp {
     /// one a *button* means is a frontend's decision. Stopping stops both, because a take that
     /// ended while the song played on would leave the playhead somewhere other than where the
     /// clip that just appeared is.
-    pub(crate) fn toggle_recording(&mut self) {
+    ///
+    /// A project with nowhere to write gets the save dialog rather than a refusal. "Recording
+    /// needs a project folder" is true and is a dead end; the answer to it is a question, and a
+    /// button that asks it is a button that works the first time it is pressed.
+    pub(crate) fn toggle_recording(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
         if self.session.is_recording() {
             match self.session.stop_recording() {
                 Ok(report) => {
@@ -578,6 +582,14 @@ impl AurisApp {
                     self.session.play();
                 }
                 self.set_status(self.t(Key::RecordingStarted));
+            }
+            Err(SessionError::RecordingNeedsFolder) => {
+                self.set_status(self.t(Key::RecordingNeedsSave));
+                self.save_as_then(
+                    Some(crate::ui::prompt::PendingAction::StartRecording),
+                    window,
+                    cx,
+                );
             }
             Err(error) => self.report_session_error(&error),
         }

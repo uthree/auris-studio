@@ -32,7 +32,6 @@ pub enum SettingsTab {
     Keys,
 }
 
-/// The settings window's view.
 /// The devices the host could see when the window opened.
 ///
 /// Both lists together, because enumerating them talks to the OS audio server and the window is
@@ -52,6 +51,7 @@ enum DeviceSlot {
     Input,
 }
 
+/// The settings window's view.
 pub struct SettingsWindow {
     app: WeakEntity<AurisApp>,
     theme: Theme,
@@ -64,6 +64,8 @@ pub struct SettingsWindow {
     language_preference: Option<Language>,
     /// Language this window is drawn in, which is the resolved preference.
     language: Language,
+    /// Whether the document is written back over itself as it changes.
+    autosave: bool,
     /// What a click creates and what deletes.
     pointer: PointerGestures,
     /// What the audio backend is actually doing.
@@ -113,6 +115,7 @@ impl SettingsWindow {
         keymap: Keymap,
         language_preference: Option<Language>,
         pointer: PointerGestures,
+        autosave: bool,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
@@ -125,6 +128,7 @@ impl SettingsWindow {
             keymap,
             language_preference,
             language: Language::resolve(language_preference),
+            autosave,
             pointer,
             capturing: None,
             search: TextField::new(String::new()),
@@ -405,7 +409,32 @@ impl SettingsWindow {
                         .child(self.t(Key::PointerClickNote)),
                 )
             })
+            .child(divider(&theme))
+            .child(section_title(self.t(Key::Autosave), &theme))
+            .child(div().flex().gap_1().child(button(
+                "autosave",
+                self.t(if self.autosave {
+                    Key::ValueOn
+                } else {
+                    Key::ValueOff
+                }),
+                ButtonStyle::Normal,
+                self.autosave,
+                theme.accent,
+                &theme,
+                cx.listener(|this, _, _, cx| {
+                    this.apply_autosave(!this.autosave, cx);
+                }),
+            )))
+            .child(note(self.t(Key::AutosaveNote), &theme))
             .into_any_element()
+    }
+
+    /// Hands an autosave choice to the application, which installs and saves it.
+    fn apply_autosave(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.autosave = enabled;
+        let _ = self.app.update(cx, |app, _| app.apply_autosave(enabled));
+        cx.notify();
     }
 
     fn render_audio(&mut self, cx: &mut Context<Self>) -> AnyElement {

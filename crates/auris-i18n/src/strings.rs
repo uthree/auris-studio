@@ -262,6 +262,15 @@ strings! {
     CmdToggleMetronome { en: "Metronome", ja: "メトロノーム" }
     CmdRecord { en: "Record", ja: "録音" }
     RecordingStarted { en: "Recording", ja: "録音中" }
+    RecordingNeedsSave {
+        en: "A take is written to disk as it happens — choose where this project lives first.",
+        ja: "録音は録りながらディスクに書き込みます。先にプロジェクトの保存先を決めてください。"
+    }
+    Autosave { en: "Autosave", ja: "自動保存" }
+    AutosaveNote {
+        en: "Saves a project that already has a folder, about every 30 seconds, once it has changed. Closing without saving stops being a way to undo an afternoon.",
+        ja: "保存先が決まっているプロジェクトを、変更があれば30秒ごとに上書き保存します。「保存せずに閉じて元に戻す」はできなくなります。"
+    }
     CmdPanic { en: "Panic", ja: "パニック" }
     CmdNewProject { en: "New Project", ja: "新規プロジェクト" }
     CmdOpenProject { en: "Open Project", ja: "プロジェクトを開く" }

@@ -803,6 +803,7 @@ impl AurisApp {
 
         let mut session = Session::new(SessionOptions {
             audio_preferences: settings.audio.clone(),
+            autosave: settings.autosave,
             ..SessionOptions::default()
         })
         .expect("a session opens even without audio");
@@ -825,6 +826,15 @@ impl AurisApp {
                 if this
                     .update(cx, |this, cx| {
                         this.session.poll();
+                        // Separate from `poll` on purpose: that is housekeeping and this writes
+                        // to somebody's disk. A success says nothing — the title bar's unsaved
+                        // mark going out is the whole of the feedback, and a status line
+                        // announcing a save every half minute is one that never holds anything
+                        // else. A failure is worth the interruption every time.
+                        if let Some(Err(error)) = this.session.autosave() {
+                            let line = this.failure(Key::CmdSave, &error);
+                            this.set_failed_status(line);
+                        }
                         cx.notify();
                     })
                     .is_err()
@@ -1310,6 +1320,18 @@ impl AurisApp {
         self.save_input();
     }
 
+    /// Turns autosaving on or off and remembers the choice.
+    ///
+    /// Best-effort on the file, like every other preference: a settings file that cannot be
+    /// written must not undo a change the user can already see working.
+    pub(crate) fn apply_autosave(&mut self, enabled: bool) {
+        self.session.set_autosave(enabled);
+        self.settings.autosave = enabled;
+        if let Err(error) = self.settings.save() {
+            log::warn!("could not save settings: {error}");
+        }
+    }
+
     /// Writes the input settings file.
     ///
     /// Best-effort: a preferences file that cannot be written must not undo a change the user
@@ -1347,6 +1369,7 @@ impl AurisApp {
         let keymap = self.keymap.clone();
         let language = self.settings.language;
         let pointer = self.pointer;
+        let autosave = self.session.autosave_enabled();
 
         let bounds = Bounds::centered(None, size(px(560.), px(620.)), cx);
         let opened = cx.open_window(
@@ -1362,7 +1385,7 @@ impl AurisApp {
             |_, cx| {
                 cx.new(|cx| {
                     SettingsWindow::new(
-                        app, theme, devices, audio, live, keymap, language, pointer, cx,
+                        app, theme, devices, audio, live, keymap, language, pointer, autosave, cx,
                     )
                 })
             },

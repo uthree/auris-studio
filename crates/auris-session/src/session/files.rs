@@ -46,6 +46,7 @@ impl Session {
         self.history.clear();
         self.path = None;
         self.dirty = false;
+        self.mark_saved();
         // History is cleared, so nothing can bring the old document's audio back; keeping the
         // decoded buffers would hold them for the rest of the process.
         self.clear_sources();
@@ -188,6 +189,7 @@ impl Session {
         self.clear_sources();
         self.path = Some(path.to_path_buf());
         self.dirty = false;
+        self.mark_saved();
         self.adopt_project(project);
 
         let missing = self.reload_assets();
@@ -212,6 +214,9 @@ impl Session {
         save_project(path, &mut self.project)?;
         self.path = Some(path.to_path_buf());
         self.dirty = false;
+        // Every write restarts the autosave clock, so saving by hand postpones the next automatic
+        // one rather than being followed by a second write a moment later.
+        self.mark_saved();
         Ok(())
     }
 
@@ -296,6 +301,7 @@ impl Session {
 
         save_project(&document, &mut self.project)?;
         self.dirty = false;
+        self.mark_saved();
         Ok(SaveReport {
             document,
             uncollected,

@@ -619,10 +619,14 @@ One track at a time: there is one input stream, and arming a second track moves 
 than adding one. Only audio tracks show the button, because only they have anywhere for a take to
 land.
 
-**Recording needs a saved project.** The take is written straight to disk while it happens, into
+**Recording needs a saved project**, and pressing Record on one that has never been saved opens
+the save dialog rather than refusing. The take is written straight to disk while it happens, into
 the project folder's `Audio/`, so a project with no folder has nowhere to put it — and inventing a
 temporary directory would mean leaving an hour of playing somewhere the machine tidies up. Files
 are named after the track and numbered from the first free number: `Vocals 1.wav`, `Vocals 2.wav`.
+
+After that first save you are not asked again, because the project is saved for you as you go —
+see [Autosave](#autosave).
 
 Takes are **32-bit float**, and there is no bit depth to choose. Every integer depth is a decision
 about how much of a performance to throw away before anyone has heard it, and float cannot clip —
@@ -645,6 +649,24 @@ Two things worth knowing:
 **Monitoring is not in yet.** You hear the song you are playing along to, not yourself through
 Auris. If you are recording through an interface, its own direct monitoring is what you want
 anyway — it is lower latency than any software path can be.
+
+## Autosave
+
+Once a project has a folder, it is written back over itself about every thirty seconds — but only
+when something has actually changed, and never part way through a drag. Nothing is announced: the
+unsaved mark in the title bar going out is the whole of the feedback, because a message every half
+minute is a status line that never holds anything else. A save that *fails* is reported every time.
+
+It never invents a place to save. A document that has never been saved has no folder, and choosing
+one on your behalf would put your song somewhere you did not put it — so that first save is still
+a question, asked once.
+
+**What this costs is worth knowing:** it writes the real file, not a recovery copy beside it, so
+**closing without saving stops being a way to undo an afternoon**. Undo still is, for as long as
+the window is open. The alternative — a recovery file adopted through a dialog on the next launch
+— keeps both at the price of two files that can disagree and a prompt people click through without
+reading. One file that is always current is easier to reason about, so that is what this is, and
+**Settings → General → Autosave** turns it off for anyone who wants the old bargain back.
 
 ## The project folder
 

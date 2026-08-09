@@ -1106,10 +1106,10 @@ impl AurisApp {
     fn on_toggle_recording(
         &mut self,
         _: &actions::ToggleRecording,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_recording();
+        self.toggle_recording(window, cx);
         cx.notify();
     }
 

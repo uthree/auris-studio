@@ -74,7 +74,7 @@ impl AudioPreferences {
 }
 
 /// Everything the application remembers between runs.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     /// Audio backend preferences.
@@ -87,6 +87,26 @@ pub struct Settings {
     /// installation, kept where every frontend can read it — and because a second frontend with a
     /// window of its own should find it already answered.
     pub language: Option<Language>,
+    /// Write the document back over itself as it changes, once it has been saved somewhere.
+    ///
+    /// On unless turned off. What it costs when it is on — "close without saving" stops being a
+    /// way to undo an afternoon — is set out beside
+    /// [`should_autosave`](crate::session::should_autosave), and is the reason this is a setting
+    /// rather than simply how the application behaves.
+    pub autosave: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            audio: AudioPreferences::default(),
+            language: None,
+            // Written out rather than derived, because `bool`'s own default is the wrong one here
+            // and a settings file written before this field existed is filled in from exactly
+            // this value.
+            autosave: true,
+        }
+    }
 }
 
 impl Settings {

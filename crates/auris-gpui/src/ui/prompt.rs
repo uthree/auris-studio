@@ -344,6 +344,12 @@ pub enum PendingAction {
     ImportMidi(std::path::PathBuf),
     /// Ask which MIDI file to read, and read it as a new document.
     ImportMidiPicked,
+    /// Start a take, now that there is a folder to write it into.
+    ///
+    /// The one pending action that is not about unsaved work. It exists because recording is the
+    /// one command that *needs* a saved project — a take is written to disk while it happens —
+    /// and refusing it with "save first" is a dead end where a save dialog is an answer.
+    StartRecording,
     /// Shut the window.
     CloseWindow,
     /// Leave.
@@ -870,6 +876,7 @@ impl AurisApp {
             PendingAction::OpenDropped(path) => self.open_project_at(path, cx),
             PendingAction::ImportMidi(path) => self.import_midi_at(path, cx),
             PendingAction::ImportMidiPicked => self.pick_and_import_midi(cx),
+            PendingAction::StartRecording => self.toggle_recording(window, cx),
             PendingAction::CloseWindow => window.remove_window(),
             PendingAction::Quit => cx.quit(),
         }
