@@ -58,6 +58,7 @@ strings! {
     AddAudioShort { en: "Audio", ja: "音声" }
     MuteInitial { en: "M", ja: "M" }
     SoloInitial { en: "S", ja: "S" }
+    RecordInitial { en: "R", ja: "R" }
     Volume { en: "Vol", ja: "音量" }
     Pan { en: "Pan", ja: "パン" }
     TrackKindInstrument { en: "Instrument", ja: "ソフト音源" }
@@ -158,6 +159,11 @@ strings! {
         ja: "選んだ時点で表示が切り替わります。プラグイン名は訳がある範囲で追従します。"
     }
     OutputDevice { en: "Output Device", ja: "出力デバイス" }
+    InputDevice { en: "Input Device", ja: "入力デバイス" }
+    InputDeviceNote {
+        en: "Opened only while recording, so changing it does not interrupt playback.",
+        ja: "録音中だけ開きます。変更しても再生は止まりません。"
+    }
     SystemDefaultDevice { en: "System Default", ja: "システムのデフォルト" }
     SystemDefaultDeviceDetail {
         en: "Follows whatever the system is set to",
@@ -254,6 +260,8 @@ strings! {
     // `GroupTransport` above gives: it is the word every Japanese DAW already prints on this
     // button, so it is the word a user arrives with.
     CmdToggleMetronome { en: "Metronome", ja: "メトロノーム" }
+    CmdRecord { en: "Record", ja: "録音" }
+    RecordingStarted { en: "Recording", ja: "録音中" }
     CmdPanic { en: "Panic", ja: "パニック" }
     CmdNewProject { en: "New Project", ja: "新規プロジェクト" }
     CmdOpenProject { en: "Open Project", ja: "プロジェクトを開く" }
@@ -971,6 +979,7 @@ mod tests {
         const SHARED: &[Key] = &[
             Key::MuteInitial,
             Key::SoloInitial,
+            Key::RecordInitial,
             Key::SubdivisionEighth,
             Key::SubdivisionSixteenth,
         ];

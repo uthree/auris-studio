@@ -419,6 +419,10 @@ impl Session {
         &mut self,
         preferences: AudioPreferences,
     ) -> Result<(), SessionError> {
+        if !output_changed(&self.audio, &preferences) {
+            self.audio = preferences;
+            return Ok(());
+        }
         // Capture the position in seconds, not frames: the new device may run at a different
         // rate, and frames counted at the old one would land somewhere else entirely.
         let playhead = self.engine.playhead_seconds();
@@ -776,6 +780,17 @@ impl Session {
     }
 }
 
+/// Whether a change of preferences means the output stream has to be torn down and reopened.
+///
+/// The input device is not the output stream's business. It is opened per take and read when one
+/// starts, so changing it costs nothing that is already running — and restarting for it would
+/// mean the settings window silenced the song to change a microphone.
+fn output_changed(before: &AudioPreferences, after: &AudioPreferences) -> bool {
+    before.device != after.device
+        || before.sample_rate != after.sample_rate
+        || before.block_frames != after.block_frames
+}
+
 impl std::fmt::Debug for Session {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Session")
@@ -794,6 +809,37 @@ mod tests {
     use crate::session::fixtures::session;
     use auris_core::param::ParamId;
     use auris_core::{ClipId, EffectSlotId, Note};
+
+    #[test]
+    fn choosing_a_microphone_does_not_reopen_the_speakers() {
+        // The settings window applies the whole preferences object for any change in it, so
+        // without this a user picking an input device would have the song stop, the graph rebuild
+        // and the playhead jump — for a device the output stream has never heard of.
+        let base = AudioPreferences::default();
+        let mut input = base.clone();
+        input.input_device = Some("Scarlett 2i2".to_string());
+        assert!(!output_changed(&base, &input));
+
+        for changed in [
+            AudioPreferences {
+                device: Some("Speakers".to_string()),
+                ..input.clone()
+            },
+            AudioPreferences {
+                sample_rate: Some(96_000),
+                ..input.clone()
+            },
+            AudioPreferences {
+                block_frames: 128,
+                ..input.clone()
+            },
+        ] {
+            assert!(
+                output_changed(&input, &changed),
+                "{changed:?} should have reopened the output"
+            );
+        }
+    }
 
     /// A moment `ms` after whichever `Instant` it is added to.
     fn tick(ms: u64) -> Duration {

@@ -9,6 +9,34 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### Audio tracks can be recorded onto
+
+* **`TrackKind::Audio` has said "Recorded or imported audio" since the beginning, and only half of
+  it was true.** Nothing in the workspace had ever opened an input device. Now: arm an audio track
+  with the **R** button on its header, press **Record** in the transport (or `R`), play, and stop.
+  The take lands as a clip where the playhead was.
+* **A take is written as it happens**, straight into the project folder's `Audio/`, by a thread of
+  its own — not on the UI thread, where a dialog that blocked for a second would cost the take a
+  second of audio. Takes are 32-bit float, and that is not a setting: every integer depth is a
+  decision about how much of a performance to throw away before anybody has heard it, and float
+  cannot clip.
+* **Recording needs a saved project**, and says so rather than inventing a temporary directory.
+  Every other asset can sit outside the folder until a save picks it up; a take has to be written
+  the moment it starts, and somewhere the machine tidies up is not that place.
+* **Where the take lands is stamped by the audio callback**, not by the button. The first block to
+  arrive reads the playhead, so a take begins at the frame it actually began at rather than one
+  callback earlier. The input and output run on separate clocks and nothing here corrects for the
+  drift between them: a take a few frames long by the end of an hour can be seen and nudged, and
+  one that has been quietly resampled cannot.
+* **Frames lost to a slow disk are counted and reported.** A hole moves everything after it
+  earlier, which is a thing to be told about now rather than to find in a mix next week.
+* The take is named after its track and numbered from the first gap — `Vocals 3.wav`, not a
+  timestamp — because the folder is something people read a year later.
+* The input device is chosen in **Settings → Audio**, and choosing one does *not* stop playback:
+  it is opened per take, so it was never the output stream's business.
+* Not in this pass: **monitoring**. You hear the song you are playing along to, not yourself
+  through Auris. An interface's own direct monitoring covers it in the meantime.
+
 ### A SoundFont has an envelope now
 
 * The sampler carries the **same four controls the built-in instruments do** — attack, decay,

@@ -47,7 +47,7 @@ pub mod architecture {
     //!   auris-dsp       effects and DSP primitives
     //!   auris-synth     built-in instruments                      → auris-dsp
     //!   auris-sampler   SoundFont playback: the bank and the sampler instrument → auris-dsp
-    //!   auris-engine    render graph, transport, cpal output, offline renderer
+    //!   auris-engine    render graph, transport, cpal in and out, offline renderer
     //!   auris-io        audio file import/export, project save/load
     //!   auris-gpu       optional wgpu compute for offline analysis
     //!   auris-compose   score-based automatic composition
@@ -134,6 +134,39 @@ pub mod architecture {
     //! gesture, and none at all when the drag changed nothing — which is what stops a selection
     //! click quietly pushing real history off the end of the stack. The transaction also batches
     //! the graph rebuild, so a structural edit inside one sets a flag and the close rebuilds once.
+    //!
+    //! # The third thread, and why recording needed one
+    //!
+    //! Two threads is the whole story for playback and one short of it for recording. cpal has no
+    //! duplex stream, so an input device is a *second* callback on a *second* clock — and the
+    //! samples it produces have to reach a file, which is blocking I/O that may not happen on
+    //! either audio thread.
+    //!
+    //! ```text
+    //!    input callback            record thread              UI thread
+    //!   ┌───────────────┐  full   ┌──────────────┐          ┌────────────┐
+    //!   │ Capture       │ ──────► │ CaptureReader│ ──────►  │  Session   │
+    //!   │ (device)      │ ◄────── │ WavRecorder  │   file   │  Take      │
+    //!   └───────────────┘  empty  └──────────────┘          └────────────┘
+    //!                                                    drop(Capture) ends it
+    //! ```
+    //!
+    //! Two rules came out of building it, and both are worth knowing before adding anything else
+    //! that leaves an audio callback.
+    //!
+    //! **The pool is the same exchange the graph handover uses, and for the same reason.** Full
+    //! buffers out, empty ones back, both bounded. The callback never allocates and never waits;
+    //! when the reader falls behind far enough to empty the pool it *drops* the block and counts
+    //! it, because a recording with a hole in it is a bad take and a recording that stalled the
+    //! device is a stalled machine.
+    //!
+    //! **The writer runs on a thread of its own, not on the session's.** The session's thread is a
+    //! UI's, and a modal dialog that blocks it for a second would cost the take a second of audio.
+    //! That in turn is why `Capture` hands out a separate reader: `cpal::Stream` is not `Send` on
+    //! every host cpal supports, so the device cannot travel and the pool's far end must.
+    //!
+    //! Ending a take is `drop`, not a message: closing the device drops the sender, and a
+    //! disconnected channel is a signal that cannot arrive before the last block has.
     //!
     //! # Where the audio actually goes
     //!

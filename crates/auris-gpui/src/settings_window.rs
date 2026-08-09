@@ -26,19 +26,38 @@ use crate::ui::widgets::{ButtonStyle, button, chain_button, divider};
 pub enum SettingsTab {
     /// Interface language and anything else that is not audio or keys.
     General,
-    /// Output device, sample rate and buffer size.
+    /// Output device, input device, sample rate and buffer size.
     Audio,
     /// Key bindings.
     Keys,
 }
 
 /// The settings window's view.
+/// The devices the host could see when the window opened.
+///
+/// Both lists together, because enumerating them talks to the OS audio server and the window is
+/// built from a snapshot rather than by asking again on every frame.
+#[derive(Clone, Debug, Default)]
+pub struct AudioDevices {
+    /// Everything that can play.
+    pub output: Vec<AudioDeviceInfo>,
+    /// Everything that can record.
+    pub input: Vec<AudioDeviceInfo>,
+}
+
+/// Which of a project's two device slots a row writes.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum DeviceSlot {
+    Output,
+    Input,
+}
+
 pub struct SettingsWindow {
     app: WeakEntity<AurisApp>,
     theme: Theme,
     tab: SettingsTab,
-    /// Output devices, read once when the window opens.
-    devices: Vec<AudioDeviceInfo>,
+    /// What the host can see, read once when the window opens.
+    devices: AudioDevices,
     audio: AudioPreferences,
     keymap: Keymap,
     /// Stored language preference; `None` follows the system.
@@ -88,7 +107,7 @@ impl SettingsWindow {
     pub fn new(
         app: WeakEntity<AurisApp>,
         theme: Theme,
-        devices: Vec<AudioDeviceInfo>,
+        devices: AudioDevices,
         audio: AudioPreferences,
         live: AudioStatus,
         keymap: Keymap,
@@ -401,19 +420,41 @@ impl SettingsWindow {
             "device-default",
             self.t(Key::SystemDefaultDevice),
             self.t(Key::SystemDefaultDeviceDetail),
-            audio.device.is_none(),
             None,
+            DeviceSlot::Output,
             cx,
         ));
-        for (index, device) in self.devices.clone().into_iter().enumerate() {
+        for (index, device) in self.devices.output.clone().into_iter().enumerate() {
             let detail = describe(&device, self.language);
-            let selected = audio.device.as_deref() == Some(device.name.as_str());
             rows.push(self.device_row(
                 ("device", index),
                 &device.name.clone(),
                 &detail,
-                selected,
                 Some(device.name),
+                DeviceSlot::Output,
+                cx,
+            ));
+        }
+
+        rows.push(divider(&theme).into_any_element());
+        rows.push(section_title(self.t(Key::InputDevice), &theme));
+        rows.push(note(self.t(Key::InputDeviceNote), &theme));
+        rows.push(self.device_row(
+            "input-default",
+            self.t(Key::SystemDefaultDevice),
+            self.t(Key::SystemDefaultDeviceDetail),
+            None,
+            DeviceSlot::Input,
+            cx,
+        ));
+        for (index, device) in self.devices.input.clone().into_iter().enumerate() {
+            let detail = describe(&device, self.language);
+            rows.push(self.device_row(
+                ("input", index),
+                &device.name.clone(),
+                &detail,
+                Some(device.name),
+                DeviceSlot::Input,
                 cx,
             ));
         }
@@ -520,6 +561,7 @@ impl SettingsWindow {
     fn rate_choices(&self) -> Vec<u32> {
         let chosen = self.audio.device.as_deref().and_then(|name| {
             self.devices
+                .output
                 .iter()
                 .find(|device| device.name == name)
                 .filter(|device| !device.sample_rates.is_empty())
@@ -530,16 +572,26 @@ impl SettingsWindow {
         }
     }
 
+    /// One device in one of the two lists. `device` of `None` is the system-default row.
+    ///
+    /// Whether it reads as chosen is worked out here rather than handed in, because it is exactly
+    /// the same question the click answers: the row that writes `Some("Scarlett")` into the input
+    /// slot is the row that is lit when the input slot holds it, and two callers deciding that
+    /// separately is two chances to disagree.
     fn device_row(
         &self,
         id: impl Into<gpui::ElementId>,
         name: &str,
         detail: &str,
-        selected: bool,
         device: Option<String>,
+        slot: DeviceSlot,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = self.theme.clone();
+        let selected = match slot {
+            DeviceSlot::Output => self.audio.device == device,
+            DeviceSlot::Input => self.audio.input_device == device,
+        };
         div()
             .id(id.into())
             .flex()
@@ -582,11 +634,19 @@ impl SettingsWindow {
                     ),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
-                let audio = AudioPreferences {
-                    device: device.clone(),
-                    // The old rate may not exist on the new device, so let it choose.
-                    sample_rate: None,
-                    ..this.audio.clone()
+                let audio = match slot {
+                    DeviceSlot::Output => AudioPreferences {
+                        device: device.clone(),
+                        // The old rate may not exist on the new device, so let it choose.
+                        sample_rate: None,
+                        ..this.audio.clone()
+                    },
+                    // The rate is left alone: it belongs to the output, and a take asks for the
+                    // project's rate rather than for whatever is set here.
+                    DeviceSlot::Input => AudioPreferences {
+                        input_device: device.clone(),
+                        ..this.audio.clone()
+                    },
                 };
                 this.apply_audio(audio, cx);
             }))
@@ -1137,6 +1197,15 @@ impl Render for SettingsWindow {
                     .child(status),
             )
     }
+}
+
+/// A line of explanation under a section's heading.
+fn note(text: &str, theme: &Theme) -> AnyElement {
+    div()
+        .text_xs()
+        .text_color(theme.text_muted)
+        .child(text.to_string())
+        .into_any_element()
 }
 
 fn section_title(title: &str, theme: &Theme) -> AnyElement {

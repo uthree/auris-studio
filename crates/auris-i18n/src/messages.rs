@@ -564,6 +564,24 @@ messages! {
         ja: "{path} を作成しました · {bpm:.2} BPM · {rate:.0} Hz"
     }
 
+    /// Confirmation that a take was recorded and turned into a clip.
+    fn recorded_take(duration: &str) {
+        en: "recorded {duration}",
+        ja: "{duration} を録音しました"
+    }
+
+    /// A take that produced nothing, which reads as a failure until it is explained.
+    fn recorded_nothing() {
+        en: "the take was empty; nothing was kept",
+        ja: "音が入っていなかったため、何も保存しませんでした"
+    }
+
+    /// A take with a hole in it, because the disk could not keep up.
+    fn recorded_with_gaps(duration: &str, frames: u64) {
+        en: "recorded {duration}, but {frames} frames were dropped — there is a gap in it",
+        ja: "{duration} を録音しましたが、{frames} フレームが欠落しています"
+    }
+
     /// A file a project refers to that is not there.
     fn warning_missing_audio(path: &str) {
         en: "warning: missing audio file {path}",

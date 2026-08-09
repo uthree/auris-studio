@@ -1338,7 +1338,10 @@ impl AurisApp {
         // this update, and reading `self` back through the entity handle would panic.
         let app = cx.entity().downgrade();
         let theme = self.theme.clone();
-        let devices = self.session.output_devices();
+        let devices = crate::settings_window::AudioDevices {
+            output: self.session.output_devices(),
+            input: self.session.input_devices(),
+        };
         let audio = self.session.audio_preferences().clone();
         let live = self.session.audio_status();
         let keymap = self.keymap.clone();

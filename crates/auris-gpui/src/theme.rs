@@ -300,6 +300,12 @@ pub struct Theme {
     pub solo: Hsla,
     /// Mute button when engaged.
     pub mute: Hsla,
+    /// Record arm, and the transport's record button while a take is running.
+    ///
+    /// Its own entry rather than [`Self::danger`], which is the same red: one of them says a
+    /// thing failed and the other says a microphone is live, and a scheme that wanted to tell
+    /// those apart should be able to without the failures changing colour too.
+    pub record: Hsla,
     /// White keys in the piano roll keyboard.
     pub key_white: Hsla,
     /// Black keys in the piano roll keyboard.
@@ -382,6 +388,9 @@ impl Theme {
             meter_high: scheme.signal(0.01, 0.68),
             solo: scheme.signal(0.12, 0.72),
             mute: scheme.signal(0.06, 0.70),
+            // The reddest of the four signals, and further round from mute's orange than mute is
+            // from solo's amber: an armed track and a muted one sit in the same row of buttons.
+            record: scheme.signal(0.99, 0.78),
             // The keyboard strip stays a keyboard in every scheme. Deriving these from the ramp
             // would give a light scheme white "black" keys, which is not a stylistic choice but a
             // piano nobody can read.

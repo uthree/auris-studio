@@ -47,6 +47,8 @@ actions!(
         ToggleLoop,
         /// Turn the click on or off.
         ToggleMetronome,
+        /// Start or stop recording a take.
+        ToggleRecording,
         /// Add an instrument track.
         AddInstrumentTrack,
         /// Add an audio track.
@@ -283,6 +285,9 @@ bindable! {
         "transport.play",       GroupTransport, CmdPlayStop,           "space"       => TogglePlay;
         "transport.return",     GroupTransport, CmdReturnToZero,       "enter"       => ReturnToZero;
         "transport.loop",       GroupTransport, CmdToggleCycle,        "secondary-l" => ToggleLoop;
+        // `r` is what every DAW binds record to, and it is free here for the same reason `k` is:
+        // nothing types into the window itself.
+        "transport.record",     GroupTransport, CmdRecord,             "r"           => ToggleRecording;
         // Logic's own key for the click, and free here. A bare letter at the window's context is
         // the same bargain the panel toggles above already take: nothing types into the window,
         // and a sheet or a prompt is a context of its own where nothing at all is bound.

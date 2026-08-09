@@ -49,7 +49,7 @@ crates/auris-dsp         effects and DSP primitives
 crates/auris-synth       built-in chiptune instruments; depends on auris-dsp
 crates/auris-sampler     SoundFont playback: the font bank and the sampler instrument;
                          depends on auris-dsp
-crates/auris-engine      render graph, transport, cpal output, offline renderer
+crates/auris-engine      render graph, transport, cpal in and out, offline renderer
 crates/auris-io          audio file import/export, project save/load
 crates/auris-gpu         optional wgpu compute for offline analysis
 crates/auris-compose     score-based automatic composition; depends on auris-core only

@@ -106,6 +106,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_return_to_zero))
             .on_action(cx.listener(Self::on_toggle_loop))
             .on_action(cx.listener(Self::on_toggle_metronome))
+            .on_action(cx.listener(Self::on_toggle_recording))
             .on_action(cx.listener(Self::on_new_project))
             .on_action(cx.listener(Self::on_open_project))
             .on_action(cx.listener(Self::on_quit))
@@ -1099,6 +1100,16 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.toggle_metronome();
+        cx.notify();
+    }
+
+    fn on_toggle_recording(
+        &mut self,
+        _: &actions::ToggleRecording,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_recording();
         cx.notify();
     }
 

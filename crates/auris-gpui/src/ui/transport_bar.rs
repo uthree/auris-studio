@@ -1,6 +1,6 @@
 //! The transport bar across the top of the window.
 
-use auris_i18n::Key;
+use auris_i18n::{Key, Language, messages};
 use auris_session::prelude::*;
 
 use gpui::{Axis, IntoElement, Pixels, Window, div, prelude::*, px};
@@ -32,6 +32,22 @@ pub(crate) const GRID_CHOICES: [(&str, i64); 7] = [
 
 /// Marks the entry whose label is translated rather than notation. See [`AurisApp::grid_label`].
 const GRID_OFF_LABEL: &str = "";
+
+/// What a finished take gets reported as.
+///
+/// A free function because the three answers are a decision — the empty take in particular, which
+/// is not a failure and reads as one unless it is said out loud — and a decision in a view is a
+/// decision with no test.
+pub(crate) fn recording_summary(report: &RecordingReport, language: Language) -> String {
+    let duration = Seconds(report.seconds).format_clock();
+    match (report.clip.is_some(), report.dropped_frames) {
+        (false, _) => messages::recorded_nothing(language),
+        (true, 0) => messages::recorded_take(language, &duration),
+        // The take is kept and usable, and everything after the gap has moved earlier by that
+        // much. Something a person needs told now rather than found in a mix next week.
+        (true, dropped) => messages::recorded_with_gaps(language, &duration, dropped),
+    }
+}
 
 /// Ticks in one unit of the position readout's last field.
 ///
@@ -106,6 +122,7 @@ impl AurisApp {
         let playing = self.is_playing();
         let looping = self.project().loop_enabled;
         let clicking = self.session.metronome();
+        let recording = self.session.is_recording();
         let playhead = self.playhead_ticks();
         let position = format_position(playhead, &self.project().signatures);
         let seconds = self.project().tempo_map.ticks_to_seconds(playhead);
@@ -225,6 +242,20 @@ impl AurisApp {
                                 &theme,
                                 cx.listener(|this, _, _, cx| {
                                     this.toggle_play();
+                                    cx.notify();
+                                }),
+                            ))
+                            // Beside Play, where a hardware transport puts it, and lit while a
+                            // take is running so that a microphone nobody remembers arming is
+                            // never live without something on screen saying so.
+                            .child(icon_button(
+                                "record",
+                                Icon::Record,
+                                recording,
+                                theme.record,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.toggle_recording();
                                     cx.notify();
                                 }),
                             ))
@@ -509,6 +540,55 @@ impl AurisApp {
         self.set_status(self.t(key));
     }
 
+    /// Arms an audio track for recording, or disarms it if it already was.
+    ///
+    /// One at a time, so clicking a second track's button moves the arm rather than adding one:
+    /// there is one input stream, and it has to go somewhere in particular.
+    pub(crate) fn toggle_arm(&mut self, track: TrackId) {
+        let wanted = match self.session.armed_track() == Some(track) {
+            true => None,
+            false => Some(track),
+        };
+        if let Err(error) = self.session.arm_track(wanted) {
+            self.report_session_error(&error);
+        }
+    }
+
+    /// Starts a take, or ends the one that is running.
+    ///
+    /// Starting rolls the transport as well, which the session deliberately does not do on its
+    /// own — recording against nothing and recording against the song are both real, and which
+    /// one a *button* means is a frontend's decision. Stopping stops both, because a take that
+    /// ended while the song played on would leave the playhead somewhere other than where the
+    /// clip that just appeared is.
+    pub(crate) fn toggle_recording(&mut self) {
+        if self.session.is_recording() {
+            match self.session.stop_recording() {
+                Ok(report) => {
+                    self.session.stop();
+                    self.set_status(recording_summary(&report, self.language));
+                }
+                Err(error) => self.report_session_error(&error),
+            }
+            return;
+        }
+        match self.session.start_recording() {
+            Ok(()) => {
+                if !self.session.is_playing() {
+                    self.session.play();
+                }
+                self.set_status(self.t(Key::RecordingStarted));
+            }
+            Err(error) => self.report_session_error(&error),
+        }
+    }
+
+    /// Puts a recording failure on the status line, named after the command that failed.
+    fn report_session_error(&mut self, error: &SessionError) {
+        let line = self.failure(Key::CmdRecord, error);
+        self.set_failed_status(line);
+    }
+
     /// Steps the editing grid to the next finer division, wrapping at the end.
     pub(crate) fn cycle_grid(&mut self) {
         let current = self.project().grid.raw();
@@ -673,6 +753,49 @@ mod tests {
             Some(GRID_OFF_LABEL),
             "off comes last, so cycling reaches it without passing through it",
         );
+    }
+
+    #[test]
+    fn a_take_that_recorded_nothing_is_not_reported_as_a_take() {
+        // The status line is the only answer a record button gives. "recorded 00:00" over a
+        // timeline with no new clip on it reads as a bug in the clip drawing rather than as an
+        // input that was never connected.
+        let empty = RecordingReport {
+            clip: None,
+            path: None,
+            seconds: 0.0,
+            dropped_frames: 0,
+        };
+        for language in Language::ALL {
+            let line = recording_summary(&empty, language);
+            assert_eq!(line, messages::recorded_nothing(language));
+        }
+    }
+
+    #[test]
+    fn a_take_with_a_hole_in_it_says_so() {
+        // A dropped block moves everything after it earlier. Reporting the take as a plain
+        // success would leave that to be found in a mix next week.
+        let good = RecordingReport {
+            clip: Some(ClipId(1)),
+            path: None,
+            seconds: 12.5,
+            dropped_frames: 0,
+        };
+        let holed = RecordingReport {
+            dropped_frames: 480,
+            ..good.clone()
+        };
+        for language in Language::ALL {
+            assert_ne!(
+                recording_summary(&good, language),
+                recording_summary(&holed, language),
+            );
+            assert!(
+                recording_summary(&holed, language).contains("480"),
+                "the number of lost frames is the whole point of the line"
+            );
+        }
     }
 
     #[test]

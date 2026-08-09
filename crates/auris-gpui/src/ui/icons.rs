@@ -21,6 +21,8 @@ pub enum Icon {
     Pause,
     /// Stop playback and rewind.
     Stop,
+    /// Start recording a take.
+    Record,
     /// Toggle the cycle region.
     Loop,
     /// Toggle the click: the wedge and its pendulum.
@@ -295,6 +297,13 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
             // The pointer runs from the middle out through the ring, which is what makes the
             // circle a control rather than a full stop.
             bar(window, 0.455, 0.14, 0.545, 0.52);
+        }
+        Icon::Record => {
+            // A filled disc, drawn as a square rounded until it has no corners left. Smaller than
+            // the other transport glyphs on purpose: a circle of the same width reads as heavier
+            // than a triangle or a pair of bars, which is why every hardware transport ever built
+            // draws its record button a size down.
+            knob(window, 0.50, 0.50, 0.46, 0.46);
         }
         Icon::Wave => {
             // A sine and a half. One period reads as a bracket; the extra half is what makes it

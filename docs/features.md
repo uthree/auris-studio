@@ -608,6 +608,44 @@ shape is found; a number is how it is said.
 **An instrument with an amplitude envelope draws that**, on the same principle: attack, decay,
 sustain and release are one shape with three corners to drag, not four numbers to imagine.
 
+## Recording
+
+Arm an audio track with the **R** button on its header, press **Record** in the transport — or
+`R` — and play. Pressing it again stops the take and puts it on the timeline as a clip, at the
+position the playhead was at when the first sample arrived. The transport rolls when you start, so
+a take recorded against the rest of the song lines up with it.
+
+One track at a time: there is one input stream, and arming a second track moves the arm rather
+than adding one. Only audio tracks show the button, because only they have anywhere for a take to
+land.
+
+**Recording needs a saved project.** The take is written straight to disk while it happens, into
+the project folder's `Audio/`, so a project with no folder has nowhere to put it — and inventing a
+temporary directory would mean leaving an hour of playing somewhere the machine tidies up. Files
+are named after the track and numbered from the first free number: `Vocals 1.wav`, `Vocals 2.wav`.
+
+Takes are **32-bit float**, and there is no bit depth to choose. Every integer depth is a decision
+about how much of a performance to throw away before anyone has heard it, and float cannot clip —
+a singer who leant in on the last chorus is recoverable rather than square.
+
+The input device is chosen in **Settings → Audio**, separately from the output. Choosing one does
+not interrupt playback: it is opened only while a take is running.
+
+Two things worth knowing:
+
+* **The input and output run on separate clocks.** The take is pinned to the timeline at its first
+  sample, and after that its length is counted at the input device's own rate. Between two
+  different pieces of hardware those rates differ very slightly, so an hour-long take can end up a
+  few frames long. Nothing corrects for it, deliberately: a take that is visibly a few frames out
+  can be nudged, and one that has been quietly resampled cannot.
+* **A disk that stalls costs frames**, and you are told how many. There is over a second of slack
+  before that can happen. If it does, the take is still usable — but everything after the gap has
+  moved earlier by that much.
+
+**Monitoring is not in yet.** You hear the song you are playing along to, not yourself through
+Auris. If you are recording through an interface, its own direct monitoring is what you want
+anyway — it is lower latency than any software path can be.
+
 ## The project folder
 
 A project is a folder, not a lone file. **Save As** creates it: choosing `MySong.auris` writes
