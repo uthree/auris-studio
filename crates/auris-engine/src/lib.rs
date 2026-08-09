@@ -85,7 +85,7 @@ pub mod transport;
 #[cfg(test)]
 mod testkit;
 
-pub use capture::{Capture, CaptureSettings, input_devices, start_capture};
+pub use capture::{Capture, CaptureReader, CaptureSettings, input_devices, start_capture};
 pub use command::EngineCommand;
 pub use device::{
     AudioDevice, AudioDeviceInfo, AudioSettings, output_devices, start_audio, start_silent,

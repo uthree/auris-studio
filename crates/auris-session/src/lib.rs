@@ -61,7 +61,8 @@ pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob};
 pub use session::{
     AccompanyReport, AudioStatus, Clipboard, ComposeReport, CopiedClip, CopiedContent,
-    DEFAULT_PARTS, Quantize, SaveReport, Session, SessionOptions, quantized,
+    DEFAULT_PARTS, Quantize, RecordingReport, RecordingStatus, SaveReport, Session, SessionOptions,
+    quantized,
 };
 pub use settings::{AudioPreferences, CONFIG_DIR_VAR, Settings, config_dir, migrate_legacy_config};
 
@@ -163,7 +164,7 @@ pub mod prelude {
 
     pub use crate::{
         AccompanyReport, AudioPreferences, Clipboard, ComposeReport, CopiedClip, CopiedContent,
-        DEFAULT_PARTS, Edit, ExportSummary, ParamTarget, Quantize, RenderJob, SaveReport, Session,
-        SessionError, SessionOptions, Settings,
+        DEFAULT_PARTS, Edit, ExportSummary, ParamTarget, Quantize, RecordingReport,
+        RecordingStatus, RenderJob, SaveReport, Session, SessionError, SessionOptions, Settings,
     };
 }

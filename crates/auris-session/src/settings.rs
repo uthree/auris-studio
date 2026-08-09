@@ -26,6 +26,14 @@ pub const CONFIG_DIR_VAR: &str = "AURIS_CONFIG_DIR";
 pub struct AudioPreferences {
     /// Output device to open, by name. `None` follows the system default.
     pub device: Option<String>,
+    /// Input device to record from, by name. `None` follows the system default.
+    ///
+    /// Its own field rather than a shared one: recording through an interface while listening on
+    /// the laptop's own output is the ordinary arrangement, not the exotic one. The rate and
+    /// block size are not repeated — a take asks for the project's rate and the same block size
+    /// as playback, and a second pair of controls for numbers nobody would set differently would
+    /// be two more things to get wrong.
+    pub input_device: Option<String>,
     /// Sample rate to request. `None` takes whatever the device prefers.
     pub sample_rate: Option<u32>,
     /// Callback size to request, in frames.
@@ -36,6 +44,7 @@ impl Default for AudioPreferences {
     fn default() -> Self {
         Self {
             device: None,
+            input_device: None,
             sample_rate: None,
             // ~11 ms at 48 kHz: responsive enough to audition notes against, long enough that
             // per-block overhead stays small.

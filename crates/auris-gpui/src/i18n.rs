@@ -136,6 +136,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::EraseModulation => Key::EditEraseModulation,
         Edit::ClearAutomation => Key::EditClearAutomation,
         Edit::ImportAudio => Key::EditImportAudio,
+        Edit::RecordTake => Key::EditRecordTake,
         Edit::ImportSoundFont => Key::EditImportSoundFont,
         Edit::ChoosePreset => Key::EditChoosePreset,
         Edit::SetKey => Key::EditSetKey,
@@ -188,6 +189,12 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         }
         SessionError::WrongTrackKind { .. } => Key::ErrorWrongTrackKind.get(language).to_string(),
         SessionError::NoPath => Key::ErrorNoPath.get(language).to_string(),
+        SessionError::RecordingNeedsFolder => {
+            Key::ErrorRecordingNeedsFolder.get(language).to_string()
+        }
+        SessionError::NothingArmed => Key::ErrorNothingArmed.get(language).to_string(),
+        SessionError::AlreadyRecording => Key::ErrorAlreadyRecording.get(language).to_string(),
+        SessionError::NotRecording => Key::ErrorNotRecording.get(language).to_string(),
         SessionError::SettingsWrite { path, source } => messages::settings_write_failed(
             language,
             &path.display().to_string(),

@@ -120,6 +120,25 @@ pub enum SessionError {
     #[error("the project has no path yet; save it somewhere first")]
     NoPath,
 
+    /// Recording was asked for on a project that has no folder to write the take into.
+    ///
+    /// Separate from [`Self::NoPath`] because the remedy reads differently: a save is being asked
+    /// for *before* the thing the user wanted, not instead of it.
+    #[error("a recording needs a project folder to write into; save the project first")]
+    RecordingNeedsFolder,
+
+    /// Recording was asked for with no track armed to record onto.
+    #[error("no track is armed to record onto")]
+    NothingArmed,
+
+    /// A second take was started while one was already running.
+    #[error("a recording is already running")]
+    AlreadyRecording,
+
+    /// A take was stopped when none was running.
+    #[error("no recording is running")]
+    NotRecording,
+
     /// The application settings file could not be written.
     #[error("could not write {path}: {source}")]
     SettingsWrite {

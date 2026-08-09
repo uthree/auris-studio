@@ -9,6 +9,7 @@
 //! * [`import`] decodes any container Symphonia understands into an
 //!   [`AudioBuffer`](auris_core::AudioBuffer), optionally resampling to the project rate.
 //! * [`export`] writes a rendered buffer out as 16-bit, 24-bit or 32-bit float WAV.
+//! * [`record`] writes a WAV that does not exist yet, block by block, for as long as a take runs.
 //! * [`project_file`] saves and loads the [`Project`](auris_core::Project) document as JSON.
 //! * [`assets`] copies the files a project refers to into its folder, and finds them again when
 //!   they have moved.
@@ -19,6 +20,7 @@ pub mod export;
 pub mod import;
 pub mod midi;
 pub mod project_file;
+pub mod record;
 pub mod soundfont;
 
 pub use assets::{byte_size, copy_into, find_named};
@@ -34,6 +36,7 @@ pub use midi::{
 pub use project_file::{
     AUDIO_DIR, PROJECT_EXTENSION, document_in_folder, load_project, project_folder, save_project,
 };
+pub use record::WavRecorder;
 pub use soundfont::{
     SoundFontPreset, font_name, load_soundfont, preset_count, presets, soundfont_extensions,
 };
@@ -81,7 +84,10 @@ mod test_support {
 
     impl Drop for TempFile {
         fn drop(&mut self) {
+            // Either kind: a recorder is handed a path inside a folder it has to create, so some
+            // of these names end up being directories with a take in them.
             let _ = std::fs::remove_file(&self.path);
+            let _ = std::fs::remove_dir_all(&self.path);
         }
     }
 }

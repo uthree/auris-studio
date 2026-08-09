@@ -29,6 +29,18 @@
 //! throws the block away and counts it, because the one thing it must not do is block: a
 //! recording with a gap in it is a bad take, and a recording that stalled the audio device is a
 //! stalled machine.
+//!
+//! # Why the reader is a separate object
+//!
+//! A `cpal::Stream` is only `Send` on some of the hosts cpal supports — WASAPI yes, CoreAudio no
+//! — so a [`Capture`] cannot be assumed to move to another thread, and the thread that writes the
+//! file has to be another thread: a UI that stalls for a second while a dialog opens would
+//! otherwise cost the take a second of audio.
+//!
+//! So the two halves are split. [`Capture`] owns the stream and stays where it was opened, and
+//! [`CaptureReader`] owns the receiving end of the pool and goes wherever the writing happens.
+//! Dropping the [`Capture`] closes the device, which drops the sender, which is how the reader
+//! finds out the take is over — see [`CaptureReader::is_finished`].
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -141,12 +153,84 @@ struct CaptureShared {
 pub struct Capture {
     /// `None` in the silent capture a test uses.
     stream: Option<cpal::Stream>,
-    full: Receiver<Vec<f32>>,
-    empty: Sender<Vec<f32>>,
+    /// Taken exactly once, by whatever is going to write the samples down.
+    reader: Option<CaptureReader>,
     shared: Arc<CaptureShared>,
     name: String,
     sample_rate: f64,
     channel_count: usize,
+}
+
+/// The receiving end of a capture's pool.
+///
+/// Sent to the thread that writes the file. It carries no handle to the device, which is the
+/// point: see the module note on why the stream cannot go with it.
+pub struct CaptureReader {
+    full: Receiver<Vec<f32>>,
+    empty: Sender<Vec<f32>>,
+    shared: Arc<CaptureShared>,
+    sample_rate: f64,
+    channel_count: usize,
+    finished: bool,
+}
+
+impl CaptureReader {
+    /// Rate the device is running at.
+    pub fn sample_rate(&self) -> f64 {
+        self.sample_rate
+    }
+
+    /// Channels the device delivers, which is how wide the file has to be.
+    pub fn channel_count(&self) -> usize {
+        self.channel_count
+    }
+
+    /// Hands every block that has arrived to `consume`, and returns the pool's buffers.
+    ///
+    /// Returns how many *samples* were passed on — frames times channels — so a caller can tell
+    /// an empty poll from a busy one and decide whether to wait. Never blocks: what has not
+    /// arrived yet is left for the next call.
+    pub fn drain(&mut self, mut consume: impl FnMut(&[f32])) -> usize {
+        let mut samples = 0;
+        loop {
+            match self.full.try_recv() {
+                Ok(buffer) => {
+                    consume(&buffer);
+                    samples += buffer.len();
+                    // Straight back to the pool. The channel cannot be full — every buffer in
+                    // flight came out of it — and if it somehow were, dropping this one costs a
+                    // later block rather than blocking the reader here.
+                    let _ = self.empty.try_send(buffer);
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => break,
+                // crossbeam reports this only once the queue is drained *and* every sender has
+                // gone, so it means exactly "the stream was dropped and you have it all".
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    self.finished = true;
+                    break;
+                }
+            }
+        }
+        samples
+    }
+
+    /// `true` once the device has closed and every sample it sent has been handed over.
+    ///
+    /// Only ever true after a [`Self::drain`] that reached the end, because that is when it is
+    /// found out.
+    pub fn is_finished(&self) -> bool {
+        self.finished
+    }
+
+    /// Frames lost because nothing drained the pool in time. See [`Capture::dropped_frames`].
+    pub fn dropped_frames(&self) -> u64 {
+        dropped_frames(&self.shared, self.channel_count)
+    }
+}
+
+/// Samples the callback threw away, as frames.
+fn dropped_frames(shared: &CaptureShared, channels: usize) -> u64 {
+    shared.dropped.load(Ordering::Relaxed) / channels.max(1) as u64
 }
 
 impl Capture {
@@ -192,8 +276,7 @@ impl Capture {
     /// rather than quietly kept: the samples are gone and everything after them has moved earlier
     /// by that much.
     pub fn dropped_frames(&self) -> u64 {
-        let channels = self.channel_count.max(1) as u64;
-        self.shared.dropped.load(Ordering::Relaxed) / channels
+        dropped_frames(&self.shared, self.channel_count)
     }
 
     /// The loudest sample since this was last called, and resets the meter.
@@ -204,22 +287,12 @@ impl Capture {
         f32::from_bits(self.shared.peak.swap(0, Ordering::Relaxed))
     }
 
-    /// Hands every block that has arrived to `consume`, and returns the pool's buffers.
+    /// The reading half, for the thread that is going to write the samples down.
     ///
-    /// Returns how many *samples* were passed on — frames times channels — so a caller that is
-    /// writing them down can tell an empty poll from a busy one. Never blocks: what is not ready
-    /// yet is simply left for the next call.
-    pub fn drain(&self, mut consume: impl FnMut(&[f32])) -> usize {
-        let mut samples = 0;
-        while let Ok(buffer) = self.full.try_recv() {
-            consume(&buffer);
-            samples += buffer.len();
-            // Straight back to the pool. The channel cannot be full — every buffer in flight came
-            // out of it — and if it somehow were, dropping this one costs a later block rather
-            // than blocking the reader here.
-            let _ = self.empty.try_send(buffer);
-        }
-        samples
+    /// `None` on the second call: there is one pool and one consumer of it, and two readers would
+    /// split a take between them.
+    pub fn take_reader(&mut self) -> Option<CaptureReader> {
+        self.reader.take()
     }
 }
 
@@ -323,8 +396,14 @@ fn pool() -> (Capture, CaptureSink, Arc<CaptureShared>) {
     });
     let capture = Capture {
         stream: None,
-        full: full_rx,
-        empty: empty_tx,
+        reader: Some(CaptureReader {
+            full: full_rx,
+            empty: empty_tx,
+            shared: Arc::clone(&shared),
+            sample_rate: 0.0,
+            channel_count: 0,
+            finished: false,
+        }),
         shared: Arc::clone(&shared),
         name: String::new(),
         sample_rate: 0.0,
@@ -377,6 +456,10 @@ pub fn start_capture(
     capture.name = setup.name;
     capture.sample_rate = sample_rate;
     capture.channel_count = channels;
+    if let Some(reader) = capture.reader.as_mut() {
+        reader.sample_rate = sample_rate;
+        reader.channel_count = channels;
+    }
     Ok(capture)
 }
 
@@ -488,29 +571,32 @@ mod tests {
     /// Everything below the stream is what these tests are for: no machine running CI has a
     /// microphone, and the parts that would go wrong — the pool running dry, the stamp, the
     /// format conversion — are all on this side of it anyway.
-    fn wired(channels: usize) -> (Capture, CaptureSink, Arc<AtomicU64>) {
+    fn wired(channels: usize) -> (Capture, CaptureReader, CaptureSink, Arc<AtomicU64>) {
         let (mut capture, mut sink, _) = pool();
         let playhead = Arc::new(AtomicU64::new(0));
         sink.playhead = Arc::clone(&playhead);
         sink.channels = channels;
         capture.channel_count = channels;
         capture.sample_rate = 48_000.0;
-        (capture, sink, playhead)
+        let mut reader = capture.take_reader().expect("the first reader");
+        reader.channel_count = channels;
+        reader.sample_rate = 48_000.0;
+        (capture, reader, sink, playhead)
     }
 
     /// Everything `drain` hands over, in one buffer.
-    fn drained(capture: &Capture) -> Vec<f32> {
+    fn drained(reader: &mut CaptureReader) -> Vec<f32> {
         let mut out = Vec::new();
-        capture.drain(|block| out.extend_from_slice(block));
+        reader.drain(|block| out.extend_from_slice(block));
         out
     }
 
     #[test]
     fn samples_come_out_the_other_side_in_the_order_they_went_in() {
-        let (capture, mut sink, _) = wired(2);
+        let (capture, mut reader, mut sink, _) = wired(2);
         sink.push(&[0.1f32, 0.2, 0.3, 0.4]);
         sink.push(&[0.5f32, 0.6]);
-        assert_eq!(drained(&capture), vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
+        assert_eq!(drained(&mut reader), vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
         assert_eq!(capture.frames(), 3, "six samples of stereo is three frames");
         assert_eq!(capture.dropped_frames(), 0);
     }
@@ -520,7 +606,7 @@ mod tests {
         // Not where it was when the button went down: that is a UI-thread reading, one callback
         // out of date, and a take that starts eleven milliseconds early is a take that has to be
         // nudged by hand on every single recording.
-        let (capture, mut sink, playhead) = wired(1);
+        let (capture, _reader, mut sink, playhead) = wired(1);
         assert_eq!(capture.started_at(), None, "nothing has arrived yet");
 
         playhead.store(96_000, Ordering::Relaxed);
@@ -537,10 +623,10 @@ mod tests {
     fn a_block_larger_than_a_pooled_buffer_is_split_rather_than_grown() {
         // Growing it would be an allocation on the audio callback. Splitting is the whole reason
         // `push` has a loop in it.
-        let (capture, mut sink, _) = wired(1);
+        let (capture, mut reader, mut sink, _) = wired(1);
         let block = vec![1.0f32; POOL_SAMPLES + POOL_SAMPLES / 2];
         sink.push(&block);
-        assert_eq!(drained(&capture).len(), block.len());
+        assert_eq!(drained(&mut reader).len(), block.len());
         assert_eq!(capture.dropped_frames(), 0);
     }
 
@@ -548,7 +634,7 @@ mod tests {
     fn a_reader_that_never_runs_costs_samples_rather_than_the_device() {
         // The contract this whole module is built around: the callback must come back. Filling
         // the pool without draining it has to end in counted losses, not in a block.
-        let (capture, mut sink, _) = wired(1);
+        let (capture, mut reader, mut sink, _) = wired(1);
         for _ in 0..POOL_BUFFERS + 4 {
             sink.push(&[0.5f32; POOL_SAMPLES]);
         }
@@ -558,26 +644,26 @@ mod tests {
             "everything past the pool should have been counted as lost"
         );
         // And what did fit is still intact, so the take up to the gap is usable.
-        assert_eq!(drained(&capture).len(), POOL_BUFFERS * POOL_SAMPLES);
+        assert_eq!(drained(&mut reader).len(), POOL_BUFFERS * POOL_SAMPLES);
     }
 
     #[test]
     fn the_pool_goes_round_rather_than_running_out() {
         // Draining returns buffers, so a take longer than the pool is the ordinary case and not
         // the failure above.
-        let (capture, mut sink, _) = wired(1);
+        let (capture, mut reader, mut sink, _) = wired(1);
         for _ in 0..POOL_BUFFERS * 4 {
             sink.push(&[0.25f32; POOL_SAMPLES]);
-            assert_eq!(drained(&capture).len(), POOL_SAMPLES);
+            assert_eq!(drained(&mut reader).len(), POOL_SAMPLES);
         }
         assert_eq!(capture.dropped_frames(), 0);
     }
 
     #[test]
     fn an_integer_device_arrives_as_the_floats_everything_else_speaks() {
-        let (capture, mut sink, _) = wired(1);
+        let (_capture, mut reader, mut sink, _) = wired(1);
         sink.push(&[i16::MAX, 0, i16::MIN]);
-        let out = drained(&capture);
+        let out = drained(&mut reader);
         assert!(
             (out[0] - 1.0).abs() < 1.0e-4,
             "full scale came out as {}",
@@ -593,7 +679,7 @@ mod tests {
 
     #[test]
     fn the_meter_holds_the_loudest_sample_and_clears_when_it_is_read() {
-        let (capture, mut sink, _) = wired(1);
+        let (capture, _reader, mut sink, _) = wired(1);
         sink.push(&[0.2f32, -0.7, 0.3]);
         assert_eq!(capture.take_peak(), 0.7, "the peak is the absolute value");
         assert_eq!(capture.take_peak(), 0.0, "and reading it starts a new one");
@@ -604,10 +690,42 @@ mod tests {
     }
 
     #[test]
+    fn the_reader_finds_out_the_take_is_over_by_the_device_closing() {
+        // There is no stop message. Dropping the `Capture` closes the stream, which drops the
+        // sink, which is what turns the pool's far end into a disconnect — and a writer thread
+        // that waited for anything else would either hang or truncate the last blocks.
+        let (capture, mut reader, mut sink, _) = wired(1);
+        sink.push(&[0.5f32; 64]);
+        assert_eq!(drained(&mut reader).len(), 64);
+        assert!(!reader.is_finished(), "the stream is still open");
+
+        drop(sink);
+        drop(capture);
+        // The tail is still handed over before the end is reported, so nothing is truncated.
+        assert!(!reader.is_finished(), "not until a drain has looked");
+        assert_eq!(drained(&mut reader).len(), 0);
+        assert!(reader.is_finished());
+    }
+
+    #[test]
+    fn a_reader_is_handed_out_once_and_only_once() {
+        // Two of them would split a take between two files, each with half the blocks.
+        let (mut capture, _, _, _) = pool_capture();
+        assert!(capture.take_reader().is_some());
+        assert!(capture.take_reader().is_none());
+    }
+
+    /// A capture with its reader still attached, for the test above.
+    fn pool_capture() -> (Capture, CaptureSink, Arc<CaptureShared>, ()) {
+        let (capture, sink, shared) = pool();
+        (capture, sink, shared, ())
+    }
+
+    #[test]
     fn an_empty_callback_neither_stamps_the_take_nor_counts_a_frame() {
         // A device is allowed to call back with nothing, and doing so before the transport has
         // moved would otherwise pin the take to whatever the playhead read at the time.
-        let (capture, mut sink, _) = wired(2);
+        let (capture, _reader, mut sink, _) = wired(2);
         sink.push::<f32>(&[]);
         assert_eq!(capture.started_at(), None);
         assert_eq!(capture.frames(), 0);

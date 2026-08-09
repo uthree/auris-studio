@@ -741,6 +741,7 @@ strings! {
     EditEraseModulation { en: "erasing the modulation", ja: "モジュレーションの削除" }
     EditClearAutomation { en: "clearing the automation", ja: "オートメーションの消去" }
     EditImportAudio { en: "importing audio", ja: "オーディオの読み込み" }
+    EditRecordTake { en: "recording a take", ja: "録音" }
     EditImportSoundFont { en: "importing a SoundFont", ja: "サウンドフォントの読み込み" }
     EditChoosePreset { en: "choosing a sound", ja: "音色の選択" }
     EditSetKey { en: "setting the key", ja: "調の変更" }
@@ -795,6 +796,16 @@ strings! {
         en: "the project has no path yet; save it somewhere first",
         ja: "保存先が未設定です。先に保存してください"
     }
+    ErrorRecordingNeedsFolder {
+        en: "a recording needs a project folder to write into; save the project first",
+        ja: "録音するにはプロジェクトフォルダが必要です。先に保存してください"
+    }
+    ErrorNothingArmed {
+        en: "no track is armed to record onto",
+        ja: "録音待機中のトラックがありません"
+    }
+    ErrorAlreadyRecording { en: "a recording is already running", ja: "すでに録音中です" }
+    ErrorNotRecording { en: "no recording is running", ja: "録音していません" }
     ErrorFile { en: "file error", ja: "ファイルエラー" }
     ErrorEngine { en: "audio engine error", ja: "オーディオエンジンのエラー" }
     ErrorDocument { en: "the document is not valid", ja: "ドキュメントが不正です" }

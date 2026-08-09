@@ -166,6 +166,8 @@ pub enum Edit {
     ClearAutomation,
     /// An audio file was imported onto a track.
     ImportAudio,
+    /// A take was recorded onto an audio track.
+    RecordTake,
     /// A SoundFont was imported into the project.
     ImportSoundFont,
     /// A track was pointed at one of a SoundFont's sounds.

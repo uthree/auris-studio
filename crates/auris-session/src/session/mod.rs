@@ -38,6 +38,7 @@ mod generated;
 mod harmony;
 mod mixer;
 mod notes;
+mod record;
 mod tracks;
 mod transport;
 
@@ -48,6 +49,7 @@ pub use accompany::{AccompanyReport, DEFAULT_PARTS};
 pub use clipboard::{Clipboard, CopiedClip, CopiedContent};
 pub use compose::{composed_gain_db, kit_trim_db};
 pub use notes::{Quantize, quantized};
+pub use record::{RecordingReport, RecordingStatus};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -234,6 +236,15 @@ pub struct Session {
     /// emptied would lose its contents on every Undo, and taking a step back is exactly when
     /// somebody is about to paste. See [`clipboard`].
     clipboard: Clipboard,
+
+    /// The audio track a take would be recorded onto.
+    ///
+    /// Not in the document, for the same reason the clipboard is not: arming is how somebody
+    /// prepares to play rather than something they wrote, and an Undo that disarmed the track
+    /// they were about to record onto would be a surprise with a microphone already live.
+    armed: Option<TrackId>,
+    /// The take that is running, if one is. See [`record`].
+    take: Option<record::Take>,
 }
 
 /// What a Save As produced.
@@ -351,6 +362,8 @@ impl Session {
             param_cache: HashMap::new(),
             waveforms: HashMap::new(),
             clipboard: Clipboard::default(),
+            armed: None,
+            take: None,
         };
         session.install_shipped_fonts();
         session.rebuild_graph();
