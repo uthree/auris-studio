@@ -54,6 +54,16 @@ impl EngineHandle {
         self.playhead.load(Ordering::Relaxed)
     }
 
+    /// The playhead itself, for something that has to read it from another audio callback.
+    ///
+    /// [`start_capture`](crate::start_capture) is the one caller: an input stream runs on its own
+    /// thread and has to stamp a take with where the transport was when the first block landed.
+    /// A copy of the number would be one callback out of date, which is the difference between a
+    /// take that lines up and one that has to be nudged by hand every time.
+    pub fn playhead_cell(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.playhead)
+    }
+
     /// Playhead position in seconds.
     pub fn playhead_seconds(&self) -> f64 {
         if self.sample_rate <= 0.0 {

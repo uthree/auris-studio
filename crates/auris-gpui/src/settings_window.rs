@@ -38,7 +38,7 @@ pub struct SettingsWindow {
     theme: Theme,
     tab: SettingsTab,
     /// Output devices, read once when the window opens.
-    devices: Vec<OutputDeviceInfo>,
+    devices: Vec<AudioDeviceInfo>,
     audio: AudioPreferences,
     keymap: Keymap,
     /// Stored language preference; `None` follows the system.
@@ -88,7 +88,7 @@ impl SettingsWindow {
     pub fn new(
         app: WeakEntity<AurisApp>,
         theme: Theme,
-        devices: Vec<OutputDeviceInfo>,
+        devices: Vec<AudioDeviceInfo>,
         audio: AudioPreferences,
         live: AudioStatus,
         keymap: Keymap,
@@ -1183,7 +1183,7 @@ fn capture_status(
 }
 
 /// One line describing what a device can do.
-fn describe(device: &OutputDeviceInfo, language: Language) -> String {
+fn describe(device: &AudioDeviceInfo, language: Language) -> String {
     let rates = match (device.sample_rates.first(), device.sample_rates.last()) {
         (Some(low), Some(high)) if low != high => {
             messages::rate_range(language, *low as f64 / 1000.0, *high as f64 / 1000.0)

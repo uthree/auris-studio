@@ -58,7 +58,7 @@ use auris_core::param::ParamDescriptor;
 use auris_core::time::{Seconds, Ticks};
 use auris_core::{AudioSourceBank, PluginRegistry, Project, SourceId, TrackId};
 use auris_engine::{
-    AudioDevice, AudioSettings, EngineCommand, EngineHandle, MeterBank, OutputDeviceInfo,
+    AudioDevice, AudioDeviceInfo, AudioSettings, EngineCommand, EngineHandle, MeterBank,
     RenderGraph, start_audio,
 };
 use auris_gpu::{GpuContext, WaveformPeaks};
@@ -387,7 +387,7 @@ impl Session {
     ///
     /// Queried on demand rather than cached: devices come and go while the application runs,
     /// and this is only called when a settings panel opens.
-    pub fn output_devices(&self) -> Vec<OutputDeviceInfo> {
+    pub fn output_devices(&self) -> Vec<AudioDeviceInfo> {
         auris_engine::output_devices()
     }
 

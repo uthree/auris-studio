@@ -59,7 +59,7 @@ impl Default for AudioSettings {
 
 /// An output device the host could open, and what it can do.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OutputDeviceInfo {
+pub struct AudioDeviceInfo {
     /// Name, which is also how [`AudioSettings::device`] refers to it.
     pub name: String,
     /// Whether this is the system's default output.
@@ -76,7 +76,7 @@ pub struct OutputDeviceInfo {
 /// call it when a settings panel opens rather than on every frame. A device that errors while
 /// being queried is skipped rather than failing the whole list — one broken aggregate device
 /// should not hide the working ones.
-pub fn output_devices() -> Vec<OutputDeviceInfo> {
+pub fn output_devices() -> Vec<AudioDeviceInfo> {
     let host = cpal::default_host();
     // `Display` is what `open_output` already records as the device name and what the status
     // bar shows, so matching on it keeps every place that names a device in agreement.
@@ -104,7 +104,7 @@ pub fn output_devices() -> Vec<OutputDeviceInfo> {
                 }
             }
             sample_rates.sort_unstable();
-            OutputDeviceInfo {
+            AudioDeviceInfo {
                 is_default: default_name.as_deref() == Some(name.as_str()),
                 name,
                 sample_rates,

@@ -9,8 +9,12 @@ pub enum EngineError {
     #[error("no default audio output device is available")]
     NoOutputDevice,
 
-    /// The device's sample format is not one the engine knows how to write.
-    #[error("unsupported output sample format `{0}`")]
+    /// The host reported no default input device, so there is nothing to record from.
+    #[error("no audio input device is available")]
+    NoInputDevice,
+
+    /// The device's sample format is not one the engine knows how to read or write.
+    #[error("unsupported sample format `{0}`")]
     UnsupportedSampleFormat(String),
 
     /// The audio backend refused an operation.

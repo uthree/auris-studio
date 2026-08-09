@@ -31,11 +31,19 @@
 //! it from the device callback; [`render_project`] calls it in a loop as fast as the CPU allows.
 //! Because there is only one path, an export matches what was heard, sample for sample.
 //!
+//! # Audio going the other way
+//!
+//! [`start_capture`] opens an input device and hands its blocks to whatever is writing them down.
+//! It is a *second* stream on a *second* clock — cpal offers nothing else — so [`capture`] is
+//! where the consequences of that are set out: where a take lands on the timeline, and what the
+//! two crystals drifting apart does and does not cost.
+//!
 //! # Realtime rules
 //!
-//! Everything reachable from [`render_block`] is allocation-free, lock-free and panic-free.
-//! Allocation happens in [`RenderGraph::build`]; levels reach the UI through the lock-free
-//! [`MeterBank`]; the playhead is a single relaxed atomic.
+//! Everything reachable from [`render_block`] is allocation-free, lock-free and panic-free, and
+//! so is everything the capture callback touches. Allocation happens in [`RenderGraph::build`]
+//! and in the capture's buffer pool; levels reach the UI through the lock-free [`MeterBank`]; the
+//! playhead is a single relaxed atomic.
 //!
 //! # Example
 //!
@@ -61,6 +69,7 @@
 //! # Ok::<(), auris_engine::EngineError>(())
 //! ```
 
+pub mod capture;
 pub mod command;
 pub mod device;
 pub mod error;
@@ -76,9 +85,10 @@ pub mod transport;
 #[cfg(test)]
 mod testkit;
 
+pub use capture::{Capture, CaptureSettings, input_devices, start_capture};
 pub use command::EngineCommand;
 pub use device::{
-    AudioDevice, AudioSettings, OutputDeviceInfo, output_devices, start_audio, start_silent,
+    AudioDevice, AudioDeviceInfo, AudioSettings, output_devices, start_audio, start_silent,
 };
 pub use error::EngineError;
 pub use graph::{
