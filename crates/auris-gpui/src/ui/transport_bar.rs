@@ -566,6 +566,49 @@ impl AurisApp {
         }
     }
 
+    /// Plays the live input through `track`, or stops doing so if it already was.
+    ///
+    /// One track at a time, like the arm and for the same reason: one input stream, and it has to
+    /// come out somewhere in particular.
+    ///
+    /// The status line names the device *and* what listening this way costs, every time rather
+    /// than once. Somebody recording through an interface that monitors in hardware and who turns
+    /// this on as well hears themselves twice, a few milliseconds apart, and the fix is to turn
+    /// one of them off — which is only obvious to somebody who has been told there are two.
+    pub(crate) fn toggle_monitoring(&mut self, track: TrackId) {
+        let wanted = match self.session.monitored_track() == Some(track) {
+            true => None,
+            false => Some(track),
+        };
+        if let Err(error) = self.session.set_monitoring(wanted) {
+            let line = self.failure(Key::CmdToggleMonitoring, &error);
+            self.set_failed_status(line);
+            return;
+        }
+        self.monitor_gaps = 0;
+        let line = match self.session.monitor_status() {
+            Some(status) => messages::monitoring_on(self.language, &status.device),
+            None => self.t(Key::MonitoringOff).to_string(),
+        };
+        self.set_status(line);
+    }
+
+    /// Says so when the monitor has broken up since this was last checked.
+    ///
+    /// Called from the frame loop, because a dropout is not something a command returns: it
+    /// happens between commands, and the only evidence otherwise is a noise the user is left to
+    /// interpret. Reported once per new gap rather than once per frame.
+    pub(crate) fn report_monitor_gaps(&mut self) {
+        let Some(status) = self.session.monitor_status() else {
+            self.monitor_gaps = 0;
+            return;
+        };
+        if status.rebuffers > self.monitor_gaps {
+            self.monitor_gaps = status.rebuffers;
+            self.set_status(messages::monitor_gaps(self.language, status.rebuffers));
+        }
+    }
+
     /// Starts a take, or ends the one that is running.
     ///
     /// Onto whatever [`record_target`](Self::record_target) names, so the ordinary way to record

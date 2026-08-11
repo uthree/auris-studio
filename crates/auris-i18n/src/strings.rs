@@ -59,6 +59,7 @@ strings! {
     MuteInitial { en: "M", ja: "M" }
     SoloInitial { en: "S", ja: "S" }
     RecordInitial { en: "R", ja: "R" }
+    MonitorInitial { en: "I", ja: "I" }
     Volume { en: "Vol", ja: "音量" }
     Pan { en: "Pan", ja: "パン" }
     TrackKindInstrument { en: "Instrument", ja: "ソフト音源" }
@@ -262,6 +263,8 @@ strings! {
     CmdToggleMetronome { en: "Metronome", ja: "メトロノーム" }
     CmdRecord { en: "Record", ja: "録音" }
     RecordingStarted { en: "Recording", ja: "録音中" }
+    CmdToggleMonitoring { en: "Input Monitoring", ja: "入力モニタリング" }
+    MonitoringOff { en: "Monitoring off", ja: "モニタリングを終了しました" }
     RecordingNeedsSave {
         en: "A take is written to disk as it happens — choose where this project lives first.",
         ja: "録音は録りながらディスクに書き込みます。先にプロジェクトの保存先を決めてください。"
@@ -989,6 +992,7 @@ mod tests {
             Key::MuteInitial,
             Key::SoloInitial,
             Key::RecordInitial,
+            Key::MonitorInitial,
             Key::SubdivisionEighth,
             Key::SubdivisionSixteenth,
         ];

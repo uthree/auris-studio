@@ -691,6 +691,9 @@ pub struct AurisApp {
     pub(crate) timeline: TimelineView,
     pub(crate) pitch: PitchView,
     pub(crate) selected_track: Option<TrackId>,
+    /// Monitor dropouts already reported, so the frame loop says something once per new gap
+    /// rather than thirty times a second for as long as the count stands.
+    pub(crate) monitor_gaps: u64,
     /// The clip the editors point at. Always a member of [`Self::selected_clips`].
     pub(crate) selected_clip: Option<ClipId>,
     /// Every selected clip. Edits act on all of them; the piano roll edits the primary one.
@@ -835,6 +838,10 @@ impl AurisApp {
                             let line = this.failure(Key::CmdSave, &error);
                             this.set_failed_status(line);
                         }
+                        // Also here rather than in a command, because a monitor breaking up
+                        // happens *between* commands: without this the only evidence is a noise
+                        // the person playing is left to interpret.
+                        this.report_monitor_gaps();
                         cx.notify();
                     })
                     .is_err()
@@ -859,6 +866,7 @@ impl AurisApp {
             timeline: TimelineView::default(),
             pitch: PitchView::default(),
             selected_track,
+            monitor_gaps: 0,
             selected_clip,
             selected_clips: selected_clip.into_iter().collect(),
             selected_notes: BTreeSet::new(),

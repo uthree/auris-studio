@@ -653,9 +653,30 @@ Two things worth knowing:
   before that can happen. If it does, the take is still usable — but everything after the gap has
   moved earlier by that much.
 
-**Monitoring is not in yet.** You hear the song you are playing along to, not yourself through
-Auris. If you are recording through an interface, its own direct monitoring is what you want
-anyway — it is lower latency than any software path can be.
+## Hearing yourself
+
+The **I** button on an audio track's header — or `U` — plays the live input through that track, so
+you hear what you are playing. It goes in where the track's own material does: through its effects,
+its fader, its pan and wherever it is routed. A singer hears themselves through the reverb they are
+about to be recorded into, at the level the fader is set to, and a muted track stays silent.
+
+It works with the transport stopped, which is when you set a level in the first place, and it does
+not need a take running. Recording and monitoring are independent switches on the same device.
+
+**Software monitoring costs latency and an interface's own does not.** The signal has to travel
+input device → Auris → output device, and Auris holds three blocks of buffer in the middle so the
+two devices' unsynchronised clocks cannot run it dry. At a 512-frame block that is around 32 ms on
+top of what the hardware costs. If you are recording through an interface with direct monitoring,
+use that instead — and use only one of the two, because both at once is hearing yourself twice, a
+few milliseconds apart.
+
+That is why it is a switch rather than something that happens whenever a track is armed, and why
+the status line names the cost every time you turn it on.
+
+**If the monitor breaks up, the status line says how many times.** The two clocks drift, and once
+the gap between them stops being usable Auris jumps back to the live edge rather than replaying
+what you have already heard. A handful over a long session is normal; a steady stream means the
+machine is not keeping up with the block size, which **Settings → Audio** can change.
 
 ## Autosave
 

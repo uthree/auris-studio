@@ -107,6 +107,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_toggle_loop))
             .on_action(cx.listener(Self::on_toggle_metronome))
             .on_action(cx.listener(Self::on_toggle_recording))
+            .on_action(cx.listener(Self::on_toggle_monitoring))
             .on_action(cx.listener(Self::on_new_project))
             .on_action(cx.listener(Self::on_open_project))
             .on_action(cx.listener(Self::on_quit))
@@ -1110,6 +1111,29 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.toggle_recording(window, cx);
+        cx.notify();
+    }
+
+    fn on_toggle_monitoring(
+        &mut self,
+        _: &actions::ToggleMonitoring,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Onto whatever a take would land on, which is where somebody wants to hear themselves.
+        // The per-track button is for monitoring one track while looking at another.
+        match self
+            .session
+            .monitored_track()
+            .or_else(|| self.record_target())
+        {
+            Some(track) => self.toggle_monitoring(track),
+            None => {
+                let line =
+                    self.failure(Key::CmdToggleMonitoring, &SessionError::NothingToRecordOnto);
+                self.set_failed_status(line);
+            }
+        }
         cx.notify();
     }
 

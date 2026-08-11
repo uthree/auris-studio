@@ -582,6 +582,22 @@ messages! {
         ja: "{duration} を録音しましたが、{frames} フレームが欠落しています"
     }
 
+    /// Monitoring switched on, naming the device and the cost of listening this way.
+    ///
+    /// The cost is said every time rather than once in a dialog: an interface with direct
+    /// monitoring beats every software path, and somebody who has one and turns this on as well
+    /// hears themselves twice, slightly apart.
+    fn monitoring_on(device: &str) {
+        en: "monitoring {device} — software monitoring adds latency; an interface's own is lower",
+        ja: "{device} をモニターしています — ソフトウェアモニタリングは遅延します。オーディオインターフェース側の機能のほうが低遅延です"
+    }
+
+    /// The monitor has been interrupted, which is a thing somebody heard and should be told why.
+    fn monitor_gaps(count: u64) {
+        en: "the monitor has broken up {count} times — try a larger audio block size",
+        ja: "モニター音が {count} 回途切れました — オーディオのブロックサイズを大きくしてみてください"
+    }
+
     /// A file a project refers to that is not there.
     fn warning_missing_audio(path: &str) {
         en: "warning: missing audio file {path}",

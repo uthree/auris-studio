@@ -392,6 +392,11 @@ pub fn model(language: Language) -> Vec<MenuSection> {
                 "transport.record",
             ),
             command(
+                t(Key::CmdToggleMonitoring),
+                actions::ToggleMonitoring,
+                "transport.monitor",
+            ),
+            command(
                 t(Key::CmdToggleCycle),
                 actions::ToggleLoop,
                 "transport.loop",

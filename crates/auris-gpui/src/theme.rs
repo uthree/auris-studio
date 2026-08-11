@@ -569,7 +569,12 @@ impl Metrics {
     /// to the smallest.
     pub const STRUCTURE_LANE_HEIGHT: Pixels = px(18.0);
     /// Width of the track header column.
-    pub const TRACK_HEADER_WIDTH: Pixels = px(196.0);
+    ///
+    /// Wide enough for the button row an *audio* track carries — mute, solo, arm and input
+    /// monitor — with the gain fader beside it still worth dragging. It was twenty pixels
+    /// narrower when a track had three buttons. Only the default: the column is draggable and a
+    /// layout somebody has already resized keeps whatever they set.
+    pub const TRACK_HEADER_WIDTH: Pixels = px(216.0);
     /// Width of the piano-roll keyboard.
     pub const KEYBOARD_WIDTH: Pixels = px(56.0);
     /// Height of one piano-roll note row at 100 % zoom.

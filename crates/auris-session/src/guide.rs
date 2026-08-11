@@ -178,8 +178,33 @@ pub mod architecture {
     //! That in turn is why `Capture` hands out a separate reader: `cpal::Stream` is not `Send` on
     //! every host cpal supports, so the device cannot travel and the pool's far end must.
     //!
-    //! Ending a take is `drop`, not a message: closing the device drops the sender, and a
-    //! disconnected channel is a signal that cannot arrive before the last block has.
+    //! # Monitoring, and why the device stopped belonging to the take
+    //!
+    //! Ending a take used to be `drop`: closing the device dropped the sender, and a disconnected
+    //! channel is a signal that cannot arrive before the last block has. It was the neatest part
+    //! of the design and it did not survive monitoring, which holds the same device open with no
+    //! take running — pressing stop would have taken the monitor down every time.
+    //!
+    //! So the device belongs to the [`Session`](crate::Session), one of it for both, and a take is
+    //! a *phase* within an open device. Two consequences, both load bearing:
+    //!
+    //! * **The pool's reader is on loan.** There is one, a second take needs it, so the writer
+    //!   thread hands it back with the frame count instead of dying with it.
+    //! * **Stopping is a flag, and a flag can be read before the block already on its way.** The
+    //!   writer waits for two quiet passes rather than closing on the first.
+    //!
+    //! The monitored signal itself takes a different road out. It cannot use the pool — that has
+    //! one consumer by construction, and it is the file writer — so
+    //! [`auris_engine::monitor`] is a second channel from the same callback: a ring of stereo
+    //! frames the input callback fills and the *render graph* empties, joined to a track so the
+    //! input arrives before the effects, the fader and the sends.
+    //!
+    //! The two clocks turn up again here and get the opposite answer from the one
+    //! [`auris_engine::capture`] gives. A take may not be silently corrected, because a take is
+    //! being kept. A monitor may, because it is being *listened to*: when drift closes the gap or
+    //! opens it too far the reader jumps to the live edge and counts it. It never jumps backwards,
+    //! which is the one refinement worth remembering — replaying a third of a second of somebody's
+    //! own voice is a worse noise than the gap that prompted it.
     //!
     //! # Where the audio actually goes
     //!

@@ -161,6 +161,9 @@ impl AurisApp {
                 // be an invitation to a thing that cannot happen.
                 let records = track.kind.as_audio().is_some();
                 let armed = arm_latch(id, self.session.armed_track(), self.record_target());
+                // No `Ready` state to match the arm's: monitoring is never inferred from a
+                // selection, because it is a thing that costs and those are switched on by hand.
+                let monitored = self.session.monitored_track() == Some(id);
 
                 let is_selected = selected == Some(id);
                 let is_dragging = dragging == Some(id);
@@ -298,6 +301,25 @@ impl AurisApp {
                                                 cx.notify();
                                             }),
                                         )))
+                                        // Beside the arm because they are the two halves of the
+                                        // same device: one keeps what comes in, the other only
+                                        // lets it be heard. In the accent rather than in red,
+                                        // because listening is not recording and a row of two
+                                        // red buttons would say it was.
+                                        .child(
+                                            div().w(px(24.0)).child(button(
+                                                ("monitor", index),
+                                                self.t(Key::MonitorInitial),
+                                                ButtonStyle::Normal,
+                                                monitored,
+                                                theme.accent,
+                                                &theme,
+                                                cx.listener(move |this, _, _, cx| {
+                                                    this.toggle_monitoring(id);
+                                                    cx.notify();
+                                                }),
+                                            )),
+                                        )
                                     })
                                     .child(
                                         div()

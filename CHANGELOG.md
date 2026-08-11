@@ -9,6 +9,28 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### You can hear yourself now
+
+* **The I button on an audio track plays the live input through it** — or `U`, or Transport → Input
+  Monitoring. It joins the mix where the track's own material does: through the effects, the fader,
+  the pan and wherever the track is routed. A singer hears themselves through the reverb they are
+  about to be recorded into, and a muted track stays silent.
+* **It works with the transport stopped and without a take running**, because setting a level is
+  what somebody does before pressing Record. Recording and monitoring are independent switches on
+  one device.
+* **What it costs is on the status line every time it is switched on**, not once in a dialog:
+  software monitoring adds latency and an interface's own direct monitoring does not. Roughly 32 ms
+  at a 512-frame block, on top of what the hardware costs. Use one or the other — both at once is
+  hearing yourself twice, a few milliseconds apart.
+* **A monitor that breaks up says how many times.** The input and output clocks drift, and once the
+  gap stops being usable the monitor jumps to the live edge rather than replaying what you have
+  already heard. A handful over a session is the clocks; a stream of them is a block size that is
+  too small, and Settings → Audio is where that lives.
+* The input meter now moves whenever the device is open rather than only during a take — a meter
+  that appeared after the take began arrived too late to set a level with.
+* Track headers are twenty pixels wider by default, for the fourth button. A column you have
+  already dragged keeps the width you gave it.
+
 ### The project saves itself
 
 * **A project with a folder is written back over itself about every thirty seconds**, when

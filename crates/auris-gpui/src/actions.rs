@@ -49,6 +49,8 @@ actions!(
         ToggleMetronome,
         /// Start or stop recording a take.
         ToggleRecording,
+        /// Play the live input through the track a take would land on, or stop doing so.
+        ToggleMonitoring,
         /// Add an instrument track.
         AddInstrumentTrack,
         /// Add an audio track.
@@ -288,6 +290,10 @@ bindable! {
         // `r` is what every DAW binds record to, and it is free here for the same reason `k` is:
         // nothing types into the window itself.
         "transport.record",     GroupTransport, CmdRecord,             "r"           => ToggleRecording;
+        // A bare letter for the same reason `r` and `k` are: this is flipped with one hand while
+        // the other is on an instrument, which is the whole case for spending one. `i` would read
+        // better and belongs to the inspector; `u` is next to it and unclaimed.
+        "transport.monitor",    GroupTransport, CmdToggleMonitoring,   "u"           => ToggleMonitoring;
         // Logic's own key for the click, and free here. A bare letter at the window's context is
         // the same bargain the panel toggles above already take: nothing types into the window,
         // and a sheet or a prompt is a context of its own where nothing at all is bound.
