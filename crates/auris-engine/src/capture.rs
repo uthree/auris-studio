@@ -135,6 +135,12 @@ pub struct CaptureSettings {
 #[derive(Debug)]
 struct CaptureShared {
     running: AtomicBool,
+    /// Whether a take is running, which is what decides if the pool is fed at all.
+    ///
+    /// An open device is not a take. Monitoring holds one open with this `false`, and then the
+    /// callback feeds the ring and nothing else — no file, no counters moving, no meter that says
+    /// a recording is under way when none is.
+    recording: AtomicBool,
     /// Samples the callback threw away because the pool was empty.
     dropped: AtomicU64,
     /// Engine playhead when the first block arrived; [`NOT_STARTED`] until then.
@@ -148,13 +154,18 @@ struct CaptureShared {
 /// A running input stream.
 ///
 /// Dropping it closes the device — there is no pause, on purpose. A stream that is open is a
-/// microphone that is live, and holding one open between takes is both a battery cost and, on
-/// every operating system that shows an indicator, a light saying the application is listening
-/// when it is not.
+/// microphone that is live, and holding one open when nothing wants it is both a battery cost
+/// and, on every operating system that shows an indicator, a light saying the application is
+/// listening when it is not. So the *device* lasts as long as somebody is recording or
+/// monitoring, and a take is a phase within that: see [`Capture::begin_take`].
 pub struct Capture {
     /// `None` in the silent capture a test uses.
     stream: Option<cpal::Stream>,
-    /// Taken exactly once, by whatever is going to write the samples down.
+    /// Taken by whatever is going to write the samples down, and handed back when it has.
+    ///
+    /// Out on loan for the length of a take and nowhere else. There is one pool and it may have
+    /// exactly one consumer, so a second take can only begin once the first has given this back —
+    /// see [`Capture::restore_reader`].
     reader: Option<CaptureReader>,
     shared: Arc<CaptureShared>,
     /// The way back to the speakers, handed to the render graph. Unlike the reader this is shared
@@ -221,9 +232,20 @@ impl CaptureReader {
     /// `true` once the device has closed and every sample it sent has been handed over.
     ///
     /// Only ever true after a [`Self::drain`] that reached the end, because that is when it is
-    /// found out.
+    /// found out. This is the device *dying* — unplugged, or the whole capture dropped. A take
+    /// that was merely stopped ends through [`Self::is_recording`] instead, with the device still
+    /// open because somebody is still monitoring through it.
     pub fn is_finished(&self) -> bool {
         self.finished
+    }
+
+    /// `false` once the take has been stopped, whether or not the device is still open.
+    ///
+    /// Not a signal to stop reading at once: the callback may have been part way through a block
+    /// when this went false, and that block belongs in the file. A writer waits for a quiet pass
+    /// or two before it closes.
+    pub fn is_recording(&self) -> bool {
+        self.shared.recording.load(Ordering::Relaxed)
     }
 
     /// Frames lost because nothing drained the pool in time. See [`Capture::dropped_frames`].
@@ -291,12 +313,49 @@ impl Capture {
         f32::from_bits(self.shared.peak.swap(0, Ordering::Relaxed))
     }
 
+    /// Opens a take: from here the callback feeds the pool, and the counters describe this take.
+    ///
+    /// Everything a take is measured by is cleared, because they all mean "so far in this take"
+    /// and a second take through the same device would otherwise begin at the first one's length.
+    pub fn begin_take(&self) {
+        self.shared.frames.store(0, Ordering::Relaxed);
+        self.shared.dropped.store(0, Ordering::Relaxed);
+        self.shared.peak.store(0, Ordering::Relaxed);
+        self.shared.started_at.store(NOT_STARTED, Ordering::Relaxed);
+        self.shared.recording.store(true, Ordering::Release);
+    }
+
+    /// Closes the take, leaving the device open for whatever else wants it.
+    pub fn end_take(&self) {
+        self.shared.recording.store(false, Ordering::Release);
+    }
+
+    /// `true` between [`Self::begin_take`] and [`Self::end_take`].
+    pub fn is_taking(&self) -> bool {
+        self.shared.recording.load(Ordering::Relaxed)
+    }
+
     /// The reading half, for the thread that is going to write the samples down.
     ///
-    /// `None` on the second call: there is one pool and one consumer of it, and two readers would
-    /// split a take between them.
+    /// `None` while a take already has it: there is one pool and one consumer of it, and two
+    /// readers would split a take between them. The writer gives it back through
+    /// [`Self::restore_reader`] when it is done, which is what lets a second take use a device the
+    /// first one left open.
     pub fn take_reader(&mut self) -> Option<CaptureReader> {
         self.reader.take()
+    }
+
+    /// Puts the reader back, so the next take can have it.
+    pub fn restore_reader(&mut self, reader: CaptureReader) {
+        self.reader = Some(reader);
+    }
+
+    /// Whether the reader is here rather than out on loan.
+    ///
+    /// `false` with no take running means the thread that borrowed it died holding it, which
+    /// nothing can recover from except opening the device again.
+    pub fn has_reader(&self) -> bool {
+        self.reader.is_some()
     }
 
     /// The ring the render graph reads to play this input back through the mix.
@@ -350,6 +409,15 @@ impl CaptureSink {
             return;
         }
         self.monitor.write(data, self.channels);
+        // Before the take check, because an input meter is about the *device*: somebody setting a
+        // level has not started a take yet, and that is exactly when they need to see one.
+        self.note_peak(data);
+        // An open device is not a take. Somebody monitoring holds the stream open with no take
+        // running, and everything below here — the stamp, the counters, the file — belongs to a
+        // take and to nothing else.
+        if !self.shared.recording.load(Ordering::Acquire) {
+            return;
+        }
         // The first block is what fixes the take to the timeline. `compare_exchange` rather than
         // a store, so every later block leaves it alone.
         let _ = self.shared.started_at.compare_exchange(
@@ -374,7 +442,6 @@ impl CaptureSink {
             // so this is a conversion and a copy with no allocation in it.
             buffer.clear();
             buffer.extend(data[..take].iter().map(|sample| f32::from_sample(*sample)));
-            self.note_peak(&buffer);
             let frames = (take / self.channels.max(1)) as u64;
             match self.full.try_send(buffer) {
                 Ok(()) => self.shared.frames.fetch_add(frames, Ordering::Relaxed),
@@ -388,10 +455,14 @@ impl CaptureSink {
     }
 
     /// Raises the meter to the loudest sample in `block`, if it is louder than what is there.
-    fn note_peak(&self, block: &[f32]) {
+    fn note_peak<T>(&self, block: &[T])
+    where
+        T: Copy,
+        f32: FromSample<T>,
+    {
         let mut peak = f32::from_bits(self.shared.peak.load(Ordering::Relaxed));
         for sample in block {
-            let level = sample.abs();
+            let level = f32::from_sample(*sample).abs();
             // `>` rather than `max`, so a NaN from a misbehaving driver loses instead of
             // poisoning the meter for the rest of the take.
             if level > peak {
@@ -411,6 +482,7 @@ fn pool(input_rate: f64) -> (Capture, CaptureSink, Arc<CaptureShared>) {
     }
     let shared = Arc::new(CaptureShared {
         running: AtomicBool::new(false),
+        recording: AtomicBool::new(false),
         dropped: AtomicU64::new(0),
         started_at: AtomicU64::new(NOT_STARTED),
         peak: AtomicU32::new(0),
@@ -606,6 +678,9 @@ mod tests {
         let mut reader = capture.take_reader().expect("the first reader");
         reader.channel_count = channels;
         reader.sample_rate = 48_000.0;
+        // Every test below is about a take. The device being open is a separate thing, and the
+        // test for *that* is `an_open_device_with_no_take_running_records_nothing`.
+        capture.begin_take();
         (capture, reader, sink, playhead)
     }
 
@@ -733,11 +808,56 @@ mod tests {
     }
 
     #[test]
-    fn a_reader_is_handed_out_once_and_only_once() {
-        // Two of them would split a take between two files, each with half the blocks.
+    fn a_reader_is_out_on_loan_rather_than_handed_out_for_good() {
+        // Two at once would split a take between two files, each with half the blocks. But a
+        // device outlives the take that opened it — somebody monitoring keeps it open between
+        // takes — so the second take has to be able to get one.
         let (mut capture, _, _, _) = pool_capture();
-        assert!(capture.take_reader().is_some());
-        assert!(capture.take_reader().is_none());
+        let reader = capture.take_reader().expect("the first take");
+        assert!(capture.take_reader().is_none(), "two consumers of one pool");
+        capture.restore_reader(reader);
+        assert!(capture.take_reader().is_some(), "the second take gets one");
+    }
+
+    #[test]
+    fn an_open_device_with_no_take_running_records_nothing() {
+        // Monitoring holds the stream open with no take under way. Everything a take is measured
+        // by has to stay still, or a meter says a recording is running when none is — and the
+        // samples must not reach the pool, where the next take would find them at its start.
+        let (capture, mut reader, mut sink, playhead) = wired(1);
+        capture.end_take();
+        playhead.store(96_000, Ordering::Relaxed);
+        sink.push(&[0.5f32; 128]);
+
+        assert_eq!(drained(&mut reader).len(), 0, "it fed the pool");
+        assert_eq!(capture.frames(), 0);
+        assert_eq!(capture.started_at(), None);
+        assert!(!capture.is_taking());
+        // The meter is the one thing that does move: an input meter is about the device, and
+        // somebody setting a level has not started a take yet.
+        assert_eq!(capture.take_peak(), 0.5);
+    }
+
+    #[test]
+    fn a_second_take_through_the_same_device_starts_from_nothing() {
+        // The counters all mean "so far in this take". A device left open by a monitor would
+        // otherwise hand the second take the first one's length, and its start position.
+        let (capture, mut reader, mut sink, playhead) = wired(1);
+        playhead.store(48_000, Ordering::Relaxed);
+        sink.push(&[0.9f32; 256]);
+        assert_eq!(drained(&mut reader).len(), 256);
+        assert_eq!(capture.frames(), 256);
+        assert_eq!(capture.started_at(), Some(48_000));
+        capture.end_take();
+
+        capture.begin_take();
+        assert_eq!(capture.frames(), 0);
+        assert_eq!(capture.started_at(), None, "it kept the first take's start");
+        assert_eq!(capture.dropped_frames(), 0);
+        playhead.store(96_000, Ordering::Relaxed);
+        sink.push(&[0.2f32; 64]);
+        assert_eq!(capture.started_at(), Some(96_000));
+        assert_eq!(capture.frames(), 64);
     }
 
     /// A capture with its reader still attached, for the test above.

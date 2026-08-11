@@ -21,7 +21,8 @@
 //! reaches the disk and `assets` is how a saved document finds the files it only names;
 //! `compose` replaces the whole document with a written piece and `accompany` writes parts around
 //! one clip of the document there already; `clipboard` is cut, copy and paste over both of the
-//! things a user can select.
+//! things a user can select. `record` and `monitor` are the two halves of the input device — what
+//! is kept, and what is merely heard — and share it rather than each opening one.
 //!
 //! Every one of them is `impl Session`, so no path a caller writes changes. And because they are
 //! *children* of this module rather than neighbours of it, they read [`Session`]'s private fields
@@ -38,6 +39,7 @@ mod files;
 mod generated;
 mod harmony;
 mod mixer;
+mod monitor;
 mod notes;
 mod record;
 mod tracks;
@@ -50,6 +52,7 @@ pub use accompany::{AccompanyReport, DEFAULT_PARTS};
 pub use autosave::{AUTOSAVE_INTERVAL, AutosaveState, should_autosave};
 pub use clipboard::{Clipboard, CopiedClip, CopiedContent};
 pub use compose::{composed_gain_db, kit_trim_db};
+pub use monitor::MonitorStatus;
 pub use notes::{Quantize, quantized};
 pub use record::{RecordingReport, RecordingStatus};
 
@@ -258,8 +261,17 @@ pub struct Session {
     /// prepares to play rather than something they wrote, and an Undo that disarmed the track
     /// they were about to record onto would be a surprise with a microphone already live.
     armed: Option<TrackId>,
+    /// The input device, open while a take is running or somebody is monitoring.
+    ///
+    /// One device serving both, because it is one device: a take that closed it on stopping would
+    /// take the monitor down with it, and two streams onto one interface is a thing drivers
+    /// refuse. See [`monitor`] for what that costs and what it buys.
+    input: Option<auris_engine::Capture>,
     /// The take that is running, if one is. See [`record`].
     take: Option<record::Take>,
+    /// The track the live input is being played through, if anybody asked for that. See
+    /// [`monitor`].
+    monitored: Option<TrackId>,
 }
 
 /// What a Save As produced.
@@ -380,6 +392,8 @@ impl Session {
             waveforms: HashMap::new(),
             clipboard: Clipboard::default(),
             armed: None,
+            input: None,
+            monitored: None,
             take: None,
         };
         session.install_shipped_fonts();
@@ -436,8 +450,17 @@ impl Session {
         &mut self,
         preferences: AudioPreferences,
     ) -> Result<(), SessionError> {
+        let input_changed = self.audio.input_device != preferences.input_device;
         if !output_changed(&self.audio, &preferences) {
             self.audio = preferences;
+            // Only the input moved, so the output is left alone — but a monitor that is running is
+            // running through the *old* microphone and would go on doing so.
+            if input_changed {
+                self.restart_input();
+                if self.monitoring() {
+                    self.rebuild_graph();
+                }
+            }
             return Ok(());
         }
         // Capture the position in seconds, not frames: the new device may run at a different
@@ -461,6 +484,10 @@ impl Session {
         self.engine = engine;
         self.audio = preferences;
 
+        // The capture reads the *engine's* playhead atomic to stamp where a take begins, and this
+        // is a different engine. An input left open across the swap would be stamping takes
+        // against a clock nothing moves any more.
+        self.restart_input();
         // The new engine starts with no graph, no loop and a playhead at zero.
         self.rebuild_graph();
         self.publish_loop();
@@ -763,6 +790,10 @@ impl Session {
             rate,
         );
         graph.set_scope(Arc::clone(&self.scope));
+        // Re-attached rather than remembered by the graph, for the same reason the scope is: this
+        // runs on every structural edit, and a monitor that did not survive one would go quiet the
+        // moment somebody added a track while playing.
+        graph.set_monitor(self.monitor_ring().zip(self.monitored));
         if let Err(error) = self.engine.set_graph(graph) {
             log::warn!("could not update the render graph: {error}");
         }

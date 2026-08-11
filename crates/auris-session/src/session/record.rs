@@ -2,9 +2,27 @@
 //!
 //! Three things happen at once and none of them can wait for the others. The input device fills a
 //! pool from its own callback; a thread of this crate's own empties that pool into a file; and the
-//! session goes on being a session, drawing meters and moving the playhead. What ties them
-//! together is that the [`Capture`] *is* the take — dropping it closes the device, which is how
-//! the writing thread finds out it is done.
+//! session goes on being a session, drawing meters and moving the playhead.
+//!
+//! # A take is a phase of an open device, not the device's life
+//!
+//! It used to be the device's life: the [`Capture`](auris_engine::Capture) *was* the take, and
+//! dropping it closed the stream, which is how the writer found out it was over. That stopped
+//! working the moment [`monitor`](super::monitor) existed, because monitoring holds the same
+//! device open with no take running and a take that ended by closing it would take the monitor
+//! down every time somebody pressed stop.
+//!
+//! So the device belongs to the [`Session`], one of it for both, and a take is
+//! [`begin_take`](auris_engine::Capture::begin_take) to
+//! [`end_take`](auris_engine::Capture::end_take) within that. Two things follow and both are load
+//! bearing:
+//!
+//! * **The pool's reader is on loan, not given away.** There is one, a second take needs it, so
+//!   the writer thread hands it back along with the frame count.
+//! * **Stopping is a flag, not a disconnect,** and a flag can be seen before the last block that
+//!   was already on its way. The writer waits for two quiet passes rather than closing on the
+//!   first, which is comfortably longer than a callback and costs a fifth of the time a person
+//!   takes to let go of a mouse button.
 //!
 //! # What a take needs before it can start
 //!
@@ -33,7 +51,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use auris_core::{AssetPath, Seconds, Ticks, TrackId};
-use auris_engine::{Capture, CaptureReader, CaptureSettings};
+use auris_engine::{CaptureReader, CaptureSettings};
 use auris_io::{IoError, WavRecorder, import_audio_file};
 
 use super::Session;
@@ -48,11 +66,15 @@ use crate::history::Edit;
 const POLL: Duration = Duration::from_millis(10);
 
 /// A take being recorded.
+///
+/// The device is not here. It belongs to the session, because monitoring holds one open with no
+/// take running and a take must be able to end without closing it — see
+/// [`Session::set_monitoring`]. What ends the take is [`Capture::end_take`]; the writer sees the
+/// flag go false and closes the file after a quiet pass or two.
 pub(super) struct Take {
-    /// The device. Dropping this closes it, which is how the writer learns the take is over.
-    capture: Capture,
-    /// The thread writing the file; it hands back the frame count, or why it stopped.
-    writer: std::thread::JoinHandle<Result<u64, IoError>>,
+    /// The thread writing the file. It hands back the pool's reader — there is one, and the next
+    /// take needs it — along with the frame count, or why it stopped.
+    writer: std::thread::JoinHandle<(CaptureReader, Result<u64, IoError>)>,
     /// Where the file is, absolute.
     path: PathBuf,
     /// Its name inside the project folder, which is what the document will store.
@@ -70,8 +92,6 @@ pub struct RecordingStatus {
     pub seconds: f64,
     /// Where it will start on the timeline, once the first block has arrived.
     pub start: Option<Ticks>,
-    /// The loudest sample since this was last read, for an input meter.
-    pub peak: f32,
     /// Frames lost because the disk could not keep up. Anything but zero is a hole.
     pub dropped_frames: u64,
     /// `false` once the device has disappeared out from under the take.
@@ -169,19 +189,91 @@ impl Session {
         self.take.is_some()
     }
 
-    /// How the running take is doing, for a meter and a clock.
+    /// How the running take is doing, for a clock.
     pub fn recording_status(&self) -> Option<RecordingStatus> {
-        let take = self.take.as_ref()?;
-        let capture = &take.capture;
+        self.take.as_ref()?;
+        let capture = self.input.as_ref()?;
         let rate = capture.sample_rate().max(1.0);
         Some(RecordingStatus {
             device: capture.name().to_string(),
             seconds: capture.frames() as f64 / rate,
             start: capture.started_at().map(|frame| self.tick_of_frame(frame)),
-            peak: capture.take_peak(),
             dropped_frames: capture.dropped_frames(),
             running: capture.is_running(),
         })
+    }
+
+    /// The loudest input sample since this was last called, for a meter.
+    ///
+    /// Whenever the device is open, which is not the same as whenever a take is running: setting
+    /// a level is what somebody does *before* pressing Record, and a meter that only appeared
+    /// after the take began would be a meter that arrived too late to be used.
+    ///
+    /// Reset on read, like a peak-hold on a console, so there is exactly one meter reading it.
+    /// Two would each see half the peaks.
+    pub fn input_peak(&self) -> f32 {
+        self.input
+            .as_ref()
+            .map_or(0.0, |capture| capture.take_peak())
+    }
+
+    /// Opens the input device if it is not already open.
+    ///
+    /// Idempotent, because both things that want a device — a take and a monitor — may want it at
+    /// once and neither knows about the other.
+    pub(super) fn open_input(&mut self) -> Result<(), SessionError> {
+        if self.input.is_some() {
+            return Ok(());
+        }
+        let settings = CaptureSettings {
+            device: self.audio.input_device.clone(),
+            // The rate the project renders at, so a take needs no resampling on the way in. A
+            // device that cannot do it is recorded at whatever it can and resampled below.
+            sample_rate: Some(self.project.sample_rate.round().max(1.0) as u32),
+            block_frames: Some(self.audio.block_frames),
+        };
+        self.input = Some(auris_engine::start_capture(&settings, &self.engine)?);
+        Ok(())
+    }
+
+    /// Closes and reopens the input device, so it follows a change in the audio settings.
+    ///
+    /// Does nothing while a take is running: the writer thread is holding the pool's reader, and
+    /// pulling the device out from under it would end the take at a moment nobody chose. Nothing
+    /// changes audio settings mid-take, and nothing here assumes that.
+    ///
+    /// A device that will not reopen turns the monitor off rather than leaving it pointing at
+    /// nothing. Losing the microphone is worth saying out loud, which the caller does by noticing
+    /// [`monitoring`](Session::monitoring) has gone false.
+    pub(super) fn restart_input(&mut self) {
+        if self.input.is_none() || self.take.is_some() {
+            return;
+        }
+        self.input = None;
+        if self.monitored.is_some() {
+            match self.open_input() {
+                Ok(()) => {
+                    if let Some(ring) = self.monitor_ring() {
+                        ring.set_enabled(true);
+                    }
+                }
+                Err(error) => {
+                    log::warn!("could not reopen the input device: {error}");
+                    self.monitored = None;
+                }
+            }
+        }
+    }
+
+    /// Closes the input device once neither a take nor a monitor wants it.
+    ///
+    /// A stream that is open is a microphone that is live, and on every operating system that
+    /// shows an indicator it is a light saying the application is listening. Leaving one open
+    /// against the next take would be convenient and would also be that.
+    pub(super) fn close_input_if_idle(&mut self) {
+        if self.take.is_none() && self.monitored.is_none() {
+            self.input = None;
+        }
     }
 
     /// Starts recording onto [`record_target(selected)`](Session::record_target).
@@ -217,33 +309,52 @@ impl Session {
             .ok_or(SessionError::RecordingNeedsFolder)?
             .to_path_buf();
 
-        let settings = CaptureSettings {
-            device: self.audio.input_device.clone(),
-            // The rate the project renders at, so a take needs no resampling on the way in. A
-            // device that cannot do it is recorded at whatever it can and resampled below.
-            sample_rate: Some(self.project.sample_rate.round().max(1.0) as u32),
-            block_frames: Some(self.audio.block_frames),
-        };
-        let mut capture = auris_engine::start_capture(&settings, &self.engine)?;
+        self.open_input()?;
+        // The reader is out on loan for the length of a take and handed back at the end of it.
+        // Missing means the last writer thread died holding it, which is not a state anything can
+        // recover from except by opening the device again.
+        if self.input.as_ref().is_some_and(|c| !c.has_reader()) {
+            self.input = None;
+            self.open_input()?;
+        }
+        let capture = self.input.as_mut().expect("the input was just opened");
         let reader = capture
             .take_reader()
             .expect("a fresh capture has its reader");
 
         let inside = PathBuf::from(auris_io::AUDIO_DIR).join(take_file_name(&folder, &name));
         let path = folder.join(&inside);
-        let recorder = WavRecorder::create(&path, reader.sample_rate(), reader.channel_count())?;
-        let writer = std::thread::Builder::new()
+        let recorder =
+            match WavRecorder::create(&path, reader.sample_rate(), reader.channel_count()) {
+                Ok(recorder) => recorder,
+                Err(error) => {
+                    // The reader has to go back even when nothing is going to use it, or the device
+                    // is stuck with no consumer and every later take reopens it.
+                    capture.restore_reader(reader);
+                    self.close_input_if_idle();
+                    return Err(error.into());
+                }
+            };
+        let writer = match std::thread::Builder::new()
             .name("auris-record".to_string())
             .spawn(move || write_take(reader, recorder))
-            .map_err(|error| {
-                SessionError::Io(IoError::Filesystem {
-                    path: path.clone(),
+        {
+            Ok(writer) => writer,
+            Err(error) => {
+                self.close_input_if_idle();
+                return Err(SessionError::Io(IoError::Filesystem {
+                    path,
                     source: error,
-                })
-            })?;
+                }));
+            }
+        };
 
+        // Last, so the callback starts feeding the pool with a writer already draining it.
+        self.input
+            .as_ref()
+            .expect("the input was just opened")
+            .begin_take();
         self.take = Some(Take {
-            capture,
             writer,
             path,
             inside,
@@ -260,20 +371,34 @@ impl Session {
     pub fn stop_recording(&mut self) -> Result<RecordingReport, SessionError> {
         let take = self.take.take().ok_or(SessionError::NotRecording)?;
         let Take {
-            capture,
             writer,
             path,
             inside,
             track,
         } = take;
 
-        let started_at = capture.started_at();
-        let dropped_frames = capture.dropped_frames();
-        // The device closes here, and that is the only signal the writer gets.
-        drop(capture);
+        // Read before the take is closed, because closing it is what stops them moving.
+        let (started_at, dropped_frames) = match self.input.as_ref() {
+            Some(capture) => {
+                let seen = (capture.started_at(), capture.dropped_frames());
+                // The writer's signal. The device stays open if somebody is monitoring through it.
+                capture.end_take();
+                seen
+            }
+            None => (None, 0),
+        };
         let frames = match writer.join() {
-            Ok(result) => result?,
+            Ok((reader, result)) => {
+                if let Some(capture) = self.input.as_mut() {
+                    capture.restore_reader(reader);
+                }
+                self.close_input_if_idle();
+                result?
+            }
             Err(_) => {
+                // The reader went down with the thread. The device cannot be recorded through
+                // again until it is reopened, which `start_recording` checks for.
+                self.close_input_if_idle();
                 return Err(SessionError::Io(IoError::WavWrite(format!(
                     "the thread writing {} panicked",
                     path.display()
@@ -355,13 +480,20 @@ fn take_track(
     armed.or_else(|| selected.filter(|_| selected_records))
 }
 
-/// Drains the capture into the file until the device closes, then closes the file.
+/// Drains the capture into the file until the take ends, then closes the file.
 ///
 /// Runs on a thread of its own rather than on the session's, because the session's thread is a
 /// UI's: a dialog that blocks it for a second would cost the take a second of audio, and the pool
 /// this is emptying is the only thing standing between that and a hole in the recording.
-fn write_take(mut reader: CaptureReader, mut recorder: WavRecorder) -> Result<u64, IoError> {
-    loop {
+///
+/// Hands the reader back whatever happened, including on a write error. There is one reader, the
+/// next take needs it, and a full disk should cost this take rather than every take after it.
+fn write_take(
+    mut reader: CaptureReader,
+    mut recorder: WavRecorder,
+) -> (CaptureReader, Result<u64, IoError>) {
+    let mut quiet = 0;
+    let result = loop {
         let mut failure = None;
         let samples = reader.drain(|block| {
             // The whole block is still taken from the pool after a failure — the buffers have to
@@ -373,16 +505,30 @@ fn write_take(mut reader: CaptureReader, mut recorder: WavRecorder) -> Result<u6
             }
         });
         if let Some(error) = failure {
-            return Err(error);
+            break Err(error);
         }
+        // The device itself went away — unplugged, or the whole capture dropped. Nothing more is
+        // coming and the pool is drained.
         if reader.is_finished() {
-            break;
+            break recorder.finish();
+        }
+        // The take was stopped. Not a reason to close at once: the callback may have been part way
+        // through a block when the flag went false, and that block belongs in the file. Two empty
+        // passes with a `POLL` between them is comfortably longer than a callback.
+        if !reader.is_recording() {
+            match samples {
+                0 => quiet += 1,
+                _ => quiet = 0,
+            }
+            if quiet >= 2 {
+                break recorder.finish();
+            }
         }
         if samples == 0 {
             std::thread::sleep(POLL);
         }
-    }
-    recorder.finish()
+    };
+    (reader, result)
 }
 
 /// A file name for a take on `track`, not already taken inside `folder`.
