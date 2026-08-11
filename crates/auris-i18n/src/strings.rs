@@ -264,6 +264,9 @@ strings! {
     CmdRecord { en: "Record", ja: "録音" }
     RecordingStarted { en: "Recording", ja: "録音中" }
     CmdToggleMonitoring { en: "Input Monitoring", ja: "入力モニタリング" }
+    CmdTogglePunch { en: "Punch Recording", ja: "パンチ録音" }
+    PunchOn { en: "Punch recording on — takes are trimmed to the punch region", ja: "パンチ録音オン — 録音はパンチ範囲に切り詰められます" }
+    PunchOff { en: "Punch recording off", ja: "パンチ録音オフ" }
     MonitoringOff { en: "Monitoring off", ja: "モニタリングを終了しました" }
     RecordingNeedsSave {
         en: "A take is written to disk as it happens — choose where this project lives first.",
@@ -405,6 +408,11 @@ strings! {
     MenuCycleStartHere { en: "Cycle Start Here", ja: "ここをサイクル開始に" }
     MenuCycleEndHere { en: "Cycle End Here", ja: "ここをサイクル終了に" }
     MenuClearCycle { en: "Clear Cycle Region", ja: "サイクル範囲を消去" }
+    MenuPunchTitle { en: "Punch", ja: "パンチ" }
+    MenuPunchStartHere { en: "Punch In Here", ja: "ここをパンチイン位置に" }
+    MenuPunchEndHere { en: "Punch Out Here", ja: "ここをパンチアウト位置に" }
+    MenuPunchFromCycle { en: "Punch Over Cycle Region", ja: "サイクル範囲をパンチ範囲にする" }
+    MenuClearPunch { en: "Clear Punch Region", ja: "パンチ範囲を消去" }
     MenuOctaveUp { en: "Octave Up", ja: "1 オクターブ上げる" }
     MenuOctaveDown { en: "Octave Down", ja: "1 オクターブ下げる" }
     MenuSemitoneUp { en: "Semitone Up", ja: "半音上げる" }
@@ -697,6 +705,7 @@ strings! {
     // both languages name a step that has already happened.
     EditToggleLoop { en: "toggling the cycle", ja: "サイクルの切り替え" }
     EditSetLoopRegion { en: "setting the cycle region", ja: "サイクル範囲の設定" }
+    EditSetPunchRegion { en: "setting the punch region", ja: "パンチ範囲の設定" }
     EditChangeTempo { en: "the tempo change", ja: "テンポの変更" }
     EditSetTempoPoint { en: "writing a tempo change", ja: "テンポチェンジの追加" }
     EditRemoveTempoPoint { en: "removing a tempo change", ja: "テンポチェンジの削除" }

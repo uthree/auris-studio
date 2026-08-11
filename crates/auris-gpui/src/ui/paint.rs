@@ -690,6 +690,44 @@ pub fn loop_region(
     region: (Ticks, Ticks),
     theme: &Theme,
 ) {
+    region_tint(
+        window,
+        bounds,
+        view,
+        region,
+        Theme::translucent(theme.loop_region, 0.18),
+    );
+}
+
+/// Shades the stretch of timeline a take is trimmed to.
+///
+/// The same wash as the cycle in the record colour, because they are the same kind of thing said
+/// about two different questions — what is played again, and what is written down. A shape of its
+/// own would have to be learned; a colour is read.
+pub fn punch_region(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    view: &TimelineView,
+    region: (Ticks, Ticks),
+    theme: &Theme,
+) {
+    region_tint(
+        window,
+        bounds,
+        view,
+        region,
+        Theme::translucent(theme.record, 0.16),
+    );
+}
+
+/// Washes `tint` over the stretch of timeline `region` covers.
+fn region_tint(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    view: &TimelineView,
+    region: (Ticks, Ticks),
+    tint: gpui::Hsla,
+) {
     let (start, end) = region;
     if end <= start {
         return;
@@ -707,7 +745,7 @@ pub fn loop_region(
             origin: point(left, bounds.origin.y),
             size: size(right - left, bounds.size.height),
         },
-        Theme::translucent(theme.loop_region, 0.18),
+        tint,
     );
 }
 

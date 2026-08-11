@@ -653,6 +653,31 @@ Two things worth knowing:
   before that can happen. If it does, the take is still usable — but everything after the gap has
   moved earlier by that much.
 
+## Punching in
+
+One bad bar in a good take does not need the take recorded again. Right-click the ruler → **Punch
+In Here** and **Punch Out Here** to mark the stretch, or **Punch Over Cycle Region** if you have
+already been looping the bars in question. The transport bar's punch button — the cycle's outline
+with a record dot in it, or `⌘P` / `Ctrl+P` — switches it on, and the region is washed over the
+timeline in red for as long as it is.
+
+Then record as usual: roll from a bar or two before, play through, and **only what falls inside the
+region is kept**. The transport rolls out of the take on its own at the punch-out, which is the
+part nobody can do by hand with an instrument in both.
+
+**A punched take removes what it lands on**, on its own track and only where the new clip covers.
+That is the point — the bar you were fixing would otherwise play behind the fix. A clip that spans
+the region comes back as two, keeping the parts outside it, and the whole thing is one Undo.
+
+Two details worth knowing:
+
+* **Record is still pressed by hand.** Punch says what a take *keeps*, not when one starts. A
+  transport that began writing to disk because the playhead crossed a region set an hour ago is one
+  nobody would leave rolling.
+* **The file holds the whole take**, not just the punch — it is in the project folder's `Audio/`
+  under the track's name. If the punch was set to the wrong bar, what you played is still there.
+  If nothing at all fell inside the region, the status line says so and the file is still kept.
+
 ## Hearing yourself
 
 The **I** button on an audio track's header — or `U` — plays the live input through that track, so

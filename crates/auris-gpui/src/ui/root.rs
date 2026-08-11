@@ -108,6 +108,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_toggle_metronome))
             .on_action(cx.listener(Self::on_toggle_recording))
             .on_action(cx.listener(Self::on_toggle_monitoring))
+            .on_action(cx.listener(Self::on_toggle_punch))
             .on_action(cx.listener(Self::on_new_project))
             .on_action(cx.listener(Self::on_open_project))
             .on_action(cx.listener(Self::on_quit))
@@ -1134,6 +1135,16 @@ impl AurisApp {
                 self.set_failed_status(line);
             }
         }
+        cx.notify();
+    }
+
+    fn on_toggle_punch(
+        &mut self,
+        _: &actions::TogglePunch,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_punch();
         cx.notify();
     }
 

@@ -55,6 +55,7 @@ use auris_engine::{CaptureReader, CaptureSettings};
 use auris_io::{IoError, WavRecorder, import_audio_file};
 
 use super::Session;
+use super::punch::punch_window;
 use crate::error::SessionError;
 use crate::history::Edit;
 
@@ -81,6 +82,12 @@ pub(super) struct Take {
     inside: PathBuf,
     /// The track the clip will land on.
     track: TrackId,
+    /// Whether the playhead has been inside the punch region since the take began.
+    ///
+    /// What makes rolling out automatic work under a cycle. "Past the punch-out" is not a
+    /// condition a looping transport ever meets — it wraps before it gets there — so what is
+    /// watched for is *leaving* the region, and leaving needs having been in.
+    pub(super) entered_punch: bool,
 }
 
 /// How a take that is running is doing.
@@ -113,6 +120,13 @@ pub struct RecordingReport {
     /// the gap has moved earlier by that much, which is a thing to be told rather than to
     /// discover in a mix a week later.
     pub dropped_frames: u64,
+    /// The take was recorded and none of it fell inside the punch region.
+    ///
+    /// A different thing from an empty take and it has to read as one: nothing was wrong with the
+    /// microphone, the player rolled past their own punch or stopped before reaching it. The file
+    /// is kept — see [`Self::path`] — because a punch set to the wrong bar is the likeliest reason
+    /// to be reading this.
+    pub outside_punch: bool,
 }
 
 impl Session {
@@ -359,6 +373,7 @@ impl Session {
             path,
             inside,
             track,
+            entered_punch: false,
         });
         Ok(())
     }
@@ -375,6 +390,7 @@ impl Session {
             path,
             inside,
             track,
+            ..
         } = take;
 
         // Read before the take is closed, because closing it is what stops them moving.
@@ -415,6 +431,7 @@ impl Session {
                 path: None,
                 seconds: 0.0,
                 dropped_frames,
+                outside_punch: false,
             });
         }
 
@@ -422,10 +439,49 @@ impl Session {
         // source at the project's rate, and a device that could not give us that rate has just
         // written a file at its own.
         let buffer = import_audio_file(&path, self.project.sample_rate)?;
-        let seconds = buffer.frame_count() as f64 / self.project.sample_rate.max(1.0);
-        let start = started_at.map_or(Ticks::ZERO, |frame| self.tick_of_frame(frame));
+        // Everything from here counts in project frames, including where the take begins: the
+        // stamp is in *engine* frames, and the two rates are free to disagree.
+        let project_rate = self.project.sample_rate.max(1.0);
+        let engine_rate = self.engine.sample_rate().max(1.0);
+        let take_start = started_at.map_or(0, |frame| {
+            (frame as f64 / engine_rate * project_rate).round() as u64
+        });
+
+        let punch = self.punch_frames_at(project_rate);
+        let Some((offset, kept)) = punch_window(punch, take_start, buffer.frame_count() as u64)
+            .filter(|(_, kept)| *kept > 0)
+        else {
+            // The take never reached the punch region — rolled past it, or stopped before it. The
+            // file stays: it is what was played, and the punch being set to the wrong bar is the
+            // likeliest reason to be standing here.
+            return Ok(RecordingReport {
+                clip: None,
+                path: Some(path),
+                seconds: 0.0,
+                dropped_frames,
+                outside_punch: true,
+            });
+        };
+        let buffer = match (offset, kept == buffer.frame_count() as u64) {
+            (0, true) => buffer,
+            _ => buffer.slice(offset as usize, kept as usize),
+        };
+        let seconds = buffer.frame_count() as f64 / project_rate;
+        let start = self
+            .project
+            .tempo_map
+            .seconds_to_ticks(Seconds((take_start + offset) as f64 / project_rate));
 
         self.record(Edit::RecordTake);
+        // Inside the same undo step, and before the new clip exists so it cannot clear itself.
+        // Only what the take actually covers: a player who rolled in late replaces less.
+        if punch.is_some() {
+            let over = self
+                .project
+                .tempo_map
+                .seconds_to_ticks(Seconds((take_start + offset + kept) as f64 / project_rate));
+            self.clear_punch_range(track, start, over);
+        }
         let name = path
             .file_stem()
             .map(|stem| stem.to_string_lossy().to_string())
@@ -450,6 +506,7 @@ impl Session {
             path: Some(path),
             seconds,
             dropped_frames,
+            outside_punch: false,
         })
     }
 

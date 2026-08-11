@@ -25,6 +25,8 @@ pub enum Icon {
     Record,
     /// Toggle the cycle region.
     Loop,
+    /// Toggle the punch region: the cycle's outline with a record disc inside it.
+    Punch,
     /// Toggle the click: the wedge and its pendulum.
     Metronome,
     /// Add something.
@@ -173,6 +175,27 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
             if let Ok(path) = builder.build() {
                 window.paint_path(path, color);
             }
+        }
+        Icon::Punch => {
+            // The cycle's own outline with a record disc inside it, because that is exactly what
+            // the thing is: a region, and what happens in it. Drawn wider and shallower than the
+            // cycle box so the disc has somewhere to sit without touching the walls — a dot that
+            // fills the box reads as a full stop in brackets.
+            let (x0, x1, y0, y1, r) = (0.08, 0.92, 0.30, 0.70, 0.13);
+            let mut builder = PathBuilder::stroke(px((side * 0.09).max(1.1)));
+            builder.move_to(at(x0 + r, y0));
+            builder.line_to(at(x1 - r, y0));
+            builder.curve_to(at(x1, y0 + r), at(x1, y0));
+            builder.line_to(at(x1, y1 - r));
+            builder.curve_to(at(x1 - r, y1), at(x1, y1));
+            builder.line_to(at(x0 + r, y1));
+            builder.curve_to(at(x0, y1 - r), at(x0, y1));
+            builder.line_to(at(x0, y0 + r));
+            builder.curve_to(at(x0 + r, y0), at(x0, y0));
+            if let Ok(path) = builder.build() {
+                window.paint_path(path, color);
+            }
+            knob(window, 0.50, 0.50, 0.26, 0.26);
         }
         Icon::Metronome => {
             // The wedge and the rod. Every metronome anybody has seen is this shape, and at

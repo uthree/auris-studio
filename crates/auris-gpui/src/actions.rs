@@ -51,6 +51,8 @@ actions!(
         ToggleRecording,
         /// Play the live input through the track a take would land on, or stop doing so.
         ToggleMonitoring,
+        /// Trim takes to the punch region, or stop doing so.
+        TogglePunch,
         /// Add an instrument track.
         AddInstrumentTrack,
         /// Add an audio track.
@@ -294,6 +296,10 @@ bindable! {
         // the other is on an instrument, which is the whole case for spending one. `i` would read
         // better and belongs to the inspector; `u` is next to it and unclaimed.
         "transport.monitor",    GroupTransport, CmdToggleMonitoring,   "u"           => ToggleMonitoring;
+        // `secondary-` rather than a bare letter, unlike its neighbours: punch is set up once
+        // before a session of takes rather than flipped between them, and a bare letter is worth
+        // spending only on a switch somebody reaches for with an instrument in the other hand.
+        "transport.punch",      GroupTransport, CmdTogglePunch,        "secondary-p" => TogglePunch;
         // Logic's own key for the click, and free here. A bare letter at the window's context is
         // the same bargain the panel toggles above already take: nothing types into the window,
         // and a sheet or a prompt is a context of its own where nothing at all is bound.

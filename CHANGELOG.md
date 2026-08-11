@@ -9,6 +9,24 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### One bad bar no longer costs the whole take
+
+* **Punch recording.** Mark a stretch from the ruler's menu — or take the cycle region wholesale
+  with **Punch Over Cycle Region** — switch it on with the transport's punch button or `⌘P`, and a
+  take keeps only what falls inside it. The region is washed over the timeline in red while it is
+  on, beside the cycle's own wash and distinguished from it by colour, because they answer two
+  questions about the same bars: what is played again, and what is written down.
+* **The transport rolls out of the take by itself** at the punch-out — the one part of punching
+  nobody can do by hand with an instrument in both. It watches for the playhead *leaving* the
+  region rather than passing the punch-out, because under a cycle it never passes it.
+* **A punched take removes what it lands on**, on its own track and only where the new clip
+  covers, in the same Undo step. A clip spanning the region comes back as two. Recording without
+  punch cannot do this and does not: nothing knows where an ordinary take will end until it ends.
+* **Record is still pressed by hand.** Punch decides what a take keeps, not when one begins.
+* **The file holds the whole take**, not the trim, so a punch set to the wrong bar has not thrown
+  away what was played. A take that missed the region entirely says so — a different sentence from
+  an empty take, which would send somebody to check a cable that is fine.
+
 ### You can hear yourself now
 
 * **The I button on an audio track plays the live input through it** — or `U`, or Transport → Input

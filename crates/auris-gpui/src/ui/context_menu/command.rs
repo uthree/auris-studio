@@ -306,6 +306,16 @@ pub enum MenuCommand {
     ToggleLoop,
     /// Remove the cycle region.
     ClearLoop,
+    /// Move the punch-in to this position.
+    SetPunchStart(Ticks),
+    /// Move the punch-out to this position.
+    SetPunchEnd(Ticks),
+    /// Turn punch recording on or off.
+    TogglePunch,
+    /// Set the punch region to whatever the cycle is set to.
+    PunchFromCycle,
+    /// Forget the punch region.
+    ClearPunch,
 
     /// Open the list of named progressions, aimed at a position.
     ShowProgressionPicker {
@@ -998,6 +1008,36 @@ impl AurisApp {
             MenuCommand::ClearLoop => {
                 self.session.set_loop_enabled(false);
                 self.session.set_loop_region(Ticks::ZERO, Ticks::ZERO);
+            }
+
+            // The same pair as the cycle's, and switching punch on as a side effect for the same
+            // reason: somebody who has just said where the punch-in goes has said they want one.
+            MenuCommand::SetPunchStart(tick) => {
+                let end = self.session.punch_region().map_or(tick, |(_, end)| end);
+                self.session.set_punch_region(tick, end.max(tick));
+                self.session.set_punch_enabled(true);
+            }
+            MenuCommand::SetPunchEnd(tick) => {
+                let start = self
+                    .session
+                    .punch_region()
+                    .map_or(Ticks::ZERO, |(start, _)| start);
+                self.session.set_punch_region(start.min(tick), tick);
+                self.session.set_punch_enabled(true);
+            }
+            MenuCommand::TogglePunch => self.toggle_punch(),
+            // The two are usually the same bars — loop to find the bad one, punch to replace it —
+            // and dragging the second region to match the first by hand is a minute's work for a
+            // thing the application already knows.
+            MenuCommand::PunchFromCycle => {
+                if let Some((start, end)) = self.project().loop_region {
+                    self.session.set_punch_region(start, end);
+                    self.session.set_punch_enabled(true);
+                }
+            }
+            MenuCommand::ClearPunch => {
+                self.session.set_punch_enabled(false);
+                self.session.set_punch_region(Ticks::ZERO, Ticks::ZERO);
             }
         }
         cx.notify();

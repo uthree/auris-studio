@@ -78,6 +78,7 @@ pub fn edit_key(edit: Edit) -> Key {
     match edit {
         Edit::ToggleLoop => Key::EditToggleLoop,
         Edit::SetLoopRegion => Key::EditSetLoopRegion,
+        Edit::SetPunchRegion => Key::EditSetPunchRegion,
         Edit::ChangeTempo(_) => Key::EditChangeTempo,
         Edit::SetTempoPoint => Key::EditSetTempoPoint,
         Edit::RemoveTempoPoint => Key::EditRemoveTempoPoint,

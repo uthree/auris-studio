@@ -38,6 +38,33 @@ impl AurisApp {
                 MenuCommand::ClearLoop,
             )
             .separator()
+            // The punch section reads as the cycle's twin on purpose: the same two edges, the same
+            // switch, and one extra entry for the case that is nearly always what somebody wants —
+            // the bars they have just been looping are the bars they are about to replace.
+            .item(
+                self.t(Key::MenuPunchStartHere),
+                MenuCommand::SetPunchStart(tick),
+            )
+            .item(
+                self.t(Key::MenuPunchEndHere),
+                MenuCommand::SetPunchEnd(tick),
+            )
+            .item_if(
+                self.project().loop_region.is_some(),
+                self.t(Key::MenuPunchFromCycle),
+                MenuCommand::PunchFromCycle,
+            )
+            .toggle(
+                self.t(Key::MenuPunchTitle),
+                MenuCommand::TogglePunch,
+                self.project().punch_enabled,
+            )
+            .item_if(
+                self.project().punch_region.is_some(),
+                self.t(Key::MenuClearPunch),
+                MenuCommand::ClearPunch,
+            )
+            .separator()
             .item(self.t(Key::MenuSetTempoHere), MenuCommand::SetTempoAt(tick))
             // Offered only where a change governs: the anchor at tick zero is the song's own
             // tempo, not a change, and cannot be removed.

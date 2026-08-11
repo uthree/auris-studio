@@ -22,6 +22,8 @@ pub enum Edit {
     ToggleLoop,
     /// The cycle region was moved.
     SetLoopRegion,
+    /// Moving the punch region.
+    SetPunchRegion,
     /// The tempo of one stretch of the timeline was turned.
     ///
     /// The position of the change being turned travels along, because repeated-edit coalescing

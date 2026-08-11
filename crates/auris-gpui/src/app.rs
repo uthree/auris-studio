@@ -842,6 +842,9 @@ impl AurisApp {
                         // happens *between* commands: without this the only evidence is a noise
                         // the person playing is left to interpret.
                         this.report_monitor_gaps();
+                        // The punch-out is a position the playhead crosses rather than a thing
+                        // anybody does, so this is the only place that could notice it.
+                        this.finish_punch();
                         cx.notify();
                     })
                     .is_err()

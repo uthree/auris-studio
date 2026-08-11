@@ -35,12 +35,15 @@ const GRID_OFF_LABEL: &str = "";
 
 /// What a finished take gets reported as.
 ///
-/// A free function because the three answers are a decision — the empty take in particular, which
-/// is not a failure and reads as one unless it is said out loud — and a decision in a view is a
-/// decision with no test.
+/// A free function because the four answers are a decision — the two that produced no clip in
+/// particular, neither of which is a failure and both of which read as one unless they are said
+/// out loud — and a decision in a view is a decision with no test.
 pub(crate) fn recording_summary(report: &RecordingReport, language: Language) -> String {
     let duration = Seconds(report.seconds).format_clock();
     match (report.clip.is_some(), report.dropped_frames) {
+        // Played, but not where the punch was. Nothing is wrong with the microphone and saying
+        // "the take was empty" would send somebody to check it.
+        (false, _) if report.outside_punch => messages::recorded_outside_punch(language),
         (false, _) => messages::recorded_nothing(language),
         (true, 0) => messages::recorded_take(language, &duration),
         // The take is kept and usable, and everything after the gap has moved earlier by that
@@ -121,6 +124,7 @@ impl AurisApp {
         let theme = self.theme.clone();
         let playing = self.is_playing();
         let looping = self.project().loop_enabled;
+        let punching = self.project().punch_enabled;
         let clicking = self.session.metronome();
         let recording = self.session.is_recording();
         let playhead = self.playhead_ticks();
@@ -256,6 +260,20 @@ impl AurisApp {
                                 &theme,
                                 cx.listener(|this, _, window, cx| {
                                     this.toggle_recording(window, cx);
+                                    cx.notify();
+                                }),
+                            ))
+                            // Beside Record rather than beside the cycle, though it looks like the
+                            // cycle: this one decides what a take *keeps*, and everything to its
+                            // left decides what the transport does.
+                            .child(icon_button(
+                                "punch",
+                                Icon::Punch,
+                                punching,
+                                theme.record,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.toggle_punch();
                                     cx.notify();
                                 }),
                             ))
@@ -524,6 +542,39 @@ impl AurisApp {
     pub(crate) fn toggle_loop(&mut self) {
         let enabled = self.project().loop_enabled;
         self.session.set_loop_enabled(!enabled);
+    }
+
+    /// Turns punch recording on or off, and says which it now is.
+    ///
+    /// The status line does the work the button cannot: the region is drawn on the lanes, but a
+    /// switch that only trims a take somebody has not recorded yet gives no other sign it is on
+    /// until the take comes back shorter than they played it.
+    pub(crate) fn toggle_punch(&mut self) {
+        self.session
+            .set_punch_enabled(!self.session.punch_enabled());
+        let key = match self.session.punch_enabled() {
+            true => Key::PunchOn,
+            false => Key::PunchOff,
+        };
+        self.set_status(self.t(key));
+    }
+
+    /// Ends a punched take that has rolled past its punch-out.
+    ///
+    /// Called from the frame loop, where the playhead crossing a position is noticed. Stops the
+    /// transport as well, for the reason the Record button does: a take that ended while the song
+    /// played on would leave the playhead somewhere other than the clip that just appeared.
+    pub(crate) fn finish_punch(&mut self) {
+        let Some(result) = self.session.finish_punch() else {
+            return;
+        };
+        match result {
+            Ok(report) => {
+                self.session.stop();
+                self.set_status(recording_summary(&report, self.language));
+            }
+            Err(error) => self.report_session_error(&error),
+        }
     }
 
     /// Turns the click on or off, and says which it now is.
@@ -836,10 +887,34 @@ mod tests {
             path: None,
             seconds: 0.0,
             dropped_frames: 0,
+            outside_punch: false,
         };
         for language in Language::ALL {
             let line = recording_summary(&empty, language);
             assert_eq!(line, messages::recorded_nothing(language));
+        }
+    }
+
+    #[test]
+    fn a_take_that_missed_its_punch_is_not_reported_as_an_empty_one() {
+        // Two different things that both produce no clip, and they send somebody to two different
+        // places: one to their cable, the other to the punch region they set.
+        let missed = RecordingReport {
+            clip: None,
+            path: Some(std::path::PathBuf::from("Vocals 3.wav")),
+            seconds: 0.0,
+            dropped_frames: 0,
+            outside_punch: true,
+        };
+        for language in Language::ALL {
+            assert_eq!(
+                recording_summary(&missed, language),
+                messages::recorded_outside_punch(language),
+            );
+            assert_ne!(
+                recording_summary(&missed, language),
+                messages::recorded_nothing(language),
+            );
         }
     }
 
@@ -852,6 +927,7 @@ mod tests {
             path: None,
             seconds: 12.5,
             dropped_frames: 0,
+            outside_punch: false,
         };
         let holed = RecordingReport {
             dropped_frames: 480,

@@ -206,6 +206,23 @@ pub struct Project {
     /// Whether playback loops over [`Self::loop_region`].
     #[serde(default)]
     pub loop_enabled: bool,
+    /// Punch region: the stretch of the timeline a take is allowed to keep.
+    ///
+    /// Its own range rather than the loop's, though the two are usually set to the same bars.
+    /// They answer different questions — the loop says what is *played again* and the punch says
+    /// what is *written down* — and a musician looping four bars while punching the third of them
+    /// is doing the ordinary thing, not an exotic one.
+    #[serde(default)]
+    pub punch_region: Option<(Ticks, Ticks)>,
+    /// Whether a take is trimmed to [`Self::punch_region`].
+    ///
+    /// A property of the document for the same reason the loop is: the bar that needs fixing is a
+    /// fact about the song, and it is still the bar that needs fixing tomorrow.
+    ///
+    /// Not a format bump. A build that has never heard of either field opens the document and
+    /// plays every note of it correctly, with punch off.
+    #[serde(default)]
+    pub punch_enabled: bool,
     /// Whether a click is heard on every beat while the transport rolls.
     ///
     /// A property of the document rather than of the application, for the same reason the loop
@@ -333,6 +350,8 @@ impl Project {
             soundfonts: BTreeMap::new(),
             loop_region: None,
             loop_enabled: false,
+            punch_region: None,
+            punch_enabled: false,
             metronome: false,
             grid: default_grid(),
             song_spec: None,

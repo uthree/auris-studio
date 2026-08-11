@@ -53,6 +53,13 @@ impl AurisApp {
             .project()
             .loop_region
             .filter(|_| self.project().loop_enabled);
+        // Only while it is on. The region is remembered when it is switched off — it is the bar
+        // that needed fixing and will need it again — but a wash over the timeline for a switch
+        // nothing is obeying is a wash somebody spends a minute trying to get rid of.
+        let punch_region = self
+            .project()
+            .punch_region
+            .filter(|_| self.project().punch_enabled);
 
         // A track deleted while the view was scrolled to the bottom leaves the offset past the
         // end, and nothing else would ever pull it back.
@@ -97,6 +104,9 @@ impl AurisApp {
                                     );
                                     if let Some(region) = loop_region {
                                         paint::loop_region(window, bounds, &view, region, &theme);
+                                    }
+                                    if let Some(region) = punch_region {
+                                        paint::punch_region(window, bounds, &view, region, &theme);
                                     }
                                     paint::playhead(
                                         window,
@@ -184,6 +194,9 @@ impl AurisApp {
                                     );
                                     if let Some(region) = loop_region {
                                         paint::loop_region(window, bounds, &view, region, &theme);
+                                    }
+                                    if let Some(region) = punch_region {
+                                        paint::punch_region(window, bounds, &view, region, &theme);
                                     }
 
                                     // Every row is painted and the mask throws away what is off

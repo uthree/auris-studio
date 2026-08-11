@@ -582,6 +582,15 @@ messages! {
         ja: "{duration} を録音しましたが、{frames} フレームが欠落しています"
     }
 
+    /// A take that was played but fell outside the punch region.
+    ///
+    /// A different thing from an empty take, and it has to read as one: nothing was wrong with the
+    /// microphone, so "nothing was recorded" would send somebody to check their cable.
+    fn recorded_outside_punch() {
+        en: "nothing was played inside the punch region; the take was kept as a file",
+        ja: "パンチ範囲内に演奏がありませんでした。録音はファイルとして残してあります"
+    }
+
     /// Monitoring switched on, naming the device and the cost of listening this way.
     ///
     /// The cost is said every time rather than once in a dialog: an interface with direct

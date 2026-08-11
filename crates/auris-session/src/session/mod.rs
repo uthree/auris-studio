@@ -41,6 +41,7 @@ mod harmony;
 mod mixer;
 mod monitor;
 mod notes;
+mod punch;
 mod record;
 mod tracks;
 mod transport;
