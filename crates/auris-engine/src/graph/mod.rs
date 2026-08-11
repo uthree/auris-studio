@@ -133,6 +133,20 @@ pub struct RenderGraph {
     /// Shared with the UI rather than owned by it, because only the render path ever sees a
     /// strip's signal — the document holds parameter values, not audio.
     pub(crate) scope: Arc<crate::scope::Scope>,
+    /// The live input, and the track it plays through, while somebody is monitoring.
+    pub(crate) monitor: Option<MonitorTap>,
+}
+
+/// A live input joined to the track it is heard through.
+///
+/// The input enters the mix as though the track were playing it: before the effects, before the
+/// fader, before the sends. That is what makes monitoring *useful* rather than merely audible — a
+/// singer hears themselves through the reverb they will be recorded into, at the level the fader
+/// is set to, and a muted track is silent because a muted track is silent.
+pub(crate) struct MonitorTap {
+    pub(crate) ring: Arc<crate::monitor::MonitorRing>,
+    /// Index into [`RenderGraph::tracks`], resolved when the tap was attached.
+    pub(crate) track: usize,
 }
 
 impl RenderGraph {
@@ -362,6 +376,7 @@ impl RenderGraph {
             master_scratch,
             master_peak: [0.0, 0.0],
             scope: Arc::new(crate::scope::Scope::new()),
+            monitor: None,
         }
     }
 
@@ -372,6 +387,22 @@ impl RenderGraph {
     /// to any more.
     pub fn set_scope(&mut self, scope: Arc<crate::scope::Scope>) {
         self.scope = scope;
+    }
+
+    /// Plays a live input through `track`, or stops doing so with `None`.
+    ///
+    /// Handed in after building for the same reason the scope is, and re-applied on every rebuild:
+    /// a graph is replaced whenever the document changes structurally, and a monitor that did not
+    /// survive that would go quiet the moment somebody added a track.
+    ///
+    /// A track id the graph does not hold silently monitors nothing, the way an unknown plugin id
+    /// silently plays nothing — a document and a device disagreeing is not a reason to stop the
+    /// audio thread.
+    pub fn set_monitor(&mut self, monitor: Option<(Arc<crate::monitor::MonitorRing>, TrackId)>) {
+        self.monitor = monitor.and_then(|(ring, id)| {
+            let track = self.tracks.iter().position(|track| track.id == id)?;
+            Some(MonitorTap { ring, track })
+        });
     }
 
     /// Rate this graph was prepared for.

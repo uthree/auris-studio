@@ -106,6 +106,15 @@ fn render_segment(
     let scope = &graph.scope;
     let watching = scope.watching();
 
+    // Never offline, for the same reason the metronome is not: a live input is a thing happening
+    // in the room, and an export is not happening in the room. It would also be *wrong* rather
+    // than merely odd — the ring has one reader, and an export racing the audio thread for it
+    // would take blocks out of what the player is hearing.
+    let monitor = match offline {
+        true => None,
+        false => graph.monitor.as_ref(),
+    };
+
     // The routing order rather than the track list: a bus cannot go through its own strip until
     // everything routed into it has been mixed in, and only this order guarantees that.
     let tracks = &mut graph.tracks;
@@ -126,6 +135,13 @@ fn render_segment(
         }
         track.scratch.set_frame_count(frames);
         render_source(track, bus_inputs, transport, &ctx);
+        // The live input joins here — after what the track plays and before everything that
+        // shapes it, which is what puts the player inside their own mix rather than beside it.
+        // Mixed rather than assigned, and unconditional on the transport: monitoring while the
+        // song is stopped is how somebody sets a level in the first place.
+        if let Some(tap) = monitor.filter(|tap| tap.track == index) {
+            tap.ring.read_into(&mut track.scratch, ctx.sample_rate);
+        }
         for (effect, enabled) in track.strip.effects.iter_mut().zip(&track.strip.enabled) {
             if *enabled {
                 effect.process(&mut track.scratch, &ctx);
@@ -1906,5 +1922,100 @@ mod tests {
         );
         assert!(graph.track_peak(0) < 1e-5);
         assert!(graph.master_peak() < 1e-5);
+    }
+
+    /// A project with one audio track, and a monitor ring already full of a steady tone.
+    ///
+    /// Full rather than fed as it goes, because a ring that has not reached its target plays
+    /// nothing — see `crate::monitor` — and every test below is about what happens *after* that.
+    fn monitored(level: f32) -> (Project, RenderGraph, Arc<crate::monitor::MonitorRing>) {
+        let mut project = Project::new("Monitor", SAMPLE_RATE);
+        project.add_audio_track("Input");
+        let graph = build(&project, 512);
+        let ring = Arc::new(crate::monitor::MonitorRing::new(SAMPLE_RATE));
+        ring.set_enabled(true);
+        ring.write(&vec![level; 48_000], 1);
+        (project, graph, ring)
+    }
+
+    #[test]
+    fn a_monitored_input_reaches_the_master_with_the_transport_stopped() {
+        // Setting a level before recording anything is the whole first minute of using this.
+        // Gating it on the transport would mean plugging in a microphone and hearing nothing
+        // until you pressed Play.
+        let (_project, mut graph, ring) = monitored(0.5);
+        let track = graph.tracks()[0].id;
+        graph.set_monitor(Some((Arc::clone(&ring), track)));
+
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+        render_block(&mut graph, &mut Transport::default(), &mut out, false);
+        assert!(
+            (out.peak() - 0.5).abs() < 1.0e-3,
+            "the input came through at {}",
+            out.peak()
+        );
+    }
+
+    #[test]
+    fn a_monitored_input_goes_through_the_tracks_own_fader_and_mute() {
+        // It enters the strip where the track's own material does, which is what lets somebody
+        // ride their own level while playing — and what makes a muted track silent.
+        let (_project, mut graph, ring) = monitored(0.5);
+        let track = graph.tracks()[0].id;
+        graph.set_monitor(Some((Arc::clone(&ring), track)));
+
+        graph.set_track_gain_db(0, -6.0);
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+        // Two blocks: a fader move ramps across the block it lands in, so the first is the slide
+        // and the second is the level it slid to.
+        render_block(&mut graph, &mut Transport::default(), &mut out, false);
+        render_block(&mut graph, &mut Transport::default(), &mut out, false);
+        assert!(
+            (out.peak() - 0.5 * db_to_gain(-6.0)).abs() < 1.0e-2,
+            "the fader did not act on it: {}",
+            out.peak()
+        );
+
+        // Muted: rendered long enough for the fade to have closed.
+        graph.set_track_gain_db(0, 0.0);
+        graph.set_track_mute(0, true);
+        for start in 0..4 {
+            render_block(
+                &mut graph,
+                &mut Transport::playing_from(start * 512),
+                &mut out,
+                false,
+            );
+        }
+        assert!(out.peak() < 1.0e-4, "a muted track let the input through");
+    }
+
+    #[test]
+    fn an_export_never_contains_the_live_input() {
+        // Two reasons, and the second is the sharp one: a bounce is not a thing happening in the
+        // room, and the ring has one reader — an offline render racing the audio thread for it
+        // would take blocks out of what the player is hearing while it worked.
+        let (_project, mut graph, ring) = monitored(0.5);
+        let track = graph.tracks()[0].id;
+        graph.set_monitor(Some((Arc::clone(&ring), track)));
+
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+        render_block(&mut graph, &mut Transport::playing_from(0), &mut out, true);
+        assert_eq!(out.peak(), 0.0);
+        assert_eq!(ring.rebuffers(), 0, "the export moved the live reader");
+    }
+
+    #[test]
+    fn a_monitor_aimed_at_a_track_that_is_gone_is_simply_not_heard() {
+        // A document and a device disagreeing is not a reason to stop the audio thread, the same
+        // way an unknown plugin id is not.
+        let (_project, mut graph, ring) = monitored(0.5);
+        graph.set_monitor(Some((
+            Arc::clone(&ring),
+            auris_core::project::TrackId(9_999),
+        )));
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+        render_block(&mut graph, &mut Transport::default(), &mut out, false);
+        assert_eq!(out.peak(), 0.0);
     }
 }
