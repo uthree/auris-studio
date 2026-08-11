@@ -102,6 +102,19 @@ pub mod architecture {
     //! **New work that is a *command* — anything a user could ask for — goes in `auris-session` so
     //! every frontend gets it. New work that is *presentation* stays in the frontend.**
     //!
+    //! # A selection is an argument, never a field
+    //!
+    //! Several commands mean something different depending on what is selected, and none of them
+    //! holds a selection: [`audition_track`](crate::Session::audition_track) sounds a chord on
+    //! whatever instrument is to hand, and [`record_target`](crate::Session::record_target) says
+    //! where a take would land. Both take an `Option<TrackId>` from the caller.
+    //!
+    //! A selection belongs to whatever is *showing* the document. The command line has none at all,
+    //! two windows onto one session would have one each, and a `selected` field on the session
+    //! would be a piece of view state that every frontend then had to remember to keep true. What
+    //! the session does own is the deliberate half — the armed track is stored, because arming is
+    //! something a person did rather than somewhere they happen to be looking.
+    //!
     //! # The two threads
     //!
     //! The UI thread owns the [`Project`](auris_core::project::Project), which is the editable

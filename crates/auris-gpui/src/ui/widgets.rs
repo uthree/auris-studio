@@ -28,32 +28,63 @@ pub enum ButtonStyle {
     Ghost,
 }
 
+/// How far a latched [`button`] is latched.
+///
+/// Two states are enough for mute, solo and loop — a thing is on or it is not. The arm button
+/// needs a third, because where a take would land is not the same question as which track somebody
+/// armed: an audio track that is merely selected is where Record would go, and it has to look
+/// different both from the track that was chosen by hand and from a track that is neither.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Latch {
+    /// Not latched; the button's ordinary appearance for its style.
+    Off,
+    /// Outlined rather than filled: this is what would happen, but nobody said so.
+    Ready,
+    /// Filled with the latch colour: this was chosen.
+    On,
+}
+
+impl From<bool> for Latch {
+    fn from(active: bool) -> Self {
+        match active {
+            true => Latch::On,
+            false => Latch::Off,
+        }
+    }
+}
+
 /// A clickable button.
 ///
 /// `active` fills the button with `active_color` — used for latched controls such as mute,
-/// solo and loop, where the button reflects state rather than just being pressed.
-pub fn button<I, L, F>(
+/// solo and loop, where the button reflects state rather than just being pressed. It takes a
+/// plain `bool` for those; see [`Latch`] for the third state the arm button needs.
+pub fn button<I, L, A, F>(
     id: I,
     label: L,
     style: ButtonStyle,
-    active: bool,
+    active: A,
     active_color: Hsla,
     theme: &Theme,
     on_click: F,
-) -> impl IntoElement + use<I, L, F>
+) -> impl IntoElement + use<I, L, A, F>
 where
     I: Into<ElementId>,
     L: Into<SharedString>,
+    A: Into<Latch>,
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
+    let active = active.into();
     let (background, text_color, border) = match (style, active) {
         // Read against whatever it is latched to — mute is orange, solo is amber, a track's
         // colour is whatever the user chose — and not against the accent, which is behind none
         // of them.
-        (_, true) => (active_color, theme.text_on(active_color), active_color),
-        (ButtonStyle::Primary, false) => (theme.accent, theme.text_on_accent, theme.accent),
-        (ButtonStyle::Normal, false) => (theme.surface_raised, theme.text, theme.border),
-        (ButtonStyle::Ghost, false) => (
+        (_, Latch::On) => (active_color, theme.text_on(active_color), active_color),
+        // The outline carries the colour and the surface stays where it was, so a ready button
+        // reads as the same button rather than as a second latched one in a row of them.
+        (_, Latch::Ready) => (theme.surface_raised, active_color, active_color),
+        (ButtonStyle::Primary, Latch::Off) => (theme.accent, theme.text_on_accent, theme.accent),
+        (ButtonStyle::Normal, Latch::Off) => (theme.surface_raised, theme.text, theme.border),
+        (ButtonStyle::Ghost, Latch::Off) => (
             gpui::transparent_black(),
             theme.text_muted,
             gpui::transparent_black(),
@@ -62,7 +93,7 @@ where
     // A Ghost button's background is transparent, and lightening transparency yields more
     // transparency: its hover painted a quad with alpha 0, so the only entry point to the
     // instrument editor in the whole application looked exactly like the label beside it.
-    let hover = if matches!((style, active), (ButtonStyle::Ghost, false)) {
+    let hover = if matches!((style, active), (ButtonStyle::Ghost, Latch::Off)) {
         theme.surface_hover
     } else {
         theme.hovered(background, 0.12)

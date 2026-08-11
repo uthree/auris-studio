@@ -817,9 +817,9 @@ strings! {
         en: "a recording needs a project folder to write into; save the project first",
         ja: "録音するにはプロジェクトフォルダが必要です。先に保存してください"
     }
-    ErrorNothingArmed {
-        en: "no track is armed to record onto",
-        ja: "録音待機中のトラックがありません"
+    ErrorNothingToRecordOnto {
+        en: "select an audio track to record onto, or arm one",
+        ja: "録音先のオーディオトラックを選択するか、録音待機にしてください"
     }
     ErrorAlreadyRecording { en: "a recording is already running", ja: "すでに録音中です" }
     ErrorNotRecording { en: "no recording is running", ja: "録音していません" }

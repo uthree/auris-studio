@@ -14,8 +14,12 @@
 //! refuses on an unsaved document, and says so rather than inventing a temporary directory whose
 //! contents would be lost the first time the machine tidied it.
 //!
-//! An armed track, too, and an audio one. Recording onto a track chosen for you is how a take
-//! ends up somewhere nobody looks.
+//! A track to record onto, too, and an audio one. Which track that is follows the selection: an
+//! audio track that is selected is where the take lands, so recording is choosing a track and
+//! pressing Record rather than arming one first. The arm is still there and still wins, because
+//! it says the one thing a selection cannot — record onto the vocal while I read the drum part.
+//! What a take may never do is pick a track for itself; a take on a track nobody chose is a take
+//! nobody finds.
 //!
 //! # Where the take lands
 //!
@@ -101,12 +105,34 @@ impl Session {
         auris_engine::input_devices()
     }
 
-    /// The track a take would be recorded onto.
+    /// The track that has been armed by hand, if any.
+    ///
+    /// Not the same question as "where would a take land" — that is
+    /// [`record_target`](Session::record_target), which falls back to the selection. This one is
+    /// for drawing the arm button, which has to show what was *chosen* rather than what would
+    /// happen.
     pub fn armed_track(&self) -> Option<TrackId> {
         self.armed
     }
 
+    /// The track a take would be recorded onto, given whatever the caller has selected.
+    ///
+    /// The selection is passed in rather than held, because a selection belongs to whatever is
+    /// showing the document — a headless session has none, and two windows onto one session would
+    /// have one each.
+    pub fn record_target(&self, selected: Option<TrackId>) -> Option<TrackId> {
+        let records = selected
+            .and_then(|id| self.project.track(id))
+            .is_some_and(|track| track.kind.as_audio().is_some());
+        take_track(self.armed, selected, records)
+    }
+
     /// Arms an audio track for recording, or disarms whatever was armed with `None`.
+    ///
+    /// Only needed to record onto something other than the selection — see
+    /// [`record_target`](Session::record_target). Arming used to be the only way to name a track
+    /// at all, which made every take begin with a button press that said what the selection
+    /// already said.
     ///
     /// One at a time. Multitrack recording is a real thing and this is not it: one input device
     /// produces one stream, and arming three tracks would either record the same audio onto all
@@ -158,15 +184,21 @@ impl Session {
         })
     }
 
-    /// Starts recording onto the armed track.
+    /// Starts recording onto [`record_target(selected)`](Session::record_target).
     ///
     /// Opens the input device and begins writing immediately; the transport is left alone, so a
     /// caller that wants to record *against* the rest of the song plays it as well.
-    pub fn start_recording(&mut self) -> Result<(), SessionError> {
+    ///
+    /// The arm is left exactly as it was found. A take that armed the track it landed on would
+    /// pin the next one there too, so selecting another track and pressing Record again would
+    /// quietly record onto the first — which is the sequence this whole fallback exists to fix.
+    pub fn start_recording(&mut self, selected: Option<TrackId>) -> Result<(), SessionError> {
         if self.take.is_some() {
             return Err(SessionError::AlreadyRecording);
         }
-        let track = self.armed.ok_or(SessionError::NothingArmed)?;
+        let track = self
+            .record_target(selected)
+            .ok_or(SessionError::NothingToRecordOnto)?;
         // Re-checked rather than trusted: the track may have been deleted, or turned into
         // something else, since it was armed.
         let name = match self.project.track(track) {
@@ -305,6 +337,24 @@ impl Session {
     }
 }
 
+/// The track a Record press lands on: whatever is armed, or the selection when nothing is.
+///
+/// Takes what the two tracks *are* rather than looking them up, so the rule can be read and tested
+/// without a document, a device or a folder to write into. It is the whole of the feature, and
+/// inside a method that opens a sound stream it would be a rule with no test.
+///
+/// Arming wins, and that is what keeping both is for: the selection is where somebody is *looking*,
+/// and there is no other way to say "record the vocal while I read the drum part". A selection
+/// that could not hold a take — an instrument track, a bus — is not a target and does not become
+/// one by being the only thing selected.
+fn take_track(
+    armed: Option<TrackId>,
+    selected: Option<TrackId>,
+    selected_records: bool,
+) -> Option<TrackId> {
+    armed.or_else(|| selected.filter(|_| selected_records))
+}
+
 /// Drains the capture into the file until the device closes, then closes the file.
 ///
 /// Runs on a thread of its own rather than on the session's, because the session's thread is a
@@ -422,19 +472,18 @@ mod tests {
         // the folder until a save picks it up; a take has to be written the moment it starts.
         let mut session = session();
         let audio = session.add_audio_track("Vocals");
-        session.arm_track(Some(audio)).unwrap();
         assert!(matches!(
-            session.start_recording(),
+            session.start_recording(Some(audio)),
             Err(SessionError::RecordingNeedsFolder)
         ));
     }
 
     #[test]
-    fn recording_with_nothing_armed_says_so() {
+    fn recording_with_nothing_to_record_onto_says_so() {
         let mut session = session();
         assert!(matches!(
-            session.start_recording(),
-            Err(SessionError::NothingArmed)
+            session.start_recording(None),
+            Err(SessionError::NothingToRecordOnto)
         ));
         assert!(matches!(
             session.stop_recording(),
@@ -442,6 +491,51 @@ mod tests {
         ));
         assert!(!session.is_recording());
         assert_eq!(session.recording_status(), None);
+    }
+
+    #[test]
+    fn a_selected_audio_track_is_the_target_without_being_armed() {
+        // The whole point of the fallback: choosing a track and pressing Record is the gesture,
+        // and the arm button is for the case that gesture cannot express.
+        let mut session = session();
+        let vocals = session.add_audio_track("Vocals");
+        let guitar = session.add_audio_track("Guitar");
+        assert_eq!(session.record_target(Some(vocals)), Some(vocals));
+        assert_eq!(session.record_target(Some(guitar)), Some(guitar));
+        assert_eq!(session.armed_track(), None, "nothing was armed by asking");
+
+        // And an arm overrides it, because "record the vocal while I read the drum part" has no
+        // other way of being said.
+        session.arm_track(Some(vocals)).unwrap();
+        assert_eq!(session.record_target(Some(guitar)), Some(vocals));
+        session.arm_track(None).unwrap();
+        assert_eq!(session.record_target(Some(guitar)), Some(guitar));
+    }
+
+    #[test]
+    fn a_selection_that_could_not_hold_a_take_is_not_a_target() {
+        // Selecting a synth and pressing Record must say so rather than reaching past it for
+        // whichever audio track happens to be nearest.
+        let mut session = session();
+        let synth = session.add_default_instrument_track("Synth").unwrap();
+        session.add_audio_track("Vocals");
+        assert_eq!(session.record_target(Some(synth)), None);
+        assert_eq!(session.record_target(None), None);
+        assert!(matches!(
+            session.start_recording(Some(synth)),
+            Err(SessionError::NothingToRecordOnto)
+        ));
+    }
+
+    #[test]
+    fn the_arm_wins_and_the_selection_only_stands_in_for_it() {
+        let armed = TrackId(1);
+        let selected = TrackId(2);
+        assert_eq!(take_track(Some(armed), Some(selected), true), Some(armed));
+        assert_eq!(take_track(Some(armed), None, false), Some(armed));
+        assert_eq!(take_track(None, Some(selected), true), Some(selected));
+        assert_eq!(take_track(None, Some(selected), false), None);
+        assert_eq!(take_track(None, None, false), None);
     }
 
     #[test]

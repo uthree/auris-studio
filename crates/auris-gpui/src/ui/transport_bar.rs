@@ -540,10 +540,22 @@ impl AurisApp {
         self.set_status(self.t(key));
     }
 
+    /// The track a take would land on: the armed one, or the selected track when it is audio.
+    ///
+    /// The selection lives here rather than in the session — a session has no window and so no
+    /// idea what is selected — so every question about where a take would go comes through this.
+    pub(crate) fn record_target(&self) -> Option<TrackId> {
+        self.session.record_target(self.selected_track)
+    }
+
     /// Arms an audio track for recording, or disarms it if it already was.
     ///
     /// One at a time, so clicking a second track's button moves the arm rather than adding one:
     /// there is one input stream, and it has to go somewhere in particular.
+    ///
+    /// Arming is no longer how a take is aimed — selecting the track does that — so this is the
+    /// override: it pins a take to a track that is not the one being looked at, and clicking it
+    /// off hands the aim back to the selection.
     pub(crate) fn toggle_arm(&mut self, track: TrackId) {
         let wanted = match self.session.armed_track() == Some(track) {
             true => None,
@@ -555,6 +567,10 @@ impl AurisApp {
     }
 
     /// Starts a take, or ends the one that is running.
+    ///
+    /// Onto whatever [`record_target`](Self::record_target) names, so the ordinary way to record
+    /// is to click an audio track and press this — the arm button is for aiming somewhere other
+    /// than where the eye is.
     ///
     /// Starting rolls the transport as well, which the session deliberately does not do on its
     /// own — recording against nothing and recording against the song are both real, and which
@@ -576,7 +592,7 @@ impl AurisApp {
             }
             return;
         }
-        match self.session.start_recording() {
+        match self.session.start_recording(self.selected_track) {
             Ok(()) => {
                 if !self.session.is_playing() {
                     self.session.play();

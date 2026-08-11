@@ -610,14 +610,21 @@ sustain and release are one shape with three corners to drag, not four numbers t
 
 ## Recording
 
-Arm an audio track with the **R** button on its header, press **Record** in the transport — or
-`R` — and play. Pressing it again stops the take and puts it on the timeline as a clip, at the
-position the playhead was at when the first sample arrived. The transport rolls when you start, so
-a take recorded against the rest of the song lines up with it.
+Click an audio track, press **Record** in the transport — or `R` — and play. Pressing it again
+stops the take and puts it on the timeline as a clip, at the position the playhead was at when the
+first sample arrived. The transport rolls when you start, so a take recorded against the rest of
+the song lines up with it.
 
-One track at a time: there is one input stream, and arming a second track moves the arm rather
-than adding one. Only audio tracks show the button, because only they have anywhere for a take to
-land.
+**The selected audio track is where the take lands**, and its **R** button is outlined to say so
+before you press anything. Selecting another audio track moves the take with it; selecting a track
+that could not hold one — an instrument track, a bus — leaves nowhere to record, and Record says
+that rather than reaching past it for the nearest audio track.
+
+**Filling that R button in aims a take somewhere other than where you are looking**, which is the
+only thing the selection cannot say: record the vocal while you read the drum part. It stays where
+you put it until you click it off, and clicking it off hands the aim back to the selection. One
+track at a time either way — there is one input stream, and arming a second track moves the arm
+rather than adding one. Only audio tracks show the button at all.
 
 **Recording needs a saved project**, and pressing Record on one that has never been saved opens
 the save dialog rather than refusing. The take is written straight to disk while it happens, into

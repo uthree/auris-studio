@@ -26,9 +26,14 @@ format rather than a convention: `## <version> — <date>`.
 ### Audio tracks can be recorded onto
 
 * **`TrackKind::Audio` has said "Recorded or imported audio" since the beginning, and only half of
-  it was true.** Nothing in the workspace had ever opened an input device. Now: arm an audio track
-  with the **R** button on its header, press **Record** in the transport (or `R`), play, and stop.
-  The take lands as a clip where the playhead was.
+  it was true.** Nothing in the workspace had ever opened an input device. Now: click an audio
+  track, press **Record** in the transport (or `R`), play, and stop. The take lands as a clip where
+  the playhead was.
+* **The take goes where you are looking.** The selected audio track is the target, and its **R**
+  button is outlined to say so before anything is pressed — arming first was a button press that
+  said what the selection already said. Filling that button in *overrides* the selection, which is
+  the one thing selecting cannot say: record the vocal while you read the drum part. Clicking it
+  off hands the aim back.
 * **A take is written as it happens**, straight into the project folder's `Audio/`, by a thread of
   its own — not on the UI thread, where a dialog that blocked for a second would cost the take a
   second of audio. Takes are 32-bit float, and that is not a setting: every integer depth is a

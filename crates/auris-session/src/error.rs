@@ -127,9 +127,9 @@ pub enum SessionError {
     #[error("a recording needs a project folder to write into; save the project first")]
     RecordingNeedsFolder,
 
-    /// Recording was asked for with no track armed to record onto.
-    #[error("no track is armed to record onto")]
-    NothingArmed,
+    /// Recording was asked for with neither an armed track nor an audio track selected.
+    #[error("select an audio track to record onto, or arm one")]
+    NothingToRecordOnto,
 
     /// A second take was started while one was already running.
     #[error("a recording is already running")]

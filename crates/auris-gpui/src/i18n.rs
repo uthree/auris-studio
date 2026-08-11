@@ -192,7 +192,9 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::RecordingNeedsFolder => {
             Key::ErrorRecordingNeedsFolder.get(language).to_string()
         }
-        SessionError::NothingArmed => Key::ErrorNothingArmed.get(language).to_string(),
+        SessionError::NothingToRecordOnto => {
+            Key::ErrorNothingToRecordOnto.get(language).to_string()
+        }
         SessionError::AlreadyRecording => Key::ErrorAlreadyRecording.get(language).to_string(),
         SessionError::NotRecording => Key::ErrorNotRecording.get(language).to_string(),
         SessionError::SettingsWrite { path, source } => messages::settings_write_failed(

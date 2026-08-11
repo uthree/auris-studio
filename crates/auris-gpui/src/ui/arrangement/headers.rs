@@ -15,7 +15,25 @@ use crate::i18n::track_kind_key;
 use crate::theme::Metrics;
 use crate::ui::automation;
 use crate::ui::icons::Icon;
-use crate::ui::widgets::{ButtonStyle, button, db_to_meter_position, icon_label, level_meter};
+use crate::ui::widgets::{
+    ButtonStyle, Latch, button, db_to_meter_position, icon_label, level_meter,
+};
+
+/// How a track's arm button is latched.
+///
+/// Three answers rather than two, because the button has two jobs now: it says which track was
+/// armed by hand, and it says where a take would actually land. Those parted company when the
+/// selection became a target of its own — an audio track that is merely selected has to look like
+/// somewhere Record would go, without claiming to have been chosen.
+///
+/// A free function because it is a rule, and a rule inside a view is a rule with no test.
+fn arm_latch(track: TrackId, armed: Option<TrackId>, target: Option<TrackId>) -> Latch {
+    match (armed == Some(track), target == Some(track)) {
+        (true, _) => Latch::On,
+        (false, true) => Latch::Ready,
+        (false, false) => Latch::Off,
+    }
+}
 
 impl AurisApp {
     /// The left column: one header per track, plus the add-track buttons.
@@ -142,7 +160,7 @@ impl AurisApp {
                 // anywhere for a take to land. An instrument track showing a disabled one would
                 // be an invitation to a thing that cannot happen.
                 let records = track.kind.as_audio().is_some();
-                let armed = self.session.armed_track() == Some(id);
+                let armed = arm_latch(id, self.session.armed_track(), self.record_target());
 
                 let is_selected = selected == Some(id);
                 let is_dragging = dragging == Some(id);
@@ -375,5 +393,30 @@ impl AurisApp {
             pan,
             cx,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_arm_button_shows_where_a_take_would_land_as_well_as_what_was_armed() {
+        let vocals = TrackId(1);
+        let guitar = TrackId(2);
+
+        // Nothing armed and the vocal selected: the vocal's button is the one that says Record
+        // would come here, and it says it without claiming anybody pressed it.
+        assert_eq!(arm_latch(vocals, None, Some(vocals)), Latch::Ready);
+        assert_eq!(arm_latch(guitar, None, Some(vocals)), Latch::Off);
+
+        // Armed by hand: filled, and filled on that track alone even while another is selected —
+        // which is the case the arm button exists for, and the case a user would otherwise have
+        // no way of seeing.
+        assert_eq!(arm_latch(vocals, Some(vocals), Some(vocals)), Latch::On);
+        assert_eq!(arm_latch(guitar, Some(vocals), Some(vocals)), Latch::Off);
+
+        // And nothing at all when there is nowhere for a take to go.
+        assert_eq!(arm_latch(vocals, None, None), Latch::Off);
     }
 }
