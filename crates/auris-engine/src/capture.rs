@@ -54,6 +54,7 @@ use crossbeam_channel::{Receiver, Sender};
 use crate::device::AudioDeviceInfo;
 use crate::error::EngineError;
 use crate::handle::EngineHandle;
+use crate::monitor::MonitorRing;
 
 /// Buffers in the pool.
 ///
@@ -156,6 +157,9 @@ pub struct Capture {
     /// Taken exactly once, by whatever is going to write the samples down.
     reader: Option<CaptureReader>,
     shared: Arc<CaptureShared>,
+    /// The way back to the speakers, handed to the render graph. Unlike the reader this is shared
+    /// rather than taken: a graph is rebuilt on every structural edit and needs it again each time.
+    monitor: Arc<MonitorRing>,
     name: String,
     sample_rate: f64,
     channel_count: usize,
@@ -294,6 +298,17 @@ impl Capture {
     pub fn take_reader(&mut self) -> Option<CaptureReader> {
         self.reader.take()
     }
+
+    /// The ring the render graph reads to play this input back through the mix.
+    ///
+    /// Handed out as often as it is asked for, unlike [`Self::take_reader`]: it is written by the
+    /// callback and read by whichever graph is current, and a graph is replaced on every structural
+    /// edit. Monitoring is off until somebody calls
+    /// [`set_enabled`](crate::monitor::MonitorRing::set_enabled) — an open device is not a device
+    /// anybody is listening to.
+    pub fn monitor(&self) -> Arc<MonitorRing> {
+        Arc::clone(&self.monitor)
+    }
 }
 
 impl std::fmt::Debug for Capture {
@@ -316,6 +331,12 @@ struct CaptureSink {
     shared: Arc<CaptureShared>,
     playhead: Arc<AtomicU64>,
     channels: usize,
+    /// The other reader of these samples: the render graph, when somebody is monitoring.
+    ///
+    /// A ring rather than a second consumer of the pool, because the pool has exactly one by
+    /// construction. See [`crate::monitor`], and note that it is written *before* the pool: a take
+    /// that is losing blocks to a stalled disk should still be audible to the person playing it.
+    monitor: Arc<MonitorRing>,
 }
 
 impl CaptureSink {
@@ -328,6 +349,7 @@ impl CaptureSink {
         if data.is_empty() {
             return;
         }
+        self.monitor.write(data, self.channels);
         // The first block is what fixes the take to the timeline. `compare_exchange` rather than
         // a store, so every later block leaves it alone.
         let _ = self.shared.started_at.compare_exchange(
@@ -381,7 +403,7 @@ impl CaptureSink {
 }
 
 /// The two halves of a fresh pool, and the state they share.
-fn pool() -> (Capture, CaptureSink, Arc<CaptureShared>) {
+fn pool(input_rate: f64) -> (Capture, CaptureSink, Arc<CaptureShared>) {
     let (full_tx, full_rx) = crossbeam_channel::bounded(POOL_BUFFERS);
     let (empty_tx, empty_rx) = crossbeam_channel::bounded(POOL_BUFFERS);
     for _ in 0..POOL_BUFFERS {
@@ -394,6 +416,7 @@ fn pool() -> (Capture, CaptureSink, Arc<CaptureShared>) {
         peak: AtomicU32::new(0),
         frames: AtomicU64::new(0),
     });
+    let monitor = Arc::new(MonitorRing::new(input_rate));
     let capture = Capture {
         stream: None,
         reader: Some(CaptureReader {
@@ -405,6 +428,7 @@ fn pool() -> (Capture, CaptureSink, Arc<CaptureShared>) {
             finished: false,
         }),
         shared: Arc::clone(&shared),
+        monitor: Arc::clone(&monitor),
         name: String::new(),
         sample_rate: 0.0,
         channel_count: 0,
@@ -415,6 +439,7 @@ fn pool() -> (Capture, CaptureSink, Arc<CaptureShared>) {
         shared: Arc::clone(&shared),
         playhead: Arc::new(AtomicU64::new(0)),
         channels: 1,
+        monitor,
     };
     (capture, sink, shared)
 }
@@ -431,7 +456,7 @@ pub fn start_capture(
     let channels = setup.config.channels as usize;
     let sample_rate = f64::from(setup.config.sample_rate);
 
-    let (mut capture, mut sink, shared) = pool();
+    let (mut capture, mut sink, shared) = pool(sample_rate);
     sink.playhead = engine.playhead_cell();
     sink.channels = channels;
     shared.running.store(true, Ordering::Relaxed);
@@ -572,7 +597,7 @@ mod tests {
     /// microphone, and the parts that would go wrong — the pool running dry, the stamp, the
     /// format conversion — are all on this side of it anyway.
     fn wired(channels: usize) -> (Capture, CaptureReader, CaptureSink, Arc<AtomicU64>) {
-        let (mut capture, mut sink, _) = pool();
+        let (mut capture, mut sink, _) = pool(48_000.0);
         let playhead = Arc::new(AtomicU64::new(0));
         sink.playhead = Arc::clone(&playhead);
         sink.channels = channels;
@@ -717,7 +742,7 @@ mod tests {
 
     /// A capture with its reader still attached, for the test above.
     fn pool_capture() -> (Capture, CaptureSink, Arc<CaptureShared>, ()) {
-        let (capture, sink, shared) = pool();
+        let (capture, sink, shared) = pool(48_000.0);
         (capture, sink, shared, ())
     }
 

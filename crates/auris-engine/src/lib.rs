@@ -38,6 +38,11 @@
 //! where the consequences of that are set out: where a take lands on the timeline, and what the
 //! two crystals drifting apart does and does not cost.
 //!
+//! Those blocks have a second reader. [`monitor`] is the ring that carries them back to the output
+//! callback so the player hears themselves through the mix, and it answers the two-clock problem
+//! the other way round from [`capture`]: what is being listened to and not kept may be re-seated
+//! when the clocks drift, and what is being kept may not.
+//!
 //! # Realtime rules
 //!
 //! Everything reachable from [`render_block`] is allocation-free, lock-free and panic-free, and
@@ -77,6 +82,7 @@ pub mod graph;
 pub mod handle;
 pub mod meter;
 pub mod metronome;
+pub mod monitor;
 pub mod offline;
 pub mod renderer;
 pub mod scope;
@@ -98,6 +104,7 @@ pub use graph::{
 pub use handle::EngineHandle;
 pub use meter::MeterBank;
 pub use metronome::{Click, Metronome};
+pub use monitor::MonitorRing;
 pub use offline::{OfflineOptions, render_project, render_project_with_progress};
 pub use renderer::render_block;
 pub use scope::{SCOPE_WINDOW, Scope, ScopeSource};
