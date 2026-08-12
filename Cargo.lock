@@ -580,6 +580,7 @@ dependencies = [
 name = "auris-core"
 version = "0.2.0"
 dependencies = [
+ "base64",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -669,6 +670,7 @@ dependencies = [
 name = "auris-session"
 version = "0.2.0"
 dependencies = [
+ "auris-clap",
  "auris-compose",
  "auris-core",
  "auris-dsp",

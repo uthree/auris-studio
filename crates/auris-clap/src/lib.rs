@@ -46,6 +46,9 @@ mod host;
 mod library;
 mod plugin;
 
+#[cfg(any(test, feature = "testkit"))]
+pub mod testkit;
+
 #[cfg(test)]
 mod tests;
 

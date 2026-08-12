@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 # No UI dependency of any kind. This crate is what a GUI, a CLI and an MCP server all sit on.
 [dependencies]
+auris-clap.workspace = true
 auris-compose.workspace = true
 auris-core.workspace = true
 auris-dsp.workspace = true
@@ -22,3 +23,7 @@ log.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+# The hosting tests need a CLAP plugin, and must not need one installed on the machine.
+auris-clap = { workspace = true, features = ["testkit"] }

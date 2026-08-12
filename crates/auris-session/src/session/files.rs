@@ -211,6 +211,7 @@ impl Session {
     /// The project folder becomes the directory holding `path`, so a caller choosing a fresh
     /// location wants [`Self::save_as`] instead — this one would leave the audio behind.
     pub fn save(&mut self, path: &Path) -> Result<(), SessionError> {
+        self.collect_hosted_state();
         save_project(path, &mut self.project)?;
         self.path = Some(path.to_path_buf());
         self.dirty = false;
@@ -299,6 +300,7 @@ impl Session {
             }
         }
 
+        self.collect_hosted_state();
         save_project(&document, &mut self.project)?;
         self.dirty = false;
         self.mark_saved();

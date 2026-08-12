@@ -38,6 +38,7 @@ mod compose;
 mod files;
 mod generated;
 mod harmony;
+mod hosted;
 mod mixer;
 mod monitor;
 mod notes;
@@ -273,6 +274,13 @@ pub struct Session {
     /// The track the live input is being played through, if anybody asked for that. See
     /// [`monitor`].
     monitored: Option<TrackId>,
+
+    /// Third-party CLAP plugins the document names.
+    ///
+    /// Here rather than in the graph because only half of a hosted plugin belongs in a graph:
+    /// the half that answers questions has to stay on this thread and outlive any number of
+    /// rebuilds. See [`hosted`] for what that costs and how it is paid.
+    hosted: hosted::HostedPlugins,
 }
 
 /// What a Save As produced.
@@ -396,6 +404,7 @@ impl Session {
             input: None,
             monitored: None,
             take: None,
+            hosted: hosted::HostedPlugins::default(),
         };
         session.install_shipped_fonts();
         session.rebuild_graph();
@@ -783,10 +792,23 @@ impl Session {
             self.render_bank = bank_at_rate(&self.bank, rate);
             self.render_bank_rate = rate;
         }
-        let mut graph = RenderGraph::build_at(
+        // Whatever the audio thread has handed back is dropped before the hosted plugins are
+        // asked for their effects, so an instance whose graph has already been retired is reused
+        // rather than replaced. Without this every rebuild would find its plugin still busy and
+        // build a second one. See [`hosted`].
+        self.engine.collect_garbage();
+        let prepare = auris_core::plugin::PrepareContext::new(
+            rate,
+            self.engine.max_block(),
+            auris_engine::RENDER_CHANNELS,
+        );
+        let mut placed = self.hosted.place(&self.project, &prepare);
+
+        let mut graph = RenderGraph::build_with(
             &self.project,
             &self.render_bank,
             &self.registry,
+            &mut placed,
             self.engine.max_block(),
             rate,
         );
@@ -822,6 +844,10 @@ impl Session {
     /// about assets that are about to arrive — and then thrown away and built again. Every other
     /// caller wants [`Self::replace_project`].
     fn adopt_project(&mut self, project: Project) {
+        // Hosted plugins belong to the document that named them: their slot ids come from it, and
+        // a new document reusing an id would inherit the old plugin. The loaded *files* are kept,
+        // because a `.clap` is the same code whichever project is open.
+        self.hosted.clear();
         self.project = project;
         self.transaction = None;
         self.needs_rebuild = false;

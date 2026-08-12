@@ -89,7 +89,7 @@ impl ClapLibrary {
     /// This is how the tests host a plugin that is linked into the test binary rather than read
     /// from disk — the entry point is reached through the same C ABI either way. There is no
     /// reason for the application to want it, and every reason for the tests to.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     pub(crate) fn from_entry(entry: PluginEntry, path: impl AsRef<Path>) -> Self {
         Self {
             entry,

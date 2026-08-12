@@ -527,6 +527,36 @@ pub mod plugins {
     //! plays recorded material, which is [`auris_sampler`]'s half. DSP code in this workspace
     //! lives behind unit tests that assert on *numbers* — levels, frequencies, lengths — rather
     //! than on "it runs".
+    //!
+    //! # Somebody else's plugin
+    //!
+    //! A CLAP plugin is hosted rather than written, and everything above stops applying at once.
+    //! It cannot be held to the realtime contract, it cannot be trusted not to crash the process,
+    //! and its state is a byte stream nobody here may read. [`auris_clap`] is where all of that is
+    //! kept, and three facts about it are worth carrying:
+    //!
+    //! **A hosted plugin is two objects, because CLAP splits the same two threads Auris does.**
+    //! `ClapPlugin` is not [`Send`] and stays on the session's thread, where it answers what the
+    //! parameters are and what the state is. `ClapEffect` is [`Send`], implements
+    //! [`Effect`](auris_core::plugin::Effect), and is the only half a graph ever holds — so
+    //! [`auris_engine`] needs no CLAP dependency and has none. The two reference-count one
+    //! instance, so either may be dropped first, on any thread, which is exactly what the
+    //! engine's return channel does to a retired graph.
+    //!
+    //! **It cannot go through the registry.** [`PluginRegistry`](auris_core::registry::PluginRegistry)'s
+    //! factory is `Fn() -> Box<dyn Effect>`, which cannot produce the main-thread half as well.
+    //! So the session builds hosted effects itself and hands them to
+    //! [`RenderGraph::build_with`](auris_engine::RenderGraph::build_with) through a
+    //! [`PlacedEffects`](auris_engine::PlacedEffects) map. Every other effect takes the path it
+    //! always did.
+    //!
+    //! **A slot owns up to two instances, and that is not an optimisation.** A graph is rebuilt on
+    //! every structural edit, and the graph being replaced does not come back until the audio
+    //! thread has swapped it out — after the replacement had to exist. So at the moment a new
+    //! effect is needed the old one is still rendering, and a CLAP plugin will not activate twice.
+    //! The session keeps the outgoing instance, hands its state to the incoming one, and reuses it
+    //! next time round. A quiet session settles back to one instance; what is never paid twice is
+    //! reading the plugin off disk. It is all in `auris_session::session::hosted`.
 }
 
 pub mod composition {

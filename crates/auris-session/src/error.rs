@@ -23,6 +23,10 @@ pub enum SessionError {
     #[error("no plugin is registered as `{0}`")]
     UnknownPlugin(String),
 
+    /// A third-party plugin could not be loaded, instantiated or driven.
+    #[error(transparent)]
+    Clap(#[from] auris_clap::ClapError),
+
     /// The requested track does not exist.
     #[error("no track with id {0}")]
     UnknownTrack(u64),

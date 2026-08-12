@@ -7,8 +7,9 @@
 //!
 //! Building resolves the three indirections the document model deliberately keeps:
 //!
-//! * plugin ids become live [`Instrument`](auris_core::plugin::Instrument) and
-//!   [`Effect`](auris_core::plugin::Effect) objects from the registry,
+//! * plugin ids become live [`Instrument`](auris_core::plugin::Instrument) and [`Effect`]
+//!   objects from the registry — or, for the few the registry cannot build, from the
+//!   [`PlacedEffects`] the caller brought,
 //! * musical tick positions become absolute timeline sample positions through the [`TempoMap`],
 //! * [`SourceId`](auris_core::project::SourceId)s become `Arc<AudioBuffer>` handles from the
 //!   [`AudioSourceBank`].
@@ -35,11 +36,12 @@ pub use track::{RenderSource, RenderTrack};
 pub(crate) use latency::LatencyDelay;
 pub(crate) use track::RenderSend;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use auris_core::param::db_to_gain;
-use auris_core::plugin::PrepareContext;
-use auris_core::project::{AudioSourceBank, Project, TrackId, TrackKind};
+use auris_core::plugin::{Effect, PrepareContext};
+use auris_core::project::{AudioSourceBank, EffectSlotId, Project, TrackId, TrackKind};
 use auris_core::registry::PluginRegistry;
 use auris_core::time::{Samples, TempoMap};
 use auris_core::{AudioBuffer, ParamId};
@@ -58,6 +60,19 @@ pub const RENDER_CHANNELS: usize = 2;
 
 /// Rate used when neither the caller nor the project offers a usable one.
 const DEFAULT_SAMPLE_RATE: f64 = 48_000.0;
+
+/// Effects the caller built itself, waiting to be placed in their slots.
+///
+/// Almost every effect comes from the [`PluginRegistry`], whose factory is
+/// `Fn() -> Box<dyn Effect>` and so can build one from nothing but an id. Some cannot be built
+/// that way: a hosted CLAP plugin is two objects, and the half that answers questions has to stay
+/// on the main thread while only the half that renders belongs in a graph. The caller that owns
+/// the other half builds those and leaves them here.
+///
+/// Building **takes** each effect it uses, so a map that still holds entries afterwards names
+/// slots that are no longer in the project — which is how the caller finds out that a hosted
+/// plugin can be let go.
+pub type PlacedEffects = BTreeMap<EffectSlotId, Box<dyn Effect>>;
 
 /// Room left in each track's per-block event buffer for notes played from the UI.
 const AUDITION_HEADROOM: usize = 16;
@@ -175,6 +190,29 @@ impl RenderGraph {
         max_block: usize,
         sample_rate: f64,
     ) -> RenderGraph {
+        Self::build_with(
+            project,
+            bank,
+            registry,
+            &mut PlacedEffects::new(),
+            max_block,
+            sample_rate,
+        )
+    }
+
+    /// Builds a render graph, taking some of its effects from the caller.
+    ///
+    /// See [`PlacedEffects`] for why a caller would have any. Every slot not named there is built
+    /// from the registry exactly as before, so a project with no hosted plugins takes the same
+    /// path it always did.
+    pub fn build_with(
+        project: &Project,
+        bank: &AudioSourceBank,
+        registry: &PluginRegistry,
+        placed: &mut PlacedEffects,
+        max_block: usize,
+        sample_rate: f64,
+    ) -> RenderGraph {
         let max_block = max_block.max(1);
         // A zero, negative or NaN rate would make every derived position meaningless and would
         // poison the meters, so fall back to the project's rate and then to a sane default: a
@@ -202,7 +240,7 @@ impl RenderGraph {
             // `audible` carries only the solo resolution; the strip keeps its own mute so a
             // mute toggle is a command rather than a rebuild.
             let audible = solo.get(index).copied().unwrap_or(true);
-            let strip = RenderStrip::from_mixer(&track.mixer, audible, registry, &prepare);
+            let strip = RenderStrip::from_mixer(&track.mixer, audible, registry, placed, &prepare);
             let source = match &track.kind {
                 TrackKind::Instrument(instrument_track) => {
                     match registry.create_instrument(&instrument_track.instrument_id) {
@@ -316,7 +354,7 @@ impl RenderGraph {
             });
         }
 
-        let master = RenderStrip::from_mixer(&project.master, true, registry, &prepare);
+        let master = RenderStrip::from_mixer(&project.master, true, registry, placed, &prepare);
         let mut master_scratch = AudioBuffer::new(RENDER_CHANNELS, max_block, sample_rate);
         master_scratch.reserve_frames(max_block);
 

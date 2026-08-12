@@ -172,6 +172,9 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
     match error {
         SessionError::Io(inner) => with(Key::ErrorFile, inner.to_string()),
         SessionError::Engine(inner) => with(Key::ErrorEngine, inner.to_string()),
+        // The plugin's own words: it names a file, an id or a refusal that came from somebody
+        // else's binary, and paraphrasing that would lose the only part worth reading.
+        SessionError::Clap(inner) => with(Key::ErrorPlugin, inner.to_string()),
         SessionError::Core(inner) => with(Key::ErrorDocument, inner.to_string()),
         SessionError::UnknownPlugin(id) => messages::unknown_plugin(language, id),
         SessionError::UnknownTrack(_) => Key::ErrorUnknownTrack.get(language).to_string(),

@@ -318,9 +318,47 @@ pub struct PluginState {
 }
 
 impl PluginState {
+    /// Where a hosted plugin's own state lives inside [`Self::extra`].
+    const HOSTED_KEY: &'static str = "hosted";
+
     /// An empty state — the plugin keeps its defaults.
     pub fn empty() -> Self {
         Self::default()
+    }
+
+    /// Stores a hosted plugin's opaque state.
+    ///
+    /// This is what [`Self::extra`] was for. A CLAP plugin's state is a byte stream it defines
+    /// and the host may not interpret — Surge XT's is fifty kilobytes of its own patch format —
+    /// so there is no question of unpacking it into [`Self::params`]. It is base64 rather than an
+    /// array of numbers because a project file is JSON, where a byte costs four characters as a
+    /// number and one and a third as base64.
+    ///
+    /// The parameter map is still written beside it, and is still what automation reads. The two
+    /// do not fight: the bytes are restored first and the map second, so a value the user
+    /// automated wins over the one baked into the patch.
+    pub fn set_hosted_bytes(&mut self, bytes: &[u8]) {
+        use base64::Engine;
+        let text = base64::engine::general_purpose::STANDARD.encode(bytes);
+        match self.extra.as_object_mut() {
+            Some(map) => {
+                map.insert(Self::HOSTED_KEY.into(), serde_json::Value::String(text));
+            }
+            None => {
+                self.extra = serde_json::json!({ Self::HOSTED_KEY: text });
+            }
+        }
+    }
+
+    /// Reads back what [`Self::set_hosted_bytes`] stored.
+    ///
+    /// `None` covers both "there is none" and "what is there is not base64", because the two call
+    /// for the same thing: build the plugin from its defaults and let the parameter map correct
+    /// it. A project that has been hand-edited into nonsense should still open.
+    pub fn hosted_bytes(&self) -> Option<Vec<u8>> {
+        use base64::Engine;
+        let text = self.extra.get(Self::HOSTED_KEY)?.as_str()?;
+        base64::engine::general_purpose::STANDARD.decode(text).ok()
     }
 }
 
@@ -527,6 +565,34 @@ mod tests {
         restored.load_state(&state);
         assert_eq!(restored.param_by_key("alpha"), Some(0.75));
         assert_eq!(restored.param_by_key("beta"), Some(-0.5));
+    }
+
+    #[test]
+    fn a_hosted_plugins_own_state_round_trips_beside_the_parameter_map() {
+        let mut state = PluginState::empty();
+        state.params.insert("clap.4242".into(), 1.5);
+        // Not valid UTF-8, not JSON, not anything: a patch format the host may not read.
+        let patch = [0x00u8, 0xff, 0x10, 0x80, 0x7f];
+        state.set_hosted_bytes(&patch);
+
+        let json = serde_json::to_string(&state).unwrap();
+        let back: PluginState = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.hosted_bytes().as_deref(), Some(&patch[..]));
+        assert_eq!(back.params.get("clap.4242"), Some(&1.5));
+    }
+
+    #[test]
+    fn a_state_with_nothing_hosted_in_it_says_so_rather_than_guessing() {
+        assert_eq!(PluginState::empty().hosted_bytes(), None);
+
+        // Hand-edited into nonsense. Opening the project matters more than the patch.
+        let mut broken = PluginState::empty();
+        broken.extra = serde_json::json!({ "hosted": "not base64!!" });
+        assert_eq!(broken.hosted_bytes(), None);
+
+        let mut wrong_shape = PluginState::empty();
+        wrong_shape.extra = serde_json::json!(["hosted"]);
+        assert_eq!(wrong_shape.hosted_bytes(), None);
     }
 
     #[test]

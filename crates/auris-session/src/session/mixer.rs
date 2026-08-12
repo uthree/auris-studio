@@ -150,6 +150,15 @@ impl Session {
         if let Some(builtin) = Self::mixer_descriptor(target) {
             return Some(builtin);
         }
+        // A hosted plugin is not in the registry and never will be, so its parameters can only be
+        // had from the instance itself — which is why they are looked up by *slot* rather than by
+        // plugin id: two slots may hold the same plugin from two different files.
+        if let ParamTarget::Effect { slot, param, .. } = target {
+            let hosted = self.hosted_parameters(slot);
+            if !hosted.is_empty() {
+                return hosted.get(param.index()).cloned();
+            }
+        }
         let plugin_id = self.plugin_id_for(target)?;
         let index = match target {
             ParamTarget::Instrument { param, .. } | ParamTarget::Effect { param, .. } => {

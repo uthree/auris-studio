@@ -275,10 +275,14 @@ impl RenderStrip {
     ///
     /// The resulting chain is always as long as `mixer.effects`: an id the registry does not know
     /// becomes a bypassed placeholder rather than a hole, so slot indices keep their meaning.
+    ///
+    /// A slot named in `placed` takes the effect the caller already built and does not consult
+    /// the registry at all — see [`PlacedEffects`](crate::graph::PlacedEffects).
     pub fn from_mixer(
         mixer: &MixerStrip,
         audible: bool,
         registry: &PluginRegistry,
+        placed: &mut crate::graph::PlacedEffects,
         prepare: &PrepareContext,
     ) -> Self {
         let mut strip = Self::new(
@@ -291,6 +295,14 @@ impl RenderStrip {
         strip.effects.reserve(mixer.effects.len());
         strip.enabled.reserve(mixer.effects.len());
         for slot in &mixer.effects {
+            // The caller's own effect first: it is already prepared — a hosted plugin was sized
+            // when it was activated and cannot be told a second time — and there is nothing for
+            // the registry to be asked about.
+            if let Some(effect) = placed.remove(&slot.id) {
+                strip.effects.push(effect);
+                strip.enabled.push(slot.enabled);
+                continue;
+            }
             match registry.create_effect(&slot.effect_id) {
                 Ok(mut effect) => {
                     effect.load_state(&slot.state);
@@ -537,6 +549,61 @@ mod tests {
         assert!(strip.enabled[1]);
         // The placeholder declares no tail, so it cannot lengthen an export either.
         assert_eq!(strip.tail_frames(), 0);
+    }
+
+    #[test]
+    fn an_effect_the_caller_placed_beats_the_registry_and_is_taken() {
+        // A hosted plugin's id is not in the registry and never will be, so the placed effect is
+        // the only thing standing between its slot and a bypassed placeholder.
+        let mut project = Project::new("Graph", 48_000.0);
+        let track = project.add_instrument_track("Lead", testkit::TONE_ID);
+        let slot = project
+            .add_effect(Some(track), "clap:com.example.nothing")
+            .unwrap();
+
+        let mut placed = crate::graph::PlacedEffects::new();
+        placed.insert(
+            slot,
+            testkit::registry().create_effect(testkit::GAIN_ID).unwrap(),
+        );
+
+        let graph = RenderGraph::build_with(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &mut placed,
+            512,
+            48_000.0,
+        );
+
+        let strip = graph.tracks()[0].strip();
+        assert_eq!(strip.effects[0].descriptor().id, testkit::GAIN_ID);
+        assert!(strip.enabled[0], "the slot's own switch still decides");
+        assert!(
+            placed.is_empty(),
+            "building takes what it uses, so what is left names slots the project has dropped"
+        );
+    }
+
+    #[test]
+    fn an_effect_placed_for_a_slot_that_is_gone_is_left_behind() {
+        let project = Project::new("Graph", 48_000.0);
+        let mut placed = crate::graph::PlacedEffects::new();
+        placed.insert(
+            auris_core::project::EffectSlotId(999),
+            testkit::registry().create_effect(testkit::GAIN_ID).unwrap(),
+        );
+
+        RenderGraph::build_with(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &mut placed,
+            512,
+            48_000.0,
+        );
+
+        assert_eq!(placed.len(), 1, "the caller has to be told, not guessed at");
     }
 
     #[test]

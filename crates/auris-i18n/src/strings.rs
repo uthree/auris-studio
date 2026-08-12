@@ -837,6 +837,7 @@ strings! {
     ErrorNotRecording { en: "no recording is running", ja: "録音していません" }
     ErrorFile { en: "file error", ja: "ファイルエラー" }
     ErrorEngine { en: "audio engine error", ja: "オーディオエンジンのエラー" }
+    ErrorPlugin { en: "plugin error", ja: "プラグインのエラー" }
     ErrorDocument { en: "the document is not valid", ja: "ドキュメントが不正です" }
 
     // ------------------------------------------------------------------ command line

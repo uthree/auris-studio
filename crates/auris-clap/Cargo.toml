@@ -7,6 +7,12 @@ repository.workspace = true
 rust-version.workspace = true
 description = "Hosting of third-party CLAP plugins for Auris Studio"
 
+[features]
+# A CLAP plugin linked into the binary, so the crates above this one can test hosting without a
+# `.clap` installed on the machine. Off by default: an application shipping a test plugin inside
+# itself would be absurd.
+testkit = ["dep:clack-plugin", "clack-host/clack-plugin", "clack-extensions/clack-plugin"]
+
 [dependencies]
 auris-core = { workspace = true }
 clack-host = { workspace = true }
@@ -17,12 +23,11 @@ clack-extensions = { workspace = true, features = [
     "params",
     "state",
 ] }
+clack-plugin = { workspace = true, optional = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-# The tests host a plugin written with `clack-plugin` and linked into the test binary, rather
-# than a `.clap` file on disk: `PluginEntry::load_from_clack` walks the same C entry point, so
-# the host path under test is the real one, and `cargo test` needs nothing installed.
+# The same fixture this crate's own tests need, without turning the feature on for everybody.
 clack-host = { workspace = true, features = ["clack-plugin"] }
 clack-plugin = { workspace = true }
 clack-extensions = { workspace = true, features = ["clack-plugin"] }

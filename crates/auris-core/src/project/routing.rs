@@ -12,6 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::asset::AssetPath;
 use crate::plugin::PluginState;
 
 use super::track::Track;
@@ -28,6 +29,18 @@ pub struct EffectSlot {
     pub enabled: bool,
     /// Saved parameter values.
     pub state: PluginState,
+    /// The plugin file this slot's effect lives in, for an effect the registry cannot build.
+    ///
+    /// `None` for every built-in, which is what an id alone is enough to find. A hosted plugin
+    /// needs the file as well, because its id was chosen by somebody else and says nothing about
+    /// where it is.
+    ///
+    /// [`External`](AssetPath::External), never `Inside`: a plugin is a library shared by every
+    /// project on the machine, exactly like a SoundFont, and copying Surge XT into a song folder
+    /// would be absurd. The cost is that a project carried to another machine finds its plugins
+    /// only if they are installed there — which is the same bargain every DAW makes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<AssetPath>,
 }
 
 impl EffectSlot {
@@ -38,7 +51,21 @@ impl EffectSlot {
             effect_id: effect_id.into(),
             enabled: true,
             state: PluginState::empty(),
+            file: None,
         }
+    }
+
+    /// A slot filled by a plugin hosted from a file.
+    pub fn hosted(id: EffectSlotId, effect_id: impl Into<String>, file: AssetPath) -> Self {
+        Self {
+            file: Some(file),
+            ..Self::new(id, effect_id)
+        }
+    }
+
+    /// `true` when this slot names a plugin the registry cannot build.
+    pub fn is_hosted(&self) -> bool {
+        self.file.is_some()
     }
 }
 
@@ -146,6 +173,24 @@ impl Project {
             None => &mut self.master,
         };
         strip.effects.push(EffectSlot::new(slot_id, effect_id));
+        Some(slot_id)
+    }
+
+    /// Adds an effect that has to be hosted from a file rather than built from the registry.
+    pub fn add_hosted_effect(
+        &mut self,
+        track_id: Option<TrackId>,
+        effect_id: impl Into<String>,
+        file: AssetPath,
+    ) -> Option<EffectSlotId> {
+        let slot_id = EffectSlotId(self.allocate_id());
+        let strip = match track_id {
+            Some(id) => &mut self.track_mut(id)?.mixer,
+            None => &mut self.master,
+        };
+        strip
+            .effects
+            .push(EffectSlot::hosted(slot_id, effect_id, file));
         Some(slot_id)
     }
 
