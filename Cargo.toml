@@ -14,6 +14,7 @@ rust-version = "1.90"
 
 [workspace.dependencies]
 # Backend, in dependency order. Nothing below `auris-session` knows a UI exists.
+auris-clap = { path = "crates/auris-clap", version = "0.2.0" }
 auris-compose = { path = "crates/auris-compose", version = "0.2.0" }
 auris-core = { path = "crates/auris-core", version = "0.2.0" }
 auris-dsp = { path = "crates/auris-dsp", version = "0.2.0" }
@@ -27,6 +28,12 @@ auris-session = { path = "crates/auris-session", version = "0.2.0" }
 
 anyhow = "1.0"
 arc-swap = "1.7"
+# Hosting third-party CLAP plugins. MIT OR Apache-2.0, so it raises none of the licensing
+# questions the Steinberg VST3 SDK would. `clack-host` and `clack-plugin` are two halves of one
+# project and must be resolved together — the tests link a plugin into the host binary.
+clack-extensions = "0.1.1"
+clack-host = "0.1.1"
+clack-plugin = "0.1.1"
 bytemuck = { version = "1.16", features = ["derive"] }
 cpal = "0.18"
 crossbeam-channel = "0.5"

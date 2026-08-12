@@ -1,0 +1,28 @@
+[package]
+name = "auris-clap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Hosting of third-party CLAP plugins for Auris Studio"
+
+[dependencies]
+auris-core = { workspace = true }
+clack-host = { workspace = true }
+clack-extensions = { workspace = true, features = [
+    "clack-host",
+    "audio-ports",
+    "latency",
+    "params",
+    "state",
+] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# The tests host a plugin written with `clack-plugin` and linked into the test binary, rather
+# than a `.clap` file on disk: `PluginEntry::load_from_clack` walks the same C entry point, so
+# the host path under test is the real one, and `cargo test` needs nothing installed.
+clack-host = { workspace = true, features = ["clack-plugin"] }
+clack-plugin = { workspace = true }
+clack-extensions = { workspace = true, features = ["clack-plugin"] }

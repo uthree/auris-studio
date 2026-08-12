@@ -49,6 +49,7 @@ crates/auris-dsp         effects and DSP primitives
 crates/auris-synth       built-in chiptune instruments; depends on auris-dsp
 crates/auris-sampler     SoundFont playback: the font bank and the sampler instrument;
                          depends on auris-dsp
+crates/auris-clap        hosting of third-party CLAP plugins; depends on auris-core only
 crates/auris-engine      render graph, transport, cpal in and out, offline renderer
 crates/auris-io          audio file import/export, project save/load
 crates/auris-gpu         optional wgpu compute for offline analysis
@@ -71,6 +72,12 @@ Dependency direction is strictly downhill and the frontend boundary matters:
 * Both instrument crates take their primitives from `auris-dsp`, not their effects. `auris_dsp::Adsr`
   is the one that matters: the built-in voices and the sampler's per-note fade are the same
   generator, so an attack of five milliseconds means the same thing on both.
+* A hosted CLAP plugin is **two objects**, because CLAP's main-thread/audio-thread split is the
+  same one Auris already has. `auris_clap::ClapPlugin` is not `Send` and answers questions; the
+  `ClapEffect` it hands out is `Send`, implements `auris_core::Effect`, and is the only half the
+  graph ever sees. `auris-engine` therefore needs no CLAP dependency and does not have one. A
+  hosted plugin cannot go through `PluginRegistry`, whose factory is `Fn() -> Box<dyn Effect>`
+  and so cannot produce the main-thread half as well: the session places it instead.
 * Sample data cannot travel through a `PluginState`, which is a map of `f32`. `auris-sampler`
   therefore keeps a `SoundFontBank` that the session owns and the registry's factory closure
   captures; a track names a sound by font id, bank and patch, never by position.

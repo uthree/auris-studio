@@ -546,6 +546,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "auris-clap"
+version = "0.2.0"
+dependencies = [
+ "auris-core",
+ "clack-extensions",
+ "clack-host",
+ "clack-plugin",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "auris-cli"
 version = "0.2.0"
 dependencies = [
@@ -1105,6 +1116,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "clack-common"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f6a27523c0b3563da8286628d3f3a54fde73de3190d28586c2c314c3bdad1e6"
+dependencies = [
+ "bitflags 2.13.1",
+ "clap-sys",
+]
+
+[[package]]
+name = "clack-extensions"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d97d8b4cab1975314c053b9ec35575c5cccd8c7b3db37b21cbe435be6174416"
+dependencies = [
+ "bitflags 2.13.1",
+ "clack-common",
+ "clack-host",
+ "clack-plugin",
+ "clap-sys",
+]
+
+[[package]]
+name = "clack-host"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f0d9f10d8ea9b1b79863aefb41fb8eae144db8491557cc58f91e16c8be32e55"
+dependencies = [
+ "clack-common",
+ "clack-plugin",
+ "clap-sys",
+ "libloading",
+ "objc2-foundation",
+]
+
+[[package]]
+name = "clack-plugin"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fa04a5185c367bfd5566e616c9c20cec2abaee9bf8a6060a3f6e44b505d5f32"
+dependencies = [
+ "clack-common",
+ "clap-sys",
+]
+
+[[package]]
 name = "clang-sys"
 version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1114,6 +1171,12 @@ dependencies = [
  "libc",
  "libloading",
 ]
+
+[[package]]
+name = "clap-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a76abbdb2907f6fd97fb6bc0b7be96b77d328f2dd9669d1075cc03369ed22154"
 
 [[package]]
 name = "cocoa"
