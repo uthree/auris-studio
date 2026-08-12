@@ -325,6 +325,10 @@ impl Session {
             // The saved values belong to the old plugin; applying them to a different one would
             // write another plugin's numbers into unrelated controls.
             inner.instrument_state = PluginState::empty();
+            // And the file with them. This one is not cosmetic: a track still naming a `.clap`
+            // while its id is a registry id is a track the session keeps a hosted instance
+            // alive for, of a plugin that file does not contain and never will.
+            inner.file = None;
         }
         if swapped {
             // And so do the curves that were writing those values every block, for the same

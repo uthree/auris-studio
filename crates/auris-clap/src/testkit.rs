@@ -30,12 +30,19 @@ use clack_extensions::audio_ports::{
     AudioPortFlags, AudioPortInfo, AudioPortInfoWriter, AudioPortType, PluginAudioPorts,
     PluginAudioPortsImpl,
 };
+use clack_extensions::note_ports::{
+    NoteDialect, NoteDialects, NotePortInfo, NotePortInfoWriter, PluginNotePorts,
+    PluginNotePortsImpl,
+};
 use clack_extensions::params::{
     ParamDisplayWriter, ParamInfo, ParamInfoFlags, ParamInfoWriter, PluginAudioProcessorParams,
     PluginMainThreadParams, PluginParams,
 };
 use clack_extensions::state::{PluginState, PluginStateImpl};
-use clack_plugin::events::event_types::ParamValueEvent;
+use clack_plugin::events::event_types::{
+    MidiEvent, NoteChokeEvent, NoteExpressionEvent, NoteExpressionType, NoteOffEvent, NoteOnEvent,
+    ParamValueEvent,
+};
 use clack_plugin::prelude::*;
 use clack_plugin::stream::{InputStream, OutputStream};
 
@@ -311,3 +318,327 @@ impl PluginStateImpl for MainThread<'_> {
 
 /// The fixture's entry point, as a `.clap` file would expose it.
 pub type Entry = SinglePluginEntry<Gain>;
+
+/// The instrument fixture's CLAP id.
+pub const TONE_ID: &str = "studio.auris.test.tone";
+
+/// [`Tone`]'s level parameter id.
+pub const LEVEL_ID: u32 = 7001;
+/// The read-only parameter reporting the last bend the fixture was sent, in semitones.
+pub const BEND_ID: u32 = 7002;
+/// The read-only parameter reporting the last modulation amount the fixture was sent.
+pub const WHEEL_ID: u32 = 7003;
+
+/// A library holding nothing but the instrument fixture.
+///
+/// A second entry rather than a second plugin inside the first, because that is also how it looks
+/// on disk: an effect and an instrument are usually two files, and loading two libraries is the
+/// path the session actually takes.
+///
+/// # Panics
+///
+/// Panics if the fixture entry cannot be loaded, which would mean the crate itself is broken.
+pub fn instrument_library() -> ClapLibrary {
+    let entry = clack_host::prelude::PluginEntry::load_from_clack::<InstrumentEntry>(
+        c"/auris/testkit/test-tone.clap",
+    )
+    .expect("the instrument fixture entry must load");
+    ClapLibrary::from_entry(entry, "/auris/testkit/test-tone.clap")
+}
+
+/// State shared between the instrument fixture's two threads.
+///
+/// The last bend and wheel are here so a *host* test can prove the translation in
+/// [`notes`](crate::notes) arrived, rather than only that it was constructed.
+#[derive(Default)]
+pub struct ToneShared {
+    level: AtomicU32,
+    bend: AtomicU32,
+    wheel: AtomicU32,
+}
+
+impl PluginShared<'_> for ToneShared {}
+
+/// The instrument fixture's main-thread half.
+pub struct ToneMainThread<'a> {
+    shared: &'a ToneShared,
+}
+
+impl<'a> PluginMainThread<'a, ToneShared> for ToneMainThread<'a> {}
+
+/// An instrument that holds a steady level for as long as a note is held.
+///
+/// Deliberately not an oscillator: a constant is something a test can assert an exact number
+/// about, and what is under test is the note plumbing rather than anybody's synthesis.
+pub struct Tone;
+
+impl Plugin for Tone {
+    type AudioProcessor<'a> = ToneProcessor<'a>;
+    type Shared<'a> = ToneShared;
+    type MainThread<'a> = ToneMainThread<'a>;
+
+    fn declare_extensions(builder: &mut PluginExtensions<Self>, _shared: Option<&ToneShared>) {
+        builder
+            .register::<PluginAudioPorts>()
+            .register::<PluginNotePorts>()
+            .register::<PluginParams>()
+            .register::<PluginState>();
+    }
+}
+
+impl DefaultPluginFactory for Tone {
+    fn get_descriptor() -> PluginDescriptor {
+        use clack_plugin::plugin::features::*;
+        PluginDescriptor::new(TONE_ID, "Test Tone")
+            .with_vendor("Auris Studio")
+            .with_description("Holds a level while a note is held")
+            .with_version("1.0.0")
+            .with_features([INSTRUMENT, SYNTHESIZER, STEREO])
+    }
+
+    fn new_shared(_host: HostSharedHandle<'_>) -> Result<ToneShared, PluginError> {
+        let shared = ToneShared::default();
+        shared.level.store(1.0f32.to_bits(), Ordering::Relaxed);
+        Ok(shared)
+    }
+
+    fn new_main_thread<'a>(
+        _host: HostMainThreadHandle<'a>,
+        shared: &'a ToneShared,
+    ) -> Result<ToneMainThread<'a>, PluginError> {
+        Ok(ToneMainThread { shared })
+    }
+}
+
+/// The instrument fixture's audio-thread half.
+pub struct ToneProcessor<'a> {
+    shared: &'a ToneShared,
+    /// Amplitude carried between blocks — a note held across a block boundary keeps sounding.
+    amplitude: f32,
+    /// One amplitude per frame, built from the block's events before anything is written, so an
+    /// event lands on its own sample rather than at the start of the block.
+    envelope: Vec<f32>,
+}
+
+impl<'a> PluginAudioProcessor<'a, ToneShared, ToneMainThread<'a>> for ToneProcessor<'a> {
+    fn activate(
+        _host: HostAudioProcessorHandle<'a>,
+        _main_thread: &mut ToneMainThread<'a>,
+        shared: &'a ToneShared,
+        config: PluginAudioConfiguration,
+    ) -> Result<Self, PluginError> {
+        Ok(Self {
+            shared,
+            amplitude: 0.0,
+            envelope: vec![0.0; config.max_frames_count as usize],
+        })
+    }
+
+    fn process(
+        &mut self,
+        _process: Process,
+        mut audio: Audio,
+        events: Events,
+    ) -> Result<ProcessStatus, PluginError> {
+        let frames = audio.frames_count() as usize;
+        let mut cursor = 0usize;
+
+        for event in events.input {
+            let at = (event.header().time() as usize).min(frames);
+            self.envelope[cursor..at].fill(self.amplitude);
+            cursor = at;
+
+            if let Some(on) = event.as_event::<NoteOnEvent>() {
+                self.amplitude = on.velocity() as f32;
+            } else if event.as_event::<NoteOffEvent>().is_some()
+                || event.as_event::<NoteChokeEvent>().is_some()
+            {
+                self.amplitude = 0.0;
+            } else if let Some(expression) = event.as_event::<NoteExpressionEvent>()
+                && expression.expression_type() == Some(NoteExpressionType::Tuning)
+            {
+                self.shared
+                    .bend
+                    .store((expression.value() as f32).to_bits(), Ordering::Relaxed);
+            } else if let Some(midi) = event.as_event::<MidiEvent>() {
+                let data = midi.data();
+                if data[0] == 0xB0 && data[1] == 1 {
+                    let amount = data[2] as f32 / 127.0;
+                    self.shared.wheel.store(amount.to_bits(), Ordering::Relaxed);
+                }
+            } else if let Some(param) = event.as_event::<ParamValueEvent>()
+                && param.param_id().map(|id| id.get()) == Some(LEVEL_ID)
+            {
+                self.shared
+                    .level
+                    .store((param.value() as f32).to_bits(), Ordering::Relaxed);
+            }
+        }
+        self.envelope[cursor..frames].fill(self.amplitude);
+
+        let level = f32::from_bits(self.shared.level.load(Ordering::Relaxed));
+        for mut port in &mut audio {
+            let Some(channels) = port.channels()?.into_f32() else {
+                continue;
+            };
+            for channel in channels {
+                let out = match channel {
+                    ChannelPair::OutputOnly(out) => out,
+                    ChannelPair::InputOutput(_, out) => out,
+                    ChannelPair::InPlace(buf) => buf,
+                    ChannelPair::InputOnly(_) => continue,
+                };
+                for (out, amplitude) in out.iter_mut().zip(&self.envelope[..frames]) {
+                    *out = amplitude * level;
+                }
+            }
+        }
+
+        Ok(ProcessStatus::Continue)
+    }
+}
+
+impl PluginAudioProcessorParams for ToneProcessor<'_> {
+    fn flush(&mut self, _input: &InputEvents, _output: &mut OutputEvents) {}
+}
+
+impl PluginAudioPortsImpl for ToneMainThread<'_> {
+    fn count(&mut self, is_input: bool) -> u32 {
+        // No audio input at all, which is the shape that would catch a host insisting on one.
+        match is_input {
+            true => 0,
+            false => 1,
+        }
+    }
+
+    fn get(&mut self, index: u32, is_input: bool, writer: &mut AudioPortInfoWriter) {
+        if is_input || index != 0 {
+            return;
+        }
+        writer.set(&AudioPortInfo {
+            id: ClapId::new(0),
+            name: b"Out",
+            channel_count: 2,
+            flags: AudioPortFlags::IS_MAIN,
+            port_type: Some(AudioPortType::STEREO),
+            in_place_pair: None,
+        });
+    }
+}
+
+impl PluginNotePortsImpl for ToneMainThread<'_> {
+    fn count(&mut self, is_input: bool) -> u32 {
+        match is_input {
+            true => 1,
+            false => 0,
+        }
+    }
+
+    fn get(&mut self, index: u32, is_input: bool, writer: &mut NotePortInfoWriter) {
+        if !is_input || index != 0 {
+            return;
+        }
+        writer.set(&NotePortInfo {
+            id: ClapId::new(0),
+            name: b"Notes",
+            // Both, like most real instruments, which is what lets the host send notes as CLAP
+            // events and still have somewhere to put a modulation wheel.
+            supported_dialects: NoteDialects::CLAP | NoteDialects::MIDI,
+            preferred_dialect: Some(NoteDialect::Clap),
+        });
+    }
+}
+
+impl PluginMainThreadParams for ToneMainThread<'_> {
+    fn count(&mut self) -> u32 {
+        3
+    }
+
+    fn get_info(&mut self, param_index: u32, info: &mut ParamInfoWriter) {
+        let common = ParamInfo {
+            id: ClapId::new(LEVEL_ID),
+            flags: ParamInfoFlags::IS_AUTOMATABLE,
+            cookie: Default::default(),
+            name: b"Level",
+            module: b"",
+            min_value: 0.0,
+            max_value: 1.0,
+            default_value: 1.0,
+        };
+        match param_index {
+            0 => info.set(&common),
+            1 => info.set(&ParamInfo {
+                id: ClapId::new(BEND_ID),
+                flags: ParamInfoFlags::IS_READONLY,
+                name: b"Last Bend",
+                min_value: -48.0,
+                max_value: 48.0,
+                default_value: 0.0,
+                ..common
+            }),
+            2 => info.set(&ParamInfo {
+                id: ClapId::new(WHEEL_ID),
+                flags: ParamInfoFlags::IS_READONLY,
+                name: b"Last Wheel",
+                default_value: 0.0,
+                ..common
+            }),
+            _ => {}
+        }
+    }
+
+    fn get_value(&mut self, param_id: ClapId) -> Option<f64> {
+        let read = |cell: &AtomicU32| f32::from_bits(cell.load(Ordering::Relaxed)) as f64;
+        match param_id.get() {
+            LEVEL_ID => Some(read(&self.shared.level)),
+            BEND_ID => Some(read(&self.shared.bend)),
+            WHEEL_ID => Some(read(&self.shared.wheel)),
+            _ => None,
+        }
+    }
+
+    fn value_to_text(
+        &mut self,
+        _param_id: ClapId,
+        value: f64,
+        writer: &mut ParamDisplayWriter,
+    ) -> std::fmt::Result {
+        use std::fmt::Write;
+        write!(writer, "{value:.2}")
+    }
+
+    fn text_to_value(&mut self, _param_id: ClapId, text: &CStr) -> Option<f64> {
+        text.to_str().ok()?.trim().parse().ok()
+    }
+
+    fn flush(&mut self, input: &InputEvents, _output: &mut OutputEvents) {
+        for event in input {
+            if let Some(event) = event.as_event::<ParamValueEvent>()
+                && event.param_id().map(|id| id.get()) == Some(LEVEL_ID)
+            {
+                self.shared
+                    .level
+                    .store((event.value() as f32).to_bits(), Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+impl PluginStateImpl for ToneMainThread<'_> {
+    fn save(&mut self, output: &mut OutputStream) -> Result<(), PluginError> {
+        output.write_all(&self.shared.level.load(Ordering::Relaxed).to_le_bytes())?;
+        Ok(())
+    }
+
+    fn load(&mut self, input: &mut InputStream) -> Result<(), PluginError> {
+        let mut bytes = [0u8; 4];
+        input.read_exact(&mut bytes)?;
+        self.shared
+            .level
+            .store(u32::from_le_bytes(bytes), Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+/// The instrument fixture's entry point, as a second `.clap` file would expose it.
+pub type InstrumentEntry = SinglePluginEntry<Tone>;

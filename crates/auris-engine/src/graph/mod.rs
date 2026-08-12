@@ -7,9 +7,9 @@
 //!
 //! Building resolves the three indirections the document model deliberately keeps:
 //!
-//! * plugin ids become live [`Instrument`](auris_core::plugin::Instrument) and [`Effect`]
-//!   objects from the registry — or, for the few the registry cannot build, from the
-//!   [`PlacedEffects`] the caller brought,
+//! * plugin ids become live [`Instrument`] and [`Effect`] objects from the registry — or, for the
+//!   few the registry cannot build, from the [`PlacedEffects`] and [`PlacedInstruments`] the
+//!   caller brought,
 //! * musical tick positions become absolute timeline sample positions through the [`TempoMap`],
 //! * [`SourceId`](auris_core::project::SourceId)s become `Arc<AudioBuffer>` handles from the
 //!   [`AudioSourceBank`].
@@ -40,7 +40,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use auris_core::param::db_to_gain;
-use auris_core::plugin::{Effect, PrepareContext};
+use auris_core::plugin::{Effect, Instrument, PrepareContext};
 use auris_core::project::{AudioSourceBank, EffectSlotId, Project, TrackId, TrackKind};
 use auris_core::registry::PluginRegistry;
 use auris_core::time::{Samples, TempoMap};
@@ -73,6 +73,13 @@ const DEFAULT_SAMPLE_RATE: f64 = 48_000.0;
 /// slots that are no longer in the project — which is how the caller finds out that a hosted
 /// plugin can be let go.
 pub type PlacedEffects = BTreeMap<EffectSlotId, Box<dyn Effect>>;
+
+/// Instruments the caller built itself, waiting to be placed on their tracks.
+///
+/// [`PlacedEffects`] one lane over, and for exactly the same reason. A track holds at most one
+/// instrument, so this is keyed by the track rather than by a slot; a track not named here gets
+/// its instrument from the registry as it always did.
+pub type PlacedInstruments = BTreeMap<TrackId, Box<dyn Instrument>>;
 
 /// Room left in each track's per-block event buffer for notes played from the UI.
 const AUDITION_HEADROOM: usize = 16;
@@ -195,21 +202,23 @@ impl RenderGraph {
             bank,
             registry,
             &mut PlacedEffects::new(),
+            &mut PlacedInstruments::new(),
             max_block,
             sample_rate,
         )
     }
 
-    /// Builds a render graph, taking some of its effects from the caller.
+    /// Builds a render graph, taking some of its plugins from the caller.
     ///
-    /// See [`PlacedEffects`] for why a caller would have any. Every slot not named there is built
-    /// from the registry exactly as before, so a project with no hosted plugins takes the same
-    /// path it always did.
+    /// See [`PlacedEffects`] and [`PlacedInstruments`] for why a caller would have any. Anything
+    /// not named there is built from the registry exactly as before, so a project with no hosted
+    /// plugins takes the same path it always did.
     pub fn build_with(
         project: &Project,
         bank: &AudioSourceBank,
         registry: &PluginRegistry,
         placed: &mut PlacedEffects,
+        instruments: &mut PlacedInstruments,
         max_block: usize,
         sample_rate: f64,
     ) -> RenderGraph {
@@ -243,7 +252,13 @@ impl RenderGraph {
             let strip = RenderStrip::from_mixer(&track.mixer, audible, registry, placed, &prepare);
             let source = match &track.kind {
                 TrackKind::Instrument(instrument_track) => {
-                    match registry.create_instrument(&instrument_track.instrument_id) {
+                    // The caller's own instrument first, and it is *taken*: what is left in the
+                    // map afterwards names tracks the project no longer plays that way.
+                    let built = match instruments.remove(&track.id) {
+                        Some(instrument) => Ok(instrument),
+                        None => registry.create_instrument(&instrument_track.instrument_id),
+                    };
+                    match built {
                         Ok(mut instrument) => {
                             instrument.load_state(&instrument_track.instrument_state);
                             instrument.prepare(&prepare);
@@ -859,6 +874,112 @@ mod tests {
             3.0,
             "a saved effect parameter must survive the rebuild"
         );
+    }
+
+    #[test]
+    fn an_instrument_the_caller_placed_beats_the_registry_and_is_taken() {
+        // The registry could build this track's instrument perfectly well. The caller's own has
+        // to win anyway: for a hosted plugin the registry's answer would be a different instance
+        // with none of the state, and there would be no way to tell from the sound.
+        let project = quarter_note_project();
+        let track = project.tracks[0].id;
+        let mut instruments = PlacedInstruments::new();
+        instruments.insert(
+            track,
+            testkit::registry()
+                .create_instrument(testkit::TONE_ID)
+                .unwrap(),
+        );
+        // A value the registry's own default would not have.
+        instruments
+            .get_mut(&track)
+            .unwrap()
+            .set_param(ParamId(0), 0.125);
+
+        let graph = RenderGraph::build_with(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &mut PlacedEffects::new(),
+            &mut instruments,
+            512,
+            48_000.0,
+        );
+
+        let RenderSource::Instrument { instrument, .. } = &graph.tracks()[0].source else {
+            panic!("expected an instrument source");
+        };
+        assert_eq!(instrument.param(ParamId(0)), 0.125);
+        assert!(
+            instruments.is_empty(),
+            "building takes what it uses, so what is left names tracks the project has dropped"
+        );
+    }
+
+    #[test]
+    fn an_instrument_placed_for_a_track_that_is_gone_is_left_behind() {
+        let project = Project::new("Graph", 48_000.0);
+        let mut instruments = PlacedInstruments::new();
+        instruments.insert(
+            TrackId(999),
+            testkit::registry()
+                .create_instrument(testkit::TONE_ID)
+                .unwrap(),
+        );
+
+        RenderGraph::build_with(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &mut PlacedEffects::new(),
+            &mut instruments,
+            512,
+            48_000.0,
+        );
+
+        assert_eq!(
+            instruments.len(),
+            1,
+            "the caller has to be told, not guessed at"
+        );
+    }
+
+    #[test]
+    fn a_placed_instrument_is_still_given_the_documents_parameters() {
+        // The plugin arrives carrying whatever it had; the document is what the user edited. The
+        // document wins, exactly as it does for one the registry built.
+        let mut project = quarter_note_project();
+        let track = project.tracks[0].id;
+        project.tracks[0]
+            .kind
+            .as_instrument_mut()
+            .unwrap()
+            .instrument_state
+            .params
+            .insert("amplitude".into(), 0.5);
+
+        let mut instruments = PlacedInstruments::new();
+        instruments.insert(
+            track,
+            testkit::registry()
+                .create_instrument(testkit::TONE_ID)
+                .unwrap(),
+        );
+
+        let graph = RenderGraph::build_with(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &mut PlacedEffects::new(),
+            &mut instruments,
+            512,
+            48_000.0,
+        );
+
+        let RenderSource::Instrument { instrument, .. } = &graph.tracks()[0].source else {
+            panic!("expected an instrument source");
+        };
+        assert_eq!(instrument.param(ParamId(0)), 0.5);
     }
 
     #[test]

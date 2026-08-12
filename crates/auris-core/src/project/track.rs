@@ -15,6 +15,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::asset::AssetPath;
 use crate::plugin::PluginState;
 use crate::time::{TempoMap, Ticks};
 
@@ -64,6 +65,21 @@ pub struct InstrumentTrack {
     pub instrument_state: PluginState,
     /// Note clips on the timeline.
     pub clips: Vec<MidiClip>,
+    /// The plugin file this track's instrument lives in, for one the registry cannot build.
+    ///
+    /// The same field, for the same reasons, as
+    /// [`EffectSlot::file`](crate::project::routing::EffectSlot::file): `None` for every built-in,
+    /// and always [`External`](AssetPath::External) for a hosted plugin, because a plugin is a
+    /// library shared by every project on the machine rather than one song's asset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<AssetPath>,
+}
+
+impl InstrumentTrack {
+    /// `true` when the instrument names a plugin the registry cannot build.
+    pub fn is_hosted(&self) -> bool {
+        self.file.is_some()
+    }
 }
 
 /// An audio track: references to imported audio.
@@ -250,8 +266,36 @@ impl Project {
                 instrument_id: instrument_id.into(),
                 instrument_state: PluginState::empty(),
                 clips: Vec::new(),
+                file: None,
             }),
         )
+    }
+
+    /// Points a track's instrument at a plugin hosted from a file.
+    ///
+    /// The clips are left exactly where they are, which is the whole point: swapping the sound a
+    /// part is played by is not the same as replacing the part. The *state* does go, because it
+    /// belongs to the instrument that is being replaced — a cutoff frequency from a chiptune synth
+    /// means nothing to Surge XT, and a stale entry under a key the new plugin happens to share
+    /// would be worse than nothing.
+    ///
+    /// `false` when there is no such track, or it is not an instrument track.
+    pub fn set_hosted_instrument(
+        &mut self,
+        track_id: TrackId,
+        instrument_id: impl Into<String>,
+        file: AssetPath,
+    ) -> bool {
+        let Some(inner) = self
+            .track_mut(track_id)
+            .and_then(|track| track.kind.as_instrument_mut())
+        else {
+            return false;
+        };
+        inner.instrument_id = instrument_id.into();
+        inner.instrument_state = PluginState::empty();
+        inner.file = Some(file);
+        true
     }
 
     /// Appends an empty audio track.
@@ -367,6 +411,48 @@ impl Project {
 mod tests {
     use super::*;
     use crate::project::fixtures::{bussed_project, demo_project};
+
+    #[test]
+    fn a_hosted_instrument_keeps_the_part_and_drops_the_old_settings() {
+        let mut project = Project::new("Hosted", 48_000.0);
+        let track = project.add_instrument_track("Lead", "auris.synth.chiptune");
+        project
+            .track_mut(track)
+            .and_then(|track| track.kind.as_instrument_mut())
+            .expect("an instrument track")
+            .instrument_state
+            .params
+            .insert("pulse_width".into(), 0.25);
+
+        let file = AssetPath::external("/plugins/Surge XT.clap");
+        assert!(project.set_hosted_instrument(track, "clap:org.surge-synth-team.surge-xt", file));
+
+        let inner = project
+            .track(track)
+            .and_then(|track| track.kind.as_instrument())
+            .expect("still an instrument track");
+        assert_eq!(inner.instrument_id, "clap:org.surge-synth-team.surge-xt");
+        assert!(inner.is_hosted());
+        assert!(
+            inner.instrument_state.params.is_empty(),
+            "a setting belongs to the instrument that had it, not to the track"
+        );
+
+        // A track that is not an instrument track has no instrument to point anywhere.
+        let audio = project.add_audio_track("Sample");
+        assert!(!project.set_hosted_instrument(audio, "clap:whatever", AssetPath::external("/x")));
+    }
+
+    #[test]
+    fn a_built_in_instrument_names_no_file() {
+        let mut project = Project::new("Built in", 48_000.0);
+        let track = project.add_instrument_track("Lead", "auris.synth.chiptune");
+        let inner = project
+            .track(track)
+            .and_then(|track| track.kind.as_instrument())
+            .expect("an instrument track");
+        assert!(!inner.is_hosted(), "an id alone is enough to find it");
+    }
 
     #[test]
     fn a_duplicated_track_gets_send_ids_of_its_own() {

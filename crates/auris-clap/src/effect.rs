@@ -1,17 +1,12 @@
-//! The audio-thread half of a hosted plugin.
-
-use std::sync::Arc;
+//! A hosted plugin in a track's effect chain.
 
 use auris_core::buffer::AudioBuffer;
 use auris_core::param::{ParamDescriptor, ParamId};
 use auris_core::plugin::{Effect, Parameterized, PluginDescriptor, PrepareContext, ProcessContext};
-use clack_host::events::event_types::ParamValueEvent;
-use clack_host::prelude::*;
-use clack_host::utils::Cookie;
+use clack_host::prelude::StoppedPluginAudioProcessor;
 
+use crate::bridge::Bridge;
 use crate::host::AurisHost;
-use crate::plugin::ParamList;
-use crate::ports::PortLayout;
 
 /// A hosted CLAP plugin, as the render graph sees it.
 ///
@@ -26,107 +21,40 @@ use crate::ports::PortLayout;
 /// and its event queue has room for every parameter at once, so nothing on the block path
 /// allocates. The plugin behind it is another matter, and no host can make it behave. A CLAP
 /// plugin that allocates in `process` will glitch, and the only fix is to stop loading it.
-pub struct ClapEffect {
-    processor: PluginAudioProcessor<AurisHost>,
-    descriptor: PluginDescriptor,
-    params: Arc<ParamList>,
-    values: Vec<f32>,
-    changed: Vec<bool>,
-    outgoing: EventBuffer,
-    replies: EventBuffer,
-    input_ports: AudioPorts,
-    output_ports: AudioPorts,
-    /// A buffer per channel of every input port the plugin declared, in its order. Every port is
-    /// here, including the ones Auris has nothing to put in: the plugin indexes this array itself,
-    /// and a port it declared but did not get is a read off the end.
-    input: Vec<Vec<Vec<f32>>>,
-    /// The same for outputs.
-    output: Vec<Vec<Vec<f32>>>,
-    /// Which port the track's audio goes in and comes out of.
-    main_input: Option<usize>,
-    main_output: Option<usize>,
-    max_frames: usize,
-    latency: usize,
-    /// A counter that only ever goes up, which is what CLAP asks of `steady_time`. The project
-    /// playhead is not usable for it: a cycle sends the playhead backwards, and a plugin is
-    /// entitled to treat that as impossible.
-    steady_time: u64,
-}
+#[derive(Debug)]
+pub struct ClapEffect(Bridge);
 
 impl ClapEffect {
     /// Wraps a freshly activated audio processor. Called by
     /// [`ClapPlugin::activate`](crate::ClapPlugin::activate), which is the only place that can
     /// produce the processor in the first place.
-    pub(crate) fn new(
-        processor: StoppedPluginAudioProcessor<AurisHost>,
-        descriptor: PluginDescriptor,
-        params: Arc<ParamList>,
-        ports: PortLayout,
-        ctx: &PrepareContext,
-        latency: usize,
-    ) -> Self {
-        let frames = ctx.max_block_frames.max(1);
-        let count = params.descriptors.len();
-        let values = params.descriptors.iter().map(|p| p.default).collect();
-        let room = |port: &usize| vec![vec![0.0; frames]; *port];
-
-        Self {
-            processor: processor.into(),
-            descriptor,
-            params,
-            values,
-            changed: vec![false; count],
-            // Room for every parameter to change in the same block, which is the most that can
-            // happen: `set_param` marks, `process` sends, and a mark cannot be set twice.
-            outgoing: EventBuffer::with_capacity(count.max(1)),
-            replies: EventBuffer::with_capacity(count.max(1)),
-            input_ports: AudioPorts::with_capacity(
-                ports.input_channels().max(1),
-                ports.inputs.len().max(1),
-            ),
-            output_ports: AudioPorts::with_capacity(
-                ports.output_channels().max(1),
-                ports.outputs.len().max(1),
-            ),
-            input: ports.inputs.iter().map(room).collect(),
-            output: ports.outputs.iter().map(room).collect(),
-            main_input: ports.main_input,
-            main_output: ports.main_output,
-            max_frames: frames,
-            latency,
-            steady_time: 0,
-        }
+    pub(crate) fn new(bridge: Bridge) -> Self {
+        Self(bridge)
     }
 
     /// Gives the processor back so the plugin can be deactivated.
     pub(crate) fn into_stopped(self) -> StoppedPluginAudioProcessor<AurisHost> {
-        self.processor.into_stopped()
+        self.0.into_stopped()
     }
 }
 
 impl Parameterized for ClapEffect {
     fn parameters(&self) -> &[ParamDescriptor] {
-        &self.params.descriptors
+        self.0.parameters()
     }
 
     fn param(&self, id: ParamId) -> f32 {
-        self.values.get(id.index()).copied().unwrap_or(0.0)
+        self.0.param(id)
     }
 
     fn set_param(&mut self, id: ParamId, value: f32) {
-        let Some(descriptor) = self.params.descriptors.get(id.index()) else {
-            return;
-        };
-        self.values[id.index()] = descriptor.clamp(value);
-        // Marking rather than queueing keeps this allocation-free however often it is called:
-        // a hundred automation writes in one block still send one event.
-        self.changed[id.index()] = true;
+        self.0.set_param(id, value);
     }
 }
 
 impl Effect for ClapEffect {
     fn descriptor(&self) -> PluginDescriptor {
-        self.descriptor.clone()
+        self.0.descriptor()
     }
 
     fn prepare(&mut self, _ctx: &PrepareContext) {
@@ -137,121 +65,16 @@ impl Effect for ClapEffect {
     }
 
     fn reset(&mut self) {
-        self.processor.reset();
-        self.steady_time = 0;
-        for port in self.input.iter_mut().chain(self.output.iter_mut()) {
-            for channel in port {
-                channel.fill(0.0);
-            }
-        }
+        self.0.reset();
     }
 
     fn process(&mut self, buffer: &mut AudioBuffer, _ctx: &ProcessContext) {
-        let frames = buffer.frame_count().min(self.max_frames);
-        if frames == 0 {
-            return;
-        }
-
-        // Destructured so the audio buffers and the processor are borrowed as separate fields.
-        let Self {
-            processor,
-            params,
-            values,
-            changed,
-            outgoing,
-            replies,
-            input_ports,
-            output_ports,
-            input,
-            output,
-            main_input,
-            main_output,
-            steady_time,
-            ..
-        } = self;
-
-        outgoing.clear();
-        replies.clear();
-        for (index, dirty) in changed.iter_mut().enumerate() {
-            if !std::mem::take(dirty) {
-                continue;
-            }
-            outgoing.push(&ParamValueEvent::new(
-                0,
-                params.clap_ids[index],
-                Pckn::match_all(),
-                values[index] as f64,
-                Cookie::empty(),
-            ));
-        }
-
-        // Only the main port is filled. Every other one — a vocoder's modulator, a compressor's
-        // sidechain — is left at silence, which is the honest answer while nothing in Auris can
-        // route audio to it, and is a great deal better than not passing it at all.
-        if let Some(port) = main_input.and_then(|index| input.get_mut(index)) {
-            for (index, channel) in port.iter_mut().enumerate().take(buffer.channel_count()) {
-                channel[..frames].copy_from_slice(&buffer.channel(index)[..frames]);
-            }
-        }
-
-        let Ok(processor) = processor.ensure_processing_started() else {
-            // The plugin refused to start. Leaving the buffer untouched passes the audio through
-            // unchanged, which is the least destructive thing a broken effect can do.
-            return;
-        };
-
-        let events = InputEvents::from_buffer(outgoing);
-        let mut event_replies = OutputEvents::from_buffer(replies);
-
-        let audio_in = input_ports.with_input_buffers(input.iter_mut().map(|port| {
-            AudioPortBuffer {
-                latency: 0,
-                channels: AudioPortBufferType::f32_input_only(
-                    port.iter_mut()
-                        .map(|channel| InputChannel::variable(&mut channel[..frames])),
-                ),
-            }
-        }));
-        let mut audio_out =
-            output_ports.with_output_buffers(output.iter_mut().map(|port| AudioPortBuffer {
-                latency: 0,
-                channels: AudioPortBufferType::f32_output_only(
-                    port.iter_mut().map(|channel| &mut channel[..frames]),
-                ),
-            }));
-
-        let rendered = processor.process(
-            &audio_in,
-            &mut audio_out,
-            &events,
-            &mut event_replies,
-            Some(*steady_time),
-            None,
-        );
-        *steady_time = steady_time.wrapping_add(frames as u64);
-
-        if rendered.is_err() {
-            return;
-        }
-
-        if let Some(port) = main_output.and_then(|index| output.get(index)) {
-            for (index, channel) in port.iter().enumerate().take(buffer.channel_count()) {
-                buffer.channel_mut(index)[..frames].copy_from_slice(&channel[..frames]);
-            }
-        }
+        // No notes, and the buffer is left alone if the plugin produces nothing: an effect that
+        // cannot run should pass the audio through rather than silence the track.
+        self.0.render(buffer, &[], false);
     }
 
     fn latency_frames(&self) -> usize {
-        self.latency
-    }
-}
-
-impl std::fmt::Debug for ClapEffect {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ClapEffect")
-            .field("id", &self.descriptor.id)
-            .field("parameters", &self.params.descriptors.len())
-            .field("latency", &self.latency)
-            .finish_non_exhaustive()
+        self.0.latency()
     }
 }

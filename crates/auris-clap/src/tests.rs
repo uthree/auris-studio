@@ -3,12 +3,14 @@
 use auris_core::buffer::AudioBuffer;
 use auris_core::param::ParamId;
 use auris_core::plugin::{
-    Effect, Parameterized, PluginCategory, PluginKind, PrepareContext, ProcessContext,
+    Effect, Instrument, NoteEvent, Parameterized, PluginCategory, PluginKind, PrepareContext,
+    ProcessContext,
 };
 
 use crate::library::ClapLibrary;
+use crate::notes::NoteLanguage;
 use crate::plugin::ClapPlugin;
-use crate::testkit::{FIXTURE_ID, INPUT_PORTS, fixture_library};
+use crate::testkit::{FIXTURE_ID, INPUT_PORTS, TONE_ID, fixture_library, instrument_library};
 
 fn library() -> ClapLibrary {
     fixture_library()
@@ -170,6 +172,167 @@ fn a_parameter_is_clamped_to_the_range_the_plugin_declared() {
     );
 
     plugin.deactivate(effect);
+}
+
+/// The instrument fixture, instantiated from its own library.
+fn tone() -> ClapPlugin {
+    instrument_library()
+        .instantiate(TONE_ID)
+        .expect("the instrument fixture must instantiate")
+}
+
+/// An empty stereo block, which is what an instrument is handed.
+fn empty(frames: usize) -> AudioBuffer {
+    AudioBuffer::stereo(frames, 48_000.0)
+}
+
+#[test]
+fn a_hosted_instrument_is_recognised_as_one() {
+    let plugins = instrument_library()
+        .plugins()
+        .expect("the factory must be readable");
+    assert_eq!(plugins[0].kind, PluginKind::Instrument);
+    assert_eq!(plugins[0].name, "Test Tone");
+}
+
+#[test]
+fn a_note_reaches_a_hosted_instrument_on_the_frame_it_was_scheduled_for() {
+    let mut plugin = tone();
+    let mut instrument = plugin
+        .activate_instrument(&context())
+        .expect("must activate");
+
+    let mut buffer = empty(32);
+    instrument.process(
+        &[
+            NoteEvent::NoteOn {
+                frame: 8,
+                pitch: 60,
+                velocity: 0.5,
+            },
+            NoteEvent::NoteOff {
+                frame: 24,
+                pitch: 60,
+            },
+        ],
+        &mut buffer,
+        &playing(32),
+    );
+
+    // Silence, then the note, then silence again — with the edges on the frames asked for, not
+    // rounded to the block. A host that timestamped every event zero would fail here.
+    assert_eq!(buffer.channel(0)[7], 0.0);
+    assert_eq!(buffer.channel(0)[8], 0.5);
+    assert_eq!(buffer.channel(1)[23], 0.5);
+    assert_eq!(buffer.channel(0)[24], 0.0);
+
+    plugin.deactivate_instrument(instrument);
+}
+
+#[test]
+fn a_note_held_across_a_block_boundary_keeps_sounding() {
+    let mut plugin = tone();
+    let mut instrument = plugin
+        .activate_instrument(&context())
+        .expect("must activate");
+
+    let mut first = empty(16);
+    instrument.process(
+        &[NoteEvent::NoteOn {
+            frame: 0,
+            pitch: 64,
+            velocity: 1.0,
+        }],
+        &mut first,
+        &playing(16),
+    );
+    assert_eq!(first.channel(0)[15], 1.0);
+
+    // Nothing is sent this time. A host that reset the plugin between blocks, or that failed to
+    // let the plugin keep its own state, would give silence here.
+    let mut second = empty(16);
+    instrument.process(&[], &mut second, &playing(16));
+    assert_eq!(second.channel(0)[0], 1.0);
+    assert_eq!(second.channel(1)[15], 1.0);
+
+    // And everything stops when the whole part is released.
+    let mut third = empty(16);
+    instrument.process(
+        &[NoteEvent::AllSoundOff { frame: 0 }],
+        &mut third,
+        &playing(16),
+    );
+    assert_eq!(third.channel(0)[0], 0.0);
+
+    plugin.deactivate_instrument(instrument);
+}
+
+#[test]
+fn the_bend_and_the_wheel_both_arrive_by_their_own_route() {
+    // The two events with no single dialect between them: the bend goes as a CLAP tuning in
+    // semitones, the wheel as MIDI, and the fixture records what it was actually sent.
+    let mut plugin = tone();
+    assert_eq!(
+        plugin.note_language(),
+        Some(NoteLanguage {
+            clap_notes: true,
+            midi: true
+        })
+    );
+    let mut instrument = plugin
+        .activate_instrument(&context())
+        .expect("must activate");
+
+    instrument.process(
+        &[
+            NoteEvent::PitchBend {
+                frame: 0,
+                semitones: -3.5,
+            },
+            NoteEvent::Modulation {
+                frame: 1,
+                amount: 1.0,
+            },
+        ],
+        &mut empty(8),
+        &playing(8),
+    );
+    plugin.deactivate_instrument(instrument);
+
+    assert_eq!(
+        plugin.value(ParamId(1)),
+        Some(-3.5),
+        "semitones, not a fourteen-bit number scaled by a range nobody agreed on"
+    );
+    assert_eq!(plugin.value(ParamId(2)), Some(1.0));
+}
+
+#[test]
+fn an_instrument_that_will_not_run_leaves_silence_rather_than_what_was_there() {
+    // The trait's contract: an instrument overwrites its buffer. A hosted one that produces
+    // nothing must still clear whatever the buffer was reused from, or the previous track's
+    // audio plays out of this one.
+    let mut plugin = tone();
+    let mut instrument = plugin
+        .activate_instrument(&context())
+        .expect("must activate");
+
+    let mut buffer = block(0.75, 16);
+    instrument.process(&[], &mut buffer, &playing(16));
+    assert_eq!(buffer.channel(0)[0], 0.0);
+    assert_eq!(buffer.channel(1)[15], 0.0);
+
+    plugin.deactivate_instrument(instrument);
+}
+
+#[test]
+fn an_instrument_with_no_audio_input_is_still_given_the_ports_it_has() {
+    let mut plugin = tone();
+    let ports = plugin.ports(2);
+    assert_eq!(ports.inputs, Vec::<usize>::new(), "a synth takes no audio");
+    assert_eq!(ports.main_input, None);
+    assert_eq!(ports.outputs, vec![2]);
+    assert_eq!(ports.main_output, Some(0));
 }
 
 #[test]

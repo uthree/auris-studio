@@ -137,10 +137,6 @@ strings! {
         en: "could not be read",
         ja: "読み込めませんでした"
     }
-    BrowserPluginNotYetHosted {
-        en: "instrument — not supported yet",
-        ja: "音源 — まだ対応していません"
-    }
     BrowserFontFileMissing {
         en: "file not found",
         ja: "ファイルが見つかりません"

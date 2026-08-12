@@ -41,7 +41,15 @@ impl AurisApp {
     /// showed until this existed. The plugin's own name is not translated: nobody here wrote it,
     /// and a translation table cannot know what is in a file that was installed yesterday.
     pub(crate) fn effect_label(&self, slot: EffectSlotId, effect_id: &str) -> String {
-        effect_label(self.session.hosted_name(slot), self.plugin_label(effect_id))
+        hosted_label(self.session.hosted_name(slot), self.plugin_label(effect_id))
+    }
+
+    /// The name to draw for whatever plays a track, for the same reasons.
+    pub(crate) fn instrument_label(&self, track: TrackId, instrument_id: &str) -> String {
+        hosted_label(
+            self.session.hosted_instrument_name(track),
+            self.plugin_label(instrument_id),
+        )
     }
 
     /// A plugin's one-line description for the browser.
@@ -226,11 +234,11 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
     }
 }
 
-/// Which of the two names an effect slot gets.
+/// Which of the two names a plugin gets — an insert's or a track's, the rule is the same.
 ///
 /// The hosted one wins whenever there is one. A free function because the alternative is a rule
 /// that only exists inside a `Render` implementation, which is the one place it cannot be checked.
-pub(crate) fn effect_label(hosted: Option<&str>, from_registry: String) -> String {
+pub(crate) fn hosted_label(hosted: Option<&str>, from_registry: String) -> String {
     match hosted {
         // A plugin that gives no name at all is not improved by an empty label.
         Some(name) if !name.trim().is_empty() => name.to_string(),
@@ -245,19 +253,19 @@ mod tests {
     use auris_session::plugin_catalogue;
 
     #[test]
-    fn a_hosted_slot_is_named_by_its_plugin_and_not_by_its_id() {
+    fn a_hosted_plugin_is_named_by_itself_and_not_by_its_id() {
         assert_eq!(
-            effect_label(
+            hosted_label(
                 Some("Surge XT Effects"),
                 "clap:org.surge-synth-team.surge-xt-fx".into()
             ),
             "Surge XT Effects"
         );
         // A built-in has no hosted name and keeps the translated one.
-        assert_eq!(effect_label(None, "Reverb".into()), "Reverb");
+        assert_eq!(hosted_label(None, "Reverb".into()), "Reverb");
         // And a plugin that answers with nothing does not get a blank row.
         assert_eq!(
-            effect_label(Some("   "), "auris.dsp.gain".into()),
+            hosted_label(Some("   "), "auris.dsp.gain".into()),
             "auris.dsp.gain"
         );
     }

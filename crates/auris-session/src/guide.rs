@@ -537,18 +537,21 @@ pub mod plugins {
     //!
     //! **A hosted plugin is two objects, because CLAP splits the same two threads Auris does.**
     //! `ClapPlugin` is not [`Send`] and stays on the session's thread, where it answers what the
-    //! parameters are and what the state is. `ClapEffect` is [`Send`], implements
-    //! [`Effect`](auris_core::plugin::Effect), and is the only half a graph ever holds — so
-    //! [`auris_engine`] needs no CLAP dependency and has none. The two reference-count one
+    //! parameters are and what the state is. `ClapEffect` and `ClapInstrument` are [`Send`],
+    //! implement [`Effect`](auris_core::plugin::Effect) and
+    //! [`Instrument`](auris_core::plugin::Instrument), and are the only halves a graph ever holds
+    //! — so [`auris_engine`] needs no CLAP dependency and has none. The two reference-count one
     //! instance, so either may be dropped first, on any thread, which is exactly what the
-    //! engine's return channel does to a retired graph.
+    //! engine's return channel does to a retired graph. CLAP itself has only one kind of plugin;
+    //! which half it hands out is the session's choice, made from the plugin's declared features.
     //!
     //! **It cannot go through the registry.** [`PluginRegistry`](auris_core::registry::PluginRegistry)'s
     //! factory is `Fn() -> Box<dyn Effect>`, which cannot produce the main-thread half as well.
-    //! So the session builds hosted effects itself and hands them to
-    //! [`RenderGraph::build_with`](auris_engine::RenderGraph::build_with) through a
-    //! [`PlacedEffects`](auris_engine::PlacedEffects) map. Every other effect takes the path it
-    //! always did.
+    //! So the session builds hosted plugins itself and hands them to
+    //! [`RenderGraph::build_with`](auris_engine::RenderGraph::build_with) through the
+    //! [`PlacedEffects`](auris_engine::PlacedEffects) and
+    //! [`PlacedInstruments`](auris_engine::PlacedInstruments) maps. Every other plugin takes the
+    //! path it always did.
     //!
     //! **A slot owns up to two instances, and that is not an optimisation.** A graph is rebuilt on
     //! every structural edit, and the graph being replaced does not come back until the audio
@@ -557,6 +560,13 @@ pub mod plugins {
     //! The session keeps the outgoing instance, hands its state to the incoming one, and reuses it
     //! next time round. A quiet session settles back to one instance; what is never paid twice is
     //! reading the plugin off disk. It is all in `auris_session::session::hosted`.
+    //!
+    //! **Notes are translated, and the translation is lossy in one direction only.** A note port
+    //! declares which dialects it speaks. CLAP's own carries the key as a field and a bend as a
+    //! tuning in *semitones*, so nothing has to be scaled by a pitch-bend range the host was never
+    //! told; MIDI is the only one of the two with a modulation wheel. A plugin speaking both gets
+    //! the better half of each, and one speaking neither gets no notes rather than events into a
+    //! void. `auris_clap::notes` is the rule, with the whole of it under test.
 }
 
 pub mod composition {

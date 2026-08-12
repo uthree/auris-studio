@@ -178,7 +178,7 @@ impl AurisApp {
         );
 
         if let Some(instrument_id) = instrument_id {
-            let name = self.plugin_label(&instrument_id);
+            let name = self.instrument_label(track_id, &instrument_id);
             sections.push(
                 div()
                     .flex()
@@ -517,6 +517,23 @@ impl AurisApp {
         let track = self.selected_track;
         if let Err(error) = self.session.add_hosted_effect(track, file, clap_id) {
             self.set_failed_status(self.failure(Key::MenuAddEffect, &error));
+        }
+    }
+
+    /// Points the selected track's instrument at a plugin hosted from a file.
+    ///
+    /// Nothing happens with no track selected, exactly as choosing a built-in instrument does
+    /// nothing: an instrument belongs to a track, and there is no sensible track to guess at.
+    pub(crate) fn set_hosted_instrument_on_selection(
+        &mut self,
+        file: &std::path::Path,
+        clap_id: &str,
+    ) {
+        let Some(track) = self.selected_track else {
+            return;
+        };
+        if let Err(error) = self.session.set_hosted_instrument(track, file, clap_id) {
+            self.set_failed_status(self.failure(Key::EditChangeInstrument, &error));
         }
     }
 

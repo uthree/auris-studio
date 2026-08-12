@@ -572,6 +572,7 @@ mod tests {
             &AudioSourceBank::new(),
             &testkit::registry(),
             &mut placed,
+            &mut crate::graph::PlacedInstruments::new(),
             512,
             48_000.0,
         );
@@ -599,6 +600,7 @@ mod tests {
             &AudioSourceBank::new(),
             &testkit::registry(),
             &mut placed,
+            &mut crate::graph::PlacedInstruments::new(),
             512,
             48_000.0,
         );

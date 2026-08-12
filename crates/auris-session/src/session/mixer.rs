@@ -159,6 +159,12 @@ impl Session {
                 return hosted.get(param.index()).cloned();
             }
         }
+        if let ParamTarget::Instrument { track, param } = target {
+            let hosted = self.hosted_instrument_parameters(track);
+            if !hosted.is_empty() {
+                return hosted.get(param.index()).cloned();
+            }
+        }
         let plugin_id = self.plugin_id_for(target)?;
         let index = match target {
             ParamTarget::Instrument { param, .. } | ParamTarget::Effect { param, .. } => {

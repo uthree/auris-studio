@@ -243,9 +243,9 @@ impl AurisApp {
                 self.effect_label(slot, &plugin_id),
                 self.session.effect_descriptors(slot),
             ),
-            PluginSubject::Instrument(_) => (
-                self.plugin_label(&plugin_id),
-                self.session.param_descriptors(&plugin_id),
+            PluginSubject::Instrument(track) => (
+                self.instrument_label(track, &plugin_id),
+                self.session.instrument_descriptors(track),
             ),
         };
         let has_curve = analyser.is_some();

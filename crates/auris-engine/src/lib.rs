@@ -98,8 +98,8 @@ pub use device::{
 };
 pub use error::EngineError;
 pub use graph::{
-    PlacedEffects, RENDER_CHANNELS, RenderAudioClip, RenderGraph, RenderSource, RenderStrip,
-    RenderTrack, ScheduledEvent, SmoothedGain,
+    PlacedEffects, PlacedInstruments, RENDER_CHANNELS, RenderAudioClip, RenderGraph, RenderSource,
+    RenderStrip, RenderTrack, ScheduledEvent, SmoothedGain,
 };
 pub use handle::EngineHandle;
 pub use meter::MeterBank;

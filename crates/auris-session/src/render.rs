@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use auris_core::param::gain_to_db;
 use auris_core::{AudioBuffer, AudioSourceBank, PluginRegistry, Project, SourceId};
-use auris_engine::{OfflineOptions, PlacedEffects, render_project_using};
+use auris_engine::{OfflineOptions, PlacedEffects, PlacedInstruments, render_project_using};
 use auris_io::{WavExportSettings, resample_buffer, write_wav};
 
 use crate::error::SessionError;
@@ -80,6 +80,8 @@ pub struct RenderJob {
     registry: Arc<PluginRegistry>,
     /// Effects the session built because the registry could not. Taken by the render.
     placed: PlacedEffects,
+    /// Instruments the session built, for the same reason.
+    instruments: PlacedInstruments,
 }
 
 impl RenderJob {
@@ -88,12 +90,14 @@ impl RenderJob {
         bank: AudioSourceBank,
         registry: Arc<PluginRegistry>,
         placed: PlacedEffects,
+        instruments: PlacedInstruments,
     ) -> Self {
         Self {
             project,
             bank,
             registry,
             placed,
+            instruments,
         }
     }
 
@@ -137,6 +141,7 @@ impl RenderJob {
             &bank,
             &self.registry,
             &mut self.placed,
+            &mut self.instruments,
             options,
             progress,
         )?)
@@ -208,6 +213,7 @@ mod tests {
             AudioSourceBank::new(),
             plugin_catalogue(),
             PlacedEffects::new(),
+            PlacedInstruments::new(),
         );
 
         let options = job
@@ -234,6 +240,7 @@ mod tests {
             AudioSourceBank::new(),
             plugin_catalogue(),
             PlacedEffects::new(),
+            PlacedInstruments::new(),
         );
         assert!(job.loop_options(OfflineOptions::whole_project()).is_none());
 
@@ -244,6 +251,7 @@ mod tests {
             AudioSourceBank::new(),
             plugin_catalogue(),
             PlacedEffects::new(),
+            PlacedInstruments::new(),
         );
         assert!(job.loop_options(OfflineOptions::whole_project()).is_none());
     }
@@ -293,6 +301,7 @@ mod tests {
             bank_at(source, 48_000.0),
             plugin_catalogue(),
             PlacedEffects::new(),
+            PlacedInstruments::new(),
         );
         let rendered = job
             .render(

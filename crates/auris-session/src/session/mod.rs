@@ -628,11 +628,13 @@ impl Session {
             auris_engine::RENDER_CHANNELS,
         );
         let placed = self.hosted.place(&self.project, &prepare);
+        let instruments = self.hosted.place_instruments(&self.project, &prepare);
         RenderJob::new(
             self.project.clone(),
             self.bank.clone(),
             Arc::clone(&self.registry),
             placed,
+            instruments,
         )
     }
 
@@ -817,12 +819,14 @@ impl Session {
             auris_engine::RENDER_CHANNELS,
         );
         let mut placed = self.hosted.place(&self.project, &prepare);
+        let mut instruments = self.hosted.place_instruments(&self.project, &prepare);
 
         let mut graph = RenderGraph::build_with(
             &self.project,
             &self.render_bank,
             &self.registry,
             &mut placed,
+            &mut instruments,
             self.engine.max_block(),
             rate,
         );

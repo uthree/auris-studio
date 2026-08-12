@@ -14,8 +14,13 @@
 //!
 //! * [`ClapPlugin`] — the main-thread half. The session owns it, asks it for parameters and
 //!   state, and it is the only thing that may talk to the plugin about anything but audio.
-//! * [`ClapEffect`] — the audio-thread half. It implements [`Effect`](auris_core::plugin::Effect)
-//!   and goes into the graph like any built-in effect.
+//! * [`ClapEffect`] or [`ClapInstrument`] — the audio-thread half. It implements
+//!   [`Effect`](auris_core::plugin::Effect) or [`Instrument`](auris_core::plugin::Instrument) and
+//!   goes into the graph like any built-in one.
+//!
+//! CLAP itself has only one kind of plugin; effect and instrument are habits, not types. Which
+//! half [`ClapPlugin`] hands out is therefore the caller's choice, and the plugin's declared
+//! features — read into [`ClapPluginInfo::kind`] — are what the caller should choose by.
 //!
 //! Neither `auris-core` nor `auris-engine` knows this crate exists. The engine drives a hosted
 //! plugin through exactly the same trait it drives a biquad through.
@@ -25,9 +30,8 @@
 //! * **No `PluginRegistry` entry.** A registry factory is `Fn() -> Box<dyn Effect>`, which cannot
 //!   produce the main-thread half a CLAP plugin also needs. A hosted plugin is placed by the
 //!   session, not built by the registry.
-//! * **No instrument.** [`ClapPlugin::activate`] produces an effect. Note input needs the note
-//!   ports extension and a translation from [`NoteEvent`](auris_core::plugin::NoteEvent), which
-//!   is a separate piece of work.
+//! * **No sidechain.** Every audio port a plugin declares is handed to it, but only the main one
+//!   carries anything; nothing in Auris can route a second track into a plugin yet.
 //! * **No GUI.** A hosted plugin is edited through the generic parameter panel.
 //!
 //! # Safety
@@ -40,10 +44,13 @@
 
 #![warn(missing_docs)]
 
+mod bridge;
 mod effect;
 mod error;
 mod host;
+mod instrument;
 mod library;
+pub mod notes;
 mod plugin;
 mod ports;
 
@@ -55,6 +62,8 @@ mod tests;
 
 pub use effect::ClapEffect;
 pub use error::ClapError;
+pub use instrument::ClapInstrument;
 pub use library::{ClapLibrary, ClapPluginInfo, classify};
+pub use notes::{NoteLanguage, language_for};
 pub use plugin::{ClapPlugin, PendingRequests};
 pub use ports::{PortLayout, main_port};

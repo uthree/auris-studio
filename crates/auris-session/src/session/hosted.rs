@@ -30,12 +30,12 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use auris_clap::{ClapEffect, ClapError, ClapLibrary, ClapPlugin, ClapPluginInfo};
+use auris_clap::{ClapEffect, ClapError, ClapInstrument, ClapLibrary, ClapPlugin, ClapPluginInfo};
 use auris_core::asset::AssetPath;
 use auris_core::param::ParamDescriptor;
 use auris_core::plugin::{Parameterized, PluginState, PrepareContext};
 use auris_core::project::{EffectSlotId, Project, TrackId};
-use auris_engine::PlacedEffects;
+use auris_engine::{PlacedEffects, PlacedInstruments};
 
 use crate::error::SessionError;
 use crate::history::Edit;
@@ -49,15 +49,18 @@ pub(super) struct HostedPlugins {
     /// be two copies of the plugin's code in the process.
     libraries: BTreeMap<PathBuf, ClapLibrary>,
     slots: BTreeMap<EffectSlotId, HostedSlot>,
+    /// A track holds at most one instrument, so these are keyed by the track rather than by a
+    /// slot of their own. Everything else about them is the same problem with the same answer.
+    instruments: BTreeMap<TrackId, HostedSlot>,
 }
 
-/// One project slot filled by a hosted plugin.
+/// One place in the project filled by a hosted plugin.
 struct HostedSlot {
     file: PathBuf,
     clap_id: String,
-    /// The instance whose effect is in the graph the engine holds.
+    /// The instance whose rendering half is in the graph the engine holds.
     live: Option<ClapPlugin>,
-    /// An instance with no effect out, ready to be activated for the next graph.
+    /// An instance with nothing out, ready to be activated for the next graph.
     spare: Option<ClapPlugin>,
 }
 
@@ -83,20 +86,25 @@ impl HostedPlugins {
     /// The parameters a hosted slot's plugin declares, or `None` when the slot has no live
     /// instance to ask.
     pub(super) fn parameters(&self, slot: EffectSlotId) -> Option<&[ParamDescriptor]> {
-        let slot = self.slots.get(&slot)?;
-        slot.live
-            .as_ref()
-            .or(slot.spare.as_ref())
-            .map(|plugin| plugin.parameters())
+        self.slots.get(&slot)?.plugin().map(ClapPlugin::parameters)
+    }
+
+    /// The same, for a track's hosted instrument.
+    pub(super) fn instrument_parameters(&self, track: TrackId) -> Option<&[ParamDescriptor]> {
+        self.instruments
+            .get(&track)?
+            .plugin()
+            .map(ClapPlugin::parameters)
     }
 
     /// What a hosted slot's plugin calls itself.
     pub(super) fn name(&self, slot: EffectSlotId) -> Option<&str> {
-        let slot = self.slots.get(&slot)?;
-        slot.live
-            .as_ref()
-            .or(slot.spare.as_ref())
-            .map(|plugin| plugin.info().name.as_str())
+        self.slots.get(&slot)?.plugin().map(name_of)
+    }
+
+    /// The same, for a track's hosted instrument.
+    pub(super) fn instrument_name(&self, track: TrackId) -> Option<&str> {
+        self.instruments.get(&track)?.plugin().map(name_of)
     }
 
     /// The state a hosted slot's plugin is carrying, for the document to save.
@@ -104,14 +112,22 @@ impl HostedPlugins {
     /// Asks the instance that is rendering, because it is the one a preset or an on-screen knob
     /// would have changed.
     pub(super) fn save_state(&mut self, slot: EffectSlotId) -> Option<Vec<u8>> {
-        let slot = self.slots.get_mut(&slot)?;
-        let plugin = slot.live.as_mut().or(slot.spare.as_mut())?;
-        plugin.save_state().ok()
+        self.slots.get_mut(&slot)?.plugin_mut()?.save_state().ok()
+    }
+
+    /// The same, for a track's hosted instrument.
+    pub(super) fn save_instrument_state(&mut self, track: TrackId) -> Option<Vec<u8>> {
+        self.instruments
+            .get_mut(&track)?
+            .plugin_mut()?
+            .save_state()
+            .ok()
     }
 
     /// Forgets everything. Called when the document is replaced.
     pub(super) fn clear(&mut self) {
         self.slots.clear();
+        self.instruments.clear();
         // The libraries stay: the same file is the same code whichever project is open, and
         // reading Surge XT's data folder again on every **File → New** would be felt.
     }
@@ -131,24 +147,7 @@ impl HostedPlugins {
             let Some(file) = self.library_path(&request.file) else {
                 continue;
             };
-
-            let slot = self.slots.entry(*id).or_insert_with(|| HostedSlot {
-                file: file.clone(),
-                clap_id: request.clap_id.clone(),
-                live: None,
-                spare: None,
-            });
-
-            // A slot whose plugin was swapped for another is a different slot in all but id.
-            if slot.clap_id != request.clap_id || slot.file != file {
-                *slot = HostedSlot {
-                    file: file.clone(),
-                    clap_id: request.clap_id.clone(),
-                    live: None,
-                    spare: None,
-                };
-            }
-
+            let slot = fit(&mut self.slots, *id, &file, &request.clap_id);
             let Some(library) = self.libraries.get(&file) else {
                 continue;
             };
@@ -159,6 +158,46 @@ impl HostedPlugins {
                 Err(error) => {
                     log::warn!(
                         "`{}` keeps its slot but stays silent: {error}",
+                        request.clap_id
+                    );
+                }
+            }
+        }
+        placed
+    }
+
+    /// Builds the instrument for every track in `project` whose sound is a hosted plugin.
+    ///
+    /// The same contract as [`place`](Self::place): tracks that no longer name a plugin are
+    /// dropped, and a plugin that cannot be built leaves the track to the graph's silent
+    /// stand-in rather than failing the rebuild.
+    pub(super) fn place_instruments(
+        &mut self,
+        project: &Project,
+        prepare: &PrepareContext,
+    ) -> PlacedInstruments {
+        let wanted = hosted_instruments(project);
+        self.instruments.retain(|id, _| wanted.contains_key(id));
+
+        let mut placed = PlacedInstruments::new();
+        for (track, request) in &wanted {
+            let Some(file) = self.library_path(&request.file) else {
+                continue;
+            };
+            let slot = fit(&mut self.instruments, *track, &file, &request.clap_id);
+            let Some(library) = self.libraries.get(&file) else {
+                continue;
+            };
+            match slot.take_instrument(library, request.state, prepare) {
+                Ok(instrument) => {
+                    placed.insert(
+                        *track,
+                        Box::new(instrument) as Box<dyn auris_core::plugin::Instrument>,
+                    );
+                }
+                Err(error) => {
+                    log::warn!(
+                        "`{}` keeps its track but stays silent: {error}",
                         request.clap_id
                     );
                 }
@@ -188,6 +227,16 @@ impl HostedPlugins {
 }
 
 impl HostedSlot {
+    /// Whichever instance can answer a question about the plugin.
+    fn plugin(&self) -> Option<&ClapPlugin> {
+        self.live.as_ref().or(self.spare.as_ref())
+    }
+
+    /// The same, to be asked something that changes it.
+    fn plugin_mut(&mut self) -> Option<&mut ClapPlugin> {
+        self.live.as_mut().or(self.spare.as_mut())
+    }
+
     /// Produces the effect for the next graph, reusing an instance when one is free.
     fn take_effect(
         &mut self,
@@ -195,6 +244,35 @@ impl HostedSlot {
         state: &PluginState,
         prepare: &PrepareContext,
     ) -> Result<ClapEffect, ClapError> {
+        let mut plugin = self.incoming(library, state)?;
+        let mut effect = plugin.activate(prepare)?;
+        // The document's parameter map last, so a value the user automated wins over the one
+        // baked into the patch.
+        effect.load_state(state);
+        self.settle(plugin);
+        Ok(effect)
+    }
+
+    /// The same, for a track's instrument.
+    fn take_instrument(
+        &mut self,
+        library: &ClapLibrary,
+        state: &PluginState,
+        prepare: &PrepareContext,
+    ) -> Result<ClapInstrument, ClapError> {
+        let mut plugin = self.incoming(library, state)?;
+        let mut instrument = plugin.activate_instrument(prepare)?;
+        instrument.load_state(state);
+        self.settle(plugin);
+        Ok(instrument)
+    }
+
+    /// The instance to activate next, carrying whatever state it should already have.
+    fn incoming(
+        &mut self,
+        library: &ClapLibrary,
+        state: &PluginState,
+    ) -> Result<ClapPlugin, ClapError> {
         self.reclaim();
 
         let mut plugin = match self.spare.take() {
@@ -214,18 +292,17 @@ impl HostedSlot {
         {
             log::warn!("`{}` could not take its state back: {error}", self.clap_id);
         }
+        Ok(plugin)
+    }
 
-        let mut effect = plugin.activate(prepare)?;
-        // The document's parameter map last, so a value the user automated wins over the one
-        // baked into the patch.
-        effect.load_state(state);
-
-        // The outgoing instance is not dropped: its effect is still rendering in the graph the
-        // engine has not let go of, and it is the one `reclaim` will pick up next time.
+    /// Files the newly activated instance as the live one.
+    ///
+    /// The outgoing instance is not dropped: its rendering half is still in the graph the engine
+    /// has not let go of, and it is the one `reclaim` will pick up next time.
+    fn settle(&mut self, plugin: ClapPlugin) {
         if let Some(outgoing) = self.live.replace(plugin) {
             self.spare = Some(outgoing);
         }
-        Ok(effect)
     }
 
     /// Takes back whichever instances have had their effects dropped.
@@ -256,6 +333,35 @@ struct HostedRequest<'a> {
     state: &'a PluginState,
 }
 
+/// What a plugin calls itself.
+fn name_of(plugin: &ClapPlugin) -> &str {
+    plugin.info().name.as_str()
+}
+
+/// The slot filed under `key`, made to match what the document now asks for.
+///
+/// A slot whose plugin was swapped for another is a different slot in all but its key, and starts
+/// again with no instances: keeping them would hand the next graph a Surge XT where the document
+/// says Vital.
+fn fit<'a, K: Ord + Copy>(
+    slots: &'a mut BTreeMap<K, HostedSlot>,
+    key: K,
+    file: &Path,
+    clap_id: &str,
+) -> &'a mut HostedSlot {
+    let fresh = || HostedSlot {
+        file: file.to_path_buf(),
+        clap_id: clap_id.to_string(),
+        live: None,
+        spare: None,
+    };
+    let slot = slots.entry(key).or_insert_with(fresh);
+    if slot.clap_id != clap_id || slot.file != file {
+        *slot = fresh();
+    }
+    slot
+}
+
 /// Reads the hosted slots out of a project.
 ///
 /// A slot is hosted when it names a file. Its `effect_id` carries the `clap:` prefix that keeps
@@ -277,6 +383,28 @@ fn hosted_slots(project: &Project) -> BTreeMap<EffectSlotId, HostedRequest<'_>> 
                     file,
                     clap_id: clap_id_of(&slot.effect_id).to_string(),
                     state: &slot.state,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// Reads the tracks whose instrument is a hosted plugin.
+///
+/// The same rule as [`hosted_slots`]: naming a file is what makes it hosted.
+fn hosted_instruments(project: &Project) -> BTreeMap<TrackId, HostedRequest<'_>> {
+    project
+        .tracks
+        .iter()
+        .filter_map(|track| {
+            let inner = track.kind.as_instrument()?;
+            let file = inner.file.as_ref()?.resolve(None)?;
+            Some((
+                track.id,
+                HostedRequest {
+                    file,
+                    clap_id: clap_id_of(&inner.instrument_id).to_string(),
+                    state: &inner.instrument_state,
                 },
             ))
         })
@@ -392,12 +520,73 @@ impl Session {
         Ok(slot)
     }
 
+    /// Points a track's instrument at a plugin hosted from a file.
+    ///
+    /// The clips stay where they are — this changes what plays the part, not the part. The plugin
+    /// itself is instantiated on the next graph build, not here.
+    pub fn set_hosted_instrument(
+        &mut self,
+        track: TrackId,
+        file: &Path,
+        clap_id: &str,
+    ) -> Result<(), SessionError> {
+        self.require_track(track)?;
+        // Checked before anything is recorded, so a plugin that is not in the file costs neither
+        // an undo step nor a track that can no longer be heard.
+        let known = self
+            .hosted_plugins_in(file)?
+            .into_iter()
+            .find(|info| info.clap_id == clap_id)
+            .ok_or_else(|| SessionError::UnknownPlugin(clap_id.to_string()))?;
+
+        self.record(Edit::ChangeInstrument);
+        if !self
+            .project
+            .set_hosted_instrument(track, known.auris_id(), AssetPath::external(file))
+        {
+            return Err(SessionError::UnknownTrack(track.0));
+        }
+        self.invalidate_graph();
+        Ok(())
+    }
+
     /// The parameters a hosted slot's plugin declares.
     ///
     /// Empty until the plugin has been built, which is the first graph rebuild after it was
     /// added — and empty for good if it could not be loaded.
     pub fn hosted_parameters(&self, slot: EffectSlotId) -> &[ParamDescriptor] {
         self.hosted.parameters(slot).unwrap_or(&[])
+    }
+
+    /// The parameters a track's hosted instrument declares.
+    pub fn hosted_instrument_parameters(&self, track: TrackId) -> &[ParamDescriptor] {
+        self.hosted.instrument_parameters(track).unwrap_or(&[])
+    }
+
+    /// What a track's hosted instrument calls itself, or `None` when it is a built-in.
+    pub fn hosted_instrument_name(&self, track: TrackId) -> Option<&str> {
+        self.hosted.instrument_name(track)
+    }
+
+    /// The parameters of whatever plays a track, hosted or built in.
+    ///
+    /// The instrument counterpart of [`Self::effect_descriptors`], and the same reasoning: the
+    /// registry cannot answer for a plugin it did not build, so the track is the thing to ask
+    /// about.
+    pub fn instrument_descriptors(&mut self, track: TrackId) -> Arc<Vec<ParamDescriptor>> {
+        let hosted = self.hosted_instrument_parameters(track);
+        if !hosted.is_empty() {
+            return Arc::new(hosted.to_vec());
+        }
+        let Some(id) = self
+            .project
+            .track(track)
+            .and_then(|track| track.kind.as_instrument())
+            .map(|inner| inner.instrument_id.clone())
+        else {
+            return Arc::new(Vec::new());
+        };
+        self.param_descriptors(&id)
     }
 
     /// What a hosted slot's plugin calls itself, or `None` for a slot that is not hosted.
@@ -449,15 +638,30 @@ impl Session {
                 }
             }
         }
+
+        let tracks: Vec<TrackId> = hosted_instruments(&self.project).into_keys().collect();
+        for id in tracks {
+            let Some(bytes) = self.hosted.save_instrument_state(id) else {
+                continue;
+            };
+            if let Some(inner) = self
+                .project
+                .track_mut(id)
+                .and_then(|track| track.kind.as_instrument_mut())
+            {
+                inner.instrument_state.set_hosted_bytes(&bytes);
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use auris_clap::testkit::{FIXTURE_ID, fixture_library};
+    use auris_clap::testkit::{FIXTURE_ID, TONE_ID, fixture_library, instrument_library};
     use auris_core::param::ParamId;
     use auris_core::plugin::{Effect, ProcessContext};
+    use auris_core::time::Ticks;
     use auris_core::{AssetPath, AudioBuffer};
 
     fn prepare() -> PrepareContext {
@@ -642,6 +846,141 @@ mod tests {
             .libraries
             .insert(file.clone(), fixture_library());
         (session, file)
+    }
+
+    /// The same, with the instrument fixture open as a second file.
+    fn session_with_instrument() -> (super::Session, PathBuf) {
+        let mut session = super::super::fixtures::session();
+        let file = PathBuf::from("/auris/testkit/test-tone.clap");
+        session
+            .hosted
+            .libraries
+            .insert(file.clone(), instrument_library());
+        (session, file)
+    }
+
+    #[test]
+    fn a_hosted_instrument_replaces_what_plays_a_track_and_not_the_part() {
+        let (mut session, file) = session_with_instrument();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::from_beats(4.0))
+            .unwrap();
+        session
+            .add_note(
+                clip,
+                auris_core::project::Note::new(60, Ticks::ZERO, Ticks::QUARTER),
+            )
+            .unwrap();
+
+        session
+            .set_hosted_instrument(track, &file, TONE_ID)
+            .expect("the fixture is in the library");
+
+        let inner = session
+            .project
+            .track(track)
+            .and_then(|track| track.kind.as_instrument())
+            .expect("still an instrument track");
+        assert_eq!(inner.instrument_id, "clap:studio.auris.test.tone");
+        assert!(inner.is_hosted());
+        assert_eq!(inner.clips.len(), 1, "the part is not the instrument");
+
+        // Non-empty is proof the plugin was really built and placed.
+        assert_eq!(session.hosted_instrument_parameters(track).len(), 3);
+        assert_eq!(session.hosted_instrument_name(track), Some("Test Tone"));
+        assert_eq!(
+            session.instrument_descriptors(track).len(),
+            3,
+            "and the plugin editor finds them by asking about the track"
+        );
+
+        // And a parameter of it can be described, which is what makes its sliders draggable
+        // rather than merely visible.
+        let target = crate::param::ParamTarget::Instrument {
+            track,
+            param: ParamId(0),
+        };
+        let descriptor = session
+            .descriptor_for(target)
+            .expect("a hosted instrument parameter must be describable");
+        assert_eq!(descriptor.name, "Level");
+        session.set_param(target, 0.25);
+        assert_eq!(session.param_value(target, &descriptor), 0.25);
+    }
+
+    #[test]
+    fn a_hosted_instrument_actually_plays_the_notes() {
+        // The whole point, end to end: a note in the document, through the session's own graph
+        // build, into a third-party plugin, and back out as samples.
+        let (mut session, file) = session_with_instrument();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::from_beats(4.0))
+            .unwrap();
+        session
+            .add_note(
+                clip,
+                auris_core::project::Note::new(60, Ticks::ZERO, Ticks::from_beats(2.0)),
+            )
+            .unwrap();
+        session
+            .set_hosted_instrument(track, &file, TONE_ID)
+            .unwrap();
+
+        let rendered = session
+            .render_job()
+            .render(&auris_engine::OfflineOptions::whole_project(), &mut |_| {})
+            .expect("render");
+        assert!(
+            rendered.peak() > 0.5,
+            "the fixture holds the note's velocity while it sounds, so silence means the notes \
+             never arrived"
+        );
+    }
+
+    #[test]
+    fn a_track_that_goes_back_to_a_built_in_lets_its_plugin_go() {
+        let (mut session, file) = session_with_instrument();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        session
+            .set_hosted_instrument(track, &file, TONE_ID)
+            .unwrap();
+        assert!(session.hosted.instruments.contains_key(&track));
+
+        session
+            .set_track_instrument(track, "auris.synth.chiptune")
+            .unwrap();
+        session.rebuild_graph();
+        assert!(
+            !session.hosted.instruments.contains_key(&track),
+            "an instance nobody can reach is an instance nobody can free"
+        );
+        assert_eq!(session.hosted_instrument_name(track), None);
+    }
+
+    #[test]
+    fn saving_captures_what_a_hosted_instrument_did_to_itself() {
+        let (mut session, file) = session_with_instrument();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        session
+            .set_hosted_instrument(track, &file, TONE_ID)
+            .unwrap();
+
+        session.collect_hosted_state();
+        let stored = session
+            .project
+            .track(track)
+            .and_then(|track| track.kind.as_instrument())
+            .expect("an instrument track")
+            .instrument_state
+            .hosted_bytes()
+            .expect("a hosted track must carry its plugin's state after a save");
+        assert_eq!(
+            stored,
+            1.0f32.to_le_bytes(),
+            "the fixture's state is its level, which starts at unity"
+        );
     }
 
     #[test]

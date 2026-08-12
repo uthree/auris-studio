@@ -16,7 +16,9 @@ use std::path::{Path, PathBuf};
 use auris_clap::{ClapLibrary, ClapPlugin};
 use auris_core::buffer::AudioBuffer;
 use auris_core::param::ParamId;
-use auris_core::plugin::{Effect, Parameterized, PluginKind, PrepareContext, ProcessContext};
+use auris_core::plugin::{
+    Effect, Instrument, Parameterized, PluginKind, PrepareContext, ProcessContext,
+};
 
 const SAMPLE_RATE: f64 = 48_000.0;
 const BLOCK: usize = 512;
@@ -136,7 +138,51 @@ fn report_state(plugin: &mut ClapPlugin) {
     }
 }
 
+/// Plays one note through a hosted instrument and reports whether anything came out.
+///
+/// The only check that exercises the whole note path against a plugin somebody else wrote: the
+/// note port's dialect, the translation, and the frame the event is stamped with.
+fn play(plugin: &mut ClapPlugin) {
+    println!("    notes: {:?}", plugin.note_language());
+    let ctx = PrepareContext::new(SAMPLE_RATE, BLOCK, 2);
+    let mut instrument = match plugin.activate_instrument(&ctx) {
+        Ok(instrument) => instrument,
+        Err(error) => {
+            println!("    cannot activate: {error}");
+            return;
+        }
+    };
+
+    let ctx = ProcessContext::realtime(SAMPLE_RATE, BLOCK, 0, 120.0, true);
+    let mut loudest = 0.0f32;
+    // Several blocks, because a synth with an attack produces nothing at all in the first one.
+    for block in 0..40 {
+        let mut buffer = AudioBuffer::stereo(BLOCK, SAMPLE_RATE);
+        let events: &[auris_core::plugin::NoteEvent] = match block {
+            0 => &[auris_core::plugin::NoteEvent::NoteOn {
+                frame: 0,
+                pitch: 60,
+                velocity: 0.8,
+            }],
+            _ => &[],
+        };
+        instrument.process(events, &mut buffer, &ctx);
+        loudest = loudest.max(peak(&buffer));
+    }
+    println!("    played middle C for {BLOCK} × 40 frames: peak {loudest:.4}");
+    if loudest == 0.0 {
+        println!("      (silence — the plugin heard no note, or has no patch loaded)");
+    }
+
+    plugin.deactivate_instrument(instrument);
+    println!("    deactivated cleanly");
+}
+
 fn render(plugin: &mut ClapPlugin, kind: PluginKind) {
+    if kind == PluginKind::Instrument {
+        play(plugin);
+        return;
+    }
     let ctx = PrepareContext::new(SAMPLE_RATE, BLOCK, 2);
     let mut effect = match plugin.activate(&ctx) {
         Ok(effect) => effect,
@@ -162,9 +208,6 @@ fn render(plugin: &mut ClapPlugin, kind: PluginKind) {
     let after = peak(&buffer);
 
     println!("    rendered one block: peak in {before:.4} → out {after:.4}");
-    if kind == PluginKind::Instrument {
-        println!("      (an instrument with no notes; silence out is the correct answer)");
-    }
 
     // Move the first parameter to the far end of its range and see whether anything changes.
     // Not every parameter is audible on a sine, so a flat result is a shrug, not a failure.

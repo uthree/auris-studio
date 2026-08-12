@@ -7,15 +7,19 @@ use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
 use auris_core::plugin::{PluginDescriptor, PrepareContext};
 use clack_extensions::audio_ports::PluginAudioPorts;
 use clack_extensions::latency::PluginLatency;
+use clack_extensions::note_ports::{NotePortInfoBuffer, PluginNotePorts};
 use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
 use clack_extensions::state::PluginState;
 use clack_host::prelude::*;
 use clack_host::utils::ClapId;
 
+use crate::bridge::Bridge;
 use crate::effect::ClapEffect;
 use crate::error::ClapError;
 use crate::host::{AurisHost, AurisMainThread, AurisShared, HostFlags, host_info};
+use crate::instrument::ClapInstrument;
 use crate::library::ClapPluginInfo;
+use crate::notes::{NoteLanguage, language_for};
 use crate::ports::PortLayout;
 
 /// The plugin's parameters, in the order the plugin lists them.
@@ -142,11 +146,34 @@ impl ClapPlugin {
     /// exists, preparing has already happened, and the only honest response to a rate change is
     /// to build the plugin again.
     pub fn activate(&mut self, ctx: &PrepareContext) -> Result<ClapEffect, ClapError> {
+        Ok(ClapEffect::new(self.start(ctx)?))
+    }
+
+    /// Activates the plugin as a track's sound source.
+    ///
+    /// The same activation as [`activate`](Self::activate) — CLAP has one kind of plugin and two
+    /// habits — with the note port read as well, so the instrument knows what language to send
+    /// notes in. A plugin with no note input gets none, and plays nothing; that is a plugin being
+    /// used as an instrument when it is an effect, and the silence says so.
+    pub fn activate_instrument(
+        &mut self,
+        ctx: &PrepareContext,
+    ) -> Result<ClapInstrument, ClapError> {
+        Ok(ClapInstrument::new(self.start(ctx)?))
+    }
+
+    /// Activates the plugin and wraps the processor with everything the audio thread will need.
+    fn start(&mut self, ctx: &PrepareContext) -> Result<Bridge, ClapError> {
         let config = PluginAudioConfiguration {
             sample_rate: ctx.sample_rate,
             min_frames_count: 1,
             max_frames_count: ctx.max_block_frames.max(1) as u32,
         };
+
+        // Read before activating: the ports and the note port may only change while the plugin is
+        // deactivated, so asking now is asking at the last moment they can still move.
+        let ports = self.ports(ctx.channel_count.max(1));
+        let language = self.note_language();
 
         let processor =
             self.instance
@@ -166,14 +193,31 @@ impl ClapPlugin {
             .map(|latency| latency.get(&mut self.instance.plugin_handle()) as usize)
             .unwrap_or(0);
 
-        Ok(ClapEffect::new(
+        Ok(Bridge::new(
             processor,
             self.descriptor(),
             Arc::clone(&self.params),
-            self.ports(ctx.channel_count.max(1)),
+            ports,
+            language,
             ctx,
             latency,
         ))
+    }
+
+    /// What the plugin's first note input port speaks, or `None` if it has none.
+    ///
+    /// Only the first port is consulted. A plugin with several is describing more streams than a
+    /// track has to send it, and picking one of them arbitrarily would be a guess; the first is
+    /// the one CLAP calls the main one.
+    pub fn note_language(&mut self) -> Option<NoteLanguage> {
+        let ports = self
+            .instance
+            .plugin_shared_handle()
+            .get_extension::<PluginNotePorts>()?;
+        let mut handle = self.instance.plugin_handle();
+        let mut buffer = NotePortInfoBuffer::new();
+        let info = ports.get(&mut handle, 0, true, &mut buffer)?;
+        language_for(info.supported_dialects)
     }
 
     /// The audio ports the plugin declares, or a stereo pair if it declares none.
@@ -204,6 +248,12 @@ impl ClapPlugin {
     /// Deactivates the plugin, taking back the rendering half.
     pub fn deactivate(&mut self, effect: ClapEffect) {
         self.instance.deactivate(effect.into_stopped());
+        self.active = false;
+    }
+
+    /// Deactivates the plugin, taking back the instrument half.
+    pub fn deactivate_instrument(&mut self, instrument: ClapInstrument) {
+        self.instance.deactivate(instrument.into_stopped());
         self.active = false;
     }
 

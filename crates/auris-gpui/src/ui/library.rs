@@ -384,7 +384,7 @@ impl AurisApp {
             for info in listed {
                 let file = file.clone();
                 let clap_id = info.clap_id.clone();
-                let hosted = info.kind == PluginKind::Effect;
+                let kind = info.kind;
                 rows.push(self.plugin_row(
                     &LibraryPlugin {
                         id: info.auris_id(),
@@ -392,18 +392,23 @@ impl AurisApp {
                         // The vendor rather than a description: a hosted plugin's description is
                         // usually empty, and whose plugin it is answers the question a list of
                         // unfamiliar names actually raises.
-                        description: match hosted {
-                            true => info.vendor.clone(),
-                            // The one thing a user must know before clicking, said on the row
-                            // rather than in a dialog after it does nothing.
-                            false => self.t(Key::BrowserPluginNotYetHosted).to_string(),
-                        },
+                        description: info.vendor.clone(),
                     },
-                    Icon::Knob,
+                    // The same icons the built-ins get, so a row reads as a sound or as a
+                    // treatment before its name has been read.
+                    match kind {
+                        PluginKind::Instrument => Icon::Keyboard,
+                        PluginKind::Effect => Icon::Knob,
+                    },
                     info.category,
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                        if hosted {
-                            this.add_hosted_effect_to_selection(&file, &clap_id);
+                        match kind {
+                            PluginKind::Instrument => {
+                                this.set_hosted_instrument_on_selection(&file, &clap_id)
+                            }
+                            PluginKind::Effect => {
+                                this.add_hosted_effect_to_selection(&file, &clap_id)
+                            }
                         }
                         cx.notify();
                     }),

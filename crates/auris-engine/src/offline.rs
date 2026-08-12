@@ -95,22 +95,25 @@ pub fn render_project_with_progress(
         bank,
         registry,
         &mut crate::graph::PlacedEffects::new(),
+        &mut crate::graph::PlacedInstruments::new(),
         options,
         progress,
     )
 }
 
-/// Renders a project, taking some of its effects from the caller.
+/// Renders a project, taking some of its plugins from the caller.
 ///
-/// See [`PlacedEffects`](crate::graph::PlacedEffects) for why a caller would have any. An export
-/// that went through [`render_project`] instead would silently leave every hosted plugin out —
-/// the bounce would be the mix minus whatever somebody loaded, which is the worst way for a
+/// See [`PlacedEffects`](crate::graph::PlacedEffects) and
+/// [`PlacedInstruments`](crate::graph::PlacedInstruments) for why a caller would have any. An
+/// export that went through [`render_project`] instead would silently leave every hosted plugin
+/// out — the bounce would be the mix minus whatever somebody loaded, which is the worst way for a
 /// feature to be missing.
 pub fn render_project_using(
     project: &Project,
     bank: &AudioSourceBank,
     registry: &PluginRegistry,
     placed: &mut crate::graph::PlacedEffects,
+    instruments: &mut crate::graph::PlacedInstruments,
     options: &OfflineOptions,
     progress: &mut dyn FnMut(f32),
 ) -> Result<AudioBuffer, EngineError> {
@@ -120,8 +123,15 @@ pub fn render_project_using(
     }
     let block_frames = options.block_frames.max(1);
 
-    let mut graph =
-        RenderGraph::build_with(project, bank, registry, placed, block_frames, sample_rate);
+    let mut graph = RenderGraph::build_with(
+        project,
+        bank,
+        registry,
+        placed,
+        instruments,
+        block_frames,
+        sample_rate,
+    );
 
     let end_frames = options.end_frames.unwrap_or_else(|| {
         // Both figures measure the same thing, but `Project::end_tick` rounds an audio clip's
