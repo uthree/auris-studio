@@ -1,7 +1,7 @@
 //! The right-hand inspector: the selected track's instrument and its effect chain.
 //!
 //! The list of everything that *could* go on it is the library, on the other side of the
-//! arrangement â€” see [`crate::ui::library`]. The two panels share [`panel_header`], because they
+//! arrangement — see [`crate::ui::library`]. The two panels share [`panel_header`], because they
 //! sit either side of the arrangement at the same height.
 
 use auris_i18n::Key;
@@ -40,7 +40,7 @@ pub(crate) enum Insert {
 ///
 /// This is both Logic's shape and the only shape the document can express. `Session::add_effect`
 /// appends, `move_effect` clamps within the existing length, and a strip's effects are a plain
-/// `Vec` â€” so there is no such thing as slot 4 empty while slot 5 is full, and no cap on how many
+/// `Vec` — so there is no such thing as slot 4 empty while slot 5 is full, and no cap on how many
 /// there may be. The fixed slots stay a view-side idea, because nothing at or below
 /// `auris-session` may be shaped by one.
 pub(crate) fn insert_rows(chain: &[(EffectSlotId, String, bool)]) -> Vec<Insert> {
@@ -60,7 +60,7 @@ pub(crate) fn insert_rows(chain: &[(EffectSlotId, String, bool)]) -> Vec<Insert>
 ///
 /// Keyed by the slot's own id rather than by its position. The mixer used to pack a strip index
 /// and a slot index into `index * 64 + slot_index`, which collided past sixty-four effects on a
-/// strip and moved every key in a chain whenever it was reordered â€” worth retiring now that a
+/// strip and moved every key in a chain whenever it was reordered — worth retiring now that a
 /// third surface draws the same chain. Zero is reserved for the empty slot, which has no id.
 pub(crate) fn insert_element_key(slot: Option<EffectSlotId>) -> usize {
     slot.map_or(0, |id| id.0 as usize + 1)
@@ -103,7 +103,7 @@ impl AurisApp {
         //
         // The header names the panel rather than what is in it. It said "Track" until the selected
         // clip's recipe joined the track's own controls here, and a panel showing two things under
-        // the name of one of them is worse than a panel that says which panel it is â€” the groups
+        // the name of one of them is worse than a panel that says which panel it is — the groups
         // inside carry their own headings.
         //
         // The width comes from the parent, which owns the resizable panel geometry, and the
@@ -228,7 +228,7 @@ impl AurisApp {
 
         // Logic's shape: the slots that are filled, then one empty one that adds another. The
         // empty slot replaces both the old "+ Add" button in this heading and the "No effects"
-        // line that used to stand in for an empty chain â€” one affordance in the place the next
+        // line that used to stand in for an empty chain — one affordance in the place the next
         // effect will actually appear, rather than two somewhere else.
         let rows = insert_rows(&effect_slots);
         for row in rows {
@@ -260,7 +260,7 @@ impl AurisApp {
 
             // One row per insert, and its parameters live in the plugin editor rather than
             // underneath it. Expanding every effect in place pushed the rest of the chain down
-            // the panel, so a four-effect strip could not be read without scrolling â€” and the
+            // the panel, so a four-effect strip could not be read without scrolling — and the
             // slot you were about to reach for kept moving.
             //
             // The reorder and remove buttons stay visible here, unlike on the mixer's 128px
@@ -619,7 +619,7 @@ mod tests {
 
     #[test]
     fn every_insert_row_gets_its_own_element_key() {
-        // Zero belongs to the empty slot, which is why the filled ones are offset by one â€” slot
+        // Zero belongs to the empty slot, which is why the filled ones are offset by one — slot
         // id 0 is a real slot and would otherwise share a key with it.
         assert_eq!(insert_element_key(None), 0);
         assert_ne!(
