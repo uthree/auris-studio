@@ -28,6 +28,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use auris_clap::{ClapEffect, ClapError, ClapLibrary, ClapPlugin, ClapPluginInfo};
 use auris_core::asset::AssetPath;
@@ -87,6 +88,15 @@ impl HostedPlugins {
             .as_ref()
             .or(slot.spare.as_ref())
             .map(|plugin| plugin.parameters())
+    }
+
+    /// What a hosted slot's plugin calls itself.
+    pub(super) fn name(&self, slot: EffectSlotId) -> Option<&str> {
+        let slot = self.slots.get(&slot)?;
+        slot.live
+            .as_ref()
+            .or(slot.spare.as_ref())
+            .map(|plugin| plugin.info().name.as_str())
     }
 
     /// The state a hosted slot's plugin is carrying, for the document to save.
@@ -226,8 +236,15 @@ impl HostedSlot {
         if self.live.as_mut().is_some_and(ClapPlugin::release) {
             self.spare = self.live.take();
         }
-        if let Some(spare) = self.spare.as_mut() {
-            spare.release();
+        // A spare with an effect still out is not a spare: handing it to `activate` would be told
+        // the plugin is already active, and the slot would go silent for no reason a user could
+        // see. Letting go of it is safe — the effect keeps the plugin itself alive until whatever
+        // is holding it is dropped — and its state was copied forward when it stopped being live.
+        //
+        // This is not the two-instance case; it is the three-instance one, which an export
+        // running while the transport plays produces.
+        if self.spare.as_mut().is_some_and(|spare| !spare.release()) {
+            self.spare = None;
         }
     }
 }
@@ -381,6 +398,36 @@ impl Session {
     /// added — and empty for good if it could not be loaded.
     pub fn hosted_parameters(&self, slot: EffectSlotId) -> &[ParamDescriptor] {
         self.hosted.parameters(slot).unwrap_or(&[])
+    }
+
+    /// What a hosted slot's plugin calls itself, or `None` for a slot that is not hosted.
+    ///
+    /// A hosted plugin has no registry entry, so the id a frontend would otherwise show is a
+    /// reverse-DNS string somebody else chose — `clap:org.surge-synth-team.surge-xt-fx` where a
+    /// built-in would have said "Reverb".
+    pub fn hosted_name(&self, slot: EffectSlotId) -> Option<&str> {
+        self.hosted.name(slot)
+    }
+
+    /// The parameters of whatever is in an effect slot, hosted or built in.
+    ///
+    /// The registry can only be asked by plugin id, which for a hosted plugin answers nothing —
+    /// and could not answer correctly anyway, since two slots may hold the same plugin from two
+    /// different files. So the slot is the thing to ask about.
+    pub fn effect_descriptors(&mut self, slot: EffectSlotId) -> Arc<Vec<ParamDescriptor>> {
+        let hosted = self.hosted_parameters(slot);
+        if !hosted.is_empty() {
+            return Arc::new(hosted.to_vec());
+        }
+        let Some(effect_id) = std::iter::once(&self.project.master)
+            .chain(self.project.tracks.iter().map(|track| &track.mixer))
+            .flat_map(|strip| strip.effects.iter())
+            .find(|existing| existing.id == slot)
+            .map(|existing| existing.effect_id.clone())
+        else {
+            return Arc::new(Vec::new());
+        };
+        self.param_descriptors(&effect_id)
     }
 
     /// Copies every hosted plugin's own state into the document.

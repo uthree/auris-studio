@@ -90,13 +90,38 @@ pub fn render_project_with_progress(
     options: &OfflineOptions,
     progress: &mut dyn FnMut(f32),
 ) -> Result<AudioBuffer, EngineError> {
+    render_project_using(
+        project,
+        bank,
+        registry,
+        &mut crate::graph::PlacedEffects::new(),
+        options,
+        progress,
+    )
+}
+
+/// Renders a project, taking some of its effects from the caller.
+///
+/// See [`PlacedEffects`](crate::graph::PlacedEffects) for why a caller would have any. An export
+/// that went through [`render_project`] instead would silently leave every hosted plugin out —
+/// the bounce would be the mix minus whatever somebody loaded, which is the worst way for a
+/// feature to be missing.
+pub fn render_project_using(
+    project: &Project,
+    bank: &AudioSourceBank,
+    registry: &PluginRegistry,
+    placed: &mut crate::graph::PlacedEffects,
+    options: &OfflineOptions,
+    progress: &mut dyn FnMut(f32),
+) -> Result<AudioBuffer, EngineError> {
     let sample_rate = options.sample_rate.unwrap_or(project.sample_rate);
     if !sample_rate.is_finite() || sample_rate <= 0.0 {
         return Err(EngineError::InvalidSampleRate(sample_rate));
     }
     let block_frames = options.block_frames.max(1);
 
-    let mut graph = RenderGraph::build_at(project, bank, registry, block_frames, sample_rate);
+    let mut graph =
+        RenderGraph::build_with(project, bank, registry, placed, block_frames, sample_rate);
 
     let end_frames = options.end_frames.unwrap_or_else(|| {
         // Both figures measure the same thing, but `Project::end_tick` rounds an audio clip's

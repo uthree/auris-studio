@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use auris_core::param::gain_to_db;
 use auris_core::{AudioBuffer, AudioSourceBank, PluginRegistry, Project, SourceId};
-use auris_engine::{OfflineOptions, render_project_with_progress};
+use auris_engine::{OfflineOptions, PlacedEffects, render_project_using};
 use auris_io::{WavExportSettings, resample_buffer, write_wav};
 
 use crate::error::SessionError;
@@ -69,11 +69,17 @@ pub struct ExportSummary {
 /// session is not `Send` in spirit (it owns an audio device) and must stay editable meanwhile.
 /// A job captures the document, the sample bank and the registry, all of which are cheap to
 /// clone and `Send`, so the render sees a consistent snapshot and later edits cannot disturb it.
-#[derive(Clone)]
+///
+/// Hosted plugins are the exception that stops this being cloneable. The half of a CLAP plugin
+/// that renders is `Send` and travels here happily; the half that could *make* another one is not
+/// and stays in the session. So a job carries the effects themselves, and there is exactly one
+/// job per set of them.
 pub struct RenderJob {
     project: Project,
     bank: AudioSourceBank,
     registry: Arc<PluginRegistry>,
+    /// Effects the session built because the registry could not. Taken by the render.
+    placed: PlacedEffects,
 }
 
 impl RenderJob {
@@ -81,11 +87,13 @@ impl RenderJob {
         project: Project,
         bank: AudioSourceBank,
         registry: Arc<PluginRegistry>,
+        placed: PlacedEffects,
     ) -> Self {
         Self {
             project,
             bank,
             registry,
+            placed,
         }
     }
 
@@ -118,16 +126,17 @@ impl RenderJob {
     /// An export can be asked for any rate, including one the sources were never decoded at, so
     /// the bank is converted to whatever this render will run at before it is handed over.
     pub fn render(
-        &self,
+        &mut self,
         options: &OfflineOptions,
         progress: &mut dyn FnMut(f32),
     ) -> Result<AudioBuffer, SessionError> {
         let rate = options.sample_rate.unwrap_or(self.project.sample_rate);
         let bank = bank_at_rate(&self.bank, rate);
-        Ok(render_project_with_progress(
+        Ok(render_project_using(
             &self.project,
             &bank,
             &self.registry,
+            &mut self.placed,
             options,
             progress,
         )?)
@@ -139,7 +148,7 @@ impl RenderJob {
     /// settings say, because the two disagreeing would resample the audio by accident: the
     /// header would claim a rate the samples were never produced at.
     pub fn render_to_wav(
-        &self,
+        &mut self,
         path: &Path,
         settings: &WavExportSettings,
         options: &OfflineOptions,
@@ -194,7 +203,12 @@ mod tests {
         // Four beats at 120 BPM is two seconds: 96 000 frames at the project's 48 kHz.
         let mut project = Project::new("Cycle", 48_000.0);
         project.loop_region = Some((Ticks::ZERO, Ticks::from_beats(4.0)));
-        let job = RenderJob::new(project, AudioSourceBank::new(), plugin_catalogue());
+        let job = RenderJob::new(
+            project,
+            AudioSourceBank::new(),
+            plugin_catalogue(),
+            PlacedEffects::new(),
+        );
 
         let options = job
             .loop_options(OfflineOptions::whole_project())
@@ -215,12 +229,22 @@ mod tests {
     #[test]
     fn a_missing_or_empty_region_offers_no_loop_options() {
         let mut project = Project::new("None", 48_000.0);
-        let job = RenderJob::new(project.clone(), AudioSourceBank::new(), plugin_catalogue());
+        let job = RenderJob::new(
+            project.clone(),
+            AudioSourceBank::new(),
+            plugin_catalogue(),
+            PlacedEffects::new(),
+        );
         assert!(job.loop_options(OfflineOptions::whole_project()).is_none());
 
         // A region of no width is nothing to export either.
         project.loop_region = Some((Ticks::from_beats(2.0), Ticks::from_beats(2.0)));
-        let job = RenderJob::new(project, AudioSourceBank::new(), plugin_catalogue());
+        let job = RenderJob::new(
+            project,
+            AudioSourceBank::new(),
+            plugin_catalogue(),
+            PlacedEffects::new(),
+        );
         assert!(job.loop_options(OfflineOptions::whole_project()).is_none());
     }
 
@@ -264,7 +288,12 @@ mod tests {
             .add_audio_clip(track, source, Ticks::ZERO)
             .expect("clip");
 
-        let job = RenderJob::new(project, bank_at(source, 48_000.0), plugin_catalogue());
+        let mut job = RenderJob::new(
+            project,
+            bank_at(source, 48_000.0),
+            plugin_catalogue(),
+            PlacedEffects::new(),
+        );
         let rendered = job
             .render(
                 &OfflineOptions {

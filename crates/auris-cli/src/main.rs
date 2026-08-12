@@ -630,7 +630,7 @@ fn render(args: &[String]) -> Result<(), String> {
         );
     }
 
-    let job = session.render_job();
+    let mut job = session.render_job();
     if loop_only {
         // Resolved through the job so the region is converted exactly as the GUI converts
         // it; a project without one is an error, not a silent whole-project render.

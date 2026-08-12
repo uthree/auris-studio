@@ -235,8 +235,19 @@ impl AurisApp {
         );
 
         let theme = self.theme.clone();
-        let name = self.plugin_label(&plugin_id);
-        let descriptors = self.session.param_descriptors(&plugin_id);
+        // Asked by *slot* rather than by plugin id wherever there is one. The registry cannot
+        // answer for a hosted plugin at all, and could not answer correctly even in principle:
+        // two slots may hold the same plugin loaded from two different files.
+        let (name, descriptors) = match subject {
+            PluginSubject::Insert { slot, .. } => (
+                self.effect_label(slot, &plugin_id),
+                self.session.effect_descriptors(slot),
+            ),
+            PluginSubject::Instrument(_) => (
+                self.plugin_label(&plugin_id),
+                self.session.param_descriptors(&plugin_id),
+            ),
+        };
         let has_curve = analyser.is_some();
         // Everything above the scrolling list, none of which scrolls, so all of it is room the
         // window needs on top of whatever the controls come to.

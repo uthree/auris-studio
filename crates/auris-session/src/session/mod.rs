@@ -614,11 +614,25 @@ impl Session {
     }
 
     /// A `Send` snapshot that can be rendered on another thread.
-    pub fn render_job(&self) -> RenderJob {
+    ///
+    /// Takes `&mut self` for one reason: a hosted plugin has to be *built here*, on this thread,
+    /// because the half that can build one may not leave it. An export that did not do this would
+    /// bounce the mix minus every plugin the user loaded.
+    pub fn render_job(&mut self) -> RenderJob {
+        // The export's own instances, at the project's rate rather than the device's. A plugin
+        // that is already rendering keeps doing so: `place` hands out a second instance and takes
+        // the first back when the export drops it.
+        let prepare = auris_core::plugin::PrepareContext::new(
+            self.project.sample_rate,
+            self.engine.max_block(),
+            auris_engine::RENDER_CHANNELS,
+        );
+        let placed = self.hosted.place(&self.project, &prepare);
         RenderJob::new(
             self.project.clone(),
             self.bank.clone(),
             Arc::clone(&self.registry),
+            placed,
         )
     }
 
@@ -1174,7 +1188,7 @@ mod tests {
             .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
             .unwrap();
 
-        let job = session.render_job();
+        let mut job = session.render_job();
         session.remove_track(track).unwrap();
 
         // The job kept its own copy, so the render still contains the note.

@@ -179,16 +179,24 @@ impl ClapPlugin {
         self.active = false;
     }
 
-    /// Deactivates a plugin whose rendering half was dropped somewhere else.
+    /// Deactivates a plugin whose rendering half was dropped somewhere else, and reports whether
+    /// it now has no effect out.
     ///
     /// This is the normal path in Auris Studio: a replaced graph travels back from the audio
     /// thread down the engine's return channel and is dropped there, so by the time the session
     /// gets round to the plugin the effect is already gone. Returns `false` when the effect is
     /// still alive, in which case the caller should try again later rather than force it.
+    ///
+    /// The answer is about the *state*, not about this call, so asking twice gives the same
+    /// answer both times. It used to mean "was deactivated by this call", which made a second
+    /// ask say `false` about a plugin that was perfectly free — and a caller keeping a spare
+    /// would throw it away on the strength of that.
     pub fn release(&mut self) -> bool {
-        let released = self.instance.try_deactivate().is_ok();
-        self.active &= !released;
-        released
+        if !self.active {
+            return true;
+        }
+        self.active = self.instance.try_deactivate().is_err();
+        !self.active
     }
 
     /// `true` while a rendering half exists.

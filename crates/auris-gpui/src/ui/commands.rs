@@ -1130,7 +1130,7 @@ impl AurisApp {
             return;
         }
         // A snapshot, so the render is unaffected by anything edited while it runs.
-        let job = self.session.render_job();
+        let mut job = self.session.render_job();
         let options = if cycle {
             // Refused before the dialog opens: a save sheet for a region that does not exist
             // would collect a filename for nothing.

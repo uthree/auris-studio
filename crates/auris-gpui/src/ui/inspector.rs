@@ -255,7 +255,7 @@ impl AurisApp {
                 }
             };
             let slot_index = insert_element_key(Some(slot_id));
-            let name = self.plugin_label(&effect_id);
+            let name = self.effect_label(slot_id, &effect_id);
             let menu_name = name.clone();
 
             // One row per insert, and its parameters live in the plugin editor rather than

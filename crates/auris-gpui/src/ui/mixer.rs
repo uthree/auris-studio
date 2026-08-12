@@ -188,7 +188,7 @@ impl AurisApp {
         let effect_rows: Vec<AnyElement> = effects
             .into_iter()
             .map(|(slot_id, effect_id, enabled)| {
-                let label = self.plugin_label(&effect_id);
+                let label = self.effect_label(slot_id, &effect_id);
                 self.effect_row(
                     ("mixer-fx", insert_element_key(Some(slot_id))),
                     label,
@@ -506,7 +506,7 @@ impl AurisApp {
         let effect_rows: Vec<AnyElement> = effects
             .into_iter()
             .map(|(slot_id, effect_id, enabled)| {
-                let label = self.plugin_label(&effect_id);
+                let label = self.effect_label(slot_id, &effect_id);
                 self.effect_row(
                     ("master-fx", insert_element_key(Some(slot_id))),
                     label,
