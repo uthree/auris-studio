@@ -45,6 +45,7 @@ mod error;
 mod host;
 mod library;
 mod plugin;
+mod ports;
 
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;
@@ -56,3 +57,4 @@ pub use effect::ClapEffect;
 pub use error::ClapError;
 pub use library::{ClapLibrary, ClapPluginInfo, classify};
 pub use plugin::{ClapPlugin, PendingRequests};
+pub use ports::{PortLayout, main_port};

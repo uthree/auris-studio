@@ -8,7 +8,7 @@ use auris_core::plugin::{
 
 use crate::library::ClapLibrary;
 use crate::plugin::ClapPlugin;
-use crate::testkit::{FIXTURE_ID, fixture_library};
+use crate::testkit::{FIXTURE_ID, INPUT_PORTS, fixture_library};
 
 fn library() -> ClapLibrary {
     fixture_library()
@@ -63,13 +63,52 @@ fn a_plugin_that_is_not_in_the_file_is_an_error_not_a_panic() {
 fn a_hosted_plugin_reports_its_parameters_by_the_plugins_own_id() {
     let plugin = hosted();
     let params = plugin.parameters();
-    assert_eq!(params.len(), 1);
+    assert_eq!(params.len(), 2);
     assert_eq!(params[0].id, ParamId(0), "the slice position");
     assert_eq!(params[0].key, "clap.4242", "the plugin's own id");
     assert_eq!(params[0].name, "Gain");
     assert_eq!(params[0].min, 0.0);
     assert_eq!(params[0].max, 2.0);
     assert_eq!(params[0].default, 1.0);
+    assert_eq!(params[1].key, "clap.4343", "and the second keeps its own");
+}
+
+#[test]
+fn every_port_the_plugin_declared_is_handed_to_it() {
+    // The fixture declares a sidechain it never reads, for the reason its module doc gives: a
+    // host that passes only the ports it has audio for hands the plugin an array shorter than the
+    // one the plugin was told it could index, and the plugin has no way to find that out in time.
+    let mut plugin = hosted();
+    let ports = plugin.ports(2);
+    assert_eq!(ports.inputs, vec![2, 2], "a main port and a sidechain");
+    assert_eq!(ports.outputs, vec![2]);
+    assert_eq!(ports.main_input, Some(0));
+    assert_eq!(ports.main_output, Some(0));
+
+    let mut effect = plugin.activate(&context()).expect("must activate");
+    effect.process(&mut block(0.5, 32), &playing(32));
+    plugin.deactivate(effect);
+
+    assert_eq!(
+        plugin.value(ParamId(1)),
+        Some(INPUT_PORTS as f32),
+        "the plugin has to receive as many input ports as it asked for"
+    );
+}
+
+#[test]
+fn a_plugin_with_a_sidechain_still_renders_through_its_main_port() {
+    // The sidechain is silent, and the audio has to come back out of the *main* output rather
+    // than out of whichever port happened to be first in the list.
+    let mut plugin = hosted();
+    let mut effect = plugin.activate(&context()).expect("must activate");
+
+    let mut buffer = block(0.5, 32);
+    effect.process(&mut buffer, &playing(32));
+    assert_eq!(buffer.channel(0)[0], 0.5);
+    assert_eq!(buffer.channel(1)[31], 0.5);
+
+    plugin.deactivate(effect);
 }
 
 #[test]

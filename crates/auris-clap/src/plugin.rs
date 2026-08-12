@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
 use auris_core::plugin::{PluginDescriptor, PrepareContext};
+use clack_extensions::audio_ports::PluginAudioPorts;
 use clack_extensions::latency::PluginLatency;
 use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
 use clack_extensions::state::PluginState;
@@ -15,6 +16,7 @@ use crate::effect::ClapEffect;
 use crate::error::ClapError;
 use crate::host::{AurisHost, AurisMainThread, AurisShared, HostFlags, host_info};
 use crate::library::ClapPluginInfo;
+use crate::ports::PortLayout;
 
 /// The plugin's parameters, in the order the plugin lists them.
 ///
@@ -168,9 +170,35 @@ impl ClapPlugin {
             processor,
             self.descriptor(),
             Arc::clone(&self.params),
+            self.ports(ctx.channel_count.max(1)),
             ctx,
             latency,
         ))
+    }
+
+    /// The audio ports the plugin declares, or a stereo pair if it declares none.
+    ///
+    /// Read afresh each time it is asked for rather than cached, because a plugin is allowed to
+    /// change its ports while deactivated — and the one moment this is asked is the one moment
+    /// after which it may not.
+    pub fn ports(&mut self, fallback_channels: usize) -> PortLayout {
+        let Some(ports) = self
+            .instance
+            .plugin_shared_handle()
+            .get_extension::<PluginAudioPorts>()
+        else {
+            return PortLayout::stereo_pair(fallback_channels);
+        };
+
+        let mut handle = self.instance.plugin_handle();
+        let (inputs, main_input) = crate::ports::read_side(&ports, &mut handle, true);
+        let (outputs, main_output) = crate::ports::read_side(&ports, &mut handle, false);
+        PortLayout {
+            inputs,
+            outputs,
+            main_input,
+            main_output,
+        }
     }
 
     /// Deactivates the plugin, taking back the rendering half.

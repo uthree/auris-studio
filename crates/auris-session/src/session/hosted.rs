@@ -661,7 +661,7 @@ mod tests {
 
         // Empty until the plugin exists, so a non-empty list is proof it was built and placed.
         let params = session.hosted_parameters(slot);
-        assert_eq!(params.len(), 1);
+        assert_eq!(params.len(), 2, "the fixture's gain and its port report");
         assert_eq!(params[0].key, "clap.4242");
 
         // And the parameter panel finds it by the same route every other parameter takes.
@@ -748,7 +748,7 @@ mod tests {
             1.0f32.to_le_bytes(),
             "the fixture's state is its gain, which starts at unity"
         );
-        assert_eq!(session.hosted_parameters(slot).len(), 1);
+        assert_eq!(session.hosted_parameters(slot).len(), 2);
     }
 
     #[test]

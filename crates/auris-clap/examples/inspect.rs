@@ -75,10 +75,24 @@ fn inspect(file: &Path) {
             }
         };
 
+        report_ports(&mut plugin);
         report_params(&mut plugin);
         report_state(&mut plugin);
         render(&mut plugin, info.kind);
     }
+}
+
+/// What ports the plugin wants, which is the thing a host cannot afford to assume.
+///
+/// A second input port is a sidechain, and it is not optional: a plugin that declares one indexes
+/// it whether or not the host has anything to send there. Printing the layout is how a plugin that
+/// is about to be hosted gets checked against the buffers it is going to be handed.
+fn report_ports(plugin: &mut ClapPlugin) {
+    let ports = plugin.ports(2);
+    println!(
+        "    ports: in {:?} (main {:?}), out {:?} (main {:?})",
+        ports.inputs, ports.main_input, ports.outputs, ports.main_output
+    );
 }
 
 fn report_params(plugin: &mut ClapPlugin) {

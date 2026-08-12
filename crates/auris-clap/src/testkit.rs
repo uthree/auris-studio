@@ -13,7 +13,12 @@
 //!   fails here;
 //! * its gain is shared between the two threads, so a parameter the audio side was given can be
 //!   read back from the main side;
-//! * its state is four bytes of gain, so a round trip through the opaque stream is checkable.
+//! * its state is four bytes of gain, so a round trip through the opaque stream is checkable;
+//! * it declares a **sidechain** input it does not use, and reports through [`PORTS_ID`] how many
+//!   input ports it was actually handed. A host that passes only the ports it cares about is not
+//!   making a layout mistake the plugin can notice — it is handing the plugin an array shorter
+//!   than the one the plugin was told to index. Surge XT Effects has exactly this shape, and
+//!   reading the missing port took the whole application down.
 //!
 //! Behind the `testkit` feature, which nothing but a test build should ever turn on.
 
@@ -39,8 +44,14 @@ use crate::library::ClapLibrary;
 /// The fixture's CLAP id.
 pub const FIXTURE_ID: &str = "studio.auris.test.gain";
 
-/// The fixture's one parameter id. Deliberately neither zero nor a plausible slice index.
+/// The fixture's gain parameter id. Deliberately neither zero nor a plausible slice index.
 pub const GAIN_ID: u32 = 4242;
+
+/// The id of the read-only parameter reporting how many input ports the last block arrived with.
+pub const PORTS_ID: u32 = 4343;
+
+/// How many input ports the fixture declares: a main one and a sidechain.
+pub const INPUT_PORTS: u32 = 2;
 
 /// A library holding nothing but the fixture.
 ///
@@ -59,6 +70,9 @@ pub fn fixture_library() -> ClapLibrary {
 #[derive(Default)]
 pub struct Shared {
     gain: AtomicU32,
+    /// Input ports the last `process` call arrived with. `u32::MAX` until there has been one, so
+    /// "nobody has rendered yet" cannot be mistaken for "the host passed none".
+    ports_seen: AtomicU32,
 }
 
 impl Shared {
@@ -109,6 +123,7 @@ impl DefaultPluginFactory for Gain {
     fn new_shared(_host: HostSharedHandle<'_>) -> Result<Shared, PluginError> {
         let shared = Shared::default();
         shared.set(1.0);
+        shared.ports_seen.store(u32::MAX, Ordering::Relaxed);
         Ok(shared)
     }
 
@@ -141,6 +156,11 @@ impl<'a> PluginAudioProcessor<'a, Shared, MainThread<'a>> for Processor<'a> {
         mut audio: Audio,
         events: Events,
     ) -> Result<ProcessStatus, PluginError> {
+        // What the host actually handed over, which is the whole point of the sidechain below.
+        self.shared
+            .ports_seen
+            .store(audio.input_port_count() as u32, Ordering::Relaxed);
+
         for event in events.input {
             if let Some(event) = event.as_event::<ParamValueEvent>()
                 && event.param_id().map(|id| id.get()) == Some(GAIN_ID)
@@ -181,22 +201,35 @@ impl PluginAudioProcessorParams for Processor<'_> {
 }
 
 impl PluginAudioPortsImpl for MainThread<'_> {
-    fn count(&mut self, _is_input: bool) -> u32 {
-        1
+    fn count(&mut self, is_input: bool) -> u32 {
+        match is_input {
+            true => INPUT_PORTS,
+            false => 1,
+        }
     }
 
     fn get(&mut self, index: u32, is_input: bool, writer: &mut AudioPortInfoWriter) {
-        if index != 0 {
+        let inputs = match is_input {
+            true => INPUT_PORTS,
+            false => 1,
+        };
+        if index >= inputs {
             return;
         }
         writer.set(&AudioPortInfo {
-            id: ClapId::new(0),
-            name: match is_input {
-                true => b"In",
-                false => b"Out",
+            id: ClapId::new(index),
+            name: match (is_input, index) {
+                (true, 0) => b"In",
+                // Never read. It exists so that a host which quietly drops it is caught here
+                // rather than by a plugin indexing off the end of what it was given.
+                (true, _) => b"Sidechain",
+                (false, _) => b"Out",
             },
             channel_count: 2,
-            flags: AudioPortFlags::IS_MAIN,
+            flags: match index {
+                0 => AudioPortFlags::IS_MAIN,
+                _ => AudioPortFlags::empty(),
+            },
             port_type: Some(AudioPortType::STEREO),
             in_place_pair: None,
         });
@@ -205,14 +238,11 @@ impl PluginAudioPortsImpl for MainThread<'_> {
 
 impl PluginMainThreadParams for MainThread<'_> {
     fn count(&mut self) -> u32 {
-        1
+        2
     }
 
     fn get_info(&mut self, param_index: u32, info: &mut ParamInfoWriter) {
-        if param_index != 0 {
-            return;
-        }
-        info.set(&ParamInfo {
+        let common = ParamInfo {
             id: ClapId::new(GAIN_ID),
             flags: ParamInfoFlags::IS_AUTOMATABLE,
             cookie: Default::default(),
@@ -221,13 +251,30 @@ impl PluginMainThreadParams for MainThread<'_> {
             min_value: 0.0,
             max_value: 2.0,
             default_value: 1.0,
-        });
+        };
+        match param_index {
+            0 => info.set(&common),
+            1 => info.set(&ParamInfo {
+                id: ClapId::new(PORTS_ID),
+                flags: ParamInfoFlags::IS_READONLY,
+                name: b"Input Ports Seen",
+                min_value: 0.0,
+                max_value: 16.0,
+                default_value: 0.0,
+                ..common
+            }),
+            _ => {}
+        }
     }
 
     fn get_value(&mut self, param_id: ClapId) -> Option<f64> {
-        match param_id.get() == GAIN_ID {
-            true => Some(self.shared.get() as f64),
-            false => None,
+        match param_id.get() {
+            GAIN_ID => Some(self.shared.get() as f64),
+            PORTS_ID => match self.shared.ports_seen.load(Ordering::Relaxed) {
+                u32::MAX => Some(0.0),
+                seen => Some(seen as f64),
+            },
+            _ => None,
         }
     }
 

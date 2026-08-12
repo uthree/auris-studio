@@ -11,6 +11,7 @@ use clack_host::utils::Cookie;
 
 use crate::host::AurisHost;
 use crate::plugin::ParamList;
+use crate::ports::PortLayout;
 
 /// A hosted CLAP plugin, as the render graph sees it.
 ///
@@ -35,8 +36,15 @@ pub struct ClapEffect {
     replies: EventBuffer,
     input_ports: AudioPorts,
     output_ports: AudioPorts,
-    input: Vec<Vec<f32>>,
-    output: Vec<Vec<f32>>,
+    /// A buffer per channel of every input port the plugin declared, in its order. Every port is
+    /// here, including the ones Auris has nothing to put in: the plugin indexes this array itself,
+    /// and a port it declared but did not get is a read off the end.
+    input: Vec<Vec<Vec<f32>>>,
+    /// The same for outputs.
+    output: Vec<Vec<Vec<f32>>>,
+    /// Which port the track's audio goes in and comes out of.
+    main_input: Option<usize>,
+    main_output: Option<usize>,
     max_frames: usize,
     latency: usize,
     /// A counter that only ever goes up, which is what CLAP asks of `steady_time`. The project
@@ -53,13 +61,14 @@ impl ClapEffect {
         processor: StoppedPluginAudioProcessor<AurisHost>,
         descriptor: PluginDescriptor,
         params: Arc<ParamList>,
+        ports: PortLayout,
         ctx: &PrepareContext,
         latency: usize,
     ) -> Self {
-        let channels = ctx.channel_count.max(1);
         let frames = ctx.max_block_frames.max(1);
         let count = params.descriptors.len();
         let values = params.descriptors.iter().map(|p| p.default).collect();
+        let room = |port: &usize| vec![vec![0.0; frames]; *port];
 
         Self {
             processor: processor.into(),
@@ -71,10 +80,18 @@ impl ClapEffect {
             // happen: `set_param` marks, `process` sends, and a mark cannot be set twice.
             outgoing: EventBuffer::with_capacity(count.max(1)),
             replies: EventBuffer::with_capacity(count.max(1)),
-            input_ports: AudioPorts::with_capacity(channels, 1),
-            output_ports: AudioPorts::with_capacity(channels, 1),
-            input: vec![vec![0.0; frames]; channels],
-            output: vec![vec![0.0; frames]; channels],
+            input_ports: AudioPorts::with_capacity(
+                ports.input_channels().max(1),
+                ports.inputs.len().max(1),
+            ),
+            output_ports: AudioPorts::with_capacity(
+                ports.output_channels().max(1),
+                ports.outputs.len().max(1),
+            ),
+            input: ports.inputs.iter().map(room).collect(),
+            output: ports.outputs.iter().map(room).collect(),
+            main_input: ports.main_input,
+            main_output: ports.main_output,
             max_frames: frames,
             latency,
             steady_time: 0,
@@ -122,8 +139,10 @@ impl Effect for ClapEffect {
     fn reset(&mut self) {
         self.processor.reset();
         self.steady_time = 0;
-        for channel in self.input.iter_mut().chain(self.output.iter_mut()) {
-            channel.fill(0.0);
+        for port in self.input.iter_mut().chain(self.output.iter_mut()) {
+            for channel in port {
+                channel.fill(0.0);
+            }
         }
     }
 
@@ -132,7 +151,6 @@ impl Effect for ClapEffect {
         if frames == 0 {
             return;
         }
-        let channels = self.input.len().min(buffer.channel_count());
 
         // Destructured so the audio buffers and the processor are borrowed as separate fields.
         let Self {
@@ -146,6 +164,8 @@ impl Effect for ClapEffect {
             output_ports,
             input,
             output,
+            main_input,
+            main_output,
             steady_time,
             ..
         } = self;
@@ -165,8 +185,13 @@ impl Effect for ClapEffect {
             ));
         }
 
-        for (index, channel) in input.iter_mut().enumerate().take(channels) {
-            channel[..frames].copy_from_slice(&buffer.channel(index)[..frames]);
+        // Only the main port is filled. Every other one — a vocoder's modulator, a compressor's
+        // sidechain — is left at silence, which is the honest answer while nothing in Auris can
+        // route audio to it, and is a great deal better than not passing it at all.
+        if let Some(port) = main_input.and_then(|index| input.get_mut(index)) {
+            for (index, channel) in port.iter_mut().enumerate().take(buffer.channel_count()) {
+                channel[..frames].copy_from_slice(&buffer.channel(index)[..frames]);
+            }
         }
 
         let Ok(processor) = processor.ensure_processing_started() else {
@@ -178,24 +203,22 @@ impl Effect for ClapEffect {
         let events = InputEvents::from_buffer(outgoing);
         let mut event_replies = OutputEvents::from_buffer(replies);
 
-        let audio_in = input_ports.with_input_buffers([AudioPortBuffer {
-            latency: 0,
-            channels: AudioPortBufferType::f32_input_only(
-                input
-                    .iter_mut()
-                    .take(channels)
-                    .map(|channel| InputChannel::variable(&mut channel[..frames])),
-            ),
-        }]);
-        let mut audio_out = output_ports.with_output_buffers([AudioPortBuffer {
-            latency: 0,
-            channels: AudioPortBufferType::f32_output_only(
-                output
-                    .iter_mut()
-                    .take(channels)
-                    .map(|channel| &mut channel[..frames]),
-            ),
-        }]);
+        let audio_in = input_ports.with_input_buffers(input.iter_mut().map(|port| {
+            AudioPortBuffer {
+                latency: 0,
+                channels: AudioPortBufferType::f32_input_only(
+                    port.iter_mut()
+                        .map(|channel| InputChannel::variable(&mut channel[..frames])),
+                ),
+            }
+        }));
+        let mut audio_out =
+            output_ports.with_output_buffers(output.iter_mut().map(|port| AudioPortBuffer {
+                latency: 0,
+                channels: AudioPortBufferType::f32_output_only(
+                    port.iter_mut().map(|channel| &mut channel[..frames]),
+                ),
+            }));
 
         let rendered = processor.process(
             &audio_in,
@@ -211,8 +234,10 @@ impl Effect for ClapEffect {
             return;
         }
 
-        for (index, channel) in output.iter().enumerate().take(channels) {
-            buffer.channel_mut(index)[..frames].copy_from_slice(&channel[..frames]);
+        if let Some(port) = main_output.and_then(|index| output.get(index)) {
+            for (index, channel) in port.iter().enumerate().take(buffer.channel_count()) {
+                buffer.channel_mut(index)[..frames].copy_from_slice(&channel[..frames]);
+            }
         }
     }
 
