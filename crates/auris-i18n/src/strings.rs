@@ -122,6 +122,25 @@ strings! {
         en: "None imported yet",
         ja: "まだ読み込まれていません"
     }
+    BrowserPlugins { en: "Installed plugins", ja: "インストール済みプラグイン" }
+    BrowserNoPlugins {
+        en: "No CLAP plugins found on this computer",
+        ja: "このコンピューターにCLAPプラグインが見つかりません"
+    }
+    // Says what opening a file *does*, not what it shows. Loading a plugin runs its code, and
+    // that is worth one line above the list rather than nowhere at all.
+    BrowserPluginsHint {
+        en: "Opening a file loads the plugin's code into Auris Studio",
+        ja: "ファイルを開くとプラグインのコードがAuris Studioに読み込まれます"
+    }
+    BrowserPluginUnreadable {
+        en: "could not be read",
+        ja: "読み込めませんでした"
+    }
+    BrowserPluginNotYetHosted {
+        en: "instrument — not supported yet",
+        ja: "音源 — まだ対応していません"
+    }
     BrowserFontFileMissing {
         en: "file not found",
         ja: "ファイルが見つかりません"

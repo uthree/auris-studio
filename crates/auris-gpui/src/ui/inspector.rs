@@ -1,4 +1,4 @@
-﻿//! The right-hand inspector: the selected track's instrument and its effect chain.
+//! The right-hand inspector: the selected track's instrument and its effect chain.
 //!
 //! The list of everything that *could* go on it is the library, on the other side of the
 //! arrangement â€” see [`crate::ui::library`]. The two panels share [`panel_header`], because they
@@ -508,6 +508,14 @@ impl AurisApp {
     /// say which one it is.
     pub(crate) fn add_effect_to(&mut self, track: Option<TrackId>, effect_id: &str) {
         if let Err(error) = self.session.add_effect(track, effect_id) {
+            self.set_failed_status(self.failure(Key::MenuAddEffect, &error));
+        }
+    }
+
+    /// Adds a plugin hosted from a file to the selected strip.
+    pub(crate) fn add_hosted_effect_to_selection(&mut self, file: &std::path::Path, clap_id: &str) {
+        let track = self.selected_track;
+        if let Err(error) = self.session.add_hosted_effect(track, file, clap_id) {
             self.set_failed_status(self.failure(Key::MenuAddEffect, &error));
         }
     }

@@ -754,6 +754,18 @@ pub struct AurisApp {
     pub(crate) plugin_window: Option<crate::ui::plugin_window::PluginWindow>,
     /// Which branches of the library are open.
     pub(crate) library: crate::ui::library::LibraryTree,
+    /// The `.clap` files found on this machine, scanned once and kept.
+    ///
+    /// `None` until the plugins section is first drawn: walking three directory trees is not a
+    /// thing to do on every frame, and not a thing to do at all for somebody who never opens it.
+    pub(crate) clap_files: Option<Vec<std::path::PathBuf>>,
+    /// What each opened `.clap` file turned out to hold.
+    ///
+    /// Filled the first time a file's branch is opened, which is also the first time its binary
+    /// is loaded. Kept afterwards so that shutting and reopening the branch is free — the file
+    /// stays open in the session either way.
+    pub(crate) clap_contents:
+        std::collections::HashMap<std::path::PathBuf, Vec<auris_session::ClapPluginInfo>>,
     /// The title the operating system was last told, so it is only told again on a change.
     pub(crate) titled: String,
     /// Whether the export destination dialog is open.
@@ -894,6 +906,8 @@ impl AurisApp {
             palette: None,
             plugin_window: None,
             library: crate::ui::library::LibraryTree::default(),
+            clap_files: None,
+            clap_contents: std::collections::HashMap::new(),
             titled: String::new(),
             choosing_export: false,
             status_failed: false,

@@ -66,6 +66,12 @@ pub use session::{
 };
 pub use settings::{AudioPreferences, CONFIG_DIR_VAR, Settings, config_dir, migrate_legacy_config};
 
+/// What a `.clap` file says is inside it, for a frontend listing one.
+///
+/// Re-exported so a frontend can name the type without depending on [`auris_clap`], which it may
+/// not do — a frontend depends on this crate and its own toolkit and nothing else.
+pub use auris_clap::ClapPluginInfo;
+
 /// File extension of a saved project.
 pub use auris_io::PROJECT_EXTENSION;
 

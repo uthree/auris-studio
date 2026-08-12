@@ -58,16 +58,28 @@ pub(crate) enum Branch {
     Effects,
     /// One category of effect.
     EffectCategory(PluginCategory),
+    /// The installed CLAP plugins section.
+    Plugins,
+    /// One `.clap` file, by its position in the scanned list.
+    PluginFile(usize),
 }
 
 impl Branch {
     /// Whether this branch is open before anybody has said otherwise.
     ///
-    /// Everything except a font and its banks. The built-in plugins all fit on screen at once,
-    /// and a browser that hides them is one you have to operate before you can look at it; a
-    /// font's sounds run to three figures and are worth asking for.
+    /// Everything except a font, its banks, and an installed plugin file. The built-in plugins
+    /// all fit on screen at once, and a browser that hides them is one you have to operate before
+    /// you can look at it; a font's sounds run to three figures and are worth asking for.
+    ///
+    /// A `.clap` file is shut for a stronger reason than size. Opening one means *loading* it,
+    /// and loading a plugin means running somebody else's code in this process. That has to be
+    /// something a person did, not something a panel did on their behalf while they were looking
+    /// for a reverb.
     fn opens_by_default(self) -> bool {
-        !matches!(self, Branch::Font(_) | Branch::Bank(..))
+        !matches!(
+            self,
+            Branch::Font(_) | Branch::Bank(..) | Branch::PluginFile(_)
+        )
     }
 }
 
@@ -298,7 +310,134 @@ impl AurisApp {
         rows.extend(self.soundfont_rows(cx));
         rows.push(divider(&theme).into_any_element());
         rows.extend(self.effect_rows(cx));
+        rows.push(divider(&theme).into_any_element());
+        rows.extend(self.installed_plugin_rows(cx));
         rows
+    }
+
+    /// The installed CLAP plugins section: the files found on this machine, and what is in one
+    /// once somebody opens it.
+    ///
+    /// Two levels rather than the categories the built-ins get, because the grouping that matters
+    /// here is the *file*: it is what the document stores, what has to still be installed for the
+    /// project to open, and the only thing known about a plugin before it is loaded.
+    fn installed_plugin_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
+        let files = self.clap_files().to_vec();
+
+        let mut rows = vec![self.section_row(
+            Branch::Plugins,
+            Key::BrowserPlugins,
+            Icon::Knob,
+            files.len(),
+            cx,
+        )];
+        if !self.library.is_open(Branch::Plugins) {
+            return rows;
+        }
+        if files.is_empty() {
+            rows.push(self.note_row(1, self.t(Key::BrowserNoPlugins)));
+            return rows;
+        }
+        rows.push(self.note_row(1, self.t(Key::BrowserPluginsHint)));
+
+        for (index, file) in files.iter().enumerate() {
+            let branch = Branch::PluginFile(index);
+            let open = self.library.is_open(branch);
+            let name = file
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_else(|| file.to_string_lossy().into_owned());
+
+            let listed = match open {
+                true => self.clap_plugins_in(file),
+                false => Vec::new(),
+            };
+            let theme = self.theme.clone();
+            rows.push(
+                self.branch_row(
+                    ("lib-clap-file", 1_000 + index),
+                    1,
+                    open,
+                    true,
+                    None,
+                    name,
+                    match open {
+                        true => listed.len().to_string(),
+                        false => String::new(),
+                    },
+                    self.row_style(theme.text, Some(category_hue(PluginCategory::Other))),
+                    cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                        this.library.set_open(branch, !open);
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+            );
+            if !open {
+                continue;
+            }
+            if listed.is_empty() {
+                rows.push(self.note_row(2, self.t(Key::BrowserPluginUnreadable)));
+                continue;
+            }
+
+            for info in listed {
+                let file = file.clone();
+                let clap_id = info.clap_id.clone();
+                let hosted = info.kind == PluginKind::Effect;
+                rows.push(self.plugin_row(
+                    &LibraryPlugin {
+                        id: info.auris_id(),
+                        name: info.name.clone(),
+                        // The vendor rather than a description: a hosted plugin's description is
+                        // usually empty, and whose plugin it is answers the question a list of
+                        // unfamiliar names actually raises.
+                        description: match hosted {
+                            true => info.vendor.clone(),
+                            // The one thing a user must know before clicking, said on the row
+                            // rather than in a dialog after it does nothing.
+                            false => self.t(Key::BrowserPluginNotYetHosted).to_string(),
+                        },
+                    },
+                    Icon::Knob,
+                    info.category,
+                    cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                        if hosted {
+                            this.add_hosted_effect_to_selection(&file, &clap_id);
+                        }
+                        cx.notify();
+                    }),
+                ));
+            }
+        }
+        rows
+    }
+
+    /// The `.clap` files installed on this machine, scanned once.
+    fn clap_files(&mut self) -> &[std::path::PathBuf] {
+        self.clap_files
+            .get_or_insert_with(|| self.session.installed_clap_files())
+    }
+
+    /// What one `.clap` file holds, loading it the first time and remembering after that.
+    ///
+    /// An empty answer is cached too. A file that cannot be read is a file that will not become
+    /// readable while the window is open, and retrying it on every frame would mean trying to
+    /// load a broken binary sixty times a second.
+    fn clap_plugins_in(&mut self, file: &std::path::Path) -> Vec<auris_session::ClapPluginInfo> {
+        if let Some(known) = self.clap_contents.get(file) {
+            return known.clone();
+        }
+        let listed = self
+            .session
+            .hosted_plugins_in(file)
+            .unwrap_or_else(|error| {
+                log::warn!("cannot read `{}`: {error}", file.display());
+                Vec::new()
+            });
+        self.clap_contents
+            .insert(file.to_path_buf(), listed.clone());
+        listed
     }
 
     /// The instruments section: every registered instrument, under its category.
@@ -821,6 +960,8 @@ fn branch_key(branch: Branch) -> usize {
         // Fonts and banks have ids of their own and are keyed by those instead; this is only
         // reached if one is ever passed here, and a constant is better than a collision.
         Branch::Font(_) | Branch::Bank(..) => 3 + 2 * PluginCategory::ALL.len(),
+        Branch::Plugins => 4 + 2 * PluginCategory::ALL.len(),
+        Branch::PluginFile(index) => 5 + 2 * PluginCategory::ALL.len() + index,
     }
 }
 
