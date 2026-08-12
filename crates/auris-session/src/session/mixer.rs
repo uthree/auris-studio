@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use auris_core::automation::{Automation, AutomationCurve};
-use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
+use auris_core::param::{ParamDescriptor, ParamUnit};
 use auris_core::plugin::PluginState;
 use auris_core::time::Ticks;
 use auris_core::{EffectSlotId, TrackId};
@@ -280,7 +280,7 @@ impl Session {
                 let Ok(index) = self.require_track(track) else {
                     return;
                 };
-                let Some(key) = self.param_key(target, param) else {
+                let Some(key) = self.param_key(target) else {
                     return;
                 };
                 if self.project.tracks[index].kind.as_instrument().is_none() {
@@ -297,7 +297,7 @@ impl Session {
                 });
             }
             ParamTarget::Effect { track, slot, param } => {
-                let Some(key) = self.param_key(target, param) else {
+                let Some(key) = self.param_key(target) else {
                     return;
                 };
                 let track_index = match track {
@@ -487,10 +487,15 @@ impl Session {
         }
     }
 
-    fn param_key(&mut self, target: ParamTarget, param: ParamId) -> Option<String> {
-        let plugin_id = self.plugin_id_for(target)?;
-        self.param_descriptors(&plugin_id)
-            .get(param.index())
+    /// The key a target's parameter is stored under in the document.
+    ///
+    /// Through [`Self::descriptor_for`], which is the one place that knows a hosted plugin can
+    /// only be asked by slot. It used to go to the registry itself, and the registry answering
+    /// "no such plugin" for a CLAP effect meant there was no key to write under — so every drag
+    /// on one of its sliders was computed, clamped and then thrown away, which looks exactly like
+    /// a control that does not work.
+    fn param_key(&mut self, target: ParamTarget) -> Option<String> {
+        self.descriptor_for(target)
             .map(|descriptor| descriptor.key.to_string())
     }
 }
@@ -514,6 +519,7 @@ fn curve_for(descriptor: &ParamDescriptor) -> AutomationCurve {
 mod tests {
     use super::*;
     use crate::session::fixtures::{Scratch, session, undo_depth};
+    use auris_core::param::ParamId;
 
     #[test]
     fn parameters_round_trip_through_the_document() {

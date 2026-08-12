@@ -676,6 +676,36 @@ mod tests {
     }
 
     #[test]
+    fn a_hosted_parameter_can_actually_be_moved() {
+        // Describing one and being able to *write* one were two different lookups, and only the
+        // first knew about hosted plugins. The second went to the registry for the key to store
+        // the value under, got nothing, and returned — so the window drew thirteen sliders that
+        // could not be dragged.
+        let (mut session, file) = session_with_fixture();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let slot = session
+            .add_hosted_effect(Some(track), &file, FIXTURE_ID)
+            .unwrap();
+        let target = crate::param::ParamTarget::Effect {
+            track: Some(track),
+            slot,
+            param: ParamId(0),
+        };
+        let descriptor = session.descriptor_for(target).unwrap();
+
+        session.set_param(target, 0.25);
+        assert_eq!(session.param_value(target, &descriptor), 0.25);
+        assert_eq!(
+            session.project.track(track).unwrap().mixer.effects[0]
+                .state
+                .params
+                .get("clap.4242"),
+            Some(&0.25),
+            "the value has to land under the plugin's own key, or a save loses it"
+        );
+    }
+
+    #[test]
     fn a_plugin_the_file_does_not_hold_costs_no_undo_step() {
         let (mut session, file) = session_with_fixture();
         let track = session.add_default_instrument_track("Lead").unwrap();
