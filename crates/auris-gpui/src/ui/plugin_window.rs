@@ -13,6 +13,10 @@
 //! the rename sheet already follow.
 
 use auris_i18n::Key;
+// Named apart from this module's own `PluginWindow`, which is the panel drawn inside the
+// application; this one is the window the plugin draws for itself.
+use auris_session::HasWindowHandle;
+use auris_session::PluginWindow as HostedWindow;
 use auris_session::prelude::*;
 use gpui::{AnyElement, Pixels, Point, Size, div, point, prelude::*, px, size};
 
@@ -42,6 +46,17 @@ impl PluginSubject {
         match self {
             PluginSubject::Instrument(track) => ParamTarget::Instrument { track, param },
             PluginSubject::Insert { track, slot } => ParamTarget::Effect { track, slot, param },
+        }
+    }
+
+    /// The hosted plugin whose *own* window this subject stands for.
+    ///
+    /// The panel this module draws and the window a CLAP plugin opens are two different windows
+    /// onto the same plugin, and this is the one line where the two namings meet.
+    pub fn hosted_window(self) -> HostedWindow {
+        match self {
+            PluginSubject::Instrument(track) => HostedWindow::Instrument(track),
+            PluginSubject::Insert { slot, .. } => HostedWindow::Effect(slot),
         }
     }
 
@@ -208,6 +223,29 @@ impl AurisApp {
     /// instead of four: an insert removed from a menu, a track deleted, an undo past the point
     /// the effect was added, a project opened — every one of them leaves the window pointing at
     /// nothing, and the next frame quietly closes it.
+    /// Opens the plugin's own window, or takes it away if it is already up.
+    ///
+    /// The application's window is named to the session on the way past. This is the one moment a
+    /// `&Window` is in scope and the session needs it again later, from a tick where nothing is —
+    /// a plugin window that has to move to the other instance of its pair has to be told all over
+    /// again what to float above.
+    pub(crate) fn toggle_hosted_window(&mut self, subject: PluginSubject, window: &gpui::Window) {
+        // Through the trait, not the inherent method of the same name: gpui's own
+        // `window_handle` answers with its handle to *this view*, which is not a thing any other
+        // process has heard of.
+        let parent = HasWindowHandle::window_handle(window)
+            .ok()
+            .map(|handle| handle.as_raw());
+        self.session.set_plugin_window_parent(parent);
+
+        let which = subject.hosted_window();
+        let open = !self.session.plugin_window_is_open(which);
+        if let Err(error) = self.session.set_plugin_window_open(which, open) {
+            let line = self.failure(Key::CmdOpenPluginWindow, &error);
+            self.set_failed_status(line);
+        }
+    }
+
     pub(crate) fn render_plugin_window(
         &mut self,
         viewport: Size<Pixels>,
@@ -248,6 +286,9 @@ impl AurisApp {
                 self.session.instrument_descriptors(track),
             ),
         };
+        // Asked every frame rather than remembered: it is a question about a plugin instance, and
+        // a graph rebuild can put a different one behind the same slot between frames.
+        let own_window = self.session.plugin_window_exists(subject.hosted_window());
         let has_curve = analyser.is_some();
         // Everything above the scrolling list, none of which scrolls, so all of it is room the
         // window needs on top of whatever the controls come to.
@@ -338,6 +379,20 @@ impl AurisApp {
                                 cx.notify();
                             }),
                         )))
+                        // Only for a plugin that has one. A button that did nothing on every
+                        // built-in in the application would be a button nobody pressed on the one
+                        // plugin where it works.
+                        .children(own_window.then(|| {
+                            chain_button(
+                                "pw-own",
+                                Icon::Window,
+                                &theme,
+                                cx.listener(move |this, _, window: &mut gpui::Window, cx| {
+                                    this.toggle_hosted_window(subject, window);
+                                    cx.notify();
+                                }),
+                            )
+                        }))
                         .child(chain_button(
                             "pw-close",
                             Icon::Cross,
@@ -429,6 +484,34 @@ mod tests {
                 slot: EffectSlotId(3),
                 param: ParamId(4)
             }
+        );
+    }
+
+    #[test]
+    fn a_subject_names_the_window_the_plugin_would_draw_for_itself() {
+        // An insert is addressed by its slot and an instrument by its track, and the two ids are
+        // both bare integers — so a mapping that crossed them would open track 3's synth from
+        // slot 3's compressor, and nothing about the types would object.
+        assert_eq!(
+            PluginSubject::Instrument(TrackId(3)).hosted_window(),
+            HostedWindow::Instrument(TrackId(3))
+        );
+        assert_eq!(
+            PluginSubject::Insert {
+                track: Some(TrackId(1)),
+                slot: EffectSlotId(3)
+            }
+            .hosted_window(),
+            HostedWindow::Effect(EffectSlotId(3)),
+            "an insert is its slot wherever the slot sits"
+        );
+        assert_eq!(
+            PluginSubject::Insert {
+                track: None,
+                slot: EffectSlotId(3)
+            }
+            .hosted_window(),
+            HostedWindow::Effect(EffectSlotId(3))
         );
     }
 
