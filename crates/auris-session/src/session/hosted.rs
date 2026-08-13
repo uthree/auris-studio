@@ -1088,11 +1088,11 @@ mod tests {
         assert_eq!(inner.clips.len(), 1, "the part is not the instrument");
 
         // Non-empty is proof the plugin was really built and placed.
-        assert_eq!(session.hosted_instrument_parameters(track).len(), 3);
+        assert_eq!(session.hosted_instrument_parameters(track).len(), 4);
         assert_eq!(session.hosted_instrument_name(track), Some("Test Tone"));
         assert_eq!(
             session.instrument_descriptors(track).len(),
-            3,
+            4,
             "and the plugin editor finds them by asking about the track"
         );
 

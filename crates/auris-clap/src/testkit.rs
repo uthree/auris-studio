@@ -94,9 +94,12 @@ pub mod gui_step {
     pub const HIDDEN: u32 = 16;
     /// `destroy` was called.
     pub const DESTROYED: u32 = 32;
-    /// `create` was called asking to be embedded in a window of the host's, which this fixture
-    /// says it cannot do. A host that asks anyway is a host that ignored the answer.
+    /// `create` was called asking to be embedded in a window of the host's, which the *gain*
+    /// fixture says it cannot do. A host that asks anyway is a host that ignored the answer.
     pub const ASKED_TO_EMBED: u32 = 64;
+    /// `set_parent` was called with a window to draw inside — the whole of what an embedded
+    /// plugin needs and the whole of what Auris could not give one until it had a window to lend.
+    pub const PARENTED: u32 = 128;
 }
 
 /// How many input ports the fixture declares: a main one and a sidechain.
@@ -496,6 +499,12 @@ pub const LEVEL_ID: u32 = 7001;
 pub const BEND_ID: u32 = 7002;
 /// The read-only parameter reporting the last modulation amount the fixture was sent.
 pub const WHEEL_ID: u32 = 7003;
+/// The read-only parameter reporting what the host has done to [`Tone`]'s window.
+///
+/// The other half of what [`GUI_ID`] covers. The gain fixture will only float and this one will
+/// only embed, which between them are the two arrangements CLAP has and the two a host must
+/// implement — and the second is the one nearly every real plugin uses.
+pub const TONE_GUI_ID: u32 = 7004;
 
 /// A library holding nothing but the instrument fixture.
 ///
@@ -523,6 +532,8 @@ pub struct ToneShared {
     level: AtomicU32,
     bend: AtomicU32,
     wheel: AtomicU32,
+    /// Which of the [`gui_step`] calls the host has made.
+    gui: AtomicU32,
 }
 
 impl PluginShared<'_> for ToneShared {}
@@ -548,9 +559,83 @@ impl Plugin for Tone {
     fn declare_extensions(builder: &mut PluginExtensions<Self>, _shared: Option<&ToneShared>) {
         builder
             .register::<PluginAudioPorts>()
+            .register::<PluginGui>()
             .register::<PluginNotePorts>()
             .register::<PluginParams>()
             .register::<PluginState>();
+    }
+}
+
+/// A window this fixture will only draw *inside*, which is the shape Surge XT has and every other
+/// plugin built on JUCE.
+///
+/// Nothing is drawn and no window is made — the host's window is, and that is the half under test.
+impl PluginGuiImpl for ToneMainThread<'_> {
+    fn is_api_supported(&mut self, configuration: GuiConfiguration) -> bool {
+        !configuration.is_floating
+            && Some(configuration.api_type) == GuiApiType::default_for_current_platform()
+    }
+
+    fn get_preferred_api(&mut self) -> Option<GuiConfiguration<'_>> {
+        Some(GuiConfiguration {
+            api_type: GuiApiType::default_for_current_platform()?,
+            is_floating: false,
+        })
+    }
+
+    fn create(&mut self, configuration: GuiConfiguration) -> Result<(), PluginError> {
+        match configuration.is_floating {
+            false => {
+                self.gui_did(gui_step::CREATED);
+                Ok(())
+            }
+            true => Err(PluginError::Message("this fixture cannot float")),
+        }
+    }
+
+    fn destroy(&mut self) {
+        self.gui_did(gui_step::DESTROYED);
+    }
+
+    fn set_scale(&mut self, _scale: f64) -> Result<(), PluginError> {
+        Ok(())
+    }
+
+    fn get_size(&mut self) -> Option<GuiSize> {
+        Some(GuiSize {
+            width: 640,
+            height: 480,
+        })
+    }
+
+    fn set_size(&mut self, _size: GuiSize) -> Result<(), PluginError> {
+        Ok(())
+    }
+
+    fn set_parent(&mut self, _window: Window) -> Result<(), PluginError> {
+        self.gui_did(gui_step::PARENTED);
+        Ok(())
+    }
+
+    fn set_transient(&mut self, _window: Window) -> Result<(), PluginError> {
+        Err(PluginError::Message("this fixture cannot float"))
+    }
+
+    fn show(&mut self) -> Result<(), PluginError> {
+        self.gui_did(gui_step::SHOWN);
+        Ok(())
+    }
+
+    fn hide(&mut self) -> Result<(), PluginError> {
+        self.gui_did(gui_step::HIDDEN);
+        Ok(())
+    }
+}
+
+impl ToneMainThread<'_> {
+    /// Records one of the [`gui_step`] calls.
+    fn gui_did(&self, step: u32) {
+        self.shared.gui.fetch_or(step, Ordering::Relaxed);
     }
 }
 
@@ -719,7 +804,7 @@ impl PluginNotePortsImpl for ToneMainThread<'_> {
 
 impl PluginMainThreadParams for ToneMainThread<'_> {
     fn count(&mut self) -> u32 {
-        3
+        4
     }
 
     fn get_info(&mut self, param_index: u32, info: &mut ParamInfoWriter) {
@@ -751,6 +836,15 @@ impl PluginMainThreadParams for ToneMainThread<'_> {
                 default_value: 0.0,
                 ..common
             }),
+            3 => info.set(&ParamInfo {
+                id: ClapId::new(TONE_GUI_ID),
+                flags: ParamInfoFlags::IS_READONLY,
+                name: b"Window Calls",
+                min_value: 0.0,
+                max_value: f64::from(u16::MAX),
+                default_value: 0.0,
+                ..common
+            }),
             _ => {}
         }
     }
@@ -761,6 +855,7 @@ impl PluginMainThreadParams for ToneMainThread<'_> {
             LEVEL_ID => Some(read(&self.shared.level)),
             BEND_ID => Some(read(&self.shared.bend)),
             WHEEL_ID => Some(read(&self.shared.wheel)),
+            TONE_GUI_ID => Some(self.shared.gui.load(Ordering::Relaxed) as f64),
             _ => None,
         }
     }

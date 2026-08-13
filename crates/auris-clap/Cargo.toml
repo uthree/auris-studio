@@ -34,6 +34,28 @@ log = { workspace = true }
 raw-window-handle = { workspace = true }
 thiserror = { workspace = true }
 
+# The window a plugin is embedded in. Only reachable through the platform's own API, so this is
+# one of the few places `#[cfg]` is right rather than `cfg!` — there is no other arm to compile.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { workspace = true }
+objc2-app-kit = { workspace = true, features = [
+    "NSApplication",
+    "NSGraphics",
+    "NSResponder",
+    "NSView",
+    "NSWindow",
+] }
+objc2-foundation = { workspace = true, features = ["NSGeometry", "NSString"] }
+
 [dev-dependencies]
 # The same fixture this crate's own tests need, without turning the feature on for everybody.
 clack-host = { workspace = true, features = ["clack-plugin"] }

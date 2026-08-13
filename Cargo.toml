@@ -46,6 +46,12 @@ env_logger = "0.11"
 # Standard MIDI Files, read and written. `parallel` is off: it pulls in rayon to decode tracks
 # on a thread pool, and a MIDI file is kilobytes — the pool costs more to start than the parse.
 midly = { version = "0.5", default-features = false, features = ["std", "alloc"] }
+# A plugin that will only draw inside a window of the host's needs the host to have made one, and
+# neither platform's window API is reachable from anything portable. Both versions are the ones
+# gpui already resolved, so hosting a plugin adds no second copy of either.
+objc2 = "0.6"
+objc2-app-kit = "0.3"
+objc2-foundation = "0.3"
 pollster = "1.0"
 # The platform's own window handle and nothing else. A hosted plugin's floating window has to be
 # told which window to stay above, and this is the one vocabulary gpui and CLAP already share — so
@@ -69,6 +75,8 @@ toml = "1"
 # 0.61 while `wgpu-hal` itself uses 0.62 — two incompatible copies of `ID3D12Device`. Windows
 # runs on Vulkan until that is fixed upstream, and `auris-gpu` is optional analysis that already
 # steps aside when no backend is present, so nothing breaks if a machine has neither.
+windows = "0.61"
+
 wgpu = { version = "30.0", default-features = false, features = [
     "std",
     "parking_lot",

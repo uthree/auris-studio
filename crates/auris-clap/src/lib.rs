@@ -32,8 +32,9 @@
 //!   session, not built by the registry.
 //! * **No sidechain.** Every audio port a plugin declares is handed to it, but only the main one
 //!   carries anything; nothing in Auris can route a second track into a plugin yet.
-//! * **No *embedded* window.** A plugin's own interface opens in a window of its own, floating
-//!   above the application, and never inside a panel of it. [`gui`] gives the account.
+//! * **No plugin interface inside a panel.** A plugin's own interface opens in a window of its
+//!   own, above the application, whether the plugin made that window or this crate lent it one.
+//!   [`gui`] gives the account, and `auris_clap::window` the platform half of it.
 //!
 //! # Safety
 //!
@@ -56,6 +57,7 @@ pub mod notes;
 mod plugin;
 mod ports;
 pub mod timers;
+pub(crate) mod window;
 
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;
@@ -65,7 +67,7 @@ mod tests;
 
 pub use effect::ClapEffect;
 pub use error::ClapError;
-pub use gui::{window_plan, window_title};
+pub use gui::{plan_for, window_title};
 pub use instrument::ClapInstrument;
 pub use library::{ClapLibrary, ClapPluginInfo, classify};
 pub use notes::{NoteLanguage, language_for};

@@ -1,21 +1,28 @@
 //! A hosted plugin's own window.
 //!
-//! # Floating, never embedded
+//! # Floating first, embedded when it has to be
 //!
-//! CLAP offers a host two ways to show a plugin: hand it a window of the host's to draw inside,
-//! or let it make its own and float it above. Auris asks for the second, always.
+//! CLAP offers a host two ways to show a plugin: let it make its own window and float it above the
+//! application, or hand it a window of the host's to draw inside. A plugin says which of the two
+//! it can do, and it is allowed to say only one.
 //!
-//! The first is the nicer one and it is not available here. Embedding means owning a native child
-//! window — an `HWND` or an `NSView` — positioned inside the host's own, and gpui draws its entire
-//! interface on one surface with no notion of a child window to give away. A plugin panel that
-//! reserved a rectangle would be reserving a rectangle of a picture, and the plugin would draw
-//! over the whole application.
+//! Floating is the one to prefer, because everything about the window is then the plugin's problem
+//! rather than a second implementation of window management living here. It is also not what most
+//! plugins offer. Every plugin built on JUCE — which is most of them, including Surge XT — draws
+//! only into a window it is given:
 //!
-//! What is lost by floating is real and worth naming: the plugin's window is not part of the
-//! layout, cannot be docked, and does not scroll with anything. What is kept is that it works at
-//! all, on both platforms, without gpui growing a child-window API. [`set_transient`] is what
-//! makes it bearable — the window is told which window to stay above, so it does not sink behind
-//! the application the moment the application is clicked.
+//! ```text
+//! Surge XT Effects.clap  offers: ["embedded"]
+//! ```
+//!
+//! So the host has to be able to provide one, and `auris_clap::window` is the plain native window
+//! it provides. What it is *not* is a panel inside the application: gpui draws its whole
+//! interface onto one surface and has no child window to give away, so a panel reserving a
+//! rectangle would be reserving a rectangle of a picture.
+//!
+//! Either way the plugin ends up in a window of its own, floating above the application. The
+//! difference is only who made it — which is why [`set_transient`] and an owned native window are
+//! the same idea reached from two directions.
 //!
 //! [`set_transient`]: clack_extensions::gui::PluginGui::set_transient
 
@@ -23,16 +30,28 @@ use std::ffi::CString;
 
 use clack_extensions::gui::{GuiApiType, GuiConfiguration};
 
-/// How Auris will ask for every plugin window: this platform's own API, floating.
+/// How to ask for a window, given what the plugin says it can do.
 ///
-/// `None` on a platform CLAP has no window API for, which is every platform but the three the
-/// specification names. A plugin is then edited through the parameter panel, as it was before any
-/// of this existed.
-pub fn window_plan() -> Option<GuiConfiguration<'static>> {
-    Some(GuiConfiguration {
-        api_type: GuiApiType::default_for_current_platform()?,
-        is_floating: true,
-    })
+/// Floating wins wherever it is offered. A plugin that manages its own window has already solved
+/// the parts this host would otherwise have to — where it opens, what happens when the display
+/// changes, how it behaves full screen — and a host doing that work again is a host with two
+/// window implementations, one of which is exercised by a minority of plugins.
+///
+/// `None` means the plugin has no window this host can put up: it offers neither, or it drew the
+/// short straw of a platform CLAP names no windowing API for.
+pub fn plan_for(floating: bool, embedded: bool) -> Option<GuiConfiguration<'static>> {
+    let api_type = GuiApiType::default_for_current_platform()?;
+    match (floating, embedded) {
+        (true, _) => Some(GuiConfiguration {
+            api_type,
+            is_floating: true,
+        }),
+        (false, true) => Some(GuiConfiguration {
+            api_type,
+            is_floating: false,
+        }),
+        (false, false) => None,
+    }
 }
 
 /// What to call a plugin's window.
@@ -77,11 +96,19 @@ mod tests {
     }
 
     #[test]
-    fn every_window_this_host_asks_for_is_a_floating_one() {
-        // Not a tautology: it is the one thing about the plan that could be quietly changed by
-        // somebody reaching for embedding, and embedding is what the module doc explains gpui
-        // cannot give.
-        let plan = window_plan().expect("all three supported platforms have an API");
-        assert!(plan.is_floating);
+    fn a_plugin_gets_the_kind_of_window_it_can_actually_use() {
+        // The bug this fixes: the host asked for floating and nothing else, so Surge XT — which
+        // offers only embedding, like everything built on JUCE — reported no window at all and
+        // the button to open one never appeared.
+        assert!(
+            plan_for(true, true).expect("both").is_floating,
+            "floating wherever it is offered, so the plugin manages its own window"
+        );
+        assert!(plan_for(true, false).expect("floating only").is_floating);
+        assert!(
+            !plan_for(false, true).expect("embedded only").is_floating,
+            "and a window of ours when that is the only thing the plugin can draw in"
+        );
+        assert!(plan_for(false, false).is_none(), "no window to open");
     }
 }

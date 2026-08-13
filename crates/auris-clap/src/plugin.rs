@@ -7,7 +7,7 @@ use std::time::Instant;
 use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
 use auris_core::plugin::{PluginDescriptor, PrepareContext};
 use clack_extensions::audio_ports::PluginAudioPorts;
-use clack_extensions::gui::{PluginGui, Window};
+use clack_extensions::gui::{GuiApiType, GuiConfiguration, GuiError, PluginGui, Window};
 use clack_extensions::latency::PluginLatency;
 use clack_extensions::note_ports::{NotePortInfoBuffer, PluginNotePorts};
 use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
@@ -25,6 +25,7 @@ use crate::instrument::ClapInstrument;
 use crate::library::ClapPluginInfo;
 use crate::notes::{NoteLanguage, language_for};
 use crate::ports::PortLayout;
+use crate::window::{ContainerWindow, HostWindow};
 
 /// The plugin's parameters, in the order the plugin lists them.
 ///
@@ -71,6 +72,11 @@ pub struct ClapPlugin {
     /// is not asked, because CLAP gives no way to ask: `create` and `destroy` are a pair the host
     /// has to balance itself, and calling either twice is undefined.
     gui_open: bool,
+    /// The window lent to a plugin that will only draw inside one of the host's.
+    ///
+    /// `None` for a plugin that makes its own, which is the arrangement to prefer and the minority
+    /// of plugins. See [`crate::window`] for why the host has to be able to make one at all.
+    container: Option<HostWindow>,
 }
 
 impl ClapPlugin {
@@ -100,6 +106,7 @@ impl ClapPlugin {
             params,
             active: false,
             gui_open: false,
+            container: None,
         })
     }
 
@@ -134,8 +141,14 @@ impl ClapPlugin {
     }
 
     /// Requests the plugin has made since this was last called. Reading clears them.
+    ///
+    /// The window's close box is one of them, whichever window it was: a plugin that made its own
+    /// reports through the host, and one drawing in a lent window has no idea it was closed —
+    /// nobody told it, and nobody may until the host has taken its window apart in the right
+    /// order.
     pub fn take_requests(&self) -> PendingRequests {
-        self.instance
+        let mut requests = self
+            .instance
             .access_shared_handler(|shared| PendingRequests {
                 restart: HostFlags::take(&shared.flags.restart)
                     | HostFlags::take(&shared.flags.rescan_info),
@@ -143,7 +156,12 @@ impl ClapPlugin {
                 dirty: HostFlags::take(&shared.flags.dirty),
                 callback: HostFlags::take(&shared.flags.callback),
                 gui_closed: HostFlags::take(&shared.flags.gui_closed),
-            })
+            });
+        requests.gui_closed |= self
+            .container
+            .as_ref()
+            .is_some_and(ContainerWindow::was_closed);
+        requests
     }
 
     /// Runs the plugin's main-thread callback, which it asked for through
@@ -186,77 +204,181 @@ impl ClapPlugin {
         self.gui().is_some()
     }
 
+    /// How this plugin's window will be put up, or `None` if it has none.
+    fn plan(&mut self) -> Option<GuiConfiguration<'static>> {
+        let gui = self
+            .instance
+            .plugin_shared_handle()
+            .get_extension::<PluginGui>()?;
+        let api_type = GuiApiType::default_for_current_platform()?;
+        let offers = |floating: bool, plugin: &mut PluginInstance<AurisHost>| {
+            gui.is_api_supported(
+                &mut plugin.plugin_handle(),
+                GuiConfiguration {
+                    api_type,
+                    is_floating: floating,
+                },
+            )
+        };
+        crate::gui::plan_for(
+            offers(true, &mut self.instance),
+            // A plugin that will only embed is only offered a window where there is a window to
+            // lend it. Otherwise the answer is "it has one" and opening it fails, which is a
+            // button on screen that does nothing.
+            offers(false, &mut self.instance) && crate::window::CAN_LEND,
+        )
+    }
+
+    /// Which windowing this plugin says it can do on this platform: floating, embedded, and what
+    /// it would prefer.
+    ///
+    /// For working out why a plugin that plainly has a window reports none — which is a question
+    /// only ever asked of a real plugin, and so is answered by
+    /// `cargo run -p auris-clap --example inspect` rather than by anything in the application.
+    pub fn window_apis(&mut self) -> Vec<String> {
+        let Some(gui) = self
+            .instance
+            .plugin_shared_handle()
+            .get_extension::<PluginGui>()
+        else {
+            return vec!["no gui extension".to_string()];
+        };
+        let Some(api) = clack_extensions::gui::GuiApiType::default_for_current_platform() else {
+            return vec!["no windowing api on this platform".to_string()];
+        };
+
+        let mut found = Vec::new();
+        for floating in [true, false] {
+            let plan = clack_extensions::gui::GuiConfiguration {
+                api_type: api,
+                is_floating: floating,
+            };
+            if gui.is_api_supported(&mut self.instance.plugin_handle(), plan) {
+                found.push(match floating {
+                    true => "floating".to_string(),
+                    false => "embedded".to_string(),
+                });
+            }
+        }
+        if let Some(preferred) = gui.get_preferred_api(&mut self.instance.plugin_handle()) {
+            found.push(format!(
+                "prefers {:?}/{}",
+                preferred.api_type,
+                match preferred.is_floating {
+                    true => "floating",
+                    false => "embedded",
+                }
+            ));
+        }
+        found
+    }
+
     /// `true` while the plugin's window is up.
     pub fn gui_is_open(&self) -> bool {
         self.gui_open
     }
 
-    /// Opens the plugin's own window, floating above `parent`.
+    /// Opens the plugin's own window, above `parent`.
     ///
     /// Opening one that is already open does nothing, so a caller may treat this as "make sure it
     /// is showing" rather than having to track the state twice.
     ///
-    /// `parent` is what the window is told to stay above. Passing `None` is legal and gives a
-    /// window that behaves like any other top-level one — which on Windows means it sinks behind
-    /// the application the moment the application is clicked.
+    /// Which of CLAP's two arrangements is used is the plugin's to decide and not the caller's: a
+    /// plugin that makes its own window gets to, and one that will only draw inside somebody
+    /// else's is lent a plain window of this crate's making. Either way what appears is a window
+    /// above the application, and `parent` is what it stays above. Passing `None` is legal and
+    /// gives a window that behaves like any other top-level one — which on Windows means sinking
+    /// behind the application the moment the application is clicked.
     ///
     /// # Safety of the parent handle
     ///
-    /// This is not an `unsafe` function, but it does hand the plugin a window handle that the
-    /// plugin will keep until [`close_gui`](Self::close_gui). Destroying that window first leaves
-    /// the plugin holding a stale one. Nothing in Auris can reach that state: the window outlives
-    /// the session, and dropping the session closes every plugin window first.
+    /// This is not an `unsafe` function, but it does hand out a window handle that is kept until
+    /// [`close_gui`](Self::close_gui). Destroying that window first leaves a stale one behind.
+    /// Nothing in Auris can reach that state: the window outlives the session, and dropping the
+    /// session closes every plugin window first.
     pub fn open_gui(&mut self, parent: Option<RawWindowHandle>) -> Result<(), ClapError> {
         if self.gui_open {
             return Ok(());
         }
-        let Some(gui) = self.gui() else {
-            return Err(ClapError::NoGui {
-                id: self.info.clap_id.clone(),
-                reason: match self
+        let id = self.info.clap_id.clone();
+        let no_gui = |reason: &str| ClapError::NoGui {
+            id: id.clone(),
+            reason: reason.to_string(),
+        };
+        let failed = |error: GuiError| ClapError::Gui {
+            id: id.clone(),
+            reason: error.to_string(),
+        };
+
+        let Some(plan) = self.plan() else {
+            return Err(
+                match self
                     .instance
                     .plugin_shared_handle()
                     .get_extension::<PluginGui>()
                     .is_some()
                 {
-                    true => "it draws no window this platform can show".into(),
-                    false => "it implements no GUI at all".into(),
+                    true => no_gui("it draws no window this platform can show"),
+                    false => no_gui("it implements no GUI at all"),
                 },
-            });
+            );
         };
-        let Some(plan) = crate::gui::window_plan() else {
-            return Err(ClapError::NoGui {
-                id: self.info.clap_id.clone(),
-                reason: "this platform has no CLAP windowing API".into(),
-            });
-        };
+        // PANIC: a plan is only answered after the extension has been read to answer it.
+        let gui = self.gui().expect("a plan implies the extension");
 
+        // Twice, because the two arrangements want it in two forms: a plugin managing its own
+        // window is *suggested* a title through CLAP, which speaks C strings; a window this crate
+        // makes is titled by the platform, which does not.
+        let plain_title = crate::gui::window_title(&self.info.name);
         let title = crate::gui::suggested_title(&self.info.name);
         let mut handle = self.instance.plugin_handle();
-        gui.create(&mut handle, plan)
-            .map_err(|error| ClapError::Gui {
-                id: self.info.clap_id.clone(),
-                reason: error.to_string(),
-            })?;
+        gui.create(&mut handle, plan).map_err(failed)?;
         // Set the moment `create` succeeds and before anything that can fail after it: everything
         // below has to be undone by `destroy`, and a window nobody records is a window nobody
         // destroys.
         self.gui_open = true;
 
-        if let Some(parent) = parent.and_then(Window::from_window_handle) {
-            // SAFETY: the handle came from a live window — see this function's own note on what
-            // keeps it live for as long as the plugin holds it. A plugin that will not take a
-            // transient parent still gets a window, one that can fall behind the application.
-            if let Err(error) = unsafe { gui.set_transient(&mut handle, parent) } {
-                log::debug!("`{}` refused a parent window: {error}", self.info.clap_id);
+        if plan.is_floating {
+            if let Some(parent) = parent.and_then(Window::from_window_handle) {
+                // SAFETY: the handle came from a live window — see this function's own note on
+                // what keeps it live. A plugin that will not take a transient parent still gets a
+                // window, one that can fall behind the application.
+                if let Err(error) = unsafe { gui.set_transient(&mut handle, parent) } {
+                    log::debug!("`{id}` refused a parent window: {error}");
+                }
             }
+            gui.suggest_title(&mut handle, &title);
+            return gui.show(&mut handle).map_err(failed);
         }
-        gui.suggest_title(&mut handle, &title);
 
-        gui.show(&mut handle).map_err(|error| ClapError::Gui {
-            id: self.info.clap_id.clone(),
-            reason: error.to_string(),
-        })
+        // Embedded, so the window is this crate's to make. The order is CLAP's and every step of
+        // it depends on the one before: the window has to exist before its scale can be read,
+        // because the scale belongs to the display it landed on, and the scale has to be set
+        // before the size is asked for, or the plugin answers for a display it was never told
+        // about.
+        let container = HostWindow::open(&plain_title, crate::window::PROVISIONAL, parent)
+            .ok_or_else(|| no_gui("this platform would not lend the plugin a window"))?;
+        if container.scale() != 1.0 {
+            let _ = gui.set_scale(&mut handle, container.scale());
+        }
+        if let Some(size) = gui.get_size(&mut handle) {
+            container.resize(size);
+        }
+        let Some(window) = Window::from_window_handle(container.handle()) else {
+            return Err(no_gui(
+                "this platform's window is not one CLAP can be given",
+            ));
+        };
+
+        // SAFETY: the window was made four lines up and is owned by this value, which destroys the
+        // plugin's GUI before letting go of it.
+        unsafe { gui.set_parent(&mut handle, window) }.map_err(failed)?;
+        gui.show(&mut handle).map_err(failed)?;
+        // Last: an empty window that fills a moment later reads as a flicker, and this way the
+        // plugin has already drawn into it by the time anybody sees it.
+        container.show();
+        self.container = Some(container);
+        Ok(())
     }
 
     /// Closes the plugin's window and frees what it was drawn with.
@@ -288,6 +410,10 @@ impl ClapPlugin {
             let _ = gui.hide(&mut handle);
         }
         gui.destroy(&mut handle);
+        // Only now: the plugin's own window is a child of this one, and taking the ground away
+        // before `destroy` has been answered is the crash the container's close box goes out of
+        // its way not to cause either.
+        self.container = None;
     }
 
     /// Stands in for the plugin reporting that its window has gone.
@@ -307,13 +433,10 @@ impl ClapPlugin {
 
     /// The GUI extension, but only when it can give a window on this platform.
     fn gui(&mut self) -> Option<PluginGui> {
-        let gui = self
-            .instance
+        self.plan()?;
+        self.instance
             .plugin_shared_handle()
-            .get_extension::<PluginGui>()?;
-        let plan = crate::gui::window_plan()?;
-        gui.is_api_supported(&mut self.instance.plugin_handle(), plan)
-            .then_some(gui)
+            .get_extension::<PluginGui>()
     }
 
     /// Activates the plugin and hands out the half that renders.

@@ -111,6 +111,7 @@ fn report_window(plugin: &mut ClapPlugin) {
             false => "none this host can open".to_string(),
         }
     );
+    println!("      offers: {:?}", plugin.window_apis());
 }
 
 fn report_params(plugin: &mut ClapPlugin) {

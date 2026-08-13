@@ -147,6 +147,43 @@ fn opening_a_window_makes_the_four_calls_in_the_order_clap_asks_for() {
 }
 
 #[test]
+fn a_plugin_that_will_only_embed_is_lent_a_window_to_draw_in() {
+    // The case the whole `window` module exists for, and the one the first attempt at this got
+    // wrong: Auris asked every plugin for a floating window, so Surge XT — which offers only
+    // embedding, like everything built on JUCE — reported no window at all.
+    let mut plugin = instrument_library()
+        .instantiate(TONE_ID)
+        .expect("the instrument fixture");
+    assert!(
+        plugin.has_gui(),
+        "a plugin that will only embed still has a window, given one to embed in"
+    );
+
+    match plugin.open_gui(None) {
+        Ok(()) => {
+            let calls = plugin.value(ParamId(3)).expect("the window call report") as u32;
+            assert_eq!(calls & gui_step::CREATED, gui_step::CREATED);
+            assert_eq!(
+                calls & gui_step::PARENTED,
+                gui_step::PARENTED,
+                "a window it was never given is a window it cannot draw in"
+            );
+            assert_eq!(calls & gui_step::SHOWN, gui_step::SHOWN);
+
+            plugin.close_gui();
+            let calls = plugin.value(ParamId(3)).expect("the window call report") as u32;
+            assert_eq!(calls & gui_step::DESTROYED, gui_step::DESTROYED);
+        }
+        // A machine with no window server has nothing to lend, and says so rather than pretending.
+        // Worth allowing rather than skipping: on any machine that *has* one this is the real test.
+        Err(error) => assert!(
+            error.to_string().contains("would not lend"),
+            "the only acceptable failure is having no window to give: {error}"
+        ),
+    }
+}
+
+#[test]
 fn a_window_is_opened_and_closed_once_however_often_it_is_asked_for() {
     // `create` and `destroy` are a pair CLAP leaves the host to balance, and calling either twice
     // is undefined. So the caller is allowed to be sloppy and this is not.
