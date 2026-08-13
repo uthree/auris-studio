@@ -431,6 +431,17 @@ impl ClapPlugin {
             .access_shared_handler(|shared| shared.closed(destroyed));
     }
 
+    /// Stands in for the plugin reporting that it has changed something about itself.
+    ///
+    /// The real call arrives when somebody loads a preset in the plugin's own window or turns a
+    /// knob there, which a fixture has no window to do. As above, what is under test is everything
+    /// downstream of the flag, and the flag is set by the same function the callback calls.
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn pretend_the_state_changed(&mut self) {
+        use clack_extensions::state::HostStateImpl;
+        self.instance.access_handler_mut(|main| main.mark_dirty());
+    }
+
     /// The GUI extension, but only when it can give a window on this platform.
     fn gui(&mut self) -> Option<PluginGui> {
         self.plan()?;

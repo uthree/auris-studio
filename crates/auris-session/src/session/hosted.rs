@@ -43,7 +43,7 @@ use auris_clap::{
     ClapEffect, ClapError, ClapInstrument, ClapLibrary, ClapPlugin, ClapPluginInfo, RawWindowHandle,
 };
 use auris_core::asset::AssetPath;
-use auris_core::param::ParamDescriptor;
+use auris_core::param::{ParamDescriptor, ParamId};
 use auris_core::plugin::{Parameterized, PluginState, PrepareContext};
 use auris_core::project::{EffectSlotId, Project, TrackId};
 use auris_engine::{PlacedEffects, PlacedInstruments};
@@ -98,6 +98,14 @@ struct HostedSlot {
     /// A wish about the slot, held here rather than read off an instance, because the instance a
     /// window is drawn by can change under it and the wish must not.
     editor: bool,
+    /// What the plugin last said its parameters were, by [`ParamId`].
+    ///
+    /// Read from the plugin rather than from the document, because for a hosted plugin the
+    /// document knows only what Auris itself has written: a patch loaded inside the plugin, or a
+    /// knob turned in its own window, happens somewhere the session never sees. Cached rather than
+    /// asked at the moment of drawing because asking is `&mut` — the plugin may compute a value —
+    /// and drawing is not.
+    values: Vec<Option<f32>>,
 }
 
 impl HostedPlugins {
@@ -252,6 +260,22 @@ impl HostedPlugins {
         }
     }
 
+    /// Asks a hosted plugin what its parameters are now, for the panel about to draw them.
+    pub(super) fn refresh_values(&mut self, which: PluginWindow) {
+        if let Some(slot) = self.window_slot(which) {
+            slot.refresh_values();
+        }
+    }
+
+    /// What the plugin last said one of its parameters was.
+    pub(super) fn value(&self, which: PluginWindow, param: ParamId) -> Option<f32> {
+        let slot = match which {
+            PluginWindow::Effect(id) => self.slots.get(&id),
+            PluginWindow::Instrument(id) => self.instruments.get(&id),
+        };
+        *slot?.values.get(param.index())?
+    }
+
     /// Whether this plugin has a window of its own that could be opened.
     pub(super) fn has_window(&mut self, which: PluginWindow) -> bool {
         self.window_slot(which)
@@ -287,12 +311,15 @@ impl HostedPlugins {
 
     /// Runs every hosted plugin's clocks and keeps its window where the slot says.
     ///
-    /// Called from the session's tick.
-    pub(super) fn service(&mut self) {
+    /// Called from the session's tick. Returns whether any plugin reported that it had changed
+    /// something about itself, which the caller owes the document a dirty mark for.
+    pub(super) fn service(&mut self) -> bool {
+        let mut dirty = false;
         for slot in self.slots.values_mut().chain(self.instruments.values_mut()) {
-            slot.service();
+            dirty |= slot.service();
         }
         self.settle_editors();
+        dirty
     }
 
     /// Puts every window back on the instance that now answers for its slot.
@@ -342,25 +369,50 @@ impl HostedSlot {
         self.live.as_mut().or(self.spare.as_mut())
     }
 
+    /// Asks the plugin what its parameters are now.
+    ///
+    /// One pass over the whole list, which for Surge XT is seven hundred and seventy-five calls
+    /// into somebody else's binary — so this is called when a panel is *drawn*, and not on the
+    /// tick. A plugin nobody is looking at is a plugin whose values nobody can be misled by.
+    fn refresh_values(&mut self) {
+        let Some(plugin) = self.live.as_mut().or(self.spare.as_mut()) else {
+            return;
+        };
+        let count = plugin.parameters().len();
+        let mut values = Vec::with_capacity(count);
+        for index in 0..count {
+            values.push(plugin.value(ParamId(index as u32)));
+        }
+        self.values = values;
+    }
+
     /// Runs the plugin's clocks and puts its window where the slot says it should be.
     ///
     /// Both instances get their timers run, not only the one being asked questions: a timer is a
     /// promise the host made when the plugin registered it, and an instance rendering in the graph
     /// is as entitled to it as one holding a window.
-    fn service(&mut self) {
+    fn service(&mut self) -> bool {
         let mut closed = false;
+        let mut dirty = false;
         for plugin in [self.live.as_mut(), self.spare.as_mut()]
             .into_iter()
             .flatten()
         {
             plugin.tick_timers();
-            // Only the window is answered here. The rest of what a plugin can ask for — a
-            // restart, a parameter rescan — has no answer in the session yet, and this is where
-            // it will go when it does.
-            if plugin.take_requests().gui_closed {
+            let requests = plugin.take_requests();
+            if requests.gui_closed {
                 plugin.close_gui();
                 closed = true;
             }
+            // The plugin changed something about itself — a preset loaded in its own window, a
+            // knob turned there. Nothing in the document has moved, and that is exactly the
+            // problem: without this the title bar says saved, autosave writes nothing, and the
+            // afternoon's work is inside a plugin that is about to be dropped.
+            dirty |= requests.dirty;
+            // `rescan_values` is deliberately not acted on. The values are read afresh every time
+            // a panel is drawn — see `Session::effect_descriptors` — so being told they changed
+            // asks for something that has already happened. A `restart` has no answer here yet,
+            // and this is where it will go when it does.
         }
         // Somebody clicked the window's close box, which is the same thing as asking for it to be
         // shut. Reading it as anything else means the button that opens it does nothing next time
@@ -368,6 +420,7 @@ impl HostedSlot {
         if closed {
             self.editor = false;
         }
+        dirty
     }
 
     /// Gives the slot's one window to the instance the slot answers with, and to no other.
@@ -513,6 +566,7 @@ fn fit<'a, K: Ord + Copy>(
         // from under an open editor comes back with none — and the one that was open closed with
         // the instance it belonged to.
         editor: false,
+        values: Vec::new(),
     };
     let slot = slots.entry(key).or_insert_with(fresh);
     if slot.clap_id != clap_id || slot.file != file {
@@ -774,6 +828,11 @@ impl Session {
     /// registry cannot answer for a plugin it did not build, so the track is the thing to ask
     /// about.
     pub fn instrument_descriptors(&mut self, track: TrackId) -> Arc<Vec<ParamDescriptor>> {
+        // A panel asking what to draw is the moment somebody is about to look at these, and the
+        // only moment worth reading a hosted plugin's own values at — see
+        // [`Self::param_value`](Session::param_value) for why they cannot simply come from the
+        // document.
+        self.hosted.refresh_values(PluginWindow::Instrument(track));
         let hosted = self.hosted_instrument_parameters(track);
         if !hosted.is_empty() {
             return Arc::new(hosted.to_vec());
@@ -804,6 +863,7 @@ impl Session {
     /// and could not answer correctly anyway, since two slots may hold the same plugin from two
     /// different files. So the slot is the thing to ask about.
     pub fn effect_descriptors(&mut self, slot: EffectSlotId) -> Arc<Vec<ParamDescriptor>> {
+        self.hosted.refresh_values(PluginWindow::Effect(slot));
         let hosted = self.hosted_parameters(slot);
         if !hosted.is_empty() {
             return Arc::new(hosted.to_vec());
@@ -875,6 +935,7 @@ mod tests {
             live: None,
             spare: None,
             editor: false,
+            values: Vec::new(),
         }
     }
 
@@ -1387,6 +1448,98 @@ mod tests {
 
         drop(first);
         drop(second);
+    }
+
+    #[test]
+    fn a_hosted_parameter_reads_back_what_the_plugin_says_rather_than_a_default() {
+        // What the plugin's own window made visible: Surge XT showed Delay with a feedback of
+        // 50 %, and the panel beside it showed thirteen zeros. The panel only ever knew what Auris
+        // itself had written into the document, and Auris had written nothing — so every control
+        // fell back to a default the plugin had long since moved away from.
+        let (mut session, file) = session_with_fixture();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        // Placed on the project rather than through the command, so the patch below is in place
+        // before the plugin is built for the first time — which is how a saved project arrives.
+        let slot = session
+            .project
+            .add_hosted_effect(
+                Some(track),
+                "clap:studio.auris.test.gain",
+                AssetPath::external(&file),
+            )
+            .unwrap();
+        session.project.tracks[0].mixer.effects[0]
+            .state
+            .set_hosted_bytes(&0.25f32.to_le_bytes());
+        session.rebuild_graph();
+
+        let target = crate::param::ParamTarget::Effect {
+            track: Some(track),
+            slot,
+            param: ParamId(0),
+        };
+        // Drawing the panel is what reads the plugin, so this is the call a frontend makes first.
+        let descriptors = session.effect_descriptors(slot);
+        let descriptor = descriptors[0].clone();
+        assert_eq!(
+            descriptor.default, 1.0,
+            "or a default could be mistaken for an answer"
+        );
+        assert_eq!(
+            session.param_value(target, &descriptor),
+            0.25,
+            "the patch's value, which is in the plugin and nowhere else"
+        );
+
+        // And what the user set in Auris still beats it, which is the same order state is
+        // restored in — a drag that lost to the patch would spring back under the pointer.
+        session.set_param(target, 2.0);
+        assert_eq!(session.param_value(target, &descriptor), 2.0);
+    }
+
+    #[test]
+    fn a_preset_loaded_inside_a_plugin_puts_the_unsaved_mark_back() {
+        // A plugin's own window is a way of editing the project that the session never sees. The
+        // plugin says so by setting one flag, and until that flag was read the title bar said
+        // saved, autosave wrote nothing, and an afternoon inside Surge XT could be closed away.
+        let (mut session, file) = session_with_fixture();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let slot = session
+            .add_hosted_effect(Some(track), &file, FIXTURE_ID)
+            .unwrap();
+
+        session.dirty = false;
+        session
+            .hosted
+            .window_slot(PluginWindow::Effect(slot))
+            .and_then(|slot| slot.plugin_mut())
+            .expect("a built instance")
+            .pretend_the_state_changed();
+        assert!(!session.is_dirty(), "nothing has looked yet");
+
+        session.poll();
+        assert!(session.is_dirty());
+    }
+
+    #[test]
+    fn a_built_in_plugins_value_still_comes_from_the_document_alone() {
+        // The other half: nothing but the document can move a built-in's parameter, and a
+        // fallback that started answering for one would be answering from an empty cache.
+        let mut session = super::super::fixtures::session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let descriptors = session.instrument_descriptors(track);
+        let descriptor = descriptors
+            .first()
+            .expect("a built-in has parameters")
+            .clone();
+        let target = crate::param::ParamTarget::Instrument {
+            track,
+            param: descriptor.id,
+        };
+
+        assert_eq!(session.param_value(target, &descriptor), descriptor.default);
+        session.set_param(target, descriptor.max);
+        assert_eq!(session.param_value(target, &descriptor), descriptor.max);
     }
 
     #[test]

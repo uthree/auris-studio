@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use auris_core::automation::{Automation, AutomationCurve};
-use auris_core::param::{ParamDescriptor, ParamUnit};
+use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
 use auris_core::plugin::PluginState;
 use auris_core::time::Ticks;
 use auris_core::{EffectSlotId, TrackId};
@@ -27,6 +27,7 @@ use auris_engine::EngineCommand;
 use crate::error::SessionError;
 use crate::history::Edit;
 use crate::param::ParamTarget;
+use crate::session::PluginWindow;
 
 use super::Session;
 
@@ -197,12 +198,24 @@ impl Session {
     }
 
     /// Current value of a parameter, falling back to its default.
+    ///
+    /// For a plugin the application built, the document is the whole story: nothing else can move
+    /// a parameter. A hosted plugin is not like that — a preset loaded inside it, a knob turned in
+    /// its own window, or its own MIDI mapping all move parameters the session never hears about.
+    /// So the document is asked first and the plugin second, which is the same order
+    /// `auris_session::session::hosted` restores state in and for the same reason: what the user
+    /// automated must win over what the patch says, and what the patch says must beat a default
+    /// nobody chose.
+    ///
+    /// The second half only answers for a plugin whose panel is being drawn; see
+    /// [`Self::effect_descriptors`]. Everywhere else this reads exactly as it always did.
     pub fn param_value(&self, target: ParamTarget, descriptor: &ParamDescriptor) -> f32 {
-        let from_state = |state: &PluginState| {
+        let from_state = |state: &PluginState, window: PluginWindow, param: ParamId| {
             state
                 .params
                 .get(descriptor.key.as_ref())
                 .copied()
+                .or_else(|| self.hosted.value(window, param))
                 .unwrap_or(descriptor.default)
         };
         match target {
@@ -215,17 +228,23 @@ impl Session {
                 .track(track)
                 .and_then(|track| track.sends.iter().find(|existing| existing.id == send))
                 .map_or(descriptor.default, |send| send.level_db),
-            ParamTarget::Instrument { track, .. } => self
+            ParamTarget::Instrument { track, param } => self
                 .project
                 .track(track)
                 .and_then(|t| t.kind.as_instrument())
                 .map_or(descriptor.default, |inner| {
-                    from_state(&inner.instrument_state)
+                    from_state(
+                        &inner.instrument_state,
+                        PluginWindow::Instrument(track),
+                        param,
+                    )
                 }),
-            ParamTarget::Effect { track, slot, .. } => self
+            ParamTarget::Effect { track, slot, param } => self
                 .strip(track)
                 .and_then(|strip| strip.effects.iter().find(|s| s.id == slot))
-                .map_or(descriptor.default, |s| from_state(&s.state)),
+                .map_or(descriptor.default, |s| {
+                    from_state(&s.state, PluginWindow::Effect(slot), param)
+                }),
         }
     }
 

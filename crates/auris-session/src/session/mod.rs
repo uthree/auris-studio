@@ -527,9 +527,12 @@ impl Session {
             self.invalidate_graph();
         }
         // A hosted plugin keeps no clock of its own and its window does not repaint without one.
-        // This is also where a window the user closed is noticed: the plugin sets a flag and says
-        // nothing else about it.
-        self.hosted.service();
+        // This is also where a window the user closed is noticed, and where a plugin that changed
+        // itself — a preset loaded in its own window — puts the unsaved mark back on the title
+        // bar. All three are things the plugin says by setting a flag and nothing else.
+        if self.hosted.service() {
+            self.dirty = true;
+        }
     }
 
     /// The document.
