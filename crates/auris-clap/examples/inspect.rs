@@ -78,6 +78,7 @@ fn inspect(file: &Path) {
         };
 
         report_ports(&mut plugin);
+        report_window(&mut plugin);
         report_params(&mut plugin);
         report_state(&mut plugin);
         render(&mut plugin, info.kind);
@@ -94,6 +95,21 @@ fn report_ports(plugin: &mut ClapPlugin) {
     println!(
         "    ports: in {:?} (main {:?}), out {:?} (main {:?})",
         ports.inputs, ports.main_input, ports.outputs, ports.main_output
+    );
+}
+
+/// Whether the plugin has a window Auris could open, and what it would be called.
+///
+/// Not opened: this example has no window of its own for a plugin's to float above, and a window
+/// nobody can see is worse than none. What it answers is the question that decides whether the
+/// button appears at all.
+fn report_window(plugin: &mut ClapPlugin) {
+    println!(
+        "    window: {}",
+        match plugin.has_gui() {
+            true => format!("`{}`", auris_clap::window_title(&plugin.info().name)),
+            false => "none this host can open".to_string(),
+        }
     );
 }
 

@@ -8,6 +8,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use clack_extensions::gui::{GuiSize, HostGui, HostGuiImpl};
 use clack_extensions::params::{HostParams, HostParamsImplMainThread, HostParamsImplShared};
 use clack_extensions::params::{ParamClearFlags, ParamRescanFlags};
 use clack_extensions::state::{HostState, HostStateImpl};
@@ -38,6 +39,13 @@ pub struct HostFlags {
     pub rescan_info: AtomicBool,
     /// The plugin's own state changed, so the project is dirty.
     pub dirty: AtomicBool,
+    /// The plugin's window has gone: the user closed it, or the plugin lost its connection to it.
+    pub gui_closed: AtomicBool,
+    /// The window was not merely closed but *destroyed* by the plugin, and the host still owes it
+    /// a `destroy` call to acknowledge that. Kept apart from [`gui_closed`](Self::gui_closed)
+    /// because the difference decides whether the host may still call `hide` on the way out —
+    /// hiding a window that no longer exists is a call into freed memory.
+    pub gui_destroyed: AtomicBool,
 }
 
 impl HostFlags {
@@ -66,6 +74,43 @@ impl SharedHandler<'_> for AurisShared {
 
     fn request_callback(&self) {
         self.flags.callback.store(true, Ordering::Release);
+    }
+}
+
+impl HostGuiImpl for AurisShared {
+    fn resize_hints_changed(&self) {
+        // Only embedded windows are resized by the host, and none of these are.
+    }
+
+    fn request_resize(&self, _new_size: GuiSize) -> Result<(), HostError> {
+        // The window belongs to the plugin — it is floating, not a rectangle of ours — so this is
+        // the plugin asking the host to resize a window the host does not have. Refusing is the
+        // honest answer, and CLAP defines refusal as a legal one.
+        Err(HostError::Message(
+            "a floating plugin window is not the host's to resize",
+        ))
+    }
+
+    fn request_show(&self) -> Result<(), HostError> {
+        Err(HostError::Message(
+            "a floating plugin window is not the host's to show",
+        ))
+    }
+
+    fn request_hide(&self) -> Result<(), HostError> {
+        Err(HostError::Message(
+            "a floating plugin window is not the host's to hide",
+        ))
+    }
+
+    fn closed(&self, was_destroyed: bool) {
+        if was_destroyed {
+            self.flags.gui_destroyed.store(true, Ordering::Release);
+        }
+        // Second, so a reader that sees `gui_closed` is guaranteed to see the truth about
+        // `gui_destroyed` — the difference is what stops the host calling `hide` on a window that
+        // is already gone.
+        self.flags.gui_closed.store(true, Ordering::Release);
     }
 }
 
@@ -163,6 +208,7 @@ impl HostHandlers for AurisHost {
 
     fn declare_extensions(builder: &mut HostExtensions<Self>, _shared: &AurisShared) {
         builder
+            .register::<HostGui>()
             .register::<HostParams>()
             .register::<HostState>()
             .register::<HostTimer>();

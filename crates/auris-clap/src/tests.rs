@@ -7,10 +7,14 @@ use auris_core::plugin::{
     ProcessContext,
 };
 
+use raw_window_handle::{RawWindowHandle, Win32WindowHandle};
+
 use crate::library::ClapLibrary;
 use crate::notes::NoteLanguage;
 use crate::plugin::ClapPlugin;
-use crate::testkit::{FIXTURE_ID, INPUT_PORTS, TONE_ID, fixture_library, instrument_library};
+use crate::testkit::{
+    FIXTURE_ID, INPUT_PORTS, TONE_ID, fixture_library, gui_step, instrument_library,
+};
 
 fn library() -> ClapLibrary {
     fixture_library()
@@ -65,7 +69,7 @@ fn a_plugin_that_is_not_in_the_file_is_an_error_not_a_panic() {
 fn a_hosted_plugin_reports_its_parameters_by_the_plugins_own_id() {
     let plugin = hosted();
     let params = plugin.parameters();
-    assert_eq!(params.len(), 3);
+    assert_eq!(params.len(), 4);
     assert_eq!(params[0].id, ParamId(0), "the slice position");
     assert_eq!(params[0].key, "clap.4242", "the plugin's own id");
     assert_eq!(params[0].name, "Gain");
@@ -96,6 +100,104 @@ fn a_timer_the_plugin_registered_is_actually_run() {
 
     plugin.tick_timers();
     assert_eq!(ticks(&mut plugin), 1.0, "and not again until the next one");
+}
+
+/// Which of the fixture's [`gui_step`] calls have been made.
+fn window_calls(plugin: &mut ClapPlugin) -> u32 {
+    plugin.value(ParamId(3)).expect("the window call report") as u32
+}
+
+#[test]
+fn opening_a_window_makes_the_four_calls_in_the_order_clap_asks_for() {
+    // A window nobody titled, or one shown before it was told what to float above, is the kind of
+    // thing that looks right on one machine and wrong on the next. The fixture opens nothing and
+    // records everything, so the protocol can be checked where there is no window server.
+    let mut plugin = hosted();
+    assert!(plugin.has_gui());
+    assert!(!plugin.gui_is_open());
+
+    // A handle to nothing: the fixture never dereferences it, and what is under test is that the
+    // host offered one at all.
+    let parent = RawWindowHandle::Win32(Win32WindowHandle::new(
+        std::num::NonZeroIsize::new(1).unwrap(),
+    ));
+    plugin.open_gui(Some(parent)).expect("the fixture opens");
+    assert!(plugin.gui_is_open());
+
+    let calls = window_calls(&mut plugin);
+    assert_eq!(calls & gui_step::CREATED, gui_step::CREATED);
+    assert_eq!(calls & gui_step::TITLED, gui_step::TITLED);
+    assert_eq!(calls & gui_step::SHOWN, gui_step::SHOWN);
+    assert_eq!(
+        calls & gui_step::ASKED_TO_EMBED,
+        0,
+        "every window this host asks for is a floating one"
+    );
+    // Only where the handle is the platform's own: a Win32 handle on a Mac is not a window the
+    // plugin could be floated above, and clack refuses to make one.
+    if cfg!(target_os = "windows") {
+        assert_eq!(calls & gui_step::TRANSIENT, gui_step::TRANSIENT);
+    }
+
+    plugin.close_gui();
+    assert!(!plugin.gui_is_open());
+    let calls = window_calls(&mut plugin);
+    assert_eq!(calls & gui_step::HIDDEN, gui_step::HIDDEN);
+    assert_eq!(calls & gui_step::DESTROYED, gui_step::DESTROYED);
+}
+
+#[test]
+fn a_window_is_opened_and_closed_once_however_often_it_is_asked_for() {
+    // `create` and `destroy` are a pair CLAP leaves the host to balance, and calling either twice
+    // is undefined. So the caller is allowed to be sloppy and this is not.
+    let mut plugin = hosted();
+    plugin.open_gui(None).expect("open");
+    plugin
+        .open_gui(None)
+        .expect("opening again is not an error");
+    assert!(plugin.gui_is_open());
+
+    plugin.close_gui();
+    assert!(!plugin.gui_is_open());
+    // The fixture would record the same bits a second time, so what is checked is that the second
+    // close cannot reach the plugin at all — which is what the state flag is for.
+    plugin.close_gui();
+}
+
+#[test]
+fn a_window_the_plugin_closed_is_reported_and_not_hidden_on_the_way_out() {
+    // A plugin that destroyed its own window is owed a `destroy` to acknowledge it and nothing
+    // else. Hiding it first is a call through a pointer the plugin has already freed, and that is
+    // the crash this flag exists to avoid.
+    let mut plugin = hosted();
+    plugin.open_gui(None).expect("open");
+
+    plugin.pretend_the_window_closed(true);
+    let requests = plugin.take_requests();
+    assert!(requests.gui_closed);
+    assert!(
+        !plugin.take_requests().gui_closed,
+        "a request is answered once"
+    );
+
+    plugin.close_gui();
+    let calls = window_calls(&mut plugin);
+    assert_eq!(calls & gui_step::DESTROYED, gui_step::DESTROYED);
+    assert_eq!(
+        calls & gui_step::HIDDEN,
+        0,
+        "hiding a window the plugin has already destroyed is a use-after-free"
+    );
+}
+
+#[test]
+fn dropping_a_plugin_closes_the_window_it_left_open() {
+    // The plugin's window is an OS object registered against this process, and the code that would
+    // tidy it up lives inside the library about to be unmapped. Deleting a track whose editor is
+    // open takes exactly this path.
+    let mut plugin = hosted();
+    plugin.open_gui(None).expect("open");
+    drop(plugin);
 }
 
 #[test]

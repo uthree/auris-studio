@@ -19,13 +19,19 @@ clack-host = { workspace = true }
 clack-extensions = { workspace = true, features = [
     "clack-host",
     "audio-ports",
+    "gui",
     "latency",
     "note-ports",
     "params",
     "state",
     "timer",
+    # So a parent window can be named by the handle the platform already gave the frontend,
+    # rather than by a bare pointer this crate would have to be trusted to have tagged right.
+    "raw-window-handle_06",
 ] }
 clack-plugin = { workspace = true, optional = true }
+log = { workspace = true }
+raw-window-handle = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

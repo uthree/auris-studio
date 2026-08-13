@@ -7,6 +7,7 @@ use std::time::Instant;
 use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
 use auris_core::plugin::{PluginDescriptor, PrepareContext};
 use clack_extensions::audio_ports::PluginAudioPorts;
+use clack_extensions::gui::{PluginGui, Window};
 use clack_extensions::latency::PluginLatency;
 use clack_extensions::note_ports::{NotePortInfoBuffer, PluginNotePorts};
 use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
@@ -14,6 +15,7 @@ use clack_extensions::state::PluginState;
 use clack_extensions::timer::PluginTimer;
 use clack_host::prelude::*;
 use clack_host::utils::ClapId;
+use raw_window_handle::RawWindowHandle;
 
 use crate::bridge::Bridge;
 use crate::effect::ClapEffect;
@@ -48,6 +50,10 @@ pub struct PendingRequests {
     pub dirty: bool,
     /// The plugin asked for its main-thread callback.
     pub callback: bool,
+    /// The plugin's window is gone — the user closed it, or the plugin lost hold of it. The owner
+    /// must call [`ClapPlugin::close_gui`] to finish the job, and stop telling anybody the editor
+    /// is open.
+    pub gui_closed: bool,
 }
 
 /// An instantiated CLAP plugin, living on the thread that made it.
@@ -61,6 +67,10 @@ pub struct ClapPlugin {
     info: ClapPluginInfo,
     params: Arc<ParamList>,
     active: bool,
+    /// `true` between [`open_gui`](Self::open_gui) and [`close_gui`](Self::close_gui). The plugin
+    /// is not asked, because CLAP gives no way to ask: `create` and `destroy` are a pair the host
+    /// has to balance itself, and calling either twice is undefined.
+    gui_open: bool,
 }
 
 impl ClapPlugin {
@@ -89,6 +99,7 @@ impl ClapPlugin {
             info,
             params,
             active: false,
+            gui_open: false,
         })
     }
 
@@ -131,6 +142,7 @@ impl ClapPlugin {
                 rescan_values: HostFlags::take(&shared.flags.rescan_values),
                 dirty: HostFlags::take(&shared.flags.dirty),
                 callback: HostFlags::take(&shared.flags.callback),
+                gui_closed: HostFlags::take(&shared.flags.gui_closed),
             })
     }
 
@@ -164,6 +176,141 @@ impl ClapPlugin {
         for id in due {
             timer.on_timer(&mut self.instance.plugin_handle(), id);
         }
+    }
+
+    /// Whether this plugin has a window this host can put on screen.
+    ///
+    /// Two ways to answer no, and a caller can do nothing about either: the plugin draws nothing —
+    /// plenty do not — or the only windowing it offers is something this platform has no API for.
+    pub fn has_gui(&mut self) -> bool {
+        self.gui().is_some()
+    }
+
+    /// `true` while the plugin's window is up.
+    pub fn gui_is_open(&self) -> bool {
+        self.gui_open
+    }
+
+    /// Opens the plugin's own window, floating above `parent`.
+    ///
+    /// Opening one that is already open does nothing, so a caller may treat this as "make sure it
+    /// is showing" rather than having to track the state twice.
+    ///
+    /// `parent` is what the window is told to stay above. Passing `None` is legal and gives a
+    /// window that behaves like any other top-level one — which on Windows means it sinks behind
+    /// the application the moment the application is clicked.
+    ///
+    /// # Safety of the parent handle
+    ///
+    /// This is not an `unsafe` function, but it does hand the plugin a window handle that the
+    /// plugin will keep until [`close_gui`](Self::close_gui). Destroying that window first leaves
+    /// the plugin holding a stale one. Nothing in Auris can reach that state: the window outlives
+    /// the session, and dropping the session closes every plugin window first.
+    pub fn open_gui(&mut self, parent: Option<RawWindowHandle>) -> Result<(), ClapError> {
+        if self.gui_open {
+            return Ok(());
+        }
+        let Some(gui) = self.gui() else {
+            return Err(ClapError::NoGui {
+                id: self.info.clap_id.clone(),
+                reason: match self
+                    .instance
+                    .plugin_shared_handle()
+                    .get_extension::<PluginGui>()
+                    .is_some()
+                {
+                    true => "it draws no window this platform can show".into(),
+                    false => "it implements no GUI at all".into(),
+                },
+            });
+        };
+        let Some(plan) = crate::gui::window_plan() else {
+            return Err(ClapError::NoGui {
+                id: self.info.clap_id.clone(),
+                reason: "this platform has no CLAP windowing API".into(),
+            });
+        };
+
+        let title = crate::gui::suggested_title(&self.info.name);
+        let mut handle = self.instance.plugin_handle();
+        gui.create(&mut handle, plan)
+            .map_err(|error| ClapError::Gui {
+                id: self.info.clap_id.clone(),
+                reason: error.to_string(),
+            })?;
+        // Set the moment `create` succeeds and before anything that can fail after it: everything
+        // below has to be undone by `destroy`, and a window nobody records is a window nobody
+        // destroys.
+        self.gui_open = true;
+
+        if let Some(parent) = parent.and_then(Window::from_window_handle) {
+            // SAFETY: the handle came from a live window — see this function's own note on what
+            // keeps it live for as long as the plugin holds it. A plugin that will not take a
+            // transient parent still gets a window, one that can fall behind the application.
+            if let Err(error) = unsafe { gui.set_transient(&mut handle, parent) } {
+                log::debug!("`{}` refused a parent window: {error}", self.info.clap_id);
+            }
+        }
+        gui.suggest_title(&mut handle, &title);
+
+        gui.show(&mut handle).map_err(|error| ClapError::Gui {
+            id: self.info.clap_id.clone(),
+            reason: error.to_string(),
+        })
+    }
+
+    /// Closes the plugin's window and frees what it was drawn with.
+    ///
+    /// Closing one that is not open does nothing. This is also what answers a plugin that reported
+    /// its window gone through [`PendingRequests::gui_closed`] — CLAP requires the host to call
+    /// `destroy` to acknowledge that, and skipping it leaks the plugin's own resources.
+    pub fn close_gui(&mut self) {
+        if !self.gui_open {
+            return;
+        }
+        self.gui_open = false;
+        let Some(gui) = self
+            .instance
+            .plugin_shared_handle()
+            .get_extension::<PluginGui>()
+        else {
+            return;
+        };
+        // Whether the window still exists. A plugin that destroyed its own window and told the
+        // host so is owed `destroy` and nothing else; hiding it first would be a call through a
+        // pointer it has already freed.
+        let destroyed = self
+            .instance
+            .access_shared_handler(|shared| HostFlags::take(&shared.flags.gui_destroyed));
+
+        let mut handle = self.instance.plugin_handle();
+        if !destroyed {
+            let _ = gui.hide(&mut handle);
+        }
+        gui.destroy(&mut handle);
+    }
+
+    /// Stands in for the plugin reporting that its window has gone.
+    ///
+    /// The real call arrives from inside the plugin, at the moment somebody clicks the window's
+    /// close box — which a test runner has no window to click. Everything downstream of the flag
+    /// is the same either way, and the flag itself is set by the same function the callback calls.
+    #[cfg(test)]
+    pub(crate) fn pretend_the_window_closed(&mut self, destroyed: bool) {
+        use clack_extensions::gui::HostGuiImpl;
+        self.instance
+            .access_shared_handler(|shared| shared.closed(destroyed));
+    }
+
+    /// The GUI extension, but only when it can give a window on this platform.
+    fn gui(&mut self) -> Option<PluginGui> {
+        let gui = self
+            .instance
+            .plugin_shared_handle()
+            .get_extension::<PluginGui>()?;
+        let plan = crate::gui::window_plan()?;
+        gui.is_api_supported(&mut self.instance.plugin_handle(), plan)
+            .then_some(gui)
     }
 
     /// Activates the plugin and hands out the half that renders.
@@ -357,6 +504,21 @@ impl ClapPlugin {
                 saving: false,
                 reason: error.to_string(),
             })
+    }
+}
+
+impl Drop for ClapPlugin {
+    /// Closes the window before the plugin behind it goes away.
+    ///
+    /// CLAP requires `destroy` before the instance is destroyed, and the instance is destroyed by
+    /// the field below this one. Leaving it to the plugin's own destructor is not a thing a host
+    /// may do: a window is an OS object registered against this process, and the code that would
+    /// clean it up is inside the library that is about to be unmapped.
+    ///
+    /// This is why a slot may drop a plugin whose editor is open without thinking about it — which
+    /// it does, every time a track with an open editor is deleted.
+    fn drop(&mut self) {
+        self.close_gui();
     }
 }
 

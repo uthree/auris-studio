@@ -47,6 +47,10 @@ env_logger = "0.11"
 # on a thread pool, and a MIDI file is kilobytes — the pool costs more to start than the parse.
 midly = { version = "0.5", default-features = false, features = ["std", "alloc"] }
 pollster = "1.0"
+# The platform's own window handle and nothing else. A hosted plugin's floating window has to be
+# told which window to stay above, and this is the one vocabulary gpui and CLAP already share — so
+# a handle travels through `auris-session` without that crate learning what a UI toolkit is.
+raw-window-handle = "0.6"
 rubato = "4.0"
 # Reads SoundFont files *and* plays them. Named once here because two crates share the type:
 # `auris-io` hands out an `Arc<SoundFont>` and `auris-sampler` renders it, and two resolved

@@ -553,6 +553,8 @@ dependencies = [
  "clack-extensions",
  "clack-host",
  "clack-plugin",
+ "log",
+ "raw-window-handle",
  "thiserror 2.0.19",
 ]
 
@@ -1138,6 +1140,7 @@ dependencies = [
  "clack-host",
  "clack-plugin",
  "clap-sys",
+ "raw-window-handle",
 ]
 
 [[package]]

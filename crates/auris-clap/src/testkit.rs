@@ -23,6 +23,9 @@
 //!   which is the only way to tell a host that runs a plugin's clock from one that quietly does
 //!   not. The visible symptom of the latter is a window that never repaints, which looks exactly
 //!   like a plugin that draws nothing.
+//! * it answers the **GUI** extension without opening anything, and reports through [`GUI_ID`]
+//!   which calls the host made. A test runner has no window server, and what is worth testing
+//!   about a host's windowing is the order it does things in rather than anybody's drawing.
 //!
 //! Behind the `testkit` feature, which nothing but a test build should ever turn on.
 
@@ -33,6 +36,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use clack_extensions::audio_ports::{
     AudioPortFlags, AudioPortInfo, AudioPortInfoWriter, AudioPortType, PluginAudioPorts,
     PluginAudioPortsImpl,
+};
+use clack_extensions::gui::{
+    GuiApiType, GuiConfiguration, GuiSize, PluginGui, PluginGuiImpl, Window,
 };
 use clack_extensions::note_ports::{
     NoteDialect, NoteDialects, NotePortInfo, NotePortInfoWriter, PluginNotePorts,
@@ -65,6 +71,34 @@ pub const PORTS_ID: u32 = 4343;
 /// The id of the read-only parameter counting the timer ticks the host has delivered.
 pub const TICKS_ID: u32 = 4344;
 
+/// The id of the read-only parameter reporting what the host has done to the fixture's window.
+///
+/// Its value is the [`gui_step`] flags, added together, in the order they happened to arrive.
+pub const GUI_ID: u32 = 4345;
+
+/// What a host can have done to the fixture's window, one bit each.
+///
+/// The fixture opens no real window — a test runner has no window server to open one on, and what
+/// is under test is the *protocol*, not anybody's drawing. So each call is recorded instead, and a
+/// host that forgets one, or makes them in the wrong order, is caught by the bits it left unset.
+pub mod gui_step {
+    /// `create` was called, and asked for a floating window.
+    pub const CREATED: u32 = 1;
+    /// A parent window was offered for the window to stay above.
+    pub const TRANSIENT: u32 = 2;
+    /// A title was suggested.
+    pub const TITLED: u32 = 4;
+    /// `show` was called.
+    pub const SHOWN: u32 = 8;
+    /// `hide` was called.
+    pub const HIDDEN: u32 = 16;
+    /// `destroy` was called.
+    pub const DESTROYED: u32 = 32;
+    /// `create` was called asking to be embedded in a window of the host's, which this fixture
+    /// says it cannot do. A host that asks anyway is a host that ignored the answer.
+    pub const ASKED_TO_EMBED: u32 = 64;
+}
+
 /// How many input ports the fixture declares: a main one and a sidechain.
 pub const INPUT_PORTS: u32 = 2;
 
@@ -90,6 +124,8 @@ pub struct Shared {
     ports_seen: AtomicU32,
     /// How many times the host has fired the timer the fixture registered.
     ticks: AtomicU32,
+    /// Which of the [`gui_step`] calls the host has made.
+    gui: AtomicU32,
 }
 
 impl Shared {
@@ -124,6 +160,86 @@ impl PluginTimerImpl for MainThread<'_> {
     }
 }
 
+impl MainThread<'_> {
+    /// Records one of the [`gui_step`] calls.
+    fn gui_did(&self, step: u32) {
+        self.shared.gui.fetch_or(step, Ordering::Relaxed);
+    }
+}
+
+/// A window the fixture never actually opens, recording what a host does to it.
+impl PluginGuiImpl for MainThread<'_> {
+    fn is_api_supported(&mut self, configuration: GuiConfiguration) -> bool {
+        // Floating only, which is the shape Auris asks for and also the shape a host on Wayland
+        // has no choice about. A fixture that said yes to everything could not catch a host
+        // asking to embed.
+        configuration.is_floating
+            && Some(configuration.api_type) == GuiApiType::default_for_current_platform()
+    }
+
+    fn get_preferred_api(&mut self) -> Option<GuiConfiguration<'_>> {
+        Some(GuiConfiguration {
+            api_type: GuiApiType::default_for_current_platform()?,
+            is_floating: true,
+        })
+    }
+
+    fn create(&mut self, configuration: GuiConfiguration) -> Result<(), PluginError> {
+        match configuration.is_floating {
+            true => {
+                self.gui_did(gui_step::CREATED);
+                Ok(())
+            }
+            false => {
+                self.gui_did(gui_step::ASKED_TO_EMBED);
+                Err(PluginError::Message("this fixture cannot be embedded"))
+            }
+        }
+    }
+
+    fn destroy(&mut self) {
+        self.gui_did(gui_step::DESTROYED);
+    }
+
+    fn set_scale(&mut self, _scale: f64) -> Result<(), PluginError> {
+        Ok(())
+    }
+
+    fn get_size(&mut self) -> Option<GuiSize> {
+        Some(GuiSize {
+            width: 400,
+            height: 300,
+        })
+    }
+
+    fn set_size(&mut self, _size: GuiSize) -> Result<(), PluginError> {
+        Ok(())
+    }
+
+    fn set_parent(&mut self, _window: Window) -> Result<(), PluginError> {
+        Err(PluginError::Message("this fixture cannot be embedded"))
+    }
+
+    fn set_transient(&mut self, _window: Window) -> Result<(), PluginError> {
+        self.gui_did(gui_step::TRANSIENT);
+        Ok(())
+    }
+
+    fn suggest_title(&mut self, _title: &str) {
+        self.gui_did(gui_step::TITLED);
+    }
+
+    fn show(&mut self) -> Result<(), PluginError> {
+        self.gui_did(gui_step::SHOWN);
+        Ok(())
+    }
+
+    fn hide(&mut self) -> Result<(), PluginError> {
+        self.gui_did(gui_step::HIDDEN);
+        Ok(())
+    }
+}
+
 /// A plugin that multiplies by one automatable parameter.
 pub struct Gain;
 
@@ -135,6 +251,7 @@ impl Plugin for Gain {
     fn declare_extensions(builder: &mut PluginExtensions<Self>, _shared: Option<&Shared>) {
         builder
             .register::<PluginAudioPorts>()
+            .register::<PluginGui>()
             .register::<PluginParams>()
             .register::<PluginState>()
             .register::<PluginTimer>();
@@ -276,7 +393,7 @@ impl PluginAudioPortsImpl for MainThread<'_> {
 
 impl PluginMainThreadParams for MainThread<'_> {
     fn count(&mut self) -> u32 {
-        3
+        4
     }
 
     fn get_info(&mut self, param_index: u32, info: &mut ParamInfoWriter) {
@@ -310,6 +427,15 @@ impl PluginMainThreadParams for MainThread<'_> {
                 default_value: 0.0,
                 ..common
             }),
+            3 => info.set(&ParamInfo {
+                id: ClapId::new(GUI_ID),
+                flags: ParamInfoFlags::IS_READONLY,
+                name: b"Window Calls",
+                min_value: 0.0,
+                max_value: f64::from(u16::MAX),
+                default_value: 0.0,
+                ..common
+            }),
             _ => {}
         }
     }
@@ -322,6 +448,7 @@ impl PluginMainThreadParams for MainThread<'_> {
                 seen => Some(seen as f64),
             },
             TICKS_ID => Some(self.shared.ticks.load(Ordering::Relaxed) as f64),
+            GUI_ID => Some(self.shared.gui.load(Ordering::Relaxed) as f64),
             _ => None,
         }
     }

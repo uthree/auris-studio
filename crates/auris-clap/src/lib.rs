@@ -32,7 +32,8 @@
 //!   session, not built by the registry.
 //! * **No sidechain.** Every audio port a plugin declares is handed to it, but only the main one
 //!   carries anything; nothing in Auris can route a second track into a plugin yet.
-//! * **No GUI.** A hosted plugin is edited through the generic parameter panel.
+//! * **No *embedded* window.** A plugin's own interface opens in a window of its own, floating
+//!   above the application, and never inside a panel of it. [`gui`] gives the account.
 //!
 //! # Safety
 //!
@@ -47,6 +48,7 @@
 mod bridge;
 mod effect;
 mod error;
+pub mod gui;
 mod host;
 mod instrument;
 mod library;
@@ -63,8 +65,12 @@ mod tests;
 
 pub use effect::ClapEffect;
 pub use error::ClapError;
+pub use gui::{window_plan, window_title};
 pub use instrument::ClapInstrument;
 pub use library::{ClapLibrary, ClapPluginInfo, classify};
 pub use notes::{NoteLanguage, language_for};
 pub use plugin::{ClapPlugin, PendingRequests};
 pub use ports::{PortLayout, main_port};
+// Re-exported so a frontend naming a parent window and a session passing one along agree on the
+// type without either taking its own dependency on the crate that defines it.
+pub use raw_window_handle::{HasWindowHandle, RawWindowHandle};

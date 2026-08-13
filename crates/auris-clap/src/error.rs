@@ -55,6 +55,29 @@ pub enum ClapError {
     #[error("`{0}` exposes no parameters")]
     NoParams(String),
 
+    /// The plugin has no window this host can put on screen.
+    ///
+    /// Either it draws nothing at all — plenty of plugins do not, and are edited entirely through
+    /// the generic parameter panel — or the only windowing it offers is one this platform cannot
+    /// provide. The two are worth telling apart in the message and not in the type: a caller can
+    /// do nothing about either.
+    #[error("`{id}` has no window this host can open: {reason}")]
+    NoGui {
+        /// The plugin's CLAP id.
+        id: String,
+        /// Which of the two it was.
+        reason: String,
+    },
+
+    /// The plugin has a window and refused to open it.
+    #[error("`{id}` would not open its window: {reason}")]
+    Gui {
+        /// The plugin's CLAP id.
+        id: String,
+        /// What the plugin said.
+        reason: String,
+    },
+
     /// Saving or restoring the plugin's own state failed.
     #[error("`{id}` could not {}its state: {reason}", if *.saving { "save " } else { "restore " })]
     State {
