@@ -65,7 +65,7 @@ fn a_plugin_that_is_not_in_the_file_is_an_error_not_a_panic() {
 fn a_hosted_plugin_reports_its_parameters_by_the_plugins_own_id() {
     let plugin = hosted();
     let params = plugin.parameters();
-    assert_eq!(params.len(), 2);
+    assert_eq!(params.len(), 3);
     assert_eq!(params[0].id, ParamId(0), "the slice position");
     assert_eq!(params[0].key, "clap.4242", "the plugin's own id");
     assert_eq!(params[0].name, "Gain");
@@ -73,6 +73,29 @@ fn a_hosted_plugin_reports_its_parameters_by_the_plugins_own_id() {
     assert_eq!(params[0].max, 2.0);
     assert_eq!(params[0].default, 1.0);
     assert_eq!(params[1].key, "clap.4343", "and the second keeps its own");
+}
+
+#[test]
+fn a_timer_the_plugin_registered_is_actually_run() {
+    // End to end, because every part of this is somebody else calling somebody else: the fixture
+    // asks the host for a timer while it is being created, the host writes it down, and the tick
+    // the frontend drives has to find its way back into the plugin. A window that never repaints
+    // is what a break anywhere along here looks like, and it looks the same as a plugin that just
+    // does not draw.
+    let mut plugin = hosted();
+    let ticks = |plugin: &mut ClapPlugin| plugin.value(ParamId(2)).expect("the tick count");
+
+    plugin.tick_timers();
+    assert_eq!(ticks(&mut plugin), 0.0, "not due until a period has passed");
+
+    std::thread::sleep(std::time::Duration::from_millis(
+        crate::timers::TIMER_FLOOR_MS as u64 + 5,
+    ));
+    plugin.tick_timers();
+    assert_eq!(ticks(&mut plugin), 1.0);
+
+    plugin.tick_timers();
+    assert_eq!(ticks(&mut plugin), 1.0, "and not again until the next one");
 }
 
 #[test]

@@ -23,6 +23,7 @@ clack-extensions = { workspace = true, features = [
     "note-ports",
     "params",
     "state",
+    "timer",
 ] }
 clack-plugin = { workspace = true, optional = true }
 thiserror = { workspace = true }

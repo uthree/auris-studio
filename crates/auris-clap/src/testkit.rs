@@ -19,6 +19,10 @@
 //!   making a layout mistake the plugin can notice — it is handing the plugin an array shorter
 //!   than the one the plugin was told to index. Surge XT Effects has exactly this shape, and
 //!   reading the missing port took the whole application down.
+//! * it registers a **timer** with the host and counts the ticks it gets through [`TICKS_ID`],
+//!   which is the only way to tell a host that runs a plugin's clock from one that quietly does
+//!   not. The visible symptom of the latter is a window that never repaints, which looks exactly
+//!   like a plugin that draws nothing.
 //!
 //! Behind the `testkit` feature, which nothing but a test build should ever turn on.
 
@@ -39,6 +43,7 @@ use clack_extensions::params::{
     PluginMainThreadParams, PluginParams,
 };
 use clack_extensions::state::{PluginState, PluginStateImpl};
+use clack_extensions::timer::{HostTimer, PluginTimer, PluginTimerImpl, TimerId};
 use clack_plugin::events::event_types::{
     MidiEvent, NoteChokeEvent, NoteExpressionEvent, NoteExpressionType, NoteOffEvent, NoteOnEvent,
     ParamValueEvent,
@@ -56,6 +61,9 @@ pub const GAIN_ID: u32 = 4242;
 
 /// The id of the read-only parameter reporting how many input ports the last block arrived with.
 pub const PORTS_ID: u32 = 4343;
+
+/// The id of the read-only parameter counting the timer ticks the host has delivered.
+pub const TICKS_ID: u32 = 4344;
 
 /// How many input ports the fixture declares: a main one and a sidechain.
 pub const INPUT_PORTS: u32 = 2;
@@ -80,6 +88,8 @@ pub struct Shared {
     /// Input ports the last `process` call arrived with. `u32::MAX` until there has been one, so
     /// "nobody has rendered yet" cannot be mistaken for "the host passed none".
     ports_seen: AtomicU32,
+    /// How many times the host has fired the timer the fixture registered.
+    ticks: AtomicU32,
 }
 
 impl Shared {
@@ -97,9 +107,22 @@ impl PluginShared<'_> for Shared {}
 /// The fixture's main-thread half.
 pub struct MainThread<'a> {
     shared: &'a Shared,
+    /// The timer the fixture registered, if the host offered any.
+    ///
+    /// Kept so the fixture can tell its *own* timer from somebody else's, which is the whole
+    /// point of a host handing back an id.
+    timer: Option<TimerId>,
 }
 
 impl<'a> PluginMainThread<'a, Shared> for MainThread<'a> {}
+
+impl PluginTimerImpl for MainThread<'_> {
+    fn on_timer(&mut self, timer_id: TimerId) {
+        if Some(timer_id) == self.timer {
+            self.shared.ticks.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
 
 /// A plugin that multiplies by one automatable parameter.
 pub struct Gain;
@@ -113,7 +136,8 @@ impl Plugin for Gain {
         builder
             .register::<PluginAudioPorts>()
             .register::<PluginParams>()
-            .register::<PluginState>();
+            .register::<PluginState>()
+            .register::<PluginTimer>();
     }
 }
 
@@ -135,10 +159,17 @@ impl DefaultPluginFactory for Gain {
     }
 
     fn new_main_thread<'a>(
-        _host: HostMainThreadHandle<'a>,
+        mut host: HostMainThreadHandle<'a>,
         shared: &'a Shared,
     ) -> Result<MainThread<'a>, PluginError> {
-        Ok(MainThread { shared })
+        // Asking for the fastest tick the host will give, which is what a plugin repainting a
+        // window asks for. A host with no timers at all is not an error — the fixture simply
+        // never ticks, which is what its tick count then says.
+        let timer = host
+            .shared()
+            .get_extension::<HostTimer>()
+            .and_then(|timer| timer.register_timer(&mut host, 0).ok());
+        Ok(MainThread { shared, timer })
     }
 }
 
@@ -245,7 +276,7 @@ impl PluginAudioPortsImpl for MainThread<'_> {
 
 impl PluginMainThreadParams for MainThread<'_> {
     fn count(&mut self) -> u32 {
-        2
+        3
     }
 
     fn get_info(&mut self, param_index: u32, info: &mut ParamInfoWriter) {
@@ -270,6 +301,15 @@ impl PluginMainThreadParams for MainThread<'_> {
                 default_value: 0.0,
                 ..common
             }),
+            2 => info.set(&ParamInfo {
+                id: ClapId::new(TICKS_ID),
+                flags: ParamInfoFlags::IS_READONLY,
+                name: b"Timer Ticks",
+                min_value: 0.0,
+                max_value: f64::from(u16::MAX),
+                default_value: 0.0,
+                ..common
+            }),
             _ => {}
         }
     }
@@ -281,6 +321,7 @@ impl PluginMainThreadParams for MainThread<'_> {
                 u32::MAX => Some(0.0),
                 seen => Some(seen as f64),
             },
+            TICKS_ID => Some(self.shared.ticks.load(Ordering::Relaxed) as f64),
             _ => None,
         }
     }

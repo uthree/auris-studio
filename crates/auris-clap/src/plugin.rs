@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 use std::sync::Arc;
+use std::time::Instant;
 
 use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
 use auris_core::plugin::{PluginDescriptor, PrepareContext};
@@ -10,6 +11,7 @@ use clack_extensions::latency::PluginLatency;
 use clack_extensions::note_ports::{NotePortInfoBuffer, PluginNotePorts};
 use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
 use clack_extensions::state::PluginState;
+use clack_extensions::timer::PluginTimer;
 use clack_host::prelude::*;
 use clack_host::utils::ClapId;
 
@@ -136,6 +138,32 @@ impl ClapPlugin {
     /// [`PendingRequests::callback`].
     pub fn run_callback(&mut self) {
         self.instance.call_on_main_thread_callback();
+    }
+
+    /// Fires whichever of the plugin's timers are owed a tick.
+    ///
+    /// A CLAP plugin keeps no clock of its own: it asks the host for one and is called back here.
+    /// Nothing else drives it, so a frontend that never calls this hosts plugins whose windows do
+    /// not repaint. Call it from the same tick the interface repaints on — the timers are
+    /// re-based on the present rather than caught up, so calling it late costs a late frame and
+    /// not a flood of them.
+    pub fn tick_timers(&mut self) {
+        let due = self
+            .instance
+            .access_handler_mut(|main| main.due_timers(Instant::now()));
+        if due.is_empty() {
+            return;
+        }
+        let Some(timer) = self
+            .instance
+            .plugin_shared_handle()
+            .get_extension::<PluginTimer>()
+        else {
+            return;
+        };
+        for id in due {
+            timer.on_timer(&mut self.instance.plugin_handle(), id);
+        }
     }
 
     /// Activates the plugin and hands out the half that renders.

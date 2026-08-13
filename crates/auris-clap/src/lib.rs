@@ -53,6 +53,7 @@ mod library;
 pub mod notes;
 mod plugin;
 mod ports;
+pub mod timers;
 
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;

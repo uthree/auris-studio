@@ -6,12 +6,16 @@
 //! atomic flag and returns; the session reads the flags when it next comes round.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 use clack_extensions::params::{HostParams, HostParamsImplMainThread, HostParamsImplShared};
 use clack_extensions::params::{ParamClearFlags, ParamRescanFlags};
 use clack_extensions::state::{HostState, HostStateImpl};
+use clack_extensions::timer::{HostTimer, HostTimerImpl, TimerId};
 use clack_host::prelude::*;
 use clack_host::utils::ClapId;
+
+use crate::timers::{Timer, take_due};
 
 /// Requests a hosted plugin has made and nobody has answered yet.
 ///
@@ -76,16 +80,51 @@ impl HostParamsImplShared for AurisShared {
 /// The `[main-thread]` half of the host.
 pub struct AurisMainThread<'a> {
     shared: &'a AurisShared,
+    /// The timers this plugin has registered, in the order it registered them.
+    timers: Vec<Timer>,
+    /// The next unused timer id. Never reused, so a callback for a timer the plugin has just
+    /// unregistered cannot be mistaken for one it registered afterwards.
+    next_timer: u32,
 }
 
 impl<'a> AurisMainThread<'a> {
     /// Builds the main-thread handler around the shared one.
     pub fn new(shared: &'a AurisShared) -> Self {
-        Self { shared }
+        Self {
+            shared,
+            timers: Vec::new(),
+            next_timer: 0,
+        }
+    }
+
+    /// Every timer owed a tick at `now`, each moved on to its next one.
+    pub(crate) fn due_timers(&mut self, now: Instant) -> Vec<TimerId> {
+        take_due(&mut self.timers, now)
     }
 }
 
 impl<'a> MainThreadHandler<'a> for AurisMainThread<'a> {}
+
+impl HostTimerImpl for AurisMainThread<'_> {
+    fn register_timer(&mut self, period_ms: u32) -> Result<TimerId, HostError> {
+        let id = TimerId(self.next_timer);
+        self.next_timer += 1;
+        self.timers.push(Timer::new(id, period_ms, Instant::now()));
+        Ok(id)
+    }
+
+    fn unregister_timer(&mut self, timer_id: TimerId) -> Result<(), HostError> {
+        let before = self.timers.len();
+        self.timers.retain(|timer| timer.id != timer_id);
+        match self.timers.len() < before {
+            true => Ok(()),
+            // Saying so rather than shrugging: a plugin cancelling a timer twice, or cancelling
+            // one it never had, is a plugin whose bookkeeping disagrees with the host's, and the
+            // next thing it does is likely to be worse.
+            false => Err(HostError::Message("no such timer")),
+        }
+    }
+}
 
 impl HostParamsImplMainThread for AurisMainThread<'_> {
     fn rescan(&mut self, flags: ParamRescanFlags) {
@@ -123,7 +162,10 @@ impl HostHandlers for AurisHost {
     type AudioProcessor<'a> = ();
 
     fn declare_extensions(builder: &mut HostExtensions<Self>, _shared: &AurisShared) {
-        builder.register::<HostParams>().register::<HostState>();
+        builder
+            .register::<HostParams>()
+            .register::<HostState>()
+            .register::<HostTimer>();
     }
 }
 
