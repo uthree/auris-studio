@@ -307,13 +307,17 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
         // has run out of headings to say what something is — an instrument, an effect and a sound
         // are three different clicks, and until these arrived the rows looked identical.
         Icon::Keyboard => {
-            // A keyboard seen from the front: the case across the top, three keys hanging off it.
+            // A keyboard seen from the front: the case across the top, two keys hanging off it.
             // Gaps are the only thing that can say "keys" in a single-colour silhouette, so the
             // keys are separate bars rather than one block with lines drawn on it.
+            //
+            // Two keys and not three. Three left gaps of a tenth of the box, which at the size a
+            // library row draws this is under a pixel — so they vanished or greyed into the keys,
+            // and the glyph read as a lower-case m. One gap can be half as wide again as three
+            // could, and the only thing this has to survive at is small.
             bar(window, 0.16, 0.24, 0.84, 0.38);
-            bar(window, 0.20, 0.38, 0.33, 0.76);
-            bar(window, 0.435, 0.38, 0.565, 0.76);
-            bar(window, 0.67, 0.38, 0.80, 0.76);
+            bar(window, 0.20, 0.38, 0.42, 0.76);
+            bar(window, 0.58, 0.38, 0.80, 0.76);
         }
         Icon::Knob => {
             ring(window, 0.50, 0.52, 0.30, 0.10);
