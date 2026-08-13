@@ -25,12 +25,23 @@
 //! so anything the plugin changed about itself — a preset loaded from its own interface, a knob
 //! turned there — survives. The document's parameter map is then applied on top, because that is
 //! the half the user automated and it must win.
+//!
+//! # And what happens to the window
+//!
+//! A plugin's own window belongs to an *instance*; wanting it open is a fact about the *slot*. So
+//! the slot keeps the wish and puts the window wherever the answer currently is — on the instance
+//! [`HostedSlot::plugin_mut`] returns, and on no other. Two views of one slot that disagree, a
+//! window drawn by one instance beside a parameter panel reading another, is the thing this
+//! prevents; a window that moves on the rare rebuild which really does swap instances is what it
+//! costs.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use auris_clap::{ClapEffect, ClapError, ClapInstrument, ClapLibrary, ClapPlugin, ClapPluginInfo};
+use auris_clap::{
+    ClapEffect, ClapError, ClapInstrument, ClapLibrary, ClapPlugin, ClapPluginInfo, RawWindowHandle,
+};
 use auris_core::asset::AssetPath;
 use auris_core::param::ParamDescriptor;
 use auris_core::plugin::{Parameterized, PluginState, PrepareContext};
@@ -52,6 +63,26 @@ pub(super) struct HostedPlugins {
     /// A track holds at most one instrument, so these are keyed by the track rather than by a
     /// slot of their own. Everything else about them is the same problem with the same answer.
     instruments: BTreeMap<TrackId, HostedSlot>,
+    /// The window every plugin window is told to float above.
+    ///
+    /// Given by the frontend once, because a plugin window that has to be moved between instances
+    /// needs it again at a moment nobody is asking for anything. The session cannot check that it
+    /// is still a window; what makes it safe is that it names the application's own, which outlives
+    /// the session — and dropping the session closes every plugin window before it goes.
+    parent: Option<RawWindowHandle>,
+}
+
+/// Which hosted plugin's own window is meant.
+///
+/// The two live in different maps, because a track holds at most one instrument and a chain holds
+/// any number of effects. To everything about windows they are the same thing, so this is what a
+/// frontend passes rather than picking between two near-identical methods.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PluginWindow {
+    /// The window of a plugin in an effect chain.
+    Effect(EffectSlotId),
+    /// The window of the plugin that plays a track.
+    Instrument(TrackId),
 }
 
 /// One place in the project filled by a hosted plugin.
@@ -62,6 +93,11 @@ struct HostedSlot {
     live: Option<ClapPlugin>,
     /// An instance with nothing out, ready to be activated for the next graph.
     spare: Option<ClapPlugin>,
+    /// Whether the user wants this plugin's own window on screen.
+    ///
+    /// A wish about the slot, held here rather than read off an instance, because the instance a
+    /// window is drawn by can change under it and the wish must not.
+    editor: bool,
 }
 
 impl HostedPlugins {
@@ -163,6 +199,7 @@ impl HostedPlugins {
                 }
             }
         }
+        self.settle_editors();
         placed
     }
 
@@ -203,7 +240,75 @@ impl HostedPlugins {
                 }
             }
         }
+        self.settle_editors();
         placed
+    }
+
+    /// The slot a window belongs to, whichever map it lives in.
+    fn window_slot(&mut self, which: PluginWindow) -> Option<&mut HostedSlot> {
+        match which {
+            PluginWindow::Effect(id) => self.slots.get_mut(&id),
+            PluginWindow::Instrument(id) => self.instruments.get_mut(&id),
+        }
+    }
+
+    /// Whether this plugin has a window of its own that could be opened.
+    pub(super) fn has_window(&mut self, which: PluginWindow) -> bool {
+        self.window_slot(which)
+            .and_then(HostedSlot::plugin_mut)
+            .is_some_and(ClapPlugin::has_gui)
+    }
+
+    /// Whether its window is meant to be on screen.
+    pub(super) fn window_is_open(&self, which: PluginWindow) -> bool {
+        let slot = match which {
+            PluginWindow::Effect(id) => self.slots.get(&id),
+            PluginWindow::Instrument(id) => self.instruments.get(&id),
+        };
+        slot.is_some_and(|slot| slot.editor)
+    }
+
+    /// Puts a plugin's window on screen or takes it off.
+    pub(super) fn set_window_open(
+        &mut self,
+        which: PluginWindow,
+        open: bool,
+    ) -> Result<(), ClapError> {
+        let parent = self.parent;
+        let Some(slot) = self.window_slot(which) else {
+            return Err(ClapError::NoGui {
+                id: format!("{which:?}"),
+                reason: "nothing hosted is here".into(),
+            });
+        };
+        slot.editor = open;
+        slot.settle_editor(parent)
+    }
+
+    /// Runs every hosted plugin's clocks and keeps its window where the slot says.
+    ///
+    /// Called from the session's tick.
+    pub(super) fn service(&mut self) {
+        for slot in self.slots.values_mut().chain(self.instruments.values_mut()) {
+            slot.service();
+        }
+        self.settle_editors();
+    }
+
+    /// Puts every window back on the instance that now answers for its slot.
+    ///
+    /// Also after a graph rebuild, and not only on the tick: a rebuild is the one thing that can
+    /// move the answer, and waiting a frame to follow it would be a frame of the window and the
+    /// parameter panel showing two different instances.
+    fn settle_editors(&mut self) {
+        let parent = self.parent;
+        for slot in self.slots.values_mut().chain(self.instruments.values_mut()) {
+            if let Err(error) = slot.settle_editor(parent) {
+                log::warn!("`{}` would not show its window: {error}", slot.clap_id);
+                // Or it would be asked again on the next tick, and every tick after that.
+                slot.editor = false;
+            }
+        }
     }
 
     /// Makes sure a file is open, returning the key it is filed under.
@@ -235,6 +340,56 @@ impl HostedSlot {
     /// The same, to be asked something that changes it.
     fn plugin_mut(&mut self) -> Option<&mut ClapPlugin> {
         self.live.as_mut().or(self.spare.as_mut())
+    }
+
+    /// Runs the plugin's clocks and puts its window where the slot says it should be.
+    ///
+    /// Both instances get their timers run, not only the one being asked questions: a timer is a
+    /// promise the host made when the plugin registered it, and an instance rendering in the graph
+    /// is as entitled to it as one holding a window.
+    fn service(&mut self) {
+        let mut closed = false;
+        for plugin in [self.live.as_mut(), self.spare.as_mut()]
+            .into_iter()
+            .flatten()
+        {
+            plugin.tick_timers();
+            // Only the window is answered here. The rest of what a plugin can ask for — a
+            // restart, a parameter rescan — has no answer in the session yet, and this is where
+            // it will go when it does.
+            if plugin.take_requests().gui_closed {
+                plugin.close_gui();
+                closed = true;
+            }
+        }
+        // Somebody clicked the window's close box, which is the same thing as asking for it to be
+        // shut. Reading it as anything else means the button that opens it does nothing next time
+        // it is pressed, because as far as the slot is concerned it is already open.
+        if closed {
+            self.editor = false;
+        }
+    }
+
+    /// Gives the slot's one window to the instance the slot answers with, and to no other.
+    fn settle_editor(&mut self, parent: Option<RawWindowHandle>) -> Result<(), ClapError> {
+        let wanted = self.editor;
+        // Ordered: the outgoing instance lets go before the incoming one asks, so a plugin that
+        // will only have one window open at a time still ends up with one.
+        if self.live.is_some()
+            && let Some(spare) = self.spare.as_mut()
+        {
+            spare.close_gui();
+        }
+        let Some(plugin) = self.plugin_mut() else {
+            return Ok(());
+        };
+        match wanted {
+            true => plugin.open_gui(parent),
+            false => {
+                plugin.close_gui();
+                Ok(())
+            }
+        }
     }
 
     /// Produces the effect for the next graph, reusing an instance when one is free.
@@ -354,6 +509,10 @@ fn fit<'a, K: Ord + Copy>(
         clap_id: clap_id.to_string(),
         live: None,
         spare: None,
+        // A different plugin's window is not this plugin's window, so a slot that was swapped out
+        // from under an open editor comes back with none — and the one that was open closed with
+        // the instance it belonged to.
+        editor: false,
     };
     let slot = slots.entry(key).or_insert_with(fresh);
     if slot.clap_id != clap_id || slot.file != file {
@@ -550,6 +709,47 @@ impl Session {
         Ok(())
     }
 
+    /// Names the window a plugin's own window should float above.
+    ///
+    /// A frontend calls this once, with its main window. Passing `None` — or never calling it at
+    /// all — still gives working plugin windows; they behave like any other top-level window,
+    /// which on Windows means sinking behind the application the moment it is clicked.
+    ///
+    /// The handle is kept rather than passed in each time, because a window that has to be moved
+    /// between instances needs it at a moment nobody asked for anything. Nothing here can check
+    /// that it still names a window: what makes it safe is that it names the application's own,
+    /// and dropping the session closes every plugin window before that can go.
+    pub fn set_plugin_window_parent(&mut self, parent: Option<RawWindowHandle>) {
+        self.hosted.parent = parent;
+    }
+
+    /// Whether this plugin has a window of its own that could be opened.
+    ///
+    /// `false` for everything that is not a hosted plugin, for a hosted plugin that draws nothing,
+    /// and for one whose windowing this platform cannot provide. A frontend should not offer the
+    /// command when this is `false` — there is nothing behind it.
+    pub fn plugin_window_exists(&mut self, which: PluginWindow) -> bool {
+        self.hosted.has_window(which)
+    }
+
+    /// Whether a plugin's own window is on screen.
+    pub fn plugin_window_is_open(&self, which: PluginWindow) -> bool {
+        self.hosted.window_is_open(which)
+    }
+
+    /// Opens or closes a plugin's own window.
+    ///
+    /// Not an undoable edit and not part of the document: which windows are open is a fact about
+    /// this sitting, like which panel is showing. A project that reopened four plugin windows
+    /// because it was saved with four open would be a project that took over the screen.
+    pub fn set_plugin_window_open(
+        &mut self,
+        which: PluginWindow,
+        open: bool,
+    ) -> Result<(), SessionError> {
+        Ok(self.hosted.set_window_open(which, open)?)
+    }
+
     /// The parameters a hosted slot's plugin declares.
     ///
     /// Empty until the plugin has been built, which is the first graph rebuild after it was
@@ -674,6 +874,7 @@ mod tests {
             clap_id: FIXTURE_ID.to_string(),
             live: None,
             spare: None,
+            editor: false,
         }
     }
 
@@ -1092,6 +1293,100 @@ mod tests {
             "the fixture's state is its gain, which starts at unity"
         );
         assert_eq!(session.hosted_parameters(slot).len(), 4);
+    }
+
+    #[test]
+    fn a_plugins_own_window_is_opened_and_closed_by_the_slot_it_sits_in() {
+        let (mut session, file) = session_with_fixture();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let slot = session
+            .add_hosted_effect(Some(track), &file, FIXTURE_ID)
+            .unwrap();
+        let which = PluginWindow::Effect(slot);
+
+        assert!(session.plugin_window_exists(which));
+        assert!(!session.plugin_window_is_open(which));
+
+        session.set_plugin_window_open(which, true).expect("opens");
+        assert!(session.plugin_window_is_open(which));
+
+        session
+            .set_plugin_window_open(which, false)
+            .expect("closes");
+        assert!(!session.plugin_window_is_open(which));
+    }
+
+    #[test]
+    fn a_track_with_no_hosted_plugin_offers_no_window() {
+        // What the button is drawn from. A built-in instrument has parameters and no window, and
+        // asking for one has to be an answer rather than a panic.
+        let mut session = super::super::fixtures::session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let which = PluginWindow::Instrument(track);
+
+        assert!(!session.plugin_window_exists(which));
+        assert!(!session.plugin_window_is_open(which));
+        assert!(session.set_plugin_window_open(which, true).is_err());
+    }
+
+    #[test]
+    fn a_window_the_user_closed_stops_the_slot_claiming_it_is_open() {
+        // Otherwise the button that opens it does nothing the next time it is pressed: the slot
+        // still thinks the window is up, so it asks for nothing, and the plugin — which threw its
+        // window away — draws nothing.
+        let (mut session, file) = session_with_fixture();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let slot = session
+            .add_hosted_effect(Some(track), &file, FIXTURE_ID)
+            .unwrap();
+        let which = PluginWindow::Effect(slot);
+        session.set_plugin_window_open(which, true).unwrap();
+
+        session
+            .hosted
+            .window_slot(which)
+            .and_then(|slot| slot.plugin_mut())
+            .expect("a built instance")
+            .pretend_the_window_closed(true);
+
+        session.poll();
+        assert!(!session.plugin_window_is_open(which));
+    }
+
+    #[test]
+    fn an_open_window_follows_the_instance_that_answers_for_the_slot() {
+        // The one thing the two-instance handover could get wrong that nothing else would notice:
+        // a window drawn by one instance beside a parameter panel reading the other. The rebuild
+        // below is the rapid kind — the first effect is still out — which is exactly the case that
+        // makes a second instance.
+        let library = fixture_library();
+        let mut slot = slot();
+        let state = PluginState::empty();
+
+        let first = slot
+            .take_effect(&library, &state, &prepare())
+            .expect("first");
+        slot.editor = true;
+        slot.settle_editor(None).expect("opens");
+        assert!(slot.live.as_ref().unwrap().gui_is_open());
+
+        let second = slot
+            .take_effect(&library, &state, &prepare())
+            .expect("second");
+        assert!(slot.spare.is_some(), "the handover really did make a pair");
+        slot.settle_editor(None).expect("moves");
+
+        assert!(
+            slot.live.as_ref().unwrap().gui_is_open(),
+            "the window belongs to whichever instance the slot now answers with"
+        );
+        assert!(
+            !slot.spare.as_ref().unwrap().gui_is_open(),
+            "and to no other, or the plugin has two windows open onto one slot"
+        );
+
+        drop(first);
+        drop(second);
     }
 
     #[test]

@@ -295,8 +295,11 @@ impl ClapPlugin {
     /// The real call arrives from inside the plugin, at the moment somebody clicks the window's
     /// close box — which a test runner has no window to click. Everything downstream of the flag
     /// is the same either way, and the flag itself is set by the same function the callback calls.
-    #[cfg(test)]
-    pub(crate) fn pretend_the_window_closed(&mut self, destroyed: bool) {
+    ///
+    /// Behind the same feature as [`testkit`](crate::testkit), and for the same reason: the crates
+    /// above this one have to be able to test what they do about it.
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn pretend_the_window_closed(&mut self, destroyed: bool) {
         use clack_extensions::gui::HostGuiImpl;
         self.instance
             .access_shared_handler(|shared| shared.closed(destroyed));

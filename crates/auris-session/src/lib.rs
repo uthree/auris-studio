@@ -61,8 +61,8 @@ pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob};
 pub use session::{
     AccompanyReport, AudioStatus, Clipboard, ComposeReport, CopiedClip, CopiedContent,
-    DEFAULT_PARTS, Quantize, RecordingReport, RecordingStatus, SaveReport, Session, SessionOptions,
-    quantized,
+    DEFAULT_PARTS, PluginWindow, Quantize, RecordingReport, RecordingStatus, SaveReport, Session,
+    SessionOptions, quantized,
 };
 pub use settings::{AudioPreferences, CONFIG_DIR_VAR, Settings, config_dir, migrate_legacy_config};
 
@@ -71,6 +71,13 @@ pub use settings::{AudioPreferences, CONFIG_DIR_VAR, Settings, config_dir, migra
 /// Re-exported so a frontend can name the type without depending on [`auris_clap`], which it may
 /// not do — a frontend depends on this crate and its own toolkit and nothing else.
 pub use auris_clap::ClapPluginInfo;
+
+/// The platform's own handle for a window, and the trait a toolkit hands one out through.
+///
+/// Re-exported for the same reason: a frontend naming the window its plugin windows should float
+/// above must be able to say what kind of thing that is. This is not a UI toolkit — it is the
+/// vocabulary two of them use to talk about the same window.
+pub use auris_clap::{HasWindowHandle, RawWindowHandle};
 
 /// File extension of a saved project.
 pub use auris_io::PROJECT_EXTENSION;

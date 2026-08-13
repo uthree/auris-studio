@@ -567,6 +567,29 @@ pub mod plugins {
     //! told; MIDI is the only one of the two with a modulation wheel. A plugin speaking both gets
     //! the better half of each, and one speaking neither gets no notes rather than events into a
     //! void. `auris_clap::notes` is the rule, with the whole of it under test.
+    //!
+    //! **A plugin's own window floats; it is never embedded.** CLAP offers a host both, and
+    //! embedding — the plugin drawing inside a rectangle of the host's — is the nicer one. It needs
+    //! a native child window to give away, and gpui draws its whole interface on one surface and
+    //! has none, so a panel reserving a rectangle would be reserving a rectangle of a picture. The
+    //! plugin therefore makes its own window and is told, through `set_transient`, which window to
+    //! stay above. [`Session::set_plugin_window_parent`] is how the frontend names that window
+    //! once, and [`PluginWindow`] is what everything else is addressed by.
+    //!
+    //! **A window belongs to an instance, and wanting one open is a fact about the slot.** Which is
+    //! why the wish is kept beside the pair rather than read off either half of it: on the rare
+    //! rebuild that really does swap instances, the window moves to whichever one the parameter
+    //! panel is now reading. A window drawn by one instance beside a panel reading another is two
+    //! views of one slot that disagree.
+    //!
+    //! **A hosted plugin has no clock and its window will not repaint without one.** It registers
+    //! a timer with the host and waits to be called back;
+    //! [`Session::poll`](crate::Session::poll) is what calls it, off the same tick the interface
+    //! repaints on. This is also where a window the user closed is noticed — the plugin sets a
+    //! flag and says nothing else about it.
+    //!
+    //! [`Session::set_plugin_window_parent`]: crate::Session::set_plugin_window_parent
+    //! [`PluginWindow`]: crate::PluginWindow
 }
 
 pub mod composition {

@@ -54,6 +54,7 @@ pub use accompany::{AccompanyReport, DEFAULT_PARTS};
 pub use autosave::{AUTOSAVE_INTERVAL, AutosaveState, should_autosave};
 pub use clipboard::{Clipboard, CopiedClip, CopiedContent};
 pub use compose::{composed_gain_db, kit_trim_db};
+pub use hosted::PluginWindow;
 pub use monitor::MonitorStatus;
 pub use notes::{Quantize, quantized};
 pub use record::{RecordingReport, RecordingStatus};
@@ -525,6 +526,10 @@ impl Session {
         if self.engine.latency_is_stale() {
             self.invalidate_graph();
         }
+        // A hosted plugin keeps no clock of its own and its window does not repaint without one.
+        // This is also where a window the user closed is noticed: the plugin sets a flag and says
+        // nothing else about it.
+        self.hosted.service();
     }
 
     /// The document.
