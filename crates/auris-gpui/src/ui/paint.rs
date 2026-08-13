@@ -171,6 +171,13 @@ pub fn area_under(window: &mut Window, points: &[Point<Pixels>], baseline: Pixel
     }
 }
 
+/// How tall a line of text is, as a multiple of its font size.
+///
+/// Public because a caller placing a label against the *bottom* of something has to know how far
+/// the text will reach down from the origin it passes in. Guessing that is how a number ends up
+/// half off the edge of a lane.
+pub const LINE_HEIGHT: f32 = 1.35;
+
 /// Paints a single line of text at `origin`, returning its width.
 ///
 /// The caller gets the width back so labels can be laid out left to right without a second
@@ -194,7 +201,7 @@ pub fn label(
         .shape_line(text, font_size, &[run], None);
     let width = line.width;
     // Ignore paint failures: a missing glyph must not take down the frame.
-    let _ = line.paint(origin, font_size * 1.35, window, cx);
+    let _ = line.paint(origin, font_size * LINE_HEIGHT, window, cx);
     width
 }
 

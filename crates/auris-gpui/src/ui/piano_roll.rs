@@ -1195,6 +1195,9 @@ const CURVE_GRAB: f32 = 7.0;
 /// How large a point is drawn.
 const CURVE_POINT_RADIUS: f32 = 3.0;
 
+/// How large the numbers down the side of a curve lane are drawn.
+const CURVE_SCALE_TEXT: f32 = 9.0;
+
 /// What a strip is called in the gutter.
 fn curve_label(which: ClipCurve) -> Key {
     match which {
@@ -1227,6 +1230,25 @@ pub fn curve_of_row(which: ClipCurve, row: f32) -> f32 {
     match which.is_bipolar() {
         true => (0.5 - row) * 2.0 * high,
         false => (1.0 - row) * high,
+    }
+}
+
+/// The two numbers written down the side of a curve lane: the top of the scale, then the bottom.
+///
+/// Both ends, and not just the top. A single number in a corner reads as a *value*: the wheel's
+/// lane carried "127" alone, over a zero line that sits on the floor where there is nothing to
+/// mark it out as a line, and it was taken for a wheel that had come up full. Two numbers, one at
+/// each end, can only be a scale.
+///
+/// The bend is written signed for the same reason — a lane labelled `12` and `-12` says at a
+/// glance that zero is between them.
+pub fn curve_scale(which: ClipCurve) -> (String, String) {
+    let (low, high) = which.range();
+    match which {
+        ClipCurve::Bend => (format!("{high:+.0}"), format!("{low:+.0}")),
+        // Stored as a fraction, but read as a MIDI controller: 127 is what somebody who has seen
+        // a mod wheel before expects the top of its travel to be called.
+        ClipCurve::Modulation => ("127".to_string(), format!("{low:.0}")),
     }
 }
 
@@ -1306,15 +1328,24 @@ fn paint_curve(
         },
         theme.border,
     );
+    let (high, low) = curve_scale(which);
     paint::label(
         window,
         cx,
         point(bounds.origin.x + px(3.0), px(top + 1.0)),
-        match which {
-            ClipCurve::Bend => format!("+{:.0}", which.limit()),
-            ClipCurve::Modulation => "127".to_string(),
-        },
-        px(9.0),
+        high,
+        px(CURVE_SCALE_TEXT),
+        theme.text_faint,
+    );
+    paint::label(
+        window,
+        cx,
+        point(
+            bounds.origin.x + px(3.0),
+            px(top + height - CURVE_SCALE_TEXT * paint::LINE_HEIGHT - 1.0),
+        ),
+        low,
+        px(CURVE_SCALE_TEXT),
         theme.text_faint,
     );
 
@@ -1665,6 +1696,29 @@ mod curve_tests {
         assert_eq!(curve_row(ClipCurve::Bend, BEND_LIMIT), 0.0, "the top is up");
         assert_eq!(curve_row(ClipCurve::Bend, -BEND_LIMIT), 1.0);
         assert_eq!(curve_row(ClipCurve::Modulation, MODULATION_LIMIT), 0.0);
+    }
+
+    #[test]
+    fn both_ends_of_a_lane_are_written_down() {
+        // The bug this fixes was not in the audio: the wheel's lane showed "127" and nothing else,
+        // and a lone number over an unlabelled floor was read as the wheel's *position*. Whatever
+        // the numbers say, there have to be two of them.
+        for which in ClipCurve::ALL {
+            let (high, low) = curve_scale(which);
+            assert!(!high.is_empty() && !low.is_empty(), "{which:?}");
+            assert_ne!(high, low, "{which:?}");
+        }
+
+        assert_eq!(
+            curve_scale(ClipCurve::Modulation),
+            ("127".to_string(), "0".to_string()),
+            "the wheel is read in the controller's units, and rests at nothing"
+        );
+        assert_eq!(
+            curve_scale(ClipCurve::Bend),
+            (format!("+{BEND_LIMIT:.0}"), format!("-{BEND_LIMIT:.0}")),
+            "and the bend is signed, so the reader can see zero is between them"
+        );
     }
 
     #[test]
