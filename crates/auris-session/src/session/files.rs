@@ -284,11 +284,21 @@ impl Session {
         // files land there, and their references are read against wherever `self.path` says the
         // document is. Leaving it pointing at the old folder is what would be inconsistent.
         self.path = Some(document.clone());
+        // A copy that fails has to have its reference pointed back *outside*, not left alone. The
+        // document belongs to the new folder from the line above, so an `Inside` reference is now
+        // read against a folder the copy never reached: the track opens silent, and nothing can
+        // repair it afterwards, because [`Self::collect_assets`] only looks at references that are
+        // not already inside and would skip this one on every retry. The path it was resolved from
+        // is a file that still exists, so naming it absolutely is what keeps
+        // [`SaveReport::uncollected`]'s promise that the project opens on this machine.
         let mut uncollected = Vec::new();
         for (id, from) in audio {
             let Some(from) = from else { continue };
             if let Err(error) = self.collect_source(id, &from) {
                 log::warn!("could not collect {}: {error}", from.display());
+                if let Some(source) = self.project.audio_sources.get_mut(&id) {
+                    source.path = AssetPath::external(&from);
+                }
                 uncollected.push(from);
             }
         }
@@ -296,6 +306,9 @@ impl Session {
             let Some(from) = from else { continue };
             if let Err(error) = self.collect_font(id, &from) {
                 log::warn!("could not collect {}: {error}", from.display());
+                if let Some(font) = self.project.soundfonts.get_mut(&id) {
+                    font.path = AssetPath::external(&from);
+                }
                 uncollected.push(from);
             }
         }
@@ -755,6 +768,53 @@ mod tests {
         let missing = reopened
             .open(&moved.join("Before.auris"))
             .expect("the moved project opens");
+        assert!(missing.is_empty(), "nothing should be missing: {missing:?}");
+        assert_eq!(reopened.project().audio_sources.len(), 1);
+    }
+
+    #[test]
+    fn a_copy_that_fails_during_save_as_leaves_a_reference_that_still_opens() {
+        // The document belongs to the new folder before a single file has been copied there, so an
+        // `Inside` reference left untouched by a failed copy stops naming the file it was written
+        // for and starts naming one that was never made. Silent track, and no way back: the repair
+        // command only looks at references that are *not* inside.
+        let scratch = Scratch::new("save-as-copy-fails");
+        let mut session = session();
+        session
+            .save_as(&scratch.join("First.auris"))
+            .expect("the first save works");
+        session
+            .import_audio(&scratch.tone("kick.wav"), Ticks::ZERO)
+            .expect("imports");
+        let owned = scratch.join("First").join(AUDIO_DIR).join("kick.wav");
+        assert!(owned.is_file(), "the first save owns its copy");
+
+        // A file where the new folder's `Audio/` directory needs to go: `copy_into` starts with
+        // `create_dir_all`, so every copy into this folder fails while the originals stay put.
+        std::fs::create_dir_all(scratch.join("Second")).unwrap();
+        std::fs::write(scratch.join("Second").join(AUDIO_DIR), b"in the way").unwrap();
+
+        let report = session
+            .save_as(&scratch.join("Second.auris"))
+            .expect("the document still saves — a missing asset is reported, never fatal");
+        assert_eq!(report.uncollected, vec![owned.clone()]);
+
+        let source = session.project().audio_sources.values().next().unwrap();
+        assert!(
+            !source.path.is_inside(),
+            "an inside reference here would be read against the folder the copy never reached"
+        );
+        assert_eq!(
+            source.path.resolve(session.project_folder()),
+            Some(owned),
+            "the file it was resolved from is still there, so that is what to name"
+        );
+
+        // The whole point of the fallback: `SaveReport` promises the project opens on this machine.
+        let mut reopened = self::tests::session();
+        let missing = reopened
+            .open(&report.document)
+            .expect("the saved project opens");
         assert!(missing.is_empty(), "nothing should be missing: {missing:?}");
         assert_eq!(reopened.project().audio_sources.len(), 1);
     }
