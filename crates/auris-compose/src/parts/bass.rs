@@ -221,7 +221,13 @@ pub(super) fn bass(
                 ) * phrase_shape(grid, section, at, settings.dynamics))
                 .clamp(0.05, 1.0),
                 start: section.start + at,
-                length: length.min(event.end() - at).max(grid.step_ticks()),
+                // Floored at a tick, not at a step. A step is often *longer* than the room left
+                // in the chord — nine chords in a four-four bar leave 426 ticks and an eighth-note
+                // grid asks for 480 — and flooring there put the note straight back over the
+                // boundary the `min` had just brought it inside, so two chords' bass notes sounded
+                // on top of each other. Every other writer in this crate floors at `Ticks(1)`,
+                // which can never exceed a `min` that is itself a real length.
+                length: length.min(event.end() - at).max(Ticks(1)),
             });
         }
     }
@@ -313,6 +319,59 @@ mod tests {
             .find(|note| note.start == section.start + event.start)
             .expect("a note at the change");
         assert_eq!(PitchClass::new(i32::from(note.pitch)), expected);
+    }
+
+    #[test]
+    fn no_bass_note_outlives_the_chord_it_belongs_to() {
+        // More chords in a bar than the grid has steps, which the chart syntax allows and a dial
+        // can ask for: nine chords in four four leave 426 ticks each, and an eighth-note step is
+        // 480. Flooring the length at a whole step re-inflated every note past its chord, so eight
+        // of the nine overlapped the next by 54 ticks — two roots sounding at once on one
+        // instrument, which is the one thing a bass part must not do.
+        let (_, frame, parts) = draft(
+            r#"
+                form = "verse"
+                chords = "| I ii iii IV V vi vii I bII |"
+                humanize = 0
+                [section.verse]
+                bars = 1
+                [section.verse.part.bass]
+                subdivision = "8"
+                "#,
+        );
+        let bass = part(&parts, "bass");
+        let section = &frame.sections[0];
+        assert!(bass.notes.len() >= 9, "one note per chord at least");
+
+        for event in &section.events {
+            let from = section.start + event.start;
+            let to = section.start + event.end();
+            for note in bass
+                .notes
+                .iter()
+                .filter(|note| note.start >= from && note.start < to)
+            {
+                assert!(
+                    note.start + note.length <= to,
+                    "a note at {} ran {} ticks past its chord's end at {}",
+                    note.start.raw(),
+                    (note.start + note.length - to).raw(),
+                    to.raw()
+                );
+            }
+        }
+
+        // And the general form of it: no two bass notes overlap at all.
+        let mut sorted = bass.notes.clone();
+        sorted.sort_by_key(|note| note.start);
+        for pair in sorted.windows(2) {
+            assert!(
+                pair[0].start + pair[0].length <= pair[1].start,
+                "the note at {} overlaps the one at {}",
+                pair[0].start.raw(),
+                pair[1].start.raw()
+            );
+        }
     }
 
     #[test]

@@ -165,9 +165,24 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
                     saw_tempo = true;
                 }
                 TrackEventKind::Meta(MetaMessage::TimeSignature(numerator, denominator, ..)) => {
-                    // The file stores the denominator as a power of two: 3 means an eighth.
-                    let denominator = 1u32 << u32::from(denominator).min(MAX_DENOMINATOR_POWER);
+                    // The file stores the denominator as a power of two: 3 means an eighth. The
+                    // power is judged *before* it is shifted rather than clamped into range and
+                    // judged afterwards — clamping first defeated the whole check below, because a
+                    // 7/32 file arrived at it already reading 7/16 and passed. Which is precisely
+                    // the outcome that check exists to rule out: nothing distinguished such a file
+                    // from one that really did say 7/16, and no warning fired either.
+                    let power = u32::from(denominator);
                     let numerator = u32::from(numerator);
+                    let denominator = match power <= MAX_DENOMINATOR_POWER {
+                        true => 1u32 << power,
+                        false => {
+                            log::warn!(
+                                "MIDI file gives a meter the denominator two to the {power}, finer \
+                                 than this build can hold; ignoring it"
+                            );
+                            continue;
+                        }
+                    };
                     // The range is checked here rather than left to `TimeSignature::new`, which
                     // answers 4/4 for anything outside it. That is the right answer for a control
                     // with bounds and the wrong one for a file: it would write down a meter the
@@ -524,6 +539,9 @@ const DEFAULT_BPM: f64 = 120.0;
 /// The byte is a shift, so an absurd one would shift a `u32` off its own end. Sixteenth notes are
 /// the finest denominator [`TimeSignature`] holds, and a file naming a 1/1024 meter is a file that
 /// has gone wrong rather than one making a point.
+///
+/// A limit to *refuse* by, never to clamp to: a 7/32 meter forced into range becomes a 7/16 one
+/// nothing can tell from a meter the file really wrote.
 const MAX_DENOMINATOR_POWER: u32 = 4;
 
 /// One track-and-channel's notes as they are gathered.
@@ -815,6 +833,54 @@ mod tests {
         assert_eq!(
             imported.signatures.signature_at(Ticks::ZERO),
             TimeSignature::new(6, 8)
+        );
+    }
+
+    #[test]
+    fn a_meter_finer_than_this_build_holds_is_refused_rather_than_rounded() {
+        // 7/32. Clamping the power into range before checking it turned this into 7/16 — a meter
+        // the file never claimed, indistinguishable afterwards from one that did, and arrived at
+        // without a warning because the value was already in range by the time anything looked.
+        let imported = metrical(vec![vec![
+            event(
+                0,
+                TrackEventKind::Meta(MetaMessage::TimeSignature(7, 5, 24, 8)),
+            ),
+            note_on(0, 60, 100),
+            note_off(480, 60),
+        ]]);
+        assert_eq!(
+            imported.signatures.signature_at(Ticks::ZERO),
+            TimeSignature::default(),
+            "a meter that cannot be held is left out, not rounded into a different one"
+        );
+
+        // A denominator absurd enough to shift a `u32` off its end is the same answer, not a panic.
+        let absurd = metrical(vec![vec![
+            event(
+                0,
+                TrackEventKind::Meta(MetaMessage::TimeSignature(4, 200, 24, 8)),
+            ),
+            note_on(0, 60, 100),
+            note_off(480, 60),
+        ]]);
+        assert_eq!(
+            absurd.signatures.signature_at(Ticks::ZERO),
+            TimeSignature::default()
+        );
+
+        // And the one either side of the limit still reads: a sixteenth is the finest we hold.
+        let finest = metrical(vec![vec![
+            event(
+                0,
+                TrackEventKind::Meta(MetaMessage::TimeSignature(7, 4, 24, 8)),
+            ),
+            note_on(0, 60, 100),
+            note_off(480, 60),
+        ]]);
+        assert_eq!(
+            finest.signatures.signature_at(Ticks::ZERO),
+            TimeSignature::new(7, 16)
         );
     }
 
