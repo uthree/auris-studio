@@ -30,6 +30,8 @@ anywhere Rust does, and CI covers all three.
 * **Automatic composition** from a text specification or from one of eight whole-song presets,
   on the desktop or from the command line.
 * **A General MIDI SoundFont in the box**, so there is something to play from the first launch.
+* **Recording onto audio tracks**, with input monitoring, an arm that overrides the selection, and
+  punch recording that replaces only the bars it was asked for.
 * **MIDI files in and out**, audio import through Symphonia, WAV export at 16, 24 or 32-bit.
 * **English and Japanese** throughout, following the system locale.
 
@@ -43,7 +45,7 @@ anywhere Rust does, and CI covers all three.
 * [CHANGELOG](CHANGELOG.md) — what changed, and what it broke.
 
 The API documentation is `cargo doc --workspace --no-deps --open`. The workspace has no root
-crate, so the account of how the twelve of them fit together lives in `auris_session::guide`,
+crate, so the account of how the thirteen of them fit together lives in `auris_session::guide`,
 which is the only crate that depends on every other and so the only one whose links to them all
 resolve.
 
@@ -83,7 +85,9 @@ Xcode install — are in [Development](docs/development.md#building-on-each-plat
 
 An honest list, so nobody discovers these the hard way:
 
-* **No recording.** Audio tracks hold imported material only.
+* **No MIDI hardware input.** A keyboard plugged into the machine cannot play a track or record
+  one; notes are written in the piano roll, imported from a `.mid`, or composed. Audio recording is
+  a different thing and it is here.
 * **What writes itself writes in one meter.** The timeline holds as many signature changes as you
   like, but a specification says `meter:` once, and a generated clip is built on the grid of the
   meter it starts in.

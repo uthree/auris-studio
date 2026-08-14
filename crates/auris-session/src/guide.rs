@@ -1,6 +1,6 @@
 //! How Auris Studio fits together.
 //!
-//! The workspace has no root crate — `cargo doc` on it produces a list of twelve crates and no
+//! The workspace has no root crate — `cargo doc` on it produces a list of thirteen crates and no
 //! account of how they relate. This module is that account. It lives here because `auris-session`
 //! is the only crate that depends on every other backend crate, which is what lets the links below
 //! actually resolve; a page anywhere else could name its neighbours but not point at them.
@@ -47,6 +47,7 @@ pub mod architecture {
     //!   auris-dsp       effects and DSP primitives
     //!   auris-synth     built-in instruments                      → auris-dsp
     //!   auris-sampler   SoundFont playback: the bank and the sampler instrument → auris-dsp
+    //!   auris-clap      hosting of third-party CLAP plugins        → auris-core only
     //!   auris-engine    render graph, transport, cpal in and out, offline renderer
     //!   auris-io        audio file import/export, project save/load
     //!   auris-gpu       optional wgpu compute for offline analysis
@@ -568,12 +569,33 @@ pub mod plugins {
     //! the better half of each, and one speaking neither gets no notes rather than events into a
     //! void. `auris_clap::notes` is the rule, with the whole of it under test.
     //!
-    //! **A plugin's own window floats; it is never embedded.** CLAP offers a host both, and
-    //! embedding — the plugin drawing inside a rectangle of the host's — is the nicer one. It needs
-    //! a native child window to give away, and gpui draws its whole interface on one surface and
-    //! has none, so a panel reserving a rectangle would be reserving a rectangle of a picture. The
-    //! plugin therefore makes its own window and is told, through `set_transient`, which window to
-    //! stay above. [`Session::set_plugin_window_parent`] is how the frontend names that window
+    //! **Floating first, embedded when it has to be — and never a panel.** CLAP lets a plugin offer
+    //! a window it makes and manages itself, an embedded one it draws inside a window of the host's,
+    //! or both, and it is allowed to offer only one. Floating is the one to prefer: everything about
+    //! such a window is the plugin's problem rather than a second window implementation living
+    //! here, and the plugin is simply told through `set_transient` which window to stay above.
+    //!
+    //! It is also not what most plugins offer. Everything built on JUCE — most of them, Surge XT
+    //! included — draws only into a window it is handed, so the host has to be able to make one.
+    //! `auris_clap::window` is that window: a plain native `HWND` or `NSView` with a title bar,
+    //! owned by the application's window so it stays above it, painting nothing, because the
+    //! plugin's own drawing covers every pixel. `auris_clap::gui::plan_for` is the choice between
+    //! the two, and `auris_clap::window::CAN_LEND` is asked *before* a button appears rather than
+    //! after it fails.
+    //!
+    //! What is still ruled out is a panel *inside* the application, and for the reason it always
+    //! was: gpui draws its whole interface onto one surface and has no child window to give away,
+    //! so a panel reserving a rectangle would be reserving a rectangle of a picture. A second gpui
+    //! window does not stand in for one either — on Windows gpui presents through a flip-model swap
+    //! chain, and a child window over one of those is composited away rather than drawn.
+    //!
+    //! So the plugin ends up in a window of its own either way and the difference is only who made
+    //! it. Which matters for one thing: a window the host made reports a close by *not destroying
+    //! anything*, because the plugin's window is its child and pulling it out from under code that
+    //! has not been told yet is a crash. The flag is raised, the window is left standing, and the
+    //! owner takes the two down in order — plugin first — when it next looks.
+    //!
+    //! [`Session::set_plugin_window_parent`] is how the frontend names the window to stay above,
     //! once, and [`PluginWindow`] is what everything else is addressed by.
     //!
     //! **A window belongs to an instance, and wanting one open is a fact about the slot.** Which is
