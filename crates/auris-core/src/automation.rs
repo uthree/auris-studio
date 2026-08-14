@@ -21,7 +21,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
-use crate::param::ParamTarget;
+use crate::param::{ParamId, ParamTarget};
 use crate::project::TrackId;
 use crate::time::Ticks;
 
@@ -63,6 +63,22 @@ impl AutomationPoint {
 pub struct AutomationLane {
     /// Which parameter this lane drives.
     pub target: ParamTarget,
+    /// The stable key of the parameter [`Self::target`] addresses, for a plugin's parameter.
+    ///
+    /// `None` for the mixer's own controls: a fader is addressed by track id, and a track id means
+    /// the same thing tomorrow. A plugin parameter is addressed by [`ParamId`], which is a
+    /// *position* in the plugin's list — stable for as long as the plugin is, and no longer. A
+    /// hosted CLAP plugin reorders its list whenever its author adds a parameter, and this crate's
+    /// own module doc has always said what to do about it: address a parameter by number at
+    /// runtime and by key on disk. [`PluginState`](crate::plugin::PluginState) already did for the
+    /// static values; a lane did not, so a saved curve drawn on Cutoff came back driving whatever
+    /// had moved into position twelve.
+    ///
+    /// Kept beside the target rather than inside it because a [`ParamTarget`] is [`Copy`] and is
+    /// spent everywhere as a lightweight name — a session's undo steps are keyed by one. So the key
+    /// travels with the lane, and [`Automation::realign_by_key`] is what puts the two back into
+    /// agreement when a document is opened.
+    key: Option<String>,
     /// How to get from one point to the next.
     pub curve: AutomationCurve,
     points: Vec<AutomationPoint>,
@@ -74,6 +90,8 @@ pub struct AutomationLane {
 struct AutomationLaneRepr {
     target: ParamTarget,
     #[serde(default)]
+    key: Option<String>,
+    #[serde(default)]
     curve: AutomationCurve,
     points: Vec<AutomationPoint>,
 }
@@ -82,7 +100,7 @@ impl TryFrom<AutomationLaneRepr> for AutomationLane {
     type Error = CoreError;
 
     fn try_from(repr: AutomationLaneRepr) -> Result<Self> {
-        Self::new(repr.target, repr.curve, repr.points)
+        Self::new(repr.target, repr.key, repr.curve, repr.points)
     }
 }
 
@@ -99,6 +117,7 @@ impl AutomationLane {
     /// replaces the one that was there.
     pub fn new(
         target: ParamTarget,
+        key: Option<String>,
         curve: AutomationCurve,
         mut points: Vec<AutomationPoint>,
     ) -> Result<Self> {
@@ -120,18 +139,33 @@ impl AutomationLane {
         points.dedup_by_key(|point| point.tick);
         Ok(Self {
             target,
+            key,
             curve,
             points,
         })
     }
 
     /// A lane holding one point.
-    pub fn single(target: ParamTarget, curve: AutomationCurve, point: AutomationPoint) -> Self {
+    pub fn single(
+        target: ParamTarget,
+        key: Option<String>,
+        curve: AutomationCurve,
+        point: AutomationPoint,
+    ) -> Self {
         Self {
             target,
+            key,
             curve,
             points: vec![point],
         }
+    }
+
+    /// The stable key of the parameter this lane drives, for a plugin's parameter.
+    ///
+    /// See the field's own account of why a lane carries one; `None` for the mixer's own controls,
+    /// and for a lane written by a build that had no answer to give.
+    pub fn key(&self) -> Option<&str> {
+        self.key.as_deref()
     }
 
     /// Every point, in timeline order.
@@ -286,9 +320,12 @@ impl Automation {
     /// `curve` is only consulted when the lane is being created. Changing how an existing lane
     /// interpolates is [`Self::set_curve`], so writing a point cannot silently restyle a curve
     /// somebody already shaped.
+    /// `key` is the parameter's stable key, and is only consulted when the lane is being created —
+    /// see [`AutomationLane::key`] for what a lane needs one for. `None` for a mixer control.
     pub fn set_point(
         &mut self,
         target: ParamTarget,
+        key: Option<String>,
         curve: AutomationCurve,
         tick: Ticks,
         value: f32,
@@ -301,10 +338,50 @@ impl Automation {
         }
         self.lanes.push(AutomationLane::single(
             target,
+            key,
             curve,
             AutomationPoint::new(tick, value),
         ));
         true
+    }
+
+    /// Re-points every plugin lane at wherever the key it was saved under sits *now*.
+    ///
+    /// `current` is asked, for one lane's target and key, which [`ParamId`] that key holds today,
+    /// and answers `None` for a key the plugin no longer has. A lane that has moved is re-pointed;
+    /// a lane whose parameter is gone is dropped, because what it would otherwise do is drive
+    /// whatever now occupies its old position — the same reason
+    /// `auris_engine`'s graph drops a lane it cannot resolve, and worse than silence for the same
+    /// reason. Mixer lanes carry no key and are left alone.
+    ///
+    /// Returns whether anything moved or was dropped, which is what tells a session the document
+    /// has been repaired and is now unsaved.
+    pub fn realign_by_key(
+        &mut self,
+        mut current: impl FnMut(ParamTarget, &str) -> Option<ParamId>,
+    ) -> bool {
+        let mut changed = false;
+        self.lanes.retain_mut(|lane| {
+            let Some(key) = lane.key.clone() else {
+                return true;
+            };
+            let Some(was) = lane.target.param() else {
+                return true;
+            };
+            match current(lane.target, &key) {
+                Some(now) if now == was => true,
+                Some(now) => {
+                    lane.target = lane.target.with_param(now);
+                    changed = true;
+                    true
+                }
+                None => {
+                    changed = true;
+                    false
+                }
+            }
+        });
+        changed
     }
 
     /// Changes how an existing lane interpolates.
@@ -390,6 +467,7 @@ mod tests {
     fn lane(points: &[(i64, f32)]) -> AutomationLane {
         AutomationLane::new(
             fader(),
+            None,
             AutomationCurve::Linear,
             points
                 .iter()
@@ -446,7 +524,7 @@ mod tests {
 
     #[test]
     fn a_lane_with_no_points_is_refused() {
-        assert!(AutomationLane::new(fader(), AutomationCurve::Linear, Vec::new()).is_err());
+        assert!(AutomationLane::new(fader(), None, AutomationCurve::Linear, Vec::new()).is_err());
     }
 
     #[test]
@@ -456,6 +534,7 @@ mod tests {
         assert!(
             AutomationLane::new(
                 fader(),
+                None,
                 AutomationCurve::Linear,
                 vec![AutomationPoint::new(Ticks::ZERO, f32::NAN)],
             )
@@ -493,7 +572,7 @@ mod tests {
     #[test]
     fn writing_a_point_starts_a_lane_and_removing_the_last_one_ends_it() {
         let mut automation = Automation::new();
-        assert!(automation.set_point(fader(), AutomationCurve::Linear, beats(4), -6.0));
+        assert!(automation.set_point(fader(), None, AutomationCurve::Linear, beats(4), -6.0));
         assert_eq!(automation.len(), 1);
         assert_eq!(automation.value_at(fader(), beats(9)), Some(-6.0));
 
@@ -508,9 +587,9 @@ mod tests {
     #[test]
     fn writing_a_point_does_not_restyle_a_curve_somebody_shaped() {
         let mut automation = Automation::new();
-        automation.set_point(fader(), AutomationCurve::Hold, Ticks::ZERO, 0.0);
+        automation.set_point(fader(), None, AutomationCurve::Hold, Ticks::ZERO, 0.0);
         // The curve travels with the *creation*; a later write is a value, not a style.
-        automation.set_point(fader(), AutomationCurve::Linear, beats(8), 8.0);
+        automation.set_point(fader(), None, AutomationCurve::Linear, beats(8), 8.0);
         assert_eq!(automation.value_at(fader(), beats(4)), Some(0.0));
         assert!(automation.set_curve(fader(), AutomationCurve::Linear));
         assert_eq!(automation.value_at(fader(), beats(4)), Some(4.0));
@@ -538,7 +617,8 @@ mod tests {
             ParamTarget::TrackGain(survivor),
             ParamTarget::MasterGain,
         ] {
-            automation.set_point(target, AutomationCurve::Linear, Ticks::ZERO, 0.0);
+            let key = (!target.is_builtin()).then(|| "cutoff".to_string());
+            automation.set_point(target, key, AutomationCurve::Linear, Ticks::ZERO, 0.0);
         }
         assert_eq!(automation.len(), 6);
         assert!(automation.remove_track(doomed));
@@ -548,13 +628,81 @@ mod tests {
     }
 
     #[test]
+    fn a_lane_follows_its_key_when_the_plugin_moves_the_parameter() {
+        // The whole point of a lane carrying a key: a hosted plugin renumbers its list whenever
+        // its author inserts a parameter, so the position a lane was saved at names something else
+        // by the time the document is opened again.
+        let track = TrackId(1);
+        let cutoff = ParamTarget::Instrument {
+            track,
+            param: ParamId(12),
+        };
+        let mut automation = Automation::new();
+        automation.set_point(
+            cutoff,
+            Some("clap.1042".to_string()),
+            AutomationCurve::Linear,
+            beats(4),
+            800.0,
+        );
+
+        // The plugin now reports that key two places further along.
+        assert!(automation.realign_by_key(|_, key| match key {
+            "clap.1042" => Some(ParamId(14)),
+            _ => None,
+        }));
+        assert!(
+            automation.lane(cutoff).is_none(),
+            "position twelve is somebody else's parameter now"
+        );
+        let moved = ParamTarget::Instrument {
+            track,
+            param: ParamId(14),
+        };
+        let lane = automation.lane(moved).expect("the lane moved with its key");
+        assert_eq!(lane.value_at(beats(4)), 800.0, "and kept its curve");
+        assert_eq!(lane.key(), Some("clap.1042"));
+
+        // Asked again with the plugin already agreeing, nothing changes and nothing is reported.
+        assert!(!automation.realign_by_key(|_, _| Some(ParamId(14))));
+    }
+
+    #[test]
+    fn a_lane_whose_parameter_the_plugin_dropped_goes_with_it() {
+        // Better than silence is not the test — silence *is* the answer. Left in place the lane
+        // would drive whatever moved into its position, which is the failure the engine's own
+        // resolver drops a lane to avoid.
+        let mut automation = Automation::new();
+        automation.set_point(
+            ParamTarget::Effect {
+                track: None,
+                slot: EffectSlotId(3),
+                param: ParamId(1),
+            },
+            Some("clap.7".to_string()),
+            AutomationCurve::Linear,
+            Ticks::ZERO,
+            0.5,
+        );
+        automation.set_point(fader(), None, AutomationCurve::Linear, Ticks::ZERO, -6.0);
+
+        assert!(automation.realign_by_key(|_, _| None));
+        assert_eq!(automation.len(), 1);
+        assert!(
+            automation.lane(fader()).is_some(),
+            "a mixer control carries no key and is nobody's position to move"
+        );
+    }
+
+    #[test]
     fn a_lane_round_trips_through_json_with_its_invariants_checked() {
         let automation = {
             let mut automation = Automation::new();
-            automation.set_point(fader(), AutomationCurve::Hold, beats(8), 3.0);
-            automation.set_point(fader(), AutomationCurve::Hold, beats(0), 0.0);
+            automation.set_point(fader(), None, AutomationCurve::Hold, beats(8), 3.0);
+            automation.set_point(fader(), None, AutomationCurve::Hold, beats(0), 0.0);
             automation.set_point(
                 ParamTarget::MasterGain,
+                None,
                 AutomationCurve::Linear,
                 beats(4),
                 -2.0,
@@ -576,12 +724,14 @@ mod tests {
         let track = project.add_audio_track("Audio 1");
         project.automation.set_point(
             ParamTarget::TrackGain(track),
+            None,
             AutomationCurve::Linear,
             Ticks::ZERO,
             -6.0,
         );
         project.automation.set_point(
             ParamTarget::MasterGain,
+            None,
             AutomationCurve::Linear,
             Ticks::ZERO,
             0.0,

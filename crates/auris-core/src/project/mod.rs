@@ -322,7 +322,16 @@ impl Project {
     /// costs the work when it does not. A version 9 build would open a song whose drum loop runs
     /// thirty-two bars, play the one bar, and write that back on the next save with the other
     /// thirty-one gone and nothing on screen having said so.
-    pub const FORMAT_VERSION: u32 = 10;
+    ///
+    /// 11 since an automation lane records the stable
+    /// [`key`](crate::automation::AutomationLane::key) of the parameter it drives beside the
+    /// [`ParamId`](crate::param::ParamId) that addresses it. Version 5's case a third time, and the
+    /// sharpest of the three: a version 10 build ignores the key, so it opens the document, plays
+    /// every curve against whatever now occupies the position the id names — a Cutoff curve driving
+    /// a Reverb Mix after the plugin's author added one parameter — and writes the file back with
+    /// the key gone, taking the only record of what the lane was drawn on with it. The version is
+    /// what turns that into a sentence about updating instead.
+    pub const FORMAT_VERSION: u32 = 11;
 
     /// An empty project.
     ///

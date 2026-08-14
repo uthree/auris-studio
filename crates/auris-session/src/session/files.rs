@@ -200,6 +200,12 @@ impl Session {
         // and be held in memory twice, which for this font is four hundred megabytes.
         self.install_shipped_fonts();
         self.rebuild_graph();
+        // After the rebuild, because a hosted plugin cannot say where its parameters are until it
+        // has been placed — and again afterwards when a lane moved, since the graph resolved the
+        // lanes to positions that have just changed underneath it.
+        if self.realign_automation() {
+            self.rebuild_graph();
+        }
         // The document was adopted without telling the engine, so the loop it holds is still the
         // one the *previous* project had.
         self.publish_loop();

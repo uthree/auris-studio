@@ -385,8 +385,12 @@ impl Session {
         let value = descriptor.clamp(value);
         let curve = curve_for(&descriptor);
         let at = at.max_zero();
+        // Only read when the lane is being created, and the same key the parameter's static value
+        // is stored under — a lane and a stored value that disagreed about which parameter they
+        // were about would be worse than either being wrong alone.
+        let key = (!target.is_builtin()).then(|| descriptor.key.to_string());
         let mut probe = self.project.automation.clone();
-        if !probe.set_point(target, curve, at, value) || probe == self.project.automation {
+        if !probe.set_point(target, key, curve, at, value) || probe == self.project.automation {
             return false;
         }
         self.record(Edit::WriteAutomation(target));
@@ -457,6 +461,65 @@ impl Session {
         self.project.automation = probe;
         self.invalidate_graph();
         true
+    }
+
+    /// Re-points every automated plugin parameter at the key its lane was saved under.
+    ///
+    /// A lane addresses a plugin parameter by position, and a plugin is free to move one: a hosted
+    /// CLAP plugin renumbers its whole list the moment its author inserts a parameter, and a
+    /// built-in one does the same on any in-house edit to its `parameters()`. So a document that
+    /// has been away is asked, once, where each key sits now — and a lane whose parameter no longer
+    /// exists is dropped rather than left driving whatever took its place.
+    ///
+    /// Called from [`Session::open`](Session::open) after the graph is built, because a hosted
+    /// plugin cannot be asked for its parameter list until it has been placed. Returns whether the
+    /// document was changed, which leaves the project dirty for the same reason a relocated audio
+    /// file does: the answer is worth keeping, and only a save keeps it.
+    pub(super) fn realign_automation(&mut self) -> bool {
+        let asking: Vec<(ParamTarget, String)> = self
+            .project
+            .automation
+            .lanes()
+            .iter()
+            .filter_map(|lane| Some((lane.target, lane.key()?.to_string())))
+            .collect();
+        if asking.is_empty() {
+            return false;
+        }
+
+        // One list per *plugin*, not per lane: reading a hosted plugin's parameters is a call into
+        // somebody else's binary per parameter, and a strip with thirty automated knobs is one
+        // plugin, asked once.
+        let mut lists: Vec<(ParamTarget, Arc<Vec<ParamDescriptor>>)> = Vec::new();
+        for (target, _) in &asking {
+            let plugin = target.with_param(ParamId(0));
+            if lists.iter().any(|(seen, _)| *seen == plugin) {
+                continue;
+            }
+            let list = match *target {
+                ParamTarget::Instrument { track, .. } => self.instrument_descriptors(track),
+                ParamTarget::Effect { slot, .. } => self.effect_descriptors(slot),
+                _ => continue,
+            };
+            lists.push((plugin, list));
+        }
+
+        let mut automation = std::mem::take(&mut self.project.automation);
+        let changed = automation.realign_by_key(|target, key| {
+            let plugin = target.with_param(ParamId(0));
+            lists
+                .iter()
+                .find(|(seen, _)| *seen == plugin)?
+                .1
+                .iter()
+                .find(|descriptor| descriptor.key == key)
+                .map(|descriptor| descriptor.id)
+        });
+        self.project.automation = automation;
+        if changed {
+            self.dirty = true;
+        }
+        changed
     }
 
     /// The descriptor for a target this document can actually automate.
@@ -712,6 +775,77 @@ mod tests {
         assert_eq!(
             session.automation().lane(fader).map(|l| l.points().len()),
             Some(1)
+        );
+    }
+
+    #[test]
+    fn a_plugin_lane_records_the_key_its_parameter_is_saved_under() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let descriptors = session.instrument_descriptors(track);
+        let first = descriptors[0].clone();
+        let knob = ParamTarget::Instrument {
+            track,
+            param: first.id,
+        };
+
+        assert!(session.set_automation_point(knob, Ticks::ZERO, first.default));
+        assert_eq!(
+            session.automation().lane(knob).and_then(|lane| lane.key()),
+            Some(&*first.key),
+            "the same key the parameter's static value is stored under"
+        );
+
+        // A fader is addressed by track id, which is nobody's position in a list.
+        let fader = ParamTarget::TrackGain(track);
+        assert!(session.set_automation_point(fader, Ticks::ZERO, -6.0));
+        assert_eq!(
+            session.automation().lane(fader).and_then(|lane| lane.key()),
+            None
+        );
+    }
+
+    #[test]
+    fn opening_a_document_puts_a_moved_plugin_parameter_back_under_its_lane() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let descriptors = session.instrument_descriptors(track);
+        assert!(
+            descriptors.len() >= 2,
+            "the default instrument needs two parameters for one to move"
+        );
+        let named = descriptors[1].clone();
+        let target = ParamTarget::Instrument {
+            track,
+            param: named.id,
+        };
+        assert!(session.set_automation_point(target, Ticks::from_beats(2.0), named.default));
+
+        // The document a save from before the plugin reordered its list would produce: the key
+        // still names the parameter, the position no longer does. Built by serialising the real
+        // automation and moving the target, because that is the road a file off disk takes.
+        let stale = ParamTarget::Instrument {
+            track,
+            param: descriptors[0].id,
+        };
+        let mut json = serde_json::to_value(session.automation()).expect("serialises");
+        json[0]["target"] = serde_json::to_value(stale).expect("serialises");
+        session.project.automation = serde_json::from_value(json).expect("deserialises");
+        assert!(
+            session.automation().lane(stale).is_some(),
+            "this is the document being opened"
+        );
+
+        assert!(session.realign_automation(), "the lane had moved");
+        let lane = session
+            .automation()
+            .lane(target)
+            .expect("back on the parameter its key names");
+        assert_eq!(lane.points().len(), 1);
+        assert!(session.automation().lane(stale).is_none());
+        assert!(
+            session.is_dirty(),
+            "a repair worth keeping leaves the document unsaved, as a relocated sample does"
         );
     }
 

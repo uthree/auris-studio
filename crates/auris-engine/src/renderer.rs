@@ -1434,10 +1434,10 @@ mod tests {
         let target = ParamTarget::TrackGain(track);
         project
             .automation
-            .set_point(target, AutomationCurve::Linear, Ticks::ZERO, from);
+            .set_point(target, None, AutomationCurve::Linear, Ticks::ZERO, from);
         project
             .automation
-            .set_point(target, AutomationCurve::Linear, over, to);
+            .set_point(target, None, AutomationCurve::Linear, over, to);
         project
     }
 
@@ -1549,6 +1549,7 @@ mod tests {
         let mut project = one_note_project(Ticks::ZERO, Ticks::from_beats(4.0));
         project.automation.set_point(
             ParamTarget::TrackGain(auris_core::TrackId(9_999)),
+            None,
             AutomationCurve::Linear,
             Ticks::ZERO,
             -6.0,
@@ -1845,12 +1846,14 @@ mod tests {
         // audio thread and is bound by the same rule as everything else there.
         project.automation.set_point(
             ParamTarget::TrackGain(track_id),
+            None,
             AutomationCurve::Linear,
             Ticks::ZERO,
             -3.0,
         );
         project.automation.set_point(
             ParamTarget::TrackGain(track_id),
+            None,
             AutomationCurve::Linear,
             Ticks::from_beats(8.0),
             0.0,

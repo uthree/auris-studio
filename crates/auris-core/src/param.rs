@@ -227,7 +227,7 @@ impl ParamDescriptor {
     /// Clamps `value` into the descriptor's range, snapping to steps when discrete.
     ///
     /// Total: every descriptor has an answer for every `f32`, however either of them was built.
-    /// See [`Self::range`] for why that matters.
+    /// The range is read through `Self::range`, whose own comment is why that matters.
     pub fn clamp(&self, value: f32) -> f32 {
         let (min, max) = self.range();
         let value = if value.is_finite() {
@@ -464,6 +464,30 @@ impl ParamTarget {
     /// it, or the document keeps curves addressed to something that no longer exists.
     pub fn belongs_to(self, track: TrackId) -> bool {
         self.track() == Some(track)
+    }
+
+    /// Which parameter of a plugin this target names, for the two variants that name one.
+    ///
+    /// `None` for the mixer's own controls, which are not positions in anybody's list.
+    pub fn param(self) -> Option<ParamId> {
+        match self {
+            ParamTarget::Instrument { param, .. } | ParamTarget::Effect { param, .. } => {
+                Some(param)
+            }
+            _ => None,
+        }
+    }
+
+    /// The same target with its plugin parameter re-pointed; unchanged for a mixer control.
+    ///
+    /// What a plugin that has reordered its list asks of a saved automation lane — see
+    /// [`Automation::realign_by_key`](crate::automation::Automation::realign_by_key).
+    pub fn with_param(self, param: ParamId) -> Self {
+        match self {
+            ParamTarget::Instrument { track, .. } => ParamTarget::Instrument { track, param },
+            ParamTarget::Effect { track, slot, .. } => ParamTarget::Effect { track, slot, param },
+            other => other,
+        }
     }
 }
 

@@ -439,6 +439,7 @@ mod tests {
     fn lane(curve: AutomationCurve) -> AutomationLane {
         AutomationLane::new(
             ParamTarget::MasterGain,
+            None,
             curve,
             vec![
                 AutomationPoint::new(Ticks::ZERO, 0.0),
