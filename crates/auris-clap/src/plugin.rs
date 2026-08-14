@@ -723,6 +723,11 @@ fn read_params(instance: &mut PluginInstance<AurisHost>) -> ParamList {
 ///   CLAP parameter that is promised never to change — the *name* may change, the *index* may
 ///   move — so the key is built from it, and a project keeps loading after the plugin is updated
 ///   and reorders its list.
+/// * The range is the plugin's arithmetic, not ours. `ParamDescriptor` refuses to die of a range
+///   that is inverted or not a number, but a value quietly landing somewhere other than where the
+///   plugin meant it is still wrong — and this is the last place the plugin can be *named*, so the
+///   range is corrected and reported here, once, rather than puzzled over later from a knob that
+///   will not move.
 fn describe(
     id: u32,
     clap_id: u32,
@@ -732,8 +737,17 @@ fn describe(
     default: f64,
     stepped: bool,
 ) -> ParamDescriptor {
-    let min = min as f32;
-    let max = max as f32;
+    let (min, max) = match (min as f32, max as f32) {
+        (min, max) if min.is_finite() && max.is_finite() && min <= max => (min, max),
+        (min, max) => {
+            log::warn!("parameter {clap_id} reports the range {min}..{max}; reading it as 0..1");
+            (0.0, 1.0)
+        }
+    };
+    let default = match default as f32 {
+        default if default.is_finite() => default.clamp(min, max),
+        _ => min,
+    };
     let steps = match stepped {
         // A stepped CLAP parameter is a range of integers, ends included.
         true => Some(((max - min).round() as u32).saturating_add(1)),
@@ -754,7 +768,7 @@ fn describe(
         }),
         min,
         max,
-        default: default as f32,
+        default,
         unit,
         curve: auris_core::param::ParamValueCurve::Linear,
         steps,
@@ -797,5 +811,37 @@ mod tests {
         let continuous = describe(0, 3, "Drive", 0.0, 1.0, 0.5, false);
         assert_eq!(continuous.unit, ParamUnit::Plain);
         assert_eq!(continuous.steps, None);
+    }
+
+    #[test]
+    fn a_range_the_plugin_reported_backwards_is_corrected_here() {
+        // Not merely survived: a descriptor carrying an inverted range would have every value
+        // silently clamped against the unit range instead, which is not what the plugin's own
+        // numbers say either. So the correction happens once, where the plugin can be named.
+        let backwards = describe(0, 9, "Cutoff", 20_000.0, 20.0, 1_000.0, false);
+        assert_eq!(backwards.min, 0.0);
+        assert_eq!(backwards.max, 1.0);
+        assert_eq!(
+            backwards.default, 1.0,
+            "a default outside the range it lands in is clamped, not carried through"
+        );
+
+        let nan = describe(0, 10, "Broken", f64::NAN, 1.0, 0.5, false);
+        assert_eq!((nan.min, nan.max), (0.0, 1.0));
+
+        let nan_default = describe(0, 11, "Broken", -6.0, 6.0, f64::NAN, false);
+        assert_eq!(
+            nan_default.default, -6.0,
+            "a not-a-number default is the bottom of the range, never a not-a-number"
+        );
+    }
+
+    #[test]
+    fn a_range_the_plugin_reported_properly_is_left_exactly_alone() {
+        let param = describe(0, 12, "Cutoff", 20.0, 20_000.0, 440.0, false);
+        assert_eq!(
+            (param.min, param.max, param.default),
+            (20.0, 20_000.0, 440.0)
+        );
     }
 }

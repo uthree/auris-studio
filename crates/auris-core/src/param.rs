@@ -206,22 +206,46 @@ impl ParamDescriptor {
             .with_steps(2)
     }
 
+    /// The range to read [`Self::min`] and [`Self::max`] as.
+    ///
+    /// Not simply the two fields. They are public, on a type that is also deserialised, and for a
+    /// hosted CLAP plugin they are numbers the *plugin* chose — and [`f32::clamp`] does not
+    /// tolerate bounds the wrong way round or bounds that are not numbers: it asserts, in release
+    /// builds as well as debug ones. A parameter is clamped on the audio callback thread, where
+    /// nothing is watching for a panic, so reading the fields directly puts a third party's
+    /// arithmetic mistake in a position to end the process mid-block.
+    ///
+    /// A range like that describes nothing to clamp against, so it is read as the unit range
+    /// instead. A knob in the wrong place is a bug somebody can find and fix; silence is not.
+    fn range(&self) -> (f32, f32) {
+        match (self.min, self.max) {
+            (min, max) if min.is_finite() && max.is_finite() && min <= max => (min, max),
+            _ => (0.0, 1.0),
+        }
+    }
+
     /// Clamps `value` into the descriptor's range, snapping to steps when discrete.
+    ///
+    /// Total: every descriptor has an answer for every `f32`, however either of them was built.
+    /// See [`Self::range`] for why that matters.
     pub fn clamp(&self, value: f32) -> f32 {
+        let (min, max) = self.range();
         let value = if value.is_finite() {
             value
         } else {
             self.default
         };
-        let value = value.clamp(self.min, self.max);
+        // The default is a plugin's own number too, so it can be the thing that is not a number.
+        let value = if value.is_finite() { value } else { min };
+        let value = value.clamp(min, max);
         match self.steps {
             Some(steps) if steps > 1 => {
-                let span = self.max - self.min;
+                let span = max - min;
                 if span.abs() < f32::EPSILON {
-                    self.min
+                    min
                 } else {
                     let quantum = span / (steps - 1) as f32;
-                    self.min + ((value - self.min) / quantum).round() * quantum
+                    min + ((value - min) / quantum).round() * quantum
                 }
             }
             _ => value,
@@ -230,32 +254,31 @@ impl ParamDescriptor {
 
     /// Maps a real value onto a control's 0..1 travel.
     pub fn normalize(&self, value: f32) -> f32 {
+        let (min, max) = self.range();
         let value = self.clamp(value);
         match self.curve {
-            ParamValueCurve::Logarithmic if self.min > 0.0 && self.max > 0.0 => {
-                let span = (self.max / self.min).ln();
+            ParamValueCurve::Logarithmic if min > 0.0 && max > 0.0 => {
+                let span = (max / min).ln();
                 if span.abs() < f32::EPSILON {
                     0.0
                 } else {
-                    ((value / self.min).ln() / span).clamp(0.0, 1.0)
+                    ((value / min).ln() / span).clamp(0.0, 1.0)
                 }
             }
             ParamValueCurve::Power(exponent) if exponent > 0.0 => {
-                let span = self.max - self.min;
+                let span = max - min;
                 if span.abs() < f32::EPSILON {
                     0.0
                 } else {
-                    ((value - self.min) / span)
-                        .powf(1.0 / exponent)
-                        .clamp(0.0, 1.0)
+                    ((value - min) / span).powf(1.0 / exponent).clamp(0.0, 1.0)
                 }
             }
             _ => {
-                let span = self.max - self.min;
+                let span = max - min;
                 if span.abs() < f32::EPSILON {
                     0.0
                 } else {
-                    ((value - self.min) / span).clamp(0.0, 1.0)
+                    ((value - min) / span).clamp(0.0, 1.0)
                 }
             }
         }
@@ -263,26 +286,26 @@ impl ParamDescriptor {
 
     /// Inverse of [`Self::normalize`].
     pub fn denormalize(&self, normalized: f32) -> f32 {
+        let (min, max) = self.range();
         let t = normalized.clamp(0.0, 1.0);
         let value = match self.curve {
-            ParamValueCurve::Logarithmic if self.min > 0.0 && self.max > 0.0 => {
-                self.min * (self.max / self.min).powf(t)
-            }
+            ParamValueCurve::Logarithmic if min > 0.0 && max > 0.0 => min * (max / min).powf(t),
             ParamValueCurve::Power(exponent) if exponent > 0.0 => {
-                self.min + (self.max - self.min) * t.powf(exponent)
+                min + (max - min) * t.powf(exponent)
             }
-            _ => self.min + (self.max - self.min) * t,
+            _ => min + (max - min) * t,
         };
         self.clamp(value)
     }
 
     /// Formats a value for display, including its unit suffix.
     pub fn format(&self, value: f32) -> String {
+        let (min, _) = self.range();
         let value = self.clamp(value);
         match self.unit {
             ParamUnit::Plain => format_significant(value),
             ParamUnit::Decibels => {
-                if value <= self.min && self.min <= -60.0 {
+                if value <= min && min <= -60.0 {
                     "-inf dB".to_string()
                 } else {
                     format!("{value:+.1} dB")
@@ -475,6 +498,47 @@ mod tests {
         assert_eq!(descriptor.clamp(0.4), 0.0);
         assert_eq!(descriptor.clamp(0.6), 1.0);
         assert_eq!(descriptor.format(1.0), "On");
+    }
+
+    #[test]
+    fn a_range_the_wrong_way_round_is_read_as_the_unit_range() {
+        // A hosted plugin's range is the plugin's own arithmetic, and `f32::clamp` asserts on
+        // bounds it cannot order — in release builds too. This is clamped on the audio callback
+        // thread, so the assert would end the process mid-block rather than misplace a knob.
+        let mut descriptor =
+            ParamDescriptor::new(0u32, "cutoff", "Cutoff", 20.0, 20_000.0, 1_000.0);
+        descriptor.min = 10.0;
+        descriptor.max = 0.0;
+
+        assert_eq!(descriptor.clamp(5.0), 1.0);
+        assert_eq!(descriptor.clamp(-3.0), 0.0);
+        assert_eq!(descriptor.normalize(0.25), 0.25);
+        assert_eq!(descriptor.denormalize(0.75), 0.75);
+    }
+
+    #[test]
+    fn a_range_that_is_not_a_number_is_read_as_the_unit_range() {
+        for (min, max) in [
+            (f32::NAN, 1.0),
+            (0.0, f32::NAN),
+            (f32::NEG_INFINITY, f32::INFINITY),
+        ] {
+            let mut descriptor = ParamDescriptor::new(0u32, "p", "P", 0.0, 1.0, 0.5);
+            descriptor.min = min;
+            descriptor.max = max;
+            assert_eq!(descriptor.clamp(2.0), 1.0, "{min}..{max}");
+            assert_eq!(descriptor.clamp(-2.0), 0.0, "{min}..{max}");
+            assert!(descriptor.normalize(0.5).is_finite(), "{min}..{max}");
+        }
+    }
+
+    #[test]
+    fn a_default_that_is_not_a_number_does_not_come_back_out() {
+        // `clamp` falls back to the default for a value it cannot use; a plugin that reports both
+        // as not-a-number would otherwise have the fallback hand one straight back.
+        let mut descriptor = ParamDescriptor::new(0u32, "p", "P", -6.0, 6.0, 0.0);
+        descriptor.default = f32::NAN;
+        assert_eq!(descriptor.clamp(f32::NAN), -6.0);
     }
 
     #[test]
