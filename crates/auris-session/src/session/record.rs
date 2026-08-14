@@ -472,7 +472,13 @@ impl Session {
             .tempo_map
             .seconds_to_ticks(Seconds((take_start + offset) as f64 / project_rate));
 
-        self.record(Edit::RecordTake);
+        // A transaction rather than a single `record`, because clearing the punch region goes
+        // through `split_clip` and `remove_clip` and each of those records a step of its own when
+        // there is no transaction open. Punching over one clip that spanned the region pushed four
+        // entries — the take, two splits and a removal — so the one Undo the user expected to
+        // reverse "the recording" instead landed them between the splits, holding three fragments
+        // with new ids and no take.
+        self.begin_transaction(Edit::RecordTake);
         // Inside the same undo step, and before the new clip exists so it cannot clear itself.
         // Only what the take actually covers: a player who rolled in late replaces less.
         if punch.is_some() {
@@ -494,12 +500,16 @@ impl Session {
             buffer.channel_count(),
         );
         self.record_source_size(source, &path);
-        let clip = self
-            .project
-            .add_audio_clip(track, source, start)
-            .ok_or(SessionError::UnknownTrack(track.0))?;
+        let Some(clip) = self.project.add_audio_clip(track, source, start) else {
+            // The take's own file stays — it is what was played — but the document goes back the
+            // way it was. A cleared punch region with no clip to show for it is not a state one
+            // Undo could sort out, and the transaction is what makes putting it back possible.
+            self.revert_transaction();
+            return Err(SessionError::UnknownTrack(track.0));
+        };
         self.install_source(source, Arc::new(buffer));
         self.invalidate_graph();
+        self.end_transaction();
 
         Ok(RecordingReport {
             clip: Some(clip),

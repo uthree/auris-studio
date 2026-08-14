@@ -662,6 +662,13 @@ impl AurisApp {
             MenuCommand::DuplicateClip(clip) => {
                 let mut copies = std::collections::BTreeSet::new();
                 let mut failure = None;
+                // One click, one step. `duplicate_clip` records a step per call, so duplicating a
+                // selection of three left three of them: one Undo took back the last copy and left
+                // the other two sitting there, which is a document the user never asked for. The
+                // copies that succeeded stay copied even when a later one fails — same as every
+                // other command here that works through a selection — and now one Undo reverses
+                // the whole click rather than the tail of it.
+                self.session.begin_transaction(Edit::DuplicateClip);
                 for source in self.clips_for_command(clip) {
                     match self.session.duplicate_clip(source) {
                         Ok(copy) => {
@@ -670,6 +677,7 @@ impl AurisApp {
                         Err(error) => failure = Some(error),
                     }
                 }
+                self.session.end_transaction();
                 match failure {
                     Some(error) => self.set_failed_status(self.failure(Key::MenuDuplicate, &error)),
                     None => {

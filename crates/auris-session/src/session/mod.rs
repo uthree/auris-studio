@@ -1190,6 +1190,38 @@ mod tests {
     }
 
     #[test]
+    fn a_split_in_between_keeps_two_repeats_apart() {
+        // `split_clip` pushes its own history entry rather than going through `record`, so it was
+        // the one edit that did not close the coalescing window: the nudge after the split folded
+        // into the one before it, and a single Undo took the split and the second nudge together.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::from_beats(4.0))
+            .unwrap();
+        session.forget_history();
+
+        let start = Instant::now();
+        session.record_repeating_at(Edit::ChangeTempo(Ticks::ZERO), start);
+        session.project.set_bpm(130.0);
+        session
+            .split_clip(clip, Ticks::from_beats(2.0))
+            .expect("splits");
+        session.record_repeating_at(Edit::ChangeTempo(Ticks::ZERO), start + tick(20));
+        session.project.set_bpm(140.0);
+
+        assert_eq!(session.undo(), Some(Edit::ChangeTempo(Ticks::ZERO)));
+        assert_eq!(
+            session.project().bpm(),
+            130.0,
+            "the nudge after the split came back on its own"
+        );
+        assert_eq!(session.undo(), Some(Edit::SplitClip));
+        assert_eq!(session.undo(), Some(Edit::ChangeTempo(Ticks::ZERO)));
+        assert_eq!(session.project().bpm(), 120.0);
+    }
+
+    #[test]
     fn a_render_job_is_independent_of_later_edits() {
         let mut session = session();
         let track = session.add_default_instrument_track("Lead").unwrap();

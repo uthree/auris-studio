@@ -345,6 +345,50 @@ mod tests {
     }
 
     #[test]
+    fn clearing_inside_a_transaction_is_one_undo_step() {
+        // What `stop_recording` relies on, and what it did not used to open. Clearing goes through
+        // `split_clip` and `remove_clip`, and outside a transaction each of those records a step of
+        // its own — so punching over one clip that spanned the region pushed three entries on top
+        // of the take's, and the single Undo the user meant for "the recording" landed them between
+        // the two splits, holding fragments with new ids and no take.
+        let mut session = session();
+        let track = session.add_audio_track("Vocals");
+        let source = session.project.add_audio_source(
+            "take",
+            auris_core::AssetPath::inside("Audio/take.wav"),
+            48_000 * 16,
+            48_000.0,
+            1,
+        );
+        let original = session
+            .project
+            .add_audio_clip(track, source, Ticks::ZERO)
+            .expect("a clip");
+        session.forget_history();
+
+        session.begin_transaction(Edit::RecordTake);
+        session.clear_punch_range(track, Ticks::from_beats(4.0), Ticks::from_beats(8.0));
+        assert!(session.end_transaction(), "the clearing changed something");
+
+        assert_eq!(session.undo(), Some(Edit::RecordTake));
+        assert!(
+            !session.can_undo(),
+            "the splits and the removal were one step"
+        );
+        let clips = session
+            .project()
+            .track(track)
+            .and_then(|track| track.kind.as_audio())
+            .map(|audio| audio.clips.clone())
+            .unwrap_or_default();
+        assert_eq!(clips.len(), 1, "one Undo puts the clip back whole");
+        assert_eq!(
+            clips[0].id, original,
+            "and with the id it had, not a fragment's"
+        );
+    }
+
+    #[test]
     fn clearing_removes_a_clip_that_lies_wholly_inside_the_range() {
         let mut session = session();
         let track = session.add_audio_track("Vocals");

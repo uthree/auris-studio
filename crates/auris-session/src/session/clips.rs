@@ -258,6 +258,11 @@ impl Session {
         if self.transaction.is_none() {
             self.history.push(Edit::SplitClip, &before);
         }
+        // What `record` does for every other command, and this is the one that pushes its own
+        // step instead of going through it: a split has to break a run of coalescing repeats, or a
+        // tempo nudge either side of it folds into one step and undoing that step silently takes
+        // the split with it.
+        self.last_record = None;
         self.dirty = true;
         self.invalidate_graph();
         Ok(right)
