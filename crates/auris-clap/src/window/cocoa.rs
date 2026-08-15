@@ -3,6 +3,7 @@
 use std::ptr::NonNull;
 
 use clack_extensions::gui::GuiSize;
+use objc2::MainThreadOnly;
 use objc2::rc::Retained;
 use objc2_app_kit::{
     NSBackingStoreType, NSView, NSWindow, NSWindowOrderingMode, NSWindowStyleMask,
