@@ -756,6 +756,16 @@ impl AudioEngine {
                     graph.note_off(track, pitch);
                 }
             }
+            EngineCommand::PitchBend { track, semitones } => {
+                if let Some(graph) = &mut self.graph {
+                    graph.pitch_bend(track, semitones);
+                }
+            }
+            EngineCommand::Modulation { track, amount } => {
+                if let Some(graph) = &mut self.graph {
+                    graph.modulation(track, amount);
+                }
+            }
             EngineCommand::SetMetronome(enabled) => {
                 if let Some(graph) = &mut self.graph {
                     graph.set_metronome(enabled);

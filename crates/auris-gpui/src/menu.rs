@@ -411,6 +411,11 @@ pub fn model(language: Language) -> Vec<MenuSection> {
                 actions::ToggleMetronome,
                 "transport.metronome",
             ),
+            command(
+                t(Key::CmdMusicalTyping),
+                actions::ToggleMusicalTyping,
+                "transport.musical_typing",
+            ),
             MenuRow::Separator,
             command(
                 t(Key::CmdGoToPosition),

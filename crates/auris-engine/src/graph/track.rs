@@ -152,6 +152,29 @@ impl RenderTrack {
         self.push_audition(NoteEvent::NoteOff { frame: 0, pitch });
     }
 
+    /// Queues a bend of the whole instrument for the start of the next block.
+    ///
+    /// Clamped to [`BEND_LIMIT`](auris_core::project::BEND_LIMIT) either way, which is what the
+    /// document allows a written curve — a live wheel and a drawn one must not be able to reach
+    /// pitches the other cannot.
+    pub fn pitch_bend(&mut self, semitones: f32) {
+        self.push_audition(NoteEvent::PitchBend {
+            frame: 0,
+            semitones: semitones.clamp(
+                -auris_core::project::BEND_LIMIT,
+                auris_core::project::BEND_LIMIT,
+            ),
+        });
+    }
+
+    /// Queues a move of the instrument's modulation wheel for the start of the next block.
+    pub fn modulation(&mut self, amount: f32) {
+        self.push_audition(NoteEvent::Modulation {
+            frame: 0,
+            amount: amount.clamp(0.0, auris_core::project::MODULATION_LIMIT),
+        });
+    }
+
     fn push_audition(&mut self, event: NoteEvent) {
         if self.audition.len() < self.audition.capacity() {
             self.audition.push(event);

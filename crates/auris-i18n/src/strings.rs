@@ -283,6 +283,16 @@ strings! {
     PunchOn { en: "Punch recording on — takes are trimmed to the punch region", ja: "パンチ録音オン — 録音はパンチ範囲に切り詰められます" }
     PunchOff { en: "Punch recording off", ja: "パンチ録音オフ" }
     MonitoringOff { en: "Monitoring off", ja: "モニタリングを終了しました" }
+    CmdMusicalTyping { en: "Musical Typing", ja: "ミュージックタイピング" }
+    MusicalTypingOn {
+        en: "Musical Typing on — A to ; plays, Z and X move the octave, C and V the velocity, 1 and 2 bend, 3 to 8 the modulation, Tab holds",
+        ja: "ミュージックタイピングオン — A〜; で演奏、Z X でオクターブ、C V で強さ、1 2 でベンド、3〜8 でモジュレーション、Tab で保持"
+    }
+    MusicalTypingOff { en: "Musical Typing off", ja: "ミュージックタイピングオフ" }
+    MusicalTypingNeedsInstrument {
+        en: "No instrument track to play — add one first",
+        ja: "演奏できるソフト音源トラックがありません。先に追加してください"
+    }
     RecordingNeedsSave {
         en: "A take is written to disk as it happens — choose where this project lives first.",
         ja: "録音は録りながらディスクに書き込みます。先にプロジェクトの保存先を決めてください。"

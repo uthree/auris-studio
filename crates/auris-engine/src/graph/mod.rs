@@ -736,6 +736,20 @@ impl RenderGraph {
         }
     }
 
+    /// Queues a bend of a track's instrument.
+    pub fn pitch_bend(&mut self, track: usize, semitones: f32) {
+        if let Some(track) = self.tracks.get_mut(track) {
+            track.pitch_bend(semitones);
+        }
+    }
+
+    /// Queues a move of a track's modulation wheel.
+    pub fn modulation(&mut self, track: usize, amount: f32) {
+        if let Some(track) = self.tracks.get_mut(track) {
+            track.modulation(amount);
+        }
+    }
+
     /// Drops every sounding voice without touching effect tails.
     ///
     /// This is what a stop or a seek does: notes must not hang, but a reverb should keep ringing.

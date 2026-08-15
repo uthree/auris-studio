@@ -51,6 +51,8 @@ actions!(
         ToggleRecording,
         /// Play the live input through the track a take would land on, or stop doing so.
         ToggleMonitoring,
+        /// Play the computer keyboard as an instrument, or stop doing so.
+        ToggleMusicalTyping,
         /// Trim takes to the punch region, or stop doing so.
         TogglePunch,
         /// Add an instrument track.
@@ -186,6 +188,32 @@ pub mod context {
     pub const INSPECTOR: &str = "AurisInspector";
     /// The log.
     pub const LOG: &str = "AurisLog";
+    /// Added to the window's context while the computer keyboard is being played as an
+    /// instrument. Nothing is bound *here*; what it does is take bindings away. See
+    /// [`reachable_from`](super::reachable_from).
+    pub const TYPING: &str = "AurisMusicalTyping";
+}
+
+/// Where a command bound to `keystroke` can be reached from, as a context predicate.
+///
+/// Normally just the context it lives in. The exception is the typing keyboard: while somebody is
+/// playing the computer keyboard, `k` has to sound a note rather than toggle the click, and that
+/// cannot be arranged after the fact — gpui resolves a keystroke to an action *before* any key
+/// listener sees it (`Window::dispatch_key_event` dispatches every matched binding and only calls
+/// `finish_dispatch_key_event`, which is where `on_key_down` lives, if none of them consumed the
+/// event). There is no way to intercept a bound key. The only thing that works is for the binding
+/// not to match, so a command on a key the keyboard plays is bound *outside* [`context::TYPING`]
+/// and the root adds that context while the mode is on.
+///
+/// Decided from the keystroke rather than from the command, so a user who moves a command onto
+/// `h` gets the same treatment as the commands that shipped on one — and so a command moved *off*
+/// a played key gets its keystroke back without anything here having to know.
+pub fn reachable_from(context: &str, keystroke: &str) -> String {
+    if auris_session::shadows_musical_typing(keystroke) {
+        format!("{context} && !{}", context::TYPING)
+    } else {
+        context.to_string()
+    }
 }
 
 /// One command the user can rebind.
@@ -215,7 +243,7 @@ pub struct Bindable {
     /// the commands that earned their key among ones nobody asked for. The row is still in the
     /// settings window, still in the palette, and one click from a key of the user's choosing.
     pub default: Option<&'static str>,
-    bind: fn(&str) -> KeyBinding,
+    bind: fn(&str, &str) -> KeyBinding,
     make: fn() -> Box<dyn Action>,
 }
 
@@ -235,7 +263,7 @@ impl Eq for Bindable {}
 impl Bindable {
     /// Builds the binding for `keystroke`.
     pub fn binding(&self, keystroke: &str) -> KeyBinding {
-        (self.bind)(keystroke)
+        (self.bind)(keystroke, &reachable_from(self.context, keystroke))
     }
 
     /// The action this command dispatches.
@@ -274,7 +302,7 @@ macro_rules! bindable {
                 // `""` in the table rather than `None`, so every row stays one line of the same
                 // shape and the column of keystrokes reads down the page.
                 default: if $default.is_empty() { None } else { Some($default) },
-                bind: |keys| KeyBinding::new(keys, $action, Some($context)),
+                bind: |keys, context| KeyBinding::new(keys, $action, Some(context)),
                 make: || Box::new($action),
             },)*)*
         ];
@@ -300,6 +328,10 @@ bindable! {
         // before a session of takes rather than flipped between them, and a bare letter is worth
         // spending only on a switch somebody reaches for with an instrument in the other hand.
         "transport.punch",      GroupTransport, CmdTogglePunch,        "secondary-p" => TogglePunch;
+        // GarageBand's own key for this, which is the one hand that has reached for it before.
+        // It has to carry a modifier whatever it was: the keyboard this switches on plays nearly
+        // every bare letter, so a bare one would be a switch that could not be switched off.
+        "transport.musical_typing", GroupTransport, CmdMusicalTyping,  "secondary-k" => ToggleMusicalTyping;
         // Logic's own key for the click, and free here. A bare letter at the window's context is
         // the same bargain the panel toggles above already take: nothing types into the window,
         // and a sheet or a prompt is a context of its own where nothing at all is bound.
@@ -811,6 +843,76 @@ mod tests {
                 entry.id
             );
         }
+    }
+
+    #[test]
+    fn every_default_builds_the_binding_it_will_be_installed_as() {
+        // `KeyBinding::new` panics on a keystroke or a context predicate it cannot parse, and
+        // `install_bindings` builds all of these at start-up — so anything malformed in the table
+        // is not a binding that quietly does not work, it is an application that does not open.
+        for (id, default) in defaults() {
+            let entry = bindable(id).expect("a real command");
+            entry.binding(default);
+        }
+    }
+
+    #[test]
+    fn a_command_on_a_key_the_typing_keyboard_plays_is_bound_out_of_its_reach() {
+        // The mode cannot take a key back from a binding once it has one: gpui resolves a
+        // keystroke to an action before any key listener runs. So the binding has to be out of
+        // reach in the first place, and every command whose key the keyboard plays has to say so
+        // — the ones that ship on one today, and any the user moves onto one tomorrow.
+        let played: Vec<(&str, &str)> = defaults()
+            .filter(|(_, default)| auris_session::shadows_musical_typing(default))
+            .collect();
+        assert!(
+            !played.is_empty(),
+            "the keyboard plays bare letters and the table is full of them; \
+             an empty list means the question stopped being asked"
+        );
+
+        for (id, default) in played {
+            let entry = bindable(id).expect("a real command");
+            let predicate = reachable_from(entry.context, default);
+            assert_eq!(
+                predicate,
+                format!("{} && !{}", entry.context, context::TYPING),
+                "`{id}` is on `{default}`, which the keyboard plays"
+            );
+            // And it still parses, which is the half a formatted string can get wrong.
+            gpui::KeyBinding::new(default, PanicStop, Some(&predicate));
+        }
+    }
+
+    #[test]
+    fn the_keys_that_are_not_notes_keep_their_commands_while_the_keyboard_is_played() {
+        // Somebody playing still has to be able to start the transport, save, and panic. Those
+        // are exactly the keystrokes the keyboard does not use, and this is the assertion that
+        // the guard above is narrow rather than a mode that eats the keyboard whole.
+        for id in [
+            "transport.play",
+            "transport.panic",
+            "transport.return",
+            "file.save",
+            "transport.musical_typing",
+        ] {
+            let entry = bindable(id).expect("a real command");
+            let default = entry.default.expect("one of these without a key is a bug");
+            assert_eq!(
+                reachable_from(entry.context, default),
+                entry.context,
+                "`{id}` is on `{default}` and would go out of reach while playing"
+            );
+        }
+    }
+
+    #[test]
+    fn the_switch_for_the_typing_keyboard_is_not_a_key_the_keyboard_plays() {
+        // It would be a mode that can be entered and not left: every bare letter the switch could
+        // sit on is one the keyboard would swallow on the way back out.
+        let entry = bindable("transport.musical_typing").expect("a real command");
+        let default = entry.default.expect("the switch ships with a key");
+        assert!(!auris_session::shadows_musical_typing(default));
     }
 
     #[test]

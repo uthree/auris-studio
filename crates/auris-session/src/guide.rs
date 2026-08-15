@@ -207,6 +207,47 @@ pub mod architecture {
     //! which is the one refinement worth remembering — replaying a third of a second of somebody's
     //! own voice is a worse noise than the gap that prompted it.
     //!
+    //! # Playing when there is no MIDI keyboard on the desk
+    //!
+    //! The computer keyboard can be one, in Logic and GarageBand's layout key for key: `a` is C
+    //! up to `;`, the octave on `z` and `x`, the velocity on `c` and `v`, the bend on `1` and `2`,
+    //! the modulation wheel across `3` to `8`, and sustain on Tab. The layout is copied rather
+    //! than improved on because its whole value is that a hand already knows it.
+    //!
+    //! All of it is in [`MusicalTyping`](crate::MusicalTyping) rather than in a frontend, because
+    //! none of "the letter `d` means E" needs a window — a frontend turns a key event into
+    //! [`typing_press`](crate::Session::typing_press) and
+    //! [`typing_release`](crate::Session::typing_release) and has done its whole job.
+    //!
+    //! Three rules are worth carrying away, because each is the sort only found by getting it
+    //! wrong:
+    //!
+    //! * **A held key remembers the track it was pressed on.** Which track a strike goes to is the
+    //!   caller's choice and it can change while a key is down. A release that followed the
+    //!   selection instead would leave the first track sounding for ever, and there is no gesture
+    //!   a user can make to recover from that.
+    //! * **A release is answered even when the keyboard is switched off,** because that is exactly
+    //!   how a key comes to be down with the mode gone: somebody let go of the switch before the
+    //!   note. Anything that ends a performance without a key being lifted — the window losing
+    //!   focus, a panic — goes through
+    //!   [`release_typed_notes`](crate::Session::release_typed_notes) for the same reason.
+    //! * **The keyboard puts back what belongs to the instrument, and keeps what belongs to it.**
+    //!   The octave and the velocity are read at the moment a note is struck and sent nowhere, so
+    //!   they stay where the hands left them. The bend and the wheel are channel state the
+    //!   instrument goes on holding — [`pitch_bend`](crate::Session::pitch_bend) and
+    //!   [`modulation`](crate::Session::modulation) are the live commands for them — so putting
+    //!   the keyboard away returns both to zero on every track it moved them on. Otherwise a
+    //!   track is left bent, nothing on screen says so, and the timeline plays back wrong.
+    //!
+    //! The part that *is* a frontend's problem is that the letters are already bound to commands,
+    //! and this cannot be solved by intercepting them: gpui resolves a keystroke to an action
+    //! before any key listener runs, so a bound key never reaches one. The binding has to fail to
+    //! match instead. `auris_gpui::actions::reachable_from` asks
+    //! [`shadows_musical_typing`](crate::shadows_musical_typing) about each keystroke as it binds
+    //! it, and puts the ones the keyboard plays outside a context the window adds while the mode
+    //! is on. Asked about the keystroke rather than the command, so a rebound key is handled
+    //! without anything having to know it moved.
+    //!
     //! # Where the audio actually goes
     //!
     //! [`auris_engine::render_block`] is the single implementation of "produce N frames".

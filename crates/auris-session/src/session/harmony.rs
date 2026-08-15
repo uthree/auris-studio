@@ -18,6 +18,7 @@
 
 use auris_core::TrackId;
 use auris_core::harmony::Harmony;
+use auris_core::project::{BEND_LIMIT, MODULATION_LIMIT};
 use auris_core::theory::chart::{Chart, catalog};
 use auris_core::theory::chord::Chord;
 use auris_core::theory::key::Key as MusicalKey;
@@ -265,6 +266,33 @@ impl Session {
     pub fn notes_off(&mut self, track: TrackId, pitches: &[u8]) {
         for pitch in pitches {
             self.note_off(track, *pitch);
+        }
+    }
+
+    /// Bends everything a track's instrument is sounding, and everything it sounds next.
+    ///
+    /// Channel state rather than an event about a note, exactly as a wheel is: the instrument
+    /// holds this until it is given another. Zero is what puts it back, and whoever bent it is
+    /// the one who has to send that.
+    ///
+    /// Outside the timeline, like [`Self::note_on`] — a clip's own bend curve is a different
+    /// thing, scheduled with the notes it belongs to.
+    pub fn pitch_bend(&mut self, track: TrackId, semitones: f32) {
+        if let Ok(index) = self.require_track(track) {
+            self.send(EngineCommand::PitchBend {
+                track: index,
+                semitones: semitones.clamp(-BEND_LIMIT, BEND_LIMIT),
+            });
+        }
+    }
+
+    /// Moves a track's modulation wheel. Channel state, like the bend.
+    pub fn modulation(&mut self, track: TrackId, amount: f32) {
+        if let Ok(index) = self.require_track(track) {
+            self.send(EngineCommand::Modulation {
+                track: index,
+                amount: amount.clamp(0.0, MODULATION_LIMIT),
+            });
         }
     }
 

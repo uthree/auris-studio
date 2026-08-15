@@ -61,8 +61,10 @@ pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob};
 pub use session::{
     AccompanyReport, AudioStatus, Clipboard, ComposeReport, CopiedClip, CopiedContent,
-    DEFAULT_PARTS, PluginWindow, Quantize, RecordingReport, RecordingStatus, SaveReport, Session,
-    SessionOptions, quantized,
+    DEFAULT_OCTAVE, DEFAULT_PARTS, DEFAULT_VELOCITY, LAYOUT, MusicalTyping, OCTAVE_RANGE, Played,
+    PluginWindow, Quantize, RecordingReport, RecordingStatus, Release, SaveReport, Session,
+    SessionOptions, Struck, TYPING_BEND, TypingRole, VELOCITY_STEP, WHEEL_STEPS, quantized,
+    shadows_musical_typing,
 };
 pub use settings::{AudioPreferences, CONFIG_DIR_VAR, Settings, config_dir, migrate_legacy_config};
 
@@ -177,7 +179,7 @@ pub mod prelude {
 
     pub use crate::{
         AccompanyReport, AudioPreferences, Clipboard, ComposeReport, CopiedClip, CopiedContent,
-        DEFAULT_PARTS, Edit, ExportSummary, ParamTarget, Quantize, RecordingReport,
+        DEFAULT_PARTS, Edit, ExportSummary, MusicalTyping, ParamTarget, Quantize, RecordingReport,
         RecordingStatus, RenderJob, SaveReport, Session, SessionError, SessionOptions, Settings,
     };
 }

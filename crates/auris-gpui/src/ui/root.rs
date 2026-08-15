@@ -53,6 +53,15 @@ impl Render for AurisApp {
         // and a panel needs it back once the sheet is gone.
         self.reconcile_focus(window);
 
+        // A window that has gone away takes the key releases with it, so a chord held while
+        // somebody switched apps would sound until they came back and pressed those keys again.
+        // Checked here rather than through an activation observer because gpui refreshes the
+        // window as part of deactivating it, so this runs on the very next frame either way, and
+        // a bool per frame is cheaper than a subscription to hold and unsubscribe.
+        if !window.is_window_active() {
+            self.session.release_typed_notes();
+        }
+
         let theme = self.theme.clone();
         let menu_bar = self.render_menu_bar(window, cx);
         let transport = self.render_transport(window, cx);
@@ -82,16 +91,7 @@ impl Render for AurisApp {
 
         div()
             .id("root")
-            // While something is being typed into, the application's own bindings must not fire:
-            // `i` has to type an `i`, not toggle the inspector. Swapping the root's context for
-            // one nothing is bound to disables the window's bindings in a single move; the panes
-            // drop their contexts at the same time, in `pane_context`, which is what stops a
-            // pane-scoped binding firing from the pane that still holds focus behind the sheet.
-            .key_context(if self.keys_are_claimed() {
-                actions::context::PROMPT
-            } else {
-                actions::KEY_CONTEXT
-            })
+            .key_context(self.window_context())
             .track_focus(&self.focus)
             .relative()
             .flex()
@@ -108,6 +108,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_toggle_metronome))
             .on_action(cx.listener(Self::on_toggle_recording))
             .on_action(cx.listener(Self::on_toggle_monitoring))
+            .on_action(cx.listener(Self::on_toggle_musical_typing))
             .on_action(cx.listener(Self::on_toggle_punch))
             .on_action(cx.listener(Self::on_new_project))
             .on_action(cx.listener(Self::on_open_project))
@@ -199,6 +200,7 @@ impl Render for AurisApp {
             // clip, and the transaction it opened silently eats every edit made afterwards.
             .on_mouse_up_out(gpui::MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_key_down(cx.listener(Self::on_key_down))
+            .on_key_up(cx.listener(Self::on_key_up))
             .children(menu_bar)
             .child(transport)
             .child(
@@ -886,19 +888,77 @@ impl AurisApp {
     ///
     /// Only the ones the platform does not deliver as text: characters reach the field through
     /// the input handler instead, which is what lets an IME compose into it.
+    ///
+    /// The typing keyboard is asked first, and answers for nothing at all unless it is switched
+    /// on and nothing is claiming the keyboard above it — so a rename sheet gets its letters even
+    /// with the mode left on, which is the order somebody who names a track mid-take needs.
     fn on_key_down(
         &mut self,
         event: &gpui::KeyDownEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.palette_key(event, window, cx)
+        if self.typing_key(event)
+            || self.palette_key(event, window, cx)
             || self.prompt_key(event, window, cx)
             || self.menu_key(event, window, cx)
             || self.menu_bar_key(event, window, cx)
         {
             cx.stop_propagation();
             cx.notify();
+        }
+    }
+
+    /// Plays `event` on the typing keyboard, and says whether it was one of its keys.
+    ///
+    /// This runs at all only because the bindings on these letters were put out of reach while
+    /// the mode is on — see [`crate::actions::reachable_from`]. A bound key never reaches a key
+    /// listener in gpui, so there is nothing here that could have taken `k` back off the
+    /// metronome by itself.
+    fn typing_key(&mut self, event: &gpui::KeyDownEvent) -> bool {
+        // The same question the window's key context asked, so the letters are claimed here
+        // exactly when their bindings were put out of reach — a keyboard that answered for a key
+        // its context had left bound, or left one dead that nothing else would answer for, would
+        // be wrong in one of the two ways there are to be wrong about this.
+        if !self.playing_the_keyboard() || self.keys_are_claimed() {
+            return false;
+        }
+        // A modified keystroke is not somebody playing. It also never gets here — ⌘S still
+        // matches its binding, because only bare keys were taken away — but a chord that somehow
+        // arrived should be let past rather than swallowed as a note.
+        if event.keystroke.modifiers.modified() {
+            return false;
+        }
+        let key = event.keystroke.key.as_str();
+        // Auto-repeat: one finger, reported over and over. The keyboard would ignore the repeats
+        // anyway; not offering them saves a redraw per repeat while a note is held.
+        if event.is_held {
+            return MusicalTyping::role(key).is_some();
+        }
+        let Some(track) = self.session.audition_track(self.selected_track) else {
+            return false;
+        };
+        self.session.typing_press(track, key)
+    }
+
+    /// Lets go of a key the typing keyboard was holding.
+    ///
+    /// Offered whatever the mode is doing, because the mode can be switched off — or a sheet
+    /// opened over it — with a finger still down, and this release is the last chance the note
+    /// it is holding has to stop.
+    fn on_key_up(
+        &mut self,
+        event: &gpui::KeyUpEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let key = event.keystroke.key.as_str();
+        let claimed = self.session.typing_release(key);
+        if MusicalTyping::role(key).is_some() {
+            cx.notify();
+        }
+        if claimed {
+            cx.stop_propagation();
         }
     }
 
@@ -1135,6 +1195,31 @@ impl AurisApp {
                 self.set_failed_status(line);
             }
         }
+        cx.notify();
+    }
+
+    fn on_toggle_musical_typing(
+        &mut self,
+        _: &actions::ToggleMusicalTyping,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let on = !self.session.musical_typing();
+        // Refused rather than switched on into silence: every key would answer with nothing, and
+        // a mode that has quietly taken the alphabet away while doing so is worse than no mode.
+        if on && self.session.audition_track(self.selected_track).is_none() {
+            let line = self.t(Key::MusicalTypingNeedsInstrument).to_string();
+            self.set_failed_status(line);
+            cx.notify();
+            return;
+        }
+        self.session.set_musical_typing(on);
+        let line = self.t(if on {
+            Key::MusicalTypingOn
+        } else {
+            Key::MusicalTypingOff
+        });
+        self.set_status(line);
         cx.notify();
     }
 
@@ -1686,6 +1771,10 @@ impl AurisApp {
             cx.notify();
             return;
         }
+        // Before the panic rather than after: the engine silences its voices, and a keyboard that
+        // still believed it was holding three of them would send their releases into the quiet
+        // and then refuse to strike those notes again.
+        self.session.release_typed_notes();
         self.session.panic();
         self.set_status(self.t(Key::PanicStopped));
         cx.notify();

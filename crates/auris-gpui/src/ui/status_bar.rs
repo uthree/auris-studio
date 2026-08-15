@@ -55,12 +55,50 @@ impl AurisApp {
                     .when(self.status_failed, |this| this.text_color(theme.danger))
                     .child(self.status.clone()),
             )
+            .children(self.typing_readout(&theme))
             .child(self.window_title())
             .child(engine)
             // The bottom dock's switches before the right dock's, which is the order they sit in
             // going clockwise from the middle of the window.
             .child(self.dock_switches(Dock::Bottom, cx))
             .child(self.dock_switches(Dock::Right, cx))
+    }
+
+    /// Where the typing keyboard's hands are, while it is switched on.
+    ///
+    /// Nothing at all while it is off, which is the point: this is the only thing on screen that
+    /// says the alphabet currently plays notes, and a readout that was always there would stop
+    /// being read long before the day somebody wondered why `k` had stopped working.
+    ///
+    /// The octave and the velocity are shown because both are moved blind — `z` and `c` report
+    /// themselves nowhere else, and a hand two octaves from where it thought it was is the usual
+    /// reason a keyboard sounds wrong.
+    fn typing_readout(&self, theme: &Theme) -> Option<impl IntoElement + use<>> {
+        let keys = self.session.typing_keyboard();
+        if !keys.enabled() {
+            return None;
+        }
+        let velocity = (keys.velocity() * 127.0).round() as u32;
+        // The wheel only when it is up, and the bend never: the wheel is a setting somebody made
+        // and then forgot, which is exactly what a readout is for, and the bend is gone before
+        // the eye reaches the bottom of the window.
+        let wheel = if keys.wheel() > 0.0 {
+            format!(" · ~{}", (keys.wheel() * 127.0).round() as u32)
+        } else {
+            String::new()
+        };
+        Some(
+            div()
+                .px_1()
+                .rounded_sm()
+                .bg(theme.surface_sunken)
+                .text_color(theme.accent)
+                .child(format!(
+                    "{} · {} · {velocity}{wheel}",
+                    self.t(Key::CmdMusicalTyping),
+                    keys.octave_name(),
+                )),
+        )
     }
 
     /// The switches for every panel that lives in `dock`.

@@ -64,6 +64,27 @@ pub fn audition_for(sounding: Option<&[u8]>, pitches: &[u8]) -> Audition {
     }
 }
 
+/// The key context the window names, given what is claiming the keyboard.
+///
+/// Free-standing so the precedence can be tested: the window itself needs a session and a live
+/// gpui window to exist, and the rule that a sheet beats the typing keyboard is worth more than
+/// the two lines it takes to state.
+///
+/// Built by parsing, which is what naming a context as a string always did.
+/// [`gpui::KeyContext::new_with_defaults`] would add an `os` entry that was never on the root
+/// before, and a context this close to every binding in the application is the wrong place to
+/// change what matches as a side effect of adding a state.
+fn window_context(claimed: bool, playing: bool) -> gpui::KeyContext {
+    let names = if claimed {
+        actions::context::PROMPT.to_string()
+    } else if playing {
+        format!("{} {}", actions::KEY_CONTEXT, actions::context::TYPING)
+    } else {
+        actions::KEY_CONTEXT.to_string()
+    };
+    gpui::KeyContext::try_from(names.as_str()).expect("the context names are identifiers")
+}
+
 /// How hard an auditioned note is struck.
 const NOTE_VELOCITY: f32 = 0.8;
 
@@ -567,6 +588,28 @@ mod tests {
     }
 
     #[test]
+    fn the_window_context_says_which_bindings_are_out_of_reach() {
+        let plain = window_context(false, false);
+        assert!(plain.contains(actions::KEY_CONTEXT));
+        assert!(!plain.contains(actions::context::TYPING));
+
+        // Playing keeps every binding except the ones bound outside the typing context, which is
+        // what leaves ⌘S and the space bar working with both hands on the letters.
+        let playing = window_context(false, true);
+        assert!(playing.contains(actions::KEY_CONTEXT));
+        assert!(playing.contains(actions::context::TYPING));
+
+        // A sheet beats the keyboard, and takes the window's own context with it: a rename field
+        // needs `a` to be an `a` rather than either a C or the inspector.
+        for playing in [false, true] {
+            let claimed = window_context(true, playing);
+            assert!(claimed.contains(actions::context::PROMPT));
+            assert!(!claimed.contains(actions::KEY_CONTEXT));
+            assert!(!claimed.contains(actions::context::TYPING));
+        }
+    }
+
+    #[test]
     fn sweeping_a_progression_strikes_each_chord_once() {
         // One gesture across four bars of chords, as a sequence of pointer moves. What must come
         // out is one strike per chord — not one per pixel, which is what a check for "is this
@@ -962,6 +1005,39 @@ impl AurisApp {
             // The song sheet is a form, and every letter typed into one of its fields has to
             // reach the field rather than the binding that letter would otherwise fire.
             || self.song_sheet.is_some()
+    }
+
+    /// The key context the window itself should name.
+    ///
+    /// Three states, and each of them takes bindings away rather than adding any:
+    ///
+    /// * While something is being typed into, the application's own bindings must not fire — `i`
+    ///   has to type an `i`, not toggle the inspector. Swapping the root's context for one nothing
+    ///   is bound to disables the window's bindings in a single move; the panes drop their
+    ///   contexts at the same time, in [`Self::pane_context`], which is what stops a pane-scoped
+    ///   binding firing from the pane that still holds focus behind the sheet.
+    /// * While the computer keyboard is being played, the window keeps its context and gains
+    ///   [`actions::context::TYPING`], which every binding on a key the keyboard plays was bound
+    ///   *outside* of. Those stop matching and every other binding — `space`, `escape`, ⌘S —
+    ///   carries on. See [`actions::reachable_from`] for why it has to be arranged this way round.
+    /// * Otherwise, the window's own context and nothing else.
+    ///
+    /// A sheet wins over the keyboard: the notes stop reaching the instrument at the same moment
+    /// the letters start reaching a text field, which is the only order that lets somebody rename
+    /// a track without playing a chord into it.
+    pub(crate) fn window_context(&self) -> gpui::KeyContext {
+        window_context(self.keys_are_claimed(), self.playing_the_keyboard())
+    }
+
+    /// Whether the typing keyboard is switched on *and* has an instrument to play.
+    ///
+    /// The two are asked together everywhere, because a keyboard with nothing to sound must not
+    /// hold the alphabet: the last instrument track can be deleted while the mode is on, and
+    /// letters that neither played a note nor ran their command would read as a seized-up
+    /// application. This way they go back to being commands until there is something to play, and
+    /// the mode is still on when there is.
+    pub(crate) fn playing_the_keyboard(&self) -> bool {
+        self.session.musical_typing() && self.session.audition_track(self.selected_track).is_some()
     }
 
     /// The key context a pane's element should name, or `None` while a sheet is up.

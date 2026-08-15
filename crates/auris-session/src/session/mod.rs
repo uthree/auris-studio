@@ -22,7 +22,8 @@
 //! `compose` replaces the whole document with a written piece and `accompany` writes parts around
 //! one clip of the document there already; `clipboard` is cut, copy and paste over both of the
 //! things a user can select. `record` and `monitor` are the two halves of the input device — what
-//! is kept, and what is merely heard — and share it rather than each opening one.
+//! is kept, and what is merely heard — and share it rather than each opening one. `typing` is the
+//! computer keyboard played as an instrument, for a desk with no MIDI keyboard on it.
 //!
 //! Every one of them is `impl Session`, so no path a caller writes changes. And because they are
 //! *children* of this module rather than neighbours of it, they read [`Session`]'s private fields
@@ -46,6 +47,7 @@ mod punch;
 mod record;
 mod tracks;
 mod transport;
+mod typing;
 
 #[cfg(test)]
 mod fixtures;
@@ -58,6 +60,10 @@ pub use hosted::PluginWindow;
 pub use monitor::MonitorStatus;
 pub use notes::{Quantize, quantized};
 pub use record::{RecordingReport, RecordingStatus};
+pub use typing::{
+    DEFAULT_OCTAVE, DEFAULT_VELOCITY, LAYOUT, MusicalTyping, OCTAVE_RANGE, Played, Release, Struck,
+    TYPING_BEND, TypingRole, VELOCITY_STEP, WHEEL_STEPS, shadows_musical_typing,
+};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -275,6 +281,12 @@ pub struct Session {
     /// The track the live input is being played through, if anybody asked for that. See
     /// [`monitor`].
     monitored: Option<TrackId>,
+    /// The computer keyboard, when it is being played as one. See [`typing`].
+    ///
+    /// Outside the document for the same reason [`Self::armed`] is: which octave somebody's hands
+    /// are on is how they are playing, not something they wrote, and an Undo that moved the
+    /// keyboard under them would be a surprise mid-phrase.
+    typing: MusicalTyping,
 
     /// Third-party CLAP plugins the document names.
     ///
@@ -404,6 +416,7 @@ impl Session {
             armed: None,
             input: None,
             monitored: None,
+            typing: MusicalTyping::default(),
             take: None,
             hosted: hosted::HostedPlugins::default(),
         };

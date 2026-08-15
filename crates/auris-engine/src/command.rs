@@ -104,6 +104,24 @@ pub enum EngineCommand {
         /// MIDI note number.
         pitch: u8,
     },
+    /// Bends every note sounding on a track, and every one that follows.
+    ///
+    /// Channel state rather than an event about a note: an instrument holds the last bend it was
+    /// given. Zero is what puts it back, and something has to send that — a wheel let go of is a
+    /// wheel sprung back, not a wheel forgotten.
+    PitchBend {
+        /// Track position in the project.
+        track: usize,
+        /// How far to bend, in semitones.
+        semitones: f32,
+    },
+    /// Moves a track's modulation wheel. Channel state, like the bend.
+    Modulation {
+        /// Track position in the project.
+        track: usize,
+        /// How far the wheel is up, 0.0 to 1.0.
+        amount: f32,
+    },
     /// Turns the click on or off.
     SetMetronome(bool),
     /// Silences everything: voices, delay lines and filter memory.
@@ -194,6 +212,16 @@ impl std::fmt::Debug for EngineCommand {
                 .debug_struct("NoteOff")
                 .field("track", track)
                 .field("pitch", pitch)
+                .finish(),
+            Self::PitchBend { track, semitones } => f
+                .debug_struct("PitchBend")
+                .field("track", track)
+                .field("semitones", semitones)
+                .finish(),
+            Self::Modulation { track, amount } => f
+                .debug_struct("Modulation")
+                .field("track", track)
+                .field("amount", amount)
                 .finish(),
             Self::SetMetronome(enabled) => f.debug_tuple("SetMetronome").field(enabled).finish(),
             Self::Panic => f.write_str("Panic"),
