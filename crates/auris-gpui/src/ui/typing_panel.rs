@@ -28,8 +28,8 @@
 use auris_i18n::{Key, Language};
 use auris_session::{LAYOUT, TypingRole};
 use gpui::{
-    AnyElement, Context, Hsla, IntoElement, MouseButton, MouseDownEvent, Pixels, Point,
-    SharedString, Size, div, point, prelude::*, px, relative, size,
+    AnyElement, Context, Hsla, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels,
+    Point, SharedString, Size, div, point, prelude::*, px, relative, size,
 };
 
 use crate::app::{AurisApp, Drag};
@@ -578,6 +578,20 @@ impl AurisApp {
                     cx.notify();
                 }),
             )
+            // A pointer held down and slid along the keys plays them, which is what a picture of a
+            // keyboard invites somebody to try. Registered on the key rather than on the panel
+            // because a bubble-phase move only reaches a hitbox the pointer is over, so the key
+            // that answers is the key under the hand and no arithmetic decides which.
+            .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
+                if slides_onto_key(
+                    event.pressed_button,
+                    this.dragging(),
+                    this.clicked_key == Some(key),
+                ) {
+                    this.press_typed_key(key);
+                    cx.notify();
+                }
+            }))
     }
 
     /// Plays one key of the drawn keyboard, and remembers it for the release.
@@ -585,17 +599,25 @@ impl AurisApp {
     /// The key is remembered rather than worked out again when the button comes up, because a
     /// press that began on one key and a release that arrives over another — or outside the panel
     /// altogether — are the same gesture: the release has to let go of what was pressed.
+    ///
+    /// Whatever the pointer was holding is let go of first. One pointer holds one key, and a
+    /// slide that took the next one without putting the last one down would leave a note sounding
+    /// with nothing left that knows about it — which is the whole of the bug this guards.
     fn press_typed_key(&mut self, key: &'static str) {
         let Some(track) = self.session.audition_track(self.selected_track) else {
             return;
         };
+        self.release_typed_key();
         self.clicked_key = Some(key);
         self.session.typing_press(track, key);
     }
 
     /// Lets go of whatever the pointer was holding on the drawn keyboard.
     ///
-    /// Called from the root's mouse-up, which is where every gesture in the window ends.
+    /// Called from the root's mouse-up, which is where every gesture in the window ends — and
+    /// from its mouse-*move*, for the releases that never arrive at all. Letting go over another
+    /// application, or off the edge of the screen, is a mouse-up the platform hands to somebody
+    /// else, and a note that waited for it would sound until the mode was switched off.
     pub(crate) fn release_typed_key(&mut self) {
         if let Some(key) = self.clicked_key.take() {
             self.session.typing_release(key);
@@ -611,6 +633,27 @@ impl AurisApp {
         self.session.set_musical_typing(false);
         self.set_status(self.t(Key::MusicalTypingOff));
     }
+}
+
+/// Whether the pointer sliding onto a key should sound it.
+///
+/// Three conditions, and each one is a bug that was available without it:
+///
+/// * **The button has to be down.** A pointer merely crossing the keyboard on its way somewhere
+///   else would otherwise play every note it passed over.
+/// * **Nothing may be being dragged.** The panel is dragged by its title bar, and the pointer
+///   crosses the keys on the way to wherever it is being put — so a keyboard that played on any
+///   move would perform a glissando every time it was moved out of the way. It is also what stops
+///   a fader dragged past the panel from sounding it.
+/// * **The key must not be the one already down.** A move arrives per pixel, and the same key
+///   struck again on each of them is a drum roll where a held note was meant. This is
+///   [`crate::app::audition_for`]'s `Hold` in miniature, and the same mistake.
+pub fn slides_onto_key(
+    button: Option<MouseButton>,
+    dragging: bool,
+    already_holding_it: bool,
+) -> bool {
+    button == Some(MouseButton::Left) && !dragging && !already_holding_it
 }
 
 /// A label and the value it names, for the four things the keys move blind.
@@ -762,6 +805,29 @@ mod tests {
         assert_eq!(key_face("a"), "A");
         assert_eq!(key_face(";"), ";");
         assert_eq!(key_face("tab"), "tab", "a named key keeps its name");
+    }
+
+    #[test]
+    fn a_pointer_slid_along_the_keys_plays_them_once_each_and_only_while_it_is_pressing() {
+        let left = Some(MouseButton::Left);
+        assert!(
+            slides_onto_key(left, false, false),
+            "a pressed pointer arriving on a key sounds it"
+        );
+        assert!(
+            !slides_onto_key(None, false, false),
+            "a pointer merely crossing the keyboard played every note under it"
+        );
+        assert!(
+            !slides_onto_key(left, true, false),
+            "moving the panel by its title bar performed a glissando on the way"
+        );
+        assert!(
+            !slides_onto_key(left, false, true),
+            "the key already down was struck again on every pixel of the move"
+        );
+        // The right button is not a way to play, whatever it is doing.
+        assert!(!slides_onto_key(Some(MouseButton::Right), false, false));
     }
 
     #[test]

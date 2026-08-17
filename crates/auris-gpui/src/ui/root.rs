@@ -539,6 +539,13 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A key of the drawn keyboard held by a pointer that is no longer pressing anything is a
+        // key whose release never arrived: letting go over another application, or off the edge of
+        // the screen, is a mouse-up the platform hands to somebody else. Checked before the drag,
+        // because there is no drag in that gesture and the note has to stop either way.
+        if event.pressed_button.is_none() {
+            self.release_typed_key();
+        }
         let Some(drag) = self.drag.clone() else {
             return;
         };

@@ -1113,6 +1113,11 @@ impl AurisApp {
 
     // ---------------------------------------------------------------- gestures
 
+    /// Whether a gesture is in progress.
+    pub(crate) fn dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+
     /// Begins a gesture. Every edit it makes becomes one undo step and one graph rebuild.
     pub(crate) fn begin_drag(&mut self, drag: Drag) {
         if let Some(edit) = drag.edit() {
