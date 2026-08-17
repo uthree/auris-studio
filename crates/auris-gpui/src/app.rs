@@ -37,6 +37,7 @@ use crate::ui::menu_bar::OpenMenu;
 use crate::ui::piano_roll::RollTool;
 use crate::ui::prompt::Prompt;
 use crate::ui::timeline::{PitchView, TimelineView};
+use crate::ui::typing_panel::TypingPanel;
 
 /// What a press or a sweep at one position should do to whatever is already sounding.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -491,6 +492,11 @@ pub enum Drag {
         /// jump under the pointer.
         grab_offset: Point<Pixels>,
     },
+    /// Moving the drawn typing keyboard by its title bar.
+    MoveTypingPanel {
+        /// Distance from the panel's own origin to the point that was grabbed.
+        grab_offset: Point<Pixels>,
+    },
     /// Dragging the divider between a dock and the arrangement.
     ResizeDock {
         /// Which dock is being resized.
@@ -556,7 +562,8 @@ impl Drag {
             // stack.
             Drag::ResizeDock { .. }
             | Drag::ResizeHeaders { .. }
-            | Drag::MovePluginWindow { .. } => None,
+            | Drag::MovePluginWindow { .. }
+            | Drag::MoveTypingPanel { .. } => None,
         }
     }
 }
@@ -840,6 +847,10 @@ pub struct AurisApp {
     pub(crate) pointer: PointerGestures,
     /// The settings window, while it is open.
     pub(crate) settings_window: Option<WindowHandle<SettingsWindow>>,
+    /// Where the drawn keyboard has been dragged to. See [`crate::ui::typing_panel`].
+    pub(crate) typing_panel: TypingPanel,
+    /// The key the pointer is holding down on the drawn keyboard, if any.
+    pub(crate) clicked_key: Option<&'static str>,
 
     _repaint: Task<()>,
 }
@@ -961,6 +972,8 @@ impl AurisApp {
             pointer: input.pointer,
             keymap,
             settings_window: None,
+            typing_panel: TypingPanel::default(),
+            clicked_key: None,
             _repaint: repaint,
         }
     }

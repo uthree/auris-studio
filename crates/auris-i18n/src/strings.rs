@@ -293,6 +293,18 @@ strings! {
         en: "No instrument track to play — add one first",
         ja: "演奏できるソフト音源トラックがありません。先に追加してください"
     }
+    // The four readouts on the drawn keyboard, in the order they sit round it. Each names a
+    // control the keys move blind, which is the whole reason the window is worth having.
+    TypingPitch { en: "Pitch", ja: "ピッチ" }
+    TypingModulation { en: "Modulation", ja: "モジュレーション" }
+    TypingOctave { en: "Octave", ja: "オクターブ" }
+    TypingVelocity { en: "Velocity", ja: "ベロシティ" }
+    // Written on the key rather than beside it, so it is as short as the letters around it.
+    TypingSustain { en: "sustain", ja: "サステイン" }
+    // The two ends of the modulation row. Only the ends are named: the four keys between them
+    // are steps of one wheel, and numbering them would be six labels for one control.
+    TypingWheelMax { en: "max", ja: "最大" }
+    TypingNoTrack { en: "no instrument", ja: "音源なし" }
     RecordingNeedsSave {
         en: "A take is written to disk as it happens — choose where this project lives first.",
         ja: "録音は録りながらディスクに書き込みます。先にプロジェクトの保存先を決めてください。"

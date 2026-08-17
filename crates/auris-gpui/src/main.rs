@@ -22,6 +22,7 @@ mod logbook;
 mod menu;
 mod settings_window;
 mod theme;
+
 mod ui;
 
 use auris_session::Settings;

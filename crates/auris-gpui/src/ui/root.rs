@@ -67,6 +67,7 @@ impl Render for AurisApp {
         let transport = self.render_transport(window, cx);
         let arrangement = self.render_arrangement(window, cx);
         let plugin_window = self.render_plugin_window(window.viewport_size(), cx);
+        let typing_panel = self.render_typing_panel(window.viewport_size(), cx);
         // Built before the layout so each one can borrow the window to ask whether it has the
         // keyboard, which the layout below is too deep inside a builder chain to do.
         let left = self.render_dock(Dock::Left, window, cx);
@@ -240,6 +241,9 @@ impl Render for AurisApp {
             // editor sits below the menu because a right-click inside it opens one.
             .children(prompt)
             .children(palette)
+            // Under the plugin editor: of the two floating panels, the editor is the one being
+            // aimed at, and the keyboard is the reference being played while it is adjusted.
+            .children(typing_panel)
             .children(plugin_window)
             .children(menu)
     }
@@ -843,6 +847,12 @@ impl AurisApp {
                     );
                 }
             }
+            Drag::MoveTypingPanel { grab_offset } => {
+                self.typing_panel.anchor = Some(gpui::point(
+                    event.position.x - grab_offset.x,
+                    event.position.y - grab_offset.y,
+                ));
+            }
             Drag::ResizeDock {
                 dock,
                 start,
@@ -880,6 +890,9 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.stop_audition();
+        // A key of the drawn keyboard pressed with the pointer is let go of here rather than on
+        // the key itself, because the pointer may well have left it — or the panel — by now.
+        self.release_typed_key();
         self.end_drag(window, cx);
         cx.notify();
     }
@@ -1213,13 +1226,15 @@ impl AurisApp {
             cx.notify();
             return;
         }
-        self.session.set_musical_typing(on);
-        let line = self.t(if on {
-            Key::MusicalTypingOn
-        } else {
-            Key::MusicalTypingOff
-        });
-        self.set_status(line);
+        // The drawn keyboard follows the mode without being asked to: it is rendered for as long
+        // as the mode is on, so there is no second thing here that could get out of step with it.
+        match on {
+            true => {
+                self.session.set_musical_typing(true);
+                self.set_status(self.t(Key::MusicalTypingOn));
+            }
+            false => self.stop_musical_typing(),
+        }
         cx.notify();
     }
 

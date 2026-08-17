@@ -248,6 +248,21 @@ pub mod architecture {
     //! is on. Asked about the keystroke rather than the command, so a rebound key is handled
     //! without anything having to know it moved.
     //!
+    //! The desktop frontend also *draws* the keyboard, as a floating panel that is on screen for
+    //! as long as the mode is. Everything on it is read back out of
+    //! [`MusicalTyping`](crate::MusicalTyping) on each frame —
+    //! [`sounding`](crate::MusicalTyping::sounding) lights the keys that are down,
+    //! [`root`](crate::MusicalTyping::root) says which note each key is on, and
+    //! [`wheel_step`](crate::MusicalTyping::wheel_step) which of `3` to `8` is in force. Those
+    //! three exist for that panel and are the reason it needs no state: a drawn keyboard with
+    //! its own copy of any of them would be a second thing to keep in step, and the day the two
+    //! disagreed it would light one key while another sounded.
+    //!
+    //! A panel inside the window rather than a window of its own, and here the reason is this
+    //! module's rather than a layout preference: a second operating-system window takes the
+    //! platform's key events with it, so a picture of the keyboard in one would stop the keyboard
+    //! working the moment somebody clicked on the picture.
+    //!
     //! # Where the audio actually goes
     //!
     //! [`auris_engine::render_block`] is the single implementation of "produce N frames".

@@ -304,7 +304,27 @@ impl MusicalTyping {
 
     /// The name of the note `a` sounds, such as `C3`, for a readout to say where the hands are.
     pub fn octave_name(&self) -> String {
-        midi_name(self.octave_root())
+        midi_name(self.root())
+    }
+
+    /// The MIDI note `a` sounds.
+    ///
+    /// Public for the same reason [`Self::sounding`] is: something drawing this keyboard has to
+    /// know which note each of its keys is on to light the ones that are down, and a frontend
+    /// working that out from [`Self::octave`] would be a second copy of a formula that has to
+    /// agree with the one a key is struck by, exactly, or light the wrong key.
+    pub fn root(&self) -> i32 {
+        (self.octave + 1) * OCTAVE
+    }
+
+    /// Which modulation key left the wheel where it is.
+    ///
+    /// For a drawn keyboard lighting the one of `3` to `8` that is currently in force. `None`
+    /// means it sits somewhere none of them could have put it, which nothing here does today —
+    /// but the answer is *drawn*, and a keyboard lighting `5` for a value `5` does not produce
+    /// would be a readout that lies.
+    pub fn wheel_step(&self) -> Option<u8> {
+        (0..WHEEL_STEPS).find(|&step| (Self::wheel_at(step) - self.wheel).abs() < 1e-4)
     }
 
     /// Every note the keyboard has sounding, held or sustained.
@@ -328,11 +348,6 @@ impl MusicalTyping {
     fn wheel_at(step: u8) -> f32 {
         let top = f32::from(WHEEL_STEPS.saturating_sub(1)).max(1.0);
         (f32::from(step) / top).clamp(0.0, 1.0) * MODULATION_LIMIT
-    }
-
-    /// The MIDI note `a` sounds.
-    fn octave_root(&self) -> i32 {
-        (self.octave + 1) * OCTAVE
     }
 
     /// Presses `key`, sounding or moving something on `track` if that is what the key does.
@@ -458,7 +473,7 @@ impl MusicalTyping {
     /// cannot happen from the keys, and a pitch invented for a key that has none would put two
     /// keys on one note.
     fn strike(&mut self, track: TrackId, semitones: i32) -> Option<Struck> {
-        let pitch = self.octave_root() + semitones;
+        let pitch = self.root() + semitones;
         if !(0..=127).contains(&pitch) {
             return None;
         }
@@ -932,6 +947,36 @@ mod tests {
             keys.release(key);
         }
         assert_eq!(last, MODULATION_LIMIT, "8 is all the way up");
+    }
+
+    #[test]
+    fn the_wheel_names_the_key_that_set_it_and_the_keyboard_names_the_note_it_starts_on() {
+        // Both are for something drawing this keyboard, and both are answers a frontend would
+        // otherwise work out for itself from a formula it cannot see.
+        let mut keys = keyboard();
+        assert_eq!(keys.wheel_step(), Some(0), "3, the wheel down");
+        for (key, step) in [("4", 1), ("6", 3), ("8", WHEEL_STEPS - 1), ("3", 0)] {
+            tap(&mut keys, key);
+            assert_eq!(
+                keys.wheel_step(),
+                Some(step),
+                "`{key}` lights the wrong key"
+            );
+        }
+
+        assert_eq!(keys.root(), 48, "a is C3");
+        assert_eq!(midi_name(keys.root()), keys.octave_name());
+        tap(&mut keys, "x");
+        assert_eq!(
+            keys.root(),
+            MIDDLE_C,
+            "and the note every key is drawn against moves with the octave"
+        );
+        assert_eq!(
+            tap(&mut keys, "a").expect("a note").pitch as i32,
+            keys.root(),
+            "which is the note it strikes"
+        );
     }
 
     #[test]
