@@ -453,7 +453,12 @@ impl Session {
             });
         let start_seconds = tempo.ticks_to_seconds(audio.start).0;
         let end_seconds = tempo.ticks_to_seconds(end).0;
-        let asked = ((end_seconds - start_seconds).max(0.0) * sample_rate) as u64;
+        // Through the stretch as well as the tempo map: what is stored is a length of *material*,
+        // and a clip playing at half speed covers a second of timeline with half a second of it.
+        // Without this, dragging the edge of a following clip put it at twice the distance the
+        // pointer had travelled.
+        let stretch = audio.stretch_in(&tempo);
+        let asked = ((end_seconds - start_seconds).max(0.0) * sample_rate / stretch) as u64;
         let length = asked.clamp(1, available.max(1));
         if length == audio.length_frames {
             // A drag that has run out of material still moves the pointer, and every frame of it
@@ -539,14 +544,19 @@ impl Session {
         };
         let (was, offset, length) = (audio.start, audio.offset_frames, audio.length_frames);
         let was_seconds = tempo.ticks_to_seconds(was).0;
-        let asked = ((tempo.ticks_to_seconds(start.max_zero()).0 - was_seconds) * sample_rate)
+        // Every figure below is in *source* frames, which is what the offset and the trim are
+        // counted in, so the distance the pointer travelled goes through the stretch on the way
+        // in and the distance the start moves goes back through it on the way out.
+        let stretch = audio.stretch_in(&tempo);
+        let asked = ((tempo.ticks_to_seconds(start.max_zero()).0 - was_seconds) * sample_rate
+            / stretch)
             .round() as i64;
         // How far back the edge can go: to the source's first frame, or to the start of the
         // timeline, whichever it meets first. The second bound matters for a clip that was
         // trimmed and then moved left — its window still has material behind it, but there is
         // nowhere on the timeline to put it, and clamping the *tick* alone would leave the start
         // at bar one while the window kept walking and the far end slid right.
-        let head_room = (was_seconds * sample_rate).round() as i64;
+        let head_room = (was_seconds * sample_rate / stretch).round() as i64;
         let back = (offset as i64).min(head_room.max(0));
         // Forward, to one frame short of the clip's own end. The *clamped* delta is what moves the
         // start, so an edge that has run out of material stops instead of sliding on with the
@@ -555,7 +565,9 @@ impl Session {
         if by == 0 {
             return Ok(());
         }
-        let now = tempo.seconds_to_ticks(Seconds(was_seconds + by as f64 / sample_rate.max(1.0)));
+        let now = tempo.seconds_to_ticks(Seconds(
+            was_seconds + by as f64 * stretch / sample_rate.max(1.0),
+        ));
         self.record(Edit::ResizeClip);
         if let Some(audio) = self.project.audio_clip_mut(clip) {
             audio.start = now.max_zero();
@@ -1019,6 +1031,44 @@ mod tests {
             !session.can_undo(),
             "a move that moved nothing pushed a step onto the history"
         );
+    }
+
+    #[test]
+    fn dragging_the_edge_of_a_stretched_clip_lands_where_the_pointer_did() {
+        // The trim is a length of *material* and the pointer is on the timeline, so every drag on
+        // a following clip goes through the stretch. Without it the edge landed at twice the
+        // distance the pointer had travelled, and dragging the far end of a half-speed loop ran
+        // off the end of the material after two bars of a four-bar drag.
+        let mut session = session();
+        session.set_bpm(120.0);
+        // Four seconds of material, which at 120 is eight beats: two bars.
+        let clip = audio_clip(&mut session, 192_000);
+        session
+            .set_clip_follows_tempo(clip, true)
+            .expect("an audio clip");
+        session.set_bpm(60.0);
+        assert_eq!(
+            session.clip_stretch(clip),
+            2.0,
+            "twice as long at half speed"
+        );
+        assert_eq!(
+            session.clip_content_length(clip),
+            Some(Ticks::from_beats(8.0)),
+            "the two bars it was recorded as are the two bars it still covers"
+        );
+
+        // Dragging the end back to one bar: four beats at 60 is four seconds of timeline, which
+        // is two seconds — half — of the material.
+        let one_bar = Ticks::from_beats(4.0);
+        session.resize_clip(clip, one_bar).expect("a clip");
+        assert_eq!(
+            audio_frames(&session, clip),
+            96_000,
+            "the drag was measured against the timeline rather than the material"
+        );
+        // And what it draws as is the bar that was asked for.
+        assert_eq!(session.clip_content_length(clip), Some(one_bar));
     }
 
     #[test]

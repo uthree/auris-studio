@@ -761,11 +761,15 @@ impl Project {
         if at <= clip.start || at >= end || clip.length_frames < 2 {
             return None;
         }
-        // Trimming is expressed in source frames, so the split point goes back through the
-        // tempo map rather than being stored as a tick.
+        // Trimming is expressed in source frames, so the split point goes back through the tempo
+        // map rather than being stored as a tick — and back through the stretch as well. A cut two
+        // seconds into a clip playing at half speed falls one second into the *material*, and
+        // dividing by anything else would leave the two halves overlapping or a gap between them.
         let seconds =
             self.tempo_map.ticks_to_seconds(at).0 - self.tempo_map.ticks_to_seconds(clip.start).0;
-        let frames = ((seconds * self.sample_rate) as u64).clamp(1, clip.length_frames - 1);
+        let stretch = clip.stretch_in(&self.tempo_map);
+        let frames =
+            ((seconds * self.sample_rate / stretch) as u64).clamp(1, clip.length_frames - 1);
 
         let mut right = clip.clone();
         right.id = ClipId(self.allocate_id());
