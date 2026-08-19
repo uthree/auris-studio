@@ -9,8 +9,8 @@
 //! `impl AurisApp` blocks in the [`crate::ui`] modules — one owner of the truth, each panel
 //! still in its own file.
 
-use std::cell::Cell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -685,6 +685,9 @@ impl ExportState {
     }
 }
 
+/// One cell per curve strip the roll has drawn, shared with the closures that paint them.
+type CurveBounds = Rc<RefCell<HashMap<ClipCurve, Rc<Cell<Option<Bounds<Pixels>>>>>>>;
+
 /// Where each canvas was actually drawn last frame.
 ///
 /// Hit tests used to re-derive these rectangles from the window size and the `Metrics`
@@ -713,19 +716,23 @@ pub struct CanvasBounds {
     pub envelope: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The equalizer's graph in the open plugin window, above the strip of frequency numbers.
     pub analyser: Rc<Cell<Option<Bounds<Pixels>>>>,
-    /// The pitch bend strip under the piano roll.
-    pub bend: Rc<Cell<Option<Bounds<Pixels>>>>,
-    /// The modulation strip under it.
-    pub modulation: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The curve strips under the piano roll, one cell per strip that has been drawn.
+    ///
+    /// A map rather than a field each, because which strips exist is now the user's: the bend, and
+    /// a lane for any controller they have opened. Cells are kept once made — there are at most a
+    /// hundred and twenty-nine of them, they are a machine word each, and a lane closed and
+    /// reopened wants the rectangle it had.
+    curves: CurveBounds,
 }
 
 impl CanvasBounds {
-    /// Where one of the two curve strips was painted.
-    pub fn curve(&self, which: ClipCurve) -> &Rc<Cell<Option<Bounds<Pixels>>>> {
-        match which {
-            ClipCurve::Bend => &self.bend,
-            ClipCurve::Controller(_) => &self.modulation,
-        }
+    /// Where one of the roll's curve strips was painted.
+    ///
+    /// Asking about a strip that has never been drawn hands back an empty cell rather than
+    /// nothing: the caller is either about to paint into it or about to find it empty, and both of
+    /// those are the same code as for a strip that is merely off screen.
+    pub fn curve(&self, which: ClipCurve) -> Rc<Cell<Option<Bounds<Pixels>>>> {
+        Rc::clone(self.curves.borrow_mut().entry(which).or_default())
     }
 }
 

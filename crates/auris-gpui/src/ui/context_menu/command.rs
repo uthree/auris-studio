@@ -160,8 +160,15 @@ pub enum MenuCommand {
     ClearCurve {
         /// Whose curve.
         clip: ClipId,
-        /// Which of the two.
+        /// Which one.
         which: ClipCurve,
+    },
+    /// Show or hide one of the piano roll's curve strips.
+    ShowCurveLane {
+        /// Which strip.
+        which: ClipCurve,
+        /// Whether it should be showing afterwards.
+        shown: bool,
     },
     /// Add a part of this role to the song sheet's roster.
     SongAddPart(Role),
@@ -638,6 +645,10 @@ impl AurisApp {
             }
             MenuCommand::ClearCurve { clip, which } => {
                 self.session.clear_curve(clip, which);
+            }
+            MenuCommand::ShowCurveLane { which, shown } => {
+                self.panels.set_curve_lane(which, shown);
+                self.remember_layout();
             }
             MenuCommand::SongAddPart(role) => {
                 if let Some(dials) = self.song_sheet.as_mut() {

@@ -215,16 +215,21 @@ pub struct PanelLayout {
     /// Off until asked for. A bend is a thing a few parts do and most do not, and a strip that is
     /// always there takes seventy pixels off the notes of every clip that never bends.
     pub bend_lane: bool,
-    /// Whether the piano roll draws its modulation strip, on the same terms.
-    pub modulation_lane: bool,
+    /// Which controllers the piano roll draws a strip for, in number order.
+    ///
+    /// A set rather than a flag each, on the same terms as the bend: a lane is opened when it is
+    /// wanted and takes its seventy pixels only then. Empty to begin with — even the modulation
+    /// wheel, which was a flag here before a clip could hold anything else, and which is one menu
+    /// item away like all the rest.
+    controller_lanes: Vec<u8>,
 }
 
 impl PanelLayout {
-    /// Whether one of the roll's two curve strips is drawn.
+    /// Whether one of the roll's curve strips is drawn.
     pub fn curve_lane(&self, which: ClipCurve) -> bool {
         match which {
             ClipCurve::Bend => self.bend_lane,
-            ClipCurve::Controller(_) => self.modulation_lane,
+            ClipCurve::Controller(number) => self.controller_lanes.contains(&number),
         }
     }
 
@@ -232,8 +237,30 @@ impl PanelLayout {
     pub fn set_curve_lane(&mut self, which: ClipCurve, shown: bool) {
         match which {
             ClipCurve::Bend => self.bend_lane = shown,
-            ClipCurve::Controller(_) => self.modulation_lane = shown,
+            ClipCurve::Controller(number) => match shown {
+                // In number order, because that is the order the strips are stacked in and the
+                // order the menu lists them in — a lane that appeared wherever it was asked for
+                // would move the others every time one was opened.
+                true => {
+                    if let Err(at) = self.controller_lanes.binary_search(&number) {
+                        self.controller_lanes.insert(at, number);
+                    }
+                }
+                false => self.controller_lanes.retain(|open| *open != number),
+            },
         }
+    }
+
+    /// Every strip the roll draws, the bend first and the controllers in number order.
+    pub fn curve_lanes(&self) -> Vec<ClipCurve> {
+        let bend = self.bend_lane.then_some(ClipCurve::Bend);
+        bend.into_iter()
+            .chain(
+                self.controller_lanes
+                    .iter()
+                    .map(|n| ClipCurve::Controller(*n)),
+            )
+            .collect()
     }
 }
 
@@ -267,7 +294,7 @@ impl Default for PanelLayout {
             header_width: Metrics::TRACK_HEADER_WIDTH,
             lanes: TimelineLanes::default(),
             bend_lane: false,
-            modulation_lane: false,
+            controller_lanes: Vec::new(),
         }
     }
 }
@@ -475,7 +502,8 @@ struct StoredLayout {
     lanes: TimelineLanes,
     /// Whether the piano roll draws its pitch bend strip.
     bend_lane: bool,
-    modulation_lane: bool,
+    /// Which controllers it draws a strip for.
+    controller_lanes: Vec<u8>,
 }
 
 impl From<&PanelLayout> for StoredLayout {
@@ -500,7 +528,7 @@ impl From<&PanelLayout> for StoredLayout {
             header_width: Some(f32::from(layout.header_width)),
             lanes: layout.lanes,
             bend_lane: layout.bend_lane,
-            modulation_lane: layout.modulation_lane,
+            controller_lanes: layout.controller_lanes.clone(),
         }
     }
 }
@@ -520,7 +548,11 @@ impl From<StoredLayout> for PanelLayout {
         }
         layout.lanes = stored.lanes;
         layout.bend_lane = stored.bend_lane;
-        layout.modulation_lane = stored.modulation_lane;
+        // Through the setter, so a file naming the same controller twice, or naming them out of
+        // order, still produces the stack the roll draws rather than a duplicate strip.
+        for number in stored.controller_lanes {
+            layout.set_curve_lane(ClipCurve::Controller(number), true);
+        }
         // A dock shows one panel at a time, which nothing in the file is obliged to respect. The
         // first one named wins, and the rest are shut: two open panels in one dock would draw over
         // each other, and only one of them could be hidden again from the status bar.
@@ -540,6 +572,46 @@ impl From<StoredLayout> for PanelLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_roll_stacks_its_strips_in_one_order_however_they_were_opened() {
+        // The strips are stacked in the order this returns and the menu lists them in the same
+        // one. A lane that appeared wherever it was asked for would move every strip below it
+        // each time one was opened, under a pointer that was drawing on one of them.
+        let mut layout = PanelLayout::default();
+        assert!(layout.curve_lanes().is_empty(), "a fresh roll shows none");
+
+        layout.set_curve_lane(ClipCurve::Controller(64), true);
+        layout.set_curve_lane(ClipCurve::MODULATION, true);
+        layout.set_curve_lane(ClipCurve::Bend, true);
+        layout.set_curve_lane(ClipCurve::Controller(11), true);
+        assert_eq!(
+            layout.curve_lanes(),
+            vec![
+                ClipCurve::Bend,
+                ClipCurve::Controller(1),
+                ClipCurve::Controller(11),
+                ClipCurve::Controller(64),
+            ]
+        );
+
+        // Opening one that is already open changes nothing: two strips on one controller would
+        // draw the same curve twice and share an element id.
+        layout.set_curve_lane(ClipCurve::Controller(11), true);
+        assert_eq!(layout.curve_lanes().len(), 4);
+
+        layout.set_curve_lane(ClipCurve::Controller(11), false);
+        assert!(!layout.curve_lane(ClipCurve::Controller(11)));
+        assert!(
+            layout.curve_lane(ClipCurve::Controller(64)),
+            "closing one closed another"
+        );
+
+        // And the whole stack survives the file it is remembered in.
+        let stored = StoredLayout::from(&layout);
+        let reopened = PanelLayout::from(stored);
+        assert_eq!(reopened.curve_lanes(), layout.curve_lanes());
+    }
 
     #[test]
     fn every_panel_and_dock_indexes_itself() {

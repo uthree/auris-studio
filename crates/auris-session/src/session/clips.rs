@@ -7,9 +7,13 @@
 //! second command.
 //!
 //! The curves are here for the same reason [`Session::set_curve_point`] takes a
-//! [`ClipCurve`](auris_core::project::ClipCurve): the bend and the modulation wheel are the same
-//! shape drawn across the same clip, and two copies of those four commands would be two chances
-//! for the wheel to behave differently from the bend for no reason anybody could see.
+//! [`ClipCurve`](auris_core::project::ClipCurve): a bend and a controller are the same shape drawn
+//! across the same clip, and a copy of those four commands per kind of curve would be that many
+//! chances for a wheel to behave differently from a bend for no reason anybody could see.
+//!
+//! A lane that has been emptied is *removed* rather than left holding nothing. A clip carries the
+//! controllers somebody wrote on, and one carrying an empty controller 11 would save that into the
+//! file, offer it in a menu, and hand it to a MIDI export as a lane that says nothing.
 //!
 //! A clip that writes itself is `generated`. It is a field on a clip rather than a kind of clip,
 //! so the commands here are the ones that act on it too — which is why resizing and trimming call
@@ -117,6 +121,7 @@ impl Session {
         self.record(Edit::erase_curve(which));
         if let Some(target) = self.project.midi_clip_mut(clip) {
             target.curve_mut(which).retain(|point| point.at != at);
+            target.forget_empty_curves();
         }
         self.invalidate_graph();
         true
@@ -134,6 +139,7 @@ impl Session {
         self.record(Edit::erase_curve(which));
         if let Some(target) = self.project.midi_clip_mut(clip) {
             target.curve_mut(which).clear();
+            target.forget_empty_curves();
         }
         self.invalidate_graph();
         true
@@ -761,6 +767,42 @@ mod tests {
     use super::*;
     use crate::session::fixtures::{BAR, numeral, session, session_with_clip, undo_depth};
     use auris_core::{AssetPath, ClipPreset, ClipRecipe, Note};
+
+    #[test]
+    fn a_lane_is_made_by_drawing_on_it_and_is_gone_when_the_last_point_is() {
+        // Every controller goes through the commands the wheel goes through, and a clip carries
+        // the ones somebody wrote on — no more. An emptied lane left behind would be saved into
+        // the file and offered in a menu as a curve that says nothing.
+        let (mut session, _track, clip) = session_with_clip();
+        let pedal = ClipCurve::Controller(11);
+
+        assert!(session.set_curve_point(clip, pedal, Ticks::ZERO, 1.0));
+        assert!(session.set_curve_point(clip, pedal, BAR, 0.25));
+        let carried = |session: &Session| {
+            session
+                .project()
+                .midi_clip(clip)
+                .expect("the clip")
+                .1
+                .curves()
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(carried(&session), vec![pedal]);
+
+        // Clamped to the controller's own range rather than the bend's, whichever lane it is.
+        assert!(session.set_curve_point(clip, pedal, BAR * 2, -4.0));
+        let value = session
+            .midi_clip(clip)
+            .expect("the clip")
+            .curve_at(pedal, BAR * 2);
+        assert_eq!(value, 0.0, "a controller does not go below its floor");
+
+        assert!(session.clear_curve(clip, pedal));
+        assert!(
+            carried(&session).is_empty(),
+            "the lane outlived the last point on it"
+        );
+    }
 
     #[test]
     fn a_loop_reaches_the_next_clip_and_switches_off_again() {

@@ -1,6 +1,6 @@
 //! The piano roll: note editing for the selected MIDI clip.
 
-use auris_i18n::{Key, messages};
+use auris_i18n::{Key, Language, messages};
 use auris_session::prelude::*;
 
 use gpui::{
@@ -12,6 +12,7 @@ use crate::app::{AurisApp, Drag};
 use crate::dock::Dock;
 use crate::gestures::{EmptyPress, empty_press};
 use crate::theme::{Metrics, Theme};
+use crate::ui::context_menu::{ContextMenu, MenuCommand};
 use crate::ui::paint;
 use crate::ui::timeline::{PitchView, TimelineView};
 use crate::ui::widgets::{ButtonStyle, button};
@@ -179,10 +180,9 @@ impl AurisApp {
         let velocity_tag = self.velocity_tag();
         // Built before the chain rather than inside it: each one needs `&mut self`, and the
         // builder below is already holding a borrow of it.
-        let lanes: Vec<gpui::AnyElement> = [ClipCurve::Bend, ClipCurve::MODULATION]
-            .into_iter()
-            .filter(|which| self.panels.curve_lane(*which))
-            .collect::<Vec<_>>()
+        let lanes: Vec<gpui::AnyElement> = self
+            .panels
+            .curve_lanes()
             .into_iter()
             .map(|which| self.render_curve_lane(which, cx))
             .collect();
@@ -219,6 +219,15 @@ impl AurisApp {
                         ),
                         RollTool::Velocity => messages::piano_roll_velocity_hint(self.language()),
                     })
+                    .child(button(
+                        "roll-lanes",
+                        self.t(Key::CurveLanes),
+                        ButtonStyle::Ghost,
+                        !self.panels.curve_lanes().is_empty(),
+                        theme.accent_soft,
+                        &theme,
+                        Self::opens_menu(cx, |this, at| this.curve_lane_menu(at)),
+                    ))
                     .child(self.zoom_slider("roll-zoom", cx)),
             )
             .child(
@@ -388,7 +397,20 @@ impl AurisApp {
                             )),
                     ),
             )
-            .children(lanes)
+            // The strips scroll among themselves once they would take more than half the panel.
+            // A lane is seventy pixels and there are a hundred and twenty-nine of them to open:
+            // without this, opening a fifth one squeezes the notes it is supposed to be shaping
+            // down to nothing, and the way back is a lane you can no longer see to close.
+            .child(
+                div()
+                    .id("curve-lanes")
+                    .flex()
+                    .flex_col()
+                    .flex_shrink_0()
+                    .max_h(gpui::relative(0.5))
+                    .overflow_y_scroll()
+                    .children(lanes),
+            )
             .into_any_element()
     }
 
@@ -437,14 +459,30 @@ impl AurisApp {
                     .border_color(theme.border)
                     .text_xs()
                     .text_color(theme.text_muted)
-                    .child(self.t(curve_label(which))),
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .child(curve_tag(which, self.language()))
+                    // The way back out of a lane, beside the lane. The menu closes one too, but a
+                    // strip somebody opened by accident should not have to be found in a menu to
+                    // be put away again.
+                    .child(button(
+                        ("curve-lane-close", lane_id(which)),
+                        "×",
+                        ButtonStyle::Ghost,
+                        false,
+                        theme.accent_soft,
+                        &theme,
+                        cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                            this.panels.set_curve_lane(which, false);
+                            this.remember_layout();
+                            cx.notify();
+                        }),
+                    )),
             )
             .child(
                 div()
-                    .id(match which {
-                        ClipCurve::Bend => "bend-lane",
-                        ClipCurve::Controller(_) => "controller-lane",
-                    })
+                    .id(("curve-lane", lane_id(which)))
                     .flex_1()
                     .min_w_0()
                     .h_full()
@@ -480,7 +518,7 @@ impl AurisApp {
                             // menu `open_menu` declines to show.
                             let menu = crate::ui::context_menu::ContextMenu::new(
                                 at,
-                                this.t(curve_label(which)),
+                                curve_label(which, this.language()),
                             );
                             match this.selected_clip {
                                 Some(clip) => menu.item(
@@ -499,6 +537,38 @@ impl AurisApp {
                     })),
             )
             .into_any_element()
+    }
+
+    /// The menu that opens and closes the strips under the notes.
+    ///
+    /// Ticks rather than two menus, because "which strips are showing" is one question with a list
+    /// of answers, and a row that is already ticked is the way back to hiding it. The clip's own
+    /// curves are marked in the label, so an imported part says where its material is.
+    fn curve_lane_menu(&mut self, at: gpui::Point<gpui::Pixels>) -> ContextMenu {
+        let language = self.language();
+        let open = self.panels.curve_lanes();
+        let carried: Vec<ClipCurve> = self
+            .selected_midi_clip()
+            .map(|clip| clip.curves().collect())
+            .unwrap_or_default();
+        curve_lane_choices(&open, &carried).into_iter().fold(
+            ContextMenu::new(at, self.t(Key::CurveLanes)),
+            |menu, which| {
+                let shown = self.panels.curve_lane(which);
+                let label = match carried.contains(&which) {
+                    true => format!("{} •", curve_label(which, language)),
+                    false => curve_label(which, language),
+                };
+                menu.toggle(
+                    label,
+                    MenuCommand::ShowCurveLane {
+                        which,
+                        shown: !shown,
+                    },
+                    shown,
+                )
+            },
+        )
     }
 
     /// The strip in the header saying which tool the roll has in hand.
@@ -1198,12 +1268,64 @@ const CURVE_POINT_RADIUS: f32 = 3.0;
 /// How large the numbers down the side of a curve lane are drawn.
 const CURVE_SCALE_TEXT: f32 = 9.0;
 
-/// What a strip is called in the gutter.
-fn curve_label(which: ClipCurve) -> Key {
+/// What a strip is called, in the gutter and in the menu that opens it.
+///
+/// A controller is named where MIDI has a name for it and numbered where it does not — see
+/// `auris_i18n::controller`. The bend is not a controller and never was: it is fourteen bits of
+/// its own message, and calling it CC anything would be wrong in a way somebody would act on.
+pub fn curve_label(which: ClipCurve, language: Language) -> String {
     match which {
-        ClipCurve::Bend => Key::BendLane,
-        ClipCurve::Controller(_) => Key::ModulationLane,
+        ClipCurve::Bend => Key::BendLane.get(language).to_string(),
+        ClipCurve::Controller(number) => auris_i18n::controller::controller_label(number, language),
     }
+}
+
+/// What a strip is called in its own gutter, which is a keyboard wide and no wider.
+///
+/// The number rather than the name, for everything but the bend. Fifty-six pixels does not hold
+/// "エクスプレッション", and a name cut off after three characters says less than `CC11` does —
+/// the menu that opened the lane is where the names are, and it is one click away.
+pub fn curve_tag(which: ClipCurve, language: Language) -> String {
+    match which {
+        ClipCurve::Bend => Key::BendLane.get(language).to_string(),
+        ClipCurve::Controller(number) => format!("CC{number}"),
+    }
+}
+
+/// A number that tells one strip's elements from another's.
+///
+/// gpui needs an id per interactive element, and two strips sharing one would share their scroll
+/// state and their hover. The bend is 128 because that is the one number no controller can be.
+fn lane_id(which: ClipCurve) -> usize {
+    match which {
+        ClipCurve::Bend => usize::from(CONTROLLER_MAX) + 1,
+        ClipCurve::Controller(number) => usize::from(number),
+    }
+}
+
+/// The rows the lane menu offers, in the order it offers them.
+///
+/// The bend, then the controllers a keyboard actually has, then anything else this clip is
+/// already carrying or already showing. That last group is what makes an imported file usable: a
+/// part shaped by controller 85 has a lane to open, and it is the one lane somebody is looking
+/// for — a menu of eight fixed rows would leave that curve audible and undrawable.
+pub fn curve_lane_choices(open: &[ClipCurve], carried: &[ClipCurve]) -> Vec<ClipCurve> {
+    let mut rows = vec![ClipCurve::Bend];
+    rows.extend(
+        auris_i18n::controller::NOTABLE
+            .into_iter()
+            .map(ClipCurve::Controller),
+    );
+    let mut extra: Vec<ClipCurve> = open
+        .iter()
+        .chain(carried)
+        .copied()
+        .filter(|which| which.controller().is_some() && !rows.contains(which))
+        .collect();
+    extra.sort_unstable();
+    extra.dedup();
+    rows.extend(extra);
+    rows
 }
 
 /// Where `value` sits in the strip, from 0 at the top to 1 at the bottom.
@@ -1829,14 +1951,55 @@ mod curve_tests {
 
     #[test]
     fn each_strip_says_which_one_it_is() {
-        // Two strips of the same size stacked under the notes, and the gutter is the only thing
-        // that tells them apart.
-        let labels: Vec<Key> = [ClipCurve::Bend, ClipCurve::MODULATION]
-            .into_iter()
-            .map(curve_label)
-            .collect();
-        assert_eq!(labels[0], Key::BendLane);
-        assert_eq!(labels[1], Key::ModulationLane);
-        assert_ne!(labels[0], labels[1]);
+        // Strips of the same size stacked under the notes, and the gutter is the only thing that
+        // tells them apart. Fifty-six pixels of it, so the tag is the number rather than the name.
+        let language = Language::English;
+        let tags: Vec<String> = [
+            ClipCurve::Bend,
+            ClipCurve::MODULATION,
+            ClipCurve::Controller(11),
+        ]
+        .into_iter()
+        .map(|which| curve_tag(which, language))
+        .collect();
+        assert_eq!(tags, vec!["Bend", "CC1", "CC11"]);
+
+        // The menu that opens them has the room to say what they are.
+        assert_eq!(
+            curve_label(ClipCurve::Controller(11), language),
+            "Expression"
+        );
+        assert_eq!(
+            curve_label(ClipCurve::Controller(85), language),
+            "CC 85",
+            "an unnamed controller keeps its number rather than borrowing a name"
+        );
+        assert_eq!(curve_label(ClipCurve::Bend, language), "Bend");
+    }
+
+    #[test]
+    fn the_lane_menu_offers_the_usual_controllers_and_whatever_this_clip_uses() {
+        // The fixed list is the controls a keyboard has. Anything else arrives with a MIDI file,
+        // and the lane it wrote on has to be reachable or its curve is audible and undrawable.
+        let rows = curve_lane_choices(&[], &[ClipCurve::Controller(85), ClipCurve::Bend]);
+        assert_eq!(rows[0], ClipCurve::Bend, "the bend leads");
+        assert!(rows.contains(&ClipCurve::MODULATION));
+        assert!(rows.contains(&ClipCurve::Controller(11)));
+        assert_eq!(
+            rows.last(),
+            Some(&ClipCurve::Controller(85)),
+            "the clip's own controller is offered, after the usual ones"
+        );
+
+        // A lane that is open and also written on is one row, not two, and the bend is never
+        // listed twice however it arrives.
+        let rows = curve_lane_choices(
+            &[ClipCurve::Bend, ClipCurve::Controller(85)],
+            &[ClipCurve::Controller(85), ClipCurve::MODULATION],
+        );
+        let mut seen = rows.clone();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), rows.len(), "a row was offered twice: {rows:?}");
     }
 }

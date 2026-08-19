@@ -30,6 +30,7 @@
 #![warn(missing_docs)]
 
 pub mod audio;
+pub mod controller;
 pub mod messages;
 mod strings;
 

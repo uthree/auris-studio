@@ -581,6 +581,7 @@ strings! {
     // The strip under the piano roll, named by what is in it rather than by the word "lane".
     BendLane { en: "Bend", ja: "ベンド" }
     ModulationLane { en: "Mod", ja: "モジュ" }
+    CurveLanes { en: "Lanes", ja: "レーン" }
     StraightenCurve { en: "Straighten", ja: "カーブを消す" }
     CmdShowBendLane { en: "Pitch Bend", ja: "ピッチベンド" }
     CmdShowModulationLane { en: "Modulation", ja: "モジュレーション" }
