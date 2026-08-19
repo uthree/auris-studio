@@ -39,6 +39,7 @@ pub mod pack;
 pub mod reverb;
 pub mod smooth;
 pub mod spectrum;
+pub mod stretch;
 
 pub use adsr::{Adsr, EnvelopeStage};
 pub use biquad::{Biquad, BiquadCoefficients};
