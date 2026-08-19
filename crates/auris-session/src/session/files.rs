@@ -137,7 +137,12 @@ impl Session {
                         .collect()
                 };
                 clip.bend = rebase(&track.bend);
-                clip.modulation = rebase(&track.modulation);
+                for (number, points) in &track.controllers {
+                    let points = rebase(points);
+                    if !points.is_empty() {
+                        clip.controllers.insert(*number, points);
+                    }
+                }
                 // The file said where the notes are; nothing should grow the clip past them on the
                 // next edit and quietly change what it holds.
                 clip.length_is_explicit = true;

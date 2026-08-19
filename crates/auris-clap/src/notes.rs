@@ -11,7 +11,7 @@
 //! event for at all. A plugin that speaks both gets the better half of each, which is why
 //! [`NoteLanguage`] is two answers and not one.
 
-use auris_core::plugin::NoteEvent;
+use auris_core::plugin::{CONTROLLER_MAX, NoteEvent};
 use clack_extensions::note_ports::{NoteDialect, NoteDialects};
 
 /// What a plugin is actually sent for one Auris event.
@@ -107,10 +107,10 @@ pub fn translate(event: NoteEvent, language: NoteLanguage) -> Translated {
             false => Translated::Midi(bend_bytes(semitones)),
         },
         // The one event with no CLAP note equivalent. A plugin that cannot take MIDI simply does
-        // not get a modulation wheel, which is a limitation to state rather than to fake with a
-        // note expression that means something else.
-        NoteEvent::Modulation { amount, .. } => match language.midi {
-            true => Translated::Midi([0xB0, 1, to_7bit(amount)]),
+        // not get controllers, which is a limitation to state rather than to fake with a note
+        // expression that means something else.
+        NoteEvent::Controller { number, value, .. } => match language.midi {
+            true => Translated::Midi([0xB0, number.min(CONTROLLER_MAX), to_7bit(value)]),
             false => Translated::Nothing,
         },
     }
@@ -176,16 +176,30 @@ mod tests {
                 velocity: 0.5
             }
         );
-        // ...and the wheel as MIDI, because CLAP has no note event for it.
+        // ...and a controller as MIDI, because CLAP has no note event for one.
         assert_eq!(
             translate(
-                NoteEvent::Modulation {
+                NoteEvent::Controller {
                     frame: 0,
-                    amount: 1.0
+                    number: 1,
+                    value: 1.0
                 },
                 language
             ),
             Translated::Midi([0xB0, 1, 127])
+        );
+        // Any controller, not just the wheel: an expression pedal is the same three bytes with a
+        // different number in the middle, and that is the whole of why a lane can be drawn on one.
+        assert_eq!(
+            translate(
+                NoteEvent::Controller {
+                    frame: 0,
+                    number: 11,
+                    value: 0.5
+                },
+                language
+            ),
+            Translated::Midi([0xB0, 11, 64])
         );
     }
 
@@ -193,9 +207,10 @@ mod tests {
     fn a_clap_only_port_loses_the_wheel_and_keeps_the_bend() {
         assert_eq!(
             translate(
-                NoteEvent::Modulation {
+                NoteEvent::Controller {
                     frame: 0,
-                    amount: 0.5
+                    number: 1,
+                    value: 0.5
                 },
                 CLAP_ONLY
             ),

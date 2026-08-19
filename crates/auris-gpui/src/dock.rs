@@ -224,7 +224,7 @@ impl PanelLayout {
     pub fn curve_lane(&self, which: ClipCurve) -> bool {
         match which {
             ClipCurve::Bend => self.bend_lane,
-            ClipCurve::Modulation => self.modulation_lane,
+            ClipCurve::Controller(_) => self.modulation_lane,
         }
     }
 
@@ -232,7 +232,7 @@ impl PanelLayout {
     pub fn set_curve_lane(&mut self, which: ClipCurve, shown: bool) {
         match which {
             ClipCurve::Bend => self.bend_lane = shown,
-            ClipCurve::Modulation => self.modulation_lane = shown,
+            ClipCurve::Controller(_) => self.modulation_lane = shown,
         }
     }
 }

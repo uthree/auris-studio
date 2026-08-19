@@ -33,9 +33,10 @@
 //! solo, which instrument a track plays, and the automation. A MIDI file is the notes and the
 //! clock.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
+use auris_core::plugin::CONTROLLER_MAX;
 use auris_core::project::{CURVE_STEP, ClipCurve, CurvePoint, Note, Project};
 use auris_core::time::{SignatureMap, TICKS_PER_QUARTER, TempoMap, Ticks, TimeSignature};
 use midly::num::{u4, u7, u15, u24, u28};
@@ -63,8 +64,13 @@ pub struct MidiTrack {
     /// A file that never bends brings none, which is what keeps this off the overwhelming
     /// majority of imports.
     pub bend: Vec<CurvePoint>,
-    /// The modulation, positioned the same way.
-    pub modulation: Vec<CurvePoint>,
+    /// The controllers the file wrote, by MIDI controller number, positioned the same way.
+    ///
+    /// Only the ones that shape a performance: see [`is_performance_controller`]. A file's bank
+    /// selects and RPN handshakes are how it addresses an instrument, not something anyone drew,
+    /// and importing them as lanes would put a staircase on screen for every General MIDI file
+    /// ever written — and send it back out on the next export.
+    pub controllers: BTreeMap<u8, Vec<CurvePoint>>,
 }
 
 /// Everything a Standard MIDI File said, in this application's units.
@@ -245,13 +251,16 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
                             }
                         }
                         MidiMessage::Controller { controller, value }
-                            if controller.as_int() == CC_MODULATION =>
+                            if is_performance_controller(controller.as_int()) =>
                         {
                             if let Some(part) = parts.get_mut(&key) {
-                                part.modulation.push(CurvePoint {
-                                    at: scale(at, per_quarter),
-                                    value: f32::from(value.as_int()) / 127.0,
-                                });
+                                part.controllers
+                                    .entry(controller.as_int())
+                                    .or_default()
+                                    .push(CurvePoint {
+                                        at: scale(at, per_quarter),
+                                        value: f32::from(value.as_int()) / 127.0,
+                                    });
                             }
                         }
                         _ => {}
@@ -287,14 +296,16 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
                 notes.sort_by_key(|note| (note.start, note.pitch));
                 let mut bend = part.bend;
                 bend.sort_by_key(|point| point.at);
-                let mut modulation = part.modulation;
-                modulation.sort_by_key(|point| point.at);
+                let mut controllers = part.controllers;
+                for points in controllers.values_mut() {
+                    points.sort_by_key(|point| point.at);
+                }
                 MidiTrack {
                     name: part.name.unwrap_or_else(|| default_name(key.1)),
                     channel: key.1,
                     notes,
                     bend,
-                    modulation,
+                    controllers,
                 }
             })
         })
@@ -389,11 +400,14 @@ fn build_tracks(project: &Project) -> (Vec<Vec<TrackEvent<'static>>>, usize) {
             // The curves, sampled by the clip's own rule rather than by one of this file's. What
             // the wire carries — fourteen bits of bend, seven of controller — is this file's
             // business and stops here; the document works in semitones and in a fraction.
-            for (at, semitones) in clip.sounding_curve_events(ClipCurve::Bend, CURVE_STEP) {
-                events.push((clip.start + at, bend_message(channel, semitones)));
-            }
-            for (at, amount) in clip.sounding_curve_events(ClipCurve::Modulation, CURVE_STEP) {
-                events.push((clip.start + at, modulation_message(channel, amount)));
+            for which in clip.curves() {
+                for (at, value) in clip.sounding_curve_events(which, CURVE_STEP) {
+                    let message = match which {
+                        ClipCurve::Bend => bend_message(channel, value),
+                        ClipCurve::Controller(number) => controller_message(channel, number, value),
+                    };
+                    events.push((clip.start + at, message));
+                }
             }
         }
         // Sorted by position, and at one position the releases go first: a note struck again at
@@ -481,8 +495,18 @@ fn message(channel: u4, pitch: u8, vel: u7) -> TrackEventKind<'static> {
 /// everywhere but here.
 const BEND_RANGE: f32 = 2.0;
 
-/// Controller 1: the modulation wheel.
-const CC_MODULATION: u8 = 1;
+/// Whether a controller shapes a performance, rather than addressing an instrument.
+///
+/// What comes back as a lane the user can see and edit. The ones left out are the file's own
+/// plumbing: bank select and its fine half, the data entry and increment pair, the RPN and NRPN
+/// selectors that those write into, and the channel mode messages from 120 up — "all notes off"
+/// is a thing that happens to a performance, not a thing anybody performed.
+///
+/// Free rather than a match inside the reader so it can be tested, and so the reverse question —
+/// which numbers a lane may be *drawn* on — has one answer to point at.
+pub fn is_performance_controller(number: u8) -> bool {
+    !matches!(number, 0 | 32 | 6 | 38 | 96..=101 | 120..=127)
+}
 
 /// A pitch bend message carrying `semitones`.
 fn bend_message(channel: u4, semitones: f32) -> TrackEventKind<'static> {
@@ -494,16 +518,16 @@ fn bend_message(channel: u4, semitones: f32) -> TrackEventKind<'static> {
     }
 }
 
-/// A modulation message carrying `amount`, from 0 to 1.
+/// A controller message carrying `value`, from 0 to 1.
 ///
 /// The seven bits are the wire's business and stop here: the document works in a fraction, the
-/// way [`NoteEvent::Modulation`](auris_core::NoteEvent::Modulation) does.
-fn modulation_message(channel: u4, amount: f32) -> TrackEventKind<'static> {
+/// way [`NoteEvent::Controller`](auris_core::NoteEvent::Controller) does.
+fn controller_message(channel: u4, number: u8, value: f32) -> TrackEventKind<'static> {
     TrackEventKind::Midi {
         channel,
         message: MidiMessage::Controller {
-            controller: u7::new(CC_MODULATION),
-            value: u7::new((amount.clamp(0.0, 1.0) * 127.0).round() as u8),
+            controller: u7::new(number.min(CONTROLLER_MAX)),
+            value: u7::new((value.clamp(0.0, 1.0) * 127.0).round() as u8),
         },
     }
 }
@@ -551,8 +575,8 @@ struct Part {
     notes: Vec<Note>,
     /// The bend, at absolute ticks. Rebased onto the clip once the clip's start is known.
     bend: Vec<CurvePoint>,
-    /// The modulation, gathered and rebased the same way.
-    modulation: Vec<CurvePoint>,
+    /// The controllers, on the same terms.
+    controllers: BTreeMap<u8, Vec<CurvePoint>>,
 }
 
 /// The channel an event belongs to, or 0 for the ones that belong to the track as a whole.
@@ -602,6 +626,7 @@ fn note(started: (u64, u8), ended: u64, pitch: u8, per_quarter: u32) -> Note {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use auris_core::plugin::CC_MODULATION;
     use midly::num::{u4, u7, u15, u24, u28};
     use midly::{Header, Track, TrackEvent};
 
@@ -1068,19 +1093,30 @@ mod tests {
             .expect("an instrument track")
             .clips[0]
             .id;
-        project.midi_clip_mut(clip).expect("the clip").modulation = vec![
-            CurvePoint {
-                at: Ticks::ZERO,
-                value: 0.0,
-            },
-            CurvePoint {
-                at: Ticks(TICKS_PER_QUARTER * 2),
-                value: 1.0,
-            },
-        ];
+        project
+            .midi_clip_mut(clip)
+            .expect("the clip")
+            .controllers
+            .insert(
+                CC_MODULATION,
+                vec![
+                    CurvePoint {
+                        at: Ticks::ZERO,
+                        value: 0.0,
+                    },
+                    CurvePoint {
+                        at: Ticks(TICKS_PER_QUARTER * 2),
+                        value: 1.0,
+                    },
+                ],
+            );
 
         let imported = round_trip(&project);
-        let wheel = &imported.tracks[0].modulation;
+        let wheel = imported.tracks[0]
+            .controllers
+            .get(&CC_MODULATION)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
         assert!(!wheel.is_empty(), "the wheel did not survive the file");
         for pair in wheel.windows(2) {
             assert!(pair[0].at <= pair[1].at, "out of order: {wheel:?}");
@@ -1114,6 +1150,89 @@ mod tests {
         // one channel, told apart by the message they are carried in.
         assert!(imported.tracks[0].bend.is_empty());
     }
+
+    #[test]
+    fn any_controller_goes_out_and_comes_back_under_its_own_number() {
+        // The wheel is not a special case: an expression pedal is the same three bytes with a
+        // different number in the middle, and a part shaped by one has to survive the file it is
+        // handed to somebody in.
+        let mut project = project_with(
+            vec![Note::new(60, Ticks::ZERO, Ticks(TICKS_PER_QUARTER * 4))],
+            Ticks(TICKS_PER_QUARTER * 4),
+        );
+        let clip = project.tracks[0]
+            .kind
+            .as_instrument()
+            .expect("an instrument track")
+            .clips[0]
+            .id;
+        let written = vec![
+            CurvePoint {
+                at: Ticks::ZERO,
+                value: 1.0,
+            },
+            CurvePoint {
+                at: Ticks(TICKS_PER_QUARTER * 2),
+                value: 0.25,
+            },
+        ];
+        let midi = project.midi_clip_mut(clip).expect("the clip");
+        midi.controllers.insert(EXPRESSION, written);
+        midi.controllers.insert(SUSTAIN, {
+            vec![CurvePoint {
+                at: Ticks::QUARTER,
+                value: 1.0,
+            }]
+        });
+
+        let imported = round_trip(&project);
+        let lanes = &imported.tracks[0].controllers;
+        assert!(
+            lanes.contains_key(&EXPRESSION) && lanes.contains_key(&SUSTAIN),
+            "the lanes came back as {:?}",
+            lanes.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            !lanes.contains_key(&CC_MODULATION),
+            "a controller nobody wrote turned up"
+        );
+        let expression = &lanes[&EXPRESSION];
+        let at = |tick: i64| {
+            expression
+                .iter()
+                .rfind(|point| point.at <= Ticks(tick))
+                .map(|point| point.value)
+                .unwrap_or(0.0)
+        };
+        assert!((at(0) - 1.0).abs() < 0.01, "it started at {}", at(0));
+        assert!(
+            (at(TICKS_PER_QUARTER * 2) - 0.25).abs() < 0.01,
+            "the pedal ended at {}",
+            at(TICKS_PER_QUARTER * 2)
+        );
+    }
+
+    #[test]
+    fn the_files_own_plumbing_does_not_come_back_as_a_lane() {
+        // A General MIDI file addresses its instruments with bank selects and RPN handshakes.
+        // Those are how a file says which sound to play, not something anybody drew, and a lane
+        // per one of them would put a staircase on screen for nearly every file there is.
+        assert!(is_performance_controller(CC_MODULATION));
+        assert!(is_performance_controller(EXPRESSION));
+        assert!(is_performance_controller(SUSTAIN));
+        for plumbing in [0, 32, 6, 38, 98, 99, 100, 101, 120, 123, 127] {
+            assert!(
+                !is_performance_controller(plumbing),
+                "controller {plumbing} would be drawn"
+            );
+        }
+    }
+
+    /// Controller 11, the expression pedal.
+    const EXPRESSION: u8 = 11;
+
+    /// Controller 64, the sustain pedal.
+    const SUSTAIN: u8 = 64;
 
     #[test]
     fn what_goes_out_comes_back_as_the_same_notes() {

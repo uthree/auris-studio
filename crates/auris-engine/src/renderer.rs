@@ -397,7 +397,7 @@ fn chase_notes(
                 }
             }
             NoteEvent::AllNotesOff { .. } | NoteEvent::AllSoundOff { .. } => counts.fill(0),
-            NoteEvent::PitchBend { .. } | NoteEvent::Modulation { .. } => {}
+            NoteEvent::PitchBend { .. } | NoteEvent::Controller { .. } => {}
         }
     }
 

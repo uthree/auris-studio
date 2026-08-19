@@ -3,8 +3,9 @@
 use auris_core::param::db_to_gain;
 use auris_core::plugin::pitch_to_hz;
 use auris_core::{
-    AudioBuffer, Instrument, NoteEvent, ParamDescriptor, ParamId, ParamUnit, ParamValueCurve,
-    Parameterized, PluginCategory, PluginDescriptor, PrepareContext, ProcessContext,
+    AudioBuffer, CC_MODULATION, Instrument, NoteEvent, ParamDescriptor, ParamId, ParamUnit,
+    ParamValueCurve, Parameterized, PluginCategory, PluginDescriptor, PrepareContext,
+    ProcessContext,
 };
 
 use crate::lfo::Lfo;
@@ -283,9 +284,13 @@ impl SegmentRenderer for Fm2 {
                 self.bend =
                     finite_or(semitones, 0.0).clamp(-MAX_BEND_SEMITONES, MAX_BEND_SEMITONES);
             }
-            NoteEvent::Modulation { amount, .. } => {
-                self.modulation = finite_or(amount, 0.0).clamp(0.0, 1.0);
-                self.refresh();
+            NoteEvent::Controller { number, value, .. } => {
+                // Controller 1 opens the vibrato, and the others are ignored for the reason the
+                // chiptune voice ignores them: a reading nobody asked for is a surprise.
+                if number == CC_MODULATION {
+                    self.modulation = finite_or(value, 0.0).clamp(0.0, 1.0);
+                    self.refresh();
+                }
             }
         }
     }
@@ -740,9 +745,10 @@ mod tests {
         let opened = swing(
             &mut rig,
             &[
-                NoteEvent::Modulation {
+                NoteEvent::Controller {
                     frame: 0,
-                    amount: 1.0,
+                    number: CC_MODULATION,
+                    value: 1.0,
                 },
                 note_on(0, 69),
             ],

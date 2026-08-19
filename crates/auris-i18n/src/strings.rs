@@ -806,6 +806,8 @@ strings! {
     EditEraseBend { en: "erasing the pitch bend", ja: "ピッチベンドの削除" }
     EditWriteModulation { en: "the modulation", ja: "モジュレーション" }
     EditEraseModulation { en: "erasing the modulation", ja: "モジュレーションの削除" }
+    EditWriteController { en: "the controller", ja: "コントロールチェンジ" }
+    EditEraseController { en: "erasing the controller", ja: "コントロールチェンジの削除" }
     EditClearAutomation { en: "clearing the automation", ja: "オートメーションの消去" }
     EditImportAudio { en: "importing audio", ja: "オーディオの読み込み" }
     EditRecordTake { en: "recording a take", ja: "録音" }

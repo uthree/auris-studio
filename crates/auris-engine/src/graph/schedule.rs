@@ -109,9 +109,10 @@ pub(super) fn schedule_clip(
             },
         });
     }
-    // The two curves, sampled the same way and by the same rule — asked of the clip rather than
-    // worked out here, so the roll drawing a curve and the renderer playing it read one answer.
-    for which in auris_core::project::ClipCurve::ALL {
+    // The curves the clip actually carries, sampled the same way and by the same rule — asked of
+    // the clip rather than worked out here, so the roll drawing a curve and the renderer playing
+    // it read one answer.
+    for which in clip.curves() {
         for (at, value) in clip.sounding_curve_events(which, auris_core::project::CURVE_STEP) {
             let frame = tempo_map
                 .ticks_to_samples(clip.start + at, sample_rate)
@@ -123,9 +124,10 @@ pub(super) fn schedule_clip(
                         frame: 0,
                         semitones: value,
                     },
-                    auris_core::project::ClipCurve::Modulation => NoteEvent::Modulation {
+                    auris_core::project::ClipCurve::Controller(number) => NoteEvent::Controller {
                         frame: 0,
-                        amount: value,
+                        number,
+                        value,
                     },
                 },
             });
@@ -144,7 +146,7 @@ fn event_rank(event: &NoteEvent) -> u8 {
         | NoteEvent::AllSoundOff { .. } => 0,
         // Controller state before the strike, so a note landing on the same frame as the curve
         // that shapes it is already being shaped when it starts.
-        NoteEvent::PitchBend { .. } | NoteEvent::Modulation { .. } => 1,
+        NoteEvent::PitchBend { .. } | NoteEvent::Controller { .. } => 1,
         NoteEvent::NoteOn { .. } => 2,
     }
 }
@@ -274,7 +276,7 @@ pub(super) fn max_sounding_notes(events: &[ScheduledEvent]) -> usize {
             }
             NoteEvent::NoteOff { .. } => sounding = sounding.saturating_sub(1),
             NoteEvent::AllNotesOff { .. } | NoteEvent::AllSoundOff { .. } => sounding = 0,
-            NoteEvent::PitchBend { .. } | NoteEvent::Modulation { .. } => {}
+            NoteEvent::PitchBend { .. } | NoteEvent::Controller { .. } => {}
         }
     }
     most
@@ -324,16 +326,19 @@ mod tests {
                 value: 2.0,
             },
         ];
-        midi.modulation = vec![
-            CurvePoint {
-                at: Ticks::ZERO,
-                value: 0.0,
-            },
-            CurvePoint {
-                at: Ticks::QUARTER,
-                value: 1.0,
-            },
-        ];
+        midi.controllers.insert(
+            auris_core::CC_MODULATION,
+            vec![
+                CurvePoint {
+                    at: Ticks::ZERO,
+                    value: 0.0,
+                },
+                CurvePoint {
+                    at: Ticks::QUARTER,
+                    value: 1.0,
+                },
+            ],
+        );
 
         let graph =
             RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
@@ -350,7 +355,11 @@ mod tests {
         let wheel: Vec<f32> = events
             .iter()
             .filter_map(|scheduled| match scheduled.event {
-                NoteEvent::Modulation { amount, .. } => Some(amount),
+                NoteEvent::Controller { number, value, .. }
+                    if number == auris_core::CC_MODULATION =>
+                {
+                    Some(value)
+                }
                 _ => None,
             })
             .collect();

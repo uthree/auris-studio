@@ -743,10 +743,10 @@ impl RenderGraph {
         }
     }
 
-    /// Queues a move of a track's modulation wheel.
-    pub fn modulation(&mut self, track: usize, amount: f32) {
+    /// Queues a move of one of a track's controllers.
+    pub fn controller(&mut self, track: usize, number: u8, value: f32) {
         if let Some(track) = self.tracks.get_mut(track) {
-            track.modulation(amount);
+            track.controller(number, value);
         }
     }
 

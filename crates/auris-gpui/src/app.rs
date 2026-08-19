@@ -724,7 +724,7 @@ impl CanvasBounds {
     pub fn curve(&self, which: ClipCurve) -> &Rc<Cell<Option<Bounds<Pixels>>>> {
         match which {
             ClipCurve::Bend => &self.bend,
-            ClipCurve::Modulation => &self.modulation,
+            ClipCurve::Controller(_) => &self.modulation,
         }
     }
 }

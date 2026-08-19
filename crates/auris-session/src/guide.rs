@@ -235,7 +235,7 @@ pub mod architecture {
     //!   The octave and the velocity are read at the moment a note is struck and sent nowhere, so
     //!   they stay where the hands left them. The bend and the wheel are channel state the
     //!   instrument goes on holding — [`pitch_bend`](crate::Session::pitch_bend) and
-    //!   [`modulation`](crate::Session::modulation) are the live commands for them — so putting
+    //!   [`controller`](crate::Session::controller) are the live commands for them — so putting
     //!   the keyboard away returns both to zero on every track it moved them on. Otherwise a
     //!   track is left bent, nothing on screen says so, and the timeline plays back wrong.
     //!
@@ -621,7 +621,7 @@ pub mod plugins {
     //! **Notes are translated, and the translation is lossy in one direction only.** A note port
     //! declares which dialects it speaks. CLAP's own carries the key as a field and a bend as a
     //! tuning in *semitones*, so nothing has to be scaled by a pitch-bend range the host was never
-    //! told; MIDI is the only one of the two with a modulation wheel. A plugin speaking both gets
+    //! told; MIDI is the only one of the two with controllers. A plugin speaking both gets
     //! the better half of each, and one speaking neither gets no notes rather than events into a
     //! void. `auris_clap::notes` is the rule, with the whole of it under test.
     //!

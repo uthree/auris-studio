@@ -121,12 +121,21 @@ const CONTROL_CHANGE: i32 = 0xB0;
 const PROGRAM_CHANGE: i32 = 0xC0;
 const PITCH_BEND: i32 = 0xE0;
 const CC_BANK_SELECT: i32 = 0x00;
-const CC_MODULATION: i32 = 0x01;
 const CC_DATA_ENTRY: i32 = 0x06;
 const CC_RPN_LSB: i32 = 0x64;
 const CC_RPN_MSB: i32 = 0x65;
 const CC_EXPRESSION: i32 = 0x0B;
 const CC_EXPRESSION_FINE: i32 = 0x2B;
+
+/// Whether a controller is one the sampler spends on itself.
+///
+/// The expression pair carries the per-note envelope — see `write_expression` — so those two are
+/// the sampler's, and a clip that writes a lane on either is answered with silence rather than
+/// with a fade that fights it.
+fn is_reserved(number: u8) -> bool {
+    let number = i32::from(number);
+    number == CC_EXPRESSION || number == CC_EXPRESSION_FINE
+}
 
 /// Where a preset choice lives inside [`PluginState::extra`].
 ///
@@ -550,18 +559,23 @@ impl Sampler {
                     }
                 }
             }
-            NoteEvent::Modulation { amount, .. } => {
-                // Handed straight to the font rather than interpreted. A SoundFont declares its
-                // own modulators, and controller 1 is conventionally wired to a vibrato depth in
-                // every General MIDI set — but a font is free to have wired it to a filter, and
-                // what it was authored to do is what it should do.
-                let raw = (amount.clamp(0.0, 1.0) * 127.0).round() as i32;
+            NoteEvent::Controller { number, value, .. } if !is_reserved(number) => {
+                // Handed straight to the font rather than interpreted, whichever controller it is.
+                // A SoundFont declares its own modulators — controller 1 is conventionally wired
+                // to a vibrato depth in every General MIDI set — but a font is free to have wired
+                // it to a filter, and what it was authored to do is what it should do.
+                let raw = (value.clamp(0.0, 1.0) * 127.0).round() as i32;
                 if let Some(synth) = self.synth.as_mut() {
                     for channel in SLOTS {
-                        synth.process_midi_message(channel, CONTROL_CHANGE, CC_MODULATION, raw);
+                        synth.process_midi_message(channel, CONTROL_CHANGE, i32::from(number), raw);
                     }
                 }
             }
+            // The expression pair is the sampler's own: `write_expression` spends it on the
+            // per-note fade, several times a block. A lane written on it would be overwritten
+            // before it was heard and would flatten the fade in between, so it is dropped here
+            // rather than the two of them fighting over one controller.
+            NoteEvent::Controller { .. } => {}
         }
     }
 

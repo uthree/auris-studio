@@ -451,9 +451,10 @@ fn the_bend_and_the_wheel_both_arrive_by_their_own_route() {
                 frame: 0,
                 semitones: -3.5,
             },
-            NoteEvent::Modulation {
+            NoteEvent::Controller {
                 frame: 1,
-                amount: 1.0,
+                number: 1,
+                value: 1.0,
             },
         ],
         &mut empty(8),

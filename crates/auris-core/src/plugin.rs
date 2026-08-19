@@ -259,17 +259,20 @@ pub enum NoteEvent {
         /// Bend amount in semitones.
         semitones: f32,
     },
-    /// Move the modulation wheel.
+    /// Move a controller.
     ///
-    /// MIDI controller 1, and channel state like the bend: an instrument holds the last value it
-    /// was given until it is given another. What an instrument *does* with it is the instrument's
-    /// own business — the built-in synths open a vibrato, and the sampler hands it to the font,
-    /// which may have been authored to do something else entirely with it.
-    Modulation {
+    /// A MIDI controller by its own number, and channel state like the bend: an instrument holds
+    /// the last value it was given until it is given another. What an instrument *does* with one
+    /// is the instrument's own business — the built-in synths open a vibrato on controller 1, the
+    /// sampler hands it to the font, which may have been authored to do something else entirely
+    /// with it, and every instrument ignores the controllers it has no reading for.
+    Controller {
         /// Offset within the block.
         frame: u32,
-        /// How far the wheel is up, 0 to 1.
-        amount: f32,
+        /// Which controller, 0 to 127. 1 is the modulation wheel.
+        number: u8,
+        /// How far it is up, 0 to 1. The seven bits MIDI spends on this stop at the file layer.
+        value: f32,
     },
 }
 
@@ -282,7 +285,7 @@ impl NoteEvent {
             | NoteEvent::AllNotesOff { frame }
             | NoteEvent::AllSoundOff { frame }
             | NoteEvent::PitchBend { frame, .. }
-            | NoteEvent::Modulation { frame, .. } => frame,
+            | NoteEvent::Controller { frame, .. } => frame,
         }
     }
 
@@ -294,11 +297,21 @@ impl NoteEvent {
             | NoteEvent::AllNotesOff { frame }
             | NoteEvent::AllSoundOff { frame }
             | NoteEvent::PitchBend { frame, .. }
-            | NoteEvent::Modulation { frame, .. } => *frame = new_frame,
+            | NoteEvent::Controller { frame, .. } => *frame = new_frame,
         }
         self
     }
 }
+
+/// Controller 1: the modulation wheel.
+///
+/// Here rather than with the document's curves because it is a fact about the wire, and the code
+/// that needs it by number is the code that answers [`NoteEvent::Controller`] — an instrument, not
+/// an editor. An editor says [`ClipCurve::MODULATION`](crate::project::ClipCurve::MODULATION).
+pub const CC_MODULATION: u8 = 1;
+
+/// The highest controller number MIDI has.
+pub const CONTROLLER_MAX: u8 = 127;
 
 /// Converts a MIDI note number to frequency in Hz using equal temperament with A4 = 440 Hz.
 pub fn pitch_to_hz(pitch: f32) -> f32 {

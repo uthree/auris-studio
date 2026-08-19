@@ -179,7 +179,7 @@ impl AurisApp {
         let velocity_tag = self.velocity_tag();
         // Built before the chain rather than inside it: each one needs `&mut self`, and the
         // builder below is already holding a borrow of it.
-        let lanes: Vec<gpui::AnyElement> = ClipCurve::ALL
+        let lanes: Vec<gpui::AnyElement> = [ClipCurve::Bend, ClipCurve::MODULATION]
             .into_iter()
             .filter(|which| self.panels.curve_lane(*which))
             .collect::<Vec<_>>()
@@ -443,7 +443,7 @@ impl AurisApp {
                 div()
                     .id(match which {
                         ClipCurve::Bend => "bend-lane",
-                        ClipCurve::Modulation => "modulation-lane",
+                        ClipCurve::Controller(_) => "controller-lane",
                     })
                     .flex_1()
                     .min_w_0()
@@ -1202,7 +1202,7 @@ const CURVE_SCALE_TEXT: f32 = 9.0;
 fn curve_label(which: ClipCurve) -> Key {
     match which {
         ClipCurve::Bend => Key::BendLane,
-        ClipCurve::Modulation => Key::ModulationLane,
+        ClipCurve::Controller(_) => Key::ModulationLane,
     }
 }
 
@@ -1248,7 +1248,7 @@ pub fn curve_scale(which: ClipCurve) -> (String, String) {
         ClipCurve::Bend => (format!("{high:+.0}"), format!("{low:+.0}")),
         // Stored as a fraction, but read as a MIDI controller: 127 is what somebody who has seen
         // a mod wheel before expects the top of its travel to be called.
-        ClipCurve::Modulation => ("127".to_string(), format!("{low:.0}")),
+        ClipCurve::Controller(_) => ("127".to_string(), format!("{low:.0}")),
     }
 }
 
@@ -1662,7 +1662,7 @@ mod curve_tests {
     fn a_value_survives_the_trip_to_the_strip_and_back() {
         // A curve is drawn from `curve_row` and dragged through `curve_of_row`, so a value that
         // did not round-trip would make the point slide out from under the pointer holding it.
-        for which in ClipCurve::ALL {
+        for which in [ClipCurve::Bend, ClipCurve::MODULATION] {
             let (low, high) = which.range();
             for value in [low, low / 2.0, 0.0, high / 2.0, high] {
                 let back = curve_of_row(which, curve_row(which, value));
@@ -1689,13 +1689,13 @@ mod curve_tests {
             "a bend rests in the middle, because it goes both ways"
         );
         assert_eq!(
-            curve_row(ClipCurve::Modulation, 0.0),
+            curve_row(ClipCurve::MODULATION, 0.0),
             1.0,
             "and a wheel rests on the floor, because there is nothing below it"
         );
         assert_eq!(curve_row(ClipCurve::Bend, BEND_LIMIT), 0.0, "the top is up");
         assert_eq!(curve_row(ClipCurve::Bend, -BEND_LIMIT), 1.0);
-        assert_eq!(curve_row(ClipCurve::Modulation, MODULATION_LIMIT), 0.0);
+        assert_eq!(curve_row(ClipCurve::MODULATION, CONTROLLER_LIMIT), 0.0);
     }
 
     #[test]
@@ -1703,14 +1703,14 @@ mod curve_tests {
         // The bug this fixes was not in the audio: the wheel's lane showed "127" and nothing else,
         // and a lone number over an unlabelled floor was read as the wheel's *position*. Whatever
         // the numbers say, there have to be two of them.
-        for which in ClipCurve::ALL {
+        for which in [ClipCurve::Bend, ClipCurve::MODULATION] {
             let (high, low) = curve_scale(which);
             assert!(!high.is_empty() && !low.is_empty(), "{which:?}");
             assert_ne!(high, low, "{which:?}");
         }
 
         assert_eq!(
-            curve_scale(ClipCurve::Modulation),
+            curve_scale(ClipCurve::MODULATION),
             ("127".to_string(), "0".to_string()),
             "the wheel is read in the controller's units, and rests at nothing"
         );
@@ -1727,7 +1727,7 @@ mod curve_tests {
         // nothing — and a drag into it would write a negative wheel position, which is not a
         // thing.
         for row in [0.0, 0.5, 1.0, 2.0] {
-            assert!(curve_of_row(ClipCurve::Modulation, row) >= 0.0, "{row}");
+            assert!(curve_of_row(ClipCurve::MODULATION, row) >= 0.0, "{row}");
         }
         assert!(curve_of_row(ClipCurve::Bend, 1.0) < 0.0, "a bend does");
     }
@@ -1831,7 +1831,10 @@ mod curve_tests {
     fn each_strip_says_which_one_it_is() {
         // Two strips of the same size stacked under the notes, and the gutter is the only thing
         // that tells them apart.
-        let labels: Vec<Key> = ClipCurve::ALL.into_iter().map(curve_label).collect();
+        let labels: Vec<Key> = [ClipCurve::Bend, ClipCurve::MODULATION]
+            .into_iter()
+            .map(curve_label)
+            .collect();
         assert_eq!(labels[0], Key::BendLane);
         assert_eq!(labels[1], Key::ModulationLane);
         assert_ne!(labels[0], labels[1]);

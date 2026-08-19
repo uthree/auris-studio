@@ -45,7 +45,7 @@ pub use clip::{
     notes_trimmed_from_front, sounding_length,
 };
 pub use curve::{
-    BEND_LIMIT, CURVE_STEP, ClipCurve, CurvePoint, MODULATION_LIMIT, curve_at, curve_events,
+    BEND_LIMIT, CONTROLLER_LIMIT, CURVE_STEP, ClipCurve, CurvePoint, curve_at, curve_events,
 };
 pub use recipe::{ClipPreset, ClipRecipe, Subdivision};
 pub use routing::{AuxSend, EffectSlot, MixerStrip, Output};
@@ -331,7 +331,15 @@ impl Project {
     /// a Reverb Mix after the plugin's author added one parameter — and writes the file back with
     /// the key gone, taking the only record of what the lane was drawn on with it. The version is
     /// what turns that into a sentence about updating instead.
-    pub const FORMAT_VERSION: u32 = 11;
+    /// 12 since a clip's one modulation curve became a map of
+    /// [`controllers`](MidiClip::controllers). Version 8's case in a different field: the wheel is
+    /// spelt as an entry under `1` where it was a list called `modulation`, so a version 11
+    /// document's wheel movements read as nothing at all — silently, because the map has a default
+    /// — and a swell somebody wrote would simply stop happening. The other direction is worse
+    /// still, and is what the number is really for: a version 11 build would open a part shaped by
+    /// an expression pedal, play it flat, and write the file back with every controller in it
+    /// gone.
+    pub const FORMAT_VERSION: u32 = 12;
 
     /// An empty project.
     ///

@@ -3,8 +3,9 @@
 use auris_core::param::db_to_gain;
 use auris_core::plugin::pitch_to_hz;
 use auris_core::{
-    AudioBuffer, Instrument, NoteEvent, ParamDescriptor, ParamId, ParamUnit, ParamValueCurve,
-    Parameterized, PluginCategory, PluginDescriptor, PrepareContext, ProcessContext,
+    AudioBuffer, CC_MODULATION, Instrument, NoteEvent, ParamDescriptor, ParamId, ParamUnit,
+    ParamValueCurve, Parameterized, PluginCategory, PluginDescriptor, PrepareContext,
+    ProcessContext,
 };
 
 use crate::lfo::Lfo;
@@ -373,9 +374,14 @@ impl SegmentRenderer for Chiptune {
                     finite_or(semitones, 0.0).clamp(-MAX_BEND_SEMITONES, MAX_BEND_SEMITONES);
                 self.refresh();
             }
-            NoteEvent::Modulation { amount, .. } => {
-                self.modulation = finite_or(amount, 0.0).clamp(0.0, 1.0);
-                self.refresh();
+            NoteEvent::Controller { number, value, .. } => {
+                // Controller 1 opens the vibrato. The rest are messages this instrument has no
+                // reading for, and are ignored rather than given one: a pedal that made a square
+                // wave do something surprising would be worse than a pedal that does nothing.
+                if number == CC_MODULATION {
+                    self.modulation = finite_or(value, 0.0).clamp(0.0, 1.0);
+                    self.refresh();
+                }
             }
         }
     }
@@ -598,9 +604,10 @@ mod tests {
         let rendered = wheeled.render(
             24_000,
             &[
-                NoteEvent::Modulation {
+                NoteEvent::Controller {
                     frame: 0,
-                    amount: 1.0,
+                    number: CC_MODULATION,
+                    value: 1.0,
                 },
                 note_on(0, 69),
             ],

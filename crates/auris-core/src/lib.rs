@@ -43,8 +43,8 @@ pub use error::{CoreError, Result};
 pub use harmony::{ChordMap, ChordPoint, Harmony, KeyMap, KeyPoint};
 pub use param::{ParamDescriptor, ParamId, ParamTarget, ParamUnit, ParamValueCurve};
 pub use plugin::{
-    Effect, Instrument, NoteEvent, Parameterized, PluginCategory, PluginDescriptor, PluginKind,
-    PluginState, PrepareContext, ProcessContext,
+    CC_MODULATION, CONTROLLER_MAX, Effect, Instrument, NoteEvent, Parameterized, PluginCategory,
+    PluginDescriptor, PluginKind, PluginState, PrepareContext, ProcessContext,
 };
 pub use project::{
     AudioClip, AudioSource, AudioSourceBank, AudioTrack, AuxSend, ClipId, ClipPreset, ClipRecipe,
@@ -64,8 +64,8 @@ pub mod prelude {
     pub use crate::buffer::AudioBuffer;
     pub use crate::param::{ParamDescriptor, ParamId, ParamUnit, ParamValueCurve};
     pub use crate::plugin::{
-        Effect, Instrument, NoteEvent, Parameterized, PluginCategory, PluginDescriptor, PluginKind,
-        PluginState, PrepareContext, ProcessContext,
+        CC_MODULATION, CONTROLLER_MAX, Effect, Instrument, NoteEvent, Parameterized,
+        PluginCategory, PluginDescriptor, PluginKind, PluginState, PrepareContext, ProcessContext,
     };
     pub use crate::registry::PluginRegistry;
 }

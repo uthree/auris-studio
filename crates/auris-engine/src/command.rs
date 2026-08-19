@@ -115,12 +115,14 @@ pub enum EngineCommand {
         /// How far to bend, in semitones.
         semitones: f32,
     },
-    /// Moves a track's modulation wheel. Channel state, like the bend.
-    Modulation {
+    /// Moves one of a track's controllers. Channel state, like the bend.
+    Controller {
         /// Track position in the project.
         track: usize,
-        /// How far the wheel is up, 0.0 to 1.0.
-        amount: f32,
+        /// Which controller, 0 to 127. 1 is the modulation wheel.
+        number: u8,
+        /// How far it is up, 0.0 to 1.0.
+        value: f32,
     },
     /// Turns the click on or off.
     SetMetronome(bool),
@@ -218,10 +220,15 @@ impl std::fmt::Debug for EngineCommand {
                 .field("track", track)
                 .field("semitones", semitones)
                 .finish(),
-            Self::Modulation { track, amount } => f
-                .debug_struct("Modulation")
+            Self::Controller {
+                track,
+                number,
+                value,
+            } => f
+                .debug_struct("Controller")
                 .field("track", track)
-                .field("amount", amount)
+                .field("number", number)
+                .field("value", value)
                 .finish(),
             Self::SetMetronome(enabled) => f.debug_tuple("SetMetronome").field(enabled).finish(),
             Self::Panic => f.write_str("Panic"),

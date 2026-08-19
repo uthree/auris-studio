@@ -167,11 +167,12 @@ impl RenderTrack {
         });
     }
 
-    /// Queues a move of the instrument's modulation wheel for the start of the next block.
-    pub fn modulation(&mut self, amount: f32) {
-        self.push_audition(NoteEvent::Modulation {
+    /// Queues a move of one of the instrument's controllers for the start of the next block.
+    pub fn controller(&mut self, number: u8, value: f32) {
+        self.push_audition(NoteEvent::Controller {
             frame: 0,
-            amount: amount.clamp(0.0, auris_core::project::MODULATION_LIMIT),
+            number,
+            value: value.clamp(0.0, auris_core::project::CONTROLLER_LIMIT),
         });
     }
 

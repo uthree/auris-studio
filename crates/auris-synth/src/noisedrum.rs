@@ -254,10 +254,10 @@ impl SegmentRenderer for NoiseDrum {
                     }
                 }
             }
-            // A drum has no pitch to wobble and nothing else here a wheel would sensibly reach.
-            // Ignored rather than given a meaning, because a mod wheel that made the snare do
-            // something surprising would be worse than one that does nothing.
-            NoteEvent::Modulation { .. } => {}
+            // A drum has no pitch to wobble and nothing else here a controller would sensibly
+            // reach. Ignored rather than given a meaning, because a mod wheel that made the snare
+            // do something surprising would be worse than one that does nothing.
+            NoteEvent::Controller { .. } => {}
             NoteEvent::PitchBend { semitones, .. } => {
                 self.bend =
                     finite_or(semitones, 0.0).clamp(-MAX_BEND_SEMITONES, MAX_BEND_SEMITONES);

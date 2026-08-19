@@ -160,10 +160,14 @@ pub enum Edit {
     WriteBend(ClipId),
     /// A point was taken off a clip's bend, or the whole curve was.
     EraseBend,
-    /// A point was written on a clip's modulation, or moved along it.
-    WriteModulation(ClipId),
-    /// A point was taken off a clip's modulation, or the whole curve was.
-    EraseModulation,
+    /// A point was written on one of a clip's controllers, or moved along it.
+    ///
+    /// The controller number travels with the clip, so a frontend can say which lane was drawn on
+    /// rather than "a controller" — and so that two lanes of the same clip do not fold into one
+    /// undo step, for the reason two clips do not.
+    WriteController(u8, ClipId),
+    /// A point was taken off one of a clip's controllers, or the whole curve was.
+    EraseController(u8),
     /// A whole lane was removed, giving the parameter its stored value back.
     ClearAutomation,
     /// An audio file was imported onto a track.
@@ -199,13 +203,13 @@ pub enum Edit {
 impl Edit {
     /// The step that writing on `which` records.
     ///
-    /// The two curves share every command, and this is where they stop sharing: an undo menu
+    /// A clip's curves share every command, and this is where they stop sharing: an undo menu
     /// saying "the pitch bend" over a wheel movement would be a menu that lies about the thing it
     /// is offering to take back.
     pub fn write_curve(which: ClipCurve, clip: ClipId) -> Edit {
         match which {
             ClipCurve::Bend => Edit::WriteBend(clip),
-            ClipCurve::Modulation => Edit::WriteModulation(clip),
+            ClipCurve::Controller(number) => Edit::WriteController(number, clip),
         }
     }
 
@@ -213,7 +217,7 @@ impl Edit {
     pub fn erase_curve(which: ClipCurve) -> Edit {
         match which {
             ClipCurve::Bend => Edit::EraseBend,
-            ClipCurve::Modulation => Edit::EraseModulation,
+            ClipCurve::Controller(number) => Edit::EraseController(number),
         }
     }
 }

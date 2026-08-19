@@ -18,7 +18,7 @@
 
 use auris_core::TrackId;
 use auris_core::harmony::Harmony;
-use auris_core::project::{BEND_LIMIT, MODULATION_LIMIT};
+use auris_core::project::{BEND_LIMIT, CONTROLLER_LIMIT};
 use auris_core::theory::chart::{Chart, catalog};
 use auris_core::theory::chord::Chord;
 use auris_core::theory::key::Key as MusicalKey;
@@ -286,12 +286,13 @@ impl Session {
         }
     }
 
-    /// Moves a track's modulation wheel. Channel state, like the bend.
-    pub fn modulation(&mut self, track: TrackId, amount: f32) {
+    /// Moves one of a track's controllers. Channel state, like the bend.
+    pub fn controller(&mut self, track: TrackId, number: u8, value: f32) {
         if let Ok(index) = self.require_track(track) {
-            self.send(EngineCommand::Modulation {
+            self.send(EngineCommand::Controller {
                 track: index,
-                amount: amount.clamp(0.0, MODULATION_LIMIT),
+                number,
+                value: value.clamp(0.0, CONTROLLER_LIMIT),
             });
         }
     }

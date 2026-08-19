@@ -1984,7 +1984,7 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_curve_lane(ClipCurve::Modulation);
+        self.toggle_curve_lane(ClipCurve::MODULATION);
         cx.notify();
     }
 

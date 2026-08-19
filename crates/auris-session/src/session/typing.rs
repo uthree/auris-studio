@@ -49,7 +49,8 @@
 //! should take back whatever was last written.
 
 use auris_core::TrackId;
-use auris_core::project::MODULATION_LIMIT;
+use auris_core::plugin::CC_MODULATION;
+use auris_core::project::CONTROLLER_LIMIT;
 use auris_core::theory::pitch::{OCTAVE, midi_name};
 
 use super::Session;
@@ -347,7 +348,7 @@ impl MusicalTyping {
     /// What the modulation wheel reads at `step`, `0` being down.
     fn wheel_at(step: u8) -> f32 {
         let top = f32::from(WHEEL_STEPS.saturating_sub(1)).max(1.0);
-        (f32::from(step) / top).clamp(0.0, 1.0) * MODULATION_LIMIT
+        (f32::from(step) / top).clamp(0.0, 1.0) * CONTROLLER_LIMIT
     }
 
     /// Presses `key`, sounding or moving something on `track` if that is what the key does.
@@ -578,7 +579,7 @@ impl Session {
             self.pitch_bend(track, semitones);
         }
         for (track, amount) in played.modulation {
-            self.modulation(track, amount);
+            self.controller(track, CC_MODULATION, amount);
         }
         for (track, pitch) in played.released {
             self.note_off(track, pitch);
@@ -942,11 +943,11 @@ mod tests {
             let amount = keys.press(key, TRACK).modulation;
             let &(_, amount) = amount.first().expect("a wheel key moves the wheel");
             assert!(amount > last, "`{key}` is not above the key before it");
-            assert!((0.0..=MODULATION_LIMIT).contains(&amount));
+            assert!((0.0..=CONTROLLER_LIMIT).contains(&amount));
             last = amount;
             keys.release(key);
         }
-        assert_eq!(last, MODULATION_LIMIT, "8 is all the way up");
+        assert_eq!(last, CONTROLLER_LIMIT, "8 is all the way up");
     }
 
     #[test]

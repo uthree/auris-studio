@@ -142,13 +142,18 @@ pub struct MidiClip {
     /// the timeline could not do.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bend: Vec<CurvePoint>,
-    /// The modulation written across the clip, in time order.
+    /// The controllers written across the clip, by MIDI controller number, each in time order.
     ///
-    /// Beside the bend and for the same reasons: controller 1 is a message every instrument
-    /// answers rather than a parameter of any one of them, and it belongs to the phrase — a clip
-    /// dragged four bars later takes its wheel movements with it.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub modulation: Vec<CurvePoint>,
+    /// Beside the bend and for the same reasons: a controller is a message an instrument answers
+    /// rather than a parameter of any one of them, and it belongs to the phrase — a clip dragged
+    /// four bars later takes its wheel movements with it.
+    ///
+    /// A map rather than a field per controller, because there are a hundred and twenty-eight of
+    /// them and no reason for this crate to have an opinion about which ones a piece uses. Sorted
+    /// by number so that a saved file, a MIDI export and a stack of lanes all come out in the
+    /// same order, and empty vectors are never kept — see [`Self::forget_empty_curves`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub controllers: BTreeMap<u8, Vec<CurvePoint>>,
     /// Whether the length above was chosen by hand rather than grown to fit the notes.
     ///
     /// Once it has been, [`Self::fit_length_to_notes`] leaves it alone. Without this a clip
@@ -177,7 +182,7 @@ impl MidiClip {
             muted: false,
             recipe: None,
             bend: Vec::new(),
-            modulation: Vec::new(),
+            controllers: BTreeMap::new(),
             // A new clip's length is a default, not a decision, so notes written past it still
             // grow it. Dragging its edge is what makes it a decision.
             length_is_explicit: false,
@@ -253,20 +258,53 @@ impl MidiClip {
         })
     }
 
-    /// One of the clip's two curves.
+    /// One of the clip's curves. A controller nothing was written on reads as no points at all.
     pub fn curve(&self, which: ClipCurve) -> &[CurvePoint] {
         match which {
             ClipCurve::Bend => &self.bend,
-            ClipCurve::Modulation => &self.modulation,
+            ClipCurve::Controller(number) => self
+                .controllers
+                .get(&number)
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
         }
     }
 
-    /// One of the clip's two curves, to be edited.
+    /// One of the clip's curves, to be edited.
+    ///
+    /// Asking for a controller the clip has never carried **creates** it, because that is what
+    /// drawing the first point on a fresh lane is. Whatever is left empty afterwards is dropped by
+    /// [`Self::forget_empty_curves`], which every editing command calls when it is done.
     pub fn curve_mut(&mut self, which: ClipCurve) -> &mut Vec<CurvePoint> {
         match which {
             ClipCurve::Bend => &mut self.bend,
-            ClipCurve::Modulation => &mut self.modulation,
+            ClipCurve::Controller(number) => self.controllers.entry(number).or_default(),
         }
+    }
+
+    /// Every curve the clip actually carries, bend first and the controllers in number order.
+    ///
+    /// What a scheduler, a MIDI writer and a stack of lanes all iterate. A clip that has never
+    /// been bent lists no bend: the curves a clip *could* hold are a hundred and twenty-nine, and
+    /// walking those to find the two that exist would put the emptiness in every loop.
+    pub fn curves(&self) -> impl Iterator<Item = ClipCurve> + '_ {
+        let bend = (!self.bend.is_empty()).then_some(ClipCurve::Bend);
+        bend.into_iter().chain(
+            self.controllers
+                .iter()
+                .filter(|(_, points)| !points.is_empty())
+                .map(|(number, _)| ClipCurve::Controller(*number)),
+        )
+    }
+
+    /// Drops any controller lane whose last point has been removed.
+    ///
+    /// A lane holding no points is not a lane the user has: it would be saved into the file, sent
+    /// to a MIDI export as a controller nothing writes, and drawn as a strip nobody asked for.
+    /// The bend is a field rather than an entry, so emptying it is already the whole of removing
+    /// it — this is only about the map.
+    pub fn forget_empty_curves(&mut self) {
+        self.controllers.retain(|_, points| !points.is_empty());
     }
 
     /// What a curve reads at `at`, measured from the clip's own start.
@@ -914,6 +952,47 @@ mod tests {
     use super::*;
     use crate::project::fixtures::demo_project;
     use crate::time::TICKS_PER_QUARTER;
+
+    #[test]
+    fn a_clip_lists_the_curves_it_has_and_forgets_the_ones_it_is_left_with() {
+        let mut clip = MidiClip::new(ClipId(1), "part", Ticks::ZERO, Ticks(TICKS_PER_QUARTER));
+        assert_eq!(clip.curves().count(), 0, "a fresh clip carries none");
+
+        // Drawing the first point on a lane is what creates it.
+        let point = CurvePoint {
+            at: Ticks::ZERO,
+            value: 0.5,
+        };
+        clip.curve_mut(ClipCurve::Controller(11)).push(point);
+        clip.curve_mut(ClipCurve::MODULATION).push(point);
+        clip.curve_mut(ClipCurve::Bend).push(point);
+        assert_eq!(
+            clip.curves().collect::<Vec<_>>(),
+            vec![
+                ClipCurve::Bend,
+                ClipCurve::Controller(1),
+                ClipCurve::Controller(11)
+            ],
+            "the bend first, then the controllers in number order"
+        );
+        assert_eq!(clip.curve(ClipCurve::Controller(11)), &[point]);
+        // One nobody has drawn on reads as empty rather than as anything at all.
+        assert!(clip.curve(ClipCurve::Controller(64)).is_empty());
+
+        // Asking about a lane must not leave it behind — a strip of nothing would be saved into
+        // the file and written back out to a MIDI export as a controller that says nothing.
+        assert!(
+            !clip.controllers.contains_key(&64),
+            "reading a curve created it"
+        );
+        clip.curve_mut(ClipCurve::Controller(11)).clear();
+        clip.forget_empty_curves();
+        assert_eq!(
+            clip.curves().collect::<Vec<_>>(),
+            vec![ClipCurve::Bend, ClipCurve::Controller(1)],
+            "an emptied lane is gone"
+        );
+    }
 
     #[test]
     fn a_clip_moves_to_another_track_of_its_own_kind() {

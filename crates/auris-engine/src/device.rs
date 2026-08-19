@@ -761,9 +761,13 @@ impl AudioEngine {
                     graph.pitch_bend(track, semitones);
                 }
             }
-            EngineCommand::Modulation { track, amount } => {
+            EngineCommand::Controller {
+                track,
+                number,
+                value,
+            } => {
                 if let Some(graph) = &mut self.graph {
-                    graph.modulation(track, amount);
+                    graph.controller(track, number, value);
                 }
             }
             EngineCommand::SetMetronome(enabled) => {

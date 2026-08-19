@@ -151,8 +151,12 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::EraseAutomation => Key::EditEraseAutomation,
         Edit::WriteBend(_) => Key::EditWriteBend,
         Edit::EraseBend => Key::EditEraseBend,
-        Edit::WriteModulation(_) => Key::EditWriteModulation,
-        Edit::EraseModulation => Key::EditEraseModulation,
+        // The wheel is named, because everybody knows what it is; any other controller is named by
+        // its kind, because "the modulation" over a pedal movement would be a menu that lies.
+        Edit::WriteController(number, _) if number == CC_MODULATION => Key::EditWriteModulation,
+        Edit::EraseController(number) if number == CC_MODULATION => Key::EditEraseModulation,
+        Edit::WriteController(..) => Key::EditWriteController,
+        Edit::EraseController(_) => Key::EditEraseController,
         Edit::ClearAutomation => Key::EditClearAutomation,
         Edit::ImportAudio => Key::EditImportAudio,
         Edit::RecordTake => Key::EditRecordTake,

@@ -1,61 +1,82 @@
-//! The two curves a clip carries: the pitch bend and the modulation wheel.
+//! The curves a clip carries: its pitch bend, and any controller written across it.
 //!
 //! One file because they are one shape. A curve is a list of [`CurvePoint`]s — a value at an
 //! instant, straight lines between them, held flat outside them — and [`ClipCurve`] is the one
-//! parameter that says which of the two is meant. Drawing, dragging, scheduling and writing a
-//! MIDI file all read that parameter rather than being written twice, which is what stops the
-//! two quietly disagreeing.
+//! parameter that says which of a clip's curves is meant. Drawing, dragging, scheduling and
+//! writing a MIDI file all read that parameter rather than being written twice, which is what
+//! stops them quietly disagreeing.
 //!
 //! What the number *means* is the curve's business and not a point's: [`BEND_LIMIT`] is
-//! semitones either side of the note, [`MODULATION_LIMIT`] is how far up a wheel goes, and both
-//! are read through [`ClipCurve::range`].
+//! semitones either side of the note, [`CONTROLLER_LIMIT`] is how far up a controller goes, and
+//! both are read through [`ClipCurve::range`].
+//!
+//! A **controller is named by its MIDI number** rather than by a variant per kind. The wheel is
+//! not special — it is controller 1 — and a clip that can hold 1 can hold 11 and 64 through the
+//! same code, which is the whole reason an expression pedal reaches an instrument at all.
 
 use serde::{Deserialize, Serialize};
 
+use crate::plugin::CC_MODULATION;
 use crate::time::Ticks;
 
 /// One point on a curve written across a clip.
 ///
-/// Shared by the bend and the modulation, because they are the same shape and the same rules: a
+/// Shared by every curve a clip carries, because they are the same shape and the same rules: a
 /// value at an instant, straight lines between the points, held flat outside them. What the number
 /// *means* is the curve's business and not this one's.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CurvePoint {
     /// Where it sits, measured from the clip's own start.
     pub at: Ticks,
-    /// What the curve reads there — semitones on a bend, 0 to 1 on the modulation.
+    /// What the curve reads there — semitones on a bend, 0 to 1 on a controller.
     pub value: f32,
 }
 
-/// Which of the two curves a clip carries.
+/// Which of a clip's curves is meant.
 ///
 /// They are the same shape and are drawn, dragged, scheduled and written to a MIDI file by the
-/// same code; this is the one parameter that tells the two apart, so that there is exactly one
+/// same code; this is the one parameter that tells them apart, so that there is exactly one
 /// copy of each of those and no chance of them disagreeing.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ClipCurve {
     /// The pitch bend, in semitones either side of the note.
     Bend,
-    /// The modulation wheel, from nothing to all the way up.
-    Modulation,
+    /// A MIDI controller, from nothing to all the way up.
+    ///
+    /// The number is the wire's own: 1 is the modulation wheel, 11 expression, 64 the sustain
+    /// pedal. Nothing in this crate reads it — what a controller *does* is the instrument's
+    /// business, and an instrument answers the handful it knows and ignores the rest.
+    Controller(u8),
 }
 
 impl ClipCurve {
-    /// Both, in the order a frontend should stack their lanes.
-    pub const ALL: [ClipCurve; 2] = [ClipCurve::Bend, ClipCurve::Modulation];
+    /// The modulation wheel: controller 1.
+    ///
+    /// Spelt out because it is the one controller the application sends on its own — the musical
+    /// typing wheel and the audition path both do — and a bare `Controller(1)` at those call
+    /// sites would be the same magic number in three crates.
+    pub const MODULATION: ClipCurve = ClipCurve::Controller(CC_MODULATION);
+
+    /// The controller number, when this is a controller rather than the bend.
+    pub fn controller(self) -> Option<u8> {
+        match self {
+            ClipCurve::Bend => None,
+            ClipCurve::Controller(number) => Some(number),
+        }
+    }
 
     /// The furthest from zero a point on this curve may be written.
     pub fn limit(self) -> f32 {
         match self {
             ClipCurve::Bend => BEND_LIMIT,
-            ClipCurve::Modulation => MODULATION_LIMIT,
+            ClipCurve::Controller(_) => CONTROLLER_LIMIT,
         }
     }
 
     /// Whether the curve goes below zero.
     ///
-    /// A bend does — the whole point of one is that it goes both ways — and a wheel does not: it
-    /// is up or it is down, and there is nothing below the bottom of its travel.
+    /// A bend does — the whole point of one is that it goes both ways — and a controller does
+    /// not: it is up or it is down, and there is nothing below the bottom of its travel.
     pub fn is_bipolar(self) -> bool {
         matches!(self, ClipCurve::Bend)
     }
@@ -77,12 +98,12 @@ impl ClipCurve {
 /// dive of an octave is a sound people want.
 pub const BEND_LIMIT: f32 = 12.0;
 
-/// How far the modulation wheel goes.
+/// How far a controller goes.
 ///
-/// One, because that is what [`NoteEvent::Modulation`](crate::NoteEvent::Modulation) carries and
-/// what a wheel is: all the way up, or somewhere below it. The seven bits MIDI spends on it are a
-/// detail of the wire that stops at [`auris_io`](https://docs.rs/auris-io).
-pub const MODULATION_LIMIT: f32 = 1.0;
+/// One, because that is what [`NoteEvent::Controller`](crate::NoteEvent::Controller) carries and
+/// what a controller is: all the way up, or somewhere below it. The seven bits MIDI spends on it
+/// are a detail of the wire that stops at [`auris_io`](https://docs.rs/auris-io).
+pub const CONTROLLER_LIMIT: f32 = 1.0;
 
 /// How finely a curve is sampled into events.
 ///
@@ -151,6 +172,7 @@ pub fn curve_events(points: &[CurvePoint], length: Ticks, step: Ticks) -> Vec<(T
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugin::CONTROLLER_MAX;
     use crate::project::{ClipId, MidiClip};
 
     fn bent(points: &[(i64, f32)], length: i64) -> MidiClip {
@@ -236,5 +258,23 @@ mod tests {
         for pair in events.windows(2) {
             assert!(pair[0].0 <= pair[1].0, "{events:?} goes back in time");
         }
+    }
+
+    #[test]
+    fn a_controller_is_named_by_its_number_and_the_wheel_is_one_of_them() {
+        // The wheel is not a kind of its own: it is controller 1, and the constant exists so that
+        // the crates which send it do not each spell the number out.
+        assert_eq!(ClipCurve::MODULATION, ClipCurve::Controller(1));
+        assert_eq!(ClipCurve::MODULATION.controller(), Some(CC_MODULATION));
+        assert_eq!(ClipCurve::Bend.controller(), None);
+
+        // Every controller is read the same way, whichever it is: up from nothing, never below.
+        for number in [CC_MODULATION, 11, 64, CONTROLLER_MAX] {
+            let curve = ClipCurve::Controller(number);
+            assert!(!curve.is_bipolar(), "controller {number} went bipolar");
+            assert_eq!(curve.range(), (0.0, CONTROLLER_LIMIT));
+        }
+        // A bend goes both ways, which is the whole point of one.
+        assert_eq!(ClipCurve::Bend.range(), (-BEND_LIMIT, BEND_LIMIT));
     }
 }
