@@ -19,7 +19,7 @@ use crate::asset::AssetPath;
 use crate::plugin::PluginState;
 use crate::time::{TempoMap, Ticks};
 
-use super::clip::{AudioClip, MidiClip, audio_length_ticks};
+use super::clip::{AudioClip, MidiClip, audio_clip_ticks};
 use super::routing::{AuxSend, MixerStrip, Output};
 use super::{ClipId, EffectSlotId, Project, SendId, TrackId};
 
@@ -212,8 +212,7 @@ impl Track {
                     // The shared helper, not inline arithmetic: it guards the sample rate, and
                     // a second copy of the conversion is a second place for the guard to be
                     // forgotten — which is exactly how this one came to divide by zero.
-                    let length =
-                        audio_length_ticks(tempo_map, sample_rate, clip.start, clip.length_frames);
+                    let length = audio_clip_ticks(tempo_map, sample_rate, clip);
                     clip.start + super::clip::sounding_length(length, clip.loop_end)
                 })
                 .max()

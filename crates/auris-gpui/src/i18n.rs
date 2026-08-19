@@ -132,6 +132,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::LoopClip => Key::EditLoopClip,
         Edit::SetClipGain => Key::EditSetClipGain,
         Edit::SetClipFade => Key::EditSetClipFade,
+        Edit::SetClipTempo => Key::EditSetClipTempo,
         Edit::AddNote => Key::EditAddNote,
         Edit::DeleteNotes => Key::EditDeleteNotes,
         Edit::CutNotes => Key::EditCutNotes,

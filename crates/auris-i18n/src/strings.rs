@@ -473,6 +473,7 @@ strings! {
     MenuOtherSignature { en: "Other…", ja: "その他…" }
     MenuClipGain { en: "Clip Gain…", ja: "クリップゲイン…" }
     MenuClearFades { en: "Remove Fades", ja: "フェードを削除" }
+    MenuFollowTempo { en: "Follow Tempo", ja: "テンポに追従" }
     MenuSetSectionHere { en: "Name Section Here…", ja: "ここからのセクション名を…" }
     MenuRemoveSectionHere { en: "Remove Section", ja: "セクションを削除" }
     MenuEndSectionsHere { en: "End Sections Here", ja: "ここで構造を終える" }
@@ -635,6 +636,7 @@ strings! {
     SetTempoTitle { en: "Tempo", ja: "テンポ" }
     SetSignatureTitle { en: "Time signature", ja: "拍子" }
     SetClipGainTitle { en: "Clip gain", ja: "クリップゲイン" }
+    SetClipSourceTempoTitle { en: "Recorded tempo", ja: "元のテンポ" }
     SetPositionTitle { en: "Go to position", ja: "位置へ移動" }
     Cancel { en: "Cancel", ja: "キャンセル" }
     Rename { en: "Rename", ja: "変更" }
@@ -753,6 +755,7 @@ strings! {
     EditRemoveSignaturePoint { en: "removing a signature change", ja: "拍子記号の削除" }
     EditSetClipGain { en: "the clip gain", ja: "クリップゲインの変更" }
     EditSetClipFade { en: "the fade", ja: "フェードの変更" }
+    EditSetClipTempo { en: "the clip's tempo", ja: "クリップのテンポ" }
     EditAddInstrumentTrack { en: "adding an instrument track", ja: "ソフト音源トラックの追加" }
     EditAddAudioTrack { en: "adding an audio track", ja: "オーディオトラックの追加" }
     EditAddBusTrack { en: "adding a bus", ja: "バスの追加" }

@@ -1,10 +1,13 @@
 //! Offline rendering, detached from the session that produced it.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
 use auris_core::param::gain_to_db;
+use auris_core::project::{UNSTRETCHED, stretch_key};
 use auris_core::{AudioBuffer, AudioSourceBank, PluginRegistry, Project, SourceId};
+use auris_dsp::stretch::time_stretch;
 use auris_engine::{OfflineOptions, PlacedEffects, PlacedInstruments, render_project_using};
 use auris_io::{WavExportSettings, resample_buffer, write_wav};
 
@@ -37,6 +40,42 @@ pub(crate) fn source_at_rate(
             None
         }
     }
+}
+
+/// Stretches whatever the project's clips ask for, and drops whatever they no longer do.
+///
+/// The renderer plays a clip that follows the tempo out of a *stretched copy* of its source, and
+/// looks that copy up by the same number the clip works its stretch out to. Making them is this
+/// side's job: a time stretcher allocates the whole output and costs tens of operations a sample,
+/// which is a thing to do while a graph is being built and never on the audio thread.
+///
+/// Cached across rebuilds, because a rebuild happens on every structural edit and re-stretching a
+/// three-minute source each time somebody moves a clip would be seconds of the window not
+/// answering. What is *not* cached is anything the project has stopped asking for — dragging a
+/// tempo from 90 to 140 asks for a copy at every value it passes through, and only the last of
+/// them is ever played.
+pub(crate) fn fill_stretches(project: &Project, bank: &mut AudioSourceBank) {
+    let mut wanted: HashSet<(SourceId, u32)> = HashSet::new();
+    for track in &project.tracks {
+        let Some(audio) = track.kind.as_audio() else {
+            continue;
+        };
+        for clip in &audio.clips {
+            let stretch = clip.stretch_in(&project.tempo_map);
+            let key = stretch_key(stretch);
+            if key == UNSTRETCHED || !wanted.insert((clip.source, key)) {
+                continue;
+            }
+            if bank.stretched(clip.source, key).is_some() {
+                continue;
+            }
+            let Some(source) = bank.get(clip.source) else {
+                continue;
+            };
+            bank.insert_stretched(clip.source, key, Arc::new(time_stretch(source, stretch)));
+        }
+    }
+    bank.retain_stretched(&|source, key| wanted.contains(&(source, key)));
 }
 
 /// A copy of `bank` with every source at `rate`.
@@ -135,7 +174,11 @@ impl RenderJob {
         progress: &mut dyn FnMut(f32),
     ) -> Result<AudioBuffer, SessionError> {
         let rate = options.sample_rate.unwrap_or(self.project.sample_rate);
-        let bank = bank_at_rate(&self.bank, rate);
+        let mut bank = bank_at_rate(&self.bank, rate);
+        // An export builds its own graph from its own bank, so it stretches its own copies. They
+        // are made at the rate the export runs at, which is the rate the clips are measured
+        // against — a copy borrowed from the session's bank would be at the *device's*.
+        fill_stretches(&self.project, &mut bank);
         Ok(render_project_using(
             &self.project,
             &bank,
@@ -201,6 +244,55 @@ mod tests {
             Arc::new(AudioBuffer::from_planar(vec![vec![0.5; frames]; 2], rate).expect("planar")),
         );
         bank
+    }
+
+    #[test]
+    fn a_clip_that_follows_the_tempo_gets_a_stretched_copy_of_its_source() {
+        // The renderer plays a following clip out of a stretched copy and looks it up by the
+        // number the clip works its stretch out to. Making it is this side's job, so what is
+        // asserted is that the copy exists, under that key, and is the length the clip will be
+        // measured as — a copy the renderer cannot find is a clip that plays at the wrong speed.
+        let mut project = Project::new("Follow", 48_000.0);
+        project.tempo_map = auris_core::time::TempoMap::constant(60.0);
+        let track = project.add_audio_track("Audio");
+        let source = project.add_audio_source(
+            "loop",
+            auris_core::AssetPath::inside("Audio/loop.wav"),
+            48_000,
+            48_000.0,
+            2,
+        );
+        let clip = project
+            .add_audio_clip(track, source, Ticks::ZERO)
+            .expect("a clip");
+        let audio = project.audio_clip_mut(clip).expect("the clip");
+        audio.source_bpm = Some(120.0);
+        audio.follows_tempo = true;
+
+        let mut bank = bank_at(source, 48_000.0);
+        fill_stretches(&project, &mut bank);
+        let key = stretch_key(2.0);
+        let stretched = bank.stretched(source, key).expect("a stretched copy");
+        assert_eq!(
+            stretched.frame_count(),
+            96_000,
+            "a loop recorded at 120 has to last twice as long to cover its bars at 60"
+        );
+
+        // Nothing is stretched twice, and nothing the project has stopped asking for is kept: a
+        // tempo dragged across a range asks for a copy at every value it passes through.
+        let again = Arc::clone(stretched);
+        fill_stretches(&project, &mut bank);
+        assert!(
+            Arc::ptr_eq(&again, bank.stretched(source, key).expect("still there")),
+            "the copy was made a second time"
+        );
+        project
+            .audio_clip_mut(clip)
+            .expect("the clip")
+            .follows_tempo = false;
+        fill_stretches(&project, &mut bank);
+        assert_eq!(bank.stretches().count(), 0, "a stale copy was kept");
     }
 
     #[test]

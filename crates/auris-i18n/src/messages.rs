@@ -108,6 +108,18 @@ messages! {
         ja: "クリップ {count} 個"
     }
 
+    /// The menu row that sets what tempo an audio clip was recorded at.
+    fn clip_source_tempo(bpm: f64) {
+        en: "Recorded Tempo: {bpm:.1} bpm…",
+        ja: "元のテンポ: {bpm:.1} bpm…"
+    }
+
+    /// The same row for a clip that has never been told what tempo it was played at.
+    fn clip_source_tempo_unknown() {
+        en: "Recorded Tempo: not set…",
+        ja: "元のテンポ: 未設定…"
+    }
+
     /// Name given to a track the user just created.
     fn new_track_name(number: usize) {
         en: "Track {number}",

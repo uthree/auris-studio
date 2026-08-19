@@ -84,7 +84,7 @@ use auris_sampler::{SharedSoundFonts, SoundFontBank};
 use crate::error::SessionError;
 use crate::history::{Edit, History};
 use crate::registry::default_registry;
-use crate::render::{RenderJob, bank_at_rate};
+use crate::render::{RenderJob, bank_at_rate, fill_stretches};
 use crate::settings::AudioPreferences;
 
 /// How to start a session.
@@ -829,6 +829,9 @@ impl Session {
             self.render_bank = bank_at_rate(&self.bank, rate);
             self.render_bank_rate = rate;
         }
+        // Every rebuild, not only after a rate change: what a clip's stretch is depends on the
+        // tempo and on the clip, and both of those are edits that land here.
+        fill_stretches(&self.project, &mut self.render_bank);
         // Whatever the audio thread has handed back is dropped before the hosted plugins are
         // asked for their effects, so an instance whose graph has already been retired is reused
         // rather than replaced. Without this every rebuild would find its plugin still busy and

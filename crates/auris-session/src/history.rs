@@ -112,6 +112,11 @@ pub enum Edit {
     SetClipGain,
     /// An audio clip's fade-in or fade-out changed.
     SetClipFade,
+    /// What tempo an audio clip was recorded at, or whether it follows the piece's, changed.
+    ///
+    /// One step for the pair, because they are one decision: telling a clip its tempo is what
+    /// makes following it mean anything, and taking the tempo away stops it following.
+    SetClipTempo,
     /// A note was added.
     AddNote,
     /// Notes were deleted.

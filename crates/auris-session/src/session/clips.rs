@@ -20,7 +20,7 @@
 //! [`Session::phrase`] back across that boundary.
 
 use auris_core::project::{ClipCurve, CurvePoint};
-use auris_core::time::{Seconds, Ticks};
+use auris_core::time::{Seconds, TempoMap, Ticks};
 use auris_core::{ClipId, TrackId};
 
 use crate::error::SessionError;
@@ -592,6 +592,87 @@ impl Session {
         Ok(())
     }
 
+    /// Tells a clip what tempo its recording was made at, or that nobody knows.
+    ///
+    /// Half of following the tempo: a clip cannot be made to fit the bars until it is known what
+    /// bars it was played in. A take recorded here is stamped by the recorder, and a loop that
+    /// came from somewhere else is typed in by hand.
+    ///
+    /// Forgetting it (`None`) also stops the clip following, because a clip that followed a tempo
+    /// it no longer knows would be stretched by nothing at all — the switch would be on and the
+    /// audio would not move, which is a control that lies.
+    pub fn set_clip_source_bpm(
+        &mut self,
+        clip: ClipId,
+        bpm: Option<f64>,
+    ) -> Result<(), SessionError> {
+        let bpm = match bpm {
+            Some(bpm) if !bpm.is_finite() => return Err(SessionError::NotFinite(bpm)),
+            Some(bpm) => Some(bpm.clamp(TempoMap::MIN_BPM, TempoMap::MAX_BPM)),
+            None => None,
+        };
+        if self.require_audio_clip(clip)?.source_bpm == bpm {
+            return Ok(());
+        }
+        self.record(Edit::SetClipTempo);
+        if let Some(audio) = self.project.audio_clip_mut(clip) {
+            audio.source_bpm = bpm;
+            audio.follows_tempo = audio.follows_tempo && bpm.is_some();
+        }
+        self.invalidate_graph();
+        Ok(())
+    }
+
+    /// Stretches a clip so that it keeps its place in the bars, or stops.
+    ///
+    /// Switching it on for a clip that has never been told its own tempo **assumes the tempo it
+    /// sits at**. That is right far more often than it is wrong — material is nearly always
+    /// dropped into the piece it was made for, and a take recorded here was recorded at exactly
+    /// that — and where it is wrong the number is on screen, in the same menu, to be corrected.
+    /// The alternative was a switch that silently did nothing until a second command was found.
+    pub fn set_clip_follows_tempo(
+        &mut self,
+        clip: ClipId,
+        follows: bool,
+    ) -> Result<(), SessionError> {
+        let audio = self.require_audio_clip(clip)?;
+        if audio.follows_tempo == follows {
+            return Ok(());
+        }
+        let assumed = match follows && audio.source_bpm.is_none() {
+            true => Some(self.project.tempo_map.bpm_at(audio.start)),
+            false => None,
+        };
+        self.record(Edit::SetClipTempo);
+        if let Some(audio) = self.project.audio_clip_mut(clip) {
+            audio.follows_tempo = follows;
+            if let Some(bpm) = assumed {
+                audio.source_bpm = Some(bpm);
+            }
+        }
+        self.invalidate_graph();
+        Ok(())
+    }
+
+    /// What tempo a clip believes it was recorded at.
+    pub fn clip_source_bpm(&self, clip: ClipId) -> Option<f64> {
+        self.project.audio_clip(clip)?.source_bpm
+    }
+
+    /// Whether a clip is stretched to follow the piece's tempo.
+    pub fn clip_follows_tempo(&self, clip: ClipId) -> bool {
+        self.project
+            .audio_clip(clip)
+            .is_some_and(|audio| audio.follows_tempo)
+    }
+
+    /// How far a clip's audio is stretched where it sits, `1.0` being as it was recorded.
+    pub fn clip_stretch(&self, clip: ClipId) -> f64 {
+        self.project
+            .audio_clip(clip)
+            .map_or(1.0, |audio| audio.stretch_in(&self.project.tempo_map))
+    }
+
     /// Sets an audio clip's fades, in frames of its source.
     ///
     /// The fade-in is clamped to the clip and the fade-out to what the fade-in leaves, so the
@@ -938,6 +1019,35 @@ mod tests {
             !session.can_undo(),
             "a move that moved nothing pushed a step onto the history"
         );
+    }
+
+    #[test]
+    fn switching_on_follow_tempo_assumes_the_tempo_the_clip_sits_at() {
+        // A switch that silently did nothing until a second command was found would be a control
+        // that lies. Material is nearly always dropped into the piece it was made for, so the
+        // piece's own tempo is the assumption — and it is shown, in the row underneath.
+        let mut session = session();
+        session.set_bpm(90.0);
+        let clip = audio_clip(&mut session, 96_000);
+        assert_eq!(session.clip_source_bpm(clip), None);
+
+        session
+            .set_clip_follows_tempo(clip, true)
+            .expect("an audio clip");
+        assert_eq!(session.clip_source_bpm(clip), Some(90.0));
+        assert_eq!(session.clip_stretch(clip), 1.0, "it fits as it stands");
+
+        // Now the piece slows down, and the clip stretches to go on covering the same bars.
+        session.set_bpm(45.0);
+        assert_eq!(session.clip_stretch(clip), 2.0);
+
+        // Forgetting what tempo it was recorded at stops it following: a clip stretched by
+        // nothing, with the switch still on, is a control that lies in the other direction.
+        session
+            .set_clip_source_bpm(clip, None)
+            .expect("an audio clip");
+        assert!(!session.clip_follows_tempo(clip));
+        assert_eq!(session.clip_stretch(clip), 1.0);
     }
 
     /// An audio clip of `frames` frames on its own track, with no samples behind it.

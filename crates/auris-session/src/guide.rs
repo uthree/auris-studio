@@ -392,6 +392,36 @@ pub mod realtime {
     //! case falls out of the general one. And a loop is a *length* rather than a count, which is
     //! what lets its edge be dragged continuously and its last pass be cut half way through.
     //!
+    //! # A stretch is prepared, not performed
+    //!
+    //! An audio clip may [`follow the tempo`](auris_core::AudioClip::follows_tempo): it is
+    //! stretched so that it goes on covering the same bars when the piece is played at another
+    //! speed. Time stretching is expensive — a search of tens of operations per output sample —
+    //! and it allocates the whole result, so it is subject to the rule above and cannot happen
+    //! anywhere near the callback.
+    //!
+    //! So it happens twice removed from it. The session runs `auris_dsp::stretch` while it is
+    //! building a graph, puts the result in the render bank beside the source it came from, and
+    //! the graph *looks it up*: `AudioSourceBank::stretched`, keyed by the source and by
+    //! [`stretch_key`](auris_core::project::stretch_key). The audio thread sees nothing but
+    //! another buffer, exactly as it does for a source resampled to the device's rate — which is
+    //! the same arrangement, for the same reason, and was here first.
+    //!
+    //! Three things follow from the key being a *number the clip works out*:
+    //!
+    //! * It is **rounded to a thousandth**. The side that fills the cache and the side that reads
+    //!   it both call [`AudioClip::stretch_in`](auris_core::AudioClip::stretch_in), and two
+    //!   readings of one stretch have to be the same `f64` bit for bit or the lookup misses.
+    //! * A copy nobody asks for any more is **dropped on the next rebuild**. Dragging a tempo from
+    //!   90 to 140 asks for a copy at every value it passes through.
+    //! * A lookup that misses **plays the clip as recorded** and says so in the log. A clip out of
+    //!   time is wrong in a way somebody can hear and put right; silence is not.
+    //!
+    //! One clip is one stretch, taken from the tempo where the clip *starts*. A tempo change
+    //! underneath a long clip therefore does not bend it — the audio carries on at the speed it
+    //! began at. Following a curve would mean re-stretching continuously, which is a feature to
+    //! build when somebody asks for it rather than a thing to half-do now.
+    //!
     //! # How the rule is enforced
     //!
     //! `auris-engine`'s test suite installs a counting global allocator and asserts that a run of

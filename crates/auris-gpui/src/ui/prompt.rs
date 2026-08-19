@@ -68,6 +68,8 @@ pub enum PromptTarget {
     SignatureFrom(Ticks),
     /// An audio clip's own gain, in decibels.
     ClipGain(ClipId),
+    /// What tempo an audio clip's material was recorded at.
+    ClipSourceTempo(ClipId),
     /// Where the playhead sits, as bar, beat and hundredth.
     Position,
     /// The song sheet's title, which its project is named after.
@@ -134,7 +136,9 @@ impl PromptTarget {
             PromptTarget::Section(_) => Notation::Section,
             PromptTarget::Signature(_) | PromptTarget::SignatureFrom(_) => Notation::Signature,
             PromptTarget::Seed(_) | PromptTarget::SongSeed => Notation::Seed,
-            PromptTarget::Tempo(_) | PromptTarget::TempoFrom(_) => Notation::Tempo,
+            PromptTarget::Tempo(_)
+            | PromptTarget::TempoFrom(_)
+            | PromptTarget::ClipSourceTempo(_) => Notation::Tempo,
             PromptTarget::ClipGain(_) => Notation::Gain,
             PromptTarget::Position => Notation::Position,
             PromptTarget::Track(_)
@@ -754,6 +758,20 @@ impl AurisApp {
                     self.set_failed_status(messages::not_a_gain(self.language(), &text));
                     return;
                 }
+            },
+            // An empty box means "nobody knows", which is a thing a clip is allowed to say and
+            // the only way back from a tempo typed in by mistake.
+            PromptTarget::ClipSourceTempo(clip) => match text.trim().is_empty() {
+                true => self.session.set_clip_source_bpm(clip, None),
+                false => match text.parse::<f64>() {
+                    Ok(bpm) if bpm.is_finite() && bpm > 0.0 => {
+                        self.session.set_clip_source_bpm(clip, Some(bpm))
+                    }
+                    _ => {
+                        self.set_failed_status(messages::not_a_tempo(self.language(), &text));
+                        return;
+                    }
+                },
             },
             // A meter is refused rather than clamped, unlike a tempo: there is no nearest
             // signature to land on, and `TimeSignature::new` answering 5/3 with a silent 4/4

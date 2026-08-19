@@ -41,8 +41,9 @@ mod track;
 mod fixtures;
 
 pub use clip::{
-    AudioClip, AudioSource, AudioSourceBank, MidiClip, Note, default_loop_end, loop_passes,
-    notes_trimmed_from_front, sounding_length,
+    AudioClip, AudioSource, AudioSourceBank, MAX_STRETCH, MIN_STRETCH, MidiClip, Note, UNSTRETCHED,
+    default_loop_end, loop_passes, notes_trimmed_from_front, quantised_stretch, sounding_length,
+    stretch_key,
 };
 pub use curve::{
     BEND_LIMIT, CONTROLLER_LIMIT, CURVE_STEP, ClipCurve, CurvePoint, curve_at, curve_events,
@@ -339,7 +340,12 @@ impl Project {
     /// still, and is what the number is really for: a version 11 build would open a part shaped by
     /// an expression pedal, play it flat, and write the file back with every controller in it
     /// gone.
-    pub const FORMAT_VERSION: u32 = 12;
+    /// 13 since an audio clip can [`follow the tempo`](AudioClip::follows_tempo). Version 5's case
+    /// again, and about as bad as it gets: a version 12 build ignores both new fields, so it opens
+    /// a piece whose loops were stretched to fit, plays every one of them at its recorded length —
+    /// against a bar line they no longer share — and writes the file back with the fact that they
+    /// ever followed anything gone.
+    pub const FORMAT_VERSION: u32 = 13;
 
     /// An empty project.
     ///

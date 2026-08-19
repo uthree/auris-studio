@@ -19,16 +19,7 @@
 //! and the result kept — see `auris_session`'s render bank, which is where that keeping happens.
 
 use auris_core::AudioBuffer;
-
-/// The shortest a stretch may be asked for: a quarter of the original.
-///
-/// Not a limit of the method but of the *result*. Past about half, WSOLA is repeating so little of
-/// the material that the seams are what is heard, and a clip stretched from a typo in a tempo
-/// field would otherwise allocate a buffer of any size at all.
-pub const MIN_STRETCH: f64 = 0.25;
-
-/// The longest a stretch may be asked for: four times the original, and the same reasoning.
-pub const MAX_STRETCH: f64 = 4.0;
+use auris_core::project::{MAX_STRETCH, MIN_STRETCH};
 
 /// How long a window is, in seconds.
 ///

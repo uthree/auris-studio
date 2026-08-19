@@ -507,6 +507,14 @@ impl Session {
             self.revert_transaction();
             return Err(SessionError::UnknownTrack(track.0));
         };
+        // A take knows what tempo it was played at, because the transport was running it. Stamped
+        // rather than switched on: a take does not *follow* the tempo by default — a vocal that
+        // moved when somebody nudged the tempo would be a surprise — but the day it is asked to,
+        // the number it needs is already there and right.
+        let played_at = self.project.tempo_map.bpm_at(start);
+        if let Some(audio) = self.project.audio_clip_mut(clip) {
+            audio.source_bpm = Some(played_at);
+        }
         self.install_source(source, Arc::new(buffer));
         self.invalidate_graph();
         self.end_transaction();

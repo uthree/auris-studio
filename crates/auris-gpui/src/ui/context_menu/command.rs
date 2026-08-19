@@ -163,6 +163,15 @@ pub enum MenuCommand {
         /// Which one.
         which: ClipCurve,
     },
+    /// Stretch an audio clip to follow the piece's tempo, or stop.
+    FollowTempo {
+        /// Which clip.
+        clip: ClipId,
+        /// Whether it should be following afterwards.
+        follows: bool,
+    },
+    /// Ask what tempo an audio clip's material was recorded at.
+    ClipSourceTempo(ClipId),
     /// Show or hide one of the piano roll's curve strips.
     ShowCurveLane {
         /// Which strip.
@@ -646,6 +655,10 @@ impl AurisApp {
             MenuCommand::ClearCurve { clip, which } => {
                 self.session.clear_curve(clip, which);
             }
+            MenuCommand::FollowTempo { clip, follows } => {
+                let _ = self.session.set_clip_follows_tempo(clip, follows);
+            }
+            MenuCommand::ClipSourceTempo(clip) => self.prompt_for_clip_source_tempo(clip),
             MenuCommand::ShowCurveLane { which, shown } => {
                 self.panels.set_curve_lane(which, shown);
                 self.remember_layout();

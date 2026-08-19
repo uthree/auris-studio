@@ -183,20 +183,42 @@ pub(super) fn resolve_audio_clip(
     if clip.muted {
         return;
     }
-    let Some(buffer) = bank.get(clip.source) else {
-        log::warn!(
-            "clip `{}` references source {} which is not loaded",
-            clip.name,
-            clip.source.0
-        );
-        return;
+    // How far this clip's audio is stretched, and therefore which copy of the source it plays.
+    // The stretched copies are made where a stretcher may be run at all — the session, off the
+    // audio thread — and a missing one is played unstretched rather than not played: a clip out of
+    // time is wrong in a way somebody can hear and fix, and silence is not.
+    let stretch = clip.stretch_in(tempo_map);
+    let key = auris_core::project::stretch_key(stretch);
+    let (buffer, stretch) = match bank.stretched(clip.source, key) {
+        Some(buffer) => (buffer, stretch),
+        None => match bank.get(clip.source) {
+            Some(buffer) => {
+                log::warn!(
+                    "clip `{}` has no audio stretched to {stretch:.3}; playing it as recorded",
+                    clip.name
+                );
+                (buffer, 1.0)
+            }
+            None => {
+                log::warn!(
+                    "clip `{}` references source {} which is not loaded",
+                    clip.name,
+                    clip.source.0
+                );
+                return;
+            }
+        },
     };
     // A nonsense rate in the document would otherwise scale every position to zero or to NaN.
-    let ratio = if source_rate.is_finite() && source_rate > 0.0 {
+    let rate_ratio = if source_rate.is_finite() && source_rate > 0.0 {
         sample_rate / source_rate
     } else {
         1.0
     };
+    // Two conversions in one: the file's rate against this graph's, and the stretch. Positions
+    // inside a stretched copy move with it — a trim half a second into the file is half a second
+    // times the stretch into the copy — so every frame count here goes through both.
+    let ratio = rate_ratio * stretch;
     // Casting a float to an integer saturates in Rust, so an absurd figure clamps rather than
     // wrapping round to a small one.
     let convert = |frames: u64| (frames as f64 * ratio).round() as u64;
@@ -302,6 +324,72 @@ mod tests {
     use crate::testkit;
     use auris_core::project::{CurvePoint, Note, Project};
     use auris_core::time::TICKS_PER_QUARTER;
+
+    #[test]
+    fn a_clip_that_follows_the_tempo_is_played_out_of_the_stretched_copy() {
+        // The drawn length and the played length come from the same stretch, and this is the half
+        // of it the audio thread sees. A renderer that read the stored frame count would play a
+        // second of audio where the arrangement had drawn two.
+        let mut project = Project::new("Follow", 48_000.0);
+        project.tempo_map = auris_core::time::TempoMap::constant(60.0);
+        let track = project.add_audio_track("Audio");
+        let source = project.add_audio_source(
+            "loop",
+            auris_core::AssetPath::inside("Audio/loop.wav"),
+            48_000,
+            48_000.0,
+            2,
+        );
+        let clip_id = project
+            .add_audio_clip(track, source, Ticks::ZERO)
+            .expect("a clip");
+        let clip = project.audio_clip_mut(clip_id).expect("the clip");
+        clip.source_bpm = Some(120.0);
+        clip.follows_tempo = true;
+        let clip = project.audio_clip(clip_id).expect("the clip").clone();
+
+        let mut bank = auris_core::AudioSourceBank::new();
+        bank.insert(
+            source,
+            Arc::new(AudioBuffer::from_planar(vec![vec![0.5; 48_000]; 2], 48_000.0).expect("mono")),
+        );
+        bank.insert_stretched(
+            source,
+            auris_core::project::stretch_key(2.0),
+            Arc::new(AudioBuffer::from_planar(vec![vec![0.5; 96_000]; 2], 48_000.0).expect("copy")),
+        );
+
+        let mut out = Vec::new();
+        resolve_audio_clip(
+            &clip,
+            &bank,
+            &project.tempo_map,
+            48_000.0,
+            48_000.0,
+            &mut out,
+        );
+        let played = out.first().expect("one pass");
+        assert_eq!(played.length, 96_000, "the stretch was not played");
+        assert_eq!(played.buffer.frame_count(), 96_000, "the wrong copy");
+
+        // With no stretched copy to be found the clip is played as recorded rather than not at
+        // all: a clip out of time can be heard and put right, and silence cannot.
+        let mut bare = auris_core::AudioSourceBank::new();
+        bare.insert(
+            source,
+            Arc::new(AudioBuffer::from_planar(vec![vec![0.5; 48_000]; 2], 48_000.0).expect("mono")),
+        );
+        let mut out = Vec::new();
+        resolve_audio_clip(
+            &clip,
+            &bare,
+            &project.tempo_map,
+            48_000.0,
+            48_000.0,
+            &mut out,
+        );
+        assert_eq!(out.first().expect("one pass").length, 48_000);
+    }
 
     #[test]
     fn both_of_a_clips_curves_are_scheduled_as_the_message_they_are() {

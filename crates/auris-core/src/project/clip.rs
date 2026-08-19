@@ -398,6 +398,25 @@ pub struct AudioClip {
     /// Whether the clip is skipped during playback.
     #[serde(default)]
     pub muted: bool,
+    /// The tempo the recording was made at, in bpm, where it is known.
+    ///
+    /// Nothing can be inferred from a file: a bar of audio is a stretch of samples, and how many
+    /// beats somebody played in it is not written anywhere in it. So this is *told* — stamped on a
+    /// take by the recorder, which knows what the transport was doing, and typed in by hand for a
+    /// loop that arrived from somewhere else.
+    ///
+    /// Without it a clip cannot follow the tempo, and [`Self::follows_tempo`] does nothing: half
+    /// of "make this fit" is knowing what it currently is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_bpm: Option<f64>,
+    /// Whether the audio is stretched so that it keeps its place in the bars.
+    ///
+    /// Off by default, and deliberately: a recording of somebody talking, a sound effect, or a
+    /// take that is the reference everything else is played against are all things that must not
+    /// move when the tempo does. What is stretched is a decision about *this material*, which is
+    /// why it is a property of the clip rather than a preference or a mode.
+    #[serde(default)]
+    pub follows_tempo: bool,
     /// How far the clip's content keeps repeating, measured from the clip's own start.
     ///
     /// In *ticks* while the trim beside it is in source frames, and deliberately: a repeat lands
@@ -422,8 +441,57 @@ impl AudioClip {
             fade_in_frames: 0,
             fade_out_frames: 0,
             muted: false,
+            source_bpm: None,
+            follows_tempo: false,
             loop_end: Ticks::ZERO,
         }
+    }
+
+    /// How far the audio is stretched when the piece is running at `bpm`.
+    ///
+    /// One for a clip that does not follow the tempo, or does not know what its own was. Above one
+    /// makes it longer: a loop recorded at 120 in a piece now running at 90 has to last a third
+    /// again as long to cover the same four bars, and `120 / 90` is exactly that.
+    ///
+    /// Rounded to a thousandth, which is the whole reason this is one function rather than an
+    /// expression at each call site. The stretched audio is *cached* under this number, so the
+    /// figure the cache was filled with and the figure the renderer looks it up by have to be the
+    /// same bits — and a millisecond in a thousand is finer than the ear or the arithmetic.
+    pub fn stretch_at(&self, bpm: f64) -> f64 {
+        let Some(source) = self.source_bpm else {
+            return 1.0;
+        };
+        if !self.follows_tempo || !source.is_finite() || source <= 0.0 {
+            return 1.0;
+        }
+        if !bpm.is_finite() || bpm <= 0.0 {
+            return 1.0;
+        }
+        quantised_stretch(source / bpm)
+    }
+
+    /// How far the audio is stretched under `tempo_map`, at the tempo where the clip starts.
+    ///
+    /// **The** reading of a clip's stretch, and the reason it is a method rather than two lines at
+    /// each call site: the session stretches the audio and the renderer looks it up, and they have
+    /// to agree about which tempo point a clip obeys, exactly, or the renderer finds nothing.
+    ///
+    /// The tempo where it *starts*, so one clip is one stretch. A tempo change under a long clip
+    /// therefore does not bend it — the audio goes on at the speed it began at and lands late.
+    /// Following a curve would mean re-stretching continuously, which is a thing to build when
+    /// somebody wants it rather than a thing to half-do now.
+    pub fn stretch_in(&self, tempo_map: &TempoMap) -> f64 {
+        self.stretch_at(tempo_map.bpm_at(self.start))
+    }
+
+    /// How many frames of *output* one pass of the clip takes at `bpm`.
+    ///
+    /// The trim is counted in the frames of the file, and a stretched clip plays more of them (or
+    /// fewer) than it holds. Everything that asks how long a clip is — the lane that draws it, the
+    /// renderer that plays it, the loop that repeats it — asks this rather than the field, so that
+    /// what is drawn and what is heard cannot disagree.
+    pub fn played_frames(&self, bpm: f64) -> u64 {
+        (self.length_frames as f64 * self.stretch_at(bpm)).round() as u64
     }
 
     /// Gain multiplier for a frame `position` into the clip, including both fades.
@@ -442,6 +510,40 @@ impl AudioClip {
         gain
     }
 }
+
+/// The shortest a clip may be stretched to: a quarter of its recorded length.
+///
+/// Past about half, a time stretcher is repeating so little of the material that the seams are
+/// what is heard. The limit is here rather than in the stretcher because it is the *document's*
+/// business too: how long a clip is drawn, and how long it sounds, both follow from this number,
+/// and a limit only the DSP knew about would draw a clip four times longer than it plays.
+pub const MIN_STRETCH: f64 = 0.25;
+
+/// The longest a clip may be stretched to: four times its recorded length.
+pub const MAX_STRETCH: f64 = 4.0;
+
+/// `ratio` clamped to what a clip may ask for and rounded to a thousandth.
+///
+/// The rounding is what makes a stretched buffer cacheable: two calls that mean the same stretch
+/// have to produce the same `f64`, bit for bit, or the cache misses every time the tempo is read
+/// from a slightly different place.
+pub fn quantised_stretch(ratio: f64) -> f64 {
+    if !ratio.is_finite() {
+        return 1.0;
+    }
+    (ratio.clamp(MIN_STRETCH, MAX_STRETCH) * 1_000.0).round() / 1_000.0
+}
+
+/// The key a stretched copy of a source is kept under.
+///
+/// A thousandth of the ratio, as a whole number, so that a map can be keyed by it —
+/// [`UNSTRETCHED`] is a clip playing at the speed it was recorded at.
+pub fn stretch_key(ratio: f64) -> u32 {
+    (quantised_stretch(ratio) * 1_000.0).round() as u32
+}
+
+/// The key of audio nobody has stretched.
+pub const UNSTRETCHED: u32 = 1_000;
 
 /// Metadata about an imported audio file, stored in the project.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -480,6 +582,14 @@ pub struct AudioSource {
 #[derive(Clone, Debug, Default)]
 pub struct AudioSourceBank {
     buffers: BTreeMap<SourceId, Arc<AudioBuffer>>,
+    /// Stretched copies, by source and by [`stretch_key`].
+    ///
+    /// Beside the sources rather than inside them because a stretch belongs to a *clip*: one file
+    /// can back a loop that follows the tempo and a sound effect that does not, and the two need
+    /// different audio from the same source. Filled by whoever can run a time stretcher — this
+    /// crate cannot, and the renderer must not — and read by the graph, which is why it is here
+    /// and not in either of them.
+    stretched: BTreeMap<(SourceId, u32), Arc<AudioBuffer>>,
 }
 
 impl AudioSourceBank {
@@ -498,9 +608,42 @@ impl AudioSourceBank {
         self.buffers.get(&id)
     }
 
-    /// Drops decoded audio for a source.
+    /// Drops decoded audio for a source, and every stretched copy of it.
     pub fn remove(&mut self, id: SourceId) {
         self.buffers.remove(&id);
+        self.stretched.retain(|(source, _), _| *source != id);
+    }
+
+    /// Stores a stretched copy of a source.
+    ///
+    /// `key` comes from [`stretch_key`], and [`UNSTRETCHED`] is not stored: that is the source
+    /// itself, and a second copy of it would be a megabyte a minute for nothing.
+    pub fn insert_stretched(&mut self, id: SourceId, key: u32, buffer: Arc<AudioBuffer>) {
+        if key != UNSTRETCHED {
+            self.stretched.insert((id, key), buffer);
+        }
+    }
+
+    /// Looks up a stretched copy, or the source itself at [`UNSTRETCHED`].
+    pub fn stretched(&self, id: SourceId, key: u32) -> Option<&Arc<AudioBuffer>> {
+        match key {
+            UNSTRETCHED => self.get(id),
+            _ => self.stretched.get(&(id, key)),
+        }
+    }
+
+    /// Every stretched copy the bank holds, by source and key.
+    pub fn stretches(&self) -> impl Iterator<Item = (SourceId, u32)> + '_ {
+        self.stretched.keys().copied()
+    }
+
+    /// Drops every stretched copy `keep` does not name.
+    ///
+    /// What stops the cache growing without end: a tempo dragged from 90 to 140 makes a stretched
+    /// copy at every value it passed through, and only the last of them is being played.
+    pub fn retain_stretched(&mut self, keep: &dyn Fn(SourceId, u32) -> bool) {
+        self.stretched
+            .retain(|(source, key), _| keep(*source, *key));
     }
 
     /// Every loaded source and its audio, in id order.
@@ -549,12 +692,7 @@ impl Project {
                         // this loop is holding a mutable borrow across — so measure it up front.
                         let source = inner.clips[index].clone();
                         let start = source.start;
-                        let length = audio_length_ticks(
-                            &self.tempo_map,
-                            self.sample_rate,
-                            start,
-                            source.length_frames,
-                        );
+                        let length = audio_clip_ticks(&self.tempo_map, self.sample_rate, &source);
                         let mut copy = source;
                         copy.id = new_id;
                         copy.start = start + sounding_length(length, copy.loop_end);
@@ -658,14 +796,11 @@ impl Project {
     /// Length of an audio clip on the musical timeline, repeats not counted.
     ///
     /// A clip's trim is in source frames, so its length in ticks depends on where it sits: the
-    /// same number of frames spans fewer ticks in a faster passage.
+    /// same number of frames spans fewer ticks in a faster passage. A clip that *follows* the
+    /// tempo spans the same ticks wherever it sits, which is what following means, and the stretch
+    /// is where that comes from.
     pub fn audio_clip_length_ticks(&self, clip: &AudioClip) -> Ticks {
-        audio_length_ticks(
-            &self.tempo_map,
-            self.sample_rate,
-            clip.start,
-            clip.length_frames,
-        )
+        audio_clip_ticks(&self.tempo_map, self.sample_rate, clip)
     }
 
     /// How far an audio clip reaches on the timeline, repeats included.
@@ -893,7 +1028,17 @@ impl Project {
     }
 }
 
-/// Length of `length_frames` source frames, placed at `start`, measured in ticks.
+/// How long `clip` is on the timeline, one pass, stretch included.
+///
+/// The one reading of an audio clip's length. It is not the stored frame count: a clip that
+/// follows the tempo plays more of them or fewer, and a lane that measured the field while the
+/// renderer measured the stretch would draw a clip that ends somewhere it does not.
+pub(super) fn audio_clip_ticks(tempo_map: &TempoMap, sample_rate: f64, clip: &AudioClip) -> Ticks {
+    let played = clip.played_frames(tempo_map.bpm_at(clip.start));
+    audio_length_ticks(tempo_map, sample_rate, clip.start, played)
+}
+
+/// Length of `length_frames` frames of output, placed at `start`, measured in ticks.
 pub(super) fn audio_length_ticks(
     tempo_map: &TempoMap,
     sample_rate: f64,
@@ -952,6 +1097,108 @@ mod tests {
     use super::*;
     use crate::project::fixtures::demo_project;
     use crate::time::TICKS_PER_QUARTER;
+
+    #[test]
+    fn a_clip_that_follows_the_tempo_keeps_its_bars_and_one_that_does_not_keeps_its_seconds() {
+        // Four seconds of audio recorded at 120, in a project running at 120: two bars either
+        // way. At 60 those two bars are eight seconds long, and following the tempo is exactly
+        // the claim that the clip still covers them.
+        let mut project = Project::new("stretch", 48_000.0);
+        project.tempo_map = TempoMap::constant(120.0);
+        let track = project.add_audio_track("Audio");
+        let source = project.add_audio_source(
+            "loop",
+            AssetPath::inside("Audio/loop.wav"),
+            192_000,
+            48_000.0,
+            2,
+        );
+        let clip = project
+            .add_audio_clip(track, source, Ticks::ZERO)
+            .expect("a clip");
+        let at_120 = project.audio_clip_length_ticks(project.audio_clip(clip).expect("the clip"));
+
+        let audio = project.audio_clip_mut(clip).expect("the clip");
+        audio.source_bpm = Some(120.0);
+        audio.follows_tempo = true;
+        project.tempo_map = TempoMap::constant(60.0);
+
+        let audio = project.audio_clip(clip).expect("the clip");
+        assert_eq!(audio.stretch_in(&project.tempo_map), 2.0, "half the tempo");
+        assert_eq!(audio.played_frames(60.0), 384_000, "twice the frames");
+        assert_eq!(
+            project.audio_clip_length_ticks(audio),
+            at_120,
+            "the clip should still cover the same two bars"
+        );
+
+        // The same clip with the switch off keeps its seconds instead, and therefore covers half
+        // as many bars as it used to.
+        project
+            .audio_clip_mut(clip)
+            .expect("the clip")
+            .follows_tempo = false;
+        let audio = project.audio_clip(clip).expect("the clip");
+        assert_eq!(audio.stretch_in(&project.tempo_map), 1.0);
+        assert_eq!(
+            project.audio_clip_length_ticks(audio),
+            Ticks(at_120.raw() / 2),
+            "unstretched audio covers fewer bars at half the tempo"
+        );
+
+        // And a clip that has never been told its own tempo cannot follow one, whatever the
+        // switch says: there is nothing to work a stretch out from.
+        let audio = project.audio_clip_mut(clip).expect("the clip");
+        audio.follows_tempo = true;
+        audio.source_bpm = None;
+        let audio = project.audio_clip(clip).expect("the clip");
+        assert_eq!(audio.stretch_in(&project.tempo_map), 1.0);
+    }
+
+    #[test]
+    fn a_stretch_is_rounded_so_that_the_copy_it_names_can_be_found_again() {
+        // The stretched audio is cached under this number. Two readings of the same stretch have
+        // to produce the same bits or the renderer looks up a copy nobody made.
+        assert_eq!(quantised_stretch(1.0 / 3.0), 0.333);
+        assert_eq!(stretch_key(1.0 / 3.0), 333);
+        assert_eq!(stretch_key(1.0), UNSTRETCHED);
+        // Out of range is clamped rather than obeyed: the buffer is allocated from it.
+        assert_eq!(quantised_stretch(100.0), MAX_STRETCH);
+        assert_eq!(quantised_stretch(0.0), MIN_STRETCH);
+        assert_eq!(quantised_stretch(f64::NAN), 1.0);
+    }
+
+    #[test]
+    fn the_bank_keeps_a_stretched_copy_beside_the_source_and_drops_it_with_it() {
+        let mut bank = AudioSourceBank::new();
+        let source = SourceId(1);
+        bank.insert(source, Arc::new(AudioBuffer::new(2, 100, 48_000.0)));
+        bank.insert_stretched(source, 1_500, Arc::new(AudioBuffer::new(2, 150, 48_000.0)));
+
+        assert_eq!(
+            bank.stretched(source, 1_500).map(|b| b.frame_count()),
+            Some(150)
+        );
+        // The source itself is what "not stretched" means, rather than a second copy of it.
+        assert_eq!(
+            bank.stretched(source, UNSTRETCHED).map(|b| b.frame_count()),
+            Some(100)
+        );
+        bank.insert_stretched(
+            source,
+            UNSTRETCHED,
+            Arc::new(AudioBuffer::new(2, 7, 48_000.0)),
+        );
+        assert_eq!(bank.stretches().count(), 1, "the source was copied");
+
+        bank.retain_stretched(&|_, key| key == 1_500);
+        assert!(bank.stretched(source, 1_500).is_some());
+        bank.remove(source);
+        assert!(
+            bank.stretched(source, 1_500).is_none(),
+            "a stretched copy outlived the audio it was made from"
+        );
+    }
 
     #[test]
     fn a_clip_lists_the_curves_it_has_and_forgets_the_ones_it_is_left_with() {

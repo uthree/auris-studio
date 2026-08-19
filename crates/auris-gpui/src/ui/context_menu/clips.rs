@@ -16,6 +16,18 @@ use crate::ui::prompt::{Prompt, PromptTarget};
 
 use super::{ContextMenu, MenuCommand};
 
+/// What the row that sets a clip's recorded tempo says.
+///
+/// A number where there is one, and plainly *not set* where there is not — the row is what tells
+/// somebody why the switch above it is doing nothing, so it has to say that rather than show a
+/// default that would look like an answer.
+pub fn source_tempo_label(bpm: Option<f64>, language: auris_i18n::Language) -> String {
+    match bpm {
+        Some(bpm) => messages::clip_source_tempo(language, bpm),
+        None => messages::clip_source_tempo_unknown(language),
+    }
+}
+
 /// The dynamic markings the note menu offers, and the MIDI velocity each one means.
 ///
 /// The usual mapping — six steps of about 20, centred so mf is a little above the middle. Not
@@ -89,6 +101,23 @@ impl AurisApp {
                 self.t(Key::MenuClearFades),
                 MenuCommand::ClearFades(clip),
             )
+            // What tempo the material was played at, and whether it is stretched to keep its
+            // place when the piece is played at another. The two rows are next to each other
+            // because the switch means nothing without the number under it.
+            .toggle_if(
+                !is_midi,
+                self.t(Key::MenuFollowTempo),
+                MenuCommand::FollowTempo {
+                    clip,
+                    follows: !self.session.clip_follows_tempo(clip),
+                },
+                self.session.clip_follows_tempo(clip),
+            )
+            .item_if(
+                !is_midi,
+                source_tempo_label(self.session.clip_source_bpm(clip), self.language()),
+                MenuCommand::ClipSourceTempo(clip),
+            )
             .item_if(
                 is_midi,
                 self.t(Key::MenuEditInPianoRoll),
@@ -117,6 +146,28 @@ impl AurisApp {
         let title = self.t(Key::SetClipGainTitle);
         let current = format!("{gain_db:.1}");
         self.open_prompt(Prompt::new(title, PromptTarget::ClipGain(clip), current));
+    }
+
+    /// Opens the sheet that takes the tempo an audio clip was recorded at.
+    ///
+    /// It comes up holding whatever the clip believes now, or the tempo it sits at when it
+    /// believes nothing: the answer for material dropped into the piece it was made for is the
+    /// piece's own tempo, and typing over a plausible number beats typing into an empty box.
+    pub(crate) fn prompt_for_clip_source_tempo(&mut self, clip: ClipId) {
+        let Some(audio) = self.audio_clip(clip) else {
+            return;
+        };
+        let start = audio.start;
+        let current = self
+            .session
+            .clip_source_bpm(clip)
+            .unwrap_or_else(|| self.session.project().tempo_map.bpm_at(start));
+        let title = self.t(Key::SetClipSourceTempoTitle);
+        self.open_prompt(Prompt::new(
+            title,
+            PromptTarget::ClipSourceTempo(clip),
+            format!("{current:.1}"),
+        ));
     }
 
     /// The menu for a note, or for empty space in the piano roll.
@@ -261,7 +312,7 @@ impl AurisApp {
         ))
     }
 
-    fn audio_clip(&self, clip: ClipId) -> Option<&AudioClip> {
+    pub(crate) fn audio_clip(&self, clip: ClipId) -> Option<&AudioClip> {
         self.project().tracks.iter().find_map(|track| {
             track
                 .kind
