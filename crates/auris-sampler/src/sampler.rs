@@ -611,14 +611,22 @@ impl Sampler {
     /// Lets a note go: the envelope's release if it has one, the font's own otherwise.
     fn let_go(&mut self, pitch: u8) {
         self.held = self.held.saturating_sub(1);
-        // The newest note with this key. The same key struck twice while the first is still
-        // sounding is two notes, and the one being let go is the one that started last.
+        // The *oldest* note with this key. The same key struck twice while the first is still
+        // sounding is two notes, and a note-off names a pitch rather than a note, so which of the
+        // two it ends is this function's decision and not the caller's — but only one answer lets
+        // both notes sound for the length they were written. Taking the newest ends the note that
+        // has just begun, leaves the older one to be ended by the *next* off, and so plays the
+        // first note over the second one's span and the second as a click.
+        //
+        // It is also the answer `auris_synth::VoiceAllocator::note_off` gives every built-in
+        // voice, and two note-off policies in one workspace is a project that sounds different
+        // depending on whether a part landed on a font.
         let held = self
             .slots
             .iter()
             .enumerate()
             .filter(|(_, slot)| slot.key == Some(pitch) && !slot.envelope.is_releasing())
-            .max_by_key(|(_, slot)| slot.used)
+            .min_by_key(|(_, slot)| slot.used)
             .map(|(index, _)| index);
         match held {
             // The font is not told yet: the envelope owns the fade, and telling the font now
@@ -1500,6 +1508,45 @@ mod tests {
         // And once one is let go it is taken instead, however loud it still is.
         slots[3].key = None;
         assert_eq!(claim(&slots), 3);
+    }
+
+    #[test]
+    fn the_first_of_two_notes_at_one_pitch_is_the_first_let_go() {
+        // A note-off names a pitch and not a note, so which of two sounding notes it ends is this
+        // sampler's decision — and only one answer lets both sound for the length they were
+        // written. Ending the newest leaves the older one for the *next* off, so the first note
+        // plays over the second one's span and the second is a click; it used to do exactly that.
+        //
+        // It is also what `auris_synth::VoiceAllocator::note_off` answers for every built-in
+        // voice, and two note-off policies in one workspace is a project that plays differently
+        // depending on whether a part landed on a font.
+        let mut sampler = sampler();
+        sampler.slots = free_slots(&[3, 1, 2, 0]);
+        // Two notes at one pitch — the older of them on slot 1 — and one at another, which must
+        // not be touched by either off.
+        for (slot, key) in [(0usize, 62u8), (1, 60), (2, 60)] {
+            sampler.slots[slot].key = Some(key);
+            sampler.slots[slot].envelope.trigger();
+        }
+
+        sampler.let_go(60);
+        assert!(
+            sampler.slots[1].envelope.is_releasing(),
+            "the note that had been sounding longest was left holding"
+        );
+        assert!(
+            !sampler.slots[2].envelope.is_releasing(),
+            "the note that had just begun was the one ended"
+        );
+        assert!(
+            !sampler.slots[0].envelope.is_releasing(),
+            "another pitch is another note"
+        );
+
+        // And the second off takes the one that is left, so neither is stranded.
+        sampler.let_go(60);
+        assert!(sampler.slots[2].envelope.is_releasing());
+        assert!(!sampler.slots[0].envelope.is_releasing());
     }
 
     #[test]

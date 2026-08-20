@@ -464,6 +464,28 @@ pub mod plugins {
     //! — the right widget, range, unit and scaling — rather than hand-written per plugin, so a new
     //! parameter is one line rather than one line and a control.
     //!
+    //! # A note-off names a pitch, not a note
+    //!
+    //! [`NoteEvent::NoteOff`](auris_core::plugin::NoteEvent) carries a pitch and a frame, and that
+    //! is all it can carry — nothing in MIDI, in CLAP or here gives a release the identity of the
+    //! strike it answers. So an instrument that finds *two* notes of that pitch still sounding has
+    //! to choose which of them it ends, and there is one right answer:
+    //!
+    //! **Release the one that started first.** Then the next off ends the next one, each note
+    //! sounds for the span it was written, and a held pedal note is not cut short by a line
+    //! crossing it. Releasing the newest instead plays the older note over the newer one's span
+    //! and leaves the newer one a click, which is a note the piece silently loses.
+    //!
+    //! [`VoiceAllocator::note_off`](auris_synth::VoiceAllocator::note_off) is the built-in voices'
+    //! implementation of it and is worth using rather than repeating; the sampler keeps its own
+    //! because its channels are a font's and not a voice pool's, and it answers the same way.
+    //!
+    //! The rule is here rather than in either of them because it is a fact about the *workspace*:
+    //! a project that played differently depending on whether a part landed on a font or on an
+    //! oscillator would be one nobody could mix. `auris-compose` takes it further and writes no
+    //! overlap at all — see `parts::untangle` — because a hosted CLAP plugin is under no
+    //! obligation to have read this page.
+    //!
     //! # A worked example
     //!
     //! ```
