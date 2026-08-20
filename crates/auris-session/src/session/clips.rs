@@ -543,6 +543,14 @@ impl Session {
             return Ok(());
         };
         let (was, offset, length) = (audio.start, audio.offset_frames, audio.length_frames);
+        // A clip with no frames has no edge to move, and the forward bound below would come out
+        // at -1 — behind the backward bound, which is what `Ord::clamp` asserts against and
+        // aborts the process over, in release as much as in debug. The importer refuses to make
+        // one of these now, but a project written before it did, or an asset that was replaced
+        // on disk with an empty file, can still put one here.
+        if length == 0 {
+            return Ok(());
+        }
         let was_seconds = tempo.ticks_to_seconds(was).0;
         // Every figure below is in *source* frames, which is what the offset and the trim are
         // counted in, so the distance the pointer travelled goes through the stretch on the way
@@ -1633,5 +1641,29 @@ mod tests {
 
         session.undo().unwrap();
         assert!(!session.midi_clip(clip).unwrap().muted);
+    }
+
+    #[test]
+    fn dragging_the_edge_of_a_clip_with_no_frames_does_nothing_instead_of_aborting() {
+        // The importer refuses to make one of these, but a project saved before it did still
+        // opens, and the first thing a user does with a clip that looks wrong is grab its edge.
+        // The bound this used to compute was `length - 1`, which for no frames is behind the
+        // bound below it — and `Ord::clamp` asserts on that in every profile, not just debug.
+        let mut session = session();
+        let clip = audio_clip(&mut session, 0);
+        session.forget_history();
+
+        assert!(session.trim_clip_start(clip, Ticks::QUARTER).is_ok());
+        assert!(session.trim_clip_start(clip, Ticks::ZERO).is_ok());
+
+        let audio = session.project().audio_clip(clip).unwrap();
+        assert_eq!(audio.start, Ticks::ZERO);
+        assert_eq!(audio.offset_frames, 0);
+        assert_eq!(audio.length_frames, 0);
+        assert_eq!(
+            undo_depth(&mut session),
+            0,
+            "refusing to trim is not an edit"
+        );
     }
 }

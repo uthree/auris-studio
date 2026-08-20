@@ -201,7 +201,7 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
     }
 
     // Nothing decoded (an audio track with no packets) leaves the declared rate as the only
-    // information available, which is enough to describe an empty file.
+    // information available, which is enough to describe the file even when it says nothing.
     let sample_rate = sample_rate
         .or(declared_sample_rate)
         .filter(|rate| *rate > 0.0)
@@ -211,6 +211,18 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
     if channels.is_empty() {
         return Err(IoError::UnsupportedFormat(format!(
             "{} decoded to zero channels",
+            path.display()
+        )));
+    }
+    // A header with nothing behind it — a `data` chunk of length zero, or a stream whose every
+    // packet failed to decode — used to come back as a buffer of no frames, on the grounds that
+    // it honestly described an empty file. It does, and there is nothing to be done with it: a
+    // clip of no frames cannot be played, drawn, faded or split, and dragging its edge divided
+    // by its own length. The recorder already refuses to keep a take that captured nothing, for
+    // the same reason and in the same words; this is the importer agreeing with it.
+    if !channels_have_data(&channels) {
+        return Err(IoError::UnsupportedFormat(format!(
+            "{} contains no audio",
             path.display()
         )));
     }
@@ -706,5 +718,43 @@ mod tests {
             Err(IoError::FileNotFound(reported)) => assert_eq!(reported, path),
             other => panic!("expected FileNotFound, got {other:?}"),
         }
+    }
+
+    /// A WAV that declares two channels at 44.1 kHz and carries no sample data at all.
+    ///
+    /// Not a corrupt file: every field is where it should be and every length agrees. It is the
+    /// shape a recording that was started and stopped in the same instant leaves behind, and the
+    /// shape a copy interrupted before its first block gets written leaves behind.
+    fn silent_header() -> Vec<u8> {
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&36u32.to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        wav.extend_from_slice(&2u16.to_le_bytes()); // channels
+        wav.extend_from_slice(&44_100u32.to_le_bytes());
+        wav.extend_from_slice(&176_400u32.to_le_bytes()); // bytes per second
+        wav.extend_from_slice(&4u16.to_le_bytes()); // bytes per frame
+        wav.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&0u32.to_le_bytes());
+        wav
+    }
+
+    #[test]
+    fn a_file_that_decodes_to_no_frames_is_refused_rather_than_imported_empty() {
+        let file = TempFile::new("no-audio.wav");
+        std::fs::write(file.path(), silent_header()).unwrap();
+
+        let error = decode_audio_file(file.path()).expect_err("a file with no audio in it");
+        assert!(
+            matches!(error, IoError::UnsupportedFormat(ref what) if what.contains("no audio")),
+            "expected an unsupported-format error naming the emptiness, got {error:?}"
+        );
+
+        // And through the importer, which is the door the session actually uses.
+        assert!(import_audio_file(file.path(), 48_000.0).is_err());
     }
 }
