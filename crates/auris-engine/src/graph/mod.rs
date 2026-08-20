@@ -88,6 +88,24 @@ const AUDITION_HEADROOM: usize = 16;
 /// the old position before the notes belonging to the new one go in.
 pub(crate) const CHASE_HEADROOM: usize = 1;
 
+/// The most events one block on this track can carry.
+///
+/// Three independent bounds added together, because all three can land in the same block: what the
+/// arrangement schedules inside one window, what a seek makes the chase re-issue, and what
+/// somebody can play from the interface while that happens.
+///
+/// It sizes two things, which is the reason it is a function. The track's own event buffer, which
+/// must not grow while the audio thread is filling it — and, through
+/// [`PrepareContext::max_block_events`](auris_core::plugin::PrepareContext::max_block_events), any
+/// buffer a plugin keeps for the same events, which must not grow for the same reason. A number
+/// worked out twice is a number that eventually differs.
+fn block_event_capacity(events: &[ScheduledEvent], max_block: usize) -> usize {
+    max_events_in_window(events, max_block as u64)
+        + max_sounding_notes(events)
+        + CHASE_HEADROOM
+        + AUDITION_HEADROOM
+}
+
 /// Number of MIDI pitches, and therefore the size of the chase table.
 pub(crate) const PITCH_COUNT: usize = 128;
 
@@ -261,12 +279,21 @@ impl RenderGraph {
                     match built {
                         Ok(mut instrument) => {
                             instrument.load_state(&instrument_track.instrument_state);
-                            instrument.prepare(&prepare);
                             let mut events = Vec::new();
                             for clip in &instrument_track.clips {
                                 schedule_clip(clip, &project.tempo_map, sample_rate, &mut events);
                             }
                             sort_events(&mut events);
+                            // Scheduled before the instrument is prepared rather than after, so
+                            // that `prepare` can be told how many events a block will carry. A
+                            // hosted plugin keeps an event buffer of its own and sizes it here;
+                            // the alternative is discovering the number in `process` and growing
+                            // the buffer there, on the thread that may not allocate.
+                            instrument.prepare(
+                                &prepare.with_max_block_events(block_event_capacity(
+                                    &events, max_block,
+                                )),
+                            );
                             RenderSource::Instrument { instrument, events }
                         }
                         Err(error) => {
@@ -307,14 +334,11 @@ impl RenderGraph {
                 },
             };
 
-            // Two independent bounds on the per-block event buffer: how many scheduled events
-            // can fall inside one block, and how many notes the chase can re-issue after a jump.
-            let (event_headroom, chase_headroom) = match &source {
-                RenderSource::Instrument { events, .. } => (
-                    max_events_in_window(events, max_block as u64),
-                    max_sounding_notes(events) + CHASE_HEADROOM,
-                ),
-                _ => (0, 0),
+            let block_events = match &source {
+                RenderSource::Instrument { events, .. } => block_event_capacity(events, max_block),
+                // Nothing schedules events onto a track that has no instrument, but anything can
+                // be auditioned onto one.
+                _ => AUDITION_HEADROOM,
             };
             let mut scratch = AudioBuffer::new(RENDER_CHANNELS, max_block, sample_rate);
             scratch.reserve_frames(max_block);
@@ -358,9 +382,7 @@ impl RenderGraph {
                 delay: LatencyDelay::new(0, RENDER_CHANNELS),
                 output_delay: LatencyDelay::new(0, RENDER_CHANNELS),
                 scratch,
-                block_events: Vec::with_capacity(
-                    event_headroom + AUDITION_HEADROOM + chase_headroom,
-                ),
+                block_events: Vec::with_capacity(block_events),
                 audition: Vec::with_capacity(AUDITION_HEADROOM),
                 continued_from: None,
                 chase_counts: [0; PITCH_COUNT],
@@ -804,6 +826,10 @@ impl RenderGraph {
 mod tests {
     use super::*;
     use crate::testkit;
+    use auris_core::param::ParamDescriptor;
+    use auris_core::plugin::{
+        NoteEvent, Parameterized, PluginCategory, PluginDescriptor, ProcessContext,
+    };
     use auris_core::project::Note;
     use auris_core::time::Ticks;
 
@@ -1077,5 +1103,87 @@ mod tests {
         fn assert_send<T: Send>() {}
         assert_send::<RenderGraph>();
         assert_send::<crate::EngineCommand>();
+    }
+
+    /// An instrument that makes no sound and remembers what `prepare` told it.
+    ///
+    /// The number is written into a handle the test keeps, because a built graph hands back
+    /// `&dyn Instrument` and there is nothing to downcast it to.
+    struct RecordsItsPrepare(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    impl Parameterized for RecordsItsPrepare {
+        fn parameters(&self) -> &[ParamDescriptor] {
+            &[]
+        }
+        fn param(&self, _id: ParamId) -> f32 {
+            0.0
+        }
+        fn set_param(&mut self, _id: ParamId, _value: f32) {}
+    }
+
+    impl Instrument for RecordsItsPrepare {
+        fn descriptor(&self) -> PluginDescriptor {
+            PluginDescriptor::instrument("test.records", "Records", "", PluginCategory::Synth)
+        }
+        fn prepare(&mut self, ctx: &PrepareContext) {
+            self.0
+                .store(ctx.max_block_events, std::sync::atomic::Ordering::Relaxed);
+        }
+        fn reset(&mut self) {}
+        fn process(
+            &mut self,
+            _events: &[NoteEvent],
+            _out: &mut AudioBuffer,
+            _ctx: &ProcessContext,
+        ) {
+        }
+    }
+
+    #[test]
+    fn an_instrument_is_told_the_same_event_count_its_track_reserves() {
+        // A hosted plugin keeps an event buffer beside the track's own, for the same events, and
+        // grows it in `process` if it was sized short — on the thread that may not allocate. So
+        // the count has to reach the plugin, and it has to be the count the track itself used:
+        // two places working the same number out separately is a number that eventually differs.
+        let mut project = Project::new("Dense", 48_000.0);
+        let track = project.add_instrument_track("Pedal", testkit::TONE_ID);
+        let clip = project
+            .add_midi_clip(track, "c", Ticks::ZERO, Ticks::from_beats(16.0))
+            .unwrap();
+        let midi = project.midi_clip_mut(clip).unwrap();
+        for index in 0..8 {
+            midi.notes.push(Note::new(
+                60 + index,
+                Ticks::from_beats(index as f64),
+                Ticks::from_beats(8.0),
+            ));
+        }
+
+        let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut instruments = PlacedInstruments::new();
+        instruments.insert(
+            track,
+            Box::new(RecordsItsPrepare(std::sync::Arc::clone(&seen))),
+        );
+        let graph = RenderGraph::build_with(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &mut PlacedEffects::new(),
+            &mut instruments,
+            512,
+            48_000.0,
+        );
+
+        let told = seen.load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(
+            told,
+            graph.tracks()[0].block_events.capacity(),
+            "the plugin was sized for a different block than its own track was"
+        );
+        assert!(
+            told > AUDITION_HEADROOM,
+            "eight overlapping notes should have contributed something"
+        );
     }
 }

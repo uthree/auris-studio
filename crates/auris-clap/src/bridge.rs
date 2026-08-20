@@ -25,12 +25,17 @@ use crate::notes::{NoteLanguage, Translated, translate};
 use crate::plugin::ParamList;
 use crate::ports::PortLayout;
 
-/// How much event room a block starts with, over and above one event per parameter.
+/// Event room a block starts with when the host will not say how much it needs.
 ///
-/// A block with more notes than this in it costs one allocation, on the audio thread, once: the
-/// buffer is reused every block and keeps whatever capacity it grew to. That is the honest trade
-/// against sizing for a worst case — a block can hold as many notes as the arrangement puts in it,
-/// and there is no number that is both safe and not absurd.
+/// A floor rather than the answer. There is no fixed number that is both safe and not absurd — a
+/// block holds as many notes as the arrangement puts in it — which is why
+/// [`PrepareContext::max_block_events`](auris_core::plugin::PrepareContext::max_block_events)
+/// exists and why the render graph fills it in from the arrangement it has just scheduled. This is
+/// what is left for the callers that cannot: an effect prepared on its own, a test, an example.
+///
+/// Exceeding it still only costs one allocation, once, since the buffer keeps whatever capacity it
+/// grows to — but that one is on the audio thread, which is the thread that has no allowance for
+/// it at all.
 const EVENT_HEADROOM: usize = 256;
 
 /// A plugin instance as the render graph drives it.
@@ -76,6 +81,10 @@ impl Bridge {
         latency: usize,
     ) -> Self {
         let frames = ctx.max_block_frames.max(1);
+        // What the host says a block can carry, and the old flat guess as a floor under it: a
+        // host that says nothing — an effect prepared on its own, a test — still gets room for a
+        // reasonable block, and one that has counted the arrangement gets the count.
+        let event_room = ctx.max_block_events.max(EVENT_HEADROOM);
         let count = params.descriptors.len();
         let values = params.descriptors.iter().map(|p| p.default).collect();
         let room = |port: &usize| vec![vec![0.0; frames]; *port];
@@ -86,8 +95,8 @@ impl Bridge {
             params,
             values,
             changed: vec![false; count],
-            outgoing: EventBuffer::with_capacity(count + EVENT_HEADROOM),
-            replies: EventBuffer::with_capacity(count + EVENT_HEADROOM),
+            outgoing: EventBuffer::with_capacity(count + event_room),
+            replies: EventBuffer::with_capacity(count + event_room),
             input_ports: AudioPorts::with_capacity(
                 ports.input_channels().max(1),
                 ports.inputs.len().max(1),

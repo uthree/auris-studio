@@ -165,15 +165,32 @@ pub struct PrepareContext {
     pub max_block_frames: usize,
     /// Channel count of the buffers `process` will receive.
     pub channel_count: usize,
+    /// Most note and parameter events one block will ever carry, where the host knows.
+    ///
+    /// Zero means "not stated", which is what every caller that is not the render graph says: an
+    /// effect in isolation, a test, an offline pass over a buffer. A plugin that keeps an event
+    /// buffer of its own sizes it from this and falls back to a guess of its own at zero, because
+    /// growing that buffer is an allocation and the place it would happen is `process`.
+    pub max_block_events: usize,
 }
 
 impl PrepareContext {
-    /// Convenience constructor.
+    /// Convenience constructor. Says nothing about the event load; see
+    /// [`Self::with_max_block_events`].
     pub fn new(sample_rate: f64, max_block_frames: usize, channel_count: usize) -> Self {
         Self {
             sample_rate,
             max_block_frames,
             channel_count,
+            max_block_events: 0,
+        }
+    }
+
+    /// The same context, stating how many events one block can carry.
+    pub fn with_max_block_events(self, max_block_events: usize) -> Self {
+        Self {
+            max_block_events,
+            ..self
         }
     }
 }
