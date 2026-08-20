@@ -111,6 +111,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::MoveTrack => Key::EditMoveTrack,
         Edit::RenameTrack => Key::EditRenameTrack,
         Edit::SetTrackColor => Key::EditSetTrackColor,
+        Edit::SetTrackHeight => Key::EditSetTrackHeight,
         Edit::MuteTrack => Key::EditMuteTrack,
         Edit::SoloTrack => Key::EditSoloTrack,
         Edit::SetTrackOutput => Key::EditSetTrackOutput,

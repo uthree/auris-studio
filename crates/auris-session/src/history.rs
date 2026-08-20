@@ -59,6 +59,8 @@ pub enum Edit {
     RenameTrack,
     /// A track was given a different colour.
     SetTrackColor,
+    /// A track's lane was made taller or shorter.
+    SetTrackHeight,
     /// A track was muted or unmuted.
     MuteTrack,
     /// A track was soloed or unsoloed.

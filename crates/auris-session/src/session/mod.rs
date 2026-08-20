@@ -60,6 +60,7 @@ pub use hosted::PluginWindow;
 pub use monitor::MonitorStatus;
 pub use notes::{Quantize, quantized};
 pub use record::{RecordingReport, RecordingStatus};
+pub use tracks::{MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT};
 pub use typing::{
     DEFAULT_OCTAVE, DEFAULT_VELOCITY, LAYOUT, MusicalTyping, OCTAVE_RANGE, Played, Release, Struck,
     TYPING_BEND, TypingRole, VELOCITY_STEP, WHEEL_STEPS, shadows_musical_typing,

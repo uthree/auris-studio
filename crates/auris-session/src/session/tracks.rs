@@ -21,6 +21,18 @@ use crate::param::ParamTarget;
 
 use super::Session;
 
+/// Shortest a lane may be made, in pixels.
+///
+/// A lane still has to hold a name and the buttons beside it; below this the header stops being
+/// something anybody can hit.
+pub const MIN_TRACK_HEIGHT: f32 = 24.0;
+
+/// Tallest a lane may be made, in pixels.
+///
+/// Not a limit anyone reaches on purpose — it is the guard against a drag that ran away, and
+/// against a document that arrived with a nonsense number in it.
+pub const MAX_TRACK_HEIGHT: f32 = 400.0;
+
 impl Session {
     /// Appends an instrument track.
     pub fn add_instrument_track(
@@ -410,16 +422,31 @@ impl Session {
     }
 
     /// Sets a track's lane height, for frontends that draw one.
+    ///
+    /// Recorded like every other track property, and for the same two reasons rather than one:
+    /// `record` is what puts a step on the undo stack, and it is also what marks the document
+    /// dirty. A stored field written without it is a change that cannot be taken back *and* one
+    /// that autosave does not know happened — so a lane resized and nothing else touched
+    /// afterwards is a lane that is its old height again on the next open.
     pub fn set_track_height(&mut self, id: TrackId, height: f32) -> Result<(), SessionError> {
         self.require_track(id)?;
+        // `clamp` would pass a NaN straight into a stored field; the floor is as good an answer
+        // as any to a height that is not a number.
+        let height = if height.is_finite() {
+            height.clamp(MIN_TRACK_HEIGHT, MAX_TRACK_HEIGHT)
+        } else {
+            MIN_TRACK_HEIGHT
+        };
+        if self
+            .project
+            .track(id)
+            .is_some_and(|track| track.height == height)
+        {
+            return Ok(());
+        }
+        self.record(Edit::SetTrackHeight);
         if let Some(track) = self.project.track_mut(id) {
-            // `clamp` would pass a NaN straight into a stored field; the midpoint is as good
-            // an answer as any to a height that is not a number.
-            track.height = if height.is_finite() {
-                height.clamp(24.0, 400.0)
-            } else {
-                24.0
-            };
+            track.height = height;
         }
         Ok(())
     }
@@ -1029,5 +1056,42 @@ mod tests {
         session.set_track_color(track, was).unwrap();
         assert_eq!(session.undo(), Some(Edit::SetTrackColor));
         assert_eq!(session.project().track(track).unwrap().color, wanted);
+    }
+
+    #[test]
+    fn resizing_a_lane_is_an_edit_like_every_other_track_property() {
+        // It writes a stored field, so it has to go through `record` — which is what puts the
+        // step on the undo stack and, just as importantly, what marks the document dirty. Written
+        // straight, a resize was neither undoable nor autosaved: the lane came back its old height
+        // on the next open unless something else happened to be edited after it.
+        let mut session = session();
+        let track = session.add_audio_track("Vocals");
+        session.forget_history();
+        assert!(!session.is_dirty());
+        let was = session.project().track(track).unwrap().height;
+
+        session.set_track_height(track, 180.0).unwrap();
+        assert_eq!(session.project().track(track).unwrap().height, 180.0);
+        assert!(session.is_dirty(), "a resize is a change to the document");
+
+        session.undo().expect("a step to undo");
+        assert_eq!(session.project().track(track).unwrap().height, was);
+
+        // Out of range and not-a-number both land inside the bounds rather than in the document.
+        session.set_track_height(track, 10_000.0).unwrap();
+        assert_eq!(
+            session.project().track(track).unwrap().height,
+            MAX_TRACK_HEIGHT
+        );
+        session.set_track_height(track, f32::NAN).unwrap();
+        assert_eq!(
+            session.project().track(track).unwrap().height,
+            MIN_TRACK_HEIGHT
+        );
+
+        // And setting the height it already has is not a step, like every sibling command.
+        let depth = undo_depth(&mut session);
+        session.set_track_height(track, MIN_TRACK_HEIGHT).unwrap();
+        assert_eq!(undo_depth(&mut session), depth);
     }
 }

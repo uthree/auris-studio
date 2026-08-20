@@ -804,6 +804,7 @@ strings! {
     MenuAutomatePan { en: "Automate Pan", ja: "パンをオートメーション" }
     MenuClearAutomation { en: "Clear Automation", ja: "オートメーションを消去" }
     EditSetTrackColor { en: "the track colour", ja: "トラックの色" }
+    EditSetTrackHeight { en: "the lane height", ja: "レーンの高さ" }
     EditWriteAutomation { en: "the automation point", ja: "オートメーションの点" }
     EditEraseAutomation { en: "erasing the automation point", ja: "オートメーションの点の削除" }
     EditWriteBend { en: "the pitch bend", ja: "ピッチベンド" }
