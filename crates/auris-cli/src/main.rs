@@ -63,7 +63,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            eprintln!("auris: {message}");
+            warned(format!("auris: {message}"));
             ExitCode::FAILURE
         }
     }
@@ -122,6 +122,24 @@ fn printed(result: std::io::Result<()>) -> Result<(), String> {
         Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
         Err(error) => Err(error.to_string()),
     }
+}
+
+/// Writes a line of commentary to stderr, whether or not anyone is listening.
+///
+/// [`printed`]'s twin, and it exists for the same reason: `eprintln!` unwraps its write and so
+/// panics on a closed pipe exactly as `println!` does, which `auris info Missing.auris 2>&1 | head`
+/// used to demonstrate. The two differ in what they do about it. Stdout carries the command's
+/// answer, so a write that fails for any reason other than a reader leaving is the command
+/// failing. Stderr carries remarks *about* work that has already succeeded — an instrument
+/// substituted, a file not found, how far a render has got — and none of them is worth turning a
+/// finished job into a failure over, so this reports nothing at all.
+fn warned(line: impl std::fmt::Display) {
+    let _ = writeln!(std::io::stderr(), "{line}");
+}
+
+/// Writes to stderr without a newline, for a progress line that overwrites itself.
+fn warned_partial(text: impl std::fmt::Display) {
+    let _ = write!(std::io::stderr(), "{text}");
 }
 
 /// Writes a project that did not exist a moment ago, the way the desktop application does.
@@ -379,7 +397,7 @@ fn compose(args: &[String]) -> Result<(), String> {
     let mut session = headless()?;
     let report = session.compose(&piece).map_err(|error| error.to_string())?;
     for missing in &report.substituted {
-        eprintln!("{}", messages::instrument_substituted(LANGUAGE, missing));
+        warned(messages::instrument_substituted(LANGUAGE, missing));
     }
     let written = save_new_project(&mut session, &output, force)?;
 
@@ -460,10 +478,10 @@ fn list_plugins() -> Result<(), String> {
 fn collect(path: &Path) -> Result<(), String> {
     let mut session = headless()?;
     for missing in session.open(path).map_err(|error| error.to_string())? {
-        eprintln!(
-            "{}",
-            messages::warning_missing_audio(LANGUAGE, &missing.display().to_string())
-        );
+        warned(messages::warning_missing_audio(
+            LANGUAGE,
+            &missing.display().to_string(),
+        ));
     }
     let collected = session
         .collect_assets()
@@ -605,10 +623,10 @@ fn info(path: &Path) -> Result<(), String> {
     })();
 
     for path in &missing {
-        eprintln!(
-            "{}",
-            messages::warning_missing_audio(LANGUAGE, &path.display().to_string())
-        );
+        warned(messages::warning_missing_audio(
+            LANGUAGE,
+            &path.display().to_string(),
+        ));
     }
     printed(print)
 }
@@ -659,10 +677,10 @@ fn render(args: &[String]) -> Result<(), String> {
 
     let mut session = headless()?;
     for path in session.open(&source).map_err(|error| error.to_string())? {
-        eprintln!(
-            "{}",
-            messages::warning_missing_audio(LANGUAGE, &path.display().to_string())
-        );
+        warned(messages::warning_missing_audio(
+            LANGUAGE,
+            &path.display().to_string(),
+        ));
     }
 
     let mut job = session.render_job();
@@ -681,11 +699,14 @@ fn render(args: &[String]) -> Result<(), String> {
             let percent = (fraction * 100.0) as i32;
             if percent != last_percent {
                 last_percent = percent;
-                eprint!("\r{}", messages::render_progress(LANGUAGE, percent));
+                warned_partial(format!(
+                    "\r{}",
+                    messages::render_progress(LANGUAGE, percent)
+                ));
             }
         })
         .map_err(|error| error.to_string())?;
-    eprintln!();
+    warned("");
 
     printed(writeln!(
         std::io::stdout(),
@@ -848,6 +869,33 @@ mod tests {
                 assert!(
                     usage.contains(flag),
                     "`{flag}` is accepted but absent from the {language:?} usage text"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nothing_writes_to_a_stream_through_a_macro_that_would_panic_on_it() {
+        // `println!` and `eprintln!` both unwrap their write, and Rust ignores SIGPIPE, so either
+        // ends a piped run in a panic and exit code 101 the moment the reader leaves. `printed`
+        // was built for the first and every listing goes through it; the warnings on stderr were
+        // still bare macros, which is what `auris info Missing.auris 2>&1 | head` found.
+        let source = include_str!("main.rs");
+        // Only what ships. Below this the macro names appear as prose and as the list being
+        // checked, and a test that counts its own mentions measures nothing.
+        let shipped = source
+            .split_once("#[cfg(test)]")
+            .map_or(source, |(before, _)| before);
+        for line in shipped.lines() {
+            let code = line.trim_start();
+            if code.starts_with("//") {
+                continue;
+            }
+            for macro_name in ["println!", "eprintln!", "eprint!", "print!"] {
+                assert!(
+                    !code.contains(macro_name),
+                    "`{macro_name}` writes through a macro that panics on a closed pipe; \
+                     use `printed` or `warned` instead — at: {code}"
                 );
             }
         }
