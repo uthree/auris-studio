@@ -213,9 +213,21 @@ impl Chiptune {
             };
             *ratio = (offset / 12.0).exp2();
         }
-        // Detuned copies are only partly correlated, so power sums rather than amplitude:
-        // 1/sqrt(n) keeps the level roughly constant as copies are added.
-        self.unison_gain = 1.0 / (self.unison as f32).sqrt();
+        // Amplitude, not power. This was `1/sqrt(n)` on the reasoning that detuned copies are
+        // only partly correlated — which is true on average and not true when it matters. The
+        // copies start at the same phase, because a note-on resets every oscillator so that a
+        // struck note has one attack transient rather than four; and a detune of a fraction of a
+        // semitone means they walk back into phase every second or so for as long as the note is
+        // held. At those moments four copies sum to four times one, and `1/sqrt(4)` leaves twice
+        // a single voice's peak: measured at the default patch, that put the output at 1.0024,
+        // which the exporter's integer conversion clamps and which is therefore audible clipping
+        // in a rendered file rather than a number in a buffer.
+        //
+        // So the gain is what the worst case needs, and the worst case recurs. What it costs is
+        // the swell between those moments sitting lower than a single voice would — unison is
+        // quieter on average than it was, and its peaks now match the level the same patch plays
+        // at with unison off, which is the number a user is comparing against.
+        self.unison_gain = 1.0 / self.unison as f32;
 
         let pulse_width = self.params.at(P_PULSE_WIDTH);
         let (attack, decay) = (self.params.at(P_ATTACK), self.params.at(P_DECAY));
@@ -1052,5 +1064,48 @@ mod tests {
         let rendered = rig.render(512, &[]);
         assert!(rendered.iter().all(|s| *s == 0.0));
         assert_eq!(rig.instrument.active_voices(), 0);
+    }
+
+    #[test]
+    fn stacking_unison_copies_never_pushes_the_output_past_a_single_voice() {
+        // The copies are struck in phase and, being a fraction of a semitone apart, walk back
+        // into phase for as long as the note is held. Under `1/sqrt(n)` those coincidences put
+        // four copies at 1.0024 on the default patch — over full scale, which the exporter's
+        // integer conversion turns into clipping rather than into a loud note.
+        let mut mono = 0.0;
+        for unison in 1..=MAX_UNISON {
+            let mut synth = Chiptune::default();
+            synth.prepare(&PrepareContext::new(48_000.0, 512, 1));
+            synth.set_param(ParamId(P_UNISON), unison as f32);
+
+            let mut out = AudioBuffer::new(1, 48_000, 48_000.0);
+            let events = [NoteEvent::NoteOn {
+                frame: 0,
+                pitch: 69,
+                velocity: 1.0,
+            }];
+            synth.process(
+                &events,
+                &mut out,
+                &ProcessContext::realtime(48_000.0, 48_000, 0, 120.0, true),
+            );
+            let peak = out
+                .channel(0)
+                .iter()
+                .fold(0.0f32, |worst, sample| worst.max(sample.abs()));
+
+            if unison == 1 {
+                mono = peak;
+                assert!(peak > 0.4, "the fixture is not making a sound: {peak}");
+            }
+            assert!(
+                peak <= mono + 1e-4,
+                "unison {unison} peaks at {peak}, above the {mono} a single voice reaches"
+            );
+            assert!(
+                peak < 1.0,
+                "unison {unison} peaks at {peak}, past full scale"
+            );
+        }
     }
 }
