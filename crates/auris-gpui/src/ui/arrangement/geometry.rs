@@ -77,6 +77,24 @@ const FADE_BAND: Pixels = px(12.0);
 /// Half-width of the grab zone around a fade handle, in pixels.
 const FADE_GRAB: f32 = 6.0;
 
+/// Clips narrower than this draw no badge on their name bar.
+///
+/// Below it the badge would sit on top of the name rather than after it, and a clip whose name is
+/// covered is worse off than one whose stretch is only in the menu.
+pub(super) const BADGE_MIN_WIDTH: f32 = 72.0;
+
+/// What a clip that follows the tempo says on its own face.
+///
+/// The stretch as a percentage of the recording: `100%` is a clip that already fits and is being
+/// played untouched, `150%` one being made half again as long. The number rather than a mark,
+/// because the two are different things to know — one of them is audio going through a stretcher,
+/// and how far it is being pushed is the whole of whether that will be heard.
+///
+/// Rounded to whole per cent, which is finer than the ear and far finer than a clip's width.
+pub(super) fn follow_badge(stretch: f64) -> String {
+    format!("{}%", (stretch * 100.0).round())
+}
+
 /// Clips narrower than this draw no fade handles and offer none to grab.
 ///
 /// On a sliver of a clip the two handles and the resize zone would overlap into a lottery;
@@ -286,6 +304,18 @@ mod tests {
             pixels_per_beat: 48.0,
             scroll_ticks: Ticks::ZERO,
         }
+    }
+
+    #[test]
+    fn a_following_clip_says_how_far_it_is_being_stretched() {
+        // The badge is the only thing on screen that says a clip is going through a stretcher, so
+        // it has to be readable at a glance and short enough to sit on a name bar.
+        assert_eq!(follow_badge(1.0), "100%", "following, and already fitting");
+        assert_eq!(follow_badge(1.5), "150%");
+        assert_eq!(follow_badge(0.5), "50%");
+        // A thousandth of a stretch is what the cache is keyed by; a per cent is what is shown.
+        assert_eq!(follow_badge(1.333), "133%");
+        assert!(follow_badge(2.0).len() <= 4, "too wide for a name bar");
     }
 
     #[test]

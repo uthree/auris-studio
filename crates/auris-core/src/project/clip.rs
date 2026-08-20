@@ -470,6 +470,16 @@ impl AudioClip {
         quantised_stretch(source / bpm)
     }
 
+    /// Whether the clip is really following the tempo, rather than merely switched to.
+    ///
+    /// Following needs both halves: the switch, and a tempo to work the stretch out from. A clip
+    /// with one and not the other plays exactly as it was recorded, so anything *showing* the
+    /// state — a badge on the clip's face — asks this rather than the flag, and says nothing where
+    /// nothing is happening.
+    pub fn is_following(&self) -> bool {
+        self.follows_tempo && self.source_bpm.is_some()
+    }
+
     /// How far the audio is stretched under `tempo_map`, at the tempo where the clip starts.
     ///
     /// **The** reading of a clip's stretch, and the reason it is a method rather than two lines at

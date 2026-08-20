@@ -16,7 +16,9 @@ use gpui::{Bounds, Corners, Pixels, Window, point, px, size};
 use crate::theme::{Metrics, Theme};
 use crate::ui::paint;
 
-use super::geometry::{CLIP_INSET, FADE_HANDLE_MIN_WIDTH, TITLE_HEIGHT};
+use super::geometry::{
+    BADGE_MIN_WIDTH, CLIP_INSET, FADE_HANDLE_MIN_WIDTH, TITLE_HEIGHT, follow_badge,
+};
 use super::lanes::{AutomationPaint, ClipContent, LanePaint, PeakMap};
 
 /// Draws one automation row: the curve, its points, and the parameter it drives.
@@ -285,6 +287,43 @@ pub(super) fn paint_lane(
                 // Read against the track's own colour rather than against the accent: the user
                 // chooses one and the scheme the other, and only one of them is behind this text.
                 theme.text_on(lane.color),
+            );
+        }
+
+        // A clip that follows the tempo says so on its face, and says how far it is being
+        // stretched: this is the only place on screen that admits the audio is going through a
+        // stretcher rather than being played as it was recorded. On the name bar because that is
+        // where a clip's facts are — beside the name and the gain, not over the waveform — and
+        // painted *after* the name, so a name too long for its clip runs under the badge rather
+        // than over it.
+        if let Some(stretch) = clip.follows
+            && f32::from(clip_bounds.size.width) > BADGE_MIN_WIDTH
+        {
+            let text = follow_badge(stretch);
+            let padding = px(3.0);
+            let inset = px(3.0);
+            let height = TITLE_HEIGHT - inset;
+            // Measured before either is drawn, so the pill fits the text rather than a guess at
+            // how wide three digits and a per-cent sign are.
+            let width = paint::measure_label(window, text.clone(), px(9.0));
+            let pill = Bounds {
+                origin: point(
+                    clip_bounds.origin.x + clip_bounds.size.width - width - padding * 3.0,
+                    clip_bounds.origin.y + inset / 2.0,
+                ),
+                size: size(width + padding * 2.0, height),
+            };
+            paint::rounded_rect(window, pill, height / 2.0, theme.accent_soft);
+            paint::label_right(
+                window,
+                cx,
+                point(
+                    pill.origin.x + pill.size.width - padding,
+                    clip_bounds.origin.y + px(1.5),
+                ),
+                text,
+                px(9.0),
+                theme.text_on(theme.accent_soft),
             );
         }
     }

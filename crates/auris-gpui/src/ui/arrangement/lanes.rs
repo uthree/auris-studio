@@ -383,6 +383,9 @@ impl AurisApp {
                             loop_end: clip.loop_end,
                             muted: clip.muted,
                             generated: clip.is_generated(),
+                            // Notes are written against the bars already; there is nothing for
+                            // them to follow and no stretch to report.
+                            follows: None,
                             content: ClipContent::Notes(clip.notes.clone()),
                         })
                         .collect(),
@@ -400,6 +403,9 @@ impl AurisApp {
                                 muted: clip.muted,
                                 // Audio is recorded or imported; nothing writes it.
                                 generated: false,
+                                follows: clip
+                                    .is_following()
+                                    .then(|| clip.stretch_in(&self.project().tempo_map)),
                                 content: ClipContent::Waveform {
                                     source: clip.source,
                                     offset_frames: clip.offset_frames,
@@ -474,6 +480,12 @@ pub(super) struct ClipPaint {
     pub(super) muted: bool,
     /// Written by the composer rather than played, which the clip says on its own face.
     pub(super) generated: bool,
+    /// How far the audio is stretched, for a clip that follows the tempo.
+    ///
+    /// `None` for one that does not, which is what the badge's absence means. The *number* is
+    /// carried rather than a flag, because a clip following at 100 % and one stretched half again
+    /// are two different things to know about a mix, and only one of them is being processed.
+    pub(super) follows: Option<f64>,
     pub(super) content: ClipContent,
 }
 

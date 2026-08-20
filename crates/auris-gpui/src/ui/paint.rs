@@ -205,6 +205,56 @@ pub fn label(
     width
 }
 
+/// How wide a line of text would be, without painting it.
+///
+/// What a badge needs: the pill behind the text has to be sized before either is drawn, and a
+/// width guessed from the character count is a pill that fits the digits in one language and clips
+/// them in the next.
+pub fn measure_label(
+    window: &Window,
+    text: impl Into<gpui::SharedString>,
+    font_size: Pixels,
+) -> Pixels {
+    let text = text.into();
+    if text.is_empty() {
+        return px(0.0);
+    }
+    let run = window.text_style().to_run(text.len());
+    window
+        .text_system()
+        .shape_line(text, font_size, &[run], None)
+        .width
+}
+
+/// Paints a single line of text *ending* at `right`, returning its width.
+///
+/// Shaped before it is placed, which is the whole difference from [`label`]: a badge pinned to
+/// the right-hand edge of something has to know how wide it is before it can be drawn, and
+/// guessing from the character count puts it a few pixels off in one language and a dozen in
+/// another.
+pub fn label_right(
+    window: &mut Window,
+    cx: &mut App,
+    right: Point<Pixels>,
+    text: impl Into<gpui::SharedString>,
+    font_size: Pixels,
+    color: Hsla,
+) -> Pixels {
+    let text = text.into();
+    if text.is_empty() {
+        return px(0.0);
+    }
+    let mut run = window.text_style().to_run(text.len());
+    run.color = color;
+    let line = window
+        .text_system()
+        .shape_line(text, font_size, &[run], None);
+    let width = line.width;
+    let origin = point(right.x - width, right.y);
+    let _ = line.paint(origin, font_size * LINE_HEIGHT, window, cx);
+    width
+}
+
 /// Draws the rectangle being swept to select things.
 ///
 /// A tinted fill and a solid outline: the fill says what is covered, and the outline keeps the
