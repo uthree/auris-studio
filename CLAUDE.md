@@ -81,9 +81,11 @@ Dependency direction is strictly downhill and the frontend boundary matters:
 * Sample data cannot travel through a `PluginState`, which is a map of `f32`. `auris-sampler`
   therefore keeps a `SoundFontBank` that the session owns and the registry's factory closure
   captures; a track names a sound by font id, bank and patch, never by position.
-* `auris-gpui` and `auris-cli` depend on `auris-session` and their own toolkit, nothing else in
-  the workspace. A frontend reaching for `auris-engine` means logic that belongs in the session
-  layer has leaked upward — move it down instead of adding the dependency.
+* `auris-gpui` and `auris-cli` depend on `auris-session`, `auris-i18n` and their own toolkit —
+  nothing else in the workspace. `auris-i18n` is there because interface text is presentation and
+  both frontends need it; it depends on nothing itself, so it adds no reach. A frontend naming
+  `auris-engine`, `auris-core` or `auris-io` means logic that belongs in the session layer has
+  leaked upward — move it down instead of adding the dependency.
 
 New work that is a *command* (anything a user could ask for) goes in `auris-session` so every
 frontend gets it. New work that is *presentation* stays in the frontend.

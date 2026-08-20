@@ -2,9 +2,19 @@
 
 //! File I/O for Auris Studio: audio import, audio export and project persistence.
 //!
-//! This crate is the only place that talks to the filesystem and to third-party codec
-//! libraries, which keeps those dependencies out of the engine and the UI. Nothing here is
-//! realtime-safe — every function allocates and blocks — so calls belong on a worker thread.
+//! This crate is the only place that talks to third-party codec libraries, and the only place
+//! that reads or writes a *project's own* files — the document, the audio it owns, the MIDI and
+//! SoundFonts it names. That is what keeps Symphonia, Hound and the rest out of the engine and
+//! the interface.
+//!
+//! It is not the only place that talks to the filesystem, and does not try to be: the settings,
+//! the keymap, the colour scheme and the panel layout are each read and written by whoever owns
+//! them, in `auris-session` and in the frontend, with plain `std::fs` over a serde type. Those are
+//! preferences about the application rather than parts of a song, they belong to no project
+//! folder, and routing them through here would buy nothing but a longer call.
+//!
+//! Nothing here is realtime-safe — every function allocates and blocks — so calls belong on a
+//! worker thread.
 //!
 //! * [`import`] decodes any container Symphonia understands into an
 //!   [`AudioBuffer`](auris_core::AudioBuffer), optionally resampling to the project rate.

@@ -84,9 +84,12 @@ pub mod architecture {
     //! quietly stop being sufficient for anyone else's. The binary is what installs those packs
     //! into the registry — see [`crate::default_registry`].
     //!
-    //! **A frontend depends on [`crate::Session`] and its own toolkit, and on nothing else in the
-    //! workspace.** If `auris-gpui` ever needs `auris-engine` directly, something that belongs in
-    //! the session layer has leaked into the UI. Move it down rather than adding the dependency.
+    //! **A frontend depends on [`crate::Session`], on `auris-i18n`, and on its own toolkit — and
+    //! on nothing else in the workspace.** The second of those is interface text, which is
+    //! presentation and belongs where the interface is; it depends on nothing itself, so it
+    //! widens no reach. If `auris-gpui` ever needs `auris-engine`, `auris-core` or `auris-io`
+    //! directly, something that belongs in the session layer has leaked into the UI. Move it down
+    //! rather than adding the dependency.
     //!
     //! # Why a session layer exists
     //!
