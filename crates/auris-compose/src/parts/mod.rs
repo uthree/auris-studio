@@ -372,10 +372,12 @@ mod tests {
 
     /// How many seeds a timing measurement is taken over.
     ///
-    /// Seeds and not presets. Every preset ships with seed 0 — not one of them writes a `seed`
-    /// line — so measuring across the eight of them is measuring one draw eight times, and seed 0
-    /// happens to give the snare the widest spread of the first twenty. Twenty-four independent
-    /// pieces put tens of thousands of notes behind each number below.
+    /// Seeds of one fixture and not the eight presets. They each write a seed of their own now,
+    /// so they would be eight independent draws rather than one draw eight times — but they also
+    /// each choose a tempo, a meter, a groove and a roster, and every number below is a
+    /// displacement in *milliseconds* measured against the same piece written at `humanize` 0.
+    /// Twenty-four seeds of one specification put tens of thousands of paired notes behind each
+    /// of them with nothing moved but the dial.
     const SEEDS: u64 = 24;
 
     /// A piece written to be measured: enough bars to draw from, and no swing to confuse the

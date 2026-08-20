@@ -666,4 +666,94 @@ mod tests {
             "a figure reaching upward was folded an octave down: {pitch} from {anchor}"
         );
     }
+
+    /// Every melodic interval the composer writes, and the ones that cross a bar line.
+    ///
+    /// The measurement [`crate::melodic`] describes, run the way that page says to run it:
+    /// [`compose`](crate::compose) over [`PRESETS`](crate::PRESETS) at four seeds each, the melody
+    /// track picked out by [`Role::Melody`]'s colour, and the signed difference between
+    /// consecutive pitches within each clip. Nothing here is a fixture — the interval
+    /// distribution of a piece is a property of the piece.
+    fn intervals() -> (Vec<i32>, Vec<i32>, Vec<i32>) {
+        let colour = Role::Melody.color();
+        let (mut all, mut crossing, mut inside) = (Vec::new(), Vec::new(), Vec::new());
+        for preset in crate::preset::PRESETS {
+            for seed in 0..4u64 {
+                let mut spec = preset.spec();
+                spec.seed = seed;
+                let piece = crate::render::compose(&spec);
+                let bar = piece.meter.ticks_per_bar().raw().max(1);
+                for track in piece.tracks.iter().filter(|track| track.color == colour) {
+                    for clip in &track.clips {
+                        for pair in clip.notes.windows(2) {
+                            let step = i32::from(pair[1].pitch) - i32::from(pair[0].pitch);
+                            all.push(step);
+                            match pair[0].start.raw() / bar == pair[1].start.raw() / bar {
+                                true => inside.push(step),
+                                false => crossing.push(step),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        (all, crossing, inside)
+    }
+
+    #[test]
+    fn the_tune_still_measures_like_a_tune() {
+        // [`crate::melodic`] is a page of numbers with nothing checking them, and the constants in
+        // this file are what it argues for: move `MOVE_WEIGHTS`, `shaped` or `join_offset` and the
+        // page silently stops describing the composer. The bands are wide on purpose — this is
+        // not a fingerprint, and taste is allowed to move inside them — but each one sits between
+        // the figure that page reports and the figure it reports for the writer *before* those
+        // rules existed, so a regression to the old shape cannot pass.
+        let (all, crossing, inside) = intervals();
+        let share = |count: usize| 100.0 * count as f64 / all.len() as f64;
+        let mean = |steps: &[i32]| {
+            let moved: Vec<i32> = steps.iter().copied().filter(|step| *step != 0).collect();
+            moved.iter().map(|step| f64::from(step.abs())).sum::<f64>() / moved.len().max(1) as f64
+        };
+
+        // A third of every move being a fourth or wider is an arpeggio's distribution, not a
+        // tune's. It was 34.3 per cent; the page reports 15.1 and a corpus 21 for all leaps.
+        let leaps = share(all.iter().filter(|step| step.abs() >= 5).count());
+        assert!(
+            leaps < 18.0,
+            "a leap of a fourth or wider is {leaps:.1}% of the line"
+        );
+
+        // Steps were 31.4 per cent and the page reports 41.8, against a corpus 68.
+        let steps = share(
+            all.iter()
+                .filter(|step| (1..=2).contains(&step.abs()))
+                .count(),
+        );
+        assert!(steps > 38.0, "only {steps:.1}% of the line moves by a step");
+        assert!(steps > leaps, "the line leaps as readily as it steps");
+
+        // A repeated note is a melodic move like any other and `MOVES` gives it one weight in
+        // nine. The page reports 22.8 per cent against a corpus 11, and the risk is the other
+        // direction: inertia against a range clamp took it to 31 before regression to the mean
+        // was added to turn the walk round.
+        let repeats = share(all.iter().filter(|step| **step == 0).count());
+        assert!(
+            (18.0..28.0).contains(&repeats),
+            "{repeats:.1}% of the line stands still"
+        );
+
+        // 3.89 before, 3.00 on the page, 2.8 in folk song with repetitions removed.
+        assert!(mean(&all) < 3.2, "the mean interval is {:.2}", mean(&all));
+
+        // The rule that was worth the most. The figure used to restart from its anchor every bar,
+        // so the join between one bar and the next was whatever fell out of the difference
+        // between two structural pitches and nothing had chosen it: a mean of 4.24 against 3.10
+        // inside a bar. `join_offset` is what chooses it, and what the page claims is that the
+        // crossings are now in line with the rest of the line rather than twice as wide.
+        let (across, within) = (mean(&crossing), mean(&inside));
+        assert!(
+            across < within * 1.4,
+            "a bar line costs {across:.2} semitones against {within:.2} inside one"
+        );
+    }
 }
