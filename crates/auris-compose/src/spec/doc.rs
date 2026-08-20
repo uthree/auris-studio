@@ -584,6 +584,23 @@ impl SongDoc {
                     )));
                 }
             }
+            // The same complaint the roster raises about a `note` on a pitched part, and it has
+            // to be raised here because it is the only place that can: a tweak is read knowing
+            // the section and the part's *name*, and which role answers to that name is a fact
+            // about the roster. Without it one half of the format refused an instruction and the
+            // other half took it and dropped it.
+            for (part, tweak) in &section.tweaks {
+                let Some(played) = spec.parts.iter().find(|entry| entry.name == *part) else {
+                    continue;
+                };
+                if tweak.note.is_some() && played.role.drum_voice().is_none() {
+                    errors.push(SpecError::about(format!(
+                        "section `{name}`, part `{part}` plays {}, whose notes come from the \
+                         harmony; `note` is for a drum part, which strikes one",
+                        played.role.name()
+                    )));
+                }
+            }
         }
 
         if errors.is_empty() {
@@ -907,6 +924,10 @@ impl PartTweakDoc {
         }
         // A note above 127 cannot be written: `u8` stops at 255 and serde has already refused
         // anything larger, so this is the only half of the range left to check.
+        //
+        // Whether the part it names strikes a note at all is *not* checked here and cannot be: a
+        // tweak knows the part's name and the roster is what knows its role. `SongSpec::into_spec`
+        // raises that one, beside the complaint about a name no part answers to.
         if let Some(note) = self.note {
             if note > 127 {
                 errors.push(SpecError::about(format!(
@@ -1327,6 +1348,43 @@ mod tests {
                 .iter()
                 .all(|error| error.to_string().contains("lead"))
         );
+    }
+
+    #[test]
+    fn a_tweak_may_only_name_a_note_where_the_part_strikes_one() {
+        // The roster refuses this and says why: a pitched part's notes come from the harmony, so
+        // a `note` on one is an instruction that would be silently dropped, and the person who
+        // wrote it would go looking for why the melody ignored them. A tweak used to take it and
+        // do exactly that — the half of the format that could not see the role was the half that
+        // said nothing.
+        let errors = SongSpec::parse(
+            r#"
+            form = "verse"
+
+            [section.verse.part.lead]
+            note = 60
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.to_string().contains("melody")),
+            "{errors:?}"
+        );
+
+        // And on a drum part it is the point of the field: a kit that puts its snare somewhere
+        // General MIDI does not comes out silent, and one section may want the other one.
+        let spec = SongSpec::parse(
+            r#"
+            form = "verse"
+
+            [section.verse.part.snare]
+            note = 40
+            "#,
+        )
+        .expect("a drum part strikes a note");
+        assert_eq!(spec.sections["verse"].tweaks["snare"].note, Some(40));
     }
 
     #[test]
