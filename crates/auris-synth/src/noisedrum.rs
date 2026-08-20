@@ -41,6 +41,18 @@ const MAX_BEND_SEMITONES: f32 = 24.0;
 /// the band; 1 ms is short enough to still read as a hit.
 const ATTACK_SECONDS: f32 = 0.001;
 
+/// Attack of the pitch sweep, and it has to be non-zero for the same reason `Fm2`'s is.
+///
+/// A stolen voice keeps its filter state, because zeroing a ringing filter steps its output to
+/// nothing in one sample. With a zero attack the sweep envelope instead jumps straight to full
+/// level on the first sample of the new hit, and the sweep is what sets that filter's centre
+/// frequency: on the default patch, a steal 40 ms into a hit moved the centre from about 225 Hz
+/// to about 1160 Hz between two adjacent samples, into a resonant filter still carrying state
+/// tuned for the old one, while the amplitude envelope was around a fifth of its peak and so
+/// plainly audible. Ramping over 2 ms spreads it, and 2 ms is a fraction of the shortest sweep
+/// the decay parameter can ask for, so the hit still reads as a hit.
+const SWEEP_ATTACK_SECONDS: f32 = 0.002;
+
 /// Resonance of the band-pass, as `1/Q`. `Q = 2` is broad enough to keep the noise sounding
 /// like noise while still giving the sweep an audible pitch.
 const FILTER_DAMPING: f32 = 0.5;
@@ -177,9 +189,12 @@ impl NoiseDrum {
         let decay = self.params.at(P_DECAY);
         for voice in &mut self.voices {
             voice.amplitude.set_adsr(ATTACK_SECONDS, decay, 0.0, decay);
-            voice
-                .sweep
-                .set_adsr(0.0, decay * SWEEP_DECAY_FRACTION, 0.0, decay);
+            voice.sweep.set_adsr(
+                SWEEP_ATTACK_SECONDS,
+                decay * SWEEP_DECAY_FRACTION,
+                0.0,
+                decay,
+            );
         }
     }
 
@@ -650,5 +665,52 @@ mod tests {
         let rendered = rig.render(512, &[]);
         assert!(rendered.iter().all(|s| *s == 0.0));
         assert_eq!(rig.instrument.active_voices(), 0);
+    }
+
+    #[test]
+    fn stealing_a_hit_mid_sweep_moves_the_filter_gradually() {
+        // A stolen voice keeps its filter, because zeroing a ringing one steps its output to
+        // nothing in a sample. The sweep envelope is what tunes that filter, and with a zero
+        // attack a steal re-triggered it straight to full level in one sample — the same
+        // discontinuity, arriving through the tuning instead of through the state.
+        let rate = 48_000.0;
+        let decay = 0.25;
+        let mut sweep = Adsr::new();
+        sweep.set_sample_rate(rate);
+        sweep.set_adsr(
+            SWEEP_ATTACK_SECONDS,
+            decay * SWEEP_DECAY_FRACTION,
+            0.0,
+            decay,
+        );
+
+        // A hit, then a steal 40 ms into it, which is inside the sweep's own decay.
+        sweep.trigger();
+        for _ in 0..(0.040 * rate) as usize {
+            sweep.process();
+        }
+        let mid_decay = sweep.level();
+        assert!(
+            (0.01..0.9).contains(&mid_decay),
+            "the fixture is not mid-decay: {mid_decay}"
+        );
+
+        sweep.trigger();
+        let next = sweep.process();
+        let step = next - mid_decay;
+        assert!(
+            step < 0.1,
+            "the sweep jumped {step} in one sample, from {mid_decay} to {next}"
+        );
+
+        // And it still gets there: the ramp is short against the shortest sweep asked for.
+        for _ in 0..(SWEEP_ATTACK_SECONDS * rate) as usize + 2 {
+            sweep.process();
+        }
+        assert!(
+            sweep.level() > 0.9,
+            "the sweep never reached the top: {}",
+            sweep.level()
+        );
     }
 }
