@@ -878,6 +878,7 @@ strings! {
         ja: "録音先のオーディオトラックを選択するか、録音待機にしてください"
     }
     ErrorAlreadyRecording { en: "a recording is already running", ja: "すでに録音中です" }
+    ErrorRecordingInProgress { en: "stop the recording before changing the audio device", ja: "オーディオデバイスを変更する前に録音を停止してください" }
     ErrorNotRecording { en: "no recording is running", ja: "録音していません" }
     ErrorFile { en: "file error", ja: "ファイルエラー" }
     ErrorEngine { en: "audio engine error", ja: "オーディオエンジンのエラー" }

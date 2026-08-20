@@ -139,6 +139,15 @@ pub enum SessionError {
     #[error("a recording is already running")]
     AlreadyRecording,
 
+    /// Something was asked for that cannot be done while a take is being written.
+    ///
+    /// Separate from [`Self::AlreadyRecording`] because it is the other way round: that one
+    /// refuses a *recording* because one is running, and this refuses everything else. Changing
+    /// the audio device is the case it exists for — the take is stamped in the frames of the
+    /// engine being replaced.
+    #[error("stop the recording before changing the audio device")]
+    RecordingInProgress,
+
     /// A take was stopped when none was running.
     #[error("no recording is running")]
     NotRecording,

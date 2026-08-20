@@ -223,6 +223,9 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
             Key::ErrorNothingToRecordOnto.get(language).to_string()
         }
         SessionError::AlreadyRecording => Key::ErrorAlreadyRecording.get(language).to_string(),
+        SessionError::RecordingInProgress => {
+            Key::ErrorRecordingInProgress.get(language).to_string()
+        }
         SessionError::NotRecording => Key::ErrorNotRecording.get(language).to_string(),
         SessionError::SettingsWrite { path, source } => messages::settings_write_failed(
             language,

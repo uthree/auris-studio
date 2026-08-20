@@ -470,10 +470,20 @@ impl Session {
     /// and at worst a refusal to open. Transport position is deliberately *not* carried over —
     /// the new device starts from where the playhead was, but stopped, because a device swap
     /// mid-playback produces a discontinuity nobody wants to hear.
+    ///
+    /// Refused outright during a take. A take is stamped with the engine frame it began on, and
+    /// the engine that counted those frames is exactly what this replaces — so the clip would be
+    /// placed by dividing a count taken from one clock by the rate of another, and land somewhere
+    /// on the timeline that has nothing to do with where it was played. `restart_input` declines
+    /// to swap the microphone mid-take for its own reasons, which left the take running against a
+    /// stale engine either way; this is the enforcement its doc comment already assumed.
     pub fn set_audio_preferences(
         &mut self,
         preferences: AudioPreferences,
     ) -> Result<(), SessionError> {
+        if self.take.is_some() {
+            return Err(SessionError::RecordingInProgress);
+        }
         let input_changed = self.audio.input_device != preferences.input_device;
         if !output_changed(&self.audio, &preferences) {
             self.audio = preferences;
