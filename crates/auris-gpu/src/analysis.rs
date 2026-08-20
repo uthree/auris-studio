@@ -1,9 +1,17 @@
 //! Whole-buffer loudness measurement.
 //!
-//! Two callers need this, both offline: the export dialog, which shows the peak level of what
-//! was just rendered, and a future "normalise" command, which needs a gain that brings a
-//! rendered mix to a target level. Both scan every sample of a finished render, so the work is
-//! the same shape as the waveform reduction and lands on the same GPU path.
+//! Written for two offline callers: the export dialog, which shows the level of what was just
+//! rendered, and a future "normalise" command, which needs a gain that brings a rendered mix to
+//! a target level. Both scan every sample of a finished render, so the work is the same shape as
+//! the waveform reduction and lands on the same GPU path.
+//!
+//! **Neither exists.** The export dialog reports `AudioBuffer::peak` instead — the loudest
+//! sample, found by a CPU scan — so nothing shipped reports the inter-sample peak below, and a
+//! mix reading -0.3 dBFS in the dialog may be over full scale between its samples without
+//! anything saying so. Reaching this from an export means handing
+//! `auris_session::RenderJob` a [`GpuContext`], which it has no field for by design:
+//! it is a self-contained copy of a render, made to be sent to a worker thread. That is the work,
+//! and it has not been done.
 //!
 //! Use [`analyze_loudness`] — it tries the GPU and silently falls back to
 //! [`analyze_loudness_cpu`].
