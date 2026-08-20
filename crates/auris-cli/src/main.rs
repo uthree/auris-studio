@@ -124,6 +124,39 @@ fn printed(result: std::io::Result<()>) -> Result<(), String> {
     }
 }
 
+/// Writes a project that did not exist a moment ago, the way the desktop application does.
+///
+/// [`Session::save`] writes at exactly the path it is handed, which its own doc points out is the
+/// wrong call for a fresh location: it makes no folder and asks no questions. Both of the commands
+/// that *create* a project were calling it, so `auris new Song.auris` run twice replaced the first
+/// project without a word, and two projects made in one directory ended up sharing that
+/// directory's `Audio/` — which is exactly what the one-folder-one-project rule exists to stop.
+///
+/// [`Session::save_as`] is what the interface uses. It nests the document in a folder of its own
+/// and refuses a folder that already holds a different project; the refusal becomes `--force`
+/// here, which is the same answer the interface gets by asking.
+///
+/// Returns the path actually written, which is a level below the one that was typed and so is the
+/// one worth printing.
+fn save_new_project(
+    session: &mut Session,
+    chosen: &Path,
+    force: bool,
+) -> Result<std::path::PathBuf, String> {
+    let saved = match force {
+        true => session.save_as_replacing(chosen),
+        false => session.save_as(chosen),
+    };
+    match saved {
+        Ok(report) => Ok(report.document),
+        Err(SessionError::WouldReplace(path)) => Err(messages::project_folder_taken(
+            LANGUAGE,
+            &path.display().to_string(),
+        )),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 fn with_path(args: &[String], run: impl Fn(&Path) -> Result<(), String>) -> Result<(), String> {
     let path = args
         .get(1)
@@ -270,6 +303,7 @@ fn compose(args: &[String]) -> Result<(), String> {
     };
     let mut overrides: Vec<(String, String)> = Vec::new();
     let mut print_only = false;
+    let mut force = false;
 
     let mut index = if source.is_some() { 2 } else { 1 };
     while index < args.len() {
@@ -304,6 +338,7 @@ fn compose(args: &[String]) -> Result<(), String> {
                 overrides.push((field, value.clone()));
             }
             "--print" => print_only = true,
+            "--force" => force = true,
             // Already read, above, because it decides what there is to read at all.
             "--preset" => index += 1,
             other => return Err(messages::unknown_option(LANGUAGE, other)),
@@ -346,14 +381,14 @@ fn compose(args: &[String]) -> Result<(), String> {
     for missing in &report.substituted {
         eprintln!("{}", messages::instrument_substituted(LANGUAGE, missing));
     }
-    session.save(&output).map_err(|error| error.to_string())?;
+    let written = save_new_project(&mut session, &output, force)?;
 
     printed(writeln!(
         std::io::stdout(),
         "{}",
         messages::composed(
             LANGUAGE,
-            &output.display().to_string(),
+            &written.display().to_string(),
             report.tracks,
             report.notes,
             piece.seed,
@@ -676,6 +711,7 @@ fn new_project(args: &[String]) -> Result<(), String> {
 
     let mut bpm = 120.0;
     let mut sample_rate = 48_000.0;
+    let mut force = false;
     let mut index = 2;
     while index < args.len() {
         match args[index].as_str() {
@@ -710,6 +746,7 @@ fn new_project(args: &[String]) -> Result<(), String> {
                         )
                     })?;
             }
+            "--force" => force = true,
             other => return Err(messages::unknown_option(LANGUAGE, other)),
         }
         index += 1;
@@ -725,14 +762,14 @@ fn new_project(args: &[String]) -> Result<(), String> {
     session
         .add_default_instrument_track(messages::new_track_name(LANGUAGE, 1))
         .map_err(|error| error.to_string())?;
-    session.save(&target).map_err(|error| error.to_string())?;
+    let written = save_new_project(&mut session, &target, force)?;
 
     printed(writeln!(
         std::io::stdout(),
         "{}",
         messages::created_project(
             LANGUAGE,
-            &target.display().to_string(),
+            &written.display().to_string(),
             session.project().bpm(),
             session.project().sample_rate,
         )
@@ -780,5 +817,39 @@ mod tests {
         // Something already too wide is never truncated: a clipped label is worse than a
         // ragged column.
         assert_eq!(pad("サンプルレート", 4), "サンプルレート");
+    }
+
+    #[test]
+    fn every_option_the_parser_takes_is_in_the_usage_text() {
+        // `--groove`, `--scale` and `--swing` were accepted for as long as they had been
+        // undocumented, so the only way to find them was to read this file. The usage text is the
+        // whole of what a user can discover, and this is the check that keeps the two together —
+        // in both languages, since a Japanese reader gets no fallback to the English list.
+        let source = include_str!("main.rs");
+        let mut accepted: Vec<&str> = source
+            .match_indices("\"--")
+            .filter_map(|(at, _)| {
+                let rest = &source[at + 1..];
+                let end = rest.find('"')?;
+                Some(&rest[..end])
+            })
+            .filter(|flag| *flag != "--help")
+            .collect();
+        accepted.sort_unstable();
+        accepted.dedup();
+        assert!(
+            accepted.len() > 10,
+            "the scan found almost nothing, so it is measuring itself: {accepted:?}"
+        );
+
+        for language in [Language::English, Language::Japanese] {
+            let usage = Key::CliUsage.get(language);
+            for flag in &accepted {
+                assert!(
+                    usage.contains(flag),
+                    "`{flag}` is accepted but absent from the {language:?} usage text"
+                );
+            }
+        }
     }
 }

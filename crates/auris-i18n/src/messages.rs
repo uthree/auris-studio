@@ -540,6 +540,16 @@ messages! {
         ja: "`{name}` というオプションはありません"
     }
 
+    /// A create command pointed at a folder that already holds another project.
+    ///
+    /// Named after the path that would have been *written*, which is not the one that was typed:
+    /// a project goes into a folder of its own, so the collision is one level down from where the
+    /// user was looking.
+    fn project_folder_taken(path: &str) {
+        en: "`{path}` already holds a project; pass `--force` to replace it",
+        ja: "`{path}` には既にプロジェクトがあります。置き換えるには `--force` を指定してください"
+    }
+
     /// A `--preset` naming a style the composer does not ship.
     fn unknown_preset(name: &str) {
         en: "there is no `{name}` preset; `auris presets` lists them",

@@ -913,8 +913,12 @@ COMPOSE OPTIONS
         --key <key>               Override the key, as in `C minor`
         --tempo <bpm>             Override the tempo
         --mood <word>             Override the mood
+        --groove <name>           Override the groove
+        --scale <name>            Override the scale
+        --swing <amount>          Override the swing, from 0 to 1
         --set \"<field>: <value>\"  Override any field at all
         --print                   Print the resolved specification instead of writing
+        --force                   Write even where a project folder of that name exists
 
 RENDER OPTIONS
     -o, --output <file.wav>       Where to write (default: alongside the project)
@@ -925,7 +929,8 @@ RENDER OPTIONS
 
 NEW OPTIONS
         --bpm <tempo>             Tempo of the new project (default: 120)
-        --sample-rate <hz>        Rate of the new project (default: 48000)",
+        --sample-rate <hz>        Rate of the new project (default: 48000)
+        --force                   Write even where a project folder of that name exists",
         ja: "\
 auris — コマンドラインから使う Auris Studio
 
@@ -951,8 +956,12 @@ compose のオプション
         --key <key>               調を上書き（例: `C minor`）
         --tempo <bpm>             テンポを上書き
         --mood <word>             曲調を上書き
+        --groove <name>           グルーヴを上書き
+        --scale <name>            スケールを上書き
+        --swing <amount>          スウィングを上書き（0〜1）
         --set \"<field>: <value>\"  任意の項目を上書き
         --print                   書き出さずに解決後の仕様を表示
+        --force                   同名のプロジェクトフォルダがあっても書き出す
 
 render のオプション
     -o, --output <file.wav>       出力先（既定: プロジェクトと同じ場所）
@@ -963,7 +972,8 @@ render のオプション
 
 new のオプション
         --bpm <tempo>             新規プロジェクトのテンポ（既定: 120）
-        --sample-rate <hz>        新規プロジェクトのサンプルレート（既定: 48000）"
+        --sample-rate <hz>        新規プロジェクトのサンプルレート（既定: 48000）
+        --force                   同名のプロジェクトフォルダがあっても書き出す"
     }
     LogPanel { en: "Log", ja: "ログ" }
     LogClear { en: "Clear", ja: "消去" }
