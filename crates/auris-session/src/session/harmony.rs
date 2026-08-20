@@ -311,9 +311,13 @@ impl Session {
 
     /// A chord laid out to be listened to rather than played by a part.
     ///
-    /// The body sits around middle C, where a chord is easiest to identify, and the bass an
-    /// octave and a half below it — far enough down to be heard as a bass rather than as the
-    /// chord's own lowest note, which is what makes a slash chord audibly a slash chord.
+    /// The body sits around middle C, where a chord is easiest to identify, and the bass note in
+    /// octave 2 — between one and two octaves below it, depending on which note the bass is. Far
+    /// enough down either way to be heard as a bass rather than as the chord's own lowest note,
+    /// which is what makes a slash chord audibly a slash chord.
+    ///
+    /// An octave rather than an interval, because that is the register a bass plays in; the gap
+    /// from the body therefore varies with the root, which is also what a bass player does.
     ///
     /// This is not what any part would play. A part has a register to keep, neighbours to stay out
     /// of the way of, and a previous chord to lead from; an audition has one job, which is to let
@@ -790,5 +794,28 @@ mod tests {
             Some(instrument),
             "a track that can play keeps the audition"
         );
+    }
+
+    #[test]
+    fn an_auditioned_chord_puts_its_bass_in_the_register_a_bass_plays_in() {
+        // The doc used to promise "an octave and a half below" middle C, a fixed eighteen
+        // semitones. The code asks for octave 2, which is a fixed *register* and therefore a gap
+        // that moves with the root — twenty-four semitones under a C chord and thirteen under a
+        // B one. Eighteen was true of exactly one root.
+        for (symbol, expected) in [("C", 36), ("F#", 42), ("B", 47)] {
+            let chord = auris_core::theory::chord::Chord::parse(symbol).expect("parses");
+            let voiced = Session::voice_for_audition(chord);
+            let lowest = *voiced.first().expect("the chord sounds");
+            assert_eq!(
+                lowest as i32, expected,
+                "{symbol} put its bass at {lowest}, not in octave 2"
+            );
+            assert!(
+                voiced[1..]
+                    .iter()
+                    .all(|pitch| i32::from(*pitch) > lowest as i32 + 6),
+                "{symbol} left the bass inside the body of the chord"
+            );
+        }
     }
 }
