@@ -198,17 +198,41 @@ impl Oscillator {
 
     /// Sets the duty cycle of [`Waveform::Square`], clamped to `0.01..=0.99`.
     ///
-    /// The ends are excluded because a pulse narrower than the PolyBLEP window has its two
-    /// edge corrections overlap, which cancels the pulse instead of band-limiting it.
+    /// The ends are excluded so that a pulse always has two edges to correct. How far apart those
+    /// edges have to *stay* is a question about the note being played rather than about the knob,
+    /// and is answered separately, per note, where the waveform is evaluated.
     pub fn set_pulse_width(&mut self, width: f32) {
         if width.is_finite() {
             self.pulse_width = width.clamp(0.01, 0.99);
         }
     }
 
-    /// Current duty cycle.
+    /// Current duty cycle, as it was asked for.
     pub fn pulse_width(&self) -> f32 {
         self.pulse_width
+    }
+
+    /// The duty cycle the band-limited square can actually sound at this frequency.
+    ///
+    /// A PolyBLEP correction spans one sample either side of the edge it smooths, so the two edges
+    /// of a pulse need `2 * dt` of phase between them to be corrected separately. Closer than that
+    /// and the corrections overlap and subtract from each other: at C8 with the duty cycle at the
+    /// 0.05 the interface allows, the sum never rose above -0.18 anywhere in the cycle — the pulse
+    /// did not come out narrow, it did not come out at all, and what was left was a DC offset.
+    ///
+    /// So the width closes toward a square as the note climbs, which is a real change of tone and
+    /// the honest one: a pulse thinner than two samples is not a shape this sample rate can carry,
+    /// and the choice is which way to be wrong about it. Above `dt` of 0.25 there is no room for
+    /// two separated edges at all and every duty cycle sounds as 0.5.
+    ///
+    /// The knob keeps whatever it was set to — [`Self::pulse_width`] still reports it — so the
+    /// same patch played an octave down is narrow again.
+    fn sounding_pulse_width(&self) -> f32 {
+        let margin = 2.0 * self.increment;
+        if margin * 2.0 >= 1.0 {
+            return 0.5;
+        }
+        self.pulse_width.clamp(margin, 1.0 - margin)
     }
 
     /// Current phase, in cycles (`0..1`).
@@ -271,10 +295,18 @@ impl Oscillator {
         match waveform {
             Waveform::Sine => (phase * TAU).sin(),
             Waveform::Square => {
-                let naive = if phase < self.pulse_width { 1.0 } else { -1.0 };
+                // The width the two edges can actually be placed at, not the one the knob holds:
+                // the naive step and the corrections have to agree about where the falling edge
+                // is, or the correction lands beside the edge rather than on it.
+                let width = if band_limited {
+                    self.sounding_pulse_width()
+                } else {
+                    self.pulse_width
+                };
+                let naive = if phase < width { 1.0 } else { -1.0 };
                 if band_limited {
                     // Rising edge at phase 0, falling edge at the pulse width.
-                    let mut fall = phase - self.pulse_width;
+                    let mut fall = phase - width;
                     if fall < 0.0 {
                         fall += 1.0;
                     }
@@ -533,5 +565,68 @@ mod tests {
             );
         }
         assert_eq!(Waveform::from_param(f32::NAN), Waveform::Square);
+    }
+
+    /// The peak and trough of one cycle of a band-limited square.
+    fn square_extremes(hz: f32, pulse_width: f32) -> (f32, f32) {
+        let mut osc = Oscillator::new();
+        osc.set_sample_rate(48_000.0);
+        osc.set_frequency(hz);
+        osc.set_pulse_width(pulse_width);
+        osc.reset();
+        let period = (48_000.0 / hz).ceil() as usize;
+        let mut high = f32::NEG_INFINITY;
+        let mut low = f32::INFINITY;
+        for _ in 0..period {
+            let sample = osc.next(Waveform::Square);
+            high = high.max(sample);
+            low = low.min(sample);
+        }
+        (high, low)
+    }
+
+    #[test]
+    fn a_narrow_pulse_high_up_the_keyboard_still_has_a_pulse_in_it() {
+        // The correction spans a sample either side of each edge, so two edges closer together
+        // than that subtract from each other instead of smoothing one apiece. At C8 with the duty
+        // cycle at the 0.05 the interface offers, that used to leave a waveform whose *highest*
+        // sample in the whole cycle was -0.18: not a narrow pulse, no pulse, and a DC offset
+        // where the note should have been.
+        for hz in [440.0, 1_760.0, 4_186.0] {
+            let (high, low) = square_extremes(hz, 0.05);
+            assert!(
+                high > 0.9,
+                "at {hz} Hz the pulse never rises: highest sample {high}"
+            );
+            assert!(low < -0.9, "at {hz} Hz the trough is missing: {low}");
+        }
+    }
+
+    #[test]
+    fn the_duty_cycle_a_note_can_sound_closes_toward_square_as_it_climbs() {
+        // What the fix trades away, pinned so it is a decision rather than a surprise: the knob
+        // keeps its value, and the width the oscillator can place widens with the note until
+        // there is only room for a square.
+        let mut osc = Oscillator::new();
+        osc.set_sample_rate(48_000.0);
+        osc.set_pulse_width(0.05);
+
+        osc.set_frequency(440.0);
+        assert_eq!(osc.pulse_width(), 0.05);
+        assert_eq!(osc.sounding_pulse_width(), 0.05, "440 Hz has room to spare");
+
+        // 4186 Hz is dt = 0.0872, so the edges are held 0.1744 apart.
+        osc.set_frequency(4_186.0);
+        assert_eq!(osc.pulse_width(), 0.05, "the knob is untouched");
+        assert!((osc.sounding_pulse_width() - 0.1744).abs() < 1e-3);
+
+        // Past a quarter of the sample rate there is no room for two separated edges at all.
+        osc.set_frequency(20_000.0);
+        assert_eq!(osc.sounding_pulse_width(), 0.5);
+
+        // And the widening is symmetric: a pulse set wide closes from the other side.
+        osc.set_pulse_width(0.95);
+        osc.set_frequency(4_186.0);
+        assert!((osc.sounding_pulse_width() - 0.8256).abs() < 1e-3);
     }
 }
