@@ -168,11 +168,26 @@ impl Chart {
             });
         }
 
+        // The outer pipes are optional, which is what makes the first and last piece empty when
+        // they are written. Only those two: a `|` in the middle with nothing on either side of it
+        // was being skipped by the same rule, so `| I | | V | IV |` — a doubled pipe, which is
+        // what a paste or a stray keystroke leaves behind — read as three bars and moved every
+        // chord after the gap a bar earlier than the section it belongs under, without saying so.
+        // There is no way to write an empty bar on purpose here, so the answer is not to guess at
+        // one: a chart that cannot be read is refused, as a chart of nothing already was.
+        let mut pieces: Vec<&str> = text.split('|').collect();
+        if pieces.first().is_some_and(|piece| piece.trim().is_empty()) {
+            pieces.remove(0);
+        }
+        if pieces.last().is_some_and(|piece| piece.trim().is_empty()) {
+            pieces.pop();
+        }
+
         let mut bars = Vec::new();
-        for bar in text.split('|') {
+        for bar in pieces {
             let bar = bar.trim();
             if bar.is_empty() {
-                continue;
+                return None;
             }
             let mut chords = Vec::new();
             for symbol in bar.split_whitespace() {
@@ -809,5 +824,40 @@ mod tests {
             "the repeat count too, or the chart would come back half as long"
         );
         assert_eq!(Chart::parse("| I | V |").unwrap().quoted_as, None);
+    }
+
+    #[test]
+    fn a_stray_pipe_is_refused_rather_than_swallowed() {
+        // A doubled pipe used to be skipped by the same rule that makes the outer pipes optional,
+        // so the chart came back a bar short and every chord after the gap played a bar early.
+        // The prompt that reads a section's chart hands raw typed text straight to this, so the
+        // typo had no other gate to meet.
+        assert_eq!(Chart::parse("| I | V | IV |").unwrap().bar_count(), 3);
+        assert_eq!(Chart::parse("I | V | IV").unwrap().bar_count(), 3);
+        assert_eq!(Chart::parse("I").unwrap().bar_count(), 1);
+
+        assert!(Chart::parse("| I | | V | IV |").is_none(), "doubled pipe");
+        assert!(
+            Chart::parse("I | | V").is_none(),
+            "doubled pipe, no outer pipes"
+        );
+        assert!(Chart::parse("| I |  | | IV |").is_none(), "two of them");
+        assert!(Chart::parse("||||").is_none());
+        assert!(Chart::parse("|").is_none());
+        assert!(Chart::parse("").is_none());
+    }
+
+    #[test]
+    fn what_display_writes_is_what_parse_reads() {
+        // The two have to agree, or a chart saved into a document is a chart that cannot be
+        // opened. `Display` writes the outer pipes; `parse` is what has just learnt which ones
+        // are optional and which are a mistake.
+        for text in ["| I | V | IV |", "I V | vi", "| IVmaj7 | III7 | vi | I7 |"] {
+            let chart = Chart::parse(text).expect("the fixture parses");
+            let written = chart.to_string();
+            let again = Chart::parse(&written).expect("what Display wrote, parse reads");
+            assert_eq!(again.bar_count(), chart.bar_count(), "{written}");
+            assert_eq!(again.to_string(), written);
+        }
     }
 }
