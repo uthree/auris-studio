@@ -21,7 +21,7 @@
 //! saving one under a new name would silently leave both pointing at the same files. Which is why
 //! [`document_in_folder`] creates the folder rather than trusting anyone to.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use auris_core::Project;
@@ -71,12 +71,39 @@ pub fn document_in_folder(chosen: &Path) -> PathBuf {
         return document;
     };
     match project_folder(&document) {
-        Some(parent) if parent.file_name() == Some(stem.as_os_str()) => document,
+        Some(parent)
+            if parent
+                .file_name()
+                .is_some_and(|name| folder_is_named(name, &stem, CASE_INSENSITIVE_PATHS)) =>
+        {
+            document
+        }
         Some(parent) => parent
             .join(&stem)
             .join(document.file_name().unwrap_or_default()),
         None => PathBuf::from(&stem).join(document.file_name().unwrap_or_default()),
     }
+}
+
+/// Whether a path that differs only in case names the same file here.
+///
+/// True on the two systems the desktop application runs on, and false on the one where only the
+/// command line tool does. A `cfg!` rather than a `#[cfg]` so that both answers compile — and are
+/// tested — wherever this is built, which is the only way the Windows reading gets checked from a
+/// Mac.
+const CASE_INSENSITIVE_PATHS: bool = cfg!(any(target_os = "windows", target_os = "macos"));
+
+/// Whether `folder` is the folder a project called `stem` already lives in.
+///
+/// The question [`document_in_folder`] asks to decide between leaving a document where it is and
+/// making a folder for it, and the reason it is not `==`: on a case-insensitive filesystem
+/// `roughmix` and `RoughMix` are one directory, so comparing them byte for byte answers "no" about
+/// a folder the save is already inside. The path built from that answer does not exist — nothing
+/// does, under a name only differing in case — so the guard against replacing another project
+/// stays quiet as well, and renaming `roughmix` to `RoughMix` writes a whole second project, audio
+/// and all, one level down inside the first.
+fn folder_is_named(folder: &OsStr, stem: &OsStr, case_insensitive: bool) -> bool {
+    folder == stem || (case_insensitive && folder.eq_ignore_ascii_case(stem))
 }
 
 /// Just enough of the schema to read the version before committing to a full parse.
@@ -450,5 +477,44 @@ mod tests {
             Err(IoError::FileNotFound(reported)) => assert_eq!(reported, path),
             other => panic!("expected FileNotFound, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_folder_is_recognised_through_a_difference_of_case_where_the_filesystem_would() {
+        let folder = OsStr::new("roughmix");
+        let stem = OsStr::new("RoughMix");
+        assert!(folder_is_named(folder, stem, true));
+        assert!(!folder_is_named(folder, stem, false));
+        // Exact is exact on either kind.
+        assert!(folder_is_named(stem, stem, true));
+        assert!(folder_is_named(stem, stem, false));
+        // And a different name is still a different name.
+        assert!(!folder_is_named(OsStr::new("Demos"), stem, true));
+    }
+
+    #[test]
+    fn renaming_a_project_by_case_alone_saves_in_place_rather_than_one_level_down() {
+        // NTFS and APFS both hold `roughmix` and `RoughMix` as one directory, so a save that
+        // capitalises the name is a save into the folder the project is already in. Comparing the
+        // two byte for byte made it a save into a folder of its own inside that one, and because
+        // nothing existed at the path that computed, the guard against writing over another
+        // project never fired either: a second copy of the song, audio and all, appeared inside
+        // the first with nothing on screen having asked.
+        if !CASE_INSENSITIVE_PATHS {
+            return;
+        }
+        assert_eq!(
+            document_in_folder(Path::new("/songs/roughmix/RoughMix.auris")),
+            PathBuf::from("/songs/roughmix/RoughMix.auris")
+        );
+        assert_eq!(
+            document_in_folder(Path::new("/songs/RoughMix/RoughMix.auris")),
+            PathBuf::from("/songs/RoughMix/RoughMix.auris")
+        );
+        // A folder that is genuinely another project still gets one made for it.
+        assert_eq!(
+            document_in_folder(Path::new("/songs/Demos/RoughMix.auris")),
+            PathBuf::from("/songs/Demos/RoughMix/RoughMix.auris")
+        );
     }
 }
