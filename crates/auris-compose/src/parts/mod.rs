@@ -7,10 +7,12 @@
 //! # Where things are
 //!
 //! Here: what a part is — [`Draft`], [`PartDraft`] and [`ScoreSettings`] — the roster loop in
-//! [`write_parts`], and the two passes that pick the notes up again once a writer has put them
+//! [`write_parts`], and the three passes that pick the notes up again once a writer has put them
 //! down. `shorten` and `humanise` are post-passes rather than each writer's business so that one
 //! setting means the same thing in every part, and for the same reason the tests that hold for
-//! the whole band are here rather than in any one writer's file.
+//! the whole band are here rather than in any one writer's file. `untangle` is a post-pass because
+//! it has to run *after* the other two: it clears up what moving a start without moving a length
+//! leaves behind, so no writer could do it for itself.
 //!
 //! One file per role — `melody`, `comp`, `arp`, `bass` and `drums` — because not one of them
 //! calls another. They are spokes, and somebody reading how a bass line is built should not have
@@ -174,6 +176,7 @@ pub fn write_parts(settings: &ScoreSettings, roster: &[PartSpec], frame: &Frame)
             draft
                 .notes
                 .sort_by_key(|note| (note.start.raw(), note.pitch));
+            untangle(&mut draft.notes);
             draft
         })
         .collect()
@@ -320,6 +323,44 @@ fn humanise(settings: &ScoreSettings, frame: &Frame, played: &[PartSpec], notes:
             note.velocity = (note.velocity * scale).clamp(0.05, 1.0);
         }
         note.start = start.max_zero();
+    }
+}
+
+/// Cuts every note back to where the next note of the same pitch begins.
+///
+/// A writer sets a note's length from where the *next* note starts, so nothing it writes overlaps
+/// itself. Then `humanise` moves the starts and leaves the lengths alone — the swing delays an
+/// offbeat note past the end of its own bar-mate, the wander nudges a repeated note a few ticks
+/// early — and a note now ends after the next note of its own pitch has already begun. Measured
+/// over the eight presets at four seeds each, 41,184 notes: 13 per cent of them at the default
+/// humanisation, and 0.8 per cent from the swing alone with the wander switched off entirely.
+///
+/// What that costs depends on the instrument, which is exactly why the composer must not write
+/// one. A note-off names a pitch and not a note, so an instrument meeting two of them has to
+/// choose: the built-in voices release the oldest — `auris_synth::VoiceAllocator::note_off` — and
+/// come through it unharmed, while `auris_sampler`'s sampler releases the newest and answers the
+/// second note with a two-millisecond blip. Seven of the eight presets play on a SoundFont. A
+/// hosted CLAP plugin may do either and nothing here can ask it.
+///
+/// The cut lands *exactly* on the next note's start rather than a tick before it, so a repeated
+/// note stays legato. That is safe because both places that read these notes put releases first
+/// where they tie — `graph::schedule::event_rank` for playback, and the MIDI writer's own sort for
+/// export — and both say so for this reason.
+///
+/// `notes` must be sorted by start, which is what makes the reverse walk find the *nearest*
+/// following note of a pitch. Two notes of one pitch struck at the same tick are left alone: there
+/// is nothing to cut back to, and shortening one to a tick would turn a doubled note into a click.
+fn untangle(notes: &mut [Draft]) {
+    let mut next_start = [None; 256];
+    for note in notes.iter_mut().rev() {
+        let slot = &mut next_start[usize::from(note.pitch)];
+        if let Some(next) = *slot
+            && next > note.start
+            && note.start + note.length > next
+        {
+            note.length = next - note.start;
+        }
+        *slot = Some(note.start);
     }
 }
 
@@ -1110,5 +1151,86 @@ mod tests {
         let melody_a = &part(&a, "lead").notes;
         let melody_b = &part(&b, "lead").notes;
         assert_ne!(melody_a, melody_b, "the seed did not reach the melody");
+    }
+
+    #[test]
+    fn a_note_is_cut_back_to_where_its_pitch_is_struck_again_and_no_further() {
+        let note = |pitch, start, length| Draft {
+            section: 0,
+            pitch,
+            velocity: 0.5,
+            start: Ticks(start),
+            length: Ticks(length),
+        };
+        // In the order `write_parts` hands them over: by start, then by pitch.
+        let mut notes = vec![
+            note(60, 0, 500),
+            note(64, 0, 500),
+            note(60, 480, 480),
+            note(64, 960, 480),
+        ];
+        untangle(&mut notes);
+        assert_eq!(
+            notes[0].length,
+            Ticks(480),
+            "cut to the restrike, and to it exactly"
+        );
+        assert_eq!(
+            notes[1].length,
+            Ticks(500),
+            "another pitch is another voice"
+        );
+        assert_eq!(
+            notes[2].length,
+            Ticks(480),
+            "the last of a pitch keeps its length"
+        );
+        assert_eq!(notes[3].length, Ticks(480));
+
+        // Two struck on the same tick are a doubled note and not an overlap: there is nothing to
+        // cut back to, and cutting one to a tick would turn it into a click.
+        let mut doubled = vec![note(60, 0, 480), note(60, 0, 480)];
+        untangle(&mut doubled);
+        assert_eq!(doubled[0].length, Ticks(480));
+        assert_eq!(doubled[1].length, Ticks(480));
+    }
+
+    #[test]
+    fn nothing_is_left_sounding_when_its_own_pitch_is_struck_again() {
+        // A note-off names a pitch and not a note, so two notes of one pitch overlapping is a
+        // question the composer is asking the instrument rather than answering: the built-in
+        // voices release the oldest and survive it, the sampler releases the newest and answers
+        // the second note with a blip. Both of the composer's own timing passes used to write
+        // them — the swing on its own, and the wander on top of it — and at the default
+        // humanisation it was thirteen notes in every hundred.
+        //
+        // Over the presets rather than a fixture, because two of them are the ones that swing.
+        for preset in crate::preset::PRESETS {
+            for seed in 0..4u64 {
+                let mut spec = preset.spec();
+                spec.seed = seed;
+                let piece = crate::render::compose(&spec);
+                for track in &piece.tracks {
+                    for clip in &track.clips {
+                        let mut sounding: std::collections::BTreeMap<u8, Ticks> =
+                            std::collections::BTreeMap::new();
+                        for note in &clip.notes {
+                            let Some(ends) = sounding.insert(note.pitch, note.end()) else {
+                                continue;
+                            };
+                            assert!(
+                                ends <= note.start,
+                                "{} seed {seed}: in `{}` a {} sounding to {} is struck again at {}",
+                                preset.name,
+                                clip.name,
+                                note.pitch,
+                                ends.raw(),
+                                note.start.raw(),
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 }

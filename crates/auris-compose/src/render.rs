@@ -260,15 +260,20 @@ fn clips_of(
                 // Rebase onto the clip. A note humanisation nudged a few ticks over a
                 // section boundary is clamped back rather than deleted — dropping it took
                 // the downbeat out of every section at the default humanisation.
-                let start = (note.start - section.start)
-                    .max_zero()
-                    .min(section.length - Ticks(1));
-                if note.start - section.start >= section.length {
+                let offset = note.start - section.start;
+                if offset >= section.length {
                     return None;
                 }
+                let start = offset.max_zero().min(section.length - Ticks(1));
                 // Truncate rather than let a note overhang: the scheduler would drop it
                 // silently, and `fit_length_to_notes` would grow the clip if it did not.
-                let length = note.length.min(section.length - start).max(Ticks(1));
+                //
+                // Measured from where the note *ends* and not from how long it is, so that
+                // clamping a start back to the section's own does not carry the release
+                // along with it: `parts::untangle` had just cut this note to where its own
+                // pitch is struck again, and a note lengthened here would land back over it.
+                let ends = (offset + note.length).min(section.length);
+                let length = (ends - start).max(Ticks(1));
                 Some(Note {
                     pitch: note.pitch.min(127),
                     velocity: note.velocity.clamp(0.0, 1.0),
@@ -1185,8 +1190,15 @@ mod tests {
     /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
     /// a bug or a decision, and this is what makes anyone look.
     ///
-    /// It last moved when the melody stopped choosing each note without looking at the one before
-    /// it — see [`crate::melodic`], which is the measurement that change came out of. All four
+    /// It last moved when a note stopped being left sounding into the next strike of its own
+    /// pitch — see `parts::untangle`. Three of the four moved and the third did not, which is the
+    /// assertion about the scope: the third is the one fixture writing `humanize = 0` over a
+    /// groove that does not swing, so it is the only one that never held an overlap to cut. No
+    /// chord moved and no note count changed in any of them, because nothing here writes or drops
+    /// a note — it only shortens ones that were running over their own successor.
+    ///
+    /// Before that it moved when the melody stopped choosing each note without looking at the one
+    /// before it — see [`crate::melodic`], which is the measurement that change came out of. All four
     /// digests moved, and not one chord or note count did: the tune's *pitches* and the length of
     /// its phrase-ending notes are all that is different, and every other part is untouched. The
     /// piece is the same piece with a singable line in it. A third of the composer's melodic
@@ -1224,7 +1236,7 @@ mod tests {
                     "#
             ),
             "verse·1 C major | Cmaj7 Gm7 Am Fmaj7 Cmaj7 G7 Am9 F |\n\
-             164 notes, digest ff280b35bf93267f\n"
+             164 notes, digest 5b33938bc3fdd94b\n"
         );
 
         // The same in a minor key, and the fixture that moved furthest when colouring stopped
@@ -1265,7 +1277,7 @@ mod tests {
                     "#
             ),
             "verse·1 A minor | Am7 E9 Fmaj7 Dm Am7 Em7 Gbm7 Dm7 |\n\
-             239 notes, digest 495820c9e83359f6\n"
+             239 notes, digest 12fd3fb7eaecbdbf\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats — and the one fixture
@@ -1305,7 +1317,7 @@ mod tests {
             ),
             "verse·1 C major | Fmaj7 E7 Am7 Bb7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
-             204 notes, digest 3b4a02e9895279af\n"
+             204 notes, digest 67d9d79ef1352763\n"
         );
     }
 
