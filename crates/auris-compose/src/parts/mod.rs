@@ -337,10 +337,14 @@ fn humanise(settings: &ScoreSettings, frame: &Frame, played: &[PartSpec], notes:
 ///
 /// What that costs depends on the instrument, which is exactly why the composer must not write
 /// one. A note-off names a pitch and not a note, so an instrument meeting two of them has to
-/// choose: the built-in voices release the oldest — `auris_synth::VoiceAllocator::note_off` — and
-/// come through it unharmed, while `auris_sampler`'s sampler releases the newest and answers the
-/// second note with a two-millisecond blip. Seven of the eight presets play on a SoundFont. A
-/// hosted CLAP plugin may do either and nothing here can ask it.
+/// choose which it ends, and the workspace's own answer is written down for it: release the one
+/// that started first — `auris_session::guide`, and `auris_synth::VoiceAllocator::note_off` for
+/// the implementation the built-in voices share.
+///
+/// That is the answer here and not everywhere. Seven of the eight presets play through a
+/// SoundFont, where a note-off reaches the font's own synthesiser on one channel and the library
+/// decides; a hosted CLAP plugin may do whatever it does. Neither can be asked, so the question
+/// is better not put.
 ///
 /// The cut lands *exactly* on the next note's start rather than a tick before it, so a repeated
 /// note stays legato. That is safe because both places that read these notes put releases first
@@ -1200,11 +1204,11 @@ mod tests {
     #[test]
     fn nothing_is_left_sounding_when_its_own_pitch_is_struck_again() {
         // A note-off names a pitch and not a note, so two notes of one pitch overlapping is a
-        // question the composer is asking the instrument rather than answering: the built-in
-        // voices release the oldest and survive it, the sampler releases the newest and answers
-        // the second note with a blip. Both of the composer's own timing passes used to write
-        // them — the swing on its own, and the wander on top of it — and at the default
-        // humanisation it was thirteen notes in every hundred.
+        // question the composer is asking the instrument rather than answering — and most of the
+        // instruments a composed piece reaches are a SoundFont library or somebody else's plugin,
+        // neither of which can be asked. Both of the composer's own timing passes used to write
+        // them, the swing on its own and the wander on top of it, and at the default humanisation
+        // it was thirteen notes in every hundred.
         //
         // Over the presets rather than a fixture, because two of them are the ones that swing.
         for preset in crate::preset::PRESETS {
