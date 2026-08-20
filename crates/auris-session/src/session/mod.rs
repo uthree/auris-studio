@@ -724,7 +724,13 @@ impl Session {
     }
 
     /// Steps back one edit, returning what it reversed.
+    ///
+    /// Nothing while a gesture is open — see [`Self::can_undo`], which is the same rule stated as
+    /// a question.
     pub fn undo(&mut self) -> Option<Edit> {
+        if self.transaction.is_some() {
+            return None;
+        }
         let edit = self.history.undo_edit()?;
         let project = self.history.undo(&self.project)?;
         self.replace_project(project);
@@ -733,7 +739,12 @@ impl Session {
     }
 
     /// Steps forward one edit, returning what it reapplied.
+    ///
+    /// Nothing while a gesture is open, for the reasons under [`Self::can_undo`].
     pub fn redo(&mut self) -> Option<Edit> {
+        if self.transaction.is_some() {
+            return None;
+        }
         let edit = self.history.redo_edit()?;
         let project = self.history.redo(&self.project)?;
         self.replace_project(project);
@@ -742,13 +753,26 @@ impl Session {
     }
 
     /// `true` when there is something to undo.
+    ///
+    /// Never during a gesture. A pointer that is still down owns the document: the mutations it
+    /// has made so far are deliberately not on the history yet, and stepping through history from
+    /// underneath it goes wrong in three ways at once. `replace_project` would drop the open
+    /// transaction on the floor — not commit it, not revert it, drop it, so Escape could no longer
+    /// put the clip back where it was picked up from. The drag would still be physically running,
+    /// so every further pointer move would land its own history entry instead of joining the one
+    /// step the gesture was meant to be, and enough of them evict unrelated work from the other
+    /// end of a stack that holds sixty-four. And the close at mouse-up would find nothing to close
+    /// and quietly do nothing.
+    ///
+    /// So the answer is no, and the gesture finishes first. It is one entry on the stack a moment
+    /// later, and undoing it then does what pressing undo during it looked like it would.
     pub fn can_undo(&self) -> bool {
-        self.history.can_undo()
+        self.transaction.is_none() && self.history.can_undo()
     }
 
-    /// `true` when there is something to redo.
+    /// `true` when there is something to redo, and no gesture is open. See [`Self::can_undo`].
     pub fn can_redo(&self) -> bool {
-        self.history.can_redo()
+        self.transaction.is_none() && self.history.can_redo()
     }
 
     /// Drops the undo history and marks the document as unmodified.

@@ -1676,4 +1676,66 @@ mod tests {
             "refusing to trim is not an edit"
         );
     }
+
+    #[test]
+    fn undo_pressed_during_a_drag_waits_for_the_drag_to_finish() {
+        // Nothing in a frontend stops the keyboard reaching Undo while a mouse button is held, so
+        // the rule has to live here. What it prevents: the open gesture being dropped rather than
+        // closed, every further pointer move becoming its own undo step, and Escape no longer
+        // having a position to put the clip back to.
+        let mut session = session();
+        let clip = audio_clip(&mut session, 48_000);
+        session.forget_history();
+        session.set_clip_gain(clip, -6.0).unwrap();
+
+        session.begin_transaction(Edit::MoveClip);
+        session.move_clip(clip, Ticks::QUARTER).unwrap();
+
+        assert!(!session.can_undo(), "the gesture owns the document");
+        assert_eq!(session.undo(), None);
+        assert_eq!(session.redo(), None);
+
+        // The gesture is still open, so it still closes as one step and Escape still works.
+        assert_eq!(
+            session.project().audio_clip(clip).unwrap().start,
+            Ticks::QUARTER
+        );
+        assert!(
+            session.revert_transaction(),
+            "the picked-up position survived"
+        );
+        assert_eq!(
+            session.project().audio_clip(clip).unwrap().start,
+            Ticks::ZERO
+        );
+
+        // And with nothing open, undo is itself again: one step for the gain, and no strays.
+        assert!(session.can_undo());
+        assert_eq!(session.undo(), Some(Edit::SetClipGain));
+        assert_eq!(session.project().audio_clip(clip).unwrap().gain_db, 0.0);
+    }
+
+    #[test]
+    fn a_gesture_interrupted_by_undo_still_closes_as_one_step() {
+        let mut session = session();
+        let clip = audio_clip(&mut session, 48_000);
+        session.forget_history();
+
+        session.begin_transaction(Edit::MoveClip);
+        for beat in 1..=4 {
+            session.undo();
+            session
+                .move_clip(clip, Ticks::from_beats(beat as f64))
+                .unwrap();
+        }
+        assert!(
+            session.end_transaction(),
+            "the gesture was still there to close"
+        );
+        assert_eq!(
+            undo_depth(&mut session),
+            1,
+            "four pointer moves and four rejected undos are one step"
+        );
+    }
 }
