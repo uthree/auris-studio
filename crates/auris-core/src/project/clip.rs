@@ -417,6 +417,23 @@ pub struct AudioClip {
     /// why it is a property of the clip rather than a preference or a mode.
     #[serde(default)]
     pub follows_tempo: bool,
+    /// The tick whose tempo the stretch is worked out against, where that is not the clip's own
+    /// start.
+    ///
+    /// Normally nothing: a clip is stretched to the tempo where it sits, and [`Self::start`] says
+    /// where that is. It is set when a clip is *divided* rather than placed — by a split, or by a
+    /// trim that walks the front edge forward — because those move the start without moving the
+    /// audio. A cut is not something anybody expects to hear, and re-reading the tempo at the new
+    /// start is audible whenever the cut falls the far side of a tempo change: the piece after it
+    /// would carry on at a different speed than the piece before, which is the same material
+    /// played two ways with a seam down the middle.
+    ///
+    /// Cleared again by a move, and that is the distinction the whole field draws. Dividing a clip
+    /// keeps the sound and changes where the boundary is; moving one asks for it somewhere else,
+    /// and somewhere else is allowed to be a different tempo. That is what following the tempo
+    /// means — see [`Self::anchored_at`], which is what everything reads instead of this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tempo_anchor: Option<Ticks>,
     /// How far the clip's content keeps repeating, measured from the clip's own start.
     ///
     /// In *ticks* while the trim beside it is in source frames, and deliberately: a repeat lands
@@ -443,6 +460,7 @@ impl AudioClip {
             muted: false,
             source_bpm: None,
             follows_tempo: false,
+            tempo_anchor: None,
             loop_end: Ticks::ZERO,
         }
     }
@@ -480,18 +498,27 @@ impl AudioClip {
         self.follows_tempo && self.source_bpm.is_some()
     }
 
-    /// How far the audio is stretched under `tempo_map`, at the tempo where the clip starts.
+    /// The tick whose tempo this clip is stretched against.
+    ///
+    /// Its own start, unless it was divided out of a longer clip that began somewhere else — see
+    /// [`Self::tempo_anchor`]. Everything that wants the tempo a clip obeys asks this, so that a
+    /// cut and a move can differ in exactly one place instead of at every call site.
+    pub fn anchored_at(&self) -> Ticks {
+        self.tempo_anchor.unwrap_or(self.start)
+    }
+
+    /// How far the audio is stretched under `tempo_map`, at the tempo the clip is anchored to.
     ///
     /// **The** reading of a clip's stretch, and the reason it is a method rather than two lines at
     /// each call site: the session stretches the audio and the renderer looks it up, and they have
     /// to agree about which tempo point a clip obeys, exactly, or the renderer finds nothing.
     ///
-    /// The tempo where it *starts*, so one clip is one stretch. A tempo change under a long clip
-    /// therefore does not bend it — the audio goes on at the speed it began at and lands late.
-    /// Following a curve would mean re-stretching continuously, which is a thing to build when
-    /// somebody wants it rather than a thing to half-do now.
+    /// One tempo per clip, so one clip is one stretch. A tempo change under a long clip therefore
+    /// does not bend it — the audio goes on at the speed it began at and lands late. Following a
+    /// curve would mean re-stretching continuously, which is a thing to build when somebody wants
+    /// it rather than a thing to half-do now.
     pub fn stretch_in(&self, tempo_map: &TempoMap) -> f64 {
-        self.stretch_at(tempo_map.bpm_at(self.start))
+        self.stretch_at(tempo_map.bpm_at(self.anchored_at()))
     }
 
     /// How many frames of *output* one pass of the clip takes at `bpm`.
@@ -502,6 +529,15 @@ impl AudioClip {
     /// what is drawn and what is heard cannot disagree.
     pub fn played_frames(&self, bpm: f64) -> u64 {
         (self.length_frames as f64 * self.stretch_at(bpm)).round() as u64
+    }
+
+    /// How many frames of *output* one pass of the clip takes under `tempo_map`.
+    ///
+    /// [`Self::played_frames`] with the tempo already looked up, and the form to reach for: taking
+    /// the bpm at the clip's `start` instead is a second reading of which tempo a clip obeys, and
+    /// the two disagree the moment a clip is anchored somewhere else by a split.
+    pub fn played_frames_in(&self, tempo_map: &TempoMap) -> u64 {
+        (self.length_frames as f64 * self.stretch_in(tempo_map)).round() as u64
     }
 
     /// Gain multiplier for a frame `position` into the clip, including both fades.
@@ -706,6 +742,9 @@ impl Project {
                         let mut copy = source;
                         copy.id = new_id;
                         copy.start = start + sounding_length(length, copy.loop_end);
+                        // A copy is placed, not divided: it follows the tempo where it lands, even
+                        // if the clip it came from was anchored elsewhere by a split.
+                        copy.tempo_anchor = None;
                         inner.clips.push(copy);
                         return Some(new_id);
                     }
@@ -784,6 +823,11 @@ impl Project {
         let mut right = clip.clone();
         right.id = ClipId(self.allocate_id());
         right.start = at;
+        // The half that moves keeps the tempo the whole clip was stretched against. Without this
+        // it would re-read the tempo at its new start, and a cut placed the far side of a tempo
+        // change would come back at a different speed than the half in front of it — the audio
+        // altered by an edit whose entire meaning is where the boundary goes.
+        right.tempo_anchor = Some(clip.anchored_at());
         right.offset_frames = clip.offset_frames + frames;
         right.length_frames = clip.length_frames - frames;
         // Each fade belongs to the edge it was drawn on: the left piece keeps the fade-in, the
@@ -1048,7 +1092,7 @@ impl Project {
 /// follows the tempo plays more of them or fewer, and a lane that measured the field while the
 /// renderer measured the stretch would draw a clip that ends somewhere it does not.
 pub(super) fn audio_clip_ticks(tempo_map: &TempoMap, sample_rate: f64, clip: &AudioClip) -> Ticks {
-    let played = clip.played_frames(tempo_map.bpm_at(clip.start));
+    let played = clip.played_frames_in(tempo_map);
     audio_length_ticks(tempo_map, sample_rate, clip.start, played)
 }
 
@@ -1610,5 +1654,104 @@ mod tests {
         assert_eq!(left.fade_out_frames, 0, "no fade is invented at the cut");
         assert_eq!(right.fade_in_frames, 0);
         assert_eq!(right.fade_out_frames, 480);
+    }
+
+    /// A project running at 120 for its first bar and 60 after it, with one four-second take at
+    /// the top that carries on across the change.
+    fn across_a_tempo_change() -> (Project, ClipId, Ticks) {
+        use crate::time::{TempoMap, TempoPoint};
+
+        let bar = Ticks::from_beats(4.0);
+        let mut project = Project::new("Seam", 48_000.0);
+        project.tempo_map = TempoMap::from_points(vec![
+            TempoPoint {
+                tick: Ticks::ZERO,
+                bpm: 120.0,
+            },
+            TempoPoint {
+                tick: bar,
+                bpm: 60.0,
+            },
+        ])
+        .expect("two points in order");
+        let track = project.add_audio_track("Take");
+        let source = project.add_audio_source(
+            "take",
+            AssetPath::external("/audio/take.wav"),
+            192_000,
+            48_000.0,
+            1,
+        );
+        let clip = project
+            .add_audio_clip(track, source, Ticks::ZERO)
+            .expect("the track was just added");
+        let audio = project.audio_clip_mut(clip).expect("just added");
+        audio.source_bpm = Some(120.0);
+        audio.follows_tempo = true;
+        (project, clip, bar)
+    }
+
+    #[test]
+    fn cutting_a_following_clip_past_a_tempo_change_does_not_change_what_is_heard() {
+        // The clip is anchored at bar one, where the piece runs at the tempo it was recorded at,
+        // so it plays unstretched all the way across the change beneath it. That is the model —
+        // one clip, one stretch — and a cut is not a request to renegotiate it. Before this, the
+        // right-hand piece read the tempo at its own new start, found 60, and came back at half
+        // speed: the same take playing two ways with a join down the middle.
+        let (mut project, clip, bar) = across_a_tempo_change();
+        let whole = project.audio_clip(clip).expect("present").clone();
+        let ends_at = whole.start + project.audio_clip_length_ticks(&whole);
+        assert_eq!(whole.stretch_in(&project.tempo_map), 1.0);
+
+        let right_id = project
+            .split_clip(clip, bar + Ticks::QUARTER)
+            .expect("a cut inside the clip");
+        let left = project.audio_clip(clip).expect("present").clone();
+        let right = project.audio_clip(right_id).expect("present").clone();
+
+        assert_eq!(left.stretch_in(&project.tempo_map), 1.0);
+        assert_eq!(
+            right.stretch_in(&project.tempo_map),
+            1.0,
+            "the half that moved re-read the tempo at its new start"
+        );
+        assert_eq!(right.anchored_at(), whole.anchored_at());
+        assert_eq!(
+            left.length_frames + right.length_frames,
+            whole.length_frames,
+            "the cut lost or duplicated material"
+        );
+        assert_eq!(
+            right.start + project.audio_clip_length_ticks(&right),
+            ends_at,
+            "the audio ends somewhere else than it did before the cut"
+        );
+    }
+
+    #[test]
+    fn a_clip_moved_after_a_cut_follows_the_tempo_it_is_moved_into() {
+        // The other half of the rule. An anchor survives a division, because a division is about
+        // where the boundary is; it does not survive a move, because moving a following clip into
+        // another tempo is a request to fit it there — which is the whole of what following means.
+        let (mut project, clip, bar) = across_a_tempo_change();
+        let right_id = project
+            .split_clip(clip, bar + Ticks::QUARTER)
+            .expect("a cut inside the clip");
+        assert_eq!(
+            project.audio_clip(right_id).unwrap().anchored_at(),
+            Ticks::ZERO
+        );
+
+        // `Session::move_clip` is what clears it; done here by hand, since this crate has no
+        // session to ask.
+        let moved = project.audio_clip_mut(right_id).expect("present");
+        moved.start = bar + Ticks::from_beats(4.0);
+        moved.tempo_anchor = None;
+        let moved = project.audio_clip(right_id).expect("present");
+        assert_eq!(
+            moved.stretch_in(&project.tempo_map),
+            2.0,
+            "a clip recorded at 120 and moved into a 60 bpm bar has to last twice as long"
+        );
     }
 }

@@ -422,6 +422,17 @@ pub mod realtime {
     //! began at. Following a curve would mean re-stretching continuously, which is a feature to
     //! build when somebody asks for it rather than a thing to half-do now.
     //!
+    //! Which leaves one question that only shows up at an edit: what happens to that "where the
+    //! clip starts" when a clip is cut in two the far side of a tempo change. The half that moves
+    //! would read the tempo at its new start, come back at another speed, and put a seam through
+    //! the middle of one take — an edit about *where the boundary is* changing what is heard. So a
+    //! clip can be anchored: [`AudioClip::tempo_anchor`](auris_core::AudioClip::tempo_anchor) is
+    //! the tick whose tempo it obeys, written by a split and by a front trim, and everything reads
+    //! it through [`anchored_at`](auris_core::AudioClip::anchored_at) rather than looking at
+    //! `start`. A **move** clears it again, and that is the line the field draws: dividing a clip
+    //! keeps the sound and changes the boundary, moving one asks for it somewhere else, and
+    //! somewhere else is allowed to be a different tempo.
+    //!
     //! # How the rule is enforced
     //!
     //! `auris-engine`'s test suite installs a counting global allocator and asserts that a run of

@@ -292,6 +292,9 @@ impl Session {
                     let mut clip = *audio;
                     clip.id = id;
                     clip.start = start;
+                    // Pasted is placed, not divided: the copy follows the tempo where it lands
+                    // rather than the one the clip it was cut from was anchored to.
+                    clip.tempo_anchor = None;
                     if let Some(inner) = self
                         .project
                         .tracks

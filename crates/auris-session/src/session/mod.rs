@@ -916,7 +916,7 @@ impl Drop for Session {
     /// something the ordinary question already covers. This catches the paths that never get
     /// there — a window closed by the system, a panic unwinding out of the interface — where the
     /// alternative is a file on disk whose header never learned how long it is. See
-    /// [`Session::abandon_take`].
+    /// `Session::abandon_take`.
     fn drop(&mut self) {
         self.abandon_take();
     }

@@ -157,11 +157,11 @@ impl AurisApp {
         let Some(audio) = self.audio_clip(clip) else {
             return;
         };
-        let start = audio.start;
+        let anchor = audio.anchored_at();
         let current = self
             .session
             .clip_source_bpm(clip)
-            .unwrap_or_else(|| self.session.project().tempo_map.bpm_at(start));
+            .unwrap_or_else(|| self.session.project().tempo_map.bpm_at(anchor));
         let title = self.t(Key::SetClipSourceTempoTitle);
         self.open_prompt(Prompt::new(
             title,

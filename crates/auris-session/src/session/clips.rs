@@ -368,12 +368,17 @@ impl Session {
                 midi.start = start;
             } else if let Some(audio) = self.project.audio_clip_mut(clip) {
                 audio.start = start;
+                audio.tempo_anchor = None;
             }
         }
         self.invalidate_graph();
     }
 
     /// Moves a clip of either kind to a new start position.
+    ///
+    /// A moved audio clip forgets any tempo it was anchored to by an earlier split or trim: asking
+    /// for it somewhere else is asking for it under whatever tempo is there, which is the whole of
+    /// what following the tempo means. See [`AudioClip::tempo_anchor`](auris_core::AudioClip::tempo_anchor).
     pub fn move_clip(&mut self, clip: ClipId, start: Ticks) -> Result<(), SessionError> {
         self.require_clip(clip)?;
         self.record(Edit::MoveClip);
@@ -382,6 +387,7 @@ impl Session {
             midi.start = start;
         } else if let Some(audio) = self.project.audio_clip_mut(clip) {
             audio.start = start;
+            audio.tempo_anchor = None;
         }
         self.invalidate_graph();
         Ok(())
@@ -578,6 +584,10 @@ impl Session {
         ));
         self.record(Edit::ResizeClip);
         if let Some(audio) = self.project.audio_clip_mut(clip) {
+            // Pinned before the start moves, for the same reason a split pins the half it moves:
+            // hiding the front of a take is not a request to play the rest of it at another speed,
+            // and dragging the edge past a tempo change would otherwise do exactly that.
+            audio.tempo_anchor = Some(audio.anchored_at());
             audio.start = now.max_zero();
             audio.offset_frames = (offset as i64 + by) as u64;
             audio.length_frames = (length as i64 - by) as u64;
@@ -660,7 +670,7 @@ impl Session {
             return Ok(());
         }
         let assumed = match follows && audio.source_bpm.is_none() {
-            true => Some(self.project.tempo_map.bpm_at(audio.start)),
+            true => Some(self.project.tempo_map.bpm_at(audio.anchored_at())),
             false => None,
         };
         self.record(Edit::SetClipTempo);

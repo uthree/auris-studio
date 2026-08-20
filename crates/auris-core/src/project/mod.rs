@@ -345,7 +345,15 @@ impl Project {
     /// a piece whose loops were stretched to fit, plays every one of them at its recorded length —
     /// against a bar line they no longer share — and writes the file back with the fact that they
     /// ever followed anything gone.
-    pub const FORMAT_VERSION: u32 = 13;
+    ///
+    /// 14 since a following clip can be anchored to a tempo other than the one at its own start —
+    /// [`tempo_anchor`](AudioClip::tempo_anchor), which is what a split or a front trim writes so
+    /// that dividing a clip does not change how it sounds. Version 5's case once more, and quiet:
+    /// a version 13 build ignores the field, so every piece cut the far side of a tempo change
+    /// plays at whatever speed its new start implies — a seam in the middle of one take — and the
+    /// next save writes the anchor away, so the seam is there for good and the file no longer
+    /// records that the two halves were ever one thing.
+    pub const FORMAT_VERSION: u32 = 14;
 
     /// An empty project.
     ///
