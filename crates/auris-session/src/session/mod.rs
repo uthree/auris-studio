@@ -908,6 +908,20 @@ fn output_changed(before: &AudioPreferences, after: &AudioPreferences) -> bool {
         || before.block_frames != after.block_frames
 }
 
+impl Drop for Session {
+    /// Closes a take that is still being written.
+    ///
+    /// The last line of defence rather than the usual route: a frontend stops the take itself
+    /// before it asks about unsaved work, because a stopped take becomes a clip and a clip is
+    /// something the ordinary question already covers. This catches the paths that never get
+    /// there — a window closed by the system, a panic unwinding out of the interface — where the
+    /// alternative is a file on disk whose header never learned how long it is. See
+    /// [`Session::abandon_take`].
+    fn drop(&mut self) {
+        self.abandon_take();
+    }
+}
+
 impl std::fmt::Debug for Session {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Session")

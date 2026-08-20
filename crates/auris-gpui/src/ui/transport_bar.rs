@@ -677,13 +677,7 @@ impl AurisApp {
     /// button that asks it is a button that works the first time it is pressed.
     pub(crate) fn toggle_recording(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
         if self.session.is_recording() {
-            match self.session.stop_recording() {
-                Ok(report) => {
-                    self.session.stop();
-                    self.set_status(recording_summary(&report, self.language));
-                }
-                Err(error) => self.report_session_error(&error),
-            }
+            self.finish_recording();
             return;
         }
         match self.session.start_recording(self.selected_track) {
@@ -700,6 +694,23 @@ impl AurisApp {
                     window,
                     cx,
                 );
+            }
+            Err(error) => self.report_session_error(&error),
+        }
+    }
+
+    /// Stops the take that is running and says on the status line what became of it.
+    ///
+    /// Its own method because stopping is not only what the Record button does a second time: it
+    /// is also what has to happen when the document is about to be closed. A take in flight is
+    /// unsaved work that `is_dirty` cannot see — the document does not change until the take
+    /// ends and the clip lands — and stopping it first is what turns it into work the ordinary
+    /// unsaved-changes question already knows how to ask about.
+    pub(crate) fn finish_recording(&mut self) {
+        match self.session.stop_recording() {
+            Ok(report) => {
+                self.session.stop();
+                self.set_status(recording_summary(&report, self.language));
             }
             Err(error) => self.report_session_error(&error),
         }

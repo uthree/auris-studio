@@ -290,6 +290,33 @@ impl Session {
         }
     }
 
+    /// Finishes a take that is still running because the session is going away.
+    ///
+    /// The thread writing the file patches the header with the take's real length only when it is
+    /// told the take has ended. A [`JoinHandle`](std::thread::JoinHandle) that is merely dropped
+    /// detaches that thread instead, so a process leaving mid-take leaves behind a WAV whose
+    /// header says it holds nothing — which is every player's answer as well.
+    ///
+    /// Nothing else is rescued on the way out: the document has either been asked about already
+    /// or is being abandoned deliberately. This one thing is waited for because it is the only
+    /// thing here that cannot be made again by doing the same work twice.
+    pub(super) fn abandon_take(&mut self) {
+        let Some(take) = self.take.take() else {
+            return;
+        };
+        // The writer stops when the capture says the take is over, not when the handle is joined;
+        // joining first would wait for a thread that has not been told to finish.
+        if let Some(capture) = self.input.as_ref() {
+            capture.end_take();
+        }
+        let path = take.path;
+        match take.writer.join() {
+            Ok((_, Ok(frames))) => log::info!("closed {} at {frames} frames", path.display()),
+            Ok((_, Err(error))) => log::warn!("could not finish {}: {error}", path.display()),
+            Err(_) => log::warn!("the thread writing {} panicked", path.display()),
+        }
+    }
+
     /// Starts recording onto [`record_target(selected)`](Session::record_target).
     ///
     /// Opens the input device and begins writing immediately; the transport is left alone, so a

@@ -824,6 +824,14 @@ impl AurisApp {
     /// Returns `true` when there was nothing to ask about and the caller may go ahead. When it
     /// returns `false` the sheet is open and will finish the command itself.
     pub(crate) fn confirm_discard(&mut self, next: PendingAction) -> bool {
+        // A running take is the one piece of unsaved work the dirty flag cannot see: until the
+        // take is stopped the document is untouched, so quitting mid-recording used to go through
+        // here without a question and take the performance with it. Stopping it makes it a clip,
+        // which makes the document dirty, which makes the question below the right one — and it
+        // is what closes the file properly whatever the answer turns out to be.
+        if self.session.is_recording() {
+            self.finish_recording();
+        }
         if !self.session.is_dirty() {
             return true;
         }
