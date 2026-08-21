@@ -334,8 +334,14 @@ macro_rules! bindable {
                 // shape and the column of keystrokes reads down the page.
                 default: if $default.is_empty() { None } else { Some($default) },
                 // Optional, and written `"a" | "b"` in the table. Almost no row has one; see
-                // `Bindable::alternate` for the only reason to add another.
-                alternate: { let alternate: Option<&'static str> = None; $(let alternate = Some($alternate);)? alternate },
+                // `Bindable::alternate` for the only reason to add another. The `None` is only
+                // read by the rows that have no alternate, so it is unused in the ones that do.
+                alternate: {
+                    #[allow(unused_variables)]
+                    let alternate: Option<&'static str> = None;
+                    $(let alternate = Some($alternate);)?
+                    alternate
+                },
                 bind: |keys, context| KeyBinding::new(keys, $action, Some(context)),
                 make: || Box::new($action),
             },)*)*
