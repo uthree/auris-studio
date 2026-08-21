@@ -66,7 +66,10 @@ pub use session::{
     SessionOptions, Struck, TYPING_BEND, TypingRole, VELOCITY_STEP, WHEEL_STEPS, quantized,
     shadows_musical_typing,
 };
-pub use settings::{AudioPreferences, CONFIG_DIR_VAR, Settings, config_dir, migrate_legacy_config};
+pub use settings::{
+    AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings, config_dir,
+    migrate_legacy_config,
+};
 
 /// What a `.clap` file says is inside it, for a frontend listing one.
 ///
@@ -184,7 +187,8 @@ pub mod prelude {
 
     pub use crate::{
         AccompanyReport, AudioPreferences, Clipboard, ComposeReport, CopiedClip, CopiedContent,
-        DEFAULT_PARTS, Edit, ExportSummary, MusicalTyping, ParamTarget, Quantize, RecordingReport,
-        RecordingStatus, RenderJob, SaveReport, Session, SessionError, SessionOptions, Settings,
+        DEFAULT_PARTS, Edit, ExportPreferences, ExportSummary, MusicalTyping, ParamTarget,
+        Quantize, RecordingReport, RecordingStatus, RenderJob, SaveReport, Session, SessionError,
+        SessionOptions, Settings,
     };
 }

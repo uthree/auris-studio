@@ -1236,10 +1236,21 @@ impl AurisApp {
         }
         // A snapshot, so the render is unaffected by anything edited while it runs.
         let mut job = self.session.render_job();
+        // The depth, the dither and the rate somebody masters at, from the settings rather than
+        // from a dialog in front of the save sheet: an export that asks three questions every
+        // time is one people stop using for a quick listen.
+        let export = self.settings.export;
+        // Set before the cycle region is converted, because `loop_options` turns ticks into
+        // frames against the rate the render will run at. A region measured at the project's
+        // rate and rendered at another would start and end in the wrong places.
+        let whole = OfflineOptions {
+            sample_rate: export.sample_rate.map(f64::from),
+            ..OfflineOptions::whole_project()
+        };
         let options = if cycle {
             // Refused before the dialog opens: a save sheet for a region that does not exist
             // would collect a filename for nothing.
-            match job.loop_options(OfflineOptions::whole_project()) {
+            match job.loop_options(whole) {
                 Some(options) => options,
                 None => {
                     self.set_failed_status(self.t(Key::NoCycleToExport));
@@ -1247,8 +1258,12 @@ impl AurisApp {
                 }
             }
         } else {
-            OfflineOptions::whole_project()
+            whole
         };
+        // What the file will be labelled, which `render_to_wav` corrects if the render turns out
+        // to run at another rate.
+        let settings =
+            export.wav_settings(options.sample_rate.unwrap_or(job.project().sample_rate));
         // Which command failed, when one does — and a different suggested name, so a cycle
         // bounced next to a full export does not offer to overwrite it.
         let command = if cycle {
@@ -1293,12 +1308,9 @@ impl AurisApp {
             let rendered = cx
                 .background_executor()
                 .spawn(async move {
-                    job.render_to_wav(
-                        &render_path,
-                        &WavExportSettings::default(),
-                        &options,
-                        &mut |fraction| progress.store(fraction.to_bits(), Ordering::Relaxed),
-                    )
+                    job.render_to_wav(&render_path, &settings, &options, &mut |fraction| {
+                        progress.store(fraction.to_bits(), Ordering::Relaxed)
+                    })
                     .map_err(|error| error.to_string())
                 })
                 .await;

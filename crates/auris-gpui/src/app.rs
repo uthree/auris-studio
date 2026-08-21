@@ -1555,6 +1555,17 @@ impl AurisApp {
         }
     }
 
+    /// Installs and saves how a bounce is written.
+    ///
+    /// Nothing in the running session reads it — an export takes a copy when it starts — so
+    /// unlike the audio preferences this cannot fail and has nothing to restart.
+    pub(crate) fn apply_export(&mut self, export: ExportPreferences) {
+        self.settings.export = export;
+        if let Err(error) = self.settings.save() {
+            log::warn!("could not save settings: {error}");
+        }
+    }
+
     /// Writes the input settings file.
     ///
     /// Best-effort: a preferences file that cannot be written must not undo a change the user
@@ -1593,6 +1604,7 @@ impl AurisApp {
         let language = self.settings.language;
         let pointer = self.pointer;
         let autosave = self.session.autosave_enabled();
+        let export = self.settings.export;
 
         let bounds = Bounds::centered(None, size(px(560.), px(620.)), cx);
         let opened = cx.open_window(
@@ -1608,7 +1620,8 @@ impl AurisApp {
             |_, cx| {
                 cx.new(|cx| {
                     SettingsWindow::new(
-                        app, theme, devices, audio, live, keymap, language, pointer, autosave, cx,
+                        app, theme, devices, audio, live, keymap, language, pointer, autosave,
+                        export, cx,
                     )
                 })
             },

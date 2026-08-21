@@ -67,6 +67,8 @@ pub struct SettingsWindow {
     /// Whether the document is written back over itself as it changes.
     autosave: bool,
     /// What a click creates and what deletes.
+    /// How a bounce is written.
+    export: ExportPreferences,
     pointer: PointerGestures,
     /// What the audio backend is actually doing.
     ///
@@ -116,6 +118,7 @@ impl SettingsWindow {
         language_preference: Option<Language>,
         pointer: PointerGestures,
         autosave: bool,
+        export: ExportPreferences,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
@@ -129,6 +132,7 @@ impl SettingsWindow {
             language_preference,
             language: Language::resolve(language_preference),
             autosave,
+            export,
             pointer,
             capturing: None,
             search: TextField::new(String::new()),
@@ -437,10 +441,18 @@ impl SettingsWindow {
         cx.notify();
     }
 
+    /// Hands an export choice to the application, which saves it.
+    fn apply_export(&mut self, export: ExportPreferences, cx: &mut Context<Self>) {
+        self.export = export;
+        let _ = self.app.update(cx, |app, _| app.apply_export(export));
+        cx.notify();
+    }
+
     fn render_audio(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
         let audio = self.audio.clone();
         let live = self.live.clone();
+        let export = self.export;
 
         let mut rows: Vec<AnyElement> = Vec::new();
 
@@ -544,6 +556,103 @@ impl SettingsWindow {
                 ))
                 .into_any_element(),
         );
+
+        // How a bounce is written. Here rather than in a dialog in front of the save sheet,
+        // because it is a fact about the person and their delivery rather than about the song:
+        // an export that asks three questions every time is one people stop using for a quick
+        // listen. On the Audio page rather than a page of its own — these are the same three
+        // numbers as the ones above them, aimed at a file instead of at a device.
+        rows.push(divider(&theme).into_any_element());
+        rows.push(section_title(self.t(Key::ExportFormat), &theme));
+        rows.push(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_1()
+                .children(
+                    [WavBitDepth::Int16, WavBitDepth::Int24, WavBitDepth::Float32]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, depth)| {
+                            button(
+                                ("depth", index),
+                                depth.label(),
+                                ButtonStyle::Normal,
+                                export.bit_depth == depth,
+                                theme.accent,
+                                &theme,
+                                cx.listener(move |this, _, _, cx| {
+                                    let export = ExportPreferences {
+                                        bit_depth: depth,
+                                        ..this.export
+                                    };
+                                    this.apply_export(export, cx);
+                                }),
+                            )
+                        }),
+                )
+                .into_any_element(),
+        );
+
+        rows.push(section_title(self.t(Key::ExportRate), &theme));
+        rows.push(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_1()
+                // The project's own rate first, and the default: an export at any other rate
+                // resamples the whole mix, which is a thing to ask for rather than to inherit
+                // from whatever the output device happens to be running at.
+                .child(self.export_rate_button(
+                    "export-rate-project",
+                    self.t(Key::ProjectRate),
+                    None,
+                    cx,
+                ))
+                .children(AudioPreferences::RATE_CHOICES.into_iter().enumerate().map(
+                    |(index, rate)| {
+                        self.export_rate_button(
+                            ("export-rate", index),
+                            messages::rate_single(self.language, rate as f64 / 1000.0),
+                            Some(rate),
+                            cx,
+                        )
+                    },
+                ))
+                .into_any_element(),
+        );
+
+        rows.push(section_title(self.t(Key::ExportDither), &theme));
+        // Off and unusable at a float depth rather than hidden: a control that disappears when
+        // a neighbour moves reads as a bug in the window. There is nothing to dither *to* when
+        // the file stores what the render produced.
+        let dithers = export.dither_applies();
+        let on = export.dither && dithers;
+        rows.push(
+            div()
+                .flex()
+                .gap_1()
+                .child(button(
+                    "export-dither",
+                    self.t(if on { Key::ValueOn } else { Key::ValueOff }),
+                    ButtonStyle::Normal,
+                    on,
+                    theme.accent,
+                    &theme,
+                    cx.listener(move |this, _, _, cx| {
+                        if !this.export.dither_applies() {
+                            return;
+                        }
+                        let export = ExportPreferences {
+                            dither: !this.export.dither,
+                            ..this.export
+                        };
+                        this.apply_export(export, cx);
+                    }),
+                ))
+                .into_any_element(),
+        );
+        rows.push(note(self.t(Key::ExportDitherNote), &theme));
 
         if let Some(status) = live {
             rows.push(divider(&theme).into_any_element());
@@ -703,6 +812,37 @@ impl SettingsWindow {
                     ..this.audio.clone()
                 };
                 this.apply_audio(audio, cx);
+            }),
+        )
+        .into_any_element()
+    }
+
+    /// One choice of rate to render an export at.
+    ///
+    /// Deliberately not [`Self::rate_button`]: that one drives the *device*, and a render is not
+    /// a device. The lists even differ — an export can be asked for a rate no output here can
+    /// play, which is the ordinary case for delivering 44.1 kHz from a 48 kHz rig.
+    fn export_rate_button(
+        &self,
+        id: impl Into<gpui::ElementId>,
+        label: impl Into<gpui::SharedString>,
+        rate: Option<u32>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = self.theme.clone();
+        button(
+            id.into(),
+            label.into(),
+            ButtonStyle::Normal,
+            self.export.sample_rate == rate,
+            theme.accent,
+            &theme,
+            cx.listener(move |this, _, _, cx| {
+                let export = ExportPreferences {
+                    sample_rate: rate,
+                    ..this.export
+                };
+                this.apply_export(export, cx);
             }),
         )
         .into_any_element()

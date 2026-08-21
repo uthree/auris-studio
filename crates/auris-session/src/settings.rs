@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use auris_i18n::Language;
+use auris_io::{WavBitDepth, WavExportSettings};
 use serde::{Deserialize, Serialize};
 
 use crate::error::SessionError;
@@ -73,6 +74,52 @@ impl AudioPreferences {
     }
 }
 
+/// How a bounce is written.
+///
+/// Kept with the settings rather than in the document: the depth somebody masters at is a fact
+/// about them and their delivery, not about the song, and a project handed to somebody else
+/// should be exported the way *they* export. It is also why there is no dialog in front of the
+/// save sheet — an export that asks three questions every time is an export people stop using
+/// for a quick listen.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExportPreferences {
+    /// Sample format written to the file.
+    pub bit_depth: WavBitDepth,
+    /// Add TPDF dither before quantising. Only ever applied at an integer depth — see
+    /// [`Self::dither_applies`].
+    pub dither: bool,
+    /// Rate to render and write at. `None` uses the project's own rate.
+    ///
+    /// Rendering at a rate is not the same as writing one into the header: the render is done at
+    /// this rate, so asking for 44.1 from a 48 kHz project resamples the whole mix rather than
+    /// mislabelling it.
+    pub sample_rate: Option<u32>,
+}
+
+impl ExportPreferences {
+    /// Whether dither can do anything at the chosen depth.
+    ///
+    /// A float file stores what the render produced, so there is nothing to dither *to*. The
+    /// switch is shown greyed rather than hidden, because a control that disappears when a
+    /// neighbour moves reads as a bug in the window.
+    pub fn dither_applies(&self) -> bool {
+        self.bit_depth.is_integer()
+    }
+
+    /// The settings a WAV writer should be given, at the rate the render actually ran at.
+    ///
+    /// The rate is passed in rather than read from here because those two can disagree: a render
+    /// that could not be run at the asked-for rate must not be labelled with it.
+    pub fn wav_settings(&self, rendered_rate: f64) -> WavExportSettings {
+        WavExportSettings {
+            bit_depth: self.bit_depth,
+            sample_rate: rendered_rate.round().max(1.0) as u32,
+            dither: self.dither && self.dither_applies(),
+        }
+    }
+}
+
 /// Everything the application remembers between runs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -94,6 +141,8 @@ pub struct Settings {
     /// [`should_autosave`](crate::session::should_autosave), and is the reason this is a setting
     /// rather than simply how the application behaves.
     pub autosave: bool,
+    /// How a bounce is written.
+    pub export: ExportPreferences,
 }
 
 impl Default for Settings {
@@ -105,6 +154,7 @@ impl Default for Settings {
             // and a settings file written before this field existed is filled in from exactly
             // this value.
             autosave: true,
+            export: ExportPreferences::default(),
         }
     }
 }
@@ -406,5 +456,38 @@ mod tests {
         // A directory that was never there is the ordinary first run, not an error.
         assert!(migrate_config(&same.join("missing"), &same.join("also-missing")).is_empty());
         assert!(!same.join("also-missing").exists());
+    }
+
+    #[test]
+    fn dither_is_dropped_at_a_depth_that_cannot_use_it() {
+        // Asked for and impossible: a float file stores what the render produced, so there is
+        // nothing to dither *to*. The preference is kept as it was — moving to float and back
+        // must not silently turn the switch off — and simply not applied.
+        let float = ExportPreferences {
+            bit_depth: WavBitDepth::Float32,
+            dither: true,
+            sample_rate: None,
+        };
+        assert!(!float.dither_applies());
+        assert!(!float.wav_settings(48_000.0).dither);
+        assert!(float.dither, "the preference itself is not rewritten");
+
+        let sixteen = ExportPreferences {
+            bit_depth: WavBitDepth::Int16,
+            ..float
+        };
+        assert!(sixteen.wav_settings(48_000.0).dither);
+    }
+
+    #[test]
+    fn the_file_is_labelled_with_the_rate_it_was_rendered_at() {
+        // Not with the one that was asked for. A render that could not run at 44.1 must not
+        // produce a file claiming it did — the samples would play back at the wrong speed.
+        let asked = ExportPreferences {
+            bit_depth: WavBitDepth::Int24,
+            dither: false,
+            sample_rate: Some(44_100),
+        };
+        assert_eq!(asked.wav_settings(48_000.0).sample_rate, 48_000);
     }
 }

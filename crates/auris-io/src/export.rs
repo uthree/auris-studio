@@ -11,7 +11,9 @@ use hound::{SampleFormat, WavSpec, WavWriter};
 use crate::error::{IoError, Result};
 
 /// Sample format of an exported WAV file.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum WavBitDepth {
     /// 16-bit signed integer — CD quality, the safest choice for distribution.
     Int16,

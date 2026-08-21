@@ -197,6 +197,14 @@ strings! {
     SampleRate { en: "Sample Rate", ja: "サンプルレート" }
     DeviceDefaultRate { en: "Device Default", ja: "デバイス標準" }
     BufferSize { en: "Buffer Size", ja: "バッファサイズ" }
+    ExportFormat { en: "Export Format", ja: "書き出し形式" }
+    ExportRate { en: "Export Rate", ja: "書き出しサンプルレート" }
+    ProjectRate { en: "Project Rate", ja: "プロジェクトのレート" }
+    ExportDither { en: "Dither", ja: "ディザ" }
+    ExportDitherNote {
+        en: "TPDF dither before quantising. Worth it at 16-bit; pointless at 24, and impossible at float.",
+        ja: "量子化前に TPDF ディザを加えます。16 bit では有効ですが、24 bit ではほぼ無意味で、float では適用されません。"
+    }
     RateUnknown { en: "rate unknown", ja: "レート不明" }
     DeviceIsDefault { en: "default", ja: "既定" }
     RestoreDefaults { en: "Restore Defaults", ja: "既定に戻す" }
