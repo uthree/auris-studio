@@ -260,6 +260,7 @@ impl AurisApp {
         let grid_label = self.grid_label();
         let master_db = gain_to_db(self.master_level());
         let master_clipped = self.session.meters().master_clipped();
+        let anything_clipped = self.anything_clipped();
         let master_gain_db = self.project().master.gain_db;
         // `None` while no input device is open, which is what decides whether the block is drawn
         // at all. The session answers it rather than the frontend inferring it from monitoring
@@ -545,7 +546,6 @@ impl AurisApp {
                     .child(
                         div()
                             .id("clear-clipping")
-                            .cursor_pointer()
                             .child(meter_block(
                                 self.t(Key::Master),
                                 format!("{master_gain_db:+.1} dB"),
@@ -553,11 +553,19 @@ impl AurisApp {
                                 master_clipped,
                                 &theme,
                             ))
-                            .tooltip(self.tip(Key::ClearClipping, ""))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.clear_clipping();
-                                cx.notify();
-                            })),
+                            // Only while there is something to put out, and asked of the whole
+                            // bank rather than of this meter: a track scrolled out of sight has
+                            // clipped just as loudly as the master, and clearing has to be
+                            // offered while *any* of them is lit. A pointer and a tooltip over
+                            // a block that would do nothing is an invitation to press it.
+                            .when(anything_clipped, |this| {
+                                this.cursor_pointer()
+                                    .tooltip(self.tip(Key::ClearClipping, ""))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.clear_clipping();
+                                        cx.notify();
+                                    }))
+                            }),
                     ),
             )
     }

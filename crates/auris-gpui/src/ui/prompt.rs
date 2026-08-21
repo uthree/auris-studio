@@ -1325,10 +1325,16 @@ impl AurisApp {
     /// The palette first: opening it closes the rename sheet, so the two are never both open, and
     /// asking in this order means the answer does not depend on that staying true.
     fn writable_field(&mut self) -> Option<&mut TextField> {
-        match self.palette.as_mut() {
-            Some(palette) => Some(&mut palette.field),
-            None => self.prompt.as_mut().and_then(Prompt::field_mut),
+        // In the order they sit in front of each other. The library's field is in a panel rather
+        // than in a sheet, so anything modal opened over it takes the typing back.
+        if let Some(palette) = self.palette.as_mut() {
+            return Some(&mut palette.field);
         }
+        if let Some(field) = self.prompt.as_mut().and_then(Prompt::field_mut) {
+            return Some(field);
+        }
+        self.library_search_focused
+            .then_some(&mut self.library_search)
     }
 }
 
@@ -1338,10 +1344,13 @@ impl crate::ui::text_field::HasTextField for AurisApp {
     }
 
     fn readable_field(&self) -> Option<&TextField> {
-        match self.palette.as_ref() {
-            Some(palette) => Some(&palette.field),
-            None => self.prompt.as_ref().and_then(Prompt::field),
+        if let Some(palette) = self.palette.as_ref() {
+            return Some(&palette.field);
         }
+        if let Some(field) = self.prompt.as_ref().and_then(Prompt::field) {
+            return Some(field);
+        }
+        self.library_search_focused.then_some(&self.library_search)
     }
 
     /// Puts the palette's highlight back on the first row.

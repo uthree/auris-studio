@@ -980,9 +980,41 @@ impl AurisApp {
             || self.prompt_key(event, window, cx)
             || self.menu_key(event, window, cx)
             || self.menu_bar_key(event, window, cx)
+            // Last, because everything above it is in front of the browser on the screen and
+            // has to answer for a key first.
+            || self.library_search_key(event)
         {
             cx.stop_propagation();
             cx.notify();
+        }
+    }
+
+    /// Answers for a key while the library's search box holds the keyboard.
+    ///
+    /// Only the keys that are not text. The characters never come through here at all — they
+    /// arrive through the platform's input handler, which is what lets an IME compose a Japanese
+    /// query into the field — so all this does is give the keyboard back.
+    fn library_search_key(&mut self, event: &gpui::KeyDownEvent) -> bool {
+        if !self.library_search_focused {
+            return false;
+        }
+        // While the IME is composing, these belong to the candidate window.
+        if self.library_search.marked().is_some() {
+            return false;
+        }
+        match event.keystroke.key.as_str() {
+            // Escape throws the query away; Enter keeps it. The list is already showing what
+            // was found, so leaving with it on screen is the useful half of pressing Return —
+            // it is the browser that is being searched, not a dialog that is being answered.
+            "escape" => {
+                self.leave_library_search();
+                true
+            }
+            "enter" => {
+                self.library_search_focused = false;
+                true
+            }
+            _ => false,
         }
     }
 

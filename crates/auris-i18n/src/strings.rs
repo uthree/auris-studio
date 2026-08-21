@@ -128,6 +128,8 @@ strings! {
         en: "No track selected — effects will go to the master bus",
         ja: "トラックが未選択です — エフェクトはマスターに追加されます"
     }
+    BrowserSearch { en: "Search the library", ja: "ライブラリを検索" }
+    BrowserNothingFound { en: "Nothing here answers to that", ja: "該当するものはありません" }
     BrowserNoSoundFonts {
         en: "None imported yet",
         ja: "まだ読み込まれていません"

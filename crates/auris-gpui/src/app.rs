@@ -991,6 +991,14 @@ pub struct AurisApp {
     /// [`Self::export`] is not set until a path comes back, so this is what stops a second
     /// Export while the picker is still up.
     pub(crate) choosing_export: bool,
+    /// What the library is being filtered by.
+    ///
+    /// Always present rather than opened: a browser with twenty rows of plugins and a hundred
+    /// and twenty-eight sounds in one font is a list nobody scrolls twice, and a search that has
+    /// to be summoned first is one people forget is there.
+    pub(crate) library_search: crate::ui::text_field::TextField,
+    /// Whether that field is taking the keyboard.
+    pub(crate) library_search_focused: bool,
     /// Whether [`Self::status`] is reporting a failure, so it can be shown as one.
     pub(crate) status_failed: bool,
     /// What the input meter is currently reading, as a linear peak.
@@ -1146,6 +1154,8 @@ impl AurisApp {
             status_failed: false,
             input_level: 0.0,
             input_clipped: false,
+            library_search: crate::ui::text_field::TextField::new(String::new()),
+            library_search_focused: false,
             automation_lanes: BTreeMap::new(),
             lane_scroll: px(0.0),
             settings,
@@ -1199,6 +1209,13 @@ impl AurisApp {
             // The song sheet is a form, and every letter typed into one of its fields has to
             // reach the field rather than the binding that letter would otherwise fire.
             || self.song_sheet.is_some()
+            // The library's search box, which is not a sheet and does not cover anything — but
+            // a bound key never reaches a key listener in gpui, so a field that did not claim
+            // them could not be typed `i` into without the inspector opening. It is left the
+            // moment Escape is pressed or a result is chosen, and the field draws a focus ring
+            // for as long as it holds them, because a panel that has quietly taken the space
+            // bar is worse than one that never offered to be typed into.
+            || self.library_search_focused
     }
 
     /// The key context the window itself should name.

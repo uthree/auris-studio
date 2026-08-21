@@ -29,6 +29,9 @@
 use std::collections::HashMap;
 
 use auris_i18n::Key;
+use gpui::MouseButton;
+
+use crate::ui::icons::icon;
 use auris_session::prelude::*;
 use gpui::{AnyElement, IntoElement, MouseDownEvent, Pixels, Window, div, prelude::*, px};
 
@@ -248,6 +251,50 @@ fn swatch(color: gpui::Hsla) -> impl IntoElement {
     div().w(px(3.0)).h(px(10.0)).rounded(px(1.5)).bg(color)
 }
 
+/// How many results a search shows.
+///
+/// A browser is a list to run an eye down, and a query that answers with two hundred rows has
+/// answered nothing. Anybody who cannot see what they wanted in forty types another letter.
+pub(crate) const SEARCH_LIMIT: usize = 40;
+
+/// The entries `query` finds, best first.
+///
+/// Generic over what an entry *is*, because the kinds the browser holds — an instrument, an
+/// effect, a sound in a font, a plugin file on the disk — are one question when somebody is
+/// looking for a name, and the whole point of searching is that they stop being four lists.
+///
+/// The scoring is the command palette's, so `revb` finds Reverb in both places and means the
+/// same thing in both. Ties keep the order they were collected in, which is the order the tree
+/// shows them.
+pub(crate) fn best_matches<T>(entries: Vec<(String, T)>, query: &str, limit: usize) -> Vec<T> {
+    let mut scored: Vec<(usize, i32, T)> = entries
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, (name, entry))| {
+            crate::ui::palette::match_score(query, &name).map(|score| (index, score, entry))
+        })
+        .collect();
+    scored.sort_by_key(|(index, score, _)| (std::cmp::Reverse(*score), *index));
+    scored.truncate(limit);
+    scored.into_iter().map(|(_, _, entry)| entry).collect()
+}
+
+/// One thing a search turned up, and enough to draw and act on it.
+enum Found {
+    /// A built-in instrument, with the category it is filed under.
+    Instrument(LibraryPlugin, PluginCategory),
+    /// A built-in effect, likewise.
+    Effect(LibraryPlugin, PluginCategory),
+    /// One sound in one font.
+    Preset(SoundFontId, SoundFontPreset),
+    /// A `.clap` file on the disk: its place in the scanned list, its name, and its path.
+    ///
+    /// The file rather than the plugins in it, because the plugins in it are not known until it
+    /// is loaded — and a result list that loads a shared library per row is a result list that
+    /// runs somebody else's code to answer a keystroke.
+    ClapFile(usize, String, std::path::PathBuf),
+}
+
 /// The gap a row with no mark leaves where one would have been, so its name still lines up with
 /// the names of the rows that have one.
 fn no_swatch() -> impl IntoElement {
@@ -282,6 +329,7 @@ impl AurisApp {
             .size_full()
             .bg(theme.surface)
             .child(panel_header(self.t(Key::Library), &theme))
+            .child(self.library_search_field(cx))
             .child(
                 // No gap between the rows and half the padding round them. A browser is a list
                 // to run an eye down, and every pixel of air between two names is a name that
@@ -299,11 +347,136 @@ impl AurisApp {
             )
     }
 
+    /// Gives the keyboard back to the application and clears the query.
+    ///
+    /// Both together, always. A query left behind an unfocused field is a browser showing a
+    /// filtered list with nothing on screen saying why, and a focus left behind a cleared query
+    /// is a panel that has quietly taken the space bar.
+    pub(crate) fn leave_library_search(&mut self) {
+        self.library_search = crate::ui::text_field::TextField::new(String::new());
+        self.library_search_focused = false;
+    }
+
+    /// The search box at the top of the browser.
+    ///
+    /// Always there rather than summoned. A browser holding twenty plugins and a font with a
+    /// hundred and twenty-eight sounds is a list nobody scrolls twice, and a search that has to
+    /// be opened first is one people forget is there.
+    ///
+    /// Clicking it takes the keyboard, because a bound key never reaches a key listener in gpui
+    /// and a field that did not claim them could not be typed `i` into without the inspector
+    /// opening. It says so while it holds them — the accent ring is not decoration — and gives
+    /// them back on Escape, on Enter, and as soon as a result is chosen.
+    fn library_search_field(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
+        let theme = self.theme.clone();
+        let focused = self.library_search_focused;
+        let text = self.library_search.content().to_string();
+        let empty = text.is_empty();
+        let selection = self.library_search.selection();
+        let marked = self.library_search.marked();
+        let view = cx.entity();
+        // The window's own handle, the one the palette and the prompt type through: the input
+        // handler is registered against whatever holds the keyboard, and while this field has it
+        // there is nothing else it could be.
+        let handle = self.focus.clone();
+
+        div()
+            .id("library-search")
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .mx_1()
+            .mb_1()
+            .h(Metrics::CONTROL_HEIGHT)
+            .px_1p5()
+            .rounded(Metrics::RADIUS_SM)
+            .bg(theme.surface_sunken)
+            .border_1()
+            .border_color(match focused {
+                true => theme.accent,
+                false => theme.border_subtle,
+            })
+            .cursor_text()
+            .child(icon(Icon::Library, px(11.0), theme.text_faint))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .child(match focused {
+                        true => crate::ui::prompt::editable_text(
+                            text.clone().into(),
+                            selection,
+                            marked,
+                            handle,
+                            view,
+                            theme.clone(),
+                        )
+                        .into_any_element(),
+                        false => div()
+                            .flex()
+                            .items_center()
+                            .h_full()
+                            .text_xs()
+                            .text_color(theme.text)
+                            .truncate()
+                            .child(text.clone())
+                            .into_any_element(),
+                    })
+                    // The placeholder under the field rather than in it, so the real text is
+                    // never something the field has to decide whether to keep.
+                    .when(empty, |this| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .flex()
+                                .items_center()
+                                .text_xs()
+                                .text_color(theme.text_faint)
+                                .truncate()
+                                .child(self.t(Key::BrowserSearch)),
+                        )
+                    }),
+            )
+            // Only once there is something to clear, because a cross on an empty field is a
+            // button that does nothing sitting where the eye keeps going.
+            .when(!empty, |this| {
+                this.child(
+                    div()
+                        .id("library-search-clear")
+                        .cursor_pointer()
+                        .child(icon(Icon::Cross, px(10.0), theme.text_muted))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                                this.leave_library_search();
+                                cx.stop_propagation();
+                                cx.notify();
+                            }),
+                        ),
+                )
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                    this.library_search_focused = true;
+                    cx.notify();
+                }),
+            )
+            .into_any_element()
+    }
+
     /// The whole tree, flattened into the rows that are currently visible.
     ///
     /// A shut branch contributes its own row and nothing else, so the cost of a font with a
     /// hundred and twenty-eight sounds is not paid until somebody opens it.
     fn library_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
+        let query = self.library_search.content().trim().to_string();
+        if !query.is_empty() {
+            return self.search_rows(&query, cx);
+        }
         let theme = self.theme.clone();
         let mut rows = self.instrument_rows(cx);
         rows.push(divider(&theme).into_any_element());
@@ -313,6 +486,133 @@ impl AurisApp {
         rows.push(divider(&theme).into_any_element());
         rows.extend(self.installed_plugin_rows(cx));
         rows
+    }
+
+    /// Everything the browser can name, filtered down to what a query finds.
+    ///
+    /// A flat list rather than a pruned tree. While a query is on, the sections and the branches
+    /// are in the way: what somebody typing `marim` wants is the row, not the three headings
+    /// above it, and a tree that opened itself to show one leaf would have to close itself again
+    /// afterwards.
+    ///
+    /// A hosted plugin is matched by its *file*, which is the only thing known about it before it
+    /// is loaded. Searching the names inside would mean opening every `.clap` on the machine to
+    /// answer one keystroke.
+    fn search_rows(&mut self, query: &str, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
+        let mut entries: Vec<(String, Found)> = Vec::new();
+        for descriptor in self.registry().instruments() {
+            entries.push((
+                descriptor.name.to_string(),
+                Found::Instrument(
+                    LibraryPlugin {
+                        id: descriptor.id.to_string(),
+                        name: descriptor.name.to_string(),
+                        description: descriptor.description.to_string(),
+                    },
+                    descriptor.category,
+                ),
+            ));
+        }
+        for descriptor in self.registry().effects() {
+            entries.push((
+                descriptor.name.to_string(),
+                Found::Effect(
+                    LibraryPlugin {
+                        id: descriptor.id.to_string(),
+                        name: descriptor.name.to_string(),
+                        description: descriptor.description.to_string(),
+                    },
+                    descriptor.category,
+                ),
+            ));
+        }
+        let fonts: Vec<SoundFontId> = self.session.soundfonts().map(|font| font.id).collect();
+        for font in fonts {
+            for preset in self.session.soundfont_presets(font) {
+                entries.push((preset.name.clone(), Found::Preset(font, preset)));
+            }
+        }
+        for (index, file) in self.clap_files().to_vec().into_iter().enumerate() {
+            let name = file
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().to_string())
+                .unwrap_or_default();
+            entries.push((name.clone(), Found::ClapFile(index, name, file)));
+        }
+
+        let found = best_matches(entries, query, SEARCH_LIMIT);
+        if found.is_empty() {
+            return vec![self.note_row(0, self.t(Key::BrowserNothingFound))];
+        }
+        found
+            .into_iter()
+            .map(|entry| match entry {
+                Found::Instrument(plugin, category) => {
+                    let id = plugin.id.clone();
+                    self.plugin_row(
+                        &plugin,
+                        Icon::Keyboard,
+                        category,
+                        cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                            this.set_track_instrument(&id);
+                            this.leave_library_search();
+                            cx.notify();
+                        }),
+                    )
+                }
+                Found::Effect(plugin, category) => {
+                    let id = plugin.id.clone();
+                    self.plugin_row(
+                        &plugin,
+                        Icon::Knob,
+                        category,
+                        cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                            this.add_effect_to_selection(&id);
+                            this.leave_library_search();
+                            cx.notify();
+                        }),
+                    )
+                }
+                Found::Preset(font, preset) => {
+                    let choice = PresetRef {
+                        font,
+                        bank: preset.bank,
+                        patch: preset.patch,
+                    };
+                    self.preset_row(
+                        &preset,
+                        choice,
+                        cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                            this.set_track_preset(choice);
+                            this.leave_library_search();
+                            cx.notify();
+                        }),
+                    )
+                }
+                // The file, not the plugins in it: opening it here would load it, and a result
+                // list that loads a shared library per row is a result list that stutters. The
+                // row clears the search and opens the file's branch in the tree, which is where
+                // the plugins inside it are listed the way they always were.
+                Found::ClapFile(index, name, file) => {
+                    let branch = Branch::PluginFile(index);
+                    self.plugin_row(
+                        &LibraryPlugin {
+                            id: file.display().to_string(),
+                            name,
+                            description: file.display().to_string(),
+                        },
+                        Icon::Knob,
+                        PluginCategory::Utility,
+                        cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                            this.leave_library_search();
+                            this.library.set_open(Branch::Plugins, true);
+                            this.library.set_open(branch, true);
+                            cx.notify();
+                        }),
+                    )
+                }
+            })
+            .collect()
     }
 
     /// The installed CLAP plugins section: the files found on this machine, and what is in one
@@ -1187,5 +1487,45 @@ mod tests {
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(count, keys.len());
+    }
+
+    #[test]
+    fn a_query_finds_what_it_names_and_puts_the_closest_first() {
+        let entries = vec![
+            ("Analogue Reverb".to_string(), 1),
+            ("Reverb".to_string(), 2),
+            ("Saw Bass".to_string(), 3),
+        ];
+        // Both contain the letters; the shorter name that starts with them wins.
+        assert_eq!(best_matches(entries, "revb", 10), vec![2, 1]);
+    }
+
+    #[test]
+    fn a_query_nothing_answers_to_finds_nothing() {
+        let entries = vec![("Reverb".to_string(), 1)];
+        assert!(best_matches(entries, "zzz", 10).is_empty());
+    }
+
+    #[test]
+    fn the_result_list_stops_where_it_stops_being_useful() {
+        // Forty rows is already more than anybody reads; two hundred is an answer that has
+        // answered nothing. Anybody who cannot see it types another letter.
+        let entries: Vec<(String, usize)> = (0..200).map(|n| (format!("Delay {n}"), n)).collect();
+        assert_eq!(
+            best_matches(entries, "delay", SEARCH_LIMIT).len(),
+            SEARCH_LIMIT
+        );
+    }
+
+    #[test]
+    fn an_empty_query_keeps_the_order_the_tree_shows() {
+        // Not that the panel ever asks — an empty query draws the tree — but a tie-break that
+        // scrambled the list would scramble it for a one-letter query too.
+        let entries = vec![
+            ("A".to_string(), 1),
+            ("B".to_string(), 2),
+            ("C".to_string(), 3),
+        ];
+        assert_eq!(best_matches(entries, "", 10), vec![1, 2, 3]);
     }
 }
