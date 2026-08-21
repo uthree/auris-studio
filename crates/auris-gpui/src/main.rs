@@ -25,6 +25,8 @@ mod theme;
 
 mod ui;
 
+use std::path::PathBuf;
+
 use auris_session::Settings;
 use gpui::{
     App, AppContext, Application, Bounds, Pixels, TitlebarOptions, WindowBounds, WindowOptions, px,
@@ -90,6 +92,17 @@ fn main() {
             }
         });
 
+        // A project named on the command line, or handed over by the shell because somebody
+        // double-clicked a `.auris` file with this registered against it. Opened *after* the
+        // window exists, through the same path the file dialog and a dropped file use: it
+        // reports what it opened, deals with missing audio, and paints a frame before it starts
+        // decoding, none of which could happen if the document were loaded before the window.
+        if let Some(path) = project_argument(std::env::args_os()) {
+            window
+                .update(cx, |view, _, cx| view.open_project_at(path, cx))
+                .ok();
+        }
+
         // The key bindings are dispatched to the focused view, so focus the app up front —
         // otherwise the space bar would not start playback until something was clicked. The
         // arrangement rather than the window itself: a binding scoped to a panel is only on the
@@ -127,6 +140,25 @@ fn main() {
 
         cx.activate(true);
     });
+}
+
+/// The project to open at launch, out of the arguments the shell handed over.
+///
+/// The first argument that is not an option, and nothing after it: one window holds one
+/// document, so a second path could only replace the first as it finished loading.
+///
+/// Anything starting with `-` is skipped rather than rejected. That is not politeness about
+/// flags this binary does not have — it is what makes launching from the macOS Finder work at
+/// all, because the process serial number arrives as `-psn_0_12345` in front of everything else.
+///
+/// The path is not checked here, for extension or for existence. `Session::open` has a sentence
+/// for every way a file can fail to be a project, in the user's own language, and swallowing a
+/// mistyped name would leave an empty window and no explanation.
+fn project_argument(args: impl IntoIterator<Item = std::ffi::OsString>) -> Option<PathBuf> {
+    args.into_iter()
+        .skip(1)
+        .find(|arg| !arg.to_string_lossy().starts_with('-'))
+        .map(PathBuf::from)
 }
 
 /// Where the window opens, shrunk to fit the display it opens on.
@@ -186,5 +218,44 @@ mod tests {
         // Subtracting the margin from a tiny display would otherwise ask for a negative size.
         let tiny = fitted_size(PREFERRED_SIZE, size(px(40.), px(30.)));
         assert_eq!(tiny, size(px(640.), px(480.)));
+    }
+
+    fn args(list: &[&str]) -> Vec<std::ffi::OsString> {
+        list.iter().map(std::ffi::OsString::from).collect()
+    }
+
+    #[test]
+    fn a_project_named_on_the_command_line_is_the_one_that_opens() {
+        assert_eq!(
+            project_argument(args(&["auris-studio", "Song/Song.auris"])),
+            Some(PathBuf::from("Song/Song.auris"))
+        );
+        // Nothing to open is the ordinary launch.
+        assert_eq!(project_argument(args(&["auris-studio"])), None);
+    }
+
+    #[test]
+    fn the_finders_own_argument_is_stepped_over_rather_than_opened() {
+        // Launching from the macOS Finder puts a process serial number in front of everything
+        // else. Treating it as a filename would open every double-click on a broken path.
+        assert_eq!(
+            project_argument(args(&["auris-studio", "-psn_0_12345", "Song/Song.auris"])),
+            Some(PathBuf::from("Song/Song.auris"))
+        );
+        assert_eq!(
+            project_argument(args(&["auris-studio", "-psn_0_12345"])),
+            None
+        );
+    }
+
+    #[test]
+    fn only_the_first_path_is_taken() {
+        // One window holds one document, so the second could only replace the first as it
+        // finished loading — two projects opening over each other, in whichever order the
+        // disks happened to answer.
+        assert_eq!(
+            project_argument(args(&["auris-studio", "One.auris", "Two.auris"])),
+            Some(PathBuf::from("One.auris"))
+        );
     }
 }
