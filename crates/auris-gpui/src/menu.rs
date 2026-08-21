@@ -12,6 +12,34 @@ use auris_i18n::{Key, Language};
 use gpui::{Action, Menu, MenuItem, SharedString, SystemMenuType};
 
 use crate::actions;
+use crate::dock::{Panel, PanelLayout};
+use auris_session::prelude::{CC_MODULATION, ClipCurve};
+
+/// What the menu needs to know about the document and the window to draw itself.
+///
+/// A flat snapshot rather than a borrow of the application, so [`model`] stays a function of its
+/// arguments and the whole menu — every label, every tick, every dimmed row — can be asserted
+/// without a window. Everything here comes from the session; what comes from the *window* is the
+/// [`PanelLayout`] passed beside it, which already answers which panels and strips are showing.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct MenuState {
+    /// There is a step on the undo stack.
+    pub can_undo: bool,
+    /// There is a step to put back.
+    pub can_redo: bool,
+    /// The transport is cycling over the loop region.
+    pub looping: bool,
+    /// Takes are being trimmed to the punch region.
+    pub punching: bool,
+    /// A take is running.
+    pub recording: bool,
+    /// The live input is being played through a track.
+    pub monitoring: bool,
+    /// The click is on.
+    pub metronome: bool,
+    /// The computer keyboard is playing notes.
+    pub musical_typing: bool,
+}
 
 /// One row of a menu.
 pub enum MenuRow {
@@ -25,6 +53,18 @@ pub enum MenuRow {
         action: Box<dyn Action>,
         /// Identifier of the key binding shown beside it, as in [`crate::actions::BINDABLE`].
         binding: &'static str,
+        /// Whether choosing it could do anything.
+        ///
+        /// Only Undo and Redo are ever `false`, and only because those two are the pair everybody
+        /// looks at to find out whether there is anything to take back — the rest of the menu
+        /// answers "nothing selected" with a line in the status bar, which says more than a
+        /// greyed row would.
+        enabled: bool,
+        /// Whether the thing this row switches is currently on.
+        ///
+        /// The View and Transport menus are full of switches whose labels are nouns — "Mixer",
+        /// "Metronome" — and a noun with no mark beside it cannot say which way it is set.
+        checked: bool,
     },
     /// A submenu the operating system fills in itself. macOS only.
     System {
@@ -43,21 +83,50 @@ pub struct MenuSection {
     pub rows: Vec<MenuRow>,
 }
 
-/// A command row.
+/// A command row: always available, never ticked.
 fn command(label: SharedString, action: impl Action, binding: &'static str) -> MenuRow {
     MenuRow::Command {
         label,
         action: Box::new(action),
         binding,
+        enabled: true,
+        checked: false,
     }
 }
 
-/// The whole menu, in `language`.
+/// A command row that is dimmed and inert while `enabled` is false.
+fn command_if(
+    enabled: bool,
+    label: SharedString,
+    action: impl Action,
+    binding: &'static str,
+) -> MenuRow {
+    MenuRow::Command {
+        label,
+        action: Box::new(action),
+        binding,
+        enabled,
+        checked: false,
+    }
+}
+
+/// A command row that carries a tick while the thing it switches is `on`.
+fn toggle(label: SharedString, action: impl Action, binding: &'static str, on: bool) -> MenuRow {
+    MenuRow::Command {
+        label,
+        action: Box::new(action),
+        binding,
+        enabled: true,
+        checked: on,
+    }
+}
+
+/// The whole menu, in `language`, with every switch set the way `state` and `panels` say.
 ///
 /// The shape differs by platform because the conventions do. macOS collects the application's
 /// own commands into a menu named after the application, which the system draws first; Windows
 /// and Linux have no such menu, and preferences and quit belong at the bottom of File.
-pub fn model(language: Language) -> Vec<MenuSection> {
+pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<MenuSection> {
     let t = |key: Key| -> SharedString { key.get(language).into() };
     let mut sections = Vec::new();
 
@@ -151,8 +220,8 @@ pub fn model(language: Language) -> Vec<MenuSection> {
     sections.push(MenuSection {
         name: t(Key::GroupEdit),
         rows: vec![
-            command(t(Key::CmdUndo), actions::Undo, "edit.undo"),
-            command(t(Key::CmdRedo), actions::Redo, "edit.redo"),
+            command_if(state.can_undo, t(Key::CmdUndo), actions::Undo, "edit.undo"),
+            command_if(state.can_redo, t(Key::CmdRedo), actions::Redo, "edit.redo"),
             MenuRow::Separator,
             // Cut, copy and paste at the top of Edit, where every application on both platforms
             // puts them, and in pairs for the same reason the two Select Alls below are: one
@@ -328,48 +397,68 @@ pub fn model(language: Language) -> Vec<MenuSection> {
                 "view.palette",
             ),
             MenuRow::Separator,
-            command(
+            // Every row from here to the zoom is a switch whose label is a noun. "Mixer" cannot
+            // say whether the mixer is showing; the tick beside it can.
+            toggle(
                 t(Key::CmdShowLibrary),
                 actions::ToggleLibrary,
                 "view.library",
+                panels.is_open(Panel::Library),
             ),
-            command(
+            toggle(
                 t(Key::CmdShowInspector),
                 actions::ToggleInspector,
                 "view.inspector",
+                panels.is_open(Panel::Inspector),
             ),
-            command(
+            toggle(
                 t(Key::CmdShowPianoRoll),
                 actions::TogglePianoRoll,
                 "view.piano_roll",
+                panels.is_open(Panel::PianoRoll),
             ),
-            command(t(Key::CmdShowMixer), actions::ToggleMixer, "view.mixer"),
-            command(t(Key::CmdShowLog), actions::ToggleLog, "view.log"),
+            toggle(
+                t(Key::CmdShowMixer),
+                actions::ToggleMixer,
+                "view.mixer",
+                panels.is_open(Panel::Mixer),
+            ),
+            toggle(
+                t(Key::CmdShowLog),
+                actions::ToggleLog,
+                "view.log",
+                panels.is_open(Panel::Log),
+            ),
             MenuRow::Separator,
-            command(
+            toggle(
                 t(Key::CmdShowStructureLane),
                 actions::ToggleStructureLane,
                 "view.structure_lane",
+                panels.lanes.structure,
             ),
-            command(
+            toggle(
                 t(Key::CmdShowHarmonyLane),
                 actions::ToggleHarmonyLane,
                 "view.harmony_lane",
+                panels.lanes.harmony,
             ),
-            command(
+            toggle(
                 t(Key::CmdShowTempoMarks),
                 actions::ToggleTempoMarks,
                 "view.tempo_marks",
+                panels.lanes.tempo,
             ),
-            command(
+            toggle(
                 t(Key::CmdShowBendLane),
                 actions::ToggleBendLane,
                 "view.bend_lane",
+                panels.curve_lane(ClipCurve::Bend),
             ),
-            command(
+            toggle(
                 t(Key::CmdShowModulationLane),
                 actions::ToggleModulationLane,
                 "view.modulation_lane",
+                panels.curve_lane(ClipCurve::Controller(CC_MODULATION)),
             ),
             MenuRow::Separator,
             command(t(Key::CmdZoomIn), actions::ZoomIn, "view.zoom_in"),
@@ -380,41 +469,54 @@ pub fn model(language: Language) -> Vec<MenuSection> {
     sections.push(MenuSection {
         name: t(Key::GroupTransport),
         rows: vec![
+            // Play is not ticked, though it is as much a switch as the rest: the transport bar
+            // says whether the song is rolling in a way nothing else on screen does — the button
+            // is a pause sign and the playhead is moving — and a menu row that had to be opened
+            // to answer it would be answering a question nobody has.
             command(t(Key::CmdPlayStop), actions::TogglePlay, "transport.play"),
             command(
                 t(Key::CmdReturnToZero),
                 actions::ReturnToZero,
                 "transport.return",
             ),
-            command(
+            // The rest are ticked, and the reason is the same one every time: they are switches
+            // left set from an hour ago, and the only other thing that says which way is a lit
+            // glyph on a bar the user is not looking at when they open this menu.
+            toggle(
                 t(Key::CmdRecord),
                 actions::ToggleRecording,
                 "transport.record",
+                state.recording,
             ),
-            command(
+            toggle(
                 t(Key::CmdToggleMonitoring),
                 actions::ToggleMonitoring,
                 "transport.monitor",
+                state.monitoring,
             ),
-            command(
+            toggle(
                 t(Key::CmdTogglePunch),
                 actions::TogglePunch,
                 "transport.punch",
+                state.punching,
             ),
-            command(
+            toggle(
                 t(Key::CmdToggleCycle),
                 actions::ToggleLoop,
                 "transport.loop",
+                state.looping,
             ),
-            command(
+            toggle(
                 t(Key::CmdToggleMetronome),
                 actions::ToggleMetronome,
                 "transport.metronome",
+                state.metronome,
             ),
-            command(
+            toggle(
                 t(Key::CmdMusicalTyping),
                 actions::ToggleMusicalTyping,
                 "transport.musical_typing",
+                state.musical_typing,
             ),
             MenuRow::Separator,
             command(
@@ -434,8 +536,15 @@ pub fn model(language: Language) -> Vec<MenuSection> {
 ///
 /// Rebuilt rather than re-rendered when the language changes: the menu bar belongs to the
 /// operating system, so nothing about a redraw would touch it.
+///
+/// Built from a default state, and the ticks and the dimming it produces are dropped on the
+/// floor, because gpui's [`MenuItem`] has room for neither. That is not a decision made here: the
+/// menu belongs to the system and is handed over once, so even a `MenuItem` that could carry a
+/// tick would need the whole menu re-set on every change of any of the eight facts in
+/// [`MenuState`]. The window's own bar — which is what Windows and Linux see — draws both. When
+/// gpui grows the field, this is the one function that has to change.
 pub fn menus(language: Language) -> Vec<Menu> {
-    model(language)
+    model(language, &PanelLayout::default(), MenuState::default())
         .into_iter()
         .map(|section| Menu {
             name: section.name,
@@ -462,11 +571,124 @@ pub fn menus(language: Language) -> Vec<Menu> {
 mod tests {
     use super::*;
 
+    /// The menu of a window nobody has touched: nothing switched on, nothing to undo.
+    ///
+    /// What the tests about *shape* — where a rule falls, which menu a row is in — want, because
+    /// none of that depends on the state and passing one in would only be noise on every line.
+    fn plain(language: Language) -> Vec<MenuSection> {
+        model(language, &PanelLayout::default(), MenuState::default())
+    }
+
+    /// Whether the row labelled `label` carries a tick, or `None` when there is no such row.
+    fn checked(sections: &[MenuSection], label: Key) -> Option<bool> {
+        let wanted = label.get(Language::English);
+        sections
+            .iter()
+            .flat_map(|section| &section.rows)
+            .find_map(|row| match row {
+                MenuRow::Command { label, checked, .. } if label == wanted => Some(*checked),
+                _ => None,
+            })
+    }
+
+    /// Whether the row labelled `label` can be chosen, or `None` when there is no such row.
+    fn enabled(sections: &[MenuSection], label: Key) -> Option<bool> {
+        let wanted = label.get(Language::English);
+        sections
+            .iter()
+            .flat_map(|section| &section.rows)
+            .find_map(|row| match row {
+                MenuRow::Command { label, enabled, .. } if label == wanted => Some(*enabled),
+                _ => None,
+            })
+    }
+
+    #[test]
+    fn a_switch_in_the_menu_says_which_way_it_is_set() {
+        // The whole point of the tick: "Mixer" and "Metronome" are nouns, and a noun on its own
+        // cannot answer the question somebody opened the menu to ask.
+        let mut layout = PanelLayout::default();
+        let off = plain(Language::English);
+        assert_eq!(checked(&off, Key::CmdToggleMetronome), Some(false));
+
+        let on = model(
+            Language::English,
+            &layout,
+            MenuState {
+                metronome: true,
+                looping: true,
+                ..MenuState::default()
+            },
+        );
+        assert_eq!(checked(&on, Key::CmdToggleMetronome), Some(true));
+        assert_eq!(checked(&on, Key::CmdToggleCycle), Some(true));
+        // And only the ones that were switched on. A tick that followed the wrong field would
+        // pass every test that looked at one row.
+        assert_eq!(checked(&on, Key::CmdTogglePunch), Some(false));
+
+        // The panels read from the layout rather than from the state, so they are worth their own
+        // half of this: the two halves are wired separately and either could be wired to nothing.
+        assert_eq!(
+            checked(&off, Key::CmdShowMixer),
+            Some(layout.is_open(Panel::Mixer))
+        );
+        layout.toggle(Panel::Mixer);
+        assert_eq!(
+            checked(
+                &model(Language::English, &layout, MenuState::default()),
+                Key::CmdShowMixer
+            ),
+            Some(layout.is_open(Panel::Mixer))
+        );
+    }
+
+    #[test]
+    fn undo_and_redo_are_dim_until_there_is_something_to_take_back() {
+        let empty = plain(Language::English);
+        assert_eq!(enabled(&empty, Key::CmdUndo), Some(false));
+        assert_eq!(enabled(&empty, Key::CmdRedo), Some(false));
+
+        let stacked = model(
+            Language::English,
+            &PanelLayout::default(),
+            MenuState {
+                can_undo: true,
+                ..MenuState::default()
+            },
+        );
+        assert_eq!(enabled(&stacked, Key::CmdUndo), Some(true));
+        // Undoing does not fill the redo stack in this snapshot, and the menu must not pretend
+        // it did: the two are separate questions and the session answers them separately.
+        assert_eq!(enabled(&stacked, Key::CmdRedo), Some(false));
+
+        // Nothing else in the menu is ever dim. If that changes, this is the test that should be
+        // rewritten deliberately rather than the one that quietly starts passing for a new reason.
+        let dim: Vec<String> = empty
+            .iter()
+            .flat_map(|section| &section.rows)
+            .filter_map(|row| match row {
+                MenuRow::Command {
+                    label,
+                    enabled: false,
+                    ..
+                } => Some(label.to_string()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            dim,
+            vec![
+                Key::CmdUndo.get(Language::English).to_string(),
+                Key::CmdRedo.get(Language::English).to_string(),
+            ]
+        );
+    }
+
     #[test]
     fn every_row_names_a_key_binding_that_exists() {
         // The in-window bar shows the keystroke beside each command by looking the id up. A
         // typo would silently leave the column blank rather than fail anywhere.
-        for section in model(Language::English) {
+        for section in plain(Language::English) {
             for row in section.rows {
                 if let MenuRow::Command { label, binding, .. } = row {
                     assert!(
@@ -482,7 +704,7 @@ mod tests {
     fn settings_and_quit_are_reachable_on_every_platform() {
         // They live in the application menu on macOS and at the bottom of File elsewhere, and
         // the second arrangement is easy to forget when adding to the first.
-        let labels: Vec<String> = model(Language::English)
+        let labels: Vec<String> = plain(Language::English)
             .into_iter()
             .flat_map(|section| section.rows)
             .filter_map(|row| match row {
@@ -505,7 +727,7 @@ mod tests {
     fn the_palette_is_in_a_menu_where_somebody_can_find_it() {
         // A palette reached only by a keystroke is a feature for people who already know about
         // it. The menu row is how anybody else finds out it exists.
-        let labels: Vec<String> = model(Language::English)
+        let labels: Vec<String> = plain(Language::English)
             .into_iter()
             .flat_map(|section| section.rows)
             .filter_map(|row| match row {
@@ -527,7 +749,7 @@ mod tests {
         // in File — carrying the label of the specification-file route, while dispatching the
         // song sheet, and with the file route itself in no menu at all. Both are named for what
         // they are now, under a heading somebody looking for the composer would open.
-        let compose = model(Language::English)
+        let compose = plain(Language::English)
             .into_iter()
             .find(|section| section.name == Key::GroupCompose.get(Language::English))
             .expect("composing has a menu of its own");
@@ -552,7 +774,7 @@ mod tests {
 
     #[test]
     fn no_command_appears_twice() {
-        let mut labels: Vec<String> = model(Language::English)
+        let mut labels: Vec<String> = plain(Language::English)
             .into_iter()
             .flat_map(|section| section.rows)
             .filter_map(|row| match row {
@@ -568,7 +790,7 @@ mod tests {
 
     #[test]
     fn the_system_submenu_is_offered_only_where_there_is_a_system_to_fill_it() {
-        let system = model(Language::English)
+        let system = plain(Language::English)
             .into_iter()
             .flat_map(|section| section.rows)
             .any(|row| matches!(row, MenuRow::System { .. }));
@@ -581,7 +803,7 @@ mod tests {
 
     #[test]
     fn a_menu_never_leads_or_ends_with_a_rule() {
-        for section in model(Language::English) {
+        for section in plain(Language::English) {
             assert!(
                 !matches!(section.rows.first(), Some(MenuRow::Separator)),
                 "`{}` starts with a rule against its own top edge",
@@ -597,7 +819,7 @@ mod tests {
 
     #[test]
     fn the_gpui_menu_keeps_every_row() {
-        let model_rows: usize = model(Language::Japanese)
+        let model_rows: usize = plain(Language::Japanese)
             .iter()
             .map(|section| section.rows.len())
             .sum();

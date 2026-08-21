@@ -28,6 +28,15 @@ const ROW_HEIGHT: Pixels = px(22.0);
 /// languages looks like a bug. Long labels truncate.
 const MENU_WIDTH: Pixels = px(260.0);
 
+/// The mark beside a switched-on row.
+///
+/// A character rather than a drawn glyph, because it is the one mark in the application that
+/// every font on both platforms has and that every menu everywhere already uses.
+const CHECK: &str = "✓";
+
+/// Width of the column the tick sits in, reserved on every row so the labels line up.
+const CHECK_WIDTH: Pixels = px(10.0);
+
 /// Which menu-bar menu is open, and how it came to be.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct OpenMenu {
@@ -96,12 +105,13 @@ pub fn stepped_section(count: usize, index: usize, delta: isize) -> usize {
 /// Wraps, and starts from whichever end the direction implies, so the first Down lands on the
 /// first row and the first Up on the last. Rules are stepped over, and so is the submenu the
 /// system fills in — Return on either runs nothing, and stopping on a row that does nothing is a
-/// keypress the user has to make twice. A menu with nothing to choose highlights nothing.
+/// keypress the user has to make twice. A disabled command is that same case and is stepped over
+/// for that same reason. A menu with nothing to choose highlights nothing.
 pub fn stepped(rows: &[MenuRow], from: Option<usize>, delta: isize) -> Option<usize> {
     let choosable: Vec<usize> = rows
         .iter()
         .enumerate()
-        .filter(|(_, row)| matches!(row, MenuRow::Command { .. }))
+        .filter(|(_, row)| matches!(row, MenuRow::Command { enabled: true, .. }))
         .map(|(index, _)| index)
         .collect();
     let first = *choosable.first()?;
@@ -132,6 +142,28 @@ impl AurisApp {
         self.menu_bar.take().is_some()
     }
 
+    /// The menu as it stands right now: this language, these panels, these switches.
+    ///
+    /// Rebuilt on every frame the bar is drawn, and on every keystroke that walks it, so that the
+    /// ticks and the dimming are never one gesture out of date. It is a few dozen strings and no
+    /// allocation the frame was not going to make anyway.
+    pub(crate) fn menu_model(&self) -> Vec<MenuSection> {
+        model(
+            self.language(),
+            &self.panels,
+            crate::menu::MenuState {
+                can_undo: self.session.can_undo(),
+                can_redo: self.session.can_redo(),
+                looping: self.project().loop_enabled,
+                punching: self.project().punch_enabled,
+                recording: self.session.is_recording(),
+                monitoring: self.session.monitored_track().is_some(),
+                metronome: self.session.metronome(),
+                musical_typing: self.session.typing_keyboard().enabled(),
+            },
+        )
+    }
+
     /// Draws the bar, on the platforms that need one.
     pub(crate) fn render_menu_bar(
         &self,
@@ -143,7 +175,7 @@ impl AurisApp {
         }
         let theme = self.theme.clone();
         let open = self.menu_bar;
-        let sections = model(self.language);
+        let sections = self.menu_model();
 
         Some(
             div()
@@ -231,27 +263,51 @@ impl AurisApp {
                     label,
                     action,
                     binding,
+                    enabled,
+                    checked,
                 } => {
+                    let (enabled, checked) = (*enabled, *checked);
                     let action = action.boxed_clone();
                     let keystroke = self.keystroke_for(binding);
                     div()
                         .id(("menu-bar-item", section_index * 100 + index))
                         .flex()
                         .items_center()
-                        .gap_4()
+                        .gap_2()
                         .flex_shrink_0()
                         .h(ROW_HEIGHT)
                         .px_2()
                         .rounded(Metrics::RADIUS_SM)
                         .text_xs()
-                        .text_color(theme.text)
-                        .cursor_pointer()
-                        .hover(|this| this.bg(theme.accent).text_color(theme.text_on_accent))
-                        // The same fill the pointer gives it, because it means the same thing:
-                        // this is the row Return would run.
-                        .when(highlighted == Some(index), |this| {
-                            this.bg(theme.accent).text_color(theme.text_on_accent)
+                        // A row that can do nothing says so by receding. It keeps its keystroke,
+                        // because the key is as unavailable as the row and hiding that would only
+                        // make the row look like a different command.
+                        .text_color(match enabled {
+                            true => theme.text,
+                            false => theme.text_faint,
                         })
+                        // Neither the pointer's fill nor the keyboard's lands on a dead row, and
+                        // neither does the pointer itself: a hand cursor over something that will
+                        // not answer is the row promising twice over.
+                        .when(enabled, |this| {
+                            this.cursor_pointer()
+                                .hover(|this| {
+                                    this.bg(theme.accent).text_color(theme.text_on_accent)
+                                })
+                                // The same fill the pointer gives it, because it means the same
+                                // thing: this is the row Return would run.
+                                .when(highlighted == Some(index), |this| {
+                                    this.bg(theme.accent).text_color(theme.text_on_accent)
+                                })
+                        })
+                        // A fixed column whether this row ticks or not, so every label in the
+                        // menu starts in the same place. A tick that pushed its own row along
+                        // would make the menu twitch as things were switched on and off.
+                        .child(div().w(CHECK_WIDTH).flex_shrink_0().child(if checked {
+                            CHECK
+                        } else {
+                            ""
+                        }))
                         .child(div().flex_1().min_w_0().truncate().child(label.clone()))
                         .child(
                             div()
@@ -261,18 +317,23 @@ impl AurisApp {
                                 .text_color(theme.text_muted)
                                 .child(keystroke),
                         )
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _: &MouseDownEvent, window, cx| {
-                                this.close_menu_bar();
-                                // Dispatched rather than called: the root view already handles
-                                // every one of these actions for the keymap and the system menu
-                                // bar, and routing through it keeps the three in step.
-                                window.dispatch_action(action.boxed_clone(), cx);
-                                cx.stop_propagation();
-                                cx.notify();
-                            }),
-                        )
+                        // No handler at all when it is disabled. The dropdown behind it already
+                        // swallows the press, so the menu stays open and nothing happens — which
+                        // is what every menu does with a dimmed row.
+                        .when(enabled, |this| {
+                            this.on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                                    this.close_menu_bar();
+                                    // Dispatched rather than called: the root view already handles
+                                    // every one of these actions for the keymap and the system
+                                    // menu bar, and routing through it keeps the three in step.
+                                    window.dispatch_action(action.boxed_clone(), cx);
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                        })
                         .into_any_element()
                 }
             })
@@ -337,11 +398,15 @@ mod tests {
 
     /// The rows of the first menu that has a rule in it, which is the case worth stepping over.
     fn rows_with_a_rule() -> Vec<MenuRow> {
-        model(auris_i18n::Language::English)
-            .into_iter()
-            .map(|section| section.rows)
-            .find(|rows| rows.iter().any(|row| matches!(row, MenuRow::Separator)))
-            .expect("the menus have rules in them")
+        model(
+            auris_i18n::Language::English,
+            &crate::dock::PanelLayout::default(),
+            crate::menu::MenuState::default(),
+        )
+        .into_iter()
+        .map(|section| section.rows)
+        .find(|rows| rows.iter().any(|row| matches!(row, MenuRow::Separator)))
+        .expect("the menus have rules in them")
     }
 
     #[test]
@@ -396,6 +461,42 @@ mod tests {
     fn a_menu_with_nothing_to_choose_highlights_nothing() {
         assert_eq!(stepped(&[], None, 1), None);
         assert_eq!(stepped(&[MenuRow::Separator], None, 1), None);
+    }
+
+    #[test]
+    fn the_highlight_steps_over_a_row_that_cannot_be_chosen() {
+        // The Edit menu opens with Undo and Redo, and both are dim in a document nobody has
+        // touched. Landing on one is a Return that runs nothing, which is the same keypress
+        // wasted that a separator would waste — so the walk starts below them.
+        let edit = model(
+            auris_i18n::Language::English,
+            &crate::dock::PanelLayout::default(),
+            crate::menu::MenuState::default(),
+        )
+        .into_iter()
+        .find(|section| {
+            section.name == auris_i18n::Key::GroupEdit.get(auris_i18n::Language::English)
+        })
+        .expect("there is an Edit menu");
+
+        let dim: Vec<usize> = edit
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| matches!(row, MenuRow::Command { enabled: false, .. }))
+            .map(|(index, _)| index)
+            .collect();
+        assert!(!dim.is_empty(), "nothing in Edit is dim to step over");
+
+        // Every stop of a full walk, from either end, is a row that can actually be chosen.
+        for delta in [1, -1] {
+            let mut at = stepped(&edit.rows, None, delta);
+            for _ in 0..edit.rows.len() {
+                let index = at.expect("the walk never runs out");
+                assert!(!dim.contains(&index), "the highlight landed on a dim row");
+                at = stepped(&edit.rows, at, delta);
+            }
+        }
     }
 
     #[test]

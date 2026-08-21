@@ -1005,7 +1005,7 @@ impl AurisApp {
         let Some(open) = self.menu_bar else {
             return false;
         };
-        let sections = crate::menu::model(self.language());
+        let sections = self.menu_model();
         let Some(section) = sections.get(open.index) else {
             // The menus are rebuilt from the language on every frame; an index left over from a
             // shorter set is not a state to try to recover, only one to stop being in.
@@ -1044,8 +1044,18 @@ impl AurisApp {
                     .highlighted
                     .and_then(|index| section.rows.get(index))
                     .and_then(|row| match row {
-                        MenuRow::Command { action, .. } => Some(action.boxed_clone()),
-                        MenuRow::Separator | MenuRow::System { .. } => None,
+                        // Checked here as well as in `stepped`, which never lands on a disabled
+                        // row: the highlight is carried across frames and a row can go dead
+                        // under it — undo runs out while the menu is open, say, because the
+                        // keystroke ran the last step.
+                        MenuRow::Command {
+                            action,
+                            enabled: true,
+                            ..
+                        } => Some(action.boxed_clone()),
+                        MenuRow::Command { .. } | MenuRow::Separator | MenuRow::System { .. } => {
+                            None
+                        }
                     });
                 // Closed either way. Return on a menu nobody has walked through means "I am done
                 // here", not "wait for an answer nobody is going to give".
