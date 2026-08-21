@@ -12,6 +12,7 @@ use auris_session::prelude::*;
 use gpui::{Pixels, Point, SharedString};
 
 use crate::app::AurisApp;
+use crate::ui::automation::automation_offer;
 
 use super::{ContextMenu, MenuCommand};
 
@@ -197,6 +198,47 @@ impl AurisApp {
             )
             .item(self.t(Key::MenuNewAudioTrack), MenuCommand::NewAudioTrack)
             .item(self.t(Key::MenuNewBusTrack), MenuCommand::NewBusTrack)
+    }
+
+    /// The menu for one parameter, wherever its control is drawn.
+    ///
+    /// Automation used to be asked for from the *track* menu, which could only name the two
+    /// parameters a track has of its own — its fader and its pan. Everything else the document
+    /// can automate, and the engine has always played back, was unreachable: a send level, a
+    /// filter cutoff, an effect's mix. Asking the control itself is what makes the other
+    /// hundred reachable without a menu that lists them, and it is where a hand already is.
+    ///
+    /// [`automation_offer`] decides what the automation rows say, including the case where they
+    /// say nothing.
+    pub(crate) fn param_menu(
+        &self,
+        anchor: Point<Pixels>,
+        target: ParamTarget,
+        title: impl Into<SharedString>,
+    ) -> ContextMenu {
+        let offer = automation_offer(
+            target,
+            &self.automation_lanes,
+            self.session.is_automated(target),
+        );
+        let menu = ContextMenu::new(anchor, title)
+            .item(self.t(Key::MenuResetValue), MenuCommand::ResetParam(target));
+        // Nothing at all for a master parameter rather than a disabled row: a row that can never
+        // become usable teaches nothing by being there, and the master strip's controls would
+        // carry two of them.
+        let menu = match offer.lane {
+            None => menu,
+            Some(track) => menu.separator().toggle(
+                self.t(Key::MenuAutomate),
+                MenuCommand::ShowAutomation(track, target),
+                offer.showing,
+            ),
+        };
+        menu.item_if(
+            offer.written,
+            self.t(Key::MenuClearAutomation),
+            MenuCommand::ClearAutomation(target),
+        )
     }
 
     /// The named positions of a discrete parameter, aimed at one plugin's copy of it.

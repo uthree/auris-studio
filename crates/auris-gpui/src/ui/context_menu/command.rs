@@ -460,6 +460,13 @@ pub enum MenuCommand {
         /// The position to take.
         value: f32,
     },
+
+    /// Put a parameter back on whatever its descriptor calls the default.
+    ///
+    /// The same thing double-clicking the control does. It is in the menu as well because the
+    /// menu is now where a parameter is asked about at all, and a list that offers to automate a
+    /// fader and not to straighten it is a list with a hole in it.
+    ResetParam(ParamTarget),
 }
 
 impl AurisApp {
@@ -980,6 +987,7 @@ impl AurisApp {
             }
             MenuCommand::SetClipOctave { clip, octave } => self.set_clip_octave(clip, octave),
             MenuCommand::SetParamChoice { target, value } => self.session.set_param(target, value),
+            MenuCommand::ResetParam(target) => self.reset_param(target),
 
             MenuCommand::DockPanel { panel, dock } => self.dock_panel(panel, dock),
             MenuCommand::TogglePanel(panel) => self.toggle_panel(panel),

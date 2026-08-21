@@ -310,7 +310,7 @@ pub fn picker_row<I, L, V, F>(
     active: bool,
     theme: &Theme,
     on_click: F,
-) -> impl IntoElement + use<I, L, V, F>
+) -> gpui::Div
 where
     I: Into<ElementId>,
     L: Into<SharedString>,
@@ -544,6 +544,11 @@ pub enum SliderFill {
 /// The handler is gone from the widget rather than from its callers so that it cannot come back
 /// one control at a time: there is no parameter to pass one to. A view that wants the wheel to
 /// mean something puts it on the region being scrolled, which is where a wheel belongs.
+///
+/// The concrete type rather than `impl IntoElement`, for the reason [`button`] returns one: a
+/// right-click menu on the control is hung off `InteractiveElement`, which an opaque return type
+/// hides. Every parameter drawn as one of these can be automated, and the menu is where that is
+/// asked for.
 #[allow(clippy::too_many_arguments)]
 pub fn value_slider<I, L, V, D>(
     id: I,
@@ -554,7 +559,7 @@ pub fn value_slider<I, L, V, D>(
     origin: SliderFill,
     theme: &Theme,
     on_drag_start: D,
-) -> impl IntoElement + use<I, L, V, D>
+) -> gpui::Stateful<gpui::Div>
 where
     I: Into<ElementId>,
     L: Into<SharedString>,

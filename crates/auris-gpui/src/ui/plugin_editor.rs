@@ -49,7 +49,7 @@ pub fn slider_row<I, D>(
     fill: Hsla,
     theme: &Theme,
     on_drag_start: D,
-) -> impl IntoElement + use<I, D>
+) -> gpui::Stateful<gpui::Div>
 where
     I: Into<ElementId>,
     D: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
@@ -101,7 +101,7 @@ pub fn button_row<I, F>(
     value: f32,
     theme: &Theme,
     on_click: F,
-) -> impl IntoElement + use<I, F>
+) -> gpui::Div
 where
     I: Into<ElementId>,
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,

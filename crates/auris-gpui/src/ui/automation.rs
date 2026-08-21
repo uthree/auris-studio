@@ -266,6 +266,41 @@ pub fn point_at(
         .map(|(index, _)| lane.points()[index].tick)
 }
 
+/// What a parameter's menu can offer about automating it.
+///
+/// Answered here rather than at the menu because the interesting part is which parameters have no
+/// answer at all. The lane column has one row per track, so a curve is only drawable under the
+/// track it belongs to — and the master strip is not a track. Its fader, its pan and the effects
+/// on it are automatable in the document and audible from it, but there is nowhere in the
+/// arrangement to draw them, so the menu says nothing rather than opening a lane that never
+/// appears.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct AutomationOffer {
+    /// The track whose lane would draw this curve, or `None` when no row could hold it.
+    pub lane: Option<TrackId>,
+    /// Whether that lane is open on this parameter already, so the row is also the way out.
+    pub showing: bool,
+    /// Whether there are points to throw away.
+    pub written: bool,
+}
+
+/// What [`AutomationOffer`] should say about `target`.
+///
+/// `open` is the lane each track is showing, and `written` whether the document holds a curve for
+/// this parameter — the session's answer, passed in so the rule can be asserted without one.
+pub fn automation_offer(
+    target: ParamTarget,
+    open: &BTreeMap<TrackId, ParamTarget>,
+    written: bool,
+) -> AutomationOffer {
+    let lane = target.track();
+    AutomationOffer {
+        lane,
+        showing: lane.is_some_and(|track| open.get(&track) == Some(&target)),
+        written,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,5 +535,52 @@ mod tests {
             point_at(&positions, &lane, point(on.x - px(40.0), on.y)),
             None
         );
+    }
+
+    #[test]
+    fn every_parameter_on_a_track_can_be_automated_and_nothing_on_the_master_can() {
+        let track = TrackId(1);
+        let open = opened(1);
+        for target in [
+            ParamTarget::TrackGain(track),
+            ParamTarget::TrackPan(track),
+            ParamTarget::Send {
+                track,
+                send: SendId(7),
+            },
+            ParamTarget::Instrument {
+                track,
+                param: ParamId(3),
+            },
+            ParamTarget::Effect {
+                track: Some(track),
+                slot: EffectSlotId(2),
+                param: ParamId(1),
+            },
+        ] {
+            assert_eq!(automation_offer(target, &open, false).lane, Some(track));
+        }
+        for target in [
+            ParamTarget::MasterGain,
+            ParamTarget::MasterPan,
+            ParamTarget::Effect {
+                track: None,
+                slot: EffectSlotId(2),
+                param: ParamId(1),
+            },
+        ] {
+            assert_eq!(automation_offer(target, &open, true).lane, None);
+        }
+    }
+
+    #[test]
+    fn the_offer_is_only_showing_for_the_parameter_the_lane_is_actually_on() {
+        let open = opened(1);
+        let gain = ParamTarget::TrackGain(TrackId(1));
+        let pan = ParamTarget::TrackPan(TrackId(1));
+        assert!(automation_offer(gain, &open, false).showing);
+        assert!(!automation_offer(pan, &open, false).showing);
+        // A lane open on another track says nothing about this one.
+        assert!(!automation_offer(ParamTarget::TrackGain(TrackId(2)), &open, false).showing);
     }
 }

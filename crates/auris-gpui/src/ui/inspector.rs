@@ -373,6 +373,8 @@ impl AurisApp {
                 let element_id = (id_prefix, target_element_key(target, descriptor.id));
 
                 let label = self.param_label(&descriptor.name);
+                // The label again for the menu, which the control itself consumes.
+                let menu_label = label.clone();
                 let value_text = self.format_param(descriptor, value);
                 match control_for(descriptor) {
                     ParamControl::Slider => slider_row(
@@ -398,6 +400,12 @@ impl AurisApp {
                             });
                         }),
                     )
+                    .on_mouse_down(
+                        gpui::MouseButton::Right,
+                        Self::opens_menu(cx, move |this, at| {
+                            this.param_menu(at, target, menu_label.clone())
+                        }),
+                    )
                     .into_any_element(),
                     // A toggle flips on the press, because two positions are a switch. A choice
                     // opens the list instead: cycling through eight waveforms to reach the pulse
@@ -418,6 +426,12 @@ impl AurisApp {
                                 cx.notify();
                             }),
                         )
+                        .on_mouse_down(
+                            gpui::MouseButton::Right,
+                            Self::opens_menu(cx, move |this, at| {
+                                this.param_menu(at, target, menu_label.clone())
+                            }),
+                        )
                         .into_any_element()
                     }
                     ParamControl::Choice => {
@@ -431,6 +445,12 @@ impl AurisApp {
                             &theme,
                             Self::opens_menu(cx, move |this, at| {
                                 this.param_choice_menu(at, target, &owned)
+                            }),
+                        )
+                        .on_mouse_down(
+                            gpui::MouseButton::Right,
+                            Self::opens_menu(cx, move |this, at| {
+                                this.param_menu(at, target, menu_label.clone())
                             }),
                         )
                         .into_any_element()
@@ -475,6 +495,10 @@ impl AurisApp {
                     start_x: event.position.x,
                 });
             }),
+        )
+        .on_mouse_down(
+            gpui::MouseButton::Right,
+            Self::opens_menu(cx, move |this, at| this.param_menu(at, target, label)),
         )
         .into_any_element()
     }
