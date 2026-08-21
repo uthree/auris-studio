@@ -21,10 +21,10 @@ use crate::ui::widgets::{
 
 /// How tall the strip along the bottom of a header that resizes its lane is.
 ///
-/// Narrower than [`Metrics::SPLITTER`], which the dividers between panels use, because this one
-/// is not a divider: it is drawn *over* the bottom of a header, and a header carries three pixels
-/// of padding there. Six would take a bite out of the pan fader; four is the padding and the
-/// border, and reaches nothing the pointer wanted instead.
+/// Narrower than [`Metrics::SPLITTER`], which the dividers between panels use, because a splitter
+/// is a gap *between* two panels and this is a strip taken out of one. It is the header's bottom
+/// padding — `track_header` sets it from here — so nothing else is ever underneath it, and every
+/// pixel spent here is a pixel the pan fader does not get.
 const RESIZE_BAND: Pixels = px(4.0);
 
 /// How a track's arm button is latched.
@@ -185,7 +185,13 @@ impl AurisApp {
                     .relative()
                     .h(px(height))
                     .pl(px(6.0))
-                    .py(px(3.0))
+                    .pt(px(3.0))
+                    // The resize band's own strip, kept clear of the controls rather than laid
+                    // over them. The pan fader runs to the bottom of the header, and a band
+                    // merely drawn on top of it is a band fighting a fader for the same four
+                    // pixels — which the fader wins, because a press lands on both and its
+                    // handler is the one that runs last.
+                    .pb(RESIZE_BAND)
                     .pr(px(4.0))
                     .gap(px(6.0))
                     .border_b_1()
@@ -394,6 +400,16 @@ impl AurisApp {
     /// Invisible until the pointer is on it, which is the same bargain the panel dividers strike:
     /// a line drawn under every header would be a second border under the one already there, and
     /// the cursor changing is what says the edge can be taken hold of.
+    ///
+    /// `occlude` is what makes it *the* thing a press in that strip lands on. The strip is the
+    /// header's own padding, so the header's hitbox covers it too, and without this a press
+    /// reached both: the band would begin a resize and the header would begin a reorder over the
+    /// top of it. Blocking rather than relying on the header's `drag.is_none()` guard, because
+    /// that guard depends on which listener gpui happens to run first, and a gesture that is
+    /// correct by accident of dispatch order is one that comes back.
+    ///
+    /// Nothing selects the track on the way past, and that is deliberate: taking hold of an edge
+    /// to resize it is not a request to change what the inspector is showing.
     fn lane_resize_band(
         &self,
         index: usize,
@@ -409,6 +425,7 @@ impl AurisApp {
             .right_0()
             .bottom_0()
             .h(RESIZE_BAND)
+            .occlude()
             .cursor(gpui::CursorStyle::ResizeUpDown)
             .hover(|this| this.bg(crate::theme::Theme::translucent(accent, 0.35)))
             .on_mouse_down(
@@ -419,6 +436,7 @@ impl AurisApp {
                         start_y: event.position.y,
                         start_height: height,
                     });
+                    cx.stop_propagation();
                     cx.notify();
                 }),
             )
@@ -503,6 +521,21 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use auris_session::session::MIN_TRACK_HEIGHT;
+
+    #[test]
+    fn the_resize_strip_leaves_a_header_worth_pressing() {
+        // The strip is the header's bottom padding, so it comes out of the shortest lane there
+        // can be. At a third of that the header would be more grab handle than header, and the
+        // mute button under it would be the thing nobody could hit.
+        assert!(
+            f32::from(RESIZE_BAND) * 3.0 < MIN_TRACK_HEIGHT,
+            "a {RESIZE_BAND:?} strip is most of a {MIN_TRACK_HEIGHT} pixel lane"
+        );
+        // And it is worth pressing itself: a strip thinner than a couple of pixels is a target
+        // the pointer has to be aimed at rather than moved towards.
+        assert!(RESIZE_BAND >= px(3.0));
+    }
 
     #[test]
     fn the_arm_button_shows_where_a_take_would_land_as_well_as_what_was_armed() {
