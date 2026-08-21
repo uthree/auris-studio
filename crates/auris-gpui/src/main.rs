@@ -27,7 +27,7 @@ mod ui;
 
 use std::path::PathBuf;
 
-use auris_session::Settings;
+use auris_session::{Settings, WindowPlacement};
 use gpui::{
     App, AppContext, Application, Bounds, Pixels, TitlebarOptions, WindowBounds, WindowOptions, px,
     size,
@@ -53,11 +53,11 @@ fn main() {
         // file a moment later, and rebuilds these menus whenever the choice changes.
         cx.set_menus(menus(Settings::load().language()));
 
-        let bounds = opening_bounds(cx);
+        let remembered = Settings::load().window;
         let window = cx
             .open_window(
                 WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_bounds: Some(opening_window_bounds(remembered, cx)),
                     titlebar: Some(TitlebarOptions {
                         title: Some("Auris Studio".into()),
                         ..Default::default()
@@ -88,6 +88,12 @@ fn main() {
             // A clean document quits now — and so does a main window that is already gone,
             // because then there is nothing left to guard.
             if guarded.unwrap_or(true) {
+                // The same write the window's own Quit does. This path is the one a Quit that
+                // landed in the Settings window takes, and it is still the main window's
+                // placement being put away.
+                window
+                    .update(cx, |view, _, _| view.save_window_placement())
+                    .ok();
                 cx.quit();
             }
         });
@@ -119,6 +125,9 @@ fn main() {
                     asked
                         .update(cx, |this, cx| {
                             let go = this.confirm_discard(ui::prompt::PendingAction::CloseWindow);
+                            if go {
+                                this.save_window_placement();
+                            }
                             cx.notify();
                             go
                         })
@@ -159,6 +168,57 @@ fn project_argument(args: impl IntoIterator<Item = std::ffi::OsString>) -> Optio
         .skip(1)
         .find(|arg| !arg.to_string_lossy().starts_with('-'))
         .map(PathBuf::from)
+}
+
+/// How wide and tall a remembered window has to still be showing to be worth restoring.
+///
+/// A rectangle is only useful if there is enough of it on a screen to take hold of. This much of
+/// it — a strip of title bar and a corner — is the least that can be dragged back into view.
+const RESCUABLE: gpui::Size<Pixels> = gpui::Size {
+    width: px(160.),
+    height: px(48.),
+};
+
+/// Where the window opens: back where it was, or centred if that is nowhere useful.
+///
+/// A remembered rectangle is not trusted on sight. The monitor it was on may be unplugged, the
+/// desktop may have been rearranged, or the same file may have come from a machine with two
+/// screens to one with none — and a window restored to a position off every display is a window
+/// that cannot be reached at all, on an application whose only window it is. So the rectangle has
+/// to still overlap the desktop by [`RESCUABLE`] before it is used.
+///
+/// A window that was maximised comes back maximised, carrying the size it restores to, so
+/// unmaximising it lands where it was rather than filling the screen for ever.
+fn opening_window_bounds(remembered: Option<WindowPlacement>, cx: &App) -> WindowBounds {
+    let display = cx.primary_display().map(|display| display.bounds());
+    match restorable(remembered, display) {
+        Some((bounds, true)) => WindowBounds::Maximized(bounds),
+        Some((bounds, false)) => WindowBounds::Windowed(bounds),
+        None => WindowBounds::Windowed(opening_bounds(cx)),
+    }
+}
+
+/// The remembered rectangle, if enough of it still lands on the desktop, and whether it was
+/// maximised.
+///
+/// `None` for a display that could not be read at all: on a headless or unusual setup there is
+/// nothing to check the rectangle against, and centring is the answer that cannot be wrong.
+fn restorable(
+    remembered: Option<WindowPlacement>,
+    display: Option<Bounds<Pixels>>,
+) -> Option<(Bounds<Pixels>, bool)> {
+    let placement = remembered?;
+    let display = display?;
+    if !(placement.width > 0.0 && placement.height > 0.0) {
+        return None;
+    }
+    let bounds = Bounds {
+        origin: gpui::point(px(placement.x), px(placement.y)),
+        size: size(px(placement.width), px(placement.height)),
+    };
+    let overlap = bounds.intersect(&display);
+    let showing = overlap.size.width >= RESCUABLE.width && overlap.size.height >= RESCUABLE.height;
+    showing.then_some((bounds, placement.maximized))
 }
 
 /// Where the window opens, shrunk to fit the display it opens on.
@@ -257,5 +317,68 @@ mod tests {
             project_argument(args(&["auris-studio", "One.auris", "Two.auris"])),
             Some(PathBuf::from("One.auris"))
         );
+    }
+
+    fn placed(x: f32, y: f32, width: f32, height: f32) -> WindowPlacement {
+        WindowPlacement {
+            x,
+            y,
+            width,
+            height,
+            maximized: false,
+        }
+    }
+
+    fn desktop() -> Bounds<Pixels> {
+        Bounds {
+            origin: gpui::point(px(0.), px(0.)),
+            size: size(px(1920.), px(1080.)),
+        }
+    }
+
+    #[test]
+    fn a_window_comes_back_where_it_was_left() {
+        let remembered = placed(200., 120., 1400., 900.);
+        let (bounds, maximized) =
+            restorable(Some(remembered), Some(desktop())).expect("still on screen");
+        assert_eq!(bounds.origin.x, px(200.));
+        assert_eq!(bounds.size.width, px(1400.));
+        assert!(!maximized);
+    }
+
+    #[test]
+    fn a_window_remembered_on_a_screen_that_is_gone_is_centred_instead() {
+        // The second monitor was to the right and has been unplugged. Restoring this would open
+        // the application's only window where no pointer can reach it.
+        assert!(restorable(Some(placed(2400., 300., 1400., 900.)), Some(desktop())).is_none());
+        // Above the desktop entirely, which is what a rearranged multi-monitor setup does.
+        assert!(restorable(Some(placed(300., -1200., 1400., 900.)), Some(desktop())).is_none());
+    }
+
+    #[test]
+    fn a_corner_still_showing_is_enough_to_drag_back_into_view() {
+        // Mostly off the right edge, but 180 pixels of title bar remain. That can be taken hold
+        // of, so it is not the emergency the case above is.
+        let clinging = placed(1740., 200., 1400., 900.);
+        assert!(restorable(Some(clinging), Some(desktop())).is_some());
+    }
+
+    #[test]
+    fn nothing_remembered_and_nothing_measurable_both_fall_back() {
+        assert!(restorable(None, Some(desktop())).is_none());
+        assert!(restorable(Some(placed(100., 100., 800., 600.)), None).is_none());
+        // A rectangle with no area, which is what a settings file filled in from defaults holds.
+        assert!(restorable(Some(placed(0., 0., 0., 0.)), Some(desktop())).is_none());
+    }
+
+    #[test]
+    fn a_maximised_window_carries_the_size_it_restores_to() {
+        let remembered = WindowPlacement {
+            maximized: true,
+            ..placed(100., 80., 1200., 800.)
+        };
+        let (bounds, maximized) = restorable(Some(remembered), Some(desktop())).expect("on screen");
+        assert!(maximized);
+        assert_eq!(bounds.size.width, px(1200.), "not the whole screen");
     }
 }

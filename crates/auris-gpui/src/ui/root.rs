@@ -24,6 +24,9 @@ impl Render for AurisApp {
         // Pointer coordinates arrive in window space, and the resize handlers need to know how
         // tall the window is to bound the bottom panel; record it once per frame.
         self.viewport_height = window.viewport_size().height;
+        // Where the window is, kept for next time. Read rather than written: the file is put
+        // out once, on the way out.
+        self.remember_window(window);
         // Sourced from where the lanes were actually painted, so it stays right through a
         // panel resize instead of being re-derived from constants that no longer hold.
         self.arrangement_width = self
@@ -1368,6 +1371,7 @@ impl AurisApp {
         // Handled here rather than on the application, because `App::quit` does not run the
         // window's close guard and a document with unsaved changes has to get its say.
         if self.confirm_discard(crate::ui::prompt::PendingAction::Quit) {
+            self.save_window_placement();
             cx.quit();
         }
         cx.notify();

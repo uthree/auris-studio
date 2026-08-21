@@ -67,7 +67,7 @@ pub use session::{
     shadows_musical_typing,
 };
 pub use settings::{
-    AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings, config_dir,
+    AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings, WindowPlacement, config_dir,
     migrate_legacy_config,
 };
 

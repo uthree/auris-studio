@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use auris_i18n::{Key, Language, messages};
 use auris_session::prelude::*;
-use auris_session::{Session, SessionOptions};
+use auris_session::{Session, SessionOptions, WindowPlacement};
 use gpui::{
     App, AppContext, Bounds, Context, FocusHandle, Focusable, Pixels, Point, Task, TitlebarOptions,
     Window, WindowBounds, WindowHandle, WindowOptions, point, px, size,
@@ -1687,6 +1687,42 @@ impl AurisApp {
     pub(crate) fn apply_autosave(&mut self, enabled: bool) {
         self.session.set_autosave(enabled);
         self.settings.autosave = enabled;
+        if let Err(error) = self.settings.save() {
+            log::warn!("could not save settings: {error}");
+        }
+    }
+
+    /// Takes note of where the window is, without writing anything.
+    ///
+    /// Every frame, because there is no event for "the window has settled": a drag of the title
+    /// bar is a hundred small moves and gpui reports the bounds rather than the gesture. Reading
+    /// them is free; the file is written once, when the window is put away.
+    pub(crate) fn remember_window(&mut self, window: &gpui::Window) {
+        let bounds = match window.window_bounds() {
+            gpui::WindowBounds::Windowed(bounds) => bounds,
+            // The restore size in both cases, which is what a maximised window should come back
+            // to when it is unmaximised. Its *current* rectangle is the whole screen, and saving
+            // that would leave a window that fills the display and cannot be made smaller by
+            // unmaximising it.
+            gpui::WindowBounds::Maximized(bounds) | gpui::WindowBounds::Fullscreen(bounds) => {
+                bounds
+            }
+        };
+        self.settings.window = Some(WindowPlacement {
+            x: f32::from(bounds.origin.x),
+            y: f32::from(bounds.origin.y),
+            width: f32::from(bounds.size.width),
+            height: f32::from(bounds.size.height),
+            maximized: window.is_maximized(),
+        });
+    }
+
+    /// Writes the settings file, so where the window is now is where it opens next time.
+    ///
+    /// Called on the way out rather than on every move: a settings file rewritten a hundred times
+    /// while a window is dragged is a hundred writes to answer a question nobody asked yet.
+    /// Best-effort, like every other preference.
+    pub(crate) fn save_window_placement(&self) {
         if let Err(error) = self.settings.save() {
             log::warn!("could not save settings: {error}");
         }

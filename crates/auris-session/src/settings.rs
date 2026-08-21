@@ -74,6 +74,27 @@ impl AudioPreferences {
     }
 }
 
+/// Where the window was when it was last put away.
+///
+/// Plain numbers rather than a toolkit's rectangle, because nothing at this level may name a UI
+/// toolkit — and because the file is meant to be readable by a person who has opened it to fix
+/// something. The size is what the window restores to, so a maximised window that is unmaximised
+/// after being reopened lands back where it was rather than filling the screen for ever.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WindowPlacement {
+    /// Distance from the left of the desktop, in logical pixels.
+    pub x: f32,
+    /// Distance from the top of the desktop.
+    pub y: f32,
+    /// Width of the window.
+    pub width: f32,
+    /// Height of the window.
+    pub height: f32,
+    /// Whether it was maximised. The rectangle above is then the restore size.
+    pub maximized: bool,
+}
+
 /// How a bounce is written.
 ///
 /// Kept with the settings rather than in the document: the depth somebody masters at is a fact
@@ -143,6 +164,8 @@ pub struct Settings {
     pub autosave: bool,
     /// How a bounce is written.
     pub export: ExportPreferences,
+    /// Where the window was when it was last put away. `None` on a first run.
+    pub window: Option<WindowPlacement>,
 }
 
 impl Default for Settings {
@@ -155,6 +178,7 @@ impl Default for Settings {
             // this value.
             autosave: true,
             export: ExportPreferences::default(),
+            window: None,
         }
     }
 }
