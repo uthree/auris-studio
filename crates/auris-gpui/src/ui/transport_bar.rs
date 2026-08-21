@@ -52,6 +52,77 @@ pub(crate) fn recording_summary(report: &RecordingReport, language: Language) ->
     }
 }
 
+/// What is going wrong with a take while it runs.
+///
+/// The session has counted both of these since recording was written and neither has ever been
+/// on screen until the take was over. That is the wrong moment for both: a device that has
+/// disappeared means the rest of the take is silence, and a disk that cannot keep up will keep
+/// not keeping up. Told while it is happening, either one can be answered by stopping and
+/// starting again; told afterwards, they are only an explanation.
+///
+/// A free function because the ordering is the decision. A lost device outranks a dropped frame
+/// even when both are true — the frames stopped arriving *because* the device went, and reporting
+/// the count would send somebody to look at their disk.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TakeTrouble {
+    /// The take is going in cleanly.
+    None,
+    /// Frames the disk could not keep up with, so far.
+    Dropping(u64),
+    /// The device disappeared out from under the take.
+    Lost,
+}
+
+/// What [`TakeTrouble`] the running take is in.
+pub(crate) fn take_trouble(status: &RecordingStatus) -> TakeTrouble {
+    match (status.running, status.dropped_frames) {
+        (false, _) => TakeTrouble::Lost,
+        (true, 0) => TakeTrouble::None,
+        (true, dropped) => TakeTrouble::Dropping(dropped),
+    }
+}
+
+/// The running take's clock, and what is wrong with it when something is.
+///
+/// The same width and place as the meters beside it, so a bar that has grown a block has not
+/// rearranged itself. The whole block is tinted with the record colour rather than only the
+/// number: a take running is the loudest thing the transport has to say.
+fn take_block(
+    caption: &'static str,
+    clock: String,
+    trouble: Option<String>,
+    theme: &crate::theme::Theme,
+) -> impl IntoElement + use<> {
+    let tint = match trouble.is_some() {
+        true => theme.danger,
+        false => theme.record,
+    };
+    div()
+        .flex()
+        .flex_col()
+        .justify_center()
+        .w(px(124.0))
+        .child(
+            div()
+                .flex()
+                .justify_between()
+                .text_xs()
+                .child(div().text_color(theme.text_faint).child(caption))
+                .child(div().text_color(tint).child(clock)),
+        )
+        // The bar's own height, so the block lines up with the meters whether or not there is
+        // anything wrong. An empty strip rather than a collapsed one.
+        .child(
+            div()
+                .h(px(7.0))
+                .mt_1()
+                .text_xs()
+                .text_color(theme.danger)
+                .truncate()
+                .children(trouble),
+        )
+}
+
 /// One captioned meter in the transport bar's right-hand column.
 ///
 /// The master and the input are the same object with different numbers in it. Drawn from one
@@ -194,6 +265,18 @@ impl AurisApp {
             .session
             .input_is_open()
             .then(|| gain_to_db(self.input_level));
+        // The running take, if there is one. Read once here rather than three times below: the
+        // clock, the trouble and whether the block exists at all are one answer.
+        let take = self.session.recording_status().map(|status| {
+            let trouble = match take_trouble(&status) {
+                TakeTrouble::None => None,
+                TakeTrouble::Dropping(frames) => {
+                    Some(auris_i18n::messages::take_dropping(self.language, frames))
+                }
+                TakeTrouble::Lost => Some(self.t(Key::TakeDeviceLost).to_string()),
+            };
+            (Seconds(status.seconds).format_clock(), trouble)
+        });
 
         // Three columns of equal weight, so the middle one lands on the window's centre line
         // however wide the sides grow. Every hardware transport and every DAW puts the
@@ -430,6 +513,13 @@ impl AurisApp {
                     // The panels are switched from the status bar, where every one of them has an
                     // icon whether it is showing or not. Four buttons up here said the same thing
                     // for three of the four, and a transport bar is for the transport.
+                    //
+                    // How long the take has been running, and only while one is. Left of the
+                    // input for the same reason the input is left of the master: it is the
+                    // earliest thing in the chain the bar reports on.
+                    .children(take.map(|(clock, trouble)| {
+                        take_block(self.t(Key::TakeClock), clock, trouble, &theme)
+                    }))
                     //
                     // What is coming in, and only while something is: a bar reading silence
                     // whenever no device is open would be a bar that says the microphone is dead.
@@ -1048,5 +1138,41 @@ mod tests {
             ticks.contains(&1),
             "one tick is as fine as the document gets"
         );
+    }
+
+    fn running_take() -> RecordingStatus {
+        RecordingStatus {
+            device: "Scarlett 2i2".to_string(),
+            seconds: 12.5,
+            start: Some(Ticks::ZERO),
+            dropped_frames: 0,
+            running: true,
+        }
+    }
+
+    #[test]
+    fn a_clean_take_reports_nothing_wrong_with_it() {
+        assert_eq!(take_trouble(&running_take()), TakeTrouble::None);
+    }
+
+    #[test]
+    fn a_take_losing_frames_says_so_while_it_is_still_losing_them() {
+        let status = RecordingStatus {
+            dropped_frames: 1_920,
+            ..running_take()
+        };
+        assert_eq!(take_trouble(&status), TakeTrouble::Dropping(1_920));
+    }
+
+    #[test]
+    fn a_device_that_has_gone_outranks_the_frames_it_stopped_delivering() {
+        // Both are true and only one is the cause. Reporting the count would send somebody to
+        // look at a disk that is keeping up perfectly well with the nothing it is being given.
+        let status = RecordingStatus {
+            dropped_frames: 44_100,
+            running: false,
+            ..running_take()
+        };
+        assert_eq!(take_trouble(&status), TakeTrouble::Lost);
     }
 }

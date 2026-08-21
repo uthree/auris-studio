@@ -613,6 +613,15 @@ messages! {
         ja: "パンチ範囲内に演奏がありませんでした。録音はファイルとして残してあります"
     }
 
+    /// The count under the recording clock while frames are still being lost.
+    ///
+    /// Present tense, and on screen for as long as it is true: this is a take going wrong now,
+    /// not a report on one that is over.
+    fn take_dropping(frames: u64) {
+        en: "{frames} frames dropped",
+        ja: "{frames} フレーム欠落中"
+    }
+
     /// Monitoring switched on, naming the device and the cost of listening this way.
     ///
     /// The cost is said every time rather than once in a dialog: an interface with direct

@@ -55,6 +55,8 @@ strings! {
     // Beside the master meter and the same width, so the caption has to be short enough not to
     // push the number off the end of its row.
     InputMeter { en: "In", ja: "入力" }
+    TakeClock { en: "Take", ja: "録音" }
+    TakeDeviceLost { en: "device lost", ja: "デバイス切断" }
 
     // ------------------------------------------------------------------ arrangement
     AddInstrumentShort { en: "Inst", ja: "音源" }
