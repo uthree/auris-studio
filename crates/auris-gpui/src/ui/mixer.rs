@@ -10,7 +10,7 @@ use gpui::{
 use crate::app::AurisApp;
 use crate::theme::Metrics;
 use crate::ui::icons::Icon;
-use crate::ui::inspector::insert_element_key;
+use crate::ui::inspector::{Insert, insert_element_key, insert_rows};
 use crate::ui::scrollbars::ScrollPanel;
 use crate::ui::widgets::{ButtonStyle, button, db_to_meter_position, icon_label, level_meter};
 
@@ -121,18 +121,25 @@ impl AurisApp {
                 .unwrap_or_else(|| self.t(Key::Master).to_string()),
         };
 
-        let effect_rows: Vec<AnyElement> = effects
+        let effect_rows: Vec<AnyElement> = insert_rows(&effects)
             .into_iter()
-            .map(|(slot_id, effect_id, enabled)| {
-                let label = self.effect_label(slot_id, &effect_id);
-                self.effect_row(
-                    ("mixer-fx", insert_element_key(Some(slot_id))),
-                    label,
-                    Some(track_id),
-                    slot_id,
+            .map(|row| match row {
+                Insert::Filled {
+                    slot,
+                    effect_id,
                     enabled,
-                    cx,
-                )
+                } => {
+                    let label = self.effect_label(slot, &effect_id);
+                    self.effect_row(
+                        ("mixer-fx", insert_element_key(Some(slot))),
+                        label,
+                        Some(track_id),
+                        slot,
+                        enabled,
+                        cx,
+                    )
+                }
+                Insert::Empty => self.add_effect_row(("mixer-add-fx", index), Some(track_id), cx),
             })
             .collect();
 
@@ -469,6 +476,38 @@ impl AurisApp {
             .into_any_element()
     }
 
+    /// The empty slot at the end of a chain, which is how another effect is added.
+    ///
+    /// Logic's shape, and the inspector's: the slots that are filled, then one empty one. The
+    /// mixer had neither half of that. A track strip offered no way at all to add an effect —
+    /// the answer was a right-click on empty space, which is not an answer anybody finds — and
+    /// the master strip had a button above its chain instead of a slot at the end of it, so the
+    /// two strips beside each other disagreed about where the next effect goes.
+    ///
+    /// Aimed at its strip by name. It used to clear `selected_track` so that whatever was picked
+    /// next would land there, which silently deselected whatever the user was working on.
+    fn add_effect_row(
+        &self,
+        id: impl Into<gpui::ElementId>,
+        track: Option<TrackId>,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        div()
+            // An effect dragged onto this row means the end of the chain, the same as in the
+            // inspector — it is the only way to say "last" with the pointer.
+            .on_mouse_move(cx.listener(move |this, _: &gpui::MouseMoveEvent, _, cx| {
+                this.drag_effect_onto(track, None, cx);
+            }))
+            .child(icon_label(
+                id,
+                Icon::Plus,
+                self.t(Key::Effect),
+                &self.theme,
+                Self::opens_menu(cx, move |this, at| this.effect_picker_menu(at, track)),
+            ))
+            .into_any_element()
+    }
+
     fn render_master_strip(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
         let gain_db = self.project().master.gain_db;
@@ -483,18 +522,25 @@ impl AurisApp {
             .map(|slot| (slot.id, slot.effect_id.clone(), slot.enabled))
             .collect();
 
-        let effect_rows: Vec<AnyElement> = effects
+        let effect_rows: Vec<AnyElement> = insert_rows(&effects)
             .into_iter()
-            .map(|(slot_id, effect_id, enabled)| {
-                let label = self.effect_label(slot_id, &effect_id);
-                self.effect_row(
-                    ("master-fx", insert_element_key(Some(slot_id))),
-                    label,
-                    None,
-                    slot_id,
+            .map(|row| match row {
+                Insert::Filled {
+                    slot,
+                    effect_id,
                     enabled,
-                    cx,
-                )
+                } => {
+                    let label = self.effect_label(slot, &effect_id);
+                    self.effect_row(
+                        ("master-fx", insert_element_key(Some(slot))),
+                        label,
+                        None,
+                        slot,
+                        enabled,
+                        cx,
+                    )
+                }
+                Insert::Empty => self.add_effect_row("master-add-fx", None, cx),
             })
             .collect();
 
@@ -529,16 +575,6 @@ impl AurisApp {
                 ParamTarget::MasterPan,
                 pan,
                 cx,
-            ))
-            .child(icon_label(
-                "master-add-fx",
-                Icon::Plus,
-                self.t(Key::Effect),
-                &theme,
-                // Aimed at the master bus by name. This used to clear `selected_track` so that
-                // whatever was picked next would land there, which silently deselected whatever
-                // the user was working on.
-                Self::opens_menu(cx, |this, at| this.effect_picker_menu(at, None)),
             ))
             .child(
                 div()
