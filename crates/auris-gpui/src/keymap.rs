@@ -188,7 +188,7 @@ impl Keymap {
     pub fn keystrokes(&self, command: &Bindable) -> Vec<&str> {
         match self.overrides.get(command.id) {
             Some(keystrokes) => keystrokes.iter().map(String::as_str).collect(),
-            None => command.default.into_iter().collect(),
+            None => command.defaults().collect(),
         }
     }
 
@@ -312,14 +312,18 @@ impl Keymap {
     /// with no key, where the empty list already is the default and storing it would write an
     /// override that says nothing.
     fn store(&mut self, command: &Bindable, keystrokes: Vec<String>) {
-        let is_default = match command.default {
-            Some(default) => {
-                keystrokes.len() == 1
-                    && actions::normalise_keystroke(&keystrokes[0])
-                        == actions::normalise_keystroke(default)
-            }
-            None => keystrokes.is_empty(),
-        };
+        // Compared as a whole list rather than as one keystroke, because a command can ship with
+        // two: putting Delete's second key back by hand has to read as "this is the default"
+        // rather than as an override that happens to say the same thing.
+        let shipped: Vec<String> = command
+            .defaults()
+            .map(actions::normalise_keystroke)
+            .collect();
+        let written: Vec<String> = keystrokes
+            .iter()
+            .map(|keystroke| actions::normalise_keystroke(keystroke))
+            .collect();
+        let is_default = written == shipped;
         if is_default {
             self.overrides.remove(command.id);
         } else {

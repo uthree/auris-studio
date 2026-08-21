@@ -259,6 +259,13 @@ pub struct Bindable {
     /// the commands that earned their key among ones nobody asked for. The row is still in the
     /// settings window, still in the palette, and one click from a key of the user's choosing.
     pub default: Option<&'static str>,
+    /// A second keystroke the command also ships on, or `None`.
+    ///
+    /// Spent very sparingly, and never to give a command two mnemonics: the second key is for a
+    /// command that means the same thing on two *keyboards*. Delete is the one — a Mac's ⌫ and a
+    /// PC's Del are the same key to the person pressing them and are different keys to gpui —
+    /// and a table that could only hold one meant Del did nothing at all on Windows.
+    pub alternate: Option<&'static str>,
     bind: fn(&str, &str) -> KeyBinding,
     make: fn() -> Box<dyn Action>,
 }
@@ -277,6 +284,14 @@ impl PartialEq for Bindable {
 impl Eq for Bindable {}
 
 impl Bindable {
+    /// Every keystroke this command ships on, in order, and none for one that ships unbound.
+    ///
+    /// What the keymap falls back to when the user has not overridden the command. Nearly always
+    /// nought or one; see [`Self::alternate`] for the exception.
+    pub fn defaults(&self) -> impl Iterator<Item = &'static str> + use<> {
+        self.default.into_iter().chain(self.alternate)
+    }
+
     /// Builds the binding for `keystroke`.
     pub fn binding(&self, keystroke: &str) -> KeyBinding {
         (self.bind)(keystroke, &reachable_from(self.context, keystroke))
@@ -307,7 +322,7 @@ impl Bindable {
 pub const KEY_CONTEXT: &str = context::WINDOW;
 
 macro_rules! bindable {
-    ($($context:path => { $($id:literal, $group:ident, $label:ident, $default:literal => $action:ident;)* })*) => {
+    ($($context:path => { $($id:literal, $group:ident, $label:ident, $default:literal $(| $alternate:literal)? => $action:ident;)* })*) => {
         /// Every command the settings window offers to rebind, in display order.
         pub const BINDABLE: &[Bindable] = &[
             $($(Bindable {
@@ -318,6 +333,9 @@ macro_rules! bindable {
                 // `""` in the table rather than `None`, so every row stays one line of the same
                 // shape and the column of keystrokes reads down the page.
                 default: if $default.is_empty() { None } else { Some($default) },
+                // Optional, and written `"a" | "b"` in the table. Almost no row has one; see
+                // `Bindable::alternate` for the only reason to add another.
+                alternate: { let alternate: Option<&'static str> = None; $(let alternate = Some($alternate);)? alternate },
                 bind: |keys, context| KeyBinding::new(keys, $action, Some(context)),
                 make: || Box::new($action),
             },)*)*
@@ -394,7 +412,11 @@ bindable! {
 
         "edit.undo",            GroupEdit,      CmdUndo,               "secondary-z" => Undo;
         "edit.redo",            GroupEdit,      CmdRedo,               "secondary-shift-z" => Redo;
-        "edit.delete",          GroupEdit,      CmdDeleteSelection,    "backspace"   => DeleteSelection;
+        // Two keys, which almost nothing here has. ⌫ is what a Mac calls Delete and Del is what a
+        // PC does, and a table holding one of them meant the key labelled *Delete* on a Windows
+        // keyboard did nothing whatever. Both, on both platforms: a Mac's ⌦ deletes forward in
+        // text and means nothing in an arrangement, so it costs nothing to answer to it there.
+        "edit.delete",          GroupEdit,      CmdDeleteSelection,    "backspace" | "delete" => DeleteSelection;
         // The three things about the song a person changes by reaching for a readout with the
         // mouse. B for beats per minute, M for meter, G for grid.
         "edit.tempo",           GroupEdit,      CmdSetTempo,           "secondary-shift-b" => SetTempo;
@@ -745,7 +767,26 @@ mod tests {
     fn defaults() -> impl Iterator<Item = (&'static str, &'static str)> {
         BINDABLE
             .iter()
-            .filter_map(|entry| Some((entry.id, entry.default?)))
+            .flat_map(|entry| entry.defaults().map(|keystroke| (entry.id, keystroke)))
+    }
+
+    #[test]
+    fn delete_answers_to_the_key_each_keyboard_calls_delete() {
+        // A Mac labels one key Delete and sends `backspace`; a PC labels a different one Delete
+        // and sends `delete`. Binding one of the two left the other doing nothing at all, which
+        // on Windows is the key the label points at.
+        let delete = bindable("edit.delete").expect("there is a delete command");
+        let keys: Vec<&str> = delete.defaults().collect();
+        assert_eq!(keys, ["backspace", "delete"]);
+
+        // And it stays the exception. A second key per command is a chord taken away from
+        // whoever wanted it, so a row that grows one should be a row somebody argued for.
+        let doubled: Vec<&str> = BINDABLE
+            .iter()
+            .filter(|entry| entry.alternate.is_some())
+            .map(|entry| entry.id)
+            .collect();
+        assert_eq!(doubled, ["edit.delete"]);
     }
 
     #[test]
