@@ -349,6 +349,9 @@ impl Session {
     /// The delta is clamped so that the earliest clip lands on zero rather than each clip being
     /// clamped separately — that would pile the leading clips on top of each other and quietly
     /// destroy the spacing the user is dragging.
+    ///
+    /// Repeats fold, for the reason [`Session::move_notes`] gives: a held arrow key is one
+    /// gesture arriving as thirty calls, and a drag is unaffected either way.
     pub fn move_clips(&mut self, origins: &[(ClipId, Ticks)], delta: Ticks) {
         // Only clips that still exist: a selection can outlive an undo, and a gesture over
         // nothing must not record a step over nothing.
@@ -361,7 +364,7 @@ impl Session {
             return;
         };
         let delta = delta.max(-earliest);
-        self.record(Edit::MoveClip);
+        self.record_repeating(Edit::MoveClip);
         for (clip, start) in present {
             let start = (start + delta).max_zero();
             if let Some(midi) = self.project.midi_clip_mut(clip) {

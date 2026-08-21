@@ -825,7 +825,7 @@ impl AurisApp {
     }
 
     /// Positions of every selected note, captured at the start of a move.
-    fn selected_note_origins(&self, clip: ClipId) -> Vec<(usize, Ticks, u8)> {
+    pub(crate) fn selected_note_origins(&self, clip: ClipId) -> Vec<(usize, Ticks, u8)> {
         let Some(clip) = self.session.midi_clip(clip) else {
             return Vec::new();
         };

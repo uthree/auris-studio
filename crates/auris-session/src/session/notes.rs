@@ -285,6 +285,11 @@ impl Session {
     }
 
     /// Moves notes by a tick and pitch delta, from positions captured before the gesture began.
+    ///
+    /// Repeats fold, which matters only to the callers that arrive without a transaction around
+    /// them — a nudge from the keyboard, a scripted run of small moves. A drag records through
+    /// `end_transaction` and is one step whatever this says; an arrow key held down for a second
+    /// would otherwise be thirty, and shove the real history off the end of the stack.
     pub fn move_notes(
         &mut self,
         clip: ClipId,
@@ -295,7 +300,7 @@ impl Session {
         if self.project.midi_clip(clip).is_none() {
             return Err(SessionError::UnknownClip(clip.0));
         }
-        self.record(Edit::MoveNotes);
+        self.record_repeating(Edit::MoveNotes);
         let grid = self.project.grid;
         if let Some(target) = self.project.midi_clip_mut(clip) {
             for (index, start, pitch) in origins {

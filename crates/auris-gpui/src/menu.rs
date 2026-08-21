@@ -277,6 +277,30 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                 "edit.octave_down",
             ),
             MenuRow::Separator,
+            // In pairs, and both spelled out, for the reason the cut and copy rows above are: the
+            // two share a keystroke and the menu is where somebody finds out which one ⌥← just
+            // gave them.
+            command(
+                t(Key::CmdNudgeNotesLeft),
+                actions::NudgeNotesLeft,
+                "edit.nudge_left",
+            ),
+            command(
+                t(Key::CmdNudgeClipsLeft),
+                actions::NudgeClipsLeft,
+                "clip.nudge_left",
+            ),
+            command(
+                t(Key::CmdNudgeNotesRight),
+                actions::NudgeNotesRight,
+                "edit.nudge_right",
+            ),
+            command(
+                t(Key::CmdNudgeClipsRight),
+                actions::NudgeClipsRight,
+                "clip.nudge_right",
+            ),
+            MenuRow::Separator,
             // The three quantise passes together, in the order a person thinks of them: the
             // plain one, then each half of the note on its own.
             command(
@@ -349,6 +373,17 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                 t(Key::CmdToggleTrackSolo),
                 actions::ToggleTrackSolo,
                 "track.solo",
+            ),
+            MenuRow::Separator,
+            command(
+                t(Key::CmdSelectPreviousTrack),
+                actions::SelectPreviousTrack,
+                "track.select_previous",
+            ),
+            command(
+                t(Key::CmdSelectNextTrack),
+                actions::SelectNextTrack,
+                "track.select_next",
             ),
             MenuRow::Separator,
             command(
@@ -478,6 +513,16 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                 t(Key::CmdReturnToZero),
                 actions::ReturnToZero,
                 "transport.return",
+            ),
+            command(
+                t(Key::CmdStepBack),
+                actions::StepBack,
+                "transport.step_back",
+            ),
+            command(
+                t(Key::CmdStepForward),
+                actions::StepForward,
+                "transport.step_forward",
             ),
             // The rest are ticked, and the reason is the same one every time: they are switches
             // left set from an hour ago, and the only other thing that says which way is a lit

@@ -282,6 +282,8 @@ strings! {
     // is what tells it apart from the pause the play button turns into.
     CmdStop { en: "Stop and Return", ja: "停止して先頭へ" }
     CmdReturnToZero { en: "Return to Zero", ja: "先頭に戻る" }
+    CmdStepBack { en: "Move Playhead Back One Division", ja: "再生位置を 1 グリッド戻す" }
+    CmdStepForward { en: "Move Playhead On One Division", ja: "再生位置を 1 グリッド進める" }
     CmdToggleCycle { en: "Toggle Cycle", ja: "サイクル切り替え" }
     // 「メトロノーム」 rather than 「拍子木」 or any other translation, for the reason
     // `GroupTransport` above gives: it is the word every Japanese DAW already prints on this
@@ -354,6 +356,8 @@ strings! {
     CmdDuplicateTrack { en: "Duplicate Track", ja: "トラックを複製" }
     CmdToggleTrackMute { en: "Mute Track", ja: "トラックをミュート" }
     CmdToggleTrackSolo { en: "Solo Track", ja: "トラックをソロ" }
+    CmdSelectPreviousTrack { en: "Select Previous Track", ja: "前のトラックを選択" }
+    CmdSelectNextTrack { en: "Select Next Track", ja: "次のトラックを選択" }
     CmdDeleteTrack { en: "Delete Track", ja: "トラックを削除" }
     // The note and clip commands. Each pair says which of the two it means, because both are on
     // the same keystroke and the settings window lists them one under the other.
@@ -369,6 +373,13 @@ strings! {
     CmdTransposeDown { en: "Transpose Down a Semitone", ja: "半音下げる" }
     CmdOctaveUp { en: "Transpose Up an Octave", ja: "1 オクターブ上げる" }
     CmdOctaveDown { en: "Transpose Down an Octave", ja: "1 オクターブ下げる" }
+    // "by One Division" rather than a fixed note value: what a nudge moves is the editing grid,
+    // which the user sets, so naming a sixteenth here would be a menu row that lies as soon as
+    // the grid button is pressed.
+    CmdNudgeNotesLeft { en: "Nudge Notes Left One Division", ja: "ノートを 1 グリッド左へ" }
+    CmdNudgeNotesRight { en: "Nudge Notes Right One Division", ja: "ノートを 1 グリッド右へ" }
+    CmdNudgeClipsLeft { en: "Nudge Clips Left One Division", ja: "クリップを 1 グリッド左へ" }
+    CmdNudgeClipsRight { en: "Nudge Clips Right One Division", ja: "クリップを 1 グリッド右へ" }
     CmdSelectAllClips { en: "Select All Clips", ja: "すべてのクリップを選択" }
     CmdDuplicateClip { en: "Duplicate Clip", ja: "クリップを複製" }
     CmdSplitClip { en: "Split Clip at Playhead", ja: "再生位置でクリップを分割" }

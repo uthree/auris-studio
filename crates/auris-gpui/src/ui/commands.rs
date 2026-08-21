@@ -18,7 +18,112 @@ use crate::app::{AurisApp, Drag, ExportState};
 use crate::i18n::{edit_key, error_text};
 use crate::ui::drop::{DropAction, DropKind, DropOutcome, Dropped, drop_action};
 
+/// Where the playhead lands after `direction` steps of `step` from `at`.
+///
+/// Onto the grid first, then along it. A playhead left between two lines by a click steps onto
+/// the next one rather than carrying its offset along for ever, which is what makes the arrow
+/// keys a way of *walking the bar* rather than a way of adding a constant. Already on a line, a
+/// step is a whole division.
+///
+/// Never before the start of the song: there is nothing there, and a playhead that could be
+/// pushed to a negative tick is one that draws off the left of the ruler.
+pub(crate) fn stepped_playhead(at: Ticks, step: Ticks, direction: i64) -> Ticks {
+    let step = step.raw().max(1);
+    let at = at.raw().max(0);
+    let landed = match direction >= 0 {
+        // The first line strictly after here, which on a line is the next one along.
+        true => at / step * step + step,
+        // The first line strictly before here. `at + step - 1` rounds *up* to a line, so
+        // subtracting one division from it lands on the line just passed rather than on the one
+        // the playhead is already sitting on.
+        false => (at + step - 1) / step * step - step,
+    };
+    Ticks(landed.max(0))
+}
+
+/// The track `delta` places along the list from whichever is selected.
+///
+/// Stops at both ends rather than wrapping. A track list is a column with a top and a bottom, and
+/// an arrow key that jumped from the last track to the first would be a keypress somebody has to
+/// undo by looking at the screen to find out where they ended up.
+///
+/// With nothing selected, Down takes the first track and Up the last — the same rule the menu
+/// bar's own walk uses, and the only one that puts the first press where the direction points.
+pub(crate) fn adjacent_track(
+    tracks: &[TrackId],
+    selected: Option<TrackId>,
+    delta: isize,
+) -> Option<TrackId> {
+    let at = selected.and_then(|id| tracks.iter().position(|track| *track == id));
+    let Some(at) = at else {
+        return match delta >= 0 {
+            true => tracks.first().copied(),
+            false => tracks.last().copied(),
+        };
+    };
+    let last = tracks.len().checked_sub(1)?;
+    let landed = (at as isize + delta).clamp(0, last as isize) as usize;
+    tracks.get(landed).copied()
+}
+
 impl AurisApp {
+    /// How far one press of an arrow key moves something.
+    ///
+    /// The editing grid, except where the grid is off. Off is a division of one tick — the finest
+    /// position the document can hold — and stepping a tick at a time is an arrow key held down
+    /// for a bar and a half to cross a beat. Nothing about switching snapping off says the
+    /// keyboard should stop being useful, so off means a beat here.
+    pub(crate) fn step_ticks(&self) -> Ticks {
+        match self.project().grid {
+            grid if grid.raw() > 1 => grid,
+            _ => Ticks(TICKS_PER_QUARTER),
+        }
+    }
+
+    /// Walks the playhead one division along the grid.
+    pub(crate) fn step_playhead(&mut self, direction: i64) {
+        let landed = stepped_playhead(self.playhead_ticks(), self.step_ticks(), direction);
+        self.seek(landed);
+    }
+
+    /// Moves the selection one track up or down the list.
+    pub(crate) fn select_adjacent_track(&mut self, delta: isize) {
+        let tracks: Vec<TrackId> = self.project().tracks.iter().map(|track| track.id).collect();
+        if let Some(next) = adjacent_track(&tracks, self.selected_track, delta) {
+            self.select_track(next);
+            // The header column scrolls independently of the selection, so stepping past the
+            // bottom of the panel would otherwise select a track nobody can see.
+            self.reveal_track(next);
+        }
+    }
+
+    /// Moves the selected notes one division along the grid.
+    ///
+    /// Silently does nothing with no clip open or nothing selected, which is what a nudge should
+    /// do: it is a key somebody presses several times in a row, and a status line on each press
+    /// saying there is nothing to move would be four complaints for one mistake.
+    pub(crate) fn nudge_notes(&mut self, direction: i64) {
+        let Some(clip) = self.selected_clip else {
+            return;
+        };
+        let origins = self.selected_note_origins(clip);
+        if origins.is_empty() {
+            return;
+        }
+        let delta = Ticks(self.step_ticks().raw() * direction);
+        let _ = self.session.move_notes(clip, &origins, delta, 0);
+    }
+
+    /// Moves the selected clips one division along the grid.
+    pub(crate) fn nudge_clips(&mut self, direction: i64) {
+        let origins = self.selected_clip_origins();
+        if origins.is_empty() {
+            return;
+        }
+        let delta = Ticks(self.step_ticks().raw() * direction);
+        self.session.move_clips(&origins, delta);
+    }
+
     /// Selects a track and points the piano roll at a clip that belongs to it.
     pub(crate) fn select_track(&mut self, track: TrackId) {
         if self.selected_track == Some(track) {
@@ -1283,6 +1388,74 @@ fn press_keeps_selection(selected: &BTreeSet<ClipId>, clip: Option<ClipId>) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_step_lands_on_the_grid_rather_than_carrying_an_offset_along() {
+        let beat = Ticks(TICKS_PER_QUARTER);
+
+        // From a line, a whole division either way.
+        assert_eq!(stepped_playhead(Ticks(0), beat, 1), beat);
+        assert_eq!(stepped_playhead(beat * 2, beat, -1), beat);
+
+        // From between two lines, onto the nearer one in the direction of travel — never
+        // half a division past it, which is what adding the step outright would do.
+        let ragged = Ticks(TICKS_PER_QUARTER * 3 / 2);
+        assert_eq!(stepped_playhead(ragged, beat, 1), beat * 2);
+        assert_eq!(stepped_playhead(ragged, beat, -1), beat);
+
+        // Walking back from anywhere reaches zero and stops there.
+        assert_eq!(stepped_playhead(beat, beat, -1), Ticks(0));
+        assert_eq!(stepped_playhead(Ticks(0), beat, -1), Ticks(0));
+        assert_eq!(stepped_playhead(Ticks(1), beat, -1), Ticks(0));
+
+        // And a walk out and back is a walk back to where it began, for any starting line —
+        // the pair of rules is what makes the arrow keys usable at all.
+        for bar in 0..8 {
+            let at = beat * bar;
+            let there = stepped_playhead(at, beat, 1);
+            assert_eq!(stepped_playhead(there, beat, -1), at, "at bar {bar}");
+        }
+    }
+
+    #[test]
+    fn stepping_through_the_track_list_stops_at_both_ends() {
+        let tracks = [TrackId(7), TrackId(8), TrackId(9)];
+
+        assert_eq!(
+            adjacent_track(&tracks, Some(TrackId(8)), 1),
+            Some(TrackId(9))
+        );
+        assert_eq!(
+            adjacent_track(&tracks, Some(TrackId(8)), -1),
+            Some(TrackId(7))
+        );
+
+        // Past either end is the end again, not the other one. A list is a column with a top and
+        // a bottom, and an arrow that wrapped would move the selection somewhere the eye is not.
+        assert_eq!(
+            adjacent_track(&tracks, Some(TrackId(9)), 1),
+            Some(TrackId(9))
+        );
+        assert_eq!(
+            adjacent_track(&tracks, Some(TrackId(7)), -1),
+            Some(TrackId(7))
+        );
+
+        // With nothing selected the first press lands where the direction points.
+        assert_eq!(adjacent_track(&tracks, None, 1), Some(TrackId(7)));
+        assert_eq!(adjacent_track(&tracks, None, -1), Some(TrackId(9)));
+
+        // A selection that has outlived its track behaves as no selection rather than as an
+        // index into a list it is not in — which a `position` unwrapped to zero would have.
+        assert_eq!(
+            adjacent_track(&tracks, Some(TrackId(99)), 1),
+            Some(TrackId(7))
+        );
+
+        // And a song with no tracks answers nothing at all rather than panicking on an index.
+        assert_eq!(adjacent_track(&[], None, 1), None);
+        assert_eq!(adjacent_track(&[], Some(TrackId(7)), -1), None);
+    }
 
     #[test]
     fn pressing_a_clip_that_is_already_selected_keeps_the_rest() {

@@ -695,6 +695,11 @@ impl Session {
             return false;
         }
         self.history.push(transaction.edit, &transaction.before);
+        // A finished gesture breaks a run of repeats, the same way any ordinary edit does. Without
+        // this a drag would leave `last_record` set to the edit it made, and a nudge of the same
+        // kind a moment later would fold into the step the drag had already pushed — one Undo
+        // taking back both.
+        self.last_record = None;
         self.dirty = true;
         if std::mem::take(&mut self.needs_rebuild) {
             self.rebuild_graph();
@@ -1228,6 +1233,49 @@ mod tests {
         session.project.set_bpm(140.0);
         assert_eq!(session.undo(), Some(Edit::ChangeTempo(Ticks::ZERO)));
         assert_eq!(session.project().bpm(), 128.0);
+    }
+
+    #[test]
+    fn a_run_of_nudges_is_one_step_and_the_drag_before_it_is_another() {
+        // A held arrow key arrives as one call per repeat. Without folding, a second of it is
+        // thirty steps out of a stack that holds sixty-four, and the afternoon's real history is
+        // pushed off the end by a key nobody meant to lean on.
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Nudged", Ticks::ZERO, Ticks(1920))
+            .unwrap();
+
+        // A drag first, which is what makes the second half of this test worth writing.
+        session.begin_transaction(Edit::MoveClip);
+        session.move_clips(&[(clip, Ticks::ZERO)], Ticks(480));
+        assert!(session.end_transaction());
+        session.forget_history();
+        session.begin_transaction(Edit::MoveClip);
+        session.move_clips(&[(clip, Ticks(480))], Ticks(480));
+        assert!(session.end_transaction());
+
+        // Then a run of nudges, close together, all of them one step.
+        for _ in 0..6 {
+            let at = session.clip_start(clip).unwrap();
+            session.move_clips(&[(clip, at)], Ticks(240));
+        }
+        assert_eq!(session.clip_start(clip), Some(Ticks(960 + 6 * 240)));
+
+        // One Undo takes the whole run back to where the drag left it — and the drag is still
+        // there underneath, rather than having been folded in with it.
+        assert_eq!(session.undo(), Some(Edit::MoveClip));
+        assert_eq!(
+            session.clip_start(clip),
+            Some(Ticks(960)),
+            "the nudges were one step"
+        );
+        assert_eq!(session.undo(), Some(Edit::MoveClip));
+        assert_eq!(
+            session.clip_start(clip),
+            Some(Ticks(480)),
+            "and the drag was its own"
+        );
     }
 
     #[test]

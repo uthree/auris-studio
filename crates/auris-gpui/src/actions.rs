@@ -43,6 +43,10 @@ actions!(
         StopPlayback,
         /// Move the playhead to the beginning.
         ReturnToZero,
+        /// Move the playhead one grid division earlier.
+        StepBack,
+        /// Move the playhead one grid division later.
+        StepForward,
         /// Toggle looping over the loop region.
         ToggleLoop,
         /// Turn the click on or off.
@@ -69,6 +73,10 @@ actions!(
         ToggleTrackMute,
         /// Solo or unsolo the selected track.
         ToggleTrackSolo,
+        /// Select the track above the one selected now.
+        SelectPreviousTrack,
+        /// Select the track below the one selected now.
+        SelectNextTrack,
         /// Delete the current selection.
         DeleteSelection,
         /// Select every note in the clip being edited.
@@ -89,6 +97,10 @@ actions!(
         OctaveUp,
         /// Lower the selected notes by an octave.
         OctaveDown,
+        /// Move the selected notes one grid division earlier.
+        NudgeNotesLeft,
+        /// Move the selected notes one grid division later.
+        NudgeNotesRight,
         /// Select every clip in the song.
         SelectAllClips,
         /// Lay a copy of the selected clips down after them.
@@ -99,6 +111,10 @@ actions!(
         CopyClips,
         /// Lay the clipboard's clips onto the selected track, at the playhead.
         PasteClips,
+        /// Move the selected clips one grid division earlier.
+        NudgeClipsLeft,
+        /// Move the selected clips one grid division later.
+        NudgeClipsRight,
         /// Cut the selected clip in two where the playhead is.
         SplitClip,
         /// Mute or unmute the selected clip.
@@ -316,6 +332,13 @@ bindable! {
     context::WINDOW => {
         "transport.play",       GroupTransport, CmdPlayStop,           "space"       => TogglePlay;
         "transport.return",     GroupTransport, CmdReturnToZero,       "enter"       => ReturnToZero;
+        // The arrow keys, which every sequencer moves the playhead with and which were bound to
+        // nothing at all here. Bare, and at the window's context rather than a pane's, because
+        // "where the song is" is not a question that belongs to one panel. Safe to take even
+        // though the menu bar walks itself with the same four: an open menu puts the window into
+        // the prompt context, where nothing is bound, so the arrows reach its own key handler.
+        "transport.step_back",  GroupTransport, CmdStepBack,           "left"        => StepBack;
+        "transport.step_forward", GroupTransport, CmdStepForward,      "right"       => StepForward;
         "transport.loop",       GroupTransport, CmdToggleCycle,        "secondary-l" => ToggleLoop;
         // `r` is what every DAW binds record to, and it is free here for the same reason `k` is:
         // nothing types into the window itself.
@@ -391,6 +414,12 @@ bindable! {
         "track.duplicate",      GroupTrack,     CmdDuplicateTrack,     ""            => DuplicateTrack;
         "track.mute",           GroupTrack,     CmdToggleTrackMute,    ""            => ToggleTrackMute;
         "track.solo",           GroupTrack,     CmdToggleTrackSolo,    ""            => ToggleTrackSolo;
+        // Up and down the track list, which is what those keys do in every DAW. At the window's
+        // context rather than the arrangement's, with the other track commands: the selected
+        // track is what the inspector shows, what a take lands on and what the library's next
+        // click changes, so stepping it from the mixer or the roll is stepping the same thing.
+        "track.select_previous", GroupTrack,    CmdSelectPreviousTrack, "up"         => SelectPreviousTrack;
+        "track.select_next",    GroupTrack,     CmdSelectNextTrack,    "down"        => SelectNextTrack;
 
         // `y` is Logic's own Library key, and it is free here.
         "view.library",         GroupView,      CmdShowLibrary,        "y"           => ToggleLibrary;
@@ -459,6 +488,12 @@ bindable! {
         // same command with a different half of the note in it, and take no key: the table's
         // policy is that a chord nobody would guess is worth less than a row somebody can fill
         // in, and both are a right-click away in the roll.
+        // ⌥ and an arrow, paired with the clip row of the same name below for the reason the cut
+        // and copy rows are paired: one keystroke, and which of the two it means is answered by
+        // where the eye already is. Plain arrows are the playhead's and stay the playhead's —
+        // moving material is the more destructive of the two and is the one that earns a modifier.
+        "edit.nudge_left",      GroupNotes,     CmdNudgeNotesLeft,     "alt-left"    => NudgeNotesLeft;
+        "edit.nudge_right",     GroupNotes,     CmdNudgeNotesRight,    "alt-right"   => NudgeNotesRight;
         "edit.quantize",        GroupNotes,     CmdQuantize,           "q"           => QuantizeNoteStarts;
         "edit.quantize_lengths", GroupNotes,    CmdQuantizeLengths,    ""            => QuantizeNoteLengths;
         "edit.quantize_both",   GroupNotes,     CmdQuantizeBoth,       ""            => QuantizeNotes;
@@ -470,6 +505,8 @@ bindable! {
         "clip.cut",             GroupClip,      CmdCutClips,           "secondary-x" => CutClips;
         "clip.copy",            GroupClip,      CmdCopyClips,          "secondary-c" => CopyClips;
         "clip.paste",           GroupClip,      CmdPasteClips,         "secondary-v" => PasteClips;
+        "clip.nudge_left",      GroupClip,      CmdNudgeClipsLeft,     "alt-left"    => NudgeClipsLeft;
+        "clip.nudge_right",     GroupClip,      CmdNudgeClipsRight,    "alt-right"   => NudgeClipsRight;
         // X is the scissors everywhere that has a pair. Not ⌘T, which Logic splits with and
         // which is the instrument track here.
         "clip.split",           GroupClip,      CmdSplitClip,          "alt-x"       => SplitClip;

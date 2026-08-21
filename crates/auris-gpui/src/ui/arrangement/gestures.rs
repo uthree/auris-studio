@@ -19,7 +19,7 @@ use super::geometry::{CLIP_INSET, ClipGrab, clip_grab_at, fade_handle_at, select
 
 impl AurisApp {
     /// Where every selected clip starts, captured before a move begins.
-    fn selected_clip_origins(&self) -> Vec<(ClipId, Ticks)> {
+    pub(crate) fn selected_clip_origins(&self) -> Vec<(ClipId, Ticks)> {
         self.selected_clips
             .iter()
             .filter_map(|id| self.clip_start(*id).map(|start| (*id, start)))

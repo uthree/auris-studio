@@ -132,6 +132,14 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_duplicate_track))
             .on_action(cx.listener(Self::on_toggle_track_mute))
             .on_action(cx.listener(Self::on_toggle_track_solo))
+            .on_action(cx.listener(Self::on_select_previous_track))
+            .on_action(cx.listener(Self::on_select_next_track))
+            .on_action(cx.listener(Self::on_step_back))
+            .on_action(cx.listener(Self::on_step_forward))
+            .on_action(cx.listener(Self::on_nudge_notes_left))
+            .on_action(cx.listener(Self::on_nudge_notes_right))
+            .on_action(cx.listener(Self::on_nudge_clips_left))
+            .on_action(cx.listener(Self::on_nudge_clips_right))
             .on_action(cx.listener(Self::on_delete_track))
             .on_action(cx.listener(Self::on_delete_selection))
             .on_action(cx.listener(Self::on_select_all_notes))
@@ -1641,6 +1649,86 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.run_menu_command(MenuCommand::TransposeNotes(-12), cx);
+        cx.notify();
+    }
+
+    fn on_step_back(
+        &mut self,
+        _: &actions::StepBack,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.step_playhead(-1);
+        cx.notify();
+    }
+
+    fn on_step_forward(
+        &mut self,
+        _: &actions::StepForward,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.step_playhead(1);
+        cx.notify();
+    }
+
+    fn on_select_previous_track(
+        &mut self,
+        _: &actions::SelectPreviousTrack,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_adjacent_track(-1);
+        cx.notify();
+    }
+
+    fn on_select_next_track(
+        &mut self,
+        _: &actions::SelectNextTrack,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_adjacent_track(1);
+        cx.notify();
+    }
+
+    fn on_nudge_notes_left(
+        &mut self,
+        _: &actions::NudgeNotesLeft,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.nudge_notes(-1);
+        cx.notify();
+    }
+
+    fn on_nudge_notes_right(
+        &mut self,
+        _: &actions::NudgeNotesRight,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.nudge_notes(1);
+        cx.notify();
+    }
+
+    fn on_nudge_clips_left(
+        &mut self,
+        _: &actions::NudgeClipsLeft,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.nudge_clips(-1);
+        cx.notify();
+    }
+
+    fn on_nudge_clips_right(
+        &mut self,
+        _: &actions::NudgeClipsRight,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.nudge_clips(1);
         cx.notify();
     }
 
