@@ -234,6 +234,35 @@ impl AurisApp {
                 offer.showing,
             ),
         };
+        // The shape belongs to the lane, so it is only asked about once there is one. A parameter
+        // with no points has nothing to get between.
+        let menu = match self
+            .session
+            .automation()
+            .lane(target)
+            .map(|lane| lane.curve)
+        {
+            None => menu,
+            Some(shape) => menu
+                .separator()
+                .toggle(
+                    self.t(Key::MenuCurveLine),
+                    MenuCommand::SetAutomationCurve {
+                        target,
+                        curve: AutomationCurve::Linear,
+                    },
+                    shape == AutomationCurve::Linear,
+                )
+                .toggle(
+                    self.t(Key::MenuCurveStep),
+                    MenuCommand::SetAutomationCurve {
+                        target,
+                        curve: AutomationCurve::Hold,
+                    },
+                    shape == AutomationCurve::Hold,
+                )
+                .separator(),
+        };
         menu.item_if(
             offer.written,
             self.t(Key::MenuClearAutomation),

@@ -467,6 +467,20 @@ pub enum MenuCommand {
     /// menu is now where a parameter is asked about at all, and a list that offers to automate a
     /// fader and not to straighten it is a list with a hole in it.
     ResetParam(ParamTarget),
+
+    /// Change how an existing lane gets from one point to the next.
+    ///
+    /// A new lane is given the shape its parameter implies — a chooser holds, a fader runs
+    /// straight — but the implication is not always right. A volume that should drop on the bar
+    /// line rather than slide into it wants Step, and a cutoff written as a sequence of settings
+    /// wants it too. Only offered on a lane that exists, because the shape is the lane's and
+    /// there is nothing to shape before the first point.
+    SetAutomationCurve {
+        /// Which lane.
+        target: ParamTarget,
+        /// The shape to give it.
+        curve: AutomationCurve,
+    },
 }
 
 impl AurisApp {
@@ -988,6 +1002,9 @@ impl AurisApp {
             MenuCommand::SetClipOctave { clip, octave } => self.set_clip_octave(clip, octave),
             MenuCommand::SetParamChoice { target, value } => self.session.set_param(target, value),
             MenuCommand::ResetParam(target) => self.reset_param(target),
+            MenuCommand::SetAutomationCurve { target, curve } => {
+                self.session.set_automation_curve(target, curve);
+            }
 
             MenuCommand::DockPanel { panel, dock } => self.dock_panel(panel, dock),
             MenuCommand::TogglePanel(panel) => self.toggle_panel(panel),

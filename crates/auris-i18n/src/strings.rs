@@ -827,6 +827,8 @@ strings! {
     MenuClearAutomation { en: "Clear Automation", ja: "オートメーションを消去" }
     MenuAutomate { en: "Automate", ja: "オートメーション" }
     MenuResetValue { en: "Reset to Default", ja: "既定値に戻す" }
+    MenuCurveLine { en: "Line", ja: "直線" }
+    MenuCurveStep { en: "Step", ja: "ステップ" }
     EditSetTrackColor { en: "the track colour", ja: "トラックの色" }
     EditSetTrackHeight { en: "the lane height", ja: "レーンの高さ" }
     EditWriteAutomation { en: "the automation point", ja: "オートメーションの点" }
