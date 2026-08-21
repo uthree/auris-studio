@@ -18,6 +18,7 @@ use crate::ui::plugin_editor::{
     ParamControl, button_row, control_for, next_discrete_value, slider_row, value_after_drag,
 };
 use crate::ui::plugin_window::PluginSubject;
+use crate::ui::scrollbars::ScrollPanel;
 use crate::ui::widgets::{chain_button, divider};
 
 /// One row of a channel strip's insert list.
@@ -115,13 +116,15 @@ impl AurisApp {
             .bg(theme.surface)
             .child(panel_header(self.t(Key::Inspector), &theme))
             .child(
-                div()
-                    .id("inspector-body")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .p_2()
-                    .child(body),
+                self.scrolling(
+                    ScrollPanel::Inspector,
+                    div()
+                        .id("inspector-body")
+                        .overflow_y_scroll()
+                        .p_2()
+                        .child(body),
+                    cx,
+                ),
             )
     }
 

@@ -14,6 +14,7 @@ use log::Level;
 use crate::app::AurisApp;
 use crate::logbook::{Entry, book};
 use crate::theme::{Metrics, Theme};
+use crate::ui::scrollbars::ScrollPanel;
 use crate::ui::widgets::{ButtonStyle, button};
 
 impl AurisApp {
@@ -67,27 +68,29 @@ impl AurisApp {
                     )),
             )
             .child(
-                div()
-                    .id("log-lines")
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_h_0()
-                    .p_1()
-                    .overflow_y_scroll()
-                    // Newest first, because the reason anybody opened this is the thing that just
-                    // happened — scrolling to the bottom of five hundred lines to find it is the
-                    // terminal's behaviour, and a terminal is what this replaces.
-                    .children(rows)
-                    .when(empty, |this| {
-                        this.child(
-                            div()
-                                .p_2()
-                                .text_xs()
-                                .text_color(theme.text_faint)
-                                .child(self.t(Key::LogEmpty)),
-                        )
-                    }),
+                self.scrolling(
+                    ScrollPanel::Log,
+                    div()
+                        .id("log-lines")
+                        .flex()
+                        .flex_col()
+                        .p_1()
+                        .overflow_y_scroll()
+                        // Newest first, because the reason anybody opened this is the thing that just
+                        // happened — scrolling to the bottom of five hundred lines to find it is the
+                        // terminal's behaviour, and a terminal is what this replaces.
+                        .children(rows)
+                        .when(empty, |this| {
+                            this.child(
+                                div()
+                                    .p_2()
+                                    .text_xs()
+                                    .text_color(theme.text_faint)
+                                    .child(self.t(Key::LogEmpty)),
+                            )
+                        }),
+                    cx,
+                ),
             )
     }
 }

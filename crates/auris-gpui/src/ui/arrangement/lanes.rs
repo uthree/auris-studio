@@ -22,6 +22,7 @@ use crate::app::AurisApp;
 use crate::theme::Metrics;
 use crate::ui::automation;
 use crate::ui::paint;
+use crate::ui::scrollbars::ScrollPanel;
 
 use super::geometry::{
     CLIP_INSET, FADE_HANDLE_MIN_WIDTH, TITLE_HEIGHT, edge_zone_rows, resize_grab,
@@ -80,203 +81,229 @@ impl AurisApp {
             .flex_1()
             .min_w_0()
             .child(
+                // The ruler and the strips under it stop where the lanes' scrollbar starts. They
+                // measure the same timeline the lanes do, and the bar is the one thing on this
+                // side of the arrangement that is not part of the song.
                 div()
-                    .id("ruler")
-                    .h(Metrics::RULER_HEIGHT)
-                    .w_full()
-                    .cursor_pointer()
-                    .child({
-                        let theme = theme.clone();
-                        let view = view.clone();
-                        let recorded = self.canvas.ruler.clone();
-                        canvas(
-                            move |bounds, _, _| recorded.set(Some(bounds)),
-                            move |bounds, _, window, cx| {
-                                paint::clipped(window, bounds, |window| {
-                                    paint::ruler(
-                                        window,
-                                        cx,
-                                        bounds,
-                                        &view,
-                                        &signatures,
-                                        &tempo,
-                                        &theme,
-                                    );
-                                    if let Some(region) = loop_region {
-                                        paint::loop_region(window, bounds, &view, region, &theme);
-                                    }
-                                    if let Some(region) = punch_region {
-                                        paint::punch_region(window, bounds, &view, region, &theme);
-                                    }
-                                    paint::playhead(
-                                        window,
-                                        bounds,
-                                        bounds.origin.x + view.tick_to_x(playhead),
-                                        &theme,
-                                    );
-                                });
-                            },
-                        )
-                        .size_full()
+                    .flex()
+                    .flex_col()
+                    .pr(self.scrollbar_width(ScrollPanel::Lanes))
+                    .child(
+                        div()
+                            .id("ruler")
+                            .h(Metrics::RULER_HEIGHT)
+                            .w_full()
+                            .cursor_pointer()
+                            .child({
+                                let theme = theme.clone();
+                                let view = view.clone();
+                                let recorded = self.canvas.ruler.clone();
+                                canvas(
+                                    move |bounds, _, _| recorded.set(Some(bounds)),
+                                    move |bounds, _, window, cx| {
+                                        paint::clipped(window, bounds, |window| {
+                                            paint::ruler(
+                                                window,
+                                                cx,
+                                                bounds,
+                                                &view,
+                                                &signatures,
+                                                &tempo,
+                                                &theme,
+                                            );
+                                            if let Some(region) = loop_region {
+                                                paint::loop_region(
+                                                    window, bounds, &view, region, &theme,
+                                                );
+                                            }
+                                            if let Some(region) = punch_region {
+                                                paint::punch_region(
+                                                    window, bounds, &view, region, &theme,
+                                                );
+                                            }
+                                            paint::playhead(
+                                                window,
+                                                bounds,
+                                                bounds.origin.x + view.tick_to_x(playhead),
+                                                &theme,
+                                            );
+                                        });
+                                    },
+                                )
+                                .size_full()
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                                    this.begin_ruler_drag(event, cx);
+                                }),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Right,
+                                AurisApp::opens_menu(cx, |this, at| {
+                                    let x = at.x - this.timeline_origin().x;
+                                    let tick = this.snap(this.timeline.x_to_tick(x)).max_zero();
+                                    this.ruler_menu(at, tick)
+                                }),
+                            )
+                            // The ruler scrolls the same timeline the lanes below it do. Without this the
+                            // wheel was dead over the top twenty pixels of the arrangement and worked two
+                            // centimetres lower, which is the kind of thing a user finds by accident.
+                            .on_scroll_wheel(cx.listener(
+                                |this, event: &gpui::ScrollWheelEvent, _, cx| {
+                                    this.scroll_timeline(event, cx);
+                                },
+                            )),
+                    )
+                    .when(self.panels.lanes.structure, |this| {
+                        this.child(self.render_structure_lane(cx))
                     })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                            this.begin_ruler_drag(event, cx);
-                        }),
-                    )
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        AurisApp::opens_menu(cx, |this, at| {
-                            let x = at.x - this.timeline_origin().x;
-                            let tick = this.snap(this.timeline.x_to_tick(x)).max_zero();
-                            this.ruler_menu(at, tick)
-                        }),
-                    )
-                    // The ruler scrolls the same timeline the lanes below it do. Without this the
-                    // wheel was dead over the top twenty pixels of the arrangement and worked two
-                    // centimetres lower, which is the kind of thing a user finds by accident.
-                    .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
-                        this.scroll_timeline(event, cx);
-                    })),
+                    .when(self.panels.lanes.harmony, |this| {
+                        this.child(self.render_harmony_lane(cx))
+                    }),
             )
-            .when(self.panels.lanes.structure, |this| {
-                this.child(self.render_structure_lane(cx))
-            })
-            .when(self.panels.lanes.harmony, |this| {
-                this.child(self.render_harmony_lane(cx))
-            })
             .child(
-                div()
-                    .id("lanes")
-                    .flex_1()
-                    .w_full()
-                    .overflow_hidden()
-                    .child({
-                        let theme = theme.clone();
-                        let view = view.clone();
-                        let recorded = self.canvas.lanes.clone();
-                        canvas(
-                            move |bounds, window, _| {
-                                recorded.set(Some(bounds));
-                                // A hitbox each rather than a hovered-thing on the view: a cursor
-                                // driven from app state would repaint the whole arrangement on
-                                // every pointer move across it, and gpui already knows which
-                                // rectangle the pointer is in.
-                                edge_zones
-                                    .iter()
-                                    .map(|zone| {
-                                        window.insert_hitbox(
-                                            Bounds {
-                                                origin: bounds.origin + zone.origin,
-                                                size: zone.size,
-                                            },
-                                            gpui::HitboxBehavior::Normal,
-                                        )
-                                    })
-                                    .collect::<Vec<_>>()
-                            },
-                            move |bounds, edges: Vec<gpui::Hitbox>, window, cx| {
-                                // Nothing on screen said the edges could be taken hold of, so the
-                                // only way to find out was to try. The arrow says it now.
-                                for edge in &edges {
-                                    window
-                                        .set_cursor_style(gpui::CursorStyle::ResizeLeftRight, edge);
-                                }
-                                paint::clipped(window, bounds, |window| {
-                                    paint::rect(window, bounds, theme.surface_sunken);
-                                    paint::time_grid(
-                                        window,
-                                        bounds,
-                                        &view,
-                                        &lane_signatures,
-                                        &theme,
-                                    );
-                                    if let Some(region) = loop_region {
-                                        paint::loop_region(window, bounds, &view, region, &theme);
+                self.scrolling(
+                    ScrollPanel::Lanes,
+                    div()
+                        .id("lanes")
+                        .overflow_hidden()
+                        .child({
+                            let theme = theme.clone();
+                            let view = view.clone();
+                            let recorded = self.canvas.lanes.clone();
+                            canvas(
+                                move |bounds, window, _| {
+                                    recorded.set(Some(bounds));
+                                    // A hitbox each rather than a hovered-thing on the view: a cursor
+                                    // driven from app state would repaint the whole arrangement on
+                                    // every pointer move across it, and gpui already knows which
+                                    // rectangle the pointer is in.
+                                    edge_zones
+                                        .iter()
+                                        .map(|zone| {
+                                            window.insert_hitbox(
+                                                Bounds {
+                                                    origin: bounds.origin + zone.origin,
+                                                    size: zone.size,
+                                                },
+                                                gpui::HitboxBehavior::Normal,
+                                            )
+                                        })
+                                        .collect::<Vec<_>>()
+                                },
+                                move |bounds, edges: Vec<gpui::Hitbox>, window, cx| {
+                                    // Nothing on screen said the edges could be taken hold of, so the
+                                    // only way to find out was to try. The arrow says it now.
+                                    for edge in &edges {
+                                        window.set_cursor_style(
+                                            gpui::CursorStyle::ResizeLeftRight,
+                                            edge,
+                                        );
                                     }
-                                    if let Some(region) = punch_region {
-                                        paint::punch_region(window, bounds, &view, region, &theme);
-                                    }
-
-                                    // Every row is painted and the mask throws away what is off
-                                    // the top or the bottom. A project is tens of tracks, not
-                                    // thousands, so culling would cost more to read than to run.
-                                    //
-                                    // Each row is placed by the top it was given rather than by
-                                    // adding up what came before it, so the clips and the curves
-                                    // cannot walk apart from each other or from the hit tests.
-                                    let top_of = |top: Pixels| bounds.origin.y - lane_scroll + top;
-                                    for lane in &lanes {
-                                        let lane_bounds = Bounds {
-                                            origin: point(bounds.origin.x, top_of(lane.top)),
-                                            size: size(bounds.size.width, px(lane.height)),
-                                        };
-                                        paint_lane(
+                                    paint::clipped(window, bounds, |window| {
+                                        paint::rect(window, bounds, theme.surface_sunken);
+                                        paint::time_grid(
                                             window,
-                                            cx,
-                                            lane_bounds,
-                                            lane,
-                                            &peaks,
+                                            bounds,
                                             &view,
+                                            &lane_signatures,
                                             &theme,
-                                            language,
                                         );
-                                        paint::hline(
-                                            window,
-                                            bounds,
-                                            lane_bounds.origin.y + lane_bounds.size.height,
-                                            theme.border_subtle,
-                                        );
-                                    }
-                                    for row in &automation_rows {
-                                        let row_bounds = Bounds {
-                                            origin: point(bounds.origin.x, top_of(row.top)),
-                                            size: size(
-                                                bounds.size.width,
-                                                crate::ui::automation::ROW_HEIGHT,
-                                            ),
-                                        };
-                                        paint_automation(
-                                            window, cx, row_bounds, row, &view, &theme,
-                                        );
-                                        paint::hline(
-                                            window,
-                                            bounds,
-                                            row_bounds.origin.y + row_bounds.size.height,
-                                            theme.border_subtle,
-                                        );
-                                    }
+                                        if let Some(region) = loop_region {
+                                            paint::loop_region(
+                                                window, bounds, &view, region, &theme,
+                                            );
+                                        }
+                                        if let Some(region) = punch_region {
+                                            paint::punch_region(
+                                                window, bounds, &view, region, &theme,
+                                            );
+                                        }
 
-                                    paint::playhead(
-                                        window,
-                                        bounds,
-                                        bounds.origin.x + view.tick_to_x(playhead),
-                                        &theme,
-                                    );
-                                    if let Some(band) = band {
-                                        paint::selection_band(window, band, &theme);
-                                    }
-                                });
-                            },
+                                        // Every row is painted and the mask throws away what is off
+                                        // the top or the bottom. A project is tens of tracks, not
+                                        // thousands, so culling would cost more to read than to run.
+                                        //
+                                        // Each row is placed by the top it was given rather than by
+                                        // adding up what came before it, so the clips and the curves
+                                        // cannot walk apart from each other or from the hit tests.
+                                        let top_of =
+                                            |top: Pixels| bounds.origin.y - lane_scroll + top;
+                                        for lane in &lanes {
+                                            let lane_bounds = Bounds {
+                                                origin: point(bounds.origin.x, top_of(lane.top)),
+                                                size: size(bounds.size.width, px(lane.height)),
+                                            };
+                                            paint_lane(
+                                                window,
+                                                cx,
+                                                lane_bounds,
+                                                lane,
+                                                &peaks,
+                                                &view,
+                                                &theme,
+                                                language,
+                                            );
+                                            paint::hline(
+                                                window,
+                                                bounds,
+                                                lane_bounds.origin.y + lane_bounds.size.height,
+                                                theme.border_subtle,
+                                            );
+                                        }
+                                        for row in &automation_rows {
+                                            let row_bounds = Bounds {
+                                                origin: point(bounds.origin.x, top_of(row.top)),
+                                                size: size(
+                                                    bounds.size.width,
+                                                    crate::ui::automation::ROW_HEIGHT,
+                                                ),
+                                            };
+                                            paint_automation(
+                                                window, cx, row_bounds, row, &view, &theme,
+                                            );
+                                            paint::hline(
+                                                window,
+                                                bounds,
+                                                row_bounds.origin.y + row_bounds.size.height,
+                                                theme.border_subtle,
+                                            );
+                                        }
+
+                                        paint::playhead(
+                                            window,
+                                            bounds,
+                                            bounds.origin.x + view.tick_to_x(playhead),
+                                            &theme,
+                                        );
+                                        if let Some(band) = band {
+                                            paint::selection_band(window, band, &theme);
+                                        }
+                                    });
+                                },
+                            )
+                            .size_full()
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                                this.begin_lane_drag(event, cx);
+                            }),
                         )
-                        .size_full()
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                            this.begin_lane_drag(event, cx);
-                        }),
-                    )
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                            this.open_lane_menu(event, cx);
-                        }),
-                    )
-                    .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
-                        this.scroll_timeline(event, cx);
-                    })),
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                                this.open_lane_menu(event, cx);
+                            }),
+                        )
+                        .on_scroll_wheel(cx.listener(
+                            |this, event: &gpui::ScrollWheelEvent, _, cx| {
+                                this.scroll_timeline(event, cx);
+                            },
+                        )),
+                    cx,
+                ),
             )
     }
 

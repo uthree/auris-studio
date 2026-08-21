@@ -11,6 +11,7 @@ use crate::app::AurisApp;
 use crate::theme::Metrics;
 use crate::ui::icons::Icon;
 use crate::ui::inspector::insert_element_key;
+use crate::ui::scrollbars::ScrollPanel;
 use crate::ui::widgets::{ButtonStyle, button, db_to_meter_position, icon_label, level_meter};
 
 /// Width of one channel strip.
@@ -57,95 +58,27 @@ impl AurisApp {
                     .child(self.t(Key::Mixer)),
             )
             .child(
-                div()
-                    .id("mixer-strips")
-                    .flex()
-                    .flex_1()
-                    .min_h_0()
-                    // And the same for the row itself, which is the one that actually scrolls:
-                    // `w_full` holds it to the panel and `min_w_0` lets it be held there. Without
-                    // the pair `overflow_x_scroll` is a promise about a row that never overflows.
-                    .w_full()
-                    .min_w_0()
-                    .gap_1()
-                    .p_1()
-                    .overflow_x_scroll()
-                    .track_scroll(&self.mixer_scroll)
-                    .children(strips),
+                self.scrolling(
+                    ScrollPanel::Mixer,
+                    div()
+                        .id("mixer-strips")
+                        .flex()
+                        // And the same for the row itself, which is the one that actually scrolls:
+                        // `w_full` holds it to the panel and `min_w_0` lets it be held there. Without
+                        // the pair `overflow_x_scroll` is a promise about a row that never overflows.
+                        .w_full()
+                        .gap_1()
+                        .p_1()
+                        .overflow_x_scroll()
+                        .children(strips),
+                    cx,
+                ),
             )
-            .child(self.render_mixer_scrollbar(cx))
             .on_mouse_down(
                 gpui::MouseButton::Right,
                 // Right-clicking past the last strip is still a request to add a track.
                 Self::opens_menu(cx, |this, at| this.arrangement_menu(at)),
             )
-    }
-
-    /// The bar under the strips, and the only visible way to reach a track that is off the end.
-    ///
-    /// The wheel already scrolled the row — gpui turns a vertical wheel sideways for a container
-    /// that only scrolls in x — but nothing on the screen said so, and a mixer whose fifteenth
-    /// track can only be found by guessing is a mixer with fourteen tracks.
-    fn render_mixer_scrollbar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement + use<> {
-        let offset = self.mixer_scroll.offset().x;
-        let max_offset = self.mixer_scroll.max_offset().width;
-        let viewport = self.mixer_scroll.bounds().size.width;
-        let recorded = self.canvas.mixer_scrollbar.clone();
-        div()
-            .relative()
-            .child(
-                crate::ui::widgets::horizontal_scrollbar(
-                    "mixer-scrollbar",
-                    f32::from(offset),
-                    f32::from(max_offset),
-                    f32::from(viewport),
-                    &self.theme,
-                    cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
-                        this.press_mixer_scrollbar(event, cx);
-                    }),
-                )
-                .into_any_element(),
-            )
-            .child({
-                // The press is measured against the bar that was drawn, not against the row it
-                // scrolls: the row carries its own padding, and a fraction taken from the wrong
-                // rectangle puts the thumb a few pixels from the pointer at one end of the track
-                // and nowhere near it at the other.
-                gpui::canvas(
-                    move |bounds, _, _| recorded.set(Some(bounds)),
-                    |_, _, _, _| (),
-                )
-                .absolute()
-                .size_full()
-            })
-    }
-
-    /// Takes hold of the scrollbar, jumping to the pointer first when it landed off the thumb.
-    fn press_mixer_scrollbar(
-        &mut self,
-        event: &gpui::MouseDownEvent,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        let Some(bar) = self.canvas.mixer_scrollbar.get() else {
-            return;
-        };
-        let max_offset = f32::from(self.mixer_scroll.max_offset().width);
-        let viewport = f32::from(self.mixer_scroll.bounds().size.width);
-        let width = f32::from(bar.size.width).max(1.0);
-        let fraction = f32::from(event.position.x - bar.origin.x) / width;
-        let offset = crate::ui::widgets::scrollbar_pressed(
-            fraction,
-            f32::from(self.mixer_scroll.offset().x),
-            max_offset,
-            viewport,
-        );
-        self.mixer_scroll
-            .set_offset(gpui::point(px(offset), self.mixer_scroll.offset().y));
-        self.drag = Some(crate::app::Drag::MixerScroll {
-            start_x: event.position.x,
-            start_offset: px(offset),
-        });
-        cx.notify();
     }
 
     fn render_strip(

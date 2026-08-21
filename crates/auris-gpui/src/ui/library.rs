@@ -39,6 +39,7 @@ use crate::app::AurisApp;
 use crate::theme::Metrics;
 use crate::ui::icons::Icon;
 use crate::ui::inspector::{audio_name, panel_header};
+use crate::ui::scrollbars::ScrollPanel;
 use crate::ui::widgets::divider;
 
 /// How far one level of the tree is indented.
@@ -331,19 +332,21 @@ impl AurisApp {
             .child(panel_header(self.t(Key::Library), &theme))
             .child(self.library_search_field(cx))
             .child(
-                // No gap between the rows and half the padding round them. A browser is a list
-                // to run an eye down, and every pixel of air between two names is a name that
-                // did not fit on the screen — this used to show eleven rows where it now shows
-                // twenty-odd.
-                div()
-                    .id("library-body")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .p_1()
-                    .flex()
-                    .flex_col()
-                    .children(rows),
+                self.scrolling(
+                    ScrollPanel::Library,
+                    // No gap between the rows and half the padding round them. A browser is a list
+                    // to run an eye down, and every pixel of air between two names is a name that
+                    // did not fit on the screen — this used to show eleven rows where it now shows
+                    // twenty-odd.
+                    div()
+                        .id("library-body")
+                        .overflow_y_scroll()
+                        .p_1()
+                        .flex()
+                        .flex_col()
+                        .children(rows),
+                    cx,
+                ),
             )
     }
 

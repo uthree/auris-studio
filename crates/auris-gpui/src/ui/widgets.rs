@@ -486,16 +486,22 @@ pub fn scrollbar_pressed(fraction: f32, offset: f32, max_offset: f32, viewport: 
 /// How thick a scrollbar is drawn.
 pub const SCROLLBAR_THICKNESS: Pixels = px(9.0);
 
-/// A horizontal scrollbar for a container that scrolls sideways.
+/// A scrollbar for a container that scrolls along `axis`.
 ///
 /// Drawn as elements rather than painted on a canvas so that the thumb is a real hitbox: the
 /// press has to be told apart from a press on the track beside it, and comparing pointer
 /// positions against a remembered rectangle is the thing [`crate::app::CanvasBounds`] exists
 /// because the application kept getting wrong.
 ///
+/// One function for both directions, because the whole of the difference between them is which
+/// of two methods each of four lines calls. The arithmetic underneath — [`scrollbar_thumb`],
+/// [`scrollbar_dragged`], [`scrollbar_pressed`] — never knew about an axis at all: it is stated
+/// in fractions of a track, and a fraction of a column is a fraction of a row.
+///
 /// The caller passes gpui's own `offset` and `max_offset` and is handed back the *fraction* a
 /// press landed at; what that means for the offset is [`scrollbar_pressed`]'s to say.
-pub fn horizontal_scrollbar<I, F>(
+pub fn scrollbar<I, F>(
+    axis: Axis,
     id: I,
     offset: f32,
     max_offset: f32,
@@ -508,24 +514,38 @@ where
     F: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
 {
     let thumb = scrollbar_thumb(offset, max_offset, viewport);
+    let down = axis == Axis::Vertical;
     div()
         .id(id)
-        .w_full()
         .flex_shrink_0()
-        // Height and all, only when there is something to scroll: a bar that is always there is
-        // a strip of the panel spent on saying that the panel fits.
+        .map(|track| match down {
+            true => track.h_full(),
+            false => track.w_full(),
+        })
+        // Thickness and all, only when there is something to scroll: a bar that is always there
+        // is a strip of the panel spent on saying that the panel fits.
         .when_some(thumb, |track, (start, length)| {
             track
-                .h(SCROLLBAR_THICKNESS)
+                .map(|track| match down {
+                    true => track.w(SCROLLBAR_THICKNESS),
+                    false => track.h(SCROLLBAR_THICKNESS),
+                })
                 .bg(theme.surface_sunken)
                 .child(
                     div()
                         .absolute()
-                        .left(relative(start))
-                        .w(relative(length))
-                        .h(SCROLLBAR_THICKNESS)
                         .rounded(Metrics::RADIUS_XS)
-                        .bg(theme.border),
+                        .bg(theme.border)
+                        .map(|thumb| match down {
+                            true => thumb
+                                .top(relative(start))
+                                .h(relative(length))
+                                .w(SCROLLBAR_THICKNESS),
+                            false => thumb
+                                .left(relative(start))
+                                .w(relative(length))
+                                .h(SCROLLBAR_THICKNESS),
+                        }),
                 )
                 .on_mouse_down(gpui::MouseButton::Left, on_press)
         })

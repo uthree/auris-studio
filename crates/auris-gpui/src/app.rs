@@ -365,13 +365,15 @@ pub enum Drag {
         /// drawing a brand-new note, whose end starts on the grid and should follow at once.
         pressed_at: Option<Point<Pixels>>,
     },
-    /// Carrying the mixer's scrollbar along its track.
-    MixerScroll {
-        /// Pointer x when the drag began.
-        start_x: Pixels,
+    /// Carrying a panel's scrollbar along its track.
+    PanelScroll {
+        /// Which panel's, which is also which way the drag is measured.
+        panel: crate::ui::scrollbars::ScrollPanel,
+        /// The pointer's coordinate along that axis when the drag began.
+        start: Pixels,
         /// The scroll offset then, which every move is measured against rather than against
-        /// wherever the strips are now — the same reason a fader remembers where it was grabbed.
-        start_offset: Pixels,
+        /// wherever the content is now — the same reason a fader remembers where it was grabbed.
+        start_offset: f32,
     },
     /// Turning a parameter.
     Param {
@@ -561,7 +563,7 @@ impl Drag {
         match self {
             Drag::Playhead => None,
             // Where a panel is looking is not something to undo.
-            Drag::MixerScroll { .. } => None,
+            Drag::PanelScroll { .. } => None,
             Drag::LoopRegion { .. } => Some(Edit::SetLoopRegion),
             Drag::ClipMove { .. } => Some(Edit::MoveClip),
             Drag::TrackReorder { .. } => Some(Edit::MoveTrack),
@@ -871,8 +873,12 @@ pub struct CanvasBounds {
     pub lanes: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The piano roll's note grid.
     pub roll: Rc<Cell<Option<Bounds<Pixels>>>>,
-    /// The mixer's scrollbar, whose width is also the width of the strips it scrolls.
-    pub mixer_scrollbar: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// Where each panel's scrollbar was drawn, keyed by
+    /// [`ScrollPanel::index`](crate::ui::scrollbars::ScrollPanel::index).
+    ///
+    /// Reached through [`CanvasBounds::scrollbar`] rather than directly, so that the one place
+    /// the array is indexed is the one place a panel is turned into a slot.
+    scrollbars: [Rc<Cell<Option<Bounds<Pixels>>>>; crate::ui::scrollbars::ScrollPanel::COUNT],
     /// The envelope graph in the open plugin window.
     pub envelope: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The equalizer's graph in the open plugin window, above the strip of frequency numbers.
@@ -887,6 +893,14 @@ pub struct CanvasBounds {
 }
 
 impl CanvasBounds {
+    /// Where a panel's scrollbar was drawn.
+    pub(crate) fn scrollbar(
+        &self,
+        panel: crate::ui::scrollbars::ScrollPanel,
+    ) -> Rc<Cell<Option<Bounds<Pixels>>>> {
+        Rc::clone(&self.scrollbars[panel.index()])
+    }
+
     /// Where one of the roll's curve strips was painted.
     ///
     /// Asking about a strip that has never been drawn hands back an empty cell rather than
@@ -960,6 +974,12 @@ pub struct AurisApp {
     /// them. Without the handle the two would be separate scroll positions that happen to look
     /// alike until somebody used both.
     pub(crate) mixer_scroll: gpui::ScrollHandle,
+    /// The same, for the browser's list of instruments and effects.
+    pub(crate) library_scroll: gpui::ScrollHandle,
+    /// The same, for the inspector's column of settings.
+    pub(crate) inspector_scroll: gpui::ScrollHandle,
+    /// The same, for the log's lines.
+    pub(crate) log_scroll: gpui::ScrollHandle,
     /// The open right-click menu, if any.
     pub(crate) menu: Option<ContextMenu>,
     /// Which menu-bar menu is open, on the platforms that draw their own bar.
@@ -1141,6 +1161,9 @@ impl AurisApp {
             arrangement_width: px(900.0),
             canvas: CanvasBounds::default(),
             mixer_scroll: gpui::ScrollHandle::new(),
+            library_scroll: gpui::ScrollHandle::new(),
+            inspector_scroll: gpui::ScrollHandle::new(),
+            log_scroll: gpui::ScrollHandle::new(),
             menu: None,
             menu_bar: None,
             prompt: None,
