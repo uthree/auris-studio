@@ -166,6 +166,12 @@ pub struct Settings {
     pub export: ExportPreferences,
     /// Where the window was when it was last put away. `None` on a first run.
     pub window: Option<WindowPlacement>,
+    /// Projects opened lately, most recent first.
+    ///
+    /// Capped at [`Settings::RECENT`]. A path rather than a handle, so a project moved or
+    /// deleted since simply fails to open and says so — checking the disk to draw a menu would
+    /// mean waking a sleeping network share every time somebody looked at File.
+    pub recent: Vec<PathBuf>,
     /// Extra places to look for CLAP plugins, on top of the conventional folders.
     ///
     /// Each is a `.clap` taken as it stands or a directory walked for them. Kept here rather
@@ -186,12 +192,30 @@ impl Default for Settings {
             autosave: true,
             export: ExportPreferences::default(),
             window: None,
+            recent: Vec::new(),
             plugin_paths: Vec::new(),
         }
     }
 }
 
 impl Settings {
+    /// How many recently opened projects are remembered.
+    ///
+    /// Ten. Long enough to hold a week of work on two or three pieces, short enough that the
+    /// list is still something an eye takes in at once rather than a second file dialog.
+    pub const RECENT: usize = 10;
+
+    /// Puts `path` at the head of the recent list, without letting it appear twice.
+    ///
+    /// Called on opening and on saving under a new name — the two moments at which a path
+    /// becomes the one being worked on. Saving over the same file does not reorder anything,
+    /// because it was already at the top.
+    pub fn remember_recent(&mut self, path: &Path) {
+        self.recent.retain(|kept| kept != path);
+        self.recent.insert(0, path.to_path_buf());
+        self.recent.truncate(Self::RECENT);
+    }
+
     /// The language to use, resolving "follow the system" against the environment.
     pub fn language(&self) -> Language {
         Language::resolve(self.language)
@@ -521,5 +545,38 @@ mod tests {
             sample_rate: Some(44_100),
         };
         assert_eq!(asked.wav_settings(48_000.0).sample_rate, 48_000);
+    }
+
+    #[test]
+    fn the_recent_list_holds_each_project_once_and_the_newest_first() {
+        let mut settings = Settings::default();
+        settings.remember_recent(Path::new("/songs/One.auris"));
+        settings.remember_recent(Path::new("/songs/Two.auris"));
+        // Opening the first one again moves it back to the top rather than listing it twice.
+        settings.remember_recent(Path::new("/songs/One.auris"));
+        assert_eq!(
+            settings.recent,
+            vec![
+                PathBuf::from("/songs/One.auris"),
+                PathBuf::from("/songs/Two.auris")
+            ]
+        );
+    }
+
+    #[test]
+    fn the_recent_list_stops_at_a_length_an_eye_can_take_in() {
+        let mut settings = Settings::default();
+        for n in 0..Settings::RECENT + 5 {
+            settings.remember_recent(&PathBuf::from(format!("/songs/{n}.auris")));
+        }
+        assert_eq!(settings.recent.len(), Settings::RECENT);
+        // And it is the oldest that fell off, not the newest.
+        assert_eq!(
+            settings.recent.first(),
+            Some(&PathBuf::from(format!(
+                "/songs/{}.auris",
+                Settings::RECENT + 4
+            )))
+        );
     }
 }

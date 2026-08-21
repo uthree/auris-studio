@@ -37,6 +37,10 @@ actions!(
         ExportAudio,
         /// Render only the cycle region to a WAV file.
         ExportCycle,
+        /// Show the list of projects opened lately, to open one again.
+        OpenRecent,
+        /// Show what this build is.
+        ShowAbout,
         /// Start or stop playback.
         TogglePlay,
         /// Stop playback and return to the start.
@@ -402,6 +406,10 @@ bindable! {
         "file.collect",         GroupFile,      CmdCollectAssets,      "secondary-shift-a" => CollectAssets;
         "file.export",          GroupFile,      CmdExportWav,          "secondary-e" => ExportAudio;
         "file.export_cycle",    GroupFile,      CmdExportCycle,        "secondary-shift-e" => ExportCycle;
+        // No keystroke: the list it opens is the point, and every letter worth spending is
+        // already spent. It is on the File menu, which is where anybody looks for it.
+        "file.recent",          GroupFile,      CmdOpenRecent,         "" => OpenRecent;
+        "view.about",           GroupView,      CmdAbout,              "" => ShowAbout;
         "file.quit",            GroupFile,      CmdQuit,               "secondary-q" => Quit;
 
         // Their ids still begin `file.` because an id is written into settings files and never

@@ -729,6 +729,10 @@ strings! {
     DialogSaveProject { en: "Save project", ja: "プロジェクトを保存" }
     DialogOpenProject { en: "Open project", ja: "プロジェクトを開く" }
     DialogPluginFolder { en: "Choose a plugin folder", ja: "プラグインのフォルダを選択" }
+    CmdOpenRecent { en: "Open Recent", ja: "最近のプロジェクト" }
+    CmdAbout { en: "About Auris Studio", ja: "Auris Studio について" }
+    MenuNoRecentProjects { en: "Nothing opened yet", ja: "まだ何も開いていません" }
+    MenuForgetRecent { en: "Forget This List", ja: "履歴を消去" }
     DialogComposeSpec { en: "Compose from specification", ja: "仕様書から作曲" }
     DialogImportAudio { en: "Import audio", ja: "オーディオを読み込む" }
     DialogImportSoundFont { en: "Import SoundFont", ja: "サウンドフォントを読み込む" }

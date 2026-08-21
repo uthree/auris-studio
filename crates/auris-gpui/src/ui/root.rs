@@ -129,6 +129,8 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_collect_assets))
             .on_action(cx.listener(Self::on_export_audio))
             .on_action(cx.listener(Self::on_export_cycle))
+            .on_action(cx.listener(Self::on_open_recent))
+            .on_action(cx.listener(Self::on_show_about))
             .on_action(cx.listener(Self::on_add_instrument_track))
             .on_action(cx.listener(Self::on_add_audio_track))
             .on_action(cx.listener(Self::on_add_bus_track))
@@ -1486,6 +1488,29 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.start_export_cycle(window, cx);
+    }
+
+    fn on_open_recent(
+        &mut self,
+        _: &actions::OpenRecent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Under the File menu, which is where the row that opened it is. A command run from the
+        // palette or a keystroke has no pointer to anchor to, and a list that appeared under the
+        // hand would appear somewhere different every time.
+        self.open_menu(self.recent_menu(gpui::point(px(8.0), px(30.0))));
+        cx.notify();
+    }
+
+    fn on_show_about(
+        &mut self,
+        _: &actions::ShowAbout,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_about();
+        cx.notify();
     }
 
     fn on_add_instrument_track(

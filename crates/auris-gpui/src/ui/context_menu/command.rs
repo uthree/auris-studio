@@ -471,6 +471,11 @@ pub enum MenuCommand {
     /// Ask for a parameter's value as a number.
     SetParamValue(ParamTarget),
 
+    /// Open a project from the recent list.
+    OpenRecent(std::path::PathBuf),
+    /// Empty the recent list.
+    ForgetRecent,
+
     /// Change how an existing lane gets from one point to the next.
     ///
     /// A new lane is given the shape its parameter implies — a chooser holds, a fader runs
@@ -998,6 +1003,16 @@ impl AurisApp {
             MenuCommand::SetParamChoice { target, value } => self.session.set_param(target, value),
             MenuCommand::ResetParam(target) => self.reset_param(target),
             MenuCommand::SetParamValue(target) => self.prompt_for_param(target),
+            MenuCommand::OpenRecent(path) => {
+                // The same guard a dropped project gets, and for the same reason: the document
+                // on screen may be unsaved, and the sheet has to be able to answer with "save,
+                // then open *that* one" rather than reopening a dialog.
+                if self.confirm_discard(crate::ui::prompt::PendingAction::OpenDropped(path.clone()))
+                {
+                    self.open_project_at(path, cx);
+                }
+            }
+            MenuCommand::ForgetRecent => self.forget_recent(),
             MenuCommand::SetAutomationCurve { target, curve } => {
                 self.session.set_automation_curve(target, curve);
             }

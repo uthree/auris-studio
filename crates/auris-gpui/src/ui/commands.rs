@@ -594,6 +594,9 @@ impl AurisApp {
 
     /// Reports where a project landed, and what did not travel with it.
     pub(crate) fn report_save(&mut self, report: &auris_session::SaveReport) {
+        // Saved under a name is the other moment a path becomes the one being worked on. A
+        // resave over the same file changes nothing here, because it was already at the top.
+        self.remember_recent(&report.document);
         let language = self.language();
         let shown = report.document.display().to_string();
         self.set_status(if report.uncollected.is_empty() {
@@ -692,6 +695,7 @@ impl AurisApp {
             let _ = this.update(cx, |this, cx| {
                 match this.session.open(&path) {
                     Ok(missing) => {
+                        this.remember_recent(&path);
                         this.resync_selection();
                         // A different document, so the view of the old one means nothing.
                         this.reset_view();
@@ -1182,6 +1186,60 @@ impl AurisApp {
             });
         })
         .detach();
+    }
+
+    /// Says what this build is.
+    ///
+    /// A notice sheet rather than a window: there is nothing to decide and nothing to type, and
+    /// this application already has one way of putting a few lines on the screen and taking them
+    /// away again.
+    ///
+    /// The version comes from the manifest at compile time, so it cannot drift from what was
+    /// built. What people are usually after when they open this is exactly that number — it is
+    /// the first thing any bug report needs.
+    pub(crate) fn show_about(&mut self) {
+        let status = self.session.audio_status();
+        let lines = [
+            format!("Auris Studio {}", env!("CARGO_PKG_VERSION")),
+            // What the engine actually opened, and where the preferences live. Both are the
+            // first things anybody is asked for when something is wrong, and both were only
+            // findable by hunting through Settings and the file system.
+            messages::audio_status(
+                self.language(),
+                &status.device,
+                status.sample_rate,
+                status.channels,
+            ),
+            auris_session::config_dir().display().to_string(),
+        ];
+        self.open_prompt(crate::ui::prompt::Prompt::notice(
+            self.t(Key::CmdAbout),
+            lines
+                .into_iter()
+                .filter(|line| !line.is_empty())
+                .map(Into::into),
+        ));
+    }
+
+    /// Puts a project at the head of the recent list and writes the settings out.
+    ///
+    /// Written straight away rather than on the way out, unlike the window's placement: the
+    /// value of this list is highest exactly when the last session ended badly, and a crash
+    /// that took the history of what was being worked on with it would be the one case it was
+    /// for. It is one small file and this happens twice an hour at most.
+    pub(crate) fn remember_recent(&mut self, path: &std::path::Path) {
+        self.settings.remember_recent(path);
+        if let Err(error) = self.settings.save() {
+            log::warn!("could not save settings: {error}");
+        }
+    }
+
+    /// Forgets every project in the recent list.
+    pub(crate) fn forget_recent(&mut self) {
+        self.settings.recent.clear();
+        if let Err(error) = self.settings.save() {
+            log::warn!("could not save settings: {error}");
+        }
     }
 
     /// Asks for a folder (or a `.clap` bundle) to look for plugins in, and remembers it.

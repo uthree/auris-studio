@@ -347,12 +347,13 @@ pub enum PendingAction {
     NewProject,
     /// Read another document over this one, asking which.
     OpenProject,
-    /// Read *this* document over this one, having already been told which by a drop.
+    /// Read *this* document over this one, having already been told which.
     ///
-    /// A separate variant rather than a path on [`Self::OpenProject`], because the two differ in
-    /// what happens after Save: one opens a file dialog and the other opens a file. Carrying the
-    /// path is also what makes a dropped project answer the sheet — Save first, then open the one
-    /// that was dropped, not the one a second dialog would ask for.
+    /// By a drop, or by a choice from the recent list — both know the path before the question
+    /// is asked. A separate variant rather than a path on [`Self::OpenProject`], because the two
+    /// differ in what happens after Save: one opens a file dialog and the other opens a file.
+    /// Carrying the path is what makes the answer be the project that was chosen rather than the
+    /// one a second dialog would go on to ask for.
     OpenDropped(std::path::PathBuf),
     /// Read a MIDI file as a new document, having already been told which by a drop.
     ImportMidi(std::path::PathBuf),

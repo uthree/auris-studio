@@ -202,6 +202,13 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
             "file.export_cycle",
         ),
     ];
+    // Under Open rather than at the bottom, which is where every application on both platforms
+    // puts it. A row rather than a submenu: gpui's menu rows carry an action and nothing else,
+    // and an action cannot carry a path — so this one opens the list itself.
+    file.insert(
+        2,
+        command(t(Key::CmdOpenRecent), actions::OpenRecent, "file.recent"),
+    );
     if !cfg!(target_os = "macos") {
         file.push(MenuRow::Separator);
         file.push(command(
@@ -498,6 +505,11 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
             MenuRow::Separator,
             command(t(Key::CmdZoomIn), actions::ZoomIn, "view.zoom_in"),
             command(t(Key::CmdZoomOut), actions::ZoomOut, "view.zoom_out"),
+            MenuRow::Separator,
+            // Not a Help menu of its own for one row. What people are looking for when they
+            // reach for Help in an application with no manual is the version number, and this
+            // is the menu they are already in.
+            command(t(Key::CmdAbout), actions::ShowAbout, "view.about"),
         ],
     });
 

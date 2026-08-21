@@ -200,6 +200,33 @@ impl AurisApp {
             .item(self.t(Key::MenuNewBusTrack), MenuCommand::NewBusTrack)
     }
 
+    /// The projects opened lately, as a menu.
+    ///
+    /// A context menu rather than a submenu of File, because gpui's menu rows carry an action
+    /// and an action cannot carry a path — a recent list is nothing *but* paths. This one is
+    /// opened by the File row and by the palette, so it reaches the same place either way.
+    ///
+    /// Each row shows the project's own name with the folder it sits in underneath the rest of
+    /// the path: two projects called Demo are the ordinary case, and a list of identical names
+    /// is a list nobody can choose from.
+    pub(crate) fn recent_menu(&self, anchor: Point<Pixels>) -> ContextMenu {
+        let mut menu = ContextMenu::new(anchor, self.t(Key::CmdOpenRecent));
+        if self.settings.recent.is_empty() {
+            // A disabled row rather than an empty menu. A menu that opens with nothing in it
+            // reads as a menu that failed.
+            return menu.item_if(
+                false,
+                self.t(Key::MenuNoRecentProjects),
+                MenuCommand::ForgetRecent,
+            );
+        }
+        for path in &self.settings.recent {
+            menu = menu.item(recent_label(path), MenuCommand::OpenRecent(path.clone()));
+        }
+        menu.separator()
+            .item(self.t(Key::MenuForgetRecent), MenuCommand::ForgetRecent)
+    }
+
     /// The menu for one parameter, wherever its control is drawn.
     ///
     /// Automation used to be asked for from the *track* menu, which could only name the two
@@ -459,5 +486,72 @@ impl AurisApp {
                 self.t(Key::MenuAddSend),
                 MenuCommand::ShowSendPicker { track, at: anchor },
             )
+    }
+}
+
+/// How one recent project is named in the menu.
+///
+/// The project's own name, and the folder holding it in brackets after it. Two projects called
+/// Demo are the ordinary case — one in this month's folder and one in last year's — and a list
+/// that showed only the name would be a list nobody can choose from. The whole path would be
+/// truthful and unreadable: these are nested five folders deep and the interesting part is the
+/// last one.
+///
+/// A free function so the rule can be asserted without a window.
+pub(crate) fn recent_label(path: &std::path::Path) -> String {
+    let name = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    match path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .map(|folder| folder.to_string_lossy().into_owned())
+    {
+        // A project folder is named after the project it holds, so this pair is usually the same
+        // word twice — `Demo` in `Demo`. The folder above it is the one that distinguishes them.
+        Some(folder) if folder != name => format!("{name}  ({folder})"),
+        Some(_) => match path
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.file_name())
+        {
+            Some(above) => format!("{name}  ({})", above.to_string_lossy()),
+            None => name,
+        },
+        None => name,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::recent_label;
+    use std::path::Path;
+
+    #[test]
+    fn a_recent_project_is_named_by_itself_and_where_it_lives() {
+        // `Session::save_as` puts `Demo.auris` inside a folder called `Demo`, so the folder
+        // right above it says nothing. The one above *that* is what tells two Demos apart.
+        assert_eq!(
+            recent_label(Path::new("/music/2026-08/Demo/Demo.auris")),
+            "Demo  (2026-08)"
+        );
+        assert_eq!(
+            recent_label(Path::new("/music/2025-01/Demo/Demo.auris")),
+            "Demo  (2025-01)"
+        );
+    }
+
+    #[test]
+    fn a_project_not_in_a_folder_of_its_own_names_the_folder_it_is_in() {
+        assert_eq!(
+            recent_label(Path::new("/music/sketches/Riff.auris")),
+            "Riff  (sketches)"
+        );
+    }
+
+    #[test]
+    fn a_project_with_nothing_above_it_is_just_itself() {
+        assert_eq!(recent_label(Path::new("Riff.auris")), "Riff");
     }
 }
