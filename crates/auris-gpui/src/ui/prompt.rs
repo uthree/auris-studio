@@ -1376,6 +1376,28 @@ crate::entity_input_handler!(AurisApp);
 /// Everything is copied in rather than borrowed because a paint closure has to capture `'static`.
 /// Shared by the rename sheet and the command palette, which are the same field with different
 /// things underneath it.
+/// A line of static text laid out exactly where [`editable_text`] would paint one.
+///
+/// A field that is not being typed into still has to *look* like the same field: a placeholder
+/// or a value drawn flush against the box while the real thing is inset by [`FIELD_PADDING`]
+/// puts the caret a character into the placeholder the moment somebody clicks, which is what the
+/// library's search box did on the day it was written. The size matters for the same reason —
+/// text that changed size when the field took focus would be a field that twitched.
+///
+/// Not a decision so much as a constant with two readers, kept next to the paint it has to agree
+/// with rather than in the panel that happens to need it.
+pub(crate) fn field_text(text: impl Into<SharedString>, color: gpui::Hsla) -> gpui::Div {
+    div()
+        .flex()
+        .items_center()
+        .h_full()
+        .pl(FIELD_PADDING)
+        .text_size(TEXT_SIZE)
+        .text_color(color)
+        .truncate()
+        .child(text.into())
+}
+
 pub(crate) fn editable_text<V: gpui::EntityInputHandler>(
     text: SharedString,
     selection: Range<usize>,

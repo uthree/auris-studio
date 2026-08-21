@@ -384,7 +384,9 @@ impl AurisApp {
             .id("library-search")
             .flex()
             .items_center()
-            .gap_1p5()
+            // No gap after the icon: the text carries its own left inset, because the field
+            // paints its caret at one. A gap on top of it would put the words a third of the
+            // way across a box this narrow.
             .mx_1()
             .mb_1()
             .h(Metrics::CONTROL_HEIGHT)
@@ -414,29 +416,21 @@ impl AurisApp {
                             theme.clone(),
                         )
                         .into_any_element(),
-                        false => div()
-                            .flex()
-                            .items_center()
-                            .h_full()
-                            .text_xs()
-                            .text_color(theme.text)
-                            .truncate()
-                            .child(text.clone())
+                        false => crate::ui::prompt::field_text(text.clone(), theme.text)
                             .into_any_element(),
                     })
                     // The placeholder under the field rather than in it, so the real text is
-                    // never something the field has to decide whether to keep.
+                    // never something the field has to decide whether to keep. Laid out by the
+                    // same helper as the value, so the caret lands on the first letter of it
+                    // rather than a character in.
                     .when(empty, |this| {
                         this.child(
-                            div()
-                                .absolute()
-                                .inset_0()
-                                .flex()
-                                .items_center()
-                                .text_xs()
-                                .text_color(theme.text_faint)
-                                .truncate()
-                                .child(self.t(Key::BrowserSearch)),
+                            crate::ui::prompt::field_text(
+                                self.t(Key::BrowserSearch),
+                                theme.text_faint,
+                            )
+                            .absolute()
+                            .inset_0(),
                         )
                     }),
             )
@@ -446,6 +440,7 @@ impl AurisApp {
                 this.child(
                     div()
                         .id("library-search-clear")
+                        .ml_1p5()
                         .cursor_pointer()
                         .child(icon(Icon::Cross, px(10.0), theme.text_muted))
                         .on_mouse_down(
