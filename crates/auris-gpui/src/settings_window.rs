@@ -18,7 +18,7 @@ use crate::gestures::{PointerGesture, PointerGestures};
 use crate::keymap::Keymap;
 use crate::theme::{Metrics, SCHEMES, Theme, scheme_or_default};
 use crate::ui::icons::Icon;
-use crate::ui::text_field::{HasTextField, TextField};
+use crate::ui::text_field::{HasTextField, KeyEffect, TextField};
 use crate::ui::widgets::{ButtonStyle, button, chain_button, divider};
 
 /// Which page the settings window is showing.
@@ -1246,43 +1246,20 @@ impl SettingsWindow {
     /// The keys the search box claims: the ones the platform does not deliver as text.
     fn search_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
         let shift = event.keystroke.modifiers.shift;
-        let claimed = match event.keystroke.key.as_str() {
-            "backspace" => {
-                self.search.backspace();
-                true
-            }
-            "delete" => {
-                self.search.delete_forward();
-                true
-            }
-            "left" => {
-                self.search.move_left(shift);
-                true
-            }
-            "right" => {
-                self.search.move_right(shift);
-                true
-            }
-            "home" => {
-                self.search.move_home(shift);
-                true
-            }
-            "end" => {
-                self.search.move_end(shift);
-                true
-            }
-            "a" if event.keystroke.modifiers.secondary() => {
-                self.search.select_all();
-                true
-            }
+        let secondary = event.keystroke.modifiers.secondary();
+        let key = event.keystroke.key.as_str();
+        let claimed = match key {
             // Escape clears the filter rather than closing the window: the list under a query is
             // a list with most of itself missing, and getting it back should not cost a trip
-            // through the menu.
+            // through the menu. This window's own, so it is answered before the shared list.
             "escape" if !self.search.content().is_empty() => {
                 self.search = TextField::new(String::new());
                 true
             }
-            _ => false,
+            // Backspace, the caret, Select All. Shared with every field in the main window
+            // rather than written out again here — this box was the fourth copy of the same
+            // table, and the four had already drifted apart.
+            key => self.search.apply_key(key, shift, secondary) != KeyEffect::Ignored,
         };
         if claimed {
             cx.notify();

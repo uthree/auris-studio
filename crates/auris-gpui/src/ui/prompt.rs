@@ -994,13 +994,10 @@ impl AurisApp {
             "enter" if !composing => {
                 self.commit_prompt(window, cx);
             }
-            "backspace" => field.backspace(),
-            "delete" => field.delete_forward(),
-            "left" => field.move_left(shift),
-            "right" => field.move_right(shift),
-            "home" | "up" => field.move_home(shift),
-            "end" | "down" => field.move_end(shift),
-            "a" if command => field.select_all(),
+            // Up and Down are this sheet's own: it has one line and no rows, so the only
+            // sensible reading of them is the ends of that line.
+            "up" => field.move_home(shift),
+            "down" => field.move_end(shift),
             // Copy, cut and paste. A rename box that cannot take a name off the clipboard means
             // retyping a chord symbol or a path by hand every time, and there is nowhere else in
             // the application to type text.
@@ -1025,7 +1022,12 @@ impl AurisApp {
                     field.insert(&text.replace(['\n', '\r'], " "));
                 }
             }
-            _ => return false,
+            // Everything else that is not a character: backspace, the caret, Select All. Shared
+            // with every other field in the window rather than written out again here.
+            key => {
+                return field.apply_key(key, shift, command)
+                    != crate::ui::text_field::KeyEffect::Ignored;
+            }
         }
         true
     }

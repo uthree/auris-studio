@@ -14,6 +14,21 @@ use std::ops::Range;
 
 use gpui::{Bounds, Pixels};
 
+/// What a key handed to [`TextField::apply_key`] did.
+///
+/// Three answers rather than a `bool`, because a caller usually needs to tell an edit from a
+/// caret move: the palette puts its highlight back on the first row when the query *changes* and
+/// would be wrong to do it when somebody merely pressed Home.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum KeyEffect {
+    /// Not a key a field answers for; the caller should look elsewhere.
+    Ignored,
+    /// The caret or selection moved. The text is as it was.
+    Moved,
+    /// The text changed.
+    Changed,
+}
+
 /// A single line of editable text with a selection and optional IME pre-edit.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TextField {
@@ -161,6 +176,51 @@ impl TextField {
     pub fn select_all(&mut self) {
         self.selection = 0..self.content.len();
         self.reversed = false;
+    }
+
+    /// Applies a key that edits or moves, and says what it did.
+    ///
+    /// The platform delivers a field its *insertions* and nothing else — that is what
+    /// [`gpui::Window::handle_input`] is for, and it is what lets an IME compose into one.
+    /// Everything that is not a character therefore has to be dispatched by hand, and every
+    /// field in this application was doing it in its own `match`: four tables that were supposed
+    /// to agree, and did not. The library's search box shipped without a backspace at all.
+    ///
+    /// Escape, Return and the arrow keys are deliberately *not* here. They mean different things
+    /// to each field — the palette walks its rows with Up and Down, the rename sheet takes them
+    /// as Home and End, and a browser's search box has neither — so each caller answers those
+    /// first and hands the rest here.
+    ///
+    /// Cut, copy and paste are not here either, for a duller reason: the clipboard is reached
+    /// through the application context, which would have to be threaded in for the sake of three
+    /// keys. The rename sheet, which is where text is actually written, answers them itself.
+    pub fn apply_key(&mut self, key: &str, shift: bool, secondary: bool) -> KeyEffect {
+        match key {
+            "backspace" => self.backspace(),
+            "delete" => self.delete_forward(),
+            "left" => {
+                self.move_left(shift);
+                return KeyEffect::Moved;
+            }
+            "right" => {
+                self.move_right(shift);
+                return KeyEffect::Moved;
+            }
+            "home" => {
+                self.move_home(shift);
+                return KeyEffect::Moved;
+            }
+            "end" => {
+                self.move_end(shift);
+                return KeyEffect::Moved;
+            }
+            "a" if secondary => {
+                self.select_all();
+                return KeyEffect::Moved;
+            }
+            _ => return KeyEffect::Ignored,
+        }
+        KeyEffect::Changed
     }
 
     /// Abandons any IME pre-edit, keeping the text it produced.
@@ -605,5 +665,48 @@ mod tests {
             3..4,
             "the start is what moves, because that is the end being dragged"
         );
+    }
+
+    #[test]
+    fn a_field_answers_for_every_key_that_is_not_a_character() {
+        // The list every field in the window shares. It is asserted as a set rather than one
+        // key at a time because the failure it guards against is a key going missing from one
+        // copy of it — the library's search box shipped with no backspace at all.
+        for key in ["backspace", "delete", "left", "right", "home", "end"] {
+            let mut field = TextField::new("abc");
+            assert_ne!(
+                field.apply_key(key, false, false),
+                KeyEffect::Ignored,
+                "{key} went unanswered"
+            );
+        }
+        let mut field = TextField::new("abc");
+        assert_ne!(field.apply_key("a", false, true), KeyEffect::Ignored);
+        // And nothing else, so a caller can still answer Escape, Return and the arrows itself.
+        for key in ["escape", "enter", "up", "down", "a"] {
+            let mut field = TextField::new("abc");
+            assert_eq!(field.apply_key(key, false, false), KeyEffect::Ignored);
+        }
+    }
+
+    #[test]
+    fn backspace_takes_a_character_and_says_the_text_changed() {
+        let mut field = TextField::new("ドラム");
+        field.move_end(false);
+        assert_eq!(
+            field.apply_key("backspace", false, false),
+            KeyEffect::Changed
+        );
+        assert_eq!(field.content(), "ドラ");
+    }
+
+    #[test]
+    fn moving_the_caret_is_not_reported_as_an_edit() {
+        // What the palette turns on: it puts its highlight back on the first row when the query
+        // changes, and pressing Home changes no query.
+        let mut field = TextField::new("reverb");
+        assert_eq!(field.apply_key("home", false, false), KeyEffect::Moved);
+        assert_eq!(field.apply_key("a", false, true), KeyEffect::Moved);
+        assert_eq!(field.content(), "reverb");
     }
 }

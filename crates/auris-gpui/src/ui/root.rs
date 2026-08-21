@@ -996,31 +996,41 @@ impl AurisApp {
 
     /// Answers for a key while the library's search box holds the keyboard.
     ///
-    /// Only the keys that are not text. The characters never come through here at all — they
-    /// arrive through the platform's input handler, which is what lets an IME compose a Japanese
-    /// query into the field — so all this does is give the keyboard back.
+    /// The characters themselves never come through here — they arrive through the platform's
+    /// input handler, which is what lets an IME compose a Japanese query into the field.
+    /// Everything that is *not* a character does, though, and has to be dispatched by hand:
+    /// gpui hands a field its insertions and nothing else. That list is
+    /// [`TextField::apply_key`](crate::ui::text_field::TextField::apply_key), shared with every
+    /// other field in the window — writing it out here is what left this box with no backspace.
     fn library_search_key(&mut self, event: &gpui::KeyDownEvent) -> bool {
         if !self.library_search_focused {
             return false;
         }
-        // While the IME is composing, these belong to the candidate window.
-        if self.library_search.marked().is_some() {
-            return false;
-        }
-        match event.keystroke.key.as_str() {
-            // Escape throws the query away; Enter keeps it. The list is already showing what
-            // was found, so leaving with it on screen is the useful half of pressing Return —
-            // it is the browser that is being searched, not a dialog that is being answered.
-            "escape" => {
-                self.leave_library_search();
-                true
+        let key = event.keystroke.key.as_str();
+        // While the IME is composing, Escape and Enter belong to the candidate window: one
+        // cancels the composition and the other accepts it.
+        if self.library_search.marked().is_none() {
+            match key {
+                // Escape throws the query away; Enter keeps it. The list is already showing what
+                // was found, so leaving with it on screen is the useful half of pressing Return
+                // — it is a browser being searched, not a dialog being answered.
+                "escape" => {
+                    self.leave_library_search();
+                    return true;
+                }
+                "enter" => {
+                    self.library_search_focused = false;
+                    return true;
+                }
+                _ => {}
             }
-            "enter" => {
-                self.library_search_focused = false;
-                true
-            }
-            _ => false,
         }
+
+        self.library_search.apply_key(
+            key,
+            event.keystroke.modifiers.shift,
+            event.keystroke.modifiers.secondary(),
+        ) != crate::ui::text_field::KeyEffect::Ignored
     }
 
     /// Plays `event` on the typing keyboard, and says whether it was one of its keys.

@@ -19,7 +19,7 @@ use gpui::{
 use crate::actions::{BINDABLE, Bindable, menu_keystroke};
 use crate::app::AurisApp;
 use crate::theme::{Metrics, SCHEMES, Scheme, Theme};
-use crate::ui::text_field::TextField;
+use crate::ui::text_field::{KeyEffect, TextField};
 
 /// What running one row of the palette does.
 ///
@@ -336,25 +336,17 @@ impl AurisApp {
         let Some(palette) = self.palette.as_mut() else {
             return false;
         };
-        match key {
+        match palette.field.apply_key(key, shift, secondary) {
+            KeyEffect::Ignored => false,
             // Anything that narrows the list starts again at the top, or the highlight would sit
-            // on whatever row happened to inherit its position.
-            "backspace" => {
-                palette.field.backspace();
+            // on whatever row happened to inherit its position. A caret move narrows nothing,
+            // which is the whole reason [`KeyEffect`] has three answers rather than two.
+            KeyEffect::Changed => {
                 palette.selected = 0;
+                true
             }
-            "delete" => {
-                palette.field.delete_forward();
-                palette.selected = 0;
-            }
-            "left" => palette.field.move_left(shift),
-            "right" => palette.field.move_right(shift),
-            "home" => palette.field.move_home(shift),
-            "end" => palette.field.move_end(shift),
-            "a" if secondary => palette.field.select_all(),
-            _ => return false,
+            KeyEffect::Moved => true,
         }
-        true
     }
 
     /// The rows the query finds, best first.
