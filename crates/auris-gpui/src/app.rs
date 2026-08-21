@@ -1202,20 +1202,28 @@ impl AurisApp {
     /// Escape itself, since the binding that used to close them is one of the ones now out of
     /// reach.
     pub(crate) fn keys_are_claimed(&self) -> bool {
-        self.prompt.is_some()
-            || self.palette.is_some()
+        self.taking_text_input()
             || self.menu.is_some()
             || self.menu_bar.is_some()
             // The song sheet is a form, and every letter typed into one of its fields has to
             // reach the field rather than the binding that letter would otherwise fire.
             || self.song_sheet.is_some()
-            // The library's search box, which is not a sheet and does not cover anything — but
-            // a bound key never reaches a key listener in gpui, so a field that did not claim
-            // them could not be typed `i` into without the inspector opening. It is left the
-            // moment Escape is pressed or a result is chosen, and the field draws a focus ring
-            // for as long as it holds them, because a panel that has quietly taken the space
-            // bar is worse than one that never offered to be typed into.
-            || self.library_search_focused
+    }
+
+    /// Whether text is being typed into something in this window.
+    ///
+    /// Narrower than [`Self::keys_are_claimed`], and the two must not be written out separately.
+    /// An open menu claims the keyboard and is not typed into; a field is both, and the second
+    /// half is a *different* mechanism — the platform types through
+    /// [`gpui::Window::handle_input`], which only works while the handle it was registered
+    /// against is the focused one. Something added to the claim list and forgotten here is a
+    /// field that goes grey, swallows every binding, and receives nothing: that is exactly what
+    /// the library's search box did on the day it was written.
+    ///
+    /// All three of these are on the *window's* handle, which is why one question serves them.
+    /// See [`Self::reconcile_focus`].
+    pub(crate) fn taking_text_input(&self) -> bool {
+        self.prompt.is_some() || self.palette.is_some() || self.library_search_focused
     }
 
     /// The key context the window itself should name.
@@ -1296,8 +1304,11 @@ impl AurisApp {
     /// Reconciled here rather than at each of the dozen places a sheet opens, most of which have
     /// no window to hand — and this way it is right again after any path that misses.
     pub(crate) fn reconcile_focus(&mut self, window: &mut Window) {
-        let sheet = self.prompt.is_some() || self.palette.is_some();
-        if sheet {
+        // [`Self::taking_text_input`] rather than a list written out again here. The library's
+        // search box is in a panel and covers nothing, but as far as *this* question goes it is
+        // a sheet: something is being typed into, and the handle it is typed through has to be
+        // the focused one or nothing reaches it at all.
+        if self.taking_text_input() {
             if !self.focus.is_focused(window) {
                 window.focus(&self.focus);
             }
