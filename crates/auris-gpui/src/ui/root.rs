@@ -841,8 +841,20 @@ impl AurisApp {
                 target,
                 start_value,
                 start_x,
+                fine,
             } => {
-                let delta = f32::from(event.position.x - start_x);
+                // Pressing or releasing Shift moves the anchor to where the pointer is now,
+                // rather than rescaling the travel so far. Rescaling would snap the value back
+                // to a fifth of where the hand had already taken it, which is a jump in the one
+                // gesture whose whole purpose is not to jump.
+                if event.modifiers.shift != fine {
+                    self.reanchor_param_drag(target, event.position.x, event.modifiers.shift);
+                    return;
+                }
+                let delta = crate::ui::widgets::fine_scaled(
+                    f32::from(event.position.x - start_x),
+                    event.modifiers,
+                );
                 self.drag_param(target, start_value, delta);
             }
             Drag::EnvelopeHandle {

@@ -839,6 +839,7 @@ strings! {
     MenuAutomatePan { en: "Automate Pan", ja: "パンをオートメーション" }
     MenuClearAutomation { en: "Clear Automation", ja: "オートメーションを消去" }
     MenuAutomate { en: "Automate", ja: "オートメーション" }
+    MenuSetValue { en: "Set Value…", ja: "値を入力…" }
     MenuResetValue { en: "Reset to Default", ja: "既定値に戻す" }
     MenuCurveLine { en: "Line", ja: "直線" }
     MenuCurveStep { en: "Step", ja: "ステップ" }

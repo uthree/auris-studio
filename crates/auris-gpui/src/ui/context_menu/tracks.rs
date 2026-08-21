@@ -222,6 +222,10 @@ impl AurisApp {
             self.session.is_automated(target),
         );
         let menu = ContextMenu::new(anchor, title)
+            .item(
+                self.t(Key::MenuSetValue),
+                MenuCommand::SetParamValue(target),
+            )
             .item(self.t(Key::MenuResetValue), MenuCommand::ResetParam(target));
         // Nothing at all for a master parameter rather than a disabled row: a row that can never
         // become usable teaches nothing by being there, and the master strip's controls would

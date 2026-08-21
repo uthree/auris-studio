@@ -8,7 +8,7 @@ use auris_i18n::Key;
 use auris_session::Session;
 use auris_session::prelude::*;
 
-use gpui::{AnyElement, IntoElement, MouseDownEvent, Window, div, prelude::*, px};
+use gpui::{AnyElement, IntoElement, MouseDownEvent, Pixels, Window, div, prelude::*, px};
 
 use crate::app::{AurisApp, Drag};
 use crate::theme::Metrics;
@@ -397,6 +397,7 @@ impl AurisApp {
                                 target,
                                 start_value: value,
                                 start_x: event.position.x,
+                                fine: event.modifiers.shift,
                             });
                         }),
                     )
@@ -493,6 +494,7 @@ impl AurisApp {
                     target,
                     start_value: value,
                     start_x: event.position.x,
+                    fine: event.modifiers.shift,
                 });
             }),
         )
@@ -501,6 +503,30 @@ impl AurisApp {
             Self::opens_menu(cx, move |this, at| this.param_menu(at, target, label)),
         )
         .into_any_element()
+    }
+
+    /// Asks for a parameter's value as a number.
+    ///
+    /// The title carries the range and the unit, because there is no shared notation to hang a
+    /// hint on: every parameter is written in its own. The field starts on the value the control
+    /// is showing, so correcting a fader by half a decibel is an edit to what is there rather
+    /// than typing it out again from nothing.
+    pub(crate) fn prompt_for_param(&mut self, target: ParamTarget) {
+        let Some(descriptor) = self.session.descriptor_for(target) else {
+            return;
+        };
+        let value = self.session.param_value(target, &descriptor);
+        let title = format!(
+            "{} ({} – {})",
+            self.param_label(&descriptor.name),
+            self.format_param(&descriptor, descriptor.min),
+            self.format_param(&descriptor, descriptor.max),
+        );
+        self.open_prompt(crate::ui::prompt::Prompt::new(
+            title,
+            crate::ui::prompt::PromptTarget::Param(target),
+            format!("{value}"),
+        ));
     }
 
     /// Puts a parameter back to whatever its descriptor calls the default.
@@ -513,6 +539,28 @@ impl AurisApp {
             return;
         };
         self.session.set_param(target, descriptor.default);
+    }
+
+    /// Moves a parameter drag's anchor to where the pointer is, without changing the value.
+    ///
+    /// What the fine modifier being pressed or released half way through a drag does. See
+    /// [`Drag::Param::fine`](crate::app::Drag).
+    pub(crate) fn reanchor_param_drag(&mut self, target: ParamTarget, at: Pixels, fine: bool) {
+        let Some(descriptor) = self.session.descriptor_for(target) else {
+            return;
+        };
+        let value = self.session.param_value(target, &descriptor);
+        if let Some(Drag::Param {
+            start_value,
+            start_x,
+            fine: held,
+            ..
+        }) = self.drag.as_mut()
+        {
+            *start_value = value;
+            *start_x = at;
+            *held = fine;
+        }
     }
 
     /// Applies a parameter drag.

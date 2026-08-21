@@ -5,8 +5,8 @@
 //! leaving all state in the view that owns it.
 
 use gpui::{
-    App, Axis, ClickEvent, ElementId, Hsla, IntoElement, MouseDownEvent, Pixels, SharedString,
-    Window, div, prelude::*, px, relative,
+    App, Axis, ClickEvent, ElementId, Hsla, IntoElement, Modifiers, MouseDownEvent, Pixels,
+    SharedString, Window, div, prelude::*, px, relative,
 };
 
 use crate::theme::{Metrics, Theme};
@@ -401,6 +401,26 @@ pub const DRAG_RANGE_PIXELS: f32 = 220.0;
 /// In the bar's own 0..1, so a caller with a range or a curve applies it afterwards.
 pub fn dragged(start: f32, delta: f32) -> f32 {
     (start + delta / DRAG_RANGE_PIXELS).clamp(0.0, 1.0)
+}
+
+/// How much of a drag's travel counts while the fine modifier is held.
+///
+/// A fifth. A full sweep of [`DRAG_RANGE_PIXELS`] is 220 pixels over the whole range, which on a
+/// cutoff running 20 Hz to 20 kHz is about a hundred hertz a pixel at the bottom — fine enough
+/// to find a filter by ear and far too coarse to land on a number. Five times finer is a metre
+/// of desk for a full sweep, which nobody wants for the ordinary gesture and everybody wants for
+/// the last two decibels.
+pub const FINE_DRAG_SCALE: f32 = 0.2;
+
+/// The travel a control should act on, given what the pointer did and what is held down.
+///
+/// Shift, which is free here: snapping is suspended with the secondary modifier and the wheel
+/// takes the other two, so this is the one that was not already spoken for.
+pub fn fine_scaled(delta: f32, modifiers: Modifiers) -> f32 {
+    match modifiers.shift {
+        true => delta * FINE_DRAG_SCALE,
+        false => delta,
+    }
 }
 
 /// How short a scrollbar's thumb may get, as a fraction of its track.

@@ -160,6 +160,27 @@ pub fn value_after_drag(descriptor: &ParamDescriptor, start_value: f32, delta_pi
     descriptor.denormalize(dragged(descriptor.normalize(start_value), delta_pixels))
 }
 
+/// A number typed into a parameter's own prompt.
+///
+/// Tolerant of the unit being typed after it, because the readout the prompt was opened from
+/// shows one: somebody correcting `-6.0 dB` to `-3.0 dB` types the whole thing, and refusing it
+/// would be refusing the text the application itself had just displayed. A leading `+` is taken
+/// too — it is how a gain that has gone up is written everywhere else in this interface.
+///
+/// `None` for anything that is not a number at all, which the caller reports rather than
+/// silently rounding to zero.
+pub fn parse_param_value(text: &str) -> Option<f32> {
+    let text = text.trim();
+    // Everything up to the first character that could not be part of a number. That stops at the
+    // space in `440 Hz` and at the `H` in `440Hz`, and keeps the `e` of `1e3` out of trouble by
+    // not being clever about it: an exponent is not something anybody types into a fader.
+    let number: String = text
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || matches!(c, '-' | '+' | '.'))
+        .collect();
+    number.parse::<f32>().ok().filter(|value| value.is_finite())
+}
+
 /// A compact heading for a plugin in the inspector, with a bypass button.
 #[allow(clippy::too_many_arguments)]
 pub fn plugin_header<I, N, L, F>(
@@ -299,5 +320,25 @@ mod tests {
         assert_eq!(discrete_value(&toggle, 1), 1.0);
         // Past the end is clamped rather than running off the top of the range.
         assert_eq!(discrete_value(&toggle, 9), 1.0);
+    }
+
+    #[test]
+    fn a_typed_value_may_carry_the_unit_the_readout_showed() {
+        // The prompt opens on a control that prints `-6.0 dB`, so somebody correcting it types
+        // the whole thing. Refusing that would be refusing the text this application displayed.
+        assert_eq!(parse_param_value("-6.0 dB"), Some(-6.0));
+        assert_eq!(parse_param_value("440Hz"), Some(440.0));
+        assert_eq!(parse_param_value(" 50 % "), Some(50.0));
+        // A gain that has gone up is written with a sign everywhere else here.
+        assert_eq!(parse_param_value("+3"), Some(3.0));
+    }
+
+    #[test]
+    fn something_that_is_not_a_number_is_refused_rather_than_read_as_zero() {
+        assert_eq!(parse_param_value(""), None);
+        assert_eq!(parse_param_value("loud"), None);
+        assert_eq!(parse_param_value("dB"), None);
+        // Not a number either, and the tolerant prefix must not turn it into one.
+        assert_eq!(parse_param_value("-"), None);
     }
 }

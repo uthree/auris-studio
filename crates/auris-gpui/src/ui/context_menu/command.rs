@@ -468,6 +468,9 @@ pub enum MenuCommand {
     /// fader and not to straighten it is a list with a hole in it.
     ResetParam(ParamTarget),
 
+    /// Ask for a parameter's value as a number.
+    SetParamValue(ParamTarget),
+
     /// Change how an existing lane gets from one point to the next.
     ///
     /// A new lane is given the shape its parameter implies — a chooser holds, a fader runs
@@ -994,6 +997,7 @@ impl AurisApp {
             MenuCommand::SetClipOctave { clip, octave } => self.set_clip_octave(clip, octave),
             MenuCommand::SetParamChoice { target, value } => self.session.set_param(target, value),
             MenuCommand::ResetParam(target) => self.reset_param(target),
+            MenuCommand::SetParamValue(target) => self.prompt_for_param(target),
             MenuCommand::SetAutomationCurve { target, curve } => {
                 self.session.set_automation_curve(target, curve);
             }

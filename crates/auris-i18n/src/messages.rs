@@ -498,6 +498,15 @@ messages! {
         ja: "`{text}` はゲインではありません — `-3` や `2.5` のように"
     }
 
+    /// The text typed into a parameter's prompt is not a number at all.
+    ///
+    /// Separate from the gain message because a parameter is not always a gain, and suggesting
+    /// `-3` for a cutoff would be suggesting a value it cannot take.
+    fn not_a_number(text: &str) {
+        en: "`{text}` is not a number",
+        ja: "`{text}` は数値ではありません"
+    }
+
     /// The text typed into the position prompt is not a bar, beat and hundredth.
     fn not_a_position(text: &str) {
         en: "`{text}` is not a position — try `17` for a bar, or `17.3` for its third beat",

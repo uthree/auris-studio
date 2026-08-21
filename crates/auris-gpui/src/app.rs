@@ -377,10 +377,18 @@ pub enum Drag {
     Param {
         /// What is being changed.
         target: ParamTarget,
-        /// Value when the drag began.
+        /// Value where the drag was last anchored.
         start_value: f32,
-        /// Pointer x when the drag began.
+        /// Pointer x where the drag was last anchored.
         start_x: Pixels,
+        /// Whether the fine modifier was held at the anchor.
+        ///
+        /// Kept so a drag can notice the modifier being pressed or released half way through.
+        /// The travel is measured from the anchor rather than block by block, so rescaling it
+        /// after the fact would snap the value back to a fifth of where the hand had already
+        /// taken it; the answer is to move the anchor to the pointer instead, which leaves the
+        /// value exactly where it was and changes only what happens next.
+        fine: bool,
     },
     /// Dragging a point along one of a clip's curves.
     CurvePoint {

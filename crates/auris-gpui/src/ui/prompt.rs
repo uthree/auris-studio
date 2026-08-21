@@ -68,6 +68,13 @@ pub enum PromptTarget {
     SignatureFrom(Ticks),
     /// An audio clip's own gain, in decibels.
     ClipGain(ClipId),
+    /// A parameter, in whatever units its descriptor is written in.
+    ///
+    /// The drag is for finding a value by ear and the fine drag for the last of it. This is for
+    /// the case where the number is already known — 440 Hz, unity gain, the same cutoff as the
+    /// track next door — and creeping up to it a pixel at a time is absurd. Clamped by the
+    /// descriptor rather than refused: a range is what the control could have reached anyway.
+    Param(ParamTarget),
     /// What tempo an audio clip's material was recorded at.
     ClipSourceTempo(ClipId),
     /// Where the playhead sits, as bar, beat and hundredth.
@@ -145,7 +152,10 @@ impl PromptTarget {
             | PromptTarget::Clip(_)
             | PromptTarget::SongTitle
             | PromptTarget::SongPartName(_)
-            | PromptTarget::KeepProgression(_) => return None,
+            | PromptTarget::KeepProgression(_)
+            // No shared notation: every parameter is written in its own units, and the range
+            // and the unit are in the prompt's title instead, where they can name this one.
+            | PromptTarget::Param(_) => return None,
         })
     }
 
@@ -752,6 +762,21 @@ impl AurisApp {
             },
             // Out of range is clamped for the same reason a tempo is; only a value that is
             // not a number at all is turned away.
+            PromptTarget::Param(param) => {
+                let Some(descriptor) = self.session.descriptor_for(param) else {
+                    return;
+                };
+                match crate::ui::plugin_editor::parse_param_value(&text) {
+                    Some(value) => {
+                        self.session.set_param(param, descriptor.clamp(value));
+                        Ok(())
+                    }
+                    None => {
+                        self.set_failed_status(messages::not_a_number(self.language(), &text));
+                        return;
+                    }
+                }
+            }
             PromptTarget::ClipGain(clip) => match text.parse::<f32>() {
                 Ok(gain_db) if gain_db.is_finite() => self.session.set_clip_gain(clip, gain_db),
                 _ => {
