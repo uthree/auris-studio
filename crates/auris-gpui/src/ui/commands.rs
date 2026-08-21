@@ -5,7 +5,7 @@
 //! moving long work off the main thread, and turning results into a status line.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -1294,12 +1294,14 @@ impl AurisApp {
             let path = handle.path().to_path_buf();
 
             let progress = Arc::new(AtomicU32::new(0));
+            let cancel = Arc::new(AtomicBool::new(false));
             let _ = this.update(cx, |this, cx| {
                 this.choosing_export = false;
                 this.export = Some(ExportState {
                     path: path.clone(),
                     progress: Arc::clone(&progress),
                     result: None,
+                    cancel: Arc::clone(&cancel),
                 });
                 cx.notify();
             });
@@ -1308,10 +1310,18 @@ impl AurisApp {
             let rendered = cx
                 .background_executor()
                 .spawn(async move {
-                    job.render_to_wav(&render_path, &settings, &options, &mut |fraction| {
-                        progress.store(fraction.to_bits(), Ordering::Relaxed)
-                    })
-                    .map_err(|error| error.to_string())
+                    let mut report = |fraction: f32| {
+                        progress.store(fraction.to_bits(), Ordering::Relaxed);
+                    };
+                    job.render_to_wav(
+                        &render_path,
+                        &settings,
+                        &options,
+                        &mut RenderProgress::reporting(&mut report).cancelled_by(&cancel),
+                    )
+                    // Stringified here so nothing that is not `Send` has to cross back, but the
+                    // one distinction that matters is kept: a cancellation is not a failure.
+                    .map_err(|error| (error.is_cancellation(), error.to_string()))
                 })
                 .await;
 
@@ -1328,7 +1338,15 @@ impl AurisApp {
                         this.set_status(text.clone());
                         Ok(text)
                     }
-                    Err(error) => {
+                    // Stopped on purpose. In the ordinary colour, and phrased as a thing that
+                    // was done rather than a thing that went wrong: an export somebody cancelled
+                    // reported in red sends them looking for the fault.
+                    Err((true, _)) => {
+                        let text = Key::ExportCancelled.get(language).to_string();
+                        this.set_status(text.clone());
+                        Ok(text)
+                    }
+                    Err((false, error)) => {
                         let text = messages::failed(language, command.get(language), &error);
                         // The failure colour, like every other Err arm: once the overlay is
                         // dismissed the status line is the only record of the failure, and in

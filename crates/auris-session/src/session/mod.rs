@@ -1350,7 +1350,10 @@ mod tests {
 
         // The job kept its own copy, so the render still contains the note.
         let rendered = job
-            .render(&auris_engine::OfflineOptions::whole_project(), &mut |_| {})
+            .render(
+                &auris_engine::OfflineOptions::whole_project(),
+                &mut auris_engine::RenderProgress::default(),
+            )
             .unwrap();
         assert!(rendered.peak() > 0.01);
         assert!(session.project().tracks.is_empty());

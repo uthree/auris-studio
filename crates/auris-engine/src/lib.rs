@@ -106,7 +106,8 @@ pub use meter::MeterBank;
 pub use metronome::{Click, Metronome};
 pub use monitor::MonitorRing;
 pub use offline::{
-    OfflineOptions, render_project, render_project_using, render_project_with_progress,
+    OfflineOptions, RenderProgress, render_project, render_project_using,
+    render_project_with_progress,
 };
 pub use renderer::render_block;
 pub use scope::{SCOPE_WINDOW, Scope, ScopeSource};

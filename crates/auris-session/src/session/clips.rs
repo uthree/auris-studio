@@ -1648,7 +1648,10 @@ mod tests {
 
         let rendered = session
             .render_job()
-            .render(&auris_engine::OfflineOptions::whole_project(), &mut |_| {})
+            .render(
+                &auris_engine::OfflineOptions::whole_project(),
+                &mut auris_engine::RenderProgress::default(),
+            )
             .unwrap();
         assert!(rendered.peak() < 1e-6, "a muted clip must not sound");
 

@@ -54,4 +54,12 @@ pub enum EngineError {
     /// The audio thread is gone, so commands can no longer be delivered.
     #[error("the audio engine is not running")]
     NotRunning,
+
+    /// An offline render was stopped by whoever asked for it.
+    ///
+    /// Not a failure, and it has to stay distinguishable from one: a render that was cancelled
+    /// on purpose reported in the colour of a broken export would have people looking for what
+    /// went wrong. What is here is the fact; whether it reads as red is the frontend's to decide.
+    #[error("the render was cancelled")]
+    RenderCancelled,
 }

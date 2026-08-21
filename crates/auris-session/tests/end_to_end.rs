@@ -161,7 +161,7 @@ fn progress_runs_from_zero_to_one() {
         &AudioSourceBank::new(),
         &registry(),
         &OfflineOptions::whole_project(),
-        &mut |fraction| reported.push(fraction),
+        &mut auris_engine::RenderProgress::reporting(&mut |fraction| reported.push(fraction)),
     )
     .unwrap();
 

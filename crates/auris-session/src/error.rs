@@ -181,3 +181,18 @@ pub enum SessionError {
     #[error("{} is already a project", .0.display())]
     WouldReplace(PathBuf),
 }
+
+impl SessionError {
+    /// Whether this is a render that was stopped on purpose rather than one that broke.
+    ///
+    /// Asked here rather than matched at each frontend, because both of them have to get the
+    /// same answer and only one of them is looked at every day. A cancellation reported in the
+    /// colour of a failure sends somebody looking for what went wrong with an export they
+    /// themselves stopped.
+    pub fn is_cancellation(&self) -> bool {
+        matches!(
+            self,
+            SessionError::Engine(auris_engine::EngineError::RenderCancelled)
+        )
+    }
+}

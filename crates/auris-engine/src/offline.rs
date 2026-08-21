@@ -67,6 +67,55 @@ impl OfflineOptions {
     }
 }
 
+/// A render's two-way channel with whoever asked for it: how far it has got, and whether to stop.
+///
+/// The two travel together because they are read in the same place — once per block, at the
+/// bottom of the loop — and because a caller that wants either almost always wants both. An
+/// export with a progress bar and no way out is a window somebody has to wait in front of, and
+/// there is no other moment at which a render can be interrupted: a block is short, and stopping
+/// between two of them costs nothing.
+///
+/// Both halves are optional. [`Default`] is a render nobody is watching and nobody can stop,
+/// which is what [`render_project`] and every test wants.
+#[derive(Default)]
+pub struct RenderProgress<'a> {
+    report: Option<&'a mut dyn FnMut(f32)>,
+    cancel: Option<&'a std::sync::atomic::AtomicBool>,
+}
+
+impl<'a> RenderProgress<'a> {
+    /// A render whose progress is reported to `report`.
+    pub fn reporting(report: &'a mut dyn FnMut(f32)) -> Self {
+        Self {
+            report: Some(report),
+            cancel: None,
+        }
+    }
+
+    /// The same render, stopped when `flag` becomes true.
+    ///
+    /// A flag rather than a channel or a handle: the render checks it between blocks and the
+    /// caller sets it from wherever the button was pressed, and neither has to know anything
+    /// about the other's thread.
+    pub fn cancelled_by(mut self, flag: &'a std::sync::atomic::AtomicBool) -> Self {
+        self.cancel = Some(flag);
+        self
+    }
+
+    /// Reports how far along the render is, from 0.0 to 1.0.
+    fn report(&mut self, fraction: f32) {
+        if let Some(report) = self.report.as_mut() {
+            report(fraction);
+        }
+    }
+
+    /// Whether the render has been asked to stop.
+    fn cancelled(&self) -> bool {
+        self.cancel
+            .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
 /// Renders a project into a single buffer.
 ///
 /// See [`render_project_with_progress`] when the caller wants to drive a progress bar.
@@ -76,19 +125,26 @@ pub fn render_project(
     registry: &PluginRegistry,
     options: &OfflineOptions,
 ) -> Result<AudioBuffer, EngineError> {
-    render_project_with_progress(project, bank, registry, options, &mut |_| {})
+    render_project_with_progress(
+        project,
+        bank,
+        registry,
+        options,
+        &mut RenderProgress::default(),
+    )
 }
 
 /// Renders a project into a single buffer, reporting progress from 0.0 to 1.0.
 ///
-/// `progress` is called once before any work starts and once per block afterwards, finishing at
-/// exactly 1.0. It runs on the calling thread, so a UI must marshal it as usual.
+/// `progress` is reported once before any work starts and once per block afterwards, finishing
+/// at exactly 1.0. It runs on the calling thread, so a UI must marshal it as usual, and it is
+/// also where a cancellation is noticed -- see [`RenderProgress`].
 pub fn render_project_with_progress(
     project: &Project,
     bank: &AudioSourceBank,
     registry: &PluginRegistry,
     options: &OfflineOptions,
-    progress: &mut dyn FnMut(f32),
+    progress: &mut RenderProgress<'_>,
 ) -> Result<AudioBuffer, EngineError> {
     render_project_using(
         project,
@@ -115,7 +171,7 @@ pub fn render_project_using(
     placed: &mut crate::graph::PlacedEffects,
     instruments: &mut crate::graph::PlacedInstruments,
     options: &OfflineOptions,
-    progress: &mut dyn FnMut(f32),
+    progress: &mut RenderProgress<'_>,
 ) -> Result<AudioBuffer, EngineError> {
     let sample_rate = options.sample_rate.unwrap_or(project.sample_rate);
     if !sample_rate.is_finite() || sample_rate <= 0.0 {
@@ -172,9 +228,9 @@ pub fn render_project_using(
         .ok_or_else(too_long)?;
 
     let mut out = AudioBuffer::new(RENDER_CHANNELS, total, sample_rate);
-    progress(0.0);
+    progress.report(0.0);
     if total == 0 {
-        progress(1.0);
+        progress.report(1.0);
         return Ok(out);
     }
 
@@ -220,7 +276,12 @@ pub fn render_project_using(
             }
         }
         rendered += frames;
-        progress(rendered as f32 / end as f32);
+        progress.report(rendered as f32 / end as f32);
+        // Between blocks, which is the only place a render can be interrupted — and cheap
+        // enough that the check costs nothing next to the block that just ran.
+        if progress.cancelled() {
+            return Err(EngineError::RenderCancelled);
+        }
     }
     Ok(out)
 }
@@ -617,6 +678,42 @@ mod tests {
     }
 
     #[test]
+    fn a_render_asked_to_stop_stops_and_says_which_it_was() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        // Raised before the first block, so the very first check fires. The render still
+        // reports its progress up to that point — the bar shows where it got to, which is what
+        // a stopped export has to be able to draw.
+        let flag = AtomicBool::new(true);
+        let mut reports = Vec::new();
+        let ended = render_project_with_progress(
+            &four_beat_project(),
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &OfflineOptions::default().with_block_frames(8_192),
+            &mut RenderProgress::reporting(&mut |fraction| reports.push(fraction))
+                .cancelled_by(&flag),
+        );
+        assert!(matches!(ended, Err(EngineError::RenderCancelled)));
+        // 0.0 before the loop and one block's worth inside it, then out.
+        assert_eq!(reports.len(), 2);
+        assert!(reports[1] < 1.0, "it stopped part way, not at the end");
+
+        // And a flag that is never raised changes nothing.
+        flag.store(false, Ordering::Relaxed);
+        assert!(
+            render_project_with_progress(
+                &four_beat_project(),
+                &AudioSourceBank::new(),
+                &testkit::registry(),
+                &OfflineOptions::default().with_block_frames(8_192),
+                &mut RenderProgress::default().cancelled_by(&flag),
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
     fn progress_runs_from_zero_to_one_and_is_monotonic() {
         let project = four_beat_project();
         let mut reports = Vec::new();
@@ -625,7 +722,7 @@ mod tests {
             &AudioSourceBank::new(),
             &testkit::registry(),
             &OfflineOptions::default().with_block_frames(8_192),
-            &mut |fraction| reports.push(fraction),
+            &mut RenderProgress::reporting(&mut |fraction| reports.push(fraction)),
         )
         .expect("render");
 

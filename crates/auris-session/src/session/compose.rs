@@ -962,7 +962,10 @@ mod tests {
 
         let rendered = session
             .render_job()
-            .render(&auris_engine::OfflineOptions::whole_project(), &mut |_| {})
+            .render(
+                &auris_engine::OfflineOptions::whole_project(),
+                &mut auris_engine::RenderProgress::default(),
+            )
             .unwrap();
         assert!(
             rendered.peak() > 0.01,
@@ -1018,7 +1021,10 @@ mod tests {
         }
         let rendered = session
             .render_job()
-            .render(&auris_engine::OfflineOptions::whole_project(), &mut |_| {})
+            .render(
+                &auris_engine::OfflineOptions::whole_project(),
+                &mut auris_engine::RenderProgress::default(),
+            )
             .unwrap();
         let ceiling = auris_core::param::db_to_gain(MASTER_CEILING_DB);
         assert!(

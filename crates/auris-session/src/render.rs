@@ -8,7 +8,9 @@ use auris_core::param::gain_to_db;
 use auris_core::project::{UNSTRETCHED, stretch_key};
 use auris_core::{AudioBuffer, AudioSourceBank, PluginRegistry, Project, SourceId};
 use auris_dsp::stretch::time_stretch;
-use auris_engine::{OfflineOptions, PlacedEffects, PlacedInstruments, render_project_using};
+use auris_engine::{
+    OfflineOptions, PlacedEffects, PlacedInstruments, RenderProgress, render_project_using,
+};
 use auris_io::{WavExportSettings, resample_buffer, write_wav};
 
 use crate::error::SessionError;
@@ -164,14 +166,14 @@ impl RenderJob {
         Some(options.with_range(start_frames, end_frames))
     }
 
-    /// Renders to a buffer, reporting progress from 0.0 to 1.0.
+    /// Renders to a buffer, reporting progress and taking a cancellation through `progress`.
     ///
     /// An export can be asked for any rate, including one the sources were never decoded at, so
     /// the bank is converted to whatever this render will run at before it is handed over.
     pub fn render(
         &mut self,
         options: &OfflineOptions,
-        progress: &mut dyn FnMut(f32),
+        progress: &mut RenderProgress<'_>,
     ) -> Result<AudioBuffer, SessionError> {
         let rate = options.sample_rate.unwrap_or(self.project.sample_rate);
         let mut bank = bank_at_rate(&self.bank, rate);
@@ -200,7 +202,7 @@ impl RenderJob {
         path: &Path,
         settings: &WavExportSettings,
         options: &OfflineOptions,
-        progress: &mut dyn FnMut(f32),
+        progress: &mut RenderProgress<'_>,
     ) -> Result<ExportSummary, SessionError> {
         let buffer = self.render(options, progress)?;
         let rendered_rate = options.sample_rate.unwrap_or(self.project.sample_rate);
@@ -401,7 +403,7 @@ mod tests {
                     sample_rate: Some(96_000.0),
                     ..OfflineOptions::default()
                 },
-                &mut |_| {},
+                &mut RenderProgress::default(),
             )
             .expect("render");
 

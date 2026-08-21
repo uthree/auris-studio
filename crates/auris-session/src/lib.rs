@@ -180,7 +180,7 @@ pub mod prelude {
     /// through [`Session::meters`](crate::Session::meters) without naming it, but a meter it fills
     /// from somewhere else — the input peak, which is handed over once and forgotten — has to fall
     /// at the same rate as the ones beside it or it reads as a different instrument.
-    pub use auris_engine::{AudioDeviceInfo, MeterBank, OfflineOptions};
+    pub use auris_engine::{AudioDeviceInfo, MeterBank, OfflineOptions, RenderProgress};
     pub use auris_gpu::WaveformPeaks;
     pub use auris_io::{SoundFontPreset, WavBitDepth, WavExportSettings};
     pub use auris_sampler::{SAMPLER_ENVELOPE_KEY, SAMPLER_ID};

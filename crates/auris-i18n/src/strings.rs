@@ -744,6 +744,8 @@ strings! {
     NewProjectStatus { en: "New project", ja: "新規プロジェクト" }
     PanicStopped { en: "Panic — all voices stopped", ja: "パニック — すべての発音を停止しました" }
     ExportAlreadyRunning { en: "An export is already running", ja: "すでに書き出しを実行中です" }
+    ExportCancelled { en: "Export stopped; no file was written", ja: "書き出しを中止しました。ファイルは作成されていません" }
+    ExportCancelling { en: "Stopping…", ja: "中止しています…" }
     NoCycleToExport {
         en: "There is no cycle region to export — alt-drag the ruler to mark one",
         ja: "書き出すサイクル範囲がありません — ルーラーを option ドラッグして設定してください"

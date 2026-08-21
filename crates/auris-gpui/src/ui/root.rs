@@ -9,7 +9,7 @@ use gpui::{
 };
 
 use crate::actions;
-use crate::app::{AurisApp, Drag, Pane};
+use crate::app::{AurisApp, Drag, ExportOutcome, Pane};
 use crate::dock::{Dock, Panel};
 use crate::gestures::past_drag_threshold;
 use crate::menu::MenuRow;
@@ -397,11 +397,15 @@ impl AurisApp {
         let export = self.export.as_ref()?;
         let theme = self.theme.clone();
         let fraction = export.fraction();
-        let finished = export.result.is_some();
-        let failed = matches!(export.result, Some(Err(_)));
+        let outcome = export.outcome();
+        let finished = outcome != ExportOutcome::Running;
+        let failed = outcome == ExportOutcome::Failed;
         let message = match &export.result {
             Some(Ok(summary)) => summary.clone(),
             Some(Err(error)) => error.clone(),
+            // The press is acknowledged before the render notices it: a block has to finish
+            // first, and an overlay that looked untouched for that long reads as a dead button.
+            None if export.cancelling() => self.t(Key::ExportCancelling).to_string(),
             None => messages::rendering(self.language(), &export.path.display().to_string()),
         };
 
@@ -456,14 +460,21 @@ impl AurisApp {
                                     // looks like — a completed export with no file at the end
                                     // of it. It stops where it got to, in the colour of a
                                     // failure.
+                                    // Only a render that reached the end fills the bar. One
+                                    // that was stopped part way stops there too, in the quiet
+                                    // colour: full and grey would claim a file, full and red
+                                    // would claim a fault.
                                     div()
                                         .h_full()
-                                        .w(relative(if finished && !failed {
-                                            1.0
-                                        } else {
-                                            fraction
+                                        .w(relative(match outcome {
+                                            ExportOutcome::Wrote => 1.0,
+                                            _ => fraction,
                                         }))
-                                        .bg(if failed { theme.danger } else { theme.accent }),
+                                        .bg(match outcome {
+                                            ExportOutcome::Failed => theme.danger,
+                                            ExportOutcome::Stopped => theme.text_faint,
+                                            _ => theme.accent,
+                                        }),
                                 ),
                         )
                         .when(finished, |this| {
@@ -476,6 +487,27 @@ impl AurisApp {
                                 &theme,
                                 cx.listener(|this, _, _, cx| {
                                     this.export = None;
+                                    cx.notify();
+                                }),
+                            ))
+                        })
+                        // Export is the longest thing this application does, and until now the
+                        // only way out of a bounce started by mistake — the wrong region, the
+                        // wrong rate, a track left muted — was to sit through it or kill the
+                        // window. The render stops at the end of its current block and no file
+                        // is written, because the file is written after the render, not during.
+                        .when(!finished, |this| {
+                            this.child(crate::ui::widgets::button(
+                                "export-cancel",
+                                self.t(Key::Cancel),
+                                crate::ui::widgets::ButtonStyle::Normal,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    if let Some(export) = this.export.as_ref() {
+                                        export.cancel();
+                                    }
                                     cx.notify();
                                 }),
                             ))

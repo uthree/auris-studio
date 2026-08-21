@@ -693,18 +693,23 @@ fn render(args: &[String]) -> Result<(), String> {
     }
     let mut last_percent = -1i32;
     let summary = job
-        .render_to_wav(&output, &settings, &options, &mut |fraction| {
-            // Only redraw when the number actually changes; repainting per block spends more
-            // time on the terminal than on the audio.
-            let percent = (fraction * 100.0) as i32;
-            if percent != last_percent {
-                last_percent = percent;
-                warned_partial(format!(
-                    "\r{}",
-                    messages::render_progress(LANGUAGE, percent)
-                ));
-            }
-        })
+        .render_to_wav(
+            &output,
+            &settings,
+            &options,
+            &mut auris_session::prelude::RenderProgress::reporting(&mut |fraction| {
+                // Only redraw when the number actually changes; repainting per block spends more
+                // time on the terminal than on the audio.
+                let percent = (fraction * 100.0) as i32;
+                if percent != last_percent {
+                    last_percent = percent;
+                    warned_partial(format!(
+                        "\r{}",
+                        messages::render_progress(LANGUAGE, percent)
+                    ));
+                }
+            }),
+        )
         .map_err(|error| error.to_string())?;
     warned("");
 

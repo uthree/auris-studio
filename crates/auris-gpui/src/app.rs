@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use auris_i18n::{Key, Language, messages};
@@ -723,6 +723,65 @@ mod tests {
             .is_none()
         );
     }
+
+    fn export_state() -> ExportState {
+        ExportState {
+            path: std::path::PathBuf::from("Song.wav"),
+            progress: Arc::new(AtomicU32::new(0.4f32.to_bits())),
+            result: None,
+            cancel: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    #[test]
+    fn a_stopped_export_is_neither_a_success_nor_a_failure() {
+        let mut export = export_state();
+        assert_eq!(export.outcome(), ExportOutcome::Running);
+
+        // The press, before the render has noticed it. Still running, and the overlay says so.
+        export.cancel();
+        assert_eq!(export.outcome(), ExportOutcome::Running);
+        assert!(export.cancelling());
+
+        // And the render comes back. A cancellation is reported as an `Ok` message — it did
+        // what was asked — so the flag is the only thing that can tell this from a written file.
+        export.result = Some(Ok("stopped".to_string()));
+        assert_eq!(export.outcome(), ExportOutcome::Stopped);
+        assert!(!export.cancelling(), "there is nothing left to wait for");
+    }
+
+    #[test]
+    fn an_export_that_finished_or_broke_says_which() {
+        let mut written = export_state();
+        written.result = Some(Ok("wrote Song.wav".to_string()));
+        assert_eq!(written.outcome(), ExportOutcome::Wrote);
+
+        let mut broken = export_state();
+        broken.result = Some(Err("the disk is full".to_string()));
+        assert_eq!(broken.outcome(), ExportOutcome::Failed);
+        // Even one that was also cancelled: whatever the flag says, a render that came back an
+        // error broke, and the bar is red rather than quiet.
+        broken.cancel();
+        assert_eq!(broken.outcome(), ExportOutcome::Failed);
+    }
+}
+
+/// Where an export has got to.
+///
+/// Three endings rather than two. A render that was stopped on purpose is neither a success nor
+/// a failure, and the overlay used to have no way to say so: filling the bar to the end would
+/// claim a file that was never written, and painting it red would send somebody looking for a
+/// fault they caused themselves. It stops where it got to, in the quiet colour.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ExportOutcome {
+    /// Still rendering.
+    Running,
+    /// The file was written.
+    Wrote,
+    /// Stopped part way, at somebody's asking. No file.
+    Stopped,
+    /// It broke.
+    Failed,
 }
 
 /// Progress of a running export.
@@ -737,12 +796,45 @@ pub struct ExportState {
     pub progress: Arc<AtomicU32>,
     /// Set once the render finishes, successfully or not.
     pub result: Option<Result<String, String>>,
+    /// Raised when the render should stop; it is read between blocks.
+    ///
+    /// Shared with the background thread rather than sent to it. A channel would want a receiver
+    /// somewhere in the render loop, and what the loop actually asks is a question with a
+    /// one-word answer.
+    pub cancel: Arc<AtomicBool>,
 }
 
 impl ExportState {
     /// Completion from 0.0 to 1.0.
     pub fn fraction(&self) -> f32 {
         f32::from_bits(self.progress.load(Ordering::Relaxed)).clamp(0.0, 1.0)
+    }
+
+    /// Asks the render to stop at the end of its current block.
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether stopping has been asked for and has not happened yet.
+    ///
+    /// What the button reads while the current block finishes. Without it the overlay looks
+    /// exactly as it did before the press, for as long as a block takes.
+    pub fn cancelling(&self) -> bool {
+        self.result.is_none() && self.cancel.load(Ordering::Relaxed)
+    }
+
+    /// Where the export has got to.
+    ///
+    /// The cancel flag rather than the result decides between [`ExportOutcome::Wrote`] and
+    /// [`ExportOutcome::Stopped`], because a stopped render comes back as an `Ok` message: it
+    /// did what was asked of it, and the message says so.
+    pub fn outcome(&self) -> ExportOutcome {
+        match (&self.result, self.cancel.load(Ordering::Relaxed)) {
+            (None, _) => ExportOutcome::Running,
+            (Some(Err(_)), _) => ExportOutcome::Failed,
+            (Some(Ok(_)), true) => ExportOutcome::Stopped,
+            (Some(Ok(_)), false) => ExportOutcome::Wrote,
+        }
     }
 }
 
