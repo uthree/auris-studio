@@ -3,7 +3,9 @@
 use auris_i18n::Key;
 use auris_session::prelude::*;
 
-use gpui::{AnyElement, Axis, IntoElement, Window, div, prelude::*, px};
+use gpui::{
+    AnyElement, Axis, IntoElement, MouseButton, MouseDownEvent, Window, div, prelude::*, px,
+};
 
 use crate::app::AurisApp;
 use crate::theme::Metrics;
@@ -236,14 +238,30 @@ impl AurisApp {
                     .items_center()
                     .gap_1()
                     .child(div().w(px(4.0)).h(px(12.0)).bg(color))
+                    // Double-click to rename, as on the header. The strip and the header are the
+                    // same track seen from two panels, and a gesture that works in one of them
+                    // and not the other is worse than one that works in neither.
                     .child(
                         div()
+                            .id(("strip-name", index))
                             .flex_1()
                             .min_w_0()
                             .text_xs()
                             .text_color(theme.text)
                             .truncate()
-                            .child(name),
+                            .child(name)
+                            .tooltip(self.tip(Key::MenuRename, ""))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                    if event.click_count < 2 {
+                                        return;
+                                    }
+                                    this.prompt_to_rename_track(track_id);
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            ),
                     ),
             )
             .child(

@@ -1184,6 +1184,27 @@ impl AurisApp {
         .detach();
     }
 
+    /// Asks for a track's new name.
+    ///
+    /// A method rather than the body of one menu row, because there are three ways in now: the
+    /// header's menu, the mixer strip's menu, and a double-click on the name itself. A name is
+    /// the one thing about a track that is written rather than chosen, and reaching a menu to
+    /// change it is a step nobody takes twice — which is how a project ends up with eight tracks
+    /// called Audio 1.
+    pub(crate) fn prompt_to_rename_track(&mut self, track: TrackId) {
+        let name = self
+            .project()
+            .track(track)
+            .map(|track| track.name.clone())
+            .unwrap_or_default();
+        let title = self.t(Key::RenameTrackTitle);
+        self.open_prompt(crate::ui::prompt::Prompt::new(
+            title,
+            crate::ui::prompt::PromptTarget::Track(track),
+            name,
+        ));
+    }
+
     /// Shows a track's automation lane on `target`, or hides it when it is already on that one.
     ///
     /// One lane per track: choosing a different parameter swaps what the row draws rather than

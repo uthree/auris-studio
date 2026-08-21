@@ -494,15 +494,7 @@ impl AurisApp {
                 }
                 Err(error) => self.set_failed_status(self.failure(Key::MenuDuplicate, &error)),
             },
-            MenuCommand::RenameTrack(track) => {
-                let name = self
-                    .project()
-                    .track(track)
-                    .map(|track| track.name.clone())
-                    .unwrap_or_default();
-                let title = self.t(Key::RenameTrackTitle);
-                self.open_prompt(Prompt::new(title, PromptTarget::Track(track), name));
-            }
+            MenuCommand::RenameTrack(track) => self.prompt_to_rename_track(track),
             MenuCommand::DeleteTrack(track) => {
                 self.select_track(track);
                 self.delete_selected_track();

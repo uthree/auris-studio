@@ -264,14 +264,39 @@ impl AurisApp {
                                             .text_color(theme.text_faint)
                                             .child(format!("{}", index + 1)),
                                     )
+                                    // Double-click to rename, which is what every list of named
+                                    // things does. A name is the one thing about a track that is
+                                    // written rather than chosen, and reaching a menu for it is a
+                                    // step nobody takes twice — which is how a project ends up
+                                    // with eight tracks called Audio 1.
+                                    //
+                                    // Propagation is only stopped on the second click. The first
+                                    // still selects the track and arms the reorder drag through
+                                    // the header behind this, because that is what one click on
+                                    // a name has always meant.
                                     .child(
                                         div()
+                                            .id(("track-name", index))
                                             .flex_1()
                                             .min_w_0()
                                             .text_xs()
                                             .text_color(theme.text)
                                             .truncate()
-                                            .child(name),
+                                            .child(name)
+                                            .tooltip(self.tip(Key::MenuRename, ""))
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(
+                                                    move |this, event: &MouseDownEvent, _, cx| {
+                                                        if event.click_count < 2 {
+                                                            return;
+                                                        }
+                                                        this.prompt_to_rename_track(id);
+                                                        cx.stop_propagation();
+                                                        cx.notify();
+                                                    },
+                                                ),
+                                            ),
                                     )
                                     .child(
                                         div().text_xs().text_color(theme.text_faint).child(kind),
