@@ -231,6 +231,16 @@ impl Session {
             .map_or(0.0, |capture| capture.take_peak())
     }
 
+    /// `true` while the input device is open and [`Self::input_peak`] means something.
+    ///
+    /// What a frontend hangs an input meter on. Asking instead whether a take or a monitor is
+    /// running would be asking two questions to answer one, and would get the answer wrong in the
+    /// moment between them: the device is opened by either and closed again only once neither
+    /// wants it, and this is that rule rather than a restatement of it.
+    pub fn input_is_open(&self) -> bool {
+        self.input.is_some()
+    }
+
     /// Opens the input device if it is not already open.
     ///
     /// Idempotent, because both things that want a device — a take and a monitor — may want it at

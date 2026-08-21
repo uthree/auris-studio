@@ -52,6 +52,9 @@ strings! {
     Mixer { en: "Mixer", ja: "ミキサー" }
     Inspector { en: "Inspector", ja: "インスペクタ" }
     Master { en: "Master", ja: "マスター" }
+    // Beside the master meter and the same width, so the caption has to be short enough not to
+    // push the number off the end of its row.
+    InputMeter { en: "In", ja: "入力" }
 
     // ------------------------------------------------------------------ arrangement
     AddInstrumentShort { en: "Inst", ja: "音源" }

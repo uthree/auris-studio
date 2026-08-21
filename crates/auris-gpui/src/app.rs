@@ -86,6 +86,24 @@ fn window_context(claimed: bool, playing: bool) -> gpui::KeyContext {
     gpui::KeyContext::try_from(names.as_str()).expect("the context names are identifiers")
 }
 
+/// How often the window redraws itself while nothing is happening to it.
+///
+/// A named constant rather than a number in the loop, because the input meter's fall is worked
+/// out from it: a peak-hold has to know how long ago it last looked.
+const REPAINT_INTERVAL: Duration = Duration::from_millis(33);
+
+/// A peak meter's reading after `elapsed`, given the loudest sample heard in that time.
+///
+/// A rise is instant and a fall is not. `Session::input_peak` hands over the peak of one tick and
+/// then forgets it, so a bar drawn straight from it would drop to nothing in any tick that caught
+/// no audio block — a held note flickering at thirty hertz. Falling at the rate the engine's own
+/// meters fall is what makes the input read like the meters beside it rather than like a
+/// different instrument.
+fn fallen_peak(held: f32, peak: f32, elapsed: Duration) -> f32 {
+    let db = MeterBank::FALL_DB_PER_SECOND * elapsed.as_secs_f32();
+    peak.max(held * 10f32.powf(-db / 20.0))
+}
+
 /// How hard an auditioned note is struck.
 const NOTE_VELOCITY: f32 = 0.8;
 
@@ -613,6 +631,31 @@ mod tests {
     }
 
     #[test]
+    fn the_input_meter_rises_at_once_and_falls_at_the_rate_the_others_do() {
+        // A louder peak is taken whole: a meter that eased up to a transient would show it at
+        // the wrong height, which for the one number somebody is setting a level by is the whole
+        // failure.
+        assert_eq!(fallen_peak(0.1, 0.9, REPAINT_INTERVAL), 0.9);
+
+        // And a tick that heard nothing falls rather than dropping out. One second of silence is
+        // one fall of the engine's own rate, which is 20 dB — a tenth of the amplitude.
+        let mut held = 1.0;
+        let ticks = (1.0 / REPAINT_INTERVAL.as_secs_f32()).round() as usize;
+        for _ in 0..ticks {
+            held = fallen_peak(held, 0.0, REPAINT_INTERVAL);
+        }
+        // Slack because the fall is a product of `ticks` roundings of an f32, and because
+        // `REPAINT_INTERVAL` does not divide a second evenly.
+        assert!(
+            (held - 0.1).abs() < 0.01,
+            "a second of silence should fall 20 dB, reached {held}"
+        );
+
+        // Silence is reached rather than approached: nothing above it, and never below zero.
+        assert_eq!(fallen_peak(0.0, 0.0, REPAINT_INTERVAL), 0.0);
+    }
+
+    #[test]
     fn the_window_context_says_which_bindings_are_out_of_reach() {
         let plain = window_context(false, false);
         assert!(plain.contains(actions::KEY_CONTEXT));
@@ -850,6 +893,13 @@ pub struct AurisApp {
     pub(crate) choosing_export: bool,
     /// Whether [`Self::status`] is reporting a failure, so it can be shown as one.
     pub(crate) status_failed: bool,
+    /// What the input meter is currently reading, as a linear peak.
+    ///
+    /// Held here rather than asked for while drawing, because `Session::input_peak` forgets what
+    /// it hands back: it is a peak-hold, and a second reader would take half the peaks off the
+    /// first. It is read exactly once per repaint tick — see [`Self::sample_input_level`] — and
+    /// the meter draws this.
+    pub(crate) input_level: f32,
     /// Which tracks have an automation lane showing, and on which parameter.
     ///
     /// Presentation rather than document: what a lane *holds* is saved, but which one you happen
@@ -914,12 +964,14 @@ impl AurisApp {
         // atomics written by the audio thread, and 30 fps is plenty to read them at.
         let repaint = cx.spawn(async move |this, cx| {
             loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(33))
-                    .await;
+                cx.background_executor().timer(REPAINT_INTERVAL).await;
                 if this
                     .update(cx, |this, cx| {
                         this.session.poll();
+                        // Here rather than while drawing, and here rather than in `poll`: the
+                        // input peak is destroyed by being read, so it has to be read exactly
+                        // once, on a tick of a known length, by the one thing that shows it.
+                        this.sample_input_level();
                         // Separate from `poll` on purpose: that is housekeeping and this writes
                         // to somebody's disk. A success says nothing — the title bar's unsaved
                         // mark going out is the whole of the feedback, and a status line
@@ -990,6 +1042,7 @@ impl AurisApp {
             titled: String::new(),
             choosing_export: false,
             status_failed: false,
+            input_level: 0.0,
             automation_lanes: BTreeMap::new(),
             lane_scroll: px(0.0),
             settings,
@@ -1285,6 +1338,17 @@ impl AurisApp {
     /// Linear peak level of a track.
     pub(crate) fn track_level(&self, index: usize) -> f32 {
         self.session.meters().track_peak(index)
+    }
+
+    /// Takes this tick's input peak and folds it into the reading the meter draws.
+    ///
+    /// Called from the repaint loop and nowhere else. See [`Self::input_level`].
+    pub(crate) fn sample_input_level(&mut self) {
+        self.input_level = fallen_peak(
+            self.input_level,
+            self.session.input_peak(),
+            REPAINT_INTERVAL,
+        );
     }
 
     /// Linear peak level of the master bus.

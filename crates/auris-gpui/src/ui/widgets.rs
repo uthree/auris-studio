@@ -775,13 +775,19 @@ pub fn level_meter(
         .when(peak > 0.001, |this| this.child(peak_marker))
 }
 
+/// Quietest level a meter draws anything for.
+///
+/// Named because a readout beside a meter has to agree with it about what counts as silence: a
+/// number still moving under a bar that has bottomed out reads as a bar that has stopped working.
+pub const METER_FLOOR_DB: f32 = -60.0;
+
 /// Maps a level in dBFS onto a 0..1 meter position.
 ///
 /// Linear amplitude would put everything below -20 dB in the bottom 10 % of the meter, so this
 /// uses the scale broadcast meters use: the top 12 dB gets half the travel, and the range
-/// bottoms out at -60 dB.
+/// bottoms out at [`METER_FLOOR_DB`].
 pub fn db_to_meter_position(db: f32) -> f32 {
-    if !db.is_finite() || db <= -60.0 {
+    if !db.is_finite() || db <= METER_FLOOR_DB {
         return 0.0;
     }
     let db = db.min(6.0);
@@ -790,7 +796,7 @@ pub fn db_to_meter_position(db: f32) -> f32 {
         0.5 + ((db + 12.0) / 18.0) * 0.5
     } else {
         // -60..-12 dB occupies the lower half.
-        ((db + 60.0) / 48.0) * 0.5
+        ((db - METER_FLOOR_DB) / 48.0) * 0.5
     }
 }
 

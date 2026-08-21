@@ -52,6 +52,55 @@ pub(crate) fn recording_summary(report: &RecordingReport, language: Language) ->
     }
 }
 
+/// One captioned meter in the transport bar's right-hand column.
+///
+/// The master and the input are the same object with different numbers in it. Drawn from one
+/// place so they stay the same width and the same height as each other: two blocks side by side
+/// that disagree about either read as one of them having gone wrong.
+fn meter_block(
+    caption: &'static str,
+    value: String,
+    db: f32,
+    theme: &crate::theme::Theme,
+) -> impl IntoElement + use<> {
+    div()
+        .flex()
+        .flex_col()
+        .justify_center()
+        .w(px(124.0))
+        .child(
+            div()
+                .flex()
+                .justify_between()
+                .text_xs()
+                .child(div().text_color(theme.text_faint).child(caption))
+                .child(div().text_color(theme.text_muted).child(value)),
+        )
+        .child(div().h(px(7.0)).mt_1().child(level_meter(
+            db_to_meter_position(db),
+            db_to_meter_position(db),
+            Axis::Horizontal,
+            theme.meter_color(db),
+            theme,
+        )))
+}
+
+/// The input peak, written for the caption row above its bar.
+///
+/// A dash below the meter's own floor rather than a number. `-inf dB` is what the arithmetic
+/// says and it is not what somebody setting a level needs to read; a made-up floor like `-60.0`
+/// is worse, because it sits there looking like a measurement while the bar beside it has
+/// bottomed out. A dash says the same thing the empty bar does.
+///
+/// A free function because it is the rule that keeps the number and the bar telling one story,
+/// and a rule inside a view is a rule with no test.
+fn input_peak_text(db: f32) -> String {
+    match db > crate::ui::widgets::METER_FLOOR_DB {
+        true => format!("{db:.1} dB"),
+        false => "—".to_string(),
+    }
+}
+
 /// Ticks in one unit of the position readout's last field.
 ///
 /// The readout has always shown hundredths of a beat rather than raw ticks, because 960 of
@@ -138,6 +187,13 @@ impl AurisApp {
         let grid_label = self.grid_label();
         let master_db = gain_to_db(self.master_level());
         let master_gain_db = self.project().master.gain_db;
+        // `None` while no input device is open, which is what decides whether the block is drawn
+        // at all. The session answers it rather than the frontend inferring it from monitoring
+        // and recording: those are two questions and the device is one fact.
+        let input_db = self
+            .session
+            .input_is_open()
+            .then(|| gain_to_db(self.input_level));
 
         // Three columns of equal weight, so the middle one lands on the window's centre line
         // however wide the sides grow. Every hardware transport and every DAW puts the
@@ -351,37 +407,19 @@ impl AurisApp {
                     // icon whether it is showing or not. Four buttons up here said the same thing
                     // for three of the four, and a transport bar is for the transport.
                     //
+                    // What is coming in, and only while something is: a bar reading silence
+                    // whenever no device is open would be a bar that says the microphone is dead.
+                    // Left of the master, which is the order the signal travels in.
+                    .children(input_db.map(|db| {
+                        meter_block(self.t(Key::InputMeter), input_peak_text(db), db, &theme)
+                    }))
                     // Master level, always visible so clipping is never a surprise.
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .justify_center()
-                            .w(px(124.0))
-                            .child(
-                                div()
-                                    .flex()
-                                    .justify_between()
-                                    .text_xs()
-                                    .child(
-                                        div()
-                                            .text_color(theme.text_faint)
-                                            .child(self.t(Key::Master)),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_color(theme.text_muted)
-                                            .child(format!("{master_gain_db:+.1} dB")),
-                                    ),
-                            )
-                            .child(div().h(px(7.0)).mt_1().child(level_meter(
-                                db_to_meter_position(master_db),
-                                db_to_meter_position(master_db),
-                                Axis::Horizontal,
-                                theme.meter_color(master_db),
-                                &theme,
-                            ))),
-                    ),
+                    .child(meter_block(
+                        self.t(Key::Master),
+                        format!("{master_gain_db:+.1} dB"),
+                        master_db,
+                        &theme,
+                    )),
             )
     }
 
@@ -755,6 +793,27 @@ mod tests {
     /// 4/4 for the whole timeline.
     fn four_four() -> SignatureMap {
         SignatureMap::default()
+    }
+
+    #[test]
+    fn the_input_readout_goes_quiet_exactly_where_its_bar_does() {
+        use crate::ui::widgets::{METER_FLOOR_DB, db_to_meter_position};
+
+        // The pair this test exists for: a number and a bar, and the frame where one says
+        // something the other does not.
+        for db in [METER_FLOOR_DB, -80.0, f32::NEG_INFINITY] {
+            assert_eq!(db_to_meter_position(db), 0.0, "{db} moves the bar");
+            assert_eq!(input_peak_text(db), "—", "{db} is written as a level");
+        }
+
+        // And above it both have something to say.
+        for db in [-59.0, -12.0, 0.0] {
+            assert!(db_to_meter_position(db) > 0.0, "{db} leaves the bar empty");
+            assert!(
+                input_peak_text(db).ends_with(" dB"),
+                "{db} is written as silence"
+            );
+        }
     }
 
     #[test]
