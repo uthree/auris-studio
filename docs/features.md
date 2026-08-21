@@ -101,6 +101,12 @@ scroll, and rolling down a column of tracks used to change the level of whicheve
 crossed on the way: silently, with no drag to remember having started, and nothing on screen saying
 which one moved. The wheel belongs to the thing being scrolled.
 
+**Every panel that scrolls says so.** A bar appears along the edge of the browser, the inspector,
+the log, the lane column and the mixer's strips the moment there is more than fits, and takes no
+room at all while everything does. The thumb is as long a share of its track as the view is of the
+content; dragging it carries the panel, and pressing the track anywhere jumps there, because with
+forty channel strips the alternative is dragging the whole way.
+
 The piano roll has two tools, and the strip in its header says which one is in hand — as does the
 status line, when the key is used and the roll is not on screen to show it. **T** puts the next
 tool in hand, which with two tools is Logic's press-it-twice-to-swap-back; like every other
