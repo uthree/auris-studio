@@ -152,6 +152,23 @@ pub mod architecture {
     //! click quietly pushing real history off the end of the stack. The transaction also batches
     //! the graph rebuild, so a structural edit inside one sets a flag and the close rebuilds once.
     //!
+    //! # Reading a file is not a change to the document
+    //!
+    //! Decoding audio and reading a SoundFont are the two slowest things the application does that
+    //! are not audio, and neither of them needs the document: each turns a path into bytes in
+    //! memory. So each is split in two. [`decode_audio`](crate::decode_audio) and
+    //! [`read_soundfont`](crate::read_soundfont) are free functions that run anywhere;
+    //! [`Session::place_audio`](crate::Session::place_audio) and
+    //! [`Session::install_soundfont`](crate::Session::install_soundfont) change the document, and
+    //! so run on the thread that owns it. [`Session::import_audio`](crate::Session::import_audio)
+    //! is still both halves in one call, for a caller with nothing else to be doing — the command
+    //! line has nothing else to be doing. The gpui frontend runs the first half on a worker and
+    //! keeps painting.
+    //!
+    //! What the split buys costs one thing back: the document can move while a file is being read.
+    //! The placing half is where that is caught — audio decoded against a sample rate the project
+    //! no longer has is decoded again rather than laid down to play at the wrong pitch.
+    //!
     //! # The third thread, and why recording needed one
     //!
     //! Two threads is the whole story for playback and one short of it for recording. cpal has no

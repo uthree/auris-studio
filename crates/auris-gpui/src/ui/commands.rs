@@ -977,21 +977,27 @@ impl AurisApp {
             let Some(handle) = handle else { return };
             let path = handle.path().to_path_buf();
 
-            let _ = this.update(cx, |this, cx| {
+            let Ok(rate) = this.update(cx, |this, cx| {
                 let text = messages::importing(this.language(), &path.display().to_string());
                 this.set_status(text);
                 cx.notify();
-            });
+                // Read while the session is in hand: the decode has to land on the project's
+                // rate, and the thread that does it cannot ask what that is.
+                this.project().sample_rate
+            }) else {
+                return;
+            };
 
-            // Decoding is slow enough to drop frames, but it has to land back in the session,
-            // which lives on this thread — so yield first and let the status paint.
-            cx.background_executor()
-                .timer(std::time::Duration::ZERO)
-                .await;
+            let loaded = read_file(
+                cx.background_executor().clone(),
+                Reading::Audio { rate },
+                path.clone(),
+            )
+            .await;
 
             let _ = this.update(cx, |this, cx| {
                 let start = this.playhead_ticks();
-                match this.take_audio(&path, start) {
+                match loaded.and_then(|loaded| this.take_loaded(&path, loaded, start)) {
                     Ok(line) => this.set_status(line),
                     Err(error) => this.set_failed_status(this.failure(Key::CmdImportAudio, &error)),
                 }
@@ -1001,13 +1007,31 @@ impl AurisApp {
         .detach();
     }
 
-    /// Reads one audio file onto a new track, and says so.
+    /// Gives a file that has been read to the document, and says what happened.
     ///
-    /// The file dialog and a drop both land here, which is what stops the two from drifting apart
-    /// — a gesture that imported a file without selecting the track it made would be a gesture
-    /// whose result the user has to go and find.
-    fn take_audio(&mut self, path: &Path, start: Ticks) -> Result<String, SessionError> {
-        self.session.import_audio(path, start)?;
+    /// The file dialogs and a drop all land here, which is what stops them from drifting apart —
+    /// a gesture that imported a file without selecting the track it made would be a gesture whose
+    /// result the user has to go and find.
+    fn take_loaded(
+        &mut self,
+        path: &Path,
+        loaded: Loaded,
+        start: Ticks,
+    ) -> Result<String, SessionError> {
+        match loaded {
+            Loaded::Audio(buffer) => self.take_audio(path, buffer, start),
+            Loaded::Font(font) => self.take_soundfont(path, font),
+        }
+    }
+
+    /// Puts decoded audio on a new track, and says so.
+    fn take_audio(
+        &mut self,
+        path: &Path,
+        buffer: AudioBuffer,
+        start: Ticks,
+    ) -> Result<String, SessionError> {
+        self.session.place_audio(path, buffer, start)?;
         // The track it made is the last one, and it is scrolled to rather than merely selected:
         // an import onto an arrangement taller than the window otherwise lands out of sight.
         if let Some(track) = self.project().tracks.last().map(|track| track.id) {
@@ -1039,20 +1063,26 @@ impl AurisApp {
             let Some(handle) = handle else { return };
             let path = handle.path().to_path_buf();
 
-            let _ = this.update(cx, |this, cx| {
+            let shown = this.update(cx, |this, cx| {
                 let text = messages::importing(this.language(), &path.display().to_string());
                 this.set_status(text);
                 cx.notify();
             });
+            if shown.is_err() {
+                return;
+            }
 
-            // A font can be hundreds of megabytes, so the read is far too slow to do without
-            // having painted the status line first.
-            cx.background_executor()
-                .timer(std::time::Duration::ZERO)
-                .await;
+            // A font is hundreds of megabytes often enough that reading one here would be a
+            // window that stops answering for a second or two.
+            let loaded = read_file(
+                cx.background_executor().clone(),
+                Reading::Font,
+                path.clone(),
+            )
+            .await;
 
             let _ = this.update(cx, |this, cx| {
-                match this.take_soundfont(&path) {
+                match loaded.and_then(|loaded| this.take_loaded(&path, loaded, Ticks::ZERO)) {
                     Ok(line) => this.set_status(line),
                     Err(error) => {
                         this.set_failed_status(this.failure(Key::CmdImportSoundFont, &error))
@@ -1065,8 +1095,8 @@ impl AurisApp {
     }
 
     /// Reads one SoundFont into the library, opens it there, and says what it holds.
-    fn take_soundfont(&mut self, path: &Path) -> Result<String, SessionError> {
-        let id = self.session.import_soundfont(path)?;
+    fn take_soundfont(&mut self, path: &Path, font: LoadedFont) -> Result<String, SessionError> {
+        let id = self.session.install_soundfont(path, font)?;
         let name = self
             .session
             .soundfonts()
@@ -1141,32 +1171,27 @@ impl AurisApp {
 
         cx.spawn(async move |this, cx| {
             for (path, kind) in dropped.accepted {
-                let shown = this.update(cx, |this, cx| {
+                let Ok(rate) = this.update(cx, |this, cx| {
                     let text = messages::importing(this.language(), &path.display().to_string());
                     this.set_status(text);
                     cx.notify();
-                });
-                if shown.is_err() {
+                    this.project().sample_rate
+                }) else {
                     return;
-                }
+                };
 
                 // A font can be hundreds of megabytes and an audio file is decoded and resampled,
-                // so both are far too slow to start without having painted that line first.
-                cx.background_executor()
-                    .timer(std::time::Duration::ZERO)
-                    .await;
+                // so both are read away from this thread. One at a time even so: a folder of takes
+                // dropped at once would otherwise decode all of them into memory together.
+                let loaded = read_file(
+                    cx.background_executor().clone(),
+                    Reading::of(kind, rate),
+                    path.clone(),
+                )
+                .await;
 
                 let done = this.update(cx, |this, cx| {
-                    let done = match kind {
-                        DropKind::Audio => this.take_audio(&path, start),
-                        DropKind::SoundFont => this.take_soundfont(&path),
-                        // `drop_action` sent everything that replaces the document down the other
-                        // branch, and one that reached here would be a document quietly not
-                        // opened.
-                        DropKind::Project | DropKind::Midi => {
-                            unreachable!("a whole document is opened, not imported into one")
-                        }
-                    };
+                    let done = loaded.and_then(|loaded| this.take_loaded(&path, loaded, start));
                     cx.notify();
                     // Turned into a line here, while the view that knows the language is in hand.
                     done.map_err(|error| this.failure(import_key(kind), &error))
@@ -1527,6 +1552,66 @@ impl AurisApp {
 }
 
 /// The command a dropped file would have been, so a failure names the same thing the menu does.
+/// A file read into memory on a worker thread, waiting to be given to the document.
+enum Loaded {
+    /// Audio, decoded and resampled to the project's rate.
+    Audio(AudioBuffer),
+    /// A SoundFont, read whole.
+    Font(LoadedFont),
+}
+
+/// Reads one file into memory away from the thread that draws.
+///
+/// The expensive half of an import — a decode and a resample, or hundreds of megabytes of
+/// SoundFont — and the half that needs no document, so it can happen anywhere. It used to happen
+/// on this thread, after a yield that let the status line paint first: the window then said what
+/// it was about to do and stopped answering while it did it, which is a freeze with a caption.
+///
+async fn read_file(
+    executor: gpui::BackgroundExecutor,
+    reading: Reading,
+    path: PathBuf,
+) -> Result<Loaded, SessionError> {
+    executor
+        .spawn(async move {
+            match reading {
+                Reading::Audio { rate } => decode_audio(&path, rate).map(Loaded::Audio),
+                Reading::Font => read_soundfont(&path).map(Loaded::Font),
+            }
+        })
+        .await
+}
+
+/// What is to be read, and the one thing the reader needs that the file does not say.
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum Reading {
+    /// Audio, to be decoded and resampled to the project's rate.
+    ///
+    /// Carried rather than looked up: the rate is the document's, and the thread doing the
+    /// reading is not the thread allowed to ask it anything.
+    Audio {
+        /// The project's sample rate.
+        rate: f64,
+    },
+    /// A SoundFont, read whole.
+    Font,
+}
+
+impl Reading {
+    /// What a dropped file of this kind needs read.
+    fn of(kind: DropKind, rate: f64) -> Reading {
+        match kind {
+            DropKind::Audio => Reading::Audio { rate },
+            DropKind::SoundFont => Reading::Font,
+            // `drop_action` sends everything that replaces the document down another branch, and
+            // the two file dialogs that come here name what they asked for themselves.
+            DropKind::Project | DropKind::Midi => {
+                unreachable!("a whole document is opened, not imported into one")
+            }
+        }
+    }
+}
+
 fn import_key(kind: DropKind) -> Key {
     match kind {
         DropKind::Audio => Key::CmdImportAudio,

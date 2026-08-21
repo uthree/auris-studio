@@ -538,6 +538,12 @@ declares and opening a bank shows its sounds, and clicking a sound points the se
 it — switching that track to the sampler in the same edit, so it is one click and one undo step
 rather than two.
 
+**The reading happens away from the window.** A two-hundred-megabyte font, and an audio file that
+has to be decoded and resampled to the project's rate, are both read on a worker thread: the status
+line says which file is being read, and everything else — playback included — carries on while it
+is. Files dropped together are read one at a time, so a folder of takes does not arrive in memory
+all at once.
+
 A project stores the font's *path* and names each sound by bank and patch, never by position in
 the list. That is what makes a piece saved last week open playing the same instrument: a position
 moves the moment anyone edits the file. The samples themselves stay out of the document, so a

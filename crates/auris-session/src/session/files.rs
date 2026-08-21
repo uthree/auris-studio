@@ -19,7 +19,9 @@ use std::sync::Arc;
 
 use auris_core::project::CurvePoint;
 use auris_core::time::Ticks;
-use auris_core::{AssetPath, ClipId, Note, Project, SoundFontId, SoundFontRef, SourceId};
+use auris_core::{
+    AssetPath, AudioBuffer, ClipId, Note, Project, SoundFontId, SoundFontRef, SourceId,
+};
 use auris_io::{
     IoError, SoundFont, SoundFontPreset, byte_size, document_in_folder, font_name,
     import_audio_file, load_project, load_soundfont, preset_count, presets, save_project,
@@ -29,6 +31,32 @@ use crate::error::SessionError;
 use crate::history::Edit;
 
 use super::{MidiReport, SaveReport, Session};
+
+/// Decodes an audio file to `sample_rate`, without a session and without touching a document.
+///
+/// The slow half of [`Session::import_audio`], and the half that needs nothing but the file. A
+/// frontend whose window would otherwise stop repainting for the length of the decode runs this on
+/// a worker thread and hands what it gets to [`Session::place_audio`], on the thread that owns the
+/// session — the only thread a document may be touched from.
+pub fn decode_audio(path: &Path, sample_rate: f64) -> Result<AudioBuffer, SessionError> {
+    Ok(import_audio_file(path, sample_rate)?)
+}
+
+/// A SoundFont read into memory and not yet given to a document.
+///
+/// Opaque on purpose. It exists to be carried from the thread that read it to the thread that owns
+/// the session, and a frontend has no other use for one; what is inside belongs to the sampler,
+/// and naming it here would put a sampler type in the signatures of every frontend.
+pub struct LoadedFont(Arc<SoundFont>);
+
+/// Reads a SoundFont into memory, without a session and without touching a document.
+///
+/// [`decode_audio`]'s counterpart and for its reason, only more so: a font is often hundreds of
+/// megabytes, and reading one on the thread that draws is a window that stops answering for a
+/// second or two with nothing to say for itself.
+pub fn read_soundfont(path: &Path) -> Result<LoadedFont, SessionError> {
+    Ok(LoadedFont(load_soundfont(path)?))
+}
 
 /// The instrument a track that played on the drum channel is given.
 const DRUM_INSTRUMENT: &str = "auris.synth.noisedrum";
@@ -411,7 +439,33 @@ impl Session {
     /// moment it is imported. A project that has not been saved yet has no folder to copy into
     /// and refers to the file where it lies; saving picks it up.
     pub fn import_audio(&mut self, path: &Path, start: Ticks) -> Result<ClipId, SessionError> {
-        let buffer = import_audio_file(path, self.project.sample_rate)?;
+        let buffer = decode_audio(path, self.project.sample_rate)?;
+        self.place_audio(path, buffer, start)
+    }
+
+    /// Puts audio that has already been decoded on a track of its own, with a clip at `start`.
+    ///
+    /// [`Self::import_audio`]'s other half — everything it does that needs the document, and so
+    /// everything that has to happen on the thread holding the session. `path` is still wanted
+    /// here: it names the track and the source, and it is what the document refers to until the
+    /// project has a folder to copy the file into.
+    ///
+    /// The buffer is expected at the project's sample rate, which is what [`decode_audio`] was
+    /// given it for — and is read again here, because the whole point of the split is that
+    /// something else can happen in between. A document whose rate moved while its audio was
+    /// being decoded gets the decode again rather than a track playing at the wrong pitch; it
+    /// costs a re-read of a file that is still warm, and only in the case that used to be
+    /// impossible.
+    pub fn place_audio(
+        &mut self,
+        path: &Path,
+        buffer: AudioBuffer,
+        start: Ticks,
+    ) -> Result<ClipId, SessionError> {
+        let buffer = match buffer.sample_rate() == self.project.sample_rate {
+            true => buffer,
+            false => decode_audio(path, self.project.sample_rate)?,
+        };
         self.record(Edit::ImportAudio);
         let name = path
             .file_stem()
@@ -455,7 +509,22 @@ impl Session {
     /// memory. Nothing is heard until a track is pointed at one of its presets with
     /// [`Self::set_track_preset`].
     pub fn import_soundfont(&mut self, path: &Path) -> Result<SoundFontId, SessionError> {
-        let font = load_soundfont(path)?;
+        let font = read_soundfont(path)?;
+        self.install_soundfont(path, font)
+    }
+
+    /// Puts a SoundFont that has already been read into the document's library.
+    ///
+    /// [`Self::import_soundfont`]'s other half, split from the read for [`Self::place_audio`]'s
+    /// reason. Everything that makes re-importing cheap is here rather than in the read, so a
+    /// frontend cannot skip it: a font the document already knows is not an undo step, and the
+    /// samples are replaced rather than added to.
+    pub fn install_soundfont(
+        &mut self,
+        path: &Path,
+        font: LoadedFont,
+    ) -> Result<SoundFontId, SessionError> {
+        let font = font.0;
         let name = font_name(&font, path);
         let id = match self.project.soundfont_at(self.project_folder(), path) {
             Some(existing) => existing,
@@ -619,6 +688,51 @@ mod tests {
     use super::*;
     use crate::session::fixtures::{Scratch, named_font, session};
     use auris_io::AUDIO_DIR;
+
+    #[test]
+    fn audio_read_somewhere_else_lands_exactly_as_importing_it_would() {
+        // The two halves together have to be the whole of the one call: a frontend that decodes on
+        // a worker thread must not get a quieter version of an import.
+        let scratch = Scratch::new("placed");
+        let file = scratch.tone("kick.wav");
+
+        let mut whole = session();
+        let expected = whole.import_audio(&file, Ticks::ZERO).expect("imports");
+
+        let mut split = session();
+        let buffer = decode_audio(&file, split.project().sample_rate).expect("decodes");
+        let clip = split
+            .place_audio(&file, buffer, Ticks::ZERO)
+            .expect("places");
+
+        assert_eq!(clip, expected, "the same clip id, made the same way");
+        assert_eq!(split.project(), whole.project());
+        assert!(split.can_undo(), "an import is one undo step either way");
+    }
+
+    #[test]
+    fn audio_decoded_against_a_rate_the_document_no_longer_has_is_decoded_again() {
+        // What the split makes possible: the document can move while the file is being read. A
+        // buffer at yesterday's rate would play at the wrong pitch and the wrong length, so it is
+        // the buffer that is thrown away rather than the import that is refused.
+        let scratch = Scratch::new("restale");
+        let file = scratch.tone("kick.wav");
+
+        let mut session = session();
+        let stale = decode_audio(&file, session.project().sample_rate / 2.0).expect("decodes");
+        assert_ne!(stale.sample_rate(), session.project().sample_rate);
+
+        session
+            .place_audio(&file, stale, Ticks::ZERO)
+            .expect("places");
+        let source = session
+            .project()
+            .audio_sources
+            .values()
+            .next()
+            .expect("one");
+        assert_eq!(source.sample_rate, session.project().sample_rate);
+    }
 
     #[test]
     fn importing_a_soundfont_that_is_not_there_changes_nothing() {

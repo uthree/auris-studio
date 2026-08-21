@@ -56,6 +56,7 @@ pub use accompany::{AccompanyReport, DEFAULT_PARTS};
 pub use autosave::{AUTOSAVE_INTERVAL, AutosaveState, should_autosave};
 pub use clipboard::{Clipboard, CopiedClip, CopiedContent};
 pub use compose::{composed_gain_db, kit_trim_db};
+pub use files::{LoadedFont, decode_audio, read_soundfont};
 pub use hosted::PluginWindow;
 pub use monitor::MonitorStatus;
 pub use notes::{Quantize, quantized};
