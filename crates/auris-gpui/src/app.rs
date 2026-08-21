@@ -285,6 +285,21 @@ pub enum Drag {
         /// [`crate::gestures::DRAG_THRESHOLD`].
         pressed_at: Option<Point<Pixels>>,
     },
+    /// Carrying an effect up or down its chain.
+    ///
+    /// The chain is reordered as the pointer moves, for [`Drag::TrackReorder`]'s reason and with
+    /// its cost: one transaction around the whole gesture, so the graph is rebuilt once at the
+    /// drop rather than on every pointer move.
+    ///
+    /// No `pressed_at` guard, unlike the drags measured in pixels. This one is driven by the row
+    /// the pointer has entered rather than by a coordinate, so nothing happens at all until the
+    /// pointer leaves the row it started on — the row boundary is the threshold.
+    EffectReorder {
+        /// Whose chain, with `None` for the master's.
+        track: Option<TrackId>,
+        /// The slot in hand. Its *position* moves during the gesture, so the id is what is held.
+        slot: EffectSlotId,
+    },
     /// Dragging one of a clip's edges.
     ClipResize {
         /// Clip being resized.
@@ -567,6 +582,7 @@ impl Drag {
             Drag::LoopRegion { .. } => Some(Edit::SetLoopRegion),
             Drag::ClipMove { .. } => Some(Edit::MoveClip),
             Drag::TrackReorder { .. } => Some(Edit::MoveTrack),
+            Drag::EffectReorder { .. } => Some(Edit::ReorderEffects),
             Drag::ClipResize { .. } => Some(Edit::ResizeClip),
             Drag::ClipLoop { .. } => Some(Edit::LoopClip),
             Drag::ClipFade { .. } => Some(Edit::SetClipFade),

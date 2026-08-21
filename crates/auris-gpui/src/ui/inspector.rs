@@ -57,6 +57,29 @@ pub(crate) fn insert_rows(chain: &[(EffectSlotId, String, bool)]) -> Vec<Insert>
     rows
 }
 
+/// How far a held effect has to move to land where the pointer now is.
+///
+/// `over` is the slot the pointer has entered, or `None` for the empty slot at the end of the
+/// list, which stands for the end of the chain. A *delta* rather than an index because that is
+/// what `Session::move_effect` takes, and it takes one because the two chevrons beside each row
+/// were the first thing to ask it.
+///
+/// `None` when nothing should happen: the pointer is over the row it set off from, or over a row
+/// belonging to some other strip — the mixer draws a chain per channel, and a drag that wandered
+/// sideways must not reorder the one it wandered into.
+pub(crate) fn reorder_delta(
+    chain: &[EffectSlotId],
+    held: EffectSlotId,
+    over: Option<EffectSlotId>,
+) -> Option<isize> {
+    let from = chain.iter().position(|slot| *slot == held)?;
+    let to = match over {
+        Some(slot) => chain.iter().position(|candidate| *candidate == slot)?,
+        None => chain.len().checked_sub(1)?,
+    };
+    (to != from).then(|| to as isize - from as isize)
+}
+
 /// A stable per-slot element key, so gpui can track hover state across frames.
 ///
 /// Keyed by the slot's own id rather than by its position. The mixer used to pack a strip index
@@ -243,16 +266,25 @@ impl AurisApp {
                 } => (slot, effect_id, enabled),
                 Insert::Empty => {
                     sections.push(
-                        crate::ui::widgets::icon_label(
-                            ("insert-empty", insert_element_key(None)),
-                            Icon::Plus,
-                            self.t(Key::Effect),
-                            &theme,
-                            Self::opens_menu(cx, move |this, at| {
-                                this.effect_picker_menu(at, Some(track_id))
-                            }),
-                        )
-                        .into_any_element(),
+                        // Wrapped so the empty slot can be dragged onto as well as clicked: the
+                        // row that adds the next effect is also where the end of the chain is,
+                        // and it is the only way to say "last" with the pointer.
+                        div()
+                            .on_mouse_move(cx.listener(
+                                move |this, _: &gpui::MouseMoveEvent, _, cx| {
+                                    this.drag_effect_onto(Some(track_id), None, cx);
+                                },
+                            ))
+                            .child(crate::ui::widgets::icon_label(
+                                ("insert-empty", insert_element_key(None)),
+                                Icon::Plus,
+                                self.t(Key::Effect),
+                                &theme,
+                                Self::opens_menu(cx, move |this, at| {
+                                    this.effect_picker_menu(at, Some(track_id))
+                                }),
+                            ))
+                            .into_any_element(),
                     );
                     continue;
                 }
@@ -276,6 +308,29 @@ impl AurisApp {
                     .items_center()
                     .gap_1()
                     .h(Metrics::CONTROL_HEIGHT)
+                    // A row in hand is lifted off the list, the way a track header is: what
+                    // follows the pointer is the chain itself rather than a line predicting it.
+                    .when(self.dragging_effect(slot_id), |this| {
+                        this.bg(theme.surface_raised).opacity(0.8)
+                    })
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                            // The fallback grab: a press that landed on one of the chevrons has
+                            // claimed the gesture already, and this runs after it because a
+                            // parent's handler bubbles last.
+                            if this.drag.is_none() {
+                                this.begin_drag(Drag::EffectReorder {
+                                    track: Some(track_id),
+                                    slot: slot_id,
+                                });
+                                cx.notify();
+                            }
+                        }),
+                    )
+                    .on_mouse_move(cx.listener(move |this, _: &gpui::MouseMoveEvent, _, cx| {
+                        this.drag_effect_onto(Some(track_id), Some(slot_id), cx);
+                    }))
                     .on_mouse_down(
                         gpui::MouseButton::Right,
                         cx.listener(move |this, event: &MouseDownEvent, _, cx| {
@@ -655,6 +710,47 @@ impl AurisApp {
         self.session.move_effect(track, slot, delta);
     }
 
+    /// The slots of a strip's chain, in the order the signal meets them.
+    pub(crate) fn chain_slots(&self, track: Option<TrackId>) -> Vec<EffectSlotId> {
+        let strip = match track {
+            Some(id) => self.project().track(id).map(|track| &track.mixer),
+            None => Some(&self.project().master),
+        };
+        strip.map_or_else(Vec::new, |strip| {
+            strip.effects.iter().map(|slot| slot.id).collect()
+        })
+    }
+
+    /// Carries a dragged effect onto the row the pointer has just entered.
+    ///
+    /// Driven by the row rather than by a coordinate. An element the pointer is inside knows
+    /// which slot it stands for without anybody measuring the list, and it is the only thing that
+    /// does — the chain is drawn in two panels at two row heights, and one of them is a column of
+    /// mixer strips whose rectangles nothing records.
+    pub(crate) fn drag_effect_onto(
+        &mut self,
+        over_track: Option<TrackId>,
+        over: Option<EffectSlotId>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(Drag::EffectReorder { track, slot }) = self.drag else {
+            return;
+        };
+        if over_track != track {
+            return;
+        }
+        let Some(delta) = reorder_delta(&self.chain_slots(track), slot, over) else {
+            return;
+        };
+        self.move_effect(track, slot, delta);
+        cx.notify();
+    }
+
+    /// Whether an effect is the one currently in hand.
+    pub(crate) fn dragging_effect(&self, slot: EffectSlotId) -> bool {
+        matches!(self.drag, Some(Drag::EffectReorder { slot: held, .. }) if held == slot)
+    }
+
     /// Removes an effect from wherever it is.
     pub(crate) fn remove_effect(&mut self, slot: EffectSlotId) {
         self.session.remove_effect(slot);
@@ -685,6 +781,40 @@ fn target_element_key(target: ParamTarget, param: ParamId) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dragging_an_effect_onto_a_row_moves_it_exactly_that_far() {
+        let chain = vec![EffectSlotId(4), EffectSlotId(9), EffectSlotId(2)];
+
+        assert_eq!(
+            reorder_delta(&chain, EffectSlotId(4), Some(EffectSlotId(2))),
+            Some(2)
+        );
+        assert_eq!(
+            reorder_delta(&chain, EffectSlotId(2), Some(EffectSlotId(4))),
+            Some(-2)
+        );
+
+        // The row it is already on asks for nothing, which is what stops the chain being
+        // rewritten on every pointer move across the row the drag began in.
+        assert_eq!(
+            reorder_delta(&chain, EffectSlotId(9), Some(EffectSlotId(9))),
+            None
+        );
+
+        // The empty slot at the end of the list means the end of the chain — and means nothing
+        // at all to the effect that is already there.
+        assert_eq!(reorder_delta(&chain, EffectSlotId(4), None), Some(2));
+        assert_eq!(reorder_delta(&chain, EffectSlotId(2), None), None);
+
+        // A row from another strip is not in this chain, and neither is anything at all when the
+        // chain is empty.
+        assert_eq!(
+            reorder_delta(&chain, EffectSlotId(4), Some(EffectSlotId(7))),
+            None
+        );
+        assert_eq!(reorder_delta(&[], EffectSlotId(4), None), None);
+    }
 
     #[test]
     fn a_chain_always_ends_in_one_empty_insert() {

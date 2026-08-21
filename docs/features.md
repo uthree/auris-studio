@@ -597,6 +597,12 @@ Clicking an effect opens its controls in a floating window. Every control is bui
 parameters the plugin declares, so a plugin you have never seen has an editor; two of them draw a
 picture as well.
 
+**Dragging an effect reorders the chain.** Take hold of its name and move it over another slot in
+the same strip, in the inspector or on the mixer; the chain rearranges as the pointer travels, so
+what you are looking at is the order itself rather than a line predicting it. Dropping it on the
+empty slot at the end puts it last. The chevrons beside each row do the same thing one step at a
+time, and the menu on each slot still offers bypass, reorder and remove.
+
 **The equalizer draws its curve.** The spectrum going into it sits behind, the response it is
 making is drawn over that, and each band that is switched in has a node on the curve:
 

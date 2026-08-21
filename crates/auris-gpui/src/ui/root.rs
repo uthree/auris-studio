@@ -738,6 +738,10 @@ impl AurisApp {
                     *at = landed;
                 }
             }
+            // Nothing to do here: the reorder is driven by the row the pointer has entered,
+            // which knows which slot it is without any of this file's arithmetic. The gesture
+            // still needs the drag state, for the transaction around it and for the lifted look.
+            Drag::EffectReorder { .. } => {}
             Drag::TrackReorder { track, pressed_at } => {
                 // The same wobble guard the clips and the notes have: a click on a header to
                 // select a track must not reorder the list because the hand moved a pixel.

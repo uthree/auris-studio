@@ -424,6 +424,21 @@ impl AurisApp {
         let theme = &self.theme;
         let menu_label = label.clone();
         div()
+            .when(self.dragging_effect(slot), |this| {
+                this.bg(theme.surface_raised).opacity(0.8)
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                    if this.drag.is_none() {
+                        this.begin_drag(crate::app::Drag::EffectReorder { track, slot });
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_mouse_move(cx.listener(move |this, _: &gpui::MouseMoveEvent, _, cx| {
+                this.drag_effect_onto(track, Some(slot), cx);
+            }))
             .child(button(
                 id,
                 label,
