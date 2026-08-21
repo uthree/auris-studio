@@ -19,6 +19,14 @@ use crate::ui::widgets::{
     ButtonStyle, Latch, button, db_to_meter_position, icon_label, level_meter,
 };
 
+/// How tall the strip along the bottom of a header that resizes its lane is.
+///
+/// Narrower than [`Metrics::SPLITTER`], which the dividers between panels use, because this one
+/// is not a divider: it is drawn *over* the bottom of a header, and a header carries three pixels
+/// of padding there. Six would take a bite out of the pan fader; four is the padding and the
+/// border, and reaches nothing the pointer wanted instead.
+const RESIZE_BAND: Pixels = px(4.0);
+
 /// How a track's arm button is latched.
 ///
 /// Three answers rather than two, because the button has two jobs now: it says which track was
@@ -171,6 +179,10 @@ impl AurisApp {
                 div()
                     .id(("track-header", index))
                     .flex()
+                    // For the resize band at the bottom, which is laid over the header rather
+                    // than in it: the row list and the canvas opposite agree on every height to
+                    // the pixel, and a strip taking part in the layout would push them apart.
+                    .relative()
                     .h(px(height))
                     .pl(px(6.0))
                     .py(px(3.0))
@@ -337,9 +349,48 @@ impl AurisApp {
                         theme.meter_color(level_db),
                         &theme,
                     )))
+                    // Last, so it paints over the fader it overlaps and so a press on it is the
+                    // press that lands. The header's own handler runs afterwards — a parent's
+                    // bubbles last — and finds the drag already claimed.
+                    .child(self.lane_resize_band(index, id, height, cx))
                     .into_any_element()
             }
         }
+    }
+
+    /// The strip along the bottom of a header that drags its lane taller or shorter.
+    ///
+    /// Invisible until the pointer is on it, which is the same bargain the panel dividers strike:
+    /// a line drawn under every header would be a second border under the one already there, and
+    /// the cursor changing is what says the edge can be taken hold of.
+    fn lane_resize_band(
+        &self,
+        index: usize,
+        track: TrackId,
+        height: f32,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let accent = self.theme.accent;
+        div()
+            .id(("track-height", index))
+            .absolute()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .h(RESIZE_BAND)
+            .cursor(gpui::CursorStyle::ResizeUpDown)
+            .hover(|this| this.bg(crate::theme::Theme::translucent(accent, 0.35)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    this.begin_drag(Drag::ResizeTrack {
+                        track,
+                        start_y: event.position.y,
+                        start_height: height,
+                    });
+                    cx.notify();
+                }),
+            )
     }
 
     /// The row of buttons above the track headers.

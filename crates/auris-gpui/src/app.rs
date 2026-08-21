@@ -513,6 +513,20 @@ pub enum Drag {
         /// Column width when the drag began.
         start_width: Pixels,
     },
+    /// Dragging the bottom edge of a track's header to make its lane taller or shorter.
+    ///
+    /// The one resize gesture in the window that is an *edit*: a lane's height is stored in the
+    /// document beside its name and its colour, so it is undoable and it makes the project dirty.
+    /// A dock's width is a property of the window and is not.
+    ResizeTrack {
+        /// Track whose lane is being resized.
+        track: TrackId,
+        /// Pointer y when the drag began.
+        start_y: Pixels,
+        /// The lane's height then. Absolute rather than accumulated, so a pointer that ran past
+        /// the floor and came back finds the lane where it left it.
+        start_height: f32,
+    },
 }
 
 impl Drag {
@@ -564,6 +578,10 @@ impl Drag {
             | Drag::ResizeHeaders { .. }
             | Drag::MovePluginWindow { .. }
             | Drag::MoveTypingPanel { .. } => None,
+            // The exception among the resizes, and the reason is where the number is kept: a
+            // lane's height is a field of the track, so it travels with the project and belongs
+            // on the stack with everything else about that track.
+            Drag::ResizeTrack { .. } => Some(Edit::SetTrackHeight),
         }
     }
 }
@@ -1577,6 +1595,18 @@ impl AurisApp {
     /// Applies a track-header column resize drag.
     pub(crate) fn resize_headers(&mut self, start_width: Pixels, delta: Pixels) {
         self.panels.header_width = PanelLayout::resized_headers(start_width, delta);
+    }
+
+    /// Applies a lane-height drag.
+    ///
+    /// Nothing is clamped on the way in. `Session::set_track_height` holds the floor and the
+    /// ceiling and is tested against both, and a second copy of the same two numbers up here
+    /// would be a second place for them to drift — the header draws whatever the document ended
+    /// up with, so the two cannot disagree.
+    pub(crate) fn resize_track(&mut self, track: TrackId, start_height: f32, delta: Pixels) {
+        let _ = self
+            .session
+            .set_track_height(track, start_height + f32::from(delta));
     }
 
     /// Writes the arrangement down, so the next launch opens the way this one was left.

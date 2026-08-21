@@ -875,6 +875,11 @@ impl AurisApp {
                 start_x,
                 start_width,
             } => self.resize_headers(start_width, event.position.x - start_x),
+            Drag::ResizeTrack {
+                track,
+                start_y,
+                start_height,
+            } => self.resize_track(track, start_height, event.position.y - start_y),
             Drag::RubberBand { .. } => {
                 // The band's far corner follows the pointer, and the selection is recomputed
                 // from scratch each move — sweeping back over something has to unselect it.
