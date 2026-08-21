@@ -57,6 +57,7 @@ strings! {
     InputMeter { en: "In", ja: "入力" }
     TakeClock { en: "Take", ja: "録音" }
     TakeDeviceLost { en: "device lost", ja: "デバイス切断" }
+    ClearClipping { en: "Clear Clip Indicators", ja: "クリップ表示をリセット" }
 
     // ------------------------------------------------------------------ arrangement
     AddInstrumentShort { en: "Inst", ja: "音源" }

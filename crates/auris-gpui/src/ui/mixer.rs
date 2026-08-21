@@ -171,6 +171,7 @@ impl AurisApp {
             .map(|slot| (slot.id, slot.effect_id.clone(), slot.enabled))
             .collect();
         let level_db = gain_to_db(self.track_level(index));
+        let clipped = self.session.meters().track_clipped(index);
         let selected = self.selected_track == Some(track_id);
         let output = track.output;
         let sends: Vec<(SendId, TrackId, f32, bool)> = track
@@ -347,6 +348,7 @@ impl AurisApp {
                     .child(div().w(px(10.0)).h_full().child(level_meter(
                         db_to_meter_position(level_db),
                         db_to_meter_position(level_db),
+                        clipped,
                         Axis::Vertical,
                         theme.meter_color(level_db),
                         &theme,
@@ -524,6 +526,7 @@ impl AurisApp {
         let gain_db = self.project().master.gain_db;
         let pan = self.project().master.pan;
         let level_db = gain_to_db(self.master_level());
+        let clipped = self.session.meters().master_clipped();
         let effects: Vec<(EffectSlotId, String, bool)> = self
             .project()
             .master
@@ -607,6 +610,7 @@ impl AurisApp {
                     .child(div().w(px(10.0)).h_full().child(level_meter(
                         db_to_meter_position(level_db),
                         db_to_meter_position(level_db),
+                        clipped,
                         Axis::Vertical,
                         theme.meter_color(level_db),
                         &theme,

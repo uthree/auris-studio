@@ -164,6 +164,9 @@ impl AurisApp {
                 let name = track.name.clone();
                 let kind = self.t(track_kind_key(&track.kind));
                 let level_db = gain_to_db(self.track_level(index));
+                // Latched by the engine and only put out by asking, so a transient that went
+                // over is still saying so long after the meter beside it has fallen back.
+                let clipped = self.session.meters().track_clipped(index);
                 // Only an audio track gets an arm button, because only an audio track has
                 // anywhere for a take to land. An instrument track showing a disabled one would
                 // be an invitation to a thing that cannot happen.
@@ -407,6 +410,7 @@ impl AurisApp {
                     .child(div().w(px(7.0)).h_full().py(px(1.0)).child(level_meter(
                         db_to_meter_position(level_db),
                         db_to_meter_position(level_db),
+                        clipped,
                         Axis::Vertical,
                         theme.meter_color(level_db),
                         &theme,

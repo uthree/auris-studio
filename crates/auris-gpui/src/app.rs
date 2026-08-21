@@ -992,6 +992,8 @@ pub struct AurisApp {
     /// first. It is read exactly once per repaint tick — see [`Self::sample_input_level`] — and
     /// the meter draws this.
     pub(crate) input_level: f32,
+    /// Whether the input has touched full scale since the indicator was last cleared.
+    pub(crate) input_clipped: bool,
     /// Which tracks have an automation lane showing, and on which parameter.
     ///
     /// Presentation rather than document: what a lane *holds* is saved, but which one you happen
@@ -1135,6 +1137,7 @@ impl AurisApp {
             choosing_export: false,
             status_failed: false,
             input_level: 0.0,
+            input_clipped: false,
             automation_lanes: BTreeMap::new(),
             lane_scroll: px(0.0),
             settings,
@@ -1451,11 +1454,28 @@ impl AurisApp {
     ///
     /// Called from the repaint loop and nowhere else. See [`Self::input_level`].
     pub(crate) fn sample_input_level(&mut self) {
-        self.input_level = fallen_peak(
-            self.input_level,
-            self.session.input_peak(),
-            REPAINT_INTERVAL,
-        );
+        let peak = self.session.input_peak();
+        // The input's clip latch is kept here rather than in the engine's meter bank, because
+        // the input is not in the graph the bank measures: it is the device, upstream of
+        // everything. The peak this reads is a held maximum rather than a falling one, so a
+        // sample that touched full scale between two ticks is still in it.
+        self.input_clipped |= peak >= 1.0;
+        self.input_level = fallen_peak(self.input_level, peak, REPAINT_INTERVAL);
+    }
+
+    /// Puts out every clip indicator, on the meters and on the input.
+    ///
+    /// Only ever by asking, which is what makes a latch a latch: an indicator that cleared
+    /// itself on the next quiet block would be a reading, and the whole point is to still be lit
+    /// when somebody looks up from the keyboard.
+    pub(crate) fn clear_clipping(&mut self) {
+        self.session.meters().clear_clipped();
+        self.input_clipped = false;
+    }
+
+    /// Whether anything anywhere is showing a clip.
+    pub(crate) fn anything_clipped(&self) -> bool {
+        self.input_clipped || self.session.meters().anything_clipped()
     }
 
     /// Linear peak level of the master bus.

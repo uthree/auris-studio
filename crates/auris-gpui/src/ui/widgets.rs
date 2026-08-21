@@ -735,6 +735,7 @@ where
 pub fn level_meter(
     level: f32,
     peak: f32,
+    clipped: bool,
     axis: Axis,
     color: Hsla,
     theme: &Theme,
@@ -777,6 +778,14 @@ pub fn level_meter(
             .bg(theme.text),
     };
 
+    // The clip indicator: a solid block at the hot end, latched by the engine and only put out
+    // by asking. It is at the end the signal grows towards, which is where a console's own
+    // light sits and where the eye is already going when something sounds wrong.
+    let clip_light = match axis {
+        Axis::Vertical => div().absolute().top_0().left_0().right_0().h(px(3.0)),
+        Axis::Horizontal => div().absolute().top_0().bottom_0().right_0().w(px(3.0)),
+    };
+
     div()
         .relative()
         .size_full()
@@ -787,6 +796,7 @@ pub fn level_meter(
         .border_color(theme.border_subtle)
         .child(fill)
         .when(peak > 0.001, |this| this.child(peak_marker))
+        .when(clipped, |this| this.child(clip_light.bg(theme.danger)))
 }
 
 /// Quietest level a meter draws anything for.

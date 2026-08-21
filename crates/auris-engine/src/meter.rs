@@ -4,14 +4,31 @@
 //! load/store of an `f32` bit pattern is enough: no lock, no allocation, and a torn read is
 //! impossible because every value is a single 32-bit word.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// Peak levels for every track plus the master bus.
 #[derive(Debug)]
 pub struct MeterBank {
     tracks: Vec<AtomicU32>,
     master: [AtomicU32; 2],
+    /// Whether each track has been at or over full scale since the flag was last cleared.
+    ///
+    /// Latched here rather than worked out by whoever draws the meter, because it cannot be
+    /// worked out from the reading. A peak falls at [`Self::FALL_DB_PER_SECOND`], so a single
+    /// block over full scale has already fallen most of a decibel by the time a window redraws,
+    /// and a clip visible for one frame at sixty hertz is a clip nobody sees. The audio thread
+    /// is the only thing that looks at every block, so it is the only thing that can say this
+    /// happened at all.
+    clipped: Vec<AtomicBool>,
+    master_clipped: [AtomicBool; 2],
 }
+
+/// The reading at which a meter latches its clip indicator.
+///
+/// Digital full scale, exactly. Not a hair under it the way an analogue console's would be:
+/// there is nothing above 1.0 to run into, and a sample that reached it may well have been
+/// clamped on the way out.
+const FULL_SCALE: f32 = 1.0;
 
 impl MeterBank {
     /// How fast a peak reading falls once the signal goes away, in decibels per second.
@@ -28,6 +45,10 @@ impl MeterBank {
         Self {
             tracks: (0..track_capacity).map(|_| AtomicU32::new(0)).collect(),
             master: [AtomicU32::new(0), AtomicU32::new(0)],
+            clipped: (0..track_capacity)
+                .map(|_| AtomicBool::new(false))
+                .collect(),
+            master_clipped: [AtomicBool::new(false), AtomicBool::new(false)],
         }
     }
 
@@ -43,12 +64,22 @@ impl MeterBank {
         if let Some(slot) = self.tracks.get(index) {
             Self::report(slot, peak, frames, sample_rate);
         }
+        if peak >= FULL_SCALE
+            && let Some(flag) = self.clipped.get(index)
+        {
+            flag.store(true, Ordering::Relaxed);
+        }
     }
 
     /// Records a master bus channel's peak for a block of `frames`.
     pub fn report_master(&self, channel: usize, peak: f32, frames: usize, sample_rate: f64) {
         if let Some(slot) = self.master.get(channel) {
             Self::report(slot, peak, frames, sample_rate);
+        }
+        if peak >= FULL_SCALE
+            && let Some(flag) = self.master_clipped.get(channel)
+        {
+            flag.store(true, Ordering::Relaxed);
         }
     }
 
@@ -71,8 +102,46 @@ impl MeterBank {
         self.master_channel_peak(0).max(self.master_channel_peak(1))
     }
 
+    /// Whether a track has been over full scale since the indicator was last cleared.
+    pub fn track_clipped(&self, index: usize) -> bool {
+        self.clipped
+            .get(index)
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+    }
+
+    /// Whether either master channel has been over full scale since the last clear.
+    pub fn master_clipped(&self) -> bool {
+        self.master_clipped
+            .iter()
+            .any(|flag| flag.load(Ordering::Relaxed))
+    }
+
+    /// Whether anything at all is showing a clip.
+    ///
+    /// What decides whether the indicator is worth offering to clear. Asked of the bank rather
+    /// than of every meter on screen, because a track scrolled out of sight has clipped just as
+    /// loudly as one in view.
+    pub fn anything_clipped(&self) -> bool {
+        self.master_clipped() || self.clipped.iter().any(|flag| flag.load(Ordering::Relaxed))
+    }
+
+    /// Puts out every clip indicator.
+    ///
+    /// Only ever by asking. A latch that cleared itself on the next quiet block would be a
+    /// reading, not a latch, and the whole point is to still be lit when somebody looks up.
+    pub fn clear_clipped(&self) {
+        for flag in self.clipped.iter().chain(self.master_clipped.iter()) {
+            flag.store(false, Ordering::Relaxed);
+        }
+    }
+
     /// Drops every reading to silence, for example after a panic or a stop.
+    ///
+    /// The clip indicators go out with it: a panic is somebody saying "stop, and let me start
+    /// again", and starting again with the last mix's red lights still on is starting again
+    /// with somebody else's evidence.
     pub fn reset(&self) {
+        self.clear_clipped();
         for slot in &self.tracks {
             slot.store(0, Ordering::Relaxed);
         }
@@ -89,6 +158,9 @@ impl MeterBank {
     pub fn clear_tracks_from(&self, index: usize) {
         for slot in self.tracks.iter().skip(index) {
             slot.store(0, Ordering::Relaxed);
+        }
+        for flag in self.clipped.iter().skip(index) {
+            flag.store(false, Ordering::Relaxed);
         }
     }
 
@@ -170,5 +242,37 @@ mod tests {
         let bank = MeterBank::new(1);
         bank.report_track(0, f32::NAN, 512, 48_000.0);
         assert_eq!(bank.track_peak(0), 0.0);
+    }
+
+    #[test]
+    fn a_clip_stays_lit_after_the_reading_that_caused_it_has_fallen_away() {
+        let bank = MeterBank::new(2);
+        bank.report_track(0, 1.0, 512, 48_000.0);
+        assert!(bank.track_clipped(0));
+        assert!(bank.anything_clipped());
+        assert!(!bank.track_clipped(1), "only the track that clipped");
+
+        // A second of silence. The reading falls to nothing; the latch does not move, which is
+        // the whole point — a clip seen for one frame at sixty hertz is a clip nobody sees.
+        for _ in 0..94 {
+            bank.report_track(0, 0.0, 512, 48_000.0);
+        }
+        assert!(bank.track_peak(0) < 0.2);
+        assert!(bank.track_clipped(0));
+
+        bank.clear_clipped();
+        assert!(!bank.track_clipped(0));
+        assert!(!bank.anything_clipped());
+    }
+
+    #[test]
+    fn a_level_short_of_full_scale_does_not_light_anything() {
+        let bank = MeterBank::new(1);
+        bank.report_track(0, 0.999, 512, 48_000.0);
+        bank.report_master(0, 0.999, 512, 48_000.0);
+        assert!(!bank.anything_clipped());
+
+        bank.report_master(1, 1.5, 512, 48_000.0);
+        assert!(bank.master_clipped());
     }
 }

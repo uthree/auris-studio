@@ -132,6 +132,7 @@ fn meter_block(
     caption: &'static str,
     value: String,
     db: f32,
+    clipped: bool,
     theme: &crate::theme::Theme,
 ) -> impl IntoElement + use<> {
     div()
@@ -150,6 +151,7 @@ fn meter_block(
         .child(div().h(px(7.0)).mt_1().child(level_meter(
             db_to_meter_position(db),
             db_to_meter_position(db),
+            clipped,
             Axis::Horizontal,
             theme.meter_color(db),
             theme,
@@ -257,6 +259,7 @@ impl AurisApp {
         let signature = self.project().signatures.signature_at(playhead);
         let grid_label = self.grid_label();
         let master_db = gain_to_db(self.master_level());
+        let master_clipped = self.session.meters().master_clipped();
         let master_gain_db = self.project().master.gain_db;
         // `None` while no input device is open, which is what decides whether the block is drawn
         // at all. The session answers it rather than the frontend inferring it from monitoring
@@ -525,15 +528,37 @@ impl AurisApp {
                     // whenever no device is open would be a bar that says the microphone is dead.
                     // Left of the master, which is the order the signal travels in.
                     .children(input_db.map(|db| {
-                        meter_block(self.t(Key::InputMeter), input_peak_text(db), db, &theme)
+                        meter_block(
+                            self.t(Key::InputMeter),
+                            input_peak_text(db),
+                            db,
+                            self.input_clipped,
+                            &theme,
+                        )
                     }))
                     // Master level, always visible so clipping is never a surprise.
-                    .child(meter_block(
-                        self.t(Key::Master),
-                        format!("{master_gain_db:+.1} dB"),
-                        master_db,
-                        &theme,
-                    )),
+                    //
+                    // Wrapped so the block can be pressed: a clip indicator is latched until
+                    // somebody puts it out, and this is where they do it. Clicking clears every
+                    // meter at once, including tracks scrolled out of sight, because a light
+                    // nobody can reach is a light that stays on for ever.
+                    .child(
+                        div()
+                            .id("clear-clipping")
+                            .cursor_pointer()
+                            .child(meter_block(
+                                self.t(Key::Master),
+                                format!("{master_gain_db:+.1} dB"),
+                                master_db,
+                                master_clipped,
+                                &theme,
+                            ))
+                            .tooltip(self.tip(Key::ClearClipping, ""))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.clear_clipping();
+                                cx.notify();
+                            })),
+                    ),
             )
     }
 
