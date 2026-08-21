@@ -20,7 +20,7 @@ fn main() {
 
     let file = match std::env::args_os().nth(1) {
         Some(given) => PathBuf::from(given),
-        None => match session.installed_clap_files().into_iter().next() {
+        None => match session.installed_clap_files(&[]).into_iter().next() {
             Some(found) => found,
             None => {
                 eprintln!("no .clap files installed, and none given");

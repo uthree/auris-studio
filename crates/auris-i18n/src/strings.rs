@@ -130,6 +130,7 @@ strings! {
     }
     BrowserSearch { en: "Search the library", ja: "ライブラリを検索" }
     BrowserNothingFound { en: "Nothing here answers to that", ja: "該当するものはありません" }
+    BrowserAddPluginFolder { en: "Add a folder…", ja: "フォルダを追加…" }
     BrowserNoSoundFonts {
         en: "None imported yet",
         ja: "まだ読み込まれていません"
@@ -727,6 +728,7 @@ strings! {
     // two English words left in an otherwise translated flow.
     DialogSaveProject { en: "Save project", ja: "プロジェクトを保存" }
     DialogOpenProject { en: "Open project", ja: "プロジェクトを開く" }
+    DialogPluginFolder { en: "Choose a plugin folder", ja: "プラグインのフォルダを選択" }
     DialogComposeSpec { en: "Compose from specification", ja: "仕様書から作曲" }
     DialogImportAudio { en: "Import audio", ja: "オーディオを読み込む" }
     DialogImportSoundFont { en: "Import SoundFont", ja: "サウンドフォントを読み込む" }

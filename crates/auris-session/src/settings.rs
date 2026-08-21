@@ -166,6 +166,13 @@ pub struct Settings {
     pub export: ExportPreferences,
     /// Where the window was when it was last put away. `None` on a first run.
     pub window: Option<WindowPlacement>,
+    /// Extra places to look for CLAP plugins, on top of the conventional folders.
+    ///
+    /// Each is a `.clap` taken as it stands or a directory walked for them. Kept here rather
+    /// than in the document because a plugin folder is a fact about the machine: a project
+    /// carried to another one names the plugins it uses, and where *that* machine keeps them is
+    /// that machine's business.
+    pub plugin_paths: Vec<PathBuf>,
 }
 
 impl Default for Settings {
@@ -179,6 +186,7 @@ impl Default for Settings {
             autosave: true,
             export: ExportPreferences::default(),
             window: None,
+            plugin_paths: Vec::new(),
         }
     }
 }

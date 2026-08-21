@@ -678,14 +678,31 @@ fn collect_clap_files(directory: &Path, found: &mut Vec<PathBuf>) {
 }
 
 impl Session {
-    /// Every `.clap` file installed in the usual places, in a stable order.
+    /// Every `.clap` file installed in the usual places, plus anywhere else asked for.
     ///
     /// Only the files: opening them is what [`Self::hosted_plugins_in`] does, and a browser that
     /// loaded every plugin on the machine to draw a list would run their code to do it.
-    pub fn installed_clap_files(&self) -> Vec<PathBuf> {
+    ///
+    /// `extra` is where somebody keeps plugins that the conventional folders do not cover — a
+    /// build tree, a bounced copy on an external disk, a shared folder on a studio machine.
+    /// Each entry is either a `.clap` taken as it stands or a directory walked like the standard
+    /// roots, so pointing at one plugin and pointing at a hundred are the same gesture.
+    pub fn installed_clap_files(&self, extra: &[PathBuf]) -> Vec<PathBuf> {
         let mut found = Vec::new();
         for root in clap_search_paths() {
             collect_clap_files(&root, &mut found);
+        }
+        for root in extra {
+            // A `.clap` bundle on macOS is a directory, so walking into it would find nothing
+            // and drop the plugin somebody explicitly pointed at. The extension decides first,
+            // exactly as it does inside the walk.
+            match root
+                .extension()
+                .is_some_and(|extension| extension == "clap")
+            {
+                true => found.push(root.clone()),
+                false => collect_clap_files(root, &mut found),
+            }
         }
         found.sort();
         found.dedup();

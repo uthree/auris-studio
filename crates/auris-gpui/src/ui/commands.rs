@@ -1184,6 +1184,57 @@ impl AurisApp {
         .detach();
     }
 
+    /// Asks for a folder (or a `.clap` bundle) to look for plugins in, and remembers it.
+    ///
+    /// A folder picker rather than a file picker, which is the one dialog that works on both
+    /// platforms: on macOS a `.clap` is a bundle *directory*, so a file picker cannot select one
+    /// at all, and a folder picker selects either the bundle or a folder holding several.
+    ///
+    /// Nothing is loaded here. The added path is scanned for files the next time the browser
+    /// draws, and opening one of them is still something a person has to ask for — see
+    /// `Session::hosted_plugins_in`, which is where somebody else's code finally runs.
+    pub(crate) fn add_plugin_path(&mut self, cx: &mut Context<Self>) {
+        let language = self.language();
+        cx.spawn(async move |this, cx| {
+            let handle = rfd::AsyncFileDialog::new()
+                .set_title(Key::DialogPluginFolder.get(language))
+                .pick_folder()
+                .await;
+            let Some(handle) = handle else { return };
+            let path = handle.path().to_path_buf();
+            let _ = this.update(cx, |this, cx| {
+                if !this.settings.plugin_paths.contains(&path) {
+                    this.settings.plugin_paths.push(path);
+                    this.save_plugin_paths();
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Stops looking in one of the added places.
+    ///
+    /// The plugins under it are not unloaded and a project that names one still names it — this
+    /// is a browser listing, not a registry. What it does mean is that the file has to be found
+    /// again before it can be added to anything new.
+    pub(crate) fn forget_plugin_path(&mut self, index: usize) {
+        if index < self.settings.plugin_paths.len() {
+            self.settings.plugin_paths.remove(index);
+            self.save_plugin_paths();
+        }
+    }
+
+    /// Writes the plugin folders out and makes the browser look again.
+    fn save_plugin_paths(&mut self) {
+        // The list of files was cached the first time the browser drew it, and the whole point
+        // of this edit is that the answer has changed.
+        self.clap_files = None;
+        if let Err(error) = self.settings.save() {
+            log::warn!("could not save settings: {error}");
+        }
+    }
+
     /// Asks for a track's new name.
     ///
     /// A method rather than the body of one menu row, because there are three ways in now: the

@@ -615,6 +615,61 @@ impl AurisApp {
             .collect()
     }
 
+    /// The extra places plugins are looked for, and the row that adds another.
+    ///
+    /// Each added folder can be forgotten again from its own row. One list-wide "forget them
+    /// all" would be shorter to write and wrong to use: these are added one at a time, for
+    /// unrelated reasons, and the one that has gone stale is rarely the only one there.
+    fn plugin_path_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
+        let theme = self.theme.clone();
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for (index, path) in self.settings.plugin_paths.clone().into_iter().enumerate() {
+            let shown = path.display().to_string();
+            rows.push(
+                div()
+                    .id(("plugin-path", index))
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .pl(indent(1))
+                    .pr_1()
+                    .h(Metrics::CONTROL_HEIGHT)
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(div().flex_1().min_w_0().truncate().child(shown))
+                    .child(
+                        div()
+                            .id(("forget-plugin-path", index))
+                            .cursor_pointer()
+                            .child(icon(Icon::Cross, px(10.0), theme.text_faint))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                                    this.forget_plugin_path(index);
+                                    cx.notify();
+                                }),
+                            ),
+                    )
+                    .into_any_element(),
+            );
+        }
+        rows.push(
+            div()
+                .pl(indent(1))
+                .pr_1()
+                .py_1()
+                .child(crate::ui::widgets::icon_label(
+                    "add-plugin-path",
+                    Icon::Plus,
+                    self.t(Key::BrowserAddPluginFolder),
+                    &theme,
+                    cx.listener(|this, _, _, cx| this.add_plugin_path(cx)),
+                ))
+                .into_any_element(),
+        );
+        rows
+    }
+
     /// The installed CLAP plugins section: the files found on this machine, and what is in one
     /// once somebody opens it.
     ///
@@ -634,11 +689,17 @@ impl AurisApp {
         if !self.library.is_open(Branch::Plugins) {
             return rows;
         }
-        if files.is_empty() {
-            rows.push(self.note_row(1, self.t(Key::BrowserNoPlugins)));
-            return rows;
-        }
-        rows.push(self.note_row(1, self.t(Key::BrowserPluginsHint)));
+        rows.push(self.note_row(
+            1,
+            self.t(match files.is_empty() {
+                true => Key::BrowserNoPlugins,
+                false => Key::BrowserPluginsHint,
+            }),
+        ));
+        // The conventional folders are not the only places plugins live: a build tree, an
+        // external disk, a folder shared between the machines in a studio. Until now a plugin
+        // outside them could not be reached at all, however plainly somebody could point at it.
+        rows.extend(self.plugin_path_rows(cx));
 
         for (index, file) in files.iter().enumerate() {
             let branch = Branch::PluginFile(index);
@@ -720,8 +781,10 @@ impl AurisApp {
 
     /// The `.clap` files installed on this machine, scanned once.
     fn clap_files(&mut self) -> &[std::path::PathBuf] {
-        self.clap_files
-            .get_or_insert_with(|| self.session.installed_clap_files())
+        self.clap_files.get_or_insert_with(|| {
+            self.session
+                .installed_clap_files(&self.settings.plugin_paths)
+        })
     }
 
     /// What one `.clap` file holds, loading it the first time and remembering after that.
