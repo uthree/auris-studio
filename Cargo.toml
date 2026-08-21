@@ -6,7 +6,7 @@ default-members = ["crates/auris-gpui"]
 resolver = "3"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/uthree/auris-studio"
@@ -14,17 +14,17 @@ rust-version = "1.90"
 
 [workspace.dependencies]
 # Backend, in dependency order. Nothing below `auris-session` knows a UI exists.
-auris-clap = { path = "crates/auris-clap", version = "0.2.0" }
-auris-compose = { path = "crates/auris-compose", version = "0.2.0" }
-auris-core = { path = "crates/auris-core", version = "0.2.0" }
-auris-dsp = { path = "crates/auris-dsp", version = "0.2.0" }
-auris-sampler = { path = "crates/auris-sampler", version = "0.2.0" }
-auris-synth = { path = "crates/auris-synth", version = "0.2.0" }
-auris-gpu = { path = "crates/auris-gpu", version = "0.2.0" }
-auris-i18n = { path = "crates/auris-i18n", version = "0.2.0" }
-auris-io = { path = "crates/auris-io", version = "0.2.0" }
-auris-engine = { path = "crates/auris-engine", version = "0.2.0" }
-auris-session = { path = "crates/auris-session", version = "0.2.0" }
+auris-clap = { path = "crates/auris-clap", version = "0.3.0" }
+auris-compose = { path = "crates/auris-compose", version = "0.3.0" }
+auris-core = { path = "crates/auris-core", version = "0.3.0" }
+auris-dsp = { path = "crates/auris-dsp", version = "0.3.0" }
+auris-sampler = { path = "crates/auris-sampler", version = "0.3.0" }
+auris-synth = { path = "crates/auris-synth", version = "0.3.0" }
+auris-gpu = { path = "crates/auris-gpu", version = "0.3.0" }
+auris-i18n = { path = "crates/auris-i18n", version = "0.3.0" }
+auris-io = { path = "crates/auris-io", version = "0.3.0" }
+auris-engine = { path = "crates/auris-engine", version = "0.3.0" }
+auris-session = { path = "crates/auris-session", version = "0.3.0" }
 
 anyhow = "1.0"
 arc-swap = "1.7"

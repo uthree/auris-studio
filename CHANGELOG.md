@@ -7,7 +7,166 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
-## Unreleased
+## 0.3.0 — 2026-08-21
+
+### Plugins somebody else wrote
+
+* **Auris hosts CLAP plugins**, instruments and effects alike. They are found in the platform's own
+  search paths, listed in the browser under the built-ins as one branch per file, and placed on a
+  track or into a chain the way anything else is. The graph cannot tell a hosted plugin from a
+  biquad, so automation, presets and the parameter panel work on one exactly as they do on ours.
+* **A file's branch is shut until you open it**, and that is not about size: opening one loads it,
+  and loading a plugin means running somebody else's code in this process. That has to be something
+  a person did, rather than something a panel did on their behalf while they were looking for a
+  reverb.
+* **A plugin opens its own window**, floating above the application and told which window to stay
+  above. Plugins that draw into a window rather than making one — anything built on JUCE, which is
+  most of them — are lent a plain native window to draw into, because a host with nothing to give
+  them shows nothing at all.
+* **The parameters are asked of the plugin, not guessed from the document.** A preset loaded
+  inside it, a knob turned in its own window, its own MIDI mapping: all of them move parameters
+  the session never hears about. The document is asked first and the plugin second, so the panel
+  beside a plugin's window agrees with the window.
+* **A plugin is sent the note dialect it declares** — CLAP's own or MIDI, and the better half of
+  each from one that speaks both. One that speaks neither gets no notes, rather than events sent
+  into a void.
+* **Where else to look is in the browser**, at the foot of the plugin list: point at a `.clap` or
+  at a folder holding a hundred of them, and it is remembered. A plugin built in a working tree or
+  kept on an external disk was previously unreachable however plainly it could be pointed at.
+
+### The computer keyboard is an instrument
+
+* **`a` to `;` is a piano** — Logic and GarageBand's layout key for key, including the keys that
+  look arbitrary, because a layout a hand already knows is the whole point and one that is nearly
+  the same is worse than one that is plainly different. `1` and `2` bend, `3` to `8` are the
+  modulation wheel, `z` and `x` move the octave, `c` and `v` the velocity, and Tab sustains.
+  ⌘K switches it on, and has to carry a modifier: a bare letter could not switch off a keyboard
+  that plays nearly every bare letter.
+* **The keyboard is drawn while it is on**, so which octave the hands are in, how hard they are
+  striking and where the wheel was left are on screen instead of in your head. Every control lights
+  while it is in force, and the bar across the top says where those seventeen semitones sit on the
+  whole of MIDI.
+
+### Audio follows the tempo
+
+* **A recording can be stretched to the piece instead of being left behind by it.** Playing a file
+  faster is a resampling away and takes the pitch with it; this is WSOLA, which lays overlapping
+  windows down at a new spacing so every period inside one keeps its length and only the number of
+  them per second changes.
+* **Per clip, from its menu.** A clip knows what tempo it was recorded at and whether it should
+  follow the piece's, and everything that asks how long it is asks what it plays as rather than
+  what was stored — so the arrangement and the renderer come from one number.
+* **A following clip says so on its face**: a pill at the end of its name bar reading the stretch
+  as a percentage of the recording. The number rather than a mark, because 100 % is a clip being
+  played untouched and 150 % is one being pushed half again as long, and only the second is a
+  reason to go and listen closely.
+* **Cutting one does not change how it sounds.** A split or a front trim writes down the tempo the
+  clip was anchored to, so two halves of a take the far side of a tempo change still play as one
+  thing.
+
+### A curve on any parameter, and a lane on any controller
+
+* **Right-clicking a control offers automation on it** — a mixer fader, a send level, a plugin's
+  row in the inspector. The document has always held those lanes and the engine has always played
+  them; the track menu could only ever name a track's own fader and pan, so a lane on anything else
+  could be written by hand and never edited.
+* **A lane slides or steps, and either can be changed afterwards.** The shape used to be guessed
+  from the parameter when the lane was made, and the guess was final — a fader meant to drop on the
+  bar line rather than slide into it had no way to say so.
+* **A clip carries any of the hundred and twenty-eight controllers**, not the wheel alone. The
+  piano roll opens a strip for whichever ones you ask for, stacked in number order and remembered
+  in the layout — an expression pedal, a breath controller or a sustain pedal now has somewhere to
+  be written down.
+
+### The export can be shaped, and called off
+
+* **Depth, rate and dither are settings** rather than 24-bit at the project's rate every time.
+  `auris export` has had the flags since the exporter was written and the window passed defaults;
+  delivering a 16-bit master meant leaving the application.
+* **A bounce can be stopped.** Export is the longest thing this application does and the overlay
+  over it had one button, which appeared only once the render was over. A cancelled export is a
+  third outcome rather than a failure: the bar stops where it got to and the line says what was
+  written.
+
+### The window opens where you left it
+
+* **Its place and size are remembered** across launches. A DAW is arranged around a screen — pushed
+  to one side of a second monitor, sized so the arrangement and the browser both fit — and doing
+  that again every session is a tax on the thing the application is opened for. A remembered
+  rectangle that no longer overlaps any display is ignored rather than restored somewhere no
+  pointer can reach.
+* **The projects opened lately are on the File menu**, ten deep, written the moment one is opened
+  or saved under a name rather than on the way out: a recent list is worth most exactly when the
+  last session ended badly.
+* **`auris-studio Song/Song.auris` opens that song**, and so does double-clicking a `.auris` file
+  with the application registered against it. The window used to ignore its argument.
+* **Help → About** says which build this is.
+
+### A meter says what already happened
+
+* **Clipping latches.** A meter falls at 20 dB per second, so a single block over full scale is
+  most of a decibel down by the next repaint and a clip nobody saw is a clip that was not reported.
+  The latch is kept where every block is seen — the audio thread — and stays lit until it is
+  cleared by clicking the master's meter.
+* **The input meter moves whenever the device is open**, not only during a take. Setting a level is
+  what somebody does *before* pressing Record, and a meter that appeared once the take began
+  arrived too late to be used for it.
+* **A take has a clock on it, and says while it is going wrong that it is.** How long it has run,
+  frames the disk could not keep up with, a device that has disappeared — all three used to be
+  visible only in the report after Stop, which is the wrong moment for every one of them.
+
+### Finding things, and typing into them
+
+* **The browser has a search field.** It holds every built-in instrument and effect, every `.clap`
+  on the machine and every sound in every imported font — a General MIDI bank is a hundred and
+  twenty-eight of them — and the only way to a name was to open the right branch and scroll.
+* **Every panel that scrolls says where you are in it.** A bar appears along the edge of the
+  browser, the inspector, the log, the lane column and the mixer's strips the moment there is more
+  than fits, and takes no room at all while everything does. Pressing its track jumps there.
+* **Shift makes a drag five times finer, and a value can simply be typed.** A full sweep of a
+  slider is 220 pixels, which on a cutoff running 20 Hz to 20 kHz is about a hundred hertz a pixel
+  at the bottom — fine enough to find a filter by ear and far too coarse to land on a number.
+* **Double-clicking a track's name renames it**, on the header and on the mixer strip both. It was
+  a menu row and nothing else, which is how a project ends up with eight tracks called Audio 1.
+* The arrow keys move the selection, both keys labelled Delete delete, menus show which way their
+  switches are set and which rows can do nothing, and the unlabelled buttons say what they are and
+  which key also works them.
+* Text fields answer the same editing keys everywhere — backspace, the caret keys, Select All, the
+  clipboard — because there is now one table for them rather than four that had drifted apart. An
+  IME composes into all of them.
+
+### Effects can be dragged into order
+
+* **Take hold of an effect's name and move it.** The chain rearranges as the pointer travels, in
+  the inspector and on the mixer alike, and the whole drag is one undo step. Reordering used to be
+  a chevron clicked once per position, or a menu row chosen again and again.
+* **Every strip ends in an empty slot that adds an effect.** A track's strip in the mixer had no
+  way to add one at all — the answer was a right-click on empty space — while the master's had a
+  button above its chain instead of a slot at the end of it.
+
+### Importing does not stop the window
+
+* **A file is read on a worker thread.** A two-hundred-megabyte SoundFont, or an audio file being
+  decoded and resampled, used to be read on the thread that draws: the status line said which file
+  it was and then nothing answered until it was done, which is a freeze with a caption. Playback
+  and everything else now carry on while it happens.
+* Files dropped together are read one at a time, so a folder of takes does not arrive in memory all
+  at once.
+
+### Fixes worth naming
+
+* A held note released while the pointer was over another window stops sounding. A release nobody
+  was listening for used to leave it on.
+* Playing the same pitch again cuts the first one, and a voice stolen for a new note is the one
+  that has been sounding longest rather than the newest.
+* Unison no longer stacks the chiptune past full scale, and a narrow pulse stays audible at the top
+  of the keyboard.
+* A cut no longer changes how a clip sounds, and quitting during a take no longer loses it.
+* Changing the audio device while a take is running is refused rather than attempted.
+* Undo steps through a gesture only once the gesture has finished.
+* A project folder is recognised through a difference of case, and Save As points an asset back
+  outside the folder when it cannot copy it in.
+
 
 ### One bad bar no longer costs the whole take
 
@@ -356,6 +515,26 @@ format rather than a convention: `## <version> — <date>`.
 * No chord and no note count moved in any of the four fingerprint fixtures, which is the report on
   the change: the pieces are the same pieces with a singable line in them. Existing projects are
   untouched — this writes new material and does not migrate old.
+
+### Compatibility
+
+* `Project::FORMAT_VERSION` is 14, from 4. Every document written by 0.2.0 opens with everything
+  in it; nothing written by this release opens in 0.2.0, which is what the number is for. Ten of
+  the bumps happened one at a time and each one's reason is written down beside the constant — the
+  short version is that automation, buses and sends, drum recipes, clip loops, per-controller
+  curves and tempo-following audio are all things an older build would have ignored on the way in
+  and written away on the next save.
+* A clip's `modulation` curve is now an entry under controller 1 in a map of `controllers`, and an
+  automation lane records the stable key of the parameter it drives beside the id that addresses
+  it. Both changed shape rather than gaining a sibling.
+* `Session::import_audio` and `Session::import_soundfont` still do the whole job, and each is now
+  also available in halves: `decode_audio` and `read_soundfont` read a file from any thread, and
+  `Session::place_audio` and `Session::install_soundfont` put what they read into the document from
+  the thread that owns it.
+* `settings.json` has grown the window's last rectangle, the projects opened lately, the extra
+  places to look for plugins, and the export's depth, rate and dither. `layout.json` has grown the
+  set of controller lanes the piano roll has open. Both are read with defaults, so an older file
+  opens and is written back complete.
 
 ## 0.2.0 — 2026-08-07
 
