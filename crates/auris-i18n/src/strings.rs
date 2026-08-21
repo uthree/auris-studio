@@ -63,6 +63,10 @@ strings! {
     SoloInitial { en: "S", ja: "S" }
     RecordInitial { en: "R", ja: "R" }
     MonitorInitial { en: "I", ja: "I" }
+    // What the `R` above is, said out loud on its tooltip. Arming is not a bindable command —
+    // the button and the track menu are the two ways to it — so this is a name rather than a
+    // command label, and it says what arming *does* because "arm" is jargon in both languages.
+    ArmTrack { en: "Record Onto This Track", ja: "このトラックに録音" }
     Volume { en: "Vol", ja: "音量" }
     Pan { en: "Pan", ja: "パン" }
     TrackKindInstrument { en: "Instrument", ja: "ソフト音源" }
@@ -273,6 +277,10 @@ strings! {
 
     // ------------------------------------------------------------------ commands
     CmdPlayStop { en: "Play / Stop", ja: "再生 / 停止" }
+    // Not in the bindable table: the transport's square is the only way to reach it, and this
+    // names it on the tooltip there. "Stop and return", because that is what the button does and
+    // is what tells it apart from the pause the play button turns into.
+    CmdStop { en: "Stop and Return", ja: "停止して先頭へ" }
     CmdReturnToZero { en: "Return to Zero", ja: "先頭に戻る" }
     CmdToggleCycle { en: "Toggle Cycle", ja: "サイクル切り替え" }
     // 「メトロノーム」 rather than 「拍子木」 or any other translation, for the reason

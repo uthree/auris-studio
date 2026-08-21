@@ -392,16 +392,20 @@ impl AurisApp {
                                     cx.notify();
                                 }),
                             )
+                            .tooltip(self.tip(Key::CmdOpenPluginWindow, ""))
                         }))
-                        .child(chain_button(
-                            "pw-close",
-                            Icon::Cross,
-                            &theme,
-                            cx.listener(|this, _, _, cx| {
-                                this.close_plugin_window();
-                                cx.notify();
-                            }),
-                        )),
+                        .child(
+                            chain_button(
+                                "pw-close",
+                                Icon::Cross,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.close_plugin_window();
+                                    cx.notify();
+                                }),
+                            )
+                            .tooltip(self.tip(Key::Close, "")),
+                        ),
                 )
                 .children(analyser)
                 .children(envelope.map(|env| self.envelope_display(subject, env, cx)))

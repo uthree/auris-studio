@@ -233,11 +233,7 @@ impl AurisApp {
                     binding,
                 } => {
                     let action = action.boxed_clone();
-                    let keystroke = crate::actions::bindable(binding)
-                        .map(|command| {
-                            crate::actions::menu_keystroke(&self.keymap.display(command))
-                        })
-                        .unwrap_or_default();
+                    let keystroke = self.keystroke_for(binding);
                     div()
                         .id(("menu-bar-item", section_index * 100 + index))
                         .flex()

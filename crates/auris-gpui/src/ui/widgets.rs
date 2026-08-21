@@ -58,6 +58,11 @@ impl From<bool> for Latch {
 /// `active` fills the button with `active_color` — used for latched controls such as mute,
 /// solo and loop, where the button reflects state rather than just being pressed. It takes a
 /// plain `bool` for those; see [`Latch`] for the third state the arm button needs.
+/// The concrete type rather than `impl IntoElement`, so a caller can go on styling it — a
+/// tooltip, most of all. gpui hangs `tooltip` off `InteractiveElement`, which an opaque return
+/// type hides, and the button is the control most in need of one: it says what it does in one
+/// letter or one glyph. [`lcd_field`](crate::ui::transport_bar) is returned the same way and for
+/// the same reason.
 pub fn button<I, L, A, F>(
     id: I,
     label: L,
@@ -66,7 +71,7 @@ pub fn button<I, L, A, F>(
     active_color: Hsla,
     theme: &Theme,
     on_click: F,
-) -> impl IntoElement + use<I, L, A, F>
+) -> gpui::Stateful<gpui::Div>
 where
     I: Into<ElementId>,
     L: Into<SharedString>,
@@ -123,6 +128,8 @@ where
 ///
 /// The icon is painted rather than typed so a row of them shares one weight and colour; see
 /// [`crate::ui::icons`].
+/// Returned concretely for the reason [`button`] is, and more urgently: this one has no text on
+/// it at all, so a tooltip is the only thing that can name it.
 pub fn icon_button<I, F>(
     id: I,
     glyph: Icon,
@@ -130,7 +137,7 @@ pub fn icon_button<I, F>(
     active_color: Hsla,
     theme: &Theme,
     on_click: F,
-) -> impl IntoElement + use<I, F>
+) -> gpui::Stateful<gpui::Div>
 where
     I: Into<ElementId>,
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -200,12 +207,14 @@ where
 }
 
 /// A small square icon button for repeated row actions, such as reordering an effect chain.
+/// Returned concretely for the reason [`icon_button`] is: a chevron and a cross are the whole of
+/// what these say, and a tooltip is the only place the words can go.
 pub fn chain_button<I, F>(
     id: I,
     glyph: Icon,
     theme: &Theme,
     on_click: F,
-) -> impl IntoElement + use<I, F>
+) -> gpui::Stateful<gpui::Div>
 where
     I: Into<ElementId>,
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,

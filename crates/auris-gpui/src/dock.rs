@@ -111,6 +111,21 @@ impl Panel {
         }
     }
 
+    /// The bindable command that shows and hides it, as an id in [`crate::actions::BINDABLE`].
+    ///
+    /// So the status bar's switch can say which key also works. The switch is a mark and nothing
+    /// else — the panel it opens is a thing learned by clicking all five — and the key is exactly
+    /// what somebody who has just learned it would rather not have to click for again.
+    pub fn command(self) -> &'static str {
+        match self {
+            Panel::Library => "view.library",
+            Panel::PianoRoll => "view.piano_roll",
+            Panel::Mixer => "view.mixer",
+            Panel::Inspector => "view.inspector",
+            Panel::Log => "view.log",
+        }
+    }
+
     /// The mark that stands for it in the status bar.
     ///
     /// A picture of what is inside rather than of which edge it is on: a panel that can be moved
@@ -572,6 +587,32 @@ impl From<StoredLayout> for PanelLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_panel_switch_names_a_command_that_exists() {
+        // The id is the only link between a switch and the key that also works it, and a typo in
+        // one is invisible: `keystroke_for` answers an unknown id with an empty string, which is
+        // exactly what a command with no key looks like. The tooltip would simply stop mentioning
+        // the key and nothing would say why.
+        for panel in Panel::ALL {
+            let id = panel.command();
+            let found = crate::actions::bindable(id);
+            assert!(found.is_some(), "{panel:?} names no command (`{id}`)");
+            // And it is the command that shows *that* panel, not merely some command: the two
+            // tables are written by hand and the labels are what would catch a swap.
+            assert_eq!(
+                found.map(|command| command.label),
+                Some(match panel {
+                    Panel::Library => Key::CmdShowLibrary,
+                    Panel::PianoRoll => Key::CmdShowPianoRoll,
+                    Panel::Mixer => Key::CmdShowMixer,
+                    Panel::Inspector => Key::CmdShowInspector,
+                    Panel::Log => Key::CmdShowLog,
+                }),
+                "{panel:?} is wired to another panel's command"
+            );
+        }
+    }
 
     #[test]
     fn the_roll_stacks_its_strips_in_one_order_however_they_were_opened() {

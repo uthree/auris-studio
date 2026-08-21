@@ -271,93 +271,117 @@ impl AurisApp {
                         div()
                             .flex()
                             .gap_1()
-                            .child(icon_button(
-                                "rtz",
-                                Icon::ToStart,
-                                false,
-                                theme.accent,
-                                &theme,
-                                cx.listener(|this, _, _, cx| {
-                                    this.seek(Ticks::ZERO);
-                                    cx.notify();
-                                }),
-                            ))
-                            .child(icon_button(
-                                "stop",
-                                Icon::Stop,
-                                false,
-                                theme.accent,
-                                &theme,
-                                cx.listener(|this, _, _, cx| {
-                                    this.session.stop();
-                                    this.seek(Ticks::ZERO);
-                                    cx.notify();
-                                }),
-                            ))
-                            .child(icon_button(
-                                "play",
-                                if playing { Icon::Pause } else { Icon::Play },
-                                playing,
-                                theme.playing,
-                                &theme,
-                                cx.listener(|this, _, _, cx| {
-                                    this.toggle_play();
-                                    cx.notify();
-                                }),
-                            ))
+                            .child(
+                                icon_button(
+                                    "rtz",
+                                    Icon::ToStart,
+                                    false,
+                                    theme.accent,
+                                    &theme,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.seek(Ticks::ZERO);
+                                        cx.notify();
+                                    }),
+                                )
+                                .tooltip(self.tip(Key::CmdReturnToZero, "transport.return")),
+                            )
+                            .child(
+                                icon_button(
+                                    "stop",
+                                    Icon::Stop,
+                                    false,
+                                    theme.accent,
+                                    &theme,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.session.stop();
+                                        this.seek(Ticks::ZERO);
+                                        cx.notify();
+                                    }),
+                                )
+                                // The one button up here that is not a bindable command, so the
+                                // card carries a name and no chip. That it has no key is a thing
+                                // to fix in the table rather than to hide by leaving it nameless.
+                                .tooltip(self.tip(Key::CmdStop, "")),
+                            )
+                            .child(
+                                icon_button(
+                                    "play",
+                                    if playing { Icon::Pause } else { Icon::Play },
+                                    playing,
+                                    theme.playing,
+                                    &theme,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.toggle_play();
+                                        cx.notify();
+                                    }),
+                                )
+                                .tooltip(self.tip(Key::CmdPlayStop, "transport.play")),
+                            )
                             // Beside Play, where a hardware transport puts it, and lit while a
                             // take is running so that a microphone nobody remembers arming is
                             // never live without something on screen saying so.
-                            .child(icon_button(
-                                "record",
-                                Icon::Record,
-                                recording,
-                                theme.record,
-                                &theme,
-                                cx.listener(|this, _, window, cx| {
-                                    this.toggle_recording(window, cx);
-                                    cx.notify();
-                                }),
-                            ))
+                            .child(
+                                icon_button(
+                                    "record",
+                                    Icon::Record,
+                                    recording,
+                                    theme.record,
+                                    &theme,
+                                    cx.listener(|this, _, window, cx| {
+                                        this.toggle_recording(window, cx);
+                                        cx.notify();
+                                    }),
+                                )
+                                .tooltip(self.tip(Key::CmdRecord, "transport.record")),
+                            )
                             // Beside Record rather than beside the cycle, though it looks like the
                             // cycle: this one decides what a take *keeps*, and everything to its
                             // left decides what the transport does.
-                            .child(icon_button(
-                                "punch",
-                                Icon::Punch,
-                                punching,
-                                theme.record,
-                                &theme,
-                                cx.listener(|this, _, _, cx| {
-                                    this.toggle_punch();
-                                    cx.notify();
-                                }),
-                            ))
-                            .child(icon_button(
-                                "loop",
-                                Icon::Loop,
-                                looping,
-                                theme.accent,
-                                &theme,
-                                cx.listener(|this, _, _, cx| {
-                                    this.toggle_loop();
-                                    cx.notify();
-                                }),
-                            ))
+                            .child(
+                                icon_button(
+                                    "punch",
+                                    Icon::Punch,
+                                    punching,
+                                    theme.record,
+                                    &theme,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.toggle_punch();
+                                        cx.notify();
+                                    }),
+                                )
+                                .tooltip(self.tip(Key::CmdTogglePunch, "transport.punch")),
+                            )
+                            .child(
+                                icon_button(
+                                    "loop",
+                                    Icon::Loop,
+                                    looping,
+                                    theme.accent,
+                                    &theme,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.toggle_loop();
+                                        cx.notify();
+                                    }),
+                                )
+                                .tooltip(self.tip(Key::CmdToggleCycle, "transport.loop")),
+                            )
                             // Beside the cycle button because the two are the same kind of
                             // switch: neither writes anything, both change how a pass sounds
                             // while somebody is listening to it.
-                            .child(icon_button(
-                                "metronome",
-                                Icon::Metronome,
-                                clicking,
-                                theme.accent,
-                                &theme,
-                                cx.listener(|this, _, _, cx| {
-                                    this.toggle_metronome();
-                                    cx.notify();
-                                }),
-                            )),
+                            .child(
+                                icon_button(
+                                    "metronome",
+                                    Icon::Metronome,
+                                    clicking,
+                                    theme.accent,
+                                    &theme,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.toggle_metronome();
+                                        cx.notify();
+                                    }),
+                                )
+                                .tooltip(self.tip(Key::CmdToggleMetronome, "transport.metronome")),
+                            ),
                     )
                     // Musical position, wall-clock position and tempo: the readouts every DAW
                     // shows, side by side under the buttons they describe.

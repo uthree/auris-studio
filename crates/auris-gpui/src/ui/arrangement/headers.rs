@@ -276,61 +276,92 @@ impl AurisApp {
                                     .flex()
                                     .items_center()
                                     .gap_1()
-                                    .child(div().w(px(24.0)).child(button(
-                                        ("mute", index),
-                                        self.t(Key::MuteInitial),
-                                        ButtonStyle::Normal,
-                                        muted,
-                                        theme.mute,
-                                        &theme,
-                                        cx.listener(move |this, _, _, cx| {
-                                            this.toggle_mute(id);
-                                            cx.notify();
-                                        }),
-                                    )))
-                                    .child(div().w(px(24.0)).child(button(
-                                        ("solo", index),
-                                        self.t(Key::SoloInitial),
-                                        ButtonStyle::Normal,
-                                        soloed,
-                                        theme.solo,
-                                        &theme,
-                                        cx.listener(move |this, _, _, cx| {
-                                            this.toggle_solo(id);
-                                            cx.notify();
-                                        }),
-                                    )))
+                                    // Each of these says what it is in one letter, which is what
+                                    // every console does and is fine for the two everybody knows.
+                                    // The other two are not: an unlabelled square that arms a
+                                    // microphone and one that opens a monitor are worth naming
+                                    // out loud, and once two of the four carry a card all four
+                                    // should.
+                                    .child(
+                                        div().w(px(24.0)).child(
+                                            button(
+                                                ("mute", index),
+                                                self.t(Key::MuteInitial),
+                                                ButtonStyle::Normal,
+                                                muted,
+                                                theme.mute,
+                                                &theme,
+                                                cx.listener(move |this, _, _, cx| {
+                                                    this.toggle_mute(id);
+                                                    cx.notify();
+                                                }),
+                                            )
+                                            .tooltip(
+                                                self.tip(Key::CmdToggleTrackMute, "track.mute"),
+                                            ),
+                                        ),
+                                    )
+                                    .child(
+                                        div().w(px(24.0)).child(
+                                            button(
+                                                ("solo", index),
+                                                self.t(Key::SoloInitial),
+                                                ButtonStyle::Normal,
+                                                soloed,
+                                                theme.solo,
+                                                &theme,
+                                                cx.listener(move |this, _, _, cx| {
+                                                    this.toggle_solo(id);
+                                                    cx.notify();
+                                                }),
+                                            )
+                                            .tooltip(
+                                                self.tip(Key::CmdToggleTrackSolo, "track.solo"),
+                                            ),
+                                        ),
+                                    )
                                     .when(records, |this| {
-                                        this.child(div().w(px(24.0)).child(button(
-                                            ("arm", index),
-                                            self.t(Key::RecordInitial),
-                                            ButtonStyle::Normal,
-                                            armed,
-                                            theme.record,
-                                            &theme,
-                                            cx.listener(move |this, _, _, cx| {
-                                                this.toggle_arm(id);
-                                                cx.notify();
-                                            }),
-                                        )))
+                                        this.child(
+                                            div().w(px(24.0)).child(
+                                                button(
+                                                    ("arm", index),
+                                                    self.t(Key::RecordInitial),
+                                                    ButtonStyle::Normal,
+                                                    armed,
+                                                    theme.record,
+                                                    &theme,
+                                                    cx.listener(move |this, _, _, cx| {
+                                                        this.toggle_arm(id);
+                                                        cx.notify();
+                                                    }),
+                                                )
+                                                .tooltip(self.tip(Key::ArmTrack, "")),
+                                            ),
+                                        )
                                         // Beside the arm because they are the two halves of the
                                         // same device: one keeps what comes in, the other only
                                         // lets it be heard. In the accent rather than in red,
                                         // because listening is not recording and a row of two
                                         // red buttons would say it was.
                                         .child(
-                                            div().w(px(24.0)).child(button(
-                                                ("monitor", index),
-                                                self.t(Key::MonitorInitial),
-                                                ButtonStyle::Normal,
-                                                monitored,
-                                                theme.accent,
-                                                &theme,
-                                                cx.listener(move |this, _, _, cx| {
-                                                    this.toggle_monitoring(id);
-                                                    cx.notify();
-                                                }),
-                                            )),
+                                            div().w(px(24.0)).child(
+                                                button(
+                                                    ("monitor", index),
+                                                    self.t(Key::MonitorInitial),
+                                                    ButtonStyle::Normal,
+                                                    monitored,
+                                                    theme.accent,
+                                                    &theme,
+                                                    cx.listener(move |this, _, _, cx| {
+                                                        this.toggle_monitoring(id);
+                                                        cx.notify();
+                                                    }),
+                                                )
+                                                .tooltip(self.tip(
+                                                    Key::CmdToggleMonitoring,
+                                                    "transport.monitor",
+                                                )),
+                                            ),
                                         )
                                     })
                                     .child(

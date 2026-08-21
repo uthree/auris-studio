@@ -305,33 +305,42 @@ impl AurisApp {
                             cx.notify();
                         }),
                     )))
-                    .child(chain_button(
-                        ("fx-up", slot_index),
-                        Icon::ChevronUp,
-                        &theme,
-                        cx.listener(move |this, _, _, cx| {
-                            this.move_effect(Some(track_id), slot_id, -1);
-                            cx.notify();
-                        }),
-                    ))
-                    .child(chain_button(
-                        ("fx-down", slot_index),
-                        Icon::ChevronDown,
-                        &theme,
-                        cx.listener(move |this, _, _, cx| {
-                            this.move_effect(Some(track_id), slot_id, 1);
-                            cx.notify();
-                        }),
-                    ))
-                    .child(chain_button(
-                        ("fx-remove", slot_index),
-                        Icon::Cross,
-                        &theme,
-                        cx.listener(move |this, _, _, cx| {
-                            this.remove_effect(slot_id);
-                            cx.notify();
-                        }),
-                    ))
+                    .child(
+                        chain_button(
+                            ("fx-up", slot_index),
+                            Icon::ChevronUp,
+                            &theme,
+                            cx.listener(move |this, _, _, cx| {
+                                this.move_effect(Some(track_id), slot_id, -1);
+                                cx.notify();
+                            }),
+                        )
+                        .tooltip(self.tip(Key::MenuMoveUp, "")),
+                    )
+                    .child(
+                        chain_button(
+                            ("fx-down", slot_index),
+                            Icon::ChevronDown,
+                            &theme,
+                            cx.listener(move |this, _, _, cx| {
+                                this.move_effect(Some(track_id), slot_id, 1);
+                                cx.notify();
+                            }),
+                        )
+                        .tooltip(self.tip(Key::MenuMoveDown, "")),
+                    )
+                    .child(
+                        chain_button(
+                            ("fx-remove", slot_index),
+                            Icon::Cross,
+                            &theme,
+                            cx.listener(move |this, _, _, cx| {
+                                this.remove_effect(slot_id);
+                                cx.notify();
+                            }),
+                        )
+                        .tooltip(self.tip(Key::MenuRemove, "")),
+                    )
                     .into_any_element(),
             );
         }

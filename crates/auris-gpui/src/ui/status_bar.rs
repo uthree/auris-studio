@@ -153,6 +153,7 @@ impl AurisApp {
             .hover(|this| this.bg(hover))
             .active(|this| this.opacity(0.75))
             .child(icon(panel.icon(), SWITCH_ICON, mark))
+            .tooltip(self.tip(panel.label(), panel.command()))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _: &MouseDownEvent, _, cx| {

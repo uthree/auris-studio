@@ -1340,6 +1340,21 @@ impl AurisApp {
         self.session.meters().track_peak(index)
     }
 
+    /// The keystroke shown beside a command, written the way this platform writes it.
+    ///
+    /// Empty for a command with no key and for an id this build does not have — the same answer,
+    /// because both mean "nothing to print here" and neither is worth a row of its own. `id` is
+    /// one of [`crate::actions::BINDABLE`]'s.
+    ///
+    /// Asked at the moment it is shown rather than baked into a table, which is the whole reason
+    /// a tooltip can carry one: every key here is the user's to move, so the only telling that
+    /// stays true is the one that reads the keymap as it draws.
+    pub(crate) fn keystroke_for(&self, id: &str) -> String {
+        crate::actions::bindable(id)
+            .map(|command| crate::actions::menu_keystroke(&self.keymap.display(command)))
+            .unwrap_or_default()
+    }
+
     /// Takes this tick's input peak and folds it into the reading the meter draws.
     ///
     /// Called from the repaint loop and nowhere else. See [`Self::input_level`].

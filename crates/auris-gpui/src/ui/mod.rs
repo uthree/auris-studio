@@ -30,6 +30,7 @@ pub mod selection;
 pub mod status_bar;
 pub mod text_field;
 pub mod timeline;
+pub mod tooltip;
 pub mod transport_bar;
 pub mod typing_panel;
 pub mod widgets;

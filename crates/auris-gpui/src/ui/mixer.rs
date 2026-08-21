@@ -252,31 +252,42 @@ impl AurisApp {
                     .gap_1()
                     // The initials, as the track header already uses. A strip is sized for
                     // "Mute", and 「ミュート」 does not fit in it: every strip in the mixer read as
-                    // broken in the language this is mostly developed in.
-                    .child(div().flex_1().child(button(
-                        ("mixer-mute", index),
-                        self.t(Key::MuteInitial),
-                        ButtonStyle::Normal,
-                        muted,
-                        theme.mute,
-                        &theme,
-                        cx.listener(move |this, _, _, cx| {
-                            this.toggle_mute(track_id);
-                            cx.notify();
-                        }),
-                    )))
-                    .child(div().flex_1().child(button(
-                        ("mixer-solo", index),
-                        self.t(Key::SoloInitial),
-                        ButtonStyle::Normal,
-                        soloed,
-                        theme.solo,
-                        &theme,
-                        cx.listener(move |this, _, _, cx| {
-                            this.toggle_solo(track_id);
-                            cx.notify();
-                        }),
-                    ))),
+                    // broken in the language this is mostly developed in. The word the strip has
+                    // no room for is on the tooltip, which is where it can be as long as it needs.
+                    .child(
+                        div().flex_1().child(
+                            button(
+                                ("mixer-mute", index),
+                                self.t(Key::MuteInitial),
+                                ButtonStyle::Normal,
+                                muted,
+                                theme.mute,
+                                &theme,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.toggle_mute(track_id);
+                                    cx.notify();
+                                }),
+                            )
+                            .tooltip(self.tip(Key::CmdToggleTrackMute, "track.mute")),
+                        ),
+                    )
+                    .child(
+                        div().flex_1().child(
+                            button(
+                                ("mixer-solo", index),
+                                self.t(Key::SoloInitial),
+                                ButtonStyle::Normal,
+                                soloed,
+                                theme.solo,
+                                &theme,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.toggle_solo(track_id);
+                                    cx.notify();
+                                }),
+                            )
+                            .tooltip(self.tip(Key::CmdToggleTrackSolo, "track.solo")),
+                        ),
+                    ),
             )
             .child(self.fader(
                 ("mixer-gain", index),
