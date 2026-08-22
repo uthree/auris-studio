@@ -1046,6 +1046,16 @@ pub struct AurisApp {
     pub(crate) input_level: f32,
     /// Whether the input has touched full scale since the indicator was last cleared.
     pub(crate) input_clipped: bool,
+    /// The same reading, one per input channel, for the meter beside an armed track.
+    ///
+    /// A second buffer rather than a second look at the first: the device-wide peak and the
+    /// per-channel peaks are separate accumulators that each reset on read, so both are taken
+    /// once per tick and held here for whoever draws them.
+    pub(crate) input_levels: Vec<f32>,
+    /// Which of those channels have touched full scale since the indicators were last put out.
+    pub(crate) input_clips: Vec<bool>,
+    /// This tick's per-channel peaks, kept only so that taking them allocates once.
+    pub(crate) input_peaks: Vec<f32>,
     /// Which tracks have an automation lane showing, and on which parameter.
     ///
     /// Presentation rather than document: what a lane *holds* is saved, but which one you happen
@@ -1193,6 +1203,9 @@ impl AurisApp {
             status_failed: false,
             input_level: 0.0,
             input_clipped: false,
+            input_levels: Vec::new(),
+            input_clips: Vec::new(),
+            input_peaks: Vec::new(),
             library_search: crate::ui::text_field::TextField::new(String::new()),
             library_search_focused: false,
             automation_lanes: BTreeMap::new(),
@@ -1536,6 +1549,38 @@ impl AurisApp {
         // sample that touched full scale between two ticks is still in it.
         self.input_clipped |= peak >= 1.0;
         self.input_level = fallen_peak(self.input_level, peak, REPAINT_INTERVAL);
+
+        // And the same for each channel, which is what a meter beside an armed track draws. The
+        // buffer is the session's to fill and ours to keep, so it is resized by the device rather
+        // than by us — and the readings beside it have to follow, or a device swapped for a wider
+        // one would leave every track reading the last one's channels.
+        self.session.take_input_peaks(&mut self.input_peaks);
+        self.input_levels.resize(self.input_peaks.len(), 0.0);
+        self.input_clips.resize(self.input_peaks.len(), false);
+        for (channel, peak) in self.input_peaks.iter().enumerate() {
+            self.input_clips[channel] |= *peak >= 1.0;
+            self.input_levels[channel] =
+                fallen_peak(self.input_levels[channel], *peak, REPAINT_INTERVAL);
+        }
+    }
+
+    /// What the meter beside `track` reads, while it is armed and a device is open.
+    ///
+    /// `None` for a track that is not armed and whenever nothing is listening, which is what
+    /// decides whether the meter is drawn at all: a bar reading silence beside every audio track
+    /// in the project would say the interface was dead.
+    pub(crate) fn input_level_for(&self, track: TrackId) -> Option<(f32, bool)> {
+        if !self.session.input_is_open() {
+            return None;
+        }
+        let input = self.session.track_arm(track)?;
+        let clipped = self
+            .input_clips
+            .iter()
+            .skip(input.first)
+            .take(input.count)
+            .any(|clipped| *clipped);
+        Some((input_level_of(&self.input_levels, input), clipped))
     }
 
     /// Puts out every clip indicator, on the meters and on the input.
@@ -1546,6 +1591,7 @@ impl AurisApp {
     pub(crate) fn clear_clipping(&mut self) {
         self.session.meters().clear_clipped();
         self.input_clipped = false;
+        self.input_clips.fill(false);
     }
 
     /// Whether anything anywhere is showing a clip.

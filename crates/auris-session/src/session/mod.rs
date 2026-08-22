@@ -65,7 +65,9 @@ pub use levels::{
 };
 pub use monitor::MonitorStatus;
 pub use notes::{Quantize, quantized};
-pub use record::{Arm, InputChannels, RecordingReport, RecordingStatus, TakeReport};
+pub use record::{
+    Arm, InputChannels, RecordingReport, RecordingStatus, TakeReport, input_level_of,
+};
 pub use tracks::{MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT};
 pub use typing::{
     DEFAULT_OCTAVE, DEFAULT_VELOCITY, LAYOUT, MusicalTyping, OCTAVE_RANGE, Played, Release, Struck,

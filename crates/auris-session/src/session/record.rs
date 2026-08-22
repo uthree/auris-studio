@@ -461,6 +461,22 @@ impl Session {
             .map_or(0.0, |capture| capture.take_peak())
     }
 
+    /// The loudest sample on each input channel since this was last called, for a meter per
+    /// armed track.
+    ///
+    /// `out` is the caller's own buffer, resized to the device's channel count and left empty
+    /// when no device is open. Reset on read like [`Self::input_peak`], and separately from it,
+    /// so a frontend can draw both without either reading silence.
+    ///
+    /// What a track's own reading is comes from [`input_level_of`], which is where the arm's
+    /// channels are turned into a number.
+    pub fn take_input_peaks(&self, out: &mut Vec<f32>) {
+        match self.input.as_ref() {
+            Some(capture) => capture.take_channel_peaks(out),
+            None => out.clear(),
+        }
+    }
+
     /// `true` while the input device is open and [`Self::input_peak`] means something.
     ///
     /// What a frontend hangs an input meter on. Asking instead whether a take or a monitor is
@@ -940,6 +956,23 @@ impl Session {
             .tempo_map
             .seconds_to_ticks(Seconds(frame as f64 / rate))
     }
+}
+
+/// What one arm's meter reads, given every channel's level.
+///
+/// The loudest of the channels it takes rather than a level per channel: an arm is one track and
+/// a track has one meter, and a stereo pair whose sides were metered apart would be two readings
+/// of one thing. Channels the device does not have contribute nothing, which is the same answer
+/// recording gives them — silence, rather than a neighbour's level.
+///
+/// Free of the session because it is the whole of what a meter needs to know, and a frontend
+/// asking about a track it is drawing should not have to reach for a device to be told.
+pub fn input_level_of(peaks: &[f32], input: InputChannels) -> f32 {
+    peaks
+        .iter()
+        .skip(input.first)
+        .take(input.count)
+        .fold(0.0f32, |loudest, level| loudest.max(*level))
 }
 
 /// The count-in a press of Record gets, in frames of whatever clock `rate` counts.
@@ -1486,6 +1519,20 @@ mod tests {
         );
         assert!(take_tracks(&[], Some(selected), false, 2).is_empty());
         assert!(take_tracks(&[], None, false, 2).is_empty());
+    }
+
+    #[test]
+    fn an_arms_meter_reads_the_loudest_of_its_own_channels() {
+        // Four channels, and a stereo arm on the third and fourth. What it reads is what is on
+        // those two — the loud microphone on channel one is somebody else's meter.
+        let peaks = [0.9, 0.1, 0.2, 0.4];
+        assert!((input_level_of(&peaks, InputChannels::stereo(2)) - 0.4).abs() < 1e-6);
+        assert!((input_level_of(&peaks, InputChannels::mono(0)) - 0.9).abs() < 1e-6);
+
+        // A channel the device does not have reads silence, which is what it records.
+        assert_eq!(input_level_of(&peaks, InputChannels::mono(9)), 0.0);
+        assert!((input_level_of(&peaks, InputChannels::stereo(3)) - 0.4).abs() < 1e-6);
+        assert_eq!(input_level_of(&[], InputChannels::mono(0)), 0.0);
     }
 
     #[test]

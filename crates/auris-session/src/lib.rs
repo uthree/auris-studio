@@ -65,8 +65,8 @@ pub use session::{
     LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont, MusicalTyping, OCTAVE_RANGE, Played, PluginWindow,
     Quantize, RecordingReport, RecordingStatus, Release, SaveReport, Session, SessionOptions,
     Struck, TARGET_LUFS, TYPING_BEND, TakeReport, TrackLevel, TypingRole, VELOCITY_STEP,
-    WHEEL_STEPS, decode_audio, fader_for, faders_lift_db, master_gain_db, quantized,
-    read_soundfont, shadows_musical_typing,
+    WHEEL_STEPS, decode_audio, fader_for, faders_lift_db, input_level_of, master_gain_db,
+    quantized, read_soundfont, shadows_musical_typing,
 };
 pub use settings::{
     AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings, WindowPlacement, config_dir,
@@ -193,6 +193,6 @@ pub mod prelude {
         CopiedContent, DEFAULT_PARTS, Edit, ExportPreferences, ExportSummary, InputChannels,
         LoadedFont, MusicalTyping, ParamTarget, Quantize, RecordingReport, RecordingStatus,
         RenderJob, SaveReport, Session, SessionError, SessionOptions, Settings, StemSummary,
-        TakeReport, decode_audio, read_soundfont,
+        TakeReport, decode_audio, input_level_of, read_soundfont,
     };
 }

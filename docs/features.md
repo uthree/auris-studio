@@ -738,6 +738,10 @@ Two things follow from there being one device rather than several:
 * **Monitoring is still one track.** It follows that track's own input channels, so listening to
   a track armed to input 5 plays input 5 — but a room recording together hears itself through the
   interface, which is what the interface is for.
+* **Every armed track has its own meter**, a thin bar to the left of the one that shows what the
+  track puts out. It reads the channels that track is armed to, so four microphones are four
+  readings rather than one number for the interface — which is what the transport bar's input
+  meter is, and stays. It appears only while the track is armed and something has the device open.
 
 **Recording needs a saved project**, and pressing Record on one that has never been saved opens
 the save dialog rather than refusing. The take is written straight to disk while it happens, into

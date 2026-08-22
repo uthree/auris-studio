@@ -9,6 +9,14 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### A meter for every armed track
+
+* Each armed track's header shows **what is arriving on its own input channels**, as a thin bar
+  beside the one that shows what the track puts out. Four microphones on a four-input interface
+  are four readings; the transport bar's meter stays what it was, the whole device in one number.
+* It appears only while the track is armed and something has the device open, and it latches a
+  clip like every other meter — cleared with the rest by clicking the master block.
+
 ### Two takes can be joined without a hole in the join
 
 * **Crossfades.** Drag one clip over another on the same track and choose **Crossfade** from

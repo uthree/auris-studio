@@ -76,6 +76,14 @@ const POOL_BUFFERS: usize = 32;
 /// callback thread.
 const POOL_SAMPLES: usize = 4_096;
 
+/// How many input channels get a meter of their own.
+///
+/// A cap on a fixed-size array rather than a limit on the interface: a device with more channels
+/// than this still records through every one of them, and the ones past it simply have no meter.
+/// Thirty-two is two more than any interface anybody is likely to have on a desk, and the array
+/// costs four bytes a channel.
+pub const MAX_METERED_CHANNELS: usize = 32;
+
 /// What [`CaptureShared::started_at`] holds until the first block arrives.
 const NOT_STARTED: u64 = u64::MAX;
 
@@ -159,6 +167,13 @@ struct CaptureShared {
     count_in_at_start: AtomicU64,
     /// Loudest sample since the meter was last read, as an `f32` bit pattern.
     peak: AtomicU32,
+    /// The same, one per input channel, for a meter beside each armed track.
+    ///
+    /// Beside the device-wide figure rather than instead of it, and the two are read by different
+    /// people: the transport bar asks what is arriving at the interface, and a track asks what is
+    /// arriving on the channels it is armed to. Both reset on read, so they cannot be one cell —
+    /// whichever asked first would leave the other reading silence.
+    channel_peaks: [AtomicU32; MAX_METERED_CHANNELS],
     /// Frames handed to the pool, which is the length of the take so far.
     frames: AtomicU64,
 }
@@ -334,6 +349,24 @@ impl Capture {
         f32::from_bits(self.shared.peak.swap(0, Ordering::Relaxed))
     }
 
+    /// The loudest sample on each input channel since this was last called, and resets them.
+    ///
+    /// `out` is resized to the device's channel count, so it is the reader's own buffer and this
+    /// allocates only when the device changes. Channels past [`MAX_METERED_CHANNELS`] read zero.
+    ///
+    /// Reset on read for the same reason [`Self::take_peak`] is, which is why there is exactly one
+    /// caller: a second would find whatever the first left, which is nothing.
+    pub fn take_channel_peaks(&self, out: &mut Vec<f32>) {
+        out.clear();
+        for channel in 0..self.channel_count {
+            let level = match self.shared.channel_peaks.get(channel) {
+                Some(cell) => f32::from_bits(cell.swap(0, Ordering::Relaxed)),
+                None => 0.0,
+            };
+            out.push(level);
+        }
+    }
+
     /// Opens a take: from here the callback feeds the pool, and the counters describe this take.
     ///
     /// Everything a take is measured by is cleared, because they all mean "so far in this take"
@@ -342,6 +375,9 @@ impl Capture {
         self.shared.frames.store(0, Ordering::Relaxed);
         self.shared.dropped.store(0, Ordering::Relaxed);
         self.shared.peak.store(0, Ordering::Relaxed);
+        for cell in &self.shared.channel_peaks {
+            cell.store(0, Ordering::Relaxed);
+        }
         self.shared.started_at.store(NOT_STARTED, Ordering::Relaxed);
         self.shared.count_in_at_start.store(0, Ordering::Relaxed);
         self.shared.recording.store(true, Ordering::Release);
@@ -495,21 +531,45 @@ impl CaptureSink {
     }
 
     /// Raises the meter to the loudest sample in `block`, if it is louder than what is there.
+    /// Both meters at once: what reached the interface, and what reached each of its channels.
+    ///
+    /// The per-channel figures are gathered on the stack and written out once at the end, so a
+    /// block costs one atomic store per channel rather than one per sample. Nothing here
+    /// allocates: the array is the fixed [`MAX_METERED_CHANNELS`] and a device with more channels
+    /// than that leaves the rest of them unmetered rather than growing it.
     fn note_peak<T>(&self, block: &[T])
     where
         T: Copy,
         f32: FromSample<T>,
     {
+        let channels = self.channels.max(1);
         let mut peak = f32::from_bits(self.shared.peak.load(Ordering::Relaxed));
-        for sample in block {
-            let level = f32::from_sample(*sample).abs();
-            // `>` rather than `max`, so a NaN from a misbehaving driver loses instead of
-            // poisoning the meter for the rest of the take.
-            if level > peak {
-                peak = level;
+        let mut channel_peaks = [0.0f32; MAX_METERED_CHANNELS];
+        for frame in block.chunks(channels) {
+            for (channel, sample) in frame.iter().enumerate() {
+                let level = f32::from_sample(*sample).abs();
+                // `>` rather than `max`, so a NaN from a misbehaving driver loses instead of
+                // poisoning the meter for the rest of the take.
+                if level > peak {
+                    peak = level;
+                }
+                if channel < MAX_METERED_CHANNELS && level > channel_peaks[channel] {
+                    channel_peaks[channel] = level;
+                }
             }
         }
         self.shared.peak.store(peak.to_bits(), Ordering::Relaxed);
+        for (cell, level) in self
+            .shared
+            .channel_peaks
+            .iter()
+            .zip(channel_peaks)
+            .take(channels)
+        {
+            if level > f32::from_bits(cell.load(Ordering::Relaxed)) {
+                cell.store(level.to_bits(), Ordering::Relaxed);
+            }
+        }
     }
 }
 
@@ -527,6 +587,7 @@ fn pool(input_rate: f64) -> (Capture, CaptureSink, Arc<CaptureShared>) {
         started_at: AtomicU64::new(NOT_STARTED),
         count_in_at_start: AtomicU64::new(0),
         peak: AtomicU32::new(0),
+        channel_peaks: [const { AtomicU32::new(0) }; MAX_METERED_CHANNELS],
         frames: AtomicU64::new(0),
     });
     let monitor = Arc::new(MonitorRing::new(input_rate));
@@ -742,6 +803,28 @@ mod tests {
         assert_eq!(drained(&mut reader), vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
         assert_eq!(capture.frames(), 3, "six samples of stereo is three frames");
         assert_eq!(capture.dropped_frames(), 0);
+    }
+
+    #[test]
+    fn every_input_channel_is_metered_on_its_own() {
+        // What a meter beside an armed track reads. The device-wide figure cannot answer it: a
+        // room where one microphone is loud and another is silent reads as loud on both.
+        let (capture, _reader, mut sink, _playhead) = wired(2);
+        // Interleaved: the left channel at half, the right at an eighth.
+        sink.push(&[0.5f32, 0.125, -0.5, 0.125]);
+
+        let mut peaks = Vec::new();
+        capture.take_channel_peaks(&mut peaks);
+        assert_eq!(peaks.len(), 2);
+        assert!((peaks[0] - 0.5).abs() < 1e-6, "{peaks:?}");
+        assert!((peaks[1] - 0.125).abs() < 1e-6, "{peaks:?}");
+        // The device-wide meter is the loudest of them and is its own reading — taking the
+        // channels must not have emptied it.
+        assert!((capture.take_peak() - 0.5).abs() < 1e-6);
+
+        // Reset on read, like every other peak-hold here.
+        capture.take_channel_peaks(&mut peaks);
+        assert_eq!(peaks, vec![0.0, 0.0]);
     }
 
     #[test]

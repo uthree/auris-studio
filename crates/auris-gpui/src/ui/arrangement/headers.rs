@@ -181,6 +181,11 @@ impl AurisApp {
                 // No `Ready` state to match the arm's: monitoring is never inferred from a
                 // selection, because it is a thing that costs and those are switched on by hand.
                 let monitored = self.session.monitored_track() == Some(id);
+                // What is arriving on the channels this track is armed to, and only while it is
+                // armed and something is listening. The transport bar's meter is the *device* —
+                // one number for the whole interface — which cannot tell a room where one
+                // microphone is loud and another is silent from one where both are.
+                let input = self.input_level_for(id);
 
                 let is_selected = selected == Some(id);
                 let is_dragging = dragging == Some(id);
@@ -413,6 +418,20 @@ impl AurisApp {
                             )
                             .child(self.pan_control(id, pan, cx)),
                     )
+                    // The input, left of what the track puts out, which is the order the signal
+                    // travels in — and narrower, so the pair reads as two different things at a
+                    // glance rather than as a stereo meter.
+                    .children(input.map(|(level, input_clipped)| {
+                        let db = gain_to_db(level);
+                        div().w(px(4.0)).h_full().py(px(1.0)).child(level_meter(
+                            db_to_meter_position(db),
+                            db_to_meter_position(db),
+                            input_clipped,
+                            Axis::Vertical,
+                            theme.meter_color(db),
+                            &theme,
+                        ))
+                    }))
                     .child(div().w(px(7.0)).h_full().py(px(1.0)).child(level_meter(
                         db_to_meter_position(level_db),
                         db_to_meter_position(level_db),
