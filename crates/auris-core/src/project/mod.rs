@@ -353,7 +353,14 @@ impl Project {
     /// plays at whatever speed its new start implies — a seam in the middle of one take — and the
     /// next save writes the anchor away, so the seam is there for good and the file no longer
     /// records that the two halves were ever one thing.
-    pub const FORMAT_VERSION: u32 = 14;
+    ///
+    /// 15 since an effect slot can be keyed from another track —
+    /// [`sidechain`](crate::project::EffectSlot::sidechain). Version 5's case yet again, and this
+    /// one is not even quiet about it while the file is open: a version 14 build ignores the
+    /// field, so a compressor keyed from the kick drum runs on the bass alone and the duck that
+    /// holds the low end apart simply is not there. The save afterwards writes the key away, and
+    /// with it the only record of which track the effect was listening to.
+    pub const FORMAT_VERSION: u32 = 15;
 
     /// An empty project.
     ///

@@ -41,6 +41,19 @@ pub struct EffectSlot {
     /// only if they are installed there — which is the same bargain every DAW makes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<AssetPath>,
+    /// The track whose signal keys this effect, for one that listens to a second input.
+    ///
+    /// A compressor keyed from the kick drum ducks the bass when the kick lands; a hosted plugin
+    /// that declares a second audio input reads it there. `None` — which is every slot until
+    /// somebody says otherwise — means the effect hears only the track it sits on.
+    ///
+    /// Named on the slot rather than on the source, because it is the *effect* that wants one:
+    /// a track has no idea how many chains are keyed from it, and would not want to keep a list.
+    /// That makes it the only edge in the routing that runs backwards from where it is written
+    /// down, which is why [`Project::routing_order`] turns it round rather than reading it as it
+    /// stands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidechain: Option<TrackId>,
 }
 
 impl EffectSlot {
@@ -52,6 +65,7 @@ impl EffectSlot {
             enabled: true,
             state: PluginState::empty(),
             file: None,
+            sidechain: None,
         }
     }
 
@@ -158,6 +172,17 @@ pub struct MixerStrip {
     /// somebody made by hand is aimed whereever they put it.
     #[serde(default)]
     pub target_lufs: Option<f32>,
+}
+
+impl MixerStrip {
+    /// Every track keying an effect in this chain, one per slot that names one.
+    ///
+    /// Duplicates are left in: two effects keyed from the same drum are two edges as far as the
+    /// routing is concerned, and the walk that reads them does not care how often it is told the
+    /// same thing.
+    pub fn sidechain_sources(&self) -> impl Iterator<Item = TrackId> + '_ {
+        self.effects.iter().filter_map(|slot| slot.sidechain)
+    }
 }
 
 impl Default for MixerStrip {
@@ -268,12 +293,41 @@ impl Project {
         }
     }
 
+    /// Out-edges by track index: for each track, everything that cannot be mixed until it has.
+    ///
+    /// Two kinds of edge, and they are written down facing opposite ways. An [`Output`] and an
+    /// [`AuxSend`] are recorded on the track the audio leaves, so they are read straight off. A
+    /// sidechain is recorded on the slot that *listens*, because that is the end that wants one —
+    /// so it is turned round here, and the track it names gains an edge to the track it keys.
+    ///
+    /// The master's own chain is left out on purpose: it runs after every track, so a sidechain
+    /// keyed from anywhere is already waiting for it and there is nothing to order.
+    fn routing_edges(&self) -> Vec<Vec<usize>> {
+        let mut edges: Vec<Vec<usize>> = vec![Vec::new(); self.tracks.len()];
+        for (index, track) in self.tracks.iter().enumerate() {
+            for target in track.feeds() {
+                if let Some(next) = self.track_index(target) {
+                    edges[index].push(next);
+                }
+            }
+            for source in track.mixer.sidechain_sources() {
+                if let Some(from) = self.track_index(source)
+                    && from != index
+                {
+                    edges[from].push(index);
+                }
+            }
+        }
+        edges
+    }
+
     /// Track indices ordered so that everything feeding a bus comes before the bus.
     ///
     /// This is the order audio has to be mixed in: a bus cannot be put through its own strip until
-    /// everything routed into it has arrived. Every track appears exactly once even if the routing
-    /// somehow holds a loop — see [`Self::repair_routing`] for why it should not — so a caller can
-    /// walk this instead of the track list and know it has covered the project.
+    /// everything routed into it has arrived, and neither can a track whose compressor is keyed
+    /// from another one. Every track appears exactly once even if the routing somehow holds a loop
+    /// — see [`Self::repair_routing`] for why it should not — so a caller can walk this instead of
+    /// the track list and know it has covered the project.
     pub fn routing_order(&self) -> Vec<usize> {
         // A depth-first post-order over the out-edges puts each node after everything it feeds;
         // reversing that puts it before them, which is the order wanted. A back edge is stepped
@@ -286,6 +340,7 @@ impl Project {
         }
         let mut mark = vec![Mark::Unseen; self.tracks.len()];
         let mut order = Vec::with_capacity(self.tracks.len());
+        let edges = self.routing_edges();
         // An explicit stack rather than recursion: the depth is the length of a routing chain,
         // which a document is free to make as long as it has tracks.
         let mut stack: Vec<(usize, usize)> = Vec::new();
@@ -296,12 +351,10 @@ impl Project {
             mark[start] = Mark::Walking;
             stack.push((start, 0));
             while let Some((node, edge)) = stack.pop() {
-                match self.tracks[node].feeds().nth(edge) {
-                    Some(target) => {
+                match edges[node].get(edge).copied() {
+                    Some(next) => {
                         stack.push((node, edge + 1));
-                        if let Some(next) = self.track_index(target)
-                            && mark[next] == Mark::Unseen
-                        {
+                        if mark[next] == Mark::Unseen {
                             mark[next] = Mark::Walking;
                             stack.push((next, 0));
                         }
@@ -321,28 +374,50 @@ impl Project {
     ///
     /// Asked before an output is changed or a send is added, because a loop is not a strange mix —
     /// it is a bus waiting for itself, and there is no order to render it in.
+    ///
+    /// Every edge already in the routing counts, sidechains included: a compressor keyed from a
+    /// bus is the bus arriving early, and a track feeding that bus can no longer be rendered after
+    /// it. Keying is asked about through [`Self::sidechain_would_cycle`], which is the same
+    /// question with the ends the other way round.
     pub fn routing_would_cycle(&self, from: TrackId, to: TrackId) -> bool {
         if from == to {
             return true;
         }
+        let (Some(from), Some(to)) = (self.track_index(from), self.track_index(to)) else {
+            return false;
+        };
         // The new edge closes a loop exactly when `from` is already downstream of `to`.
-        let mut seen = vec![to];
+        let edges = self.routing_edges();
+        let mut seen = vec![false; self.tracks.len()];
+        seen[to] = true;
         let mut queue = vec![to];
         while let Some(node) = queue.pop() {
-            let Some(track) = self.track(node) else {
-                continue;
-            };
-            for next in track.feeds() {
+            for &next in &edges[node] {
                 if next == from {
                     return true;
                 }
-                if !seen.contains(&next) {
-                    seen.push(next);
+                if !std::mem::replace(&mut seen[next], true) {
                     queue.push(next);
                 }
             }
         }
         false
+    }
+
+    /// `true` when keying an effect on `owner` from `source` would make a signal loop back on
+    /// itself.
+    ///
+    /// A sidechain is an edge from the source to the track it keys, so this is
+    /// [`Self::routing_would_cycle`] with the ends swapped — and the swap is the whole reason it
+    /// has a name of its own. Writing it out at each call site is writing down the one thing about
+    /// sidechains that is easy to get backwards.
+    pub fn sidechain_would_cycle(&self, owner: Option<TrackId>, source: TrackId) -> bool {
+        match owner {
+            // The master's chain runs after every track, so nothing it keys from can be waiting
+            // for it.
+            None => false,
+            Some(owner) => self.routing_would_cycle(source, owner),
+        }
     }
 
     /// Points every output and every send at a bus that exists, breaking any loop it finds.
@@ -407,7 +482,83 @@ impl Project {
                 }
             }
         }
+
+        // Sidechains last, and taken off before they are put back for the reason the edges above
+        // are: a loop among them would otherwise be judged against itself. They are not held to
+        // the bus rule — anything with a signal can key an effect — only to naming a track that
+        // exists and not closing a loop.
+        repaired |= self.repair_sidechains();
         repaired
+    }
+
+    /// Drops every sidechain that names a track which is not there, or which would leave a strip
+    /// waiting for itself. Returns `true` when anything had to be changed.
+    fn repair_sidechains(&mut self) -> bool {
+        let mut repaired = false;
+        let owners: Vec<Option<TrackId>> = std::iter::once(None)
+            .chain(self.tracks.iter().map(|track| Some(track.id)))
+            .collect();
+        for owner in owners {
+            let Some(strip) = self.strip(owner) else {
+                continue;
+            };
+            let named: Vec<(usize, TrackId)> = strip
+                .effects
+                .iter()
+                .enumerate()
+                .filter_map(|(slot, effect)| effect.sidechain.map(|source| (slot, source)))
+                .collect();
+            for (slot, source) in named {
+                let keep =
+                    self.track(source).is_some() && !self.sidechain_would_cycle(owner, source);
+                if keep {
+                    continue;
+                }
+                if let Some(strip) = self.strip_mut(owner)
+                    && let Some(effect) = strip.effects.get_mut(slot)
+                {
+                    effect.sidechain = None;
+                    repaired = true;
+                }
+            }
+        }
+        repaired
+    }
+
+    /// The chain on a track, or the master's when `track` is `None`.
+    fn strip(&self, track: Option<TrackId>) -> Option<&MixerStrip> {
+        match track {
+            Some(id) => self.track(id).map(|entry| &entry.mixer),
+            None => Some(&self.master),
+        }
+    }
+
+    /// The same, to be written to.
+    fn strip_mut(&mut self, track: Option<TrackId>) -> Option<&mut MixerStrip> {
+        match track {
+            Some(id) => self.track_mut(id).map(|entry| &mut entry.mixer),
+            None => Some(&mut self.master),
+        }
+    }
+
+    /// Clears every sidechain keyed from `source`, wherever in the project it is.
+    ///
+    /// Called when a track is deleted. A slot left naming a track that is gone would key from
+    /// silence, which is a compressor that has quietly stopped working — and would come back to
+    /// life pointed at whichever track was created next, since ids are handed out in order.
+    pub fn clear_sidechains_from(&mut self, source: TrackId) {
+        for strip in self
+            .tracks
+            .iter_mut()
+            .map(|track| &mut track.mixer)
+            .chain(std::iter::once(&mut self.master))
+        {
+            for effect in &mut strip.effects {
+                if effect.sidechain == Some(source) {
+                    effect.sidechain = None;
+                }
+            }
+        }
     }
 
     /// Which tracks the solo switches leave audible, in project order.
@@ -611,6 +762,129 @@ mod tests {
         let json = serde_json::to_string(&project).expect("serialises");
         let back: Project = serde_json::from_str(&json).expect("deserialises");
         assert_eq!(back, project, "{json}");
+    }
+
+    /// Keys the first effect on `owner` from `source`, and hands back the slot.
+    fn key_from(project: &mut Project, owner: Option<TrackId>, source: TrackId) -> EffectSlotId {
+        let slot = project.add_effect(owner, "auris.fx.compressor").unwrap();
+        let strip = match owner {
+            Some(id) => &mut project.track_mut(id).unwrap().mixer,
+            None => &mut project.master,
+        };
+        strip.effects.last_mut().unwrap().sidechain = Some(source);
+        slot
+    }
+
+    #[test]
+    fn a_track_that_keys_another_is_ordered_before_it() {
+        // The edge is written down on the bass and runs from the kick, which is the one thing
+        // about a sidechain that is easy to get backwards.
+        let (mut project, kick, _, _) = bussed_project();
+        let bass = project.add_instrument_track("Bass", "x");
+        key_from(&mut project, Some(bass), kick);
+
+        let order = project.routing_order();
+        assert_eq!(order.len(), project.tracks.len());
+        let at = |id: TrackId| {
+            let index = project.track_index(id).unwrap();
+            order.iter().position(|slot| *slot == index).unwrap()
+        };
+        assert!(
+            at(kick) < at(bass),
+            "the key has to be there before it is read"
+        );
+    }
+
+    #[test]
+    fn keying_from_a_track_downstream_would_close_a_loop() {
+        let (mut project, kick, _, bus) = bussed_project();
+        // The kick already feeds the drum bus, so the bus cannot key an effect on the kick: it
+        // would have to be mixed before the track it is waiting for.
+        assert!(project.sidechain_would_cycle(Some(kick), bus));
+        // The other way round is the ordinary case, and so is keying from a track that only
+        // shares the master.
+        assert!(!project.sidechain_would_cycle(Some(bus), kick));
+        let bass = project.add_instrument_track("Bass", "x");
+        assert!(!project.sidechain_would_cycle(Some(bass), kick));
+        // An effect cannot key from the track it is sitting on.
+        assert!(project.sidechain_would_cycle(Some(kick), kick));
+        // The master runs last, so nothing it keys from can be waiting for it.
+        assert!(!project.sidechain_would_cycle(None, bus));
+    }
+
+    #[test]
+    fn an_existing_key_is_an_edge_the_next_route_has_to_clear() {
+        // Keying the bass from the kick puts the kick upstream of the bass, and the bass's own
+        // output carries that on to the bus it feeds. Keying the kick from *that* bus is then a
+        // loop, though no output or send names both ends of it.
+        let mut project = Project::new("Demo", 48_000.0);
+        let kick = project.add_instrument_track("Kick", "x");
+        let bass = project.add_instrument_track("Bass", "x");
+        let bus = project.add_bus_track("Sub");
+        project.track_mut(bass).unwrap().output = Output::Bus(bus);
+        assert!(!project.sidechain_would_cycle(Some(kick), bus));
+
+        key_from(&mut project, Some(bass), kick);
+        assert!(
+            project.sidechain_would_cycle(Some(kick), bus),
+            "kick keys bass, bass feeds bus, so the bus cannot key the kick"
+        );
+    }
+
+    #[test]
+    fn a_key_that_cannot_be_rendered_is_dropped_on_load() {
+        let (mut project, kick, _, bus) = bussed_project();
+        // Three faults a document can carry that the editing commands cannot make: a key from a
+        // track that is not there, a key from the track the effect sits on, and a key that would
+        // leave a strip waiting for itself.
+        let gone = key_from(&mut project, Some(kick), TrackId(9_999));
+        let itself = key_from(&mut project, Some(kick), kick);
+        let looped = key_from(&mut project, Some(kick), bus);
+        let good = key_from(&mut project, Some(bus), kick);
+
+        assert!(project.repair_routing());
+        let keyed = |slot: EffectSlotId| {
+            project
+                .tracks
+                .iter()
+                .flat_map(|track| &track.mixer.effects)
+                .find(|effect| effect.id == slot)
+                .and_then(|effect| effect.sidechain)
+        };
+        assert_eq!(keyed(gone), None);
+        assert_eq!(keyed(itself), None);
+        assert_eq!(keyed(looped), None);
+        assert_eq!(
+            keyed(good),
+            Some(kick),
+            "the one that was fine is left alone"
+        );
+        assert!(!project.repair_routing(), "the repair is idempotent");
+    }
+
+    #[test]
+    fn deleting_a_track_takes_the_keys_read_from_it_with_it() {
+        // Ids are handed out in order, so a slot left holding a deleted track's id would come
+        // back to life keyed from whichever track was created next.
+        let (mut project, kick, snare, bus) = bussed_project();
+        let from_kick = key_from(&mut project, Some(bus), kick);
+        let on_master = key_from(&mut project, None, kick);
+        let from_snare = key_from(&mut project, Some(bus), snare);
+
+        assert!(project.remove_track(kick));
+        let keyed = |slot: EffectSlotId| {
+            project
+                .tracks
+                .iter()
+                .map(|track| &track.mixer)
+                .chain(std::iter::once(&project.master))
+                .flat_map(|strip| &strip.effects)
+                .find(|effect| effect.id == slot)
+                .and_then(|effect| effect.sidechain)
+        };
+        assert_eq!(keyed(from_kick), None);
+        assert_eq!(keyed(on_master), None, "the master's chain is cleared too");
+        assert_eq!(keyed(from_snare), Some(snare));
     }
 
     #[test]

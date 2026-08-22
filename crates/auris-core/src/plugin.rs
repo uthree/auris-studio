@@ -505,6 +505,37 @@ pub trait Effect: Parameterized + Send {
     /// Transforms `buffer` in place.
     fn process(&mut self, buffer: &mut AudioBuffer, ctx: &ProcessContext);
 
+    /// Whether this effect listens to a second input as well as the one it is placed in.
+    ///
+    /// A compressor keyed from the kick drum answers `true`, and so does a hosted plugin that
+    /// declares a sidechain port. It is what decides whether a frontend offers a source to key
+    /// from at all: an effect that would ignore one should not be asked.
+    ///
+    /// The answer must not change while the effect is in a graph — the engine reads it when the
+    /// graph is built and not again.
+    fn wants_sidechain(&self) -> bool {
+        false
+    }
+
+    /// Transforms `buffer` in place with a second input to key off.
+    ///
+    /// Called instead of [`Self::process`] when the slot names a track to key from, and only
+    /// then; the default forwards, so an effect with no reading for a key is unaffected by one.
+    /// `sidechain` holds the same number of frames as `buffer` and is not to be written to.
+    ///
+    /// The key is *what the source track puts into the mix* — its own chain, fader and pan
+    /// applied, and silence while it is muted or a solo elsewhere has closed it. This runs on the
+    /// audio thread under the same rules as [`Self::process`].
+    fn process_with_sidechain(
+        &mut self,
+        buffer: &mut AudioBuffer,
+        sidechain: &AudioBuffer,
+        ctx: &ProcessContext,
+    ) {
+        let _ = sidechain;
+        self.process(buffer, ctx);
+    }
+
     /// How many frames of audio keep coming out after the input goes silent.
     ///
     /// The offline renderer keeps rendering for this long past the end of the project so that

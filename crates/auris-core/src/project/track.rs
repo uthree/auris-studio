@@ -363,6 +363,9 @@ impl Project {
                 }
                 track.sends.retain(|send| send.target != id);
             }
+            // Including what it was keying. See `clear_sidechains_from` for why a slot must not
+            // be left holding the id.
+            self.clear_sidechains_from(id);
         }
         removed
     }
