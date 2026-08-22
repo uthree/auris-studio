@@ -23,6 +23,11 @@ const P_MAKEUP_DB: u32 = 5;
 ///
 /// Detection runs on the largest absolute sample across **all** channels, so the same gain is
 /// applied everywhere and a loud left channel cannot pull the stereo image sideways.
+///
+/// It reads a sidechain where the slot names one, and then that is what it listens to: the audio
+/// passing through is turned down by what the *key* is doing. A bass keyed from the kick drum is
+/// the ordinary use, and the reason the two signals have to be kept apart — the bass never gets
+/// quieter for being loud, only for the kick being loud.
 pub struct Compressor {
     params: ParamBank,
     sample_rate: f32,
@@ -135,7 +140,7 @@ impl Effect for Compressor {
         PluginDescriptor::effect(
             "auris.fx.compressor",
             "Compressor",
-            "Soft-knee compressor with stereo-linked peak detection",
+            "Soft-knee compressor, stereo-linked and keyable from another track",
             PluginCategory::Dynamics,
         )
     }
@@ -151,6 +156,32 @@ impl Effect for Compressor {
     }
 
     fn process(&mut self, buffer: &mut AudioBuffer, _ctx: &ProcessContext) {
+        self.run(buffer, None);
+    }
+
+    fn wants_sidechain(&self) -> bool {
+        true
+    }
+
+    fn process_with_sidechain(
+        &mut self,
+        buffer: &mut AudioBuffer,
+        sidechain: &AudioBuffer,
+        _ctx: &ProcessContext,
+    ) {
+        self.run(buffer, Some(sidechain));
+    }
+}
+
+impl Compressor {
+    /// One block, detecting from `key` where there is one and from the audio itself where there
+    /// is not.
+    ///
+    /// The two are the same loop on purpose. A keyed compressor differs from an ordinary one in
+    /// exactly one line — where the level comes from — and everything after it, the knee, the two
+    /// time constants and the makeup, has to stay identical or a keyed compressor is a second
+    /// compressor that happens to share a name.
+    fn run(&mut self, buffer: &mut AudioBuffer, key: Option<&AudioBuffer>) {
         let frames = buffer.frame_count();
         if frames == 0 {
             return;
@@ -164,10 +195,12 @@ impl Effect for Compressor {
         let slope = 1.0 / ratio - 1.0;
 
         for frame in 0..frames {
-            let mut level = 0.0f32;
-            for channel in buffer.channels() {
-                level = level.max(channel[frame].abs());
-            }
+            // The immutable borrow ends on this line, which is what lets the unkeyed case read
+            // the same buffer it is about to write to.
+            let level = match key {
+                Some(key) => peak_at(key, frame),
+                None => peak_at(buffer, frame),
+            };
 
             let over = gain_to_db(level) - threshold_db;
             let target_db = if knee_db > 0.0 {
@@ -194,6 +227,19 @@ impl Effect for Compressor {
     }
 }
 
+/// The largest absolute sample across every channel at one frame, and zero past the end.
+///
+/// Past the end is the key running short, which the engine does not do — but a detector that
+/// panicked on it would take the audio thread with it, and silence is the answer that leaves the
+/// compressor open rather than closed.
+fn peak_at(buffer: &AudioBuffer, frame: usize) -> f32 {
+    buffer
+        .channels()
+        .iter()
+        .filter_map(|channel| channel.get(frame))
+        .fold(0.0f32, |peak, sample| peak.max(sample.abs()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,6 +259,98 @@ mod tests {
     /// A constant-amplitude block: `|x|` never varies, so the detector converges exactly.
     fn constant(frames: usize, amplitude: f32) -> AudioBuffer {
         AudioBuffer::from_planar(vec![vec![amplitude; frames]; 2], SR).unwrap()
+    }
+
+    /// The settings the keyed tests share: no knee and a quick attack, so the answer is the
+    /// static gain curve and nothing else.
+    fn keyed() -> Compressor {
+        let mut plugin = prepared();
+        plugin.set_param_by_key("threshold_db", -20.0);
+        plugin.set_param_by_key("ratio", 4.0);
+        plugin.set_param_by_key("knee_db", 0.0);
+        plugin.set_param_by_key("attack_ms", 1.0);
+        plugin.set_param_by_key("release_ms", 200.0);
+        plugin.set_param_by_key("makeup_db", 0.0);
+        plugin
+    }
+
+    #[test]
+    fn a_key_turns_the_audio_down_by_what_the_key_is_doing() {
+        let mut plugin = keyed();
+        // The audio sits 10 dB under the threshold and would be left alone on its own. The key
+        // is 12 dB over it, which at 4:1 is 9 dB of reduction — so the output settles 9 dB below
+        // where it came in, at -39 dBFS.
+        let frames = 24_000;
+        let mut buffer = constant(frames, db_to_gain(-30.0));
+        let key = constant(frames, db_to_gain(-8.0));
+        plugin.process_with_sidechain(&mut buffer, &key, &context(frames));
+
+        let out_db = gain_to_db(buffer.slice(frames - 1_000, 1_000).peak());
+        assert!(
+            (out_db + 39.0).abs() < 0.05,
+            "output settled at {out_db} dB"
+        );
+        assert!(
+            (plugin.gain_reduction_db() + 9.0).abs() < 0.05,
+            "meter read {} dB",
+            plugin.gain_reduction_db()
+        );
+    }
+
+    #[test]
+    fn loud_audio_under_a_silent_key_is_left_alone() {
+        // The other half of the same claim: what the compressor hears is the key, so audio well
+        // over the threshold passes untouched while nothing is keying it.
+        let mut plugin = keyed();
+        let frames = 24_000;
+        let input = db_to_gain(-2.0);
+        let mut buffer = constant(frames, input);
+        let key = constant(frames, 0.0);
+        plugin.process_with_sidechain(&mut buffer, &key, &context(frames));
+
+        assert!((buffer.peak() - input).abs() < 1e-6);
+        assert_eq!(plugin.gain_reduction_db(), 0.0);
+    }
+
+    #[test]
+    fn keying_a_compressor_from_its_own_input_is_the_unkeyed_compressor() {
+        // The two paths are one loop with one line different, and this is what says so: handed
+        // its own audio as the key, a keyed compressor has to produce the plain one's output to
+        // the sample.
+        let frames = 8_192;
+        let ctx = context(frames);
+        let signal: Vec<f32> = (0..frames)
+            .map(|i| (i as f32 * 0.031).sin() * db_to_gain(-6.0))
+            .collect();
+        let buffer = AudioBuffer::from_planar(vec![signal.clone(), signal], SR).unwrap();
+
+        let mut plain = keyed();
+        let mut alone = buffer.clone();
+        plain.process(&mut alone, &ctx);
+
+        let mut keyed_by_itself = keyed();
+        let mut through = buffer.clone();
+        keyed_by_itself.process_with_sidechain(&mut through, &buffer, &ctx);
+
+        for channel in 0..alone.channel_count() {
+            assert_eq!(alone.channel(channel), through.channel(channel));
+        }
+    }
+
+    #[test]
+    fn a_key_that_runs_short_leaves_the_compressor_open() {
+        // The engine hands over a key the length of the block; a shorter one is a fault, and the
+        // answer to it has to be silence rather than a panic on the audio thread.
+        let mut plugin = keyed();
+        let frames = 4_800;
+        let mut buffer = constant(frames, db_to_gain(-2.0));
+        let key = constant(frames / 2, 1.0);
+        plugin.process_with_sidechain(&mut buffer, &key, &context(frames));
+        assert!(
+            plugin.gain_reduction_db() < 0.0,
+            "the frames it had still key"
+        );
+        assert!(buffer.peak().is_finite());
     }
 
     #[test]
