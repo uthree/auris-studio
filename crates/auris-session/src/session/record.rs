@@ -411,14 +411,13 @@ impl Session {
         channels
     }
 
-    /// Points the monitor's ring at the channels the track it plays is armed to read.
+    /// Points every monitored track's ring at the channels that track is armed to read.
     ///
-    /// Called wherever either of those can change. An unarmed track monitors the first pair,
-    /// which is what a laptop microphone is and what this did before an arm named channels at all.
+    /// Called wherever either of those can change — [`publish_monitors`](Self::publish_monitors)
+    /// is where it happens. An unarmed track monitors the first pair, which is what a laptop
+    /// microphone is and what this did before an arm named channels at all.
     pub(super) fn point_monitor(&self) {
-        if let (Some(track), Some(ring)) = (self.monitored, self.monitor_ring()) {
-            ring.set_source(self.track_arm(track).map_or(0, |input| input.first));
-        }
+        self.publish_monitors();
     }
 
     /// Whether `track` is one a take could land on.
@@ -524,16 +523,18 @@ impl Session {
             return;
         }
         self.input = None;
-        if self.monitored.is_some() {
+        if !self.monitored.is_empty() {
             match self.open_input() {
+                // The rings belong to the device that was just replaced, so every one of them is
+                // pointed and switched on again — and the graph is holding the old device's,
+                // which is why a rebuild follows.
                 Ok(()) => {
-                    if let Some(ring) = self.monitor_ring() {
-                        ring.set_enabled(true);
-                    }
+                    self.publish_monitors();
+                    self.rebuild_graph();
                 }
                 Err(error) => {
                     log::warn!("could not reopen the input device: {error}");
-                    self.monitored = None;
+                    self.monitored.clear();
                 }
             }
         }
@@ -545,7 +546,7 @@ impl Session {
     /// shows an indicator it is a light saying the application is listening. Leaving one open
     /// against the next take would be convenient and would also be that.
     pub(super) fn close_input_if_idle(&mut self) {
-        if self.take.is_none() && self.monitored.is_none() {
+        if self.take.is_none() && self.monitored.is_empty() {
             self.input = None;
         }
     }

@@ -76,6 +76,14 @@ const POOL_BUFFERS: usize = 32;
 /// callback thread.
 const POOL_SAMPLES: usize = 4_096;
 
+/// How many tracks can be monitored at once.
+///
+/// One ring each, all of them made when the pool is, because the input callback may not allocate
+/// and the set of listeners changes while it is running — a slot switched on is an atomic flag,
+/// where a ring made on demand would be an allocation under a realtime thread. Eight is a band.
+/// Each costs a ring, so the whole set is a megabyte held for as long as a device is open.
+pub const MONITOR_SLOTS: usize = 8;
+
 /// How many input channels get a meter of their own.
 ///
 /// A cap on a fixed-size array rather than a limit on the interface: a device with more channels
@@ -197,7 +205,7 @@ pub struct Capture {
     shared: Arc<CaptureShared>,
     /// The way back to the speakers, handed to the render graph. Unlike the reader this is shared
     /// rather than taken: a graph is rebuilt on every structural edit and needs it again each time.
-    monitor: Arc<MonitorRing>,
+    monitors: Vec<Arc<MonitorRing>>,
     name: String,
     sample_rate: f64,
     channel_count: usize,
@@ -416,15 +424,40 @@ impl Capture {
         self.reader.is_some()
     }
 
-    /// The ring the render graph reads to play this input back through the mix.
+    /// One of the rings the render graph reads to play this input back through the mix.
     ///
-    /// Handed out as often as it is asked for, unlike [`Self::take_reader`]: it is written by the
-    /// callback and read by whichever graph is current, and a graph is replaced on every structural
-    /// edit. Monitoring is off until somebody calls
+    /// Handed out as often as it is asked for, unlike [`Self::take_reader`]: a ring is written by
+    /// the callback and read by whichever graph is current, and a graph is replaced on every
+    /// structural edit. Every slot is off until somebody calls
     /// [`set_enabled`](crate::monitor::MonitorRing::set_enabled) — an open device is not a device
-    /// anybody is listening to.
-    pub fn monitor(&self) -> Arc<MonitorRing> {
-        Arc::clone(&self.monitor)
+    /// anybody is listening to — and which channels a slot carries is
+    /// [`set_source`](crate::monitor::MonitorRing::set_source).
+    ///
+    /// `None` past [`MONITOR_SLOTS`], which is a caller asking to monitor more tracks at once
+    /// than a room holds players.
+    pub fn monitor(&self, slot: usize) -> Option<Arc<MonitorRing>> {
+        self.monitors.get(slot).map(Arc::clone)
+    }
+
+    /// The worst any listening slot has had it: gaps heard, counted.
+    ///
+    /// The worst rather than the sum, because one is what a person is being told about — that the
+    /// monitor is breaking up — and four monitors each breaking up once is that same fact said
+    /// four times.
+    pub fn monitor_rebuffers(&self) -> u64 {
+        self.monitors
+            .iter()
+            .filter(|ring| ring.is_enabled())
+            .map(|ring| ring.rebuffers())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Stops every slot listening, for a device that is being closed or re-pointed.
+    pub fn silence_monitors(&self) {
+        for ring in &self.monitors {
+            ring.set_enabled(false);
+        }
     }
 }
 
@@ -450,12 +483,14 @@ struct CaptureSink {
     /// The count-in cell, read at the same moment as the playhead and for the same reason.
     count_in: Arc<AtomicU64>,
     channels: usize,
-    /// The other reader of these samples: the render graph, when somebody is monitoring.
+    /// The other readers of these samples: the render graph, for every track being monitored.
     ///
-    /// A ring rather than a second consumer of the pool, because the pool has exactly one by
-    /// construction. See [`crate::monitor`], and note that it is written *before* the pool: a take
-    /// that is losing blocks to a stalled disk should still be audible to the person playing it.
-    monitor: Arc<MonitorRing>,
+    /// Rings rather than second consumers of the pool, because the pool has exactly one by
+    /// construction. See [`crate::monitor`], and note that they are written *before* the pool: a
+    /// take that is losing blocks to a stalled disk should still be audible to the person playing
+    /// it. A slot nobody is listening through costs the branch inside
+    /// [`MonitorRing::write`](crate::monitor::MonitorRing::write) and nothing else.
+    monitors: Vec<Arc<MonitorRing>>,
 }
 
 impl CaptureSink {
@@ -468,7 +503,9 @@ impl CaptureSink {
         if data.is_empty() {
             return;
         }
-        self.monitor.write(data, self.channels);
+        for ring in &self.monitors {
+            ring.write(data, self.channels);
+        }
         // Before the take check, because an input meter is about the *device*: somebody setting a
         // level has not started a take yet, and that is exactly when they need to see one.
         self.note_peak(data);
@@ -590,7 +627,10 @@ fn pool(input_rate: f64) -> (Capture, CaptureSink, Arc<CaptureShared>) {
         channel_peaks: [const { AtomicU32::new(0) }; MAX_METERED_CHANNELS],
         frames: AtomicU64::new(0),
     });
-    let monitor = Arc::new(MonitorRing::new(input_rate));
+    // Every slot up front: the callback writes whichever are enabled and may not make one.
+    let monitors: Vec<Arc<MonitorRing>> = (0..MONITOR_SLOTS)
+        .map(|_| Arc::new(MonitorRing::new(input_rate)))
+        .collect();
     let capture = Capture {
         stream: None,
         reader: Some(CaptureReader {
@@ -602,7 +642,7 @@ fn pool(input_rate: f64) -> (Capture, CaptureSink, Arc<CaptureShared>) {
             finished: false,
         }),
         shared: Arc::clone(&shared),
-        monitor: Arc::clone(&monitor),
+        monitors: monitors.clone(),
         name: String::new(),
         sample_rate: 0.0,
         channel_count: 0,
@@ -614,7 +654,7 @@ fn pool(input_rate: f64) -> (Capture, CaptureSink, Arc<CaptureShared>) {
         playhead: Arc::new(AtomicU64::new(0)),
         count_in: Arc::new(AtomicU64::new(0)),
         channels: 1,
-        monitor,
+        monitors,
     };
     (capture, sink, shared)
 }

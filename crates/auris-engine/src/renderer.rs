@@ -14,7 +14,7 @@ use auris_core::AudioBuffer;
 use auris_core::plugin::{NoteEvent, ProcessContext};
 
 use crate::graph::{
-    PITCH_COUNT, RenderAudioClip, RenderGraph, RenderSend, RenderSource, RenderTrack,
+    MonitorTap, PITCH_COUNT, RenderAudioClip, RenderGraph, RenderSend, RenderSource, RenderTrack,
     ScheduledEvent,
 };
 use crate::transport::Transport;
@@ -130,9 +130,9 @@ fn render_segment(
     // in the room, and an export is not happening in the room. It would also be *wrong* rather
     // than merely odd — the ring has one reader, and an export racing the audio thread for it
     // would take blocks out of what the player is hearing.
-    let monitor = match offline {
-        true => None,
-        false => graph.monitor.as_ref(),
+    let monitors: &[MonitorTap] = match offline {
+        true => &[],
+        false => &graph.monitors,
     };
 
     // The routing order rather than the track list: a bus cannot go through its own strip until
@@ -159,7 +159,7 @@ fn render_segment(
         // shapes it, which is what puts the player inside their own mix rather than beside it.
         // Mixed rather than assigned, and unconditional on the transport: monitoring while the
         // song is stopped is how somebody sets a level in the first place.
-        if let Some(tap) = monitor.filter(|tap| tap.track == index) {
+        if let Some(tap) = monitors.iter().find(|tap| tap.track == index) {
             tap.ring.read_into(&mut track.scratch, ctx.sample_rate);
         }
         track
@@ -2161,7 +2161,7 @@ mod tests {
         // until you pressed Play.
         let (_project, mut graph, ring) = monitored(0.5);
         let track = graph.tracks()[0].id;
-        graph.set_monitor(Some((Arc::clone(&ring), track)));
+        graph.set_monitors(&[(Arc::clone(&ring), track)]);
 
         let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
         render_block(&mut graph, &mut Transport::default(), &mut out, false);
@@ -2178,7 +2178,7 @@ mod tests {
         // ride their own level while playing — and what makes a muted track silent.
         let (_project, mut graph, ring) = monitored(0.5);
         let track = graph.tracks()[0].id;
-        graph.set_monitor(Some((Arc::clone(&ring), track)));
+        graph.set_monitors(&[(Arc::clone(&ring), track)]);
 
         graph.set_track_gain_db(0, -6.0);
         let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
@@ -2213,7 +2213,7 @@ mod tests {
         // would take blocks out of what the player is hearing while it worked.
         let (_project, mut graph, ring) = monitored(0.5);
         let track = graph.tracks()[0].id;
-        graph.set_monitor(Some((Arc::clone(&ring), track)));
+        graph.set_monitors(&[(Arc::clone(&ring), track)]);
 
         let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
         render_block(&mut graph, &mut Transport::playing_from(0), &mut out, true);
@@ -2222,14 +2222,77 @@ mod tests {
     }
 
     #[test]
+    fn two_tracks_can_be_monitored_at_once_and_each_hears_its_own_ring() {
+        // A band monitors as a band. Each track takes the ring it was given, so the singer's
+        // microphone comes out of the vocal track's fader and the guitar's out of the guitar's.
+        let mut project = Project::new("Monitor", SAMPLE_RATE);
+        project.add_audio_track("Vocal");
+        project.add_audio_track("Guitar");
+        let mut graph = build(&project, 512);
+        let ring = || {
+            let ring = Arc::new(crate::monitor::MonitorRing::new(SAMPLE_RATE));
+            ring.set_enabled(true);
+            ring
+        };
+        let (vocal, guitar) = (graph.tracks()[0].id, graph.tracks()[1].id);
+        let (loud, quiet) = (ring(), ring());
+        graph.set_monitors(&[(Arc::clone(&loud), vocal), (Arc::clone(&quiet), guitar)]);
+
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+        // Fed a block at a time, the way an input callback feeds it: a reader seats itself a few
+        // blocks behind the writer and cannot outrun it, so a ring primed once and then read from
+        // runs dry however much was put in.
+        let pass = |graph: &mut RenderGraph, out: &mut AudioBuffer| {
+            loud.write(&vec![0.5f32; 2_048], 1);
+            quiet.write(&vec![0.125f32; 2_048], 1);
+            render_block(graph, &mut Transport::default(), out, false);
+        };
+
+        // The second track is muted, so what reaches the master is the first one's ring alone —
+        // which is how the two are told apart in one number. Two blocks, because a mute slides.
+        graph.set_track_mute(1, true);
+        pass(&mut graph, &mut out);
+        pass(&mut graph, &mut out);
+        assert!(
+            (out.peak() - 0.5).abs() < 1.0e-3,
+            "the vocal's own ring did not come through alone: {}",
+            out.peak()
+        );
+
+        // And the other way round, which is what proves the second tap is not the first one's.
+        graph.set_track_mute(0, true);
+        graph.set_track_mute(1, false);
+        pass(&mut graph, &mut out);
+        pass(&mut graph, &mut out);
+        assert!(
+            (out.peak() - 0.125).abs() < 1.0e-3,
+            "the guitar heard something other than its own ring: {}",
+            out.peak()
+        );
+    }
+
+    #[test]
+    fn monitors_handed_over_replace_whatever_was_listening_before() {
+        let (_project, mut graph, ring) = monitored(0.5);
+        let track = graph.tracks()[0].id;
+        graph.set_monitors(&[(Arc::clone(&ring), track)]);
+        graph.set_monitors(&[]);
+
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+        render_block(&mut graph, &mut Transport::default(), &mut out, false);
+        assert_eq!(
+            out.peak(),
+            0.0,
+            "a monitor that was taken away was still heard"
+        );
+    }
+
+    #[test]
     fn a_monitor_aimed_at_a_track_that_is_gone_is_simply_not_heard() {
         // A document and a device disagreeing is not a reason to stop the audio thread, the same
         // way an unknown plugin id is not.
         let (_project, mut graph, ring) = monitored(0.5);
-        graph.set_monitor(Some((
-            Arc::clone(&ring),
-            auris_core::project::TrackId(9_999),
-        )));
+        graph.set_monitors(&[(Arc::clone(&ring), auris_core::project::TrackId(9_999))]);
         let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
         render_block(&mut graph, &mut Transport::default(), &mut out, false);
         assert_eq!(out.peak(), 0.0);

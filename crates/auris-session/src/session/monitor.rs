@@ -37,8 +37,8 @@ use crate::error::SessionError;
 pub struct MonitorStatus {
     /// The device being listened to.
     pub device: String,
-    /// The track the input is playing through.
-    pub track: TrackId,
+    /// The tracks the input is playing through, in the order they were switched on.
+    pub tracks: Vec<TrackId>,
     /// `false` once the device has disappeared out from under it.
     pub running: bool,
     /// Times the monitor has had to jump to catch up with the input, each of them a heard gap.
@@ -50,73 +50,131 @@ pub struct MonitorStatus {
 }
 
 impl Session {
-    /// The track the live input is being played through, if any.
-    pub fn monitored_track(&self) -> Option<TrackId> {
-        self.monitored
+    /// How many tracks may be monitored at once.
+    ///
+    /// A ring each, all of them made when the device opens because the input callback may not
+    /// allocate — [`auris_engine::MONITOR_SLOTS`] is the number and the reason.
+    pub const MAX_MONITORS: usize = auris_engine::MONITOR_SLOTS;
+
+    /// The tracks the live input is being played through, in the order they were switched on.
+    pub fn monitored_tracks(&self) -> &[TrackId] {
+        &self.monitored
     }
 
-    /// `true` while the input is being played through the mix.
+    /// `true` while `track` is one of them.
+    pub fn is_monitored(&self, track: TrackId) -> bool {
+        self.monitored.contains(&track)
+    }
+
+    /// `true` while the input is being played through the mix at all.
     pub fn monitoring(&self) -> bool {
-        self.monitored.is_some()
+        !self.monitored.is_empty()
     }
 
-    /// Plays the live input through `track`, or stops with `None`.
+    /// Plays the live input through `track`, or stops doing so.
     ///
     /// Opens the input device if nothing had it open, and closes it when nothing wants it any
     /// more. Only an audio track: an instrument track has no signal path a live input could take.
     ///
-    /// Idempotent, which is what lets a caller re-point it from wherever it decides the target —
-    /// a frontend whose selection has moved calls this with the new track and pays a rebuild only
-    /// when the answer actually changed.
-    pub fn set_monitoring(&mut self, track: Option<TrackId>) -> Result<(), SessionError> {
-        if let Some(id) = track {
-            let found = self
-                .project
-                .track(id)
-                .ok_or(SessionError::UnknownTrack(id.0))?;
-            if found.kind.as_audio().is_none() {
-                return Err(SessionError::WrongTrackKind {
-                    id: id.0,
-                    actual: found.kind.label(),
-                    expected: "Audio",
-                });
-            }
+    /// Idempotent, which is what lets a caller call it with whatever it decides the target should
+    /// be and pay a rebuild only when the answer actually changed.
+    ///
+    /// Several tracks at once, up to [`Self::MAX_MONITORS`], because a band monitors as a band —
+    /// each track hears the channels *it* is armed to, so the singer hears the microphone their
+    /// own take will be made of. Past the limit this refuses rather than quietly listening to
+    /// fewer: a monitor nobody can hear is worse than one that said why.
+    pub fn set_track_monitoring(&mut self, track: TrackId, on: bool) -> Result<(), SessionError> {
+        let found = self
+            .project
+            .track(track)
+            .ok_or(SessionError::UnknownTrack(track.0))?;
+        if found.kind.as_audio().is_none() {
+            return Err(SessionError::WrongTrackKind {
+                id: track.0,
+                actual: found.kind.label(),
+                expected: "Audio",
+            });
         }
-        if track == self.monitored {
+        if on == self.is_monitored(track) {
             return Ok(());
         }
-        if track.is_some() {
+        if on {
+            if self.monitored.len() >= Self::MAX_MONITORS {
+                return Err(SessionError::TooManyMonitors {
+                    limit: Self::MAX_MONITORS,
+                });
+            }
             self.open_input()?;
+            self.monitored.push(track);
+        } else {
+            self.monitored.retain(|held| *held != track);
         }
-        self.monitored = track;
-        if let Some(ring) = self.monitor_ring() {
-            // Switching on re-seats the reader at the live edge rather than resuming, so a monitor
-            // turned off for a minute does not come back a minute behind.
-            ring.set_enabled(track.is_some());
-        }
-        // At the channels this track would record from, so what is heard is what would be kept.
-        self.point_monitor();
-        // The tap lives in the graph, and the graph is what has to be told which track.
+        self.publish_monitors();
+        // The taps live in the graph, and the graph is what has to be told which tracks.
         self.rebuild_graph();
         self.close_input_if_idle();
         Ok(())
     }
 
+    /// Stops monitoring every track that was.
+    pub fn stop_monitoring(&mut self) {
+        if self.monitored.is_empty() {
+            return;
+        }
+        self.monitored.clear();
+        self.publish_monitors();
+        self.rebuild_graph();
+        self.close_input_if_idle();
+    }
+
     /// How the monitor is doing, for a meter and a warning.
     pub fn monitor_status(&self) -> Option<MonitorStatus> {
-        let track = self.monitored?;
+        if self.monitored.is_empty() {
+            return None;
+        }
         let capture = self.input.as_ref()?;
         Some(MonitorStatus {
             device: capture.name().to_string(),
-            track,
+            tracks: self.monitored.clone(),
             running: capture.is_running(),
-            rebuffers: capture.monitor().rebuffers(),
+            rebuffers: capture.monitor_rebuffers(),
         })
     }
 
-    /// The ring the open input writes into, if there is one.
-    pub(super) fn monitor_ring(&self) -> Option<std::sync::Arc<MonitorRing>> {
-        self.input.as_ref().map(|capture| capture.monitor())
+    /// Points each slot at the track it carries and silences the rest.
+    ///
+    /// A slot per monitored track, in the order they were switched on, at the channels that track
+    /// would record from — so what is heard is what would be kept. Switching one on re-seats its
+    /// reader at the live edge rather than resuming, which is what stops a monitor turned off for
+    /// a minute coming back a minute behind.
+    pub(super) fn publish_monitors(&self) {
+        let Some(capture) = self.input.as_ref() else {
+            return;
+        };
+        for slot in 0..Self::MAX_MONITORS {
+            let Some(ring) = capture.monitor(slot) else {
+                continue;
+            };
+            match self.monitored.get(slot) {
+                Some(track) => {
+                    ring.set_source(self.track_arm(*track).map_or(0, |input| input.first));
+                    ring.set_enabled(true);
+                }
+                None => ring.set_enabled(false),
+            }
+        }
+    }
+
+    /// The rings the graph should read, paired with the tracks they come out of.
+    pub(super) fn monitor_taps(&self) -> Vec<(std::sync::Arc<MonitorRing>, TrackId)> {
+        let Some(capture) = self.input.as_ref() else {
+            return Vec::new();
+        };
+        self.monitored
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, track)| Some((capture.monitor(slot)?, *track)))
+            .collect()
     }
 }
 
@@ -136,15 +194,70 @@ mod tests {
         let mut session = session();
         let synth = session.add_default_instrument_track("Synth").unwrap();
         assert!(matches!(
-            session.set_monitoring(Some(synth)),
+            session.set_track_monitoring(synth, true),
             Err(SessionError::WrongTrackKind { .. })
         ));
         assert!(!session.monitoring());
 
         assert!(matches!(
-            session.set_monitoring(Some(auris_core::TrackId(9_999))),
+            session.set_track_monitoring(auris_core::TrackId(9_999), true),
             Err(SessionError::UnknownTrack(_))
         ));
+    }
+
+    #[test]
+    fn several_tracks_can_be_monitored_at_once_and_each_is_switched_on_its_own() {
+        // A band monitors as a band: everybody hears themselves through their own track, at that
+        // track's fader and through its effects.
+        let mut session = session();
+        let vocal = session.add_audio_track("Vocal");
+        let guitar = session.add_audio_track("Guitar");
+
+        session.set_track_monitoring(vocal, true).unwrap();
+        session.set_track_monitoring(guitar, true).unwrap();
+        assert_eq!(session.monitored_tracks(), [vocal, guitar]);
+        assert!(session.is_monitored(vocal) && session.is_monitored(guitar));
+
+        // Switching one off leaves the other listening, which is the whole point of a list.
+        session.set_track_monitoring(vocal, false).unwrap();
+        assert_eq!(session.monitored_tracks(), [guitar]);
+        assert!(session.monitoring());
+
+        session.stop_monitoring();
+        assert!(!session.monitoring());
+        assert_eq!(session.monitor_status(), None);
+    }
+
+    #[test]
+    fn switching_one_on_twice_is_not_two_monitors() {
+        // A frontend calls this with whatever it decides the answer is, so the no-change call is
+        // the common one and must not stack up rings on one track.
+        let mut session = session();
+        let vocal = session.add_audio_track("Vocal");
+        session.set_track_monitoring(vocal, true).unwrap();
+        session.set_track_monitoring(vocal, true).unwrap();
+        assert_eq!(session.monitored_tracks(), [vocal]);
+
+        session.set_track_monitoring(vocal, false).unwrap();
+        session.set_track_monitoring(vocal, false).unwrap();
+        assert!(session.monitored_tracks().is_empty());
+    }
+
+    #[test]
+    fn more_tracks_than_there_are_rings_is_refused_rather_than_half_done() {
+        // Every ring is made when the device opens, because the input callback may not make one
+        // while it is running. A monitor nobody can hear is worse than one that said why.
+        let mut session = session();
+        for index in 0..=Session::MAX_MONITORS {
+            let track = session.add_audio_track(format!("Take {index}"));
+            let result = session.set_track_monitoring(track, true);
+            if index < Session::MAX_MONITORS {
+                result.expect("within the limit");
+            } else {
+                assert!(matches!(result, Err(SessionError::TooManyMonitors { .. })));
+            }
+        }
+        assert_eq!(session.monitored_tracks().len(), Session::MAX_MONITORS);
     }
 
     #[test]
@@ -153,7 +266,7 @@ mod tests {
         // also had this on would hear themselves twice, slightly apart.
         let session = session();
         assert!(!session.monitoring());
-        assert_eq!(session.monitored_track(), None);
+        assert!(session.monitored_tracks().is_empty());
         assert_eq!(session.monitor_status(), None);
     }
 
@@ -162,7 +275,9 @@ mod tests {
         // A frontend re-points this from wherever it decides its target, so the no-change call is
         // the common one and must not open a device or rebuild a graph to do nothing.
         let mut session = session();
-        session.set_monitoring(None).unwrap();
+        let track = session.add_audio_track("Take");
+        session.set_track_monitoring(track, false).unwrap();
+        session.stop_monitoring();
         assert!(!session.monitoring());
     }
 }

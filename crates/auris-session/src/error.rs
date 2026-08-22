@@ -135,6 +135,16 @@ pub enum SessionError {
     #[error("select an audio track to record onto, or arm one")]
     NothingToRecordOnto,
 
+    /// Monitoring was asked for on more tracks at once than there are rings to carry them.
+    ///
+    /// A limit rather than a queue: every ring is made when the device opens, because the input
+    /// callback may not allocate one while it is running.
+    #[error("no more than {limit} tracks can be monitored at once")]
+    TooManyMonitors {
+        /// How many may be monitored at once.
+        limit: usize,
+    },
+
     /// A crossfade was asked for between two clips that do not overlap on one track.
     ///
     /// Nothing is moved to make them: a crossfade shapes a join somebody has already made by

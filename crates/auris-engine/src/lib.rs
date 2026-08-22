@@ -92,7 +92,8 @@ pub mod transport;
 mod testkit;
 
 pub use capture::{
-    Capture, CaptureReader, CaptureSettings, MAX_METERED_CHANNELS, input_devices, start_capture,
+    Capture, CaptureReader, CaptureSettings, MAX_METERED_CHANNELS, MONITOR_SLOTS, input_devices,
+    start_capture,
 };
 pub use command::EngineCommand;
 pub use device::{

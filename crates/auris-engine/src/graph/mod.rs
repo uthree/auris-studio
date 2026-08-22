@@ -184,8 +184,12 @@ pub struct RenderGraph {
     /// Shared with the UI rather than owned by it, because only the render path ever sees a
     /// strip's signal — the document holds parameter values, not audio.
     pub(crate) scope: Arc<crate::scope::Scope>,
-    /// The live input, and the track it plays through, while somebody is monitoring.
-    pub(crate) monitor: Option<MonitorTap>,
+    /// The live input, and the tracks it plays through, for everyone being monitored.
+    ///
+    /// A list rather than one, because a band monitors as a band. Walked once per track in the
+    /// render, which is a handful of comparisons against a list that is empty on almost every
+    /// project and never longer than [`MONITOR_SLOTS`](crate::MONITOR_SLOTS).
+    pub(crate) monitors: Vec<MonitorTap>,
 }
 
 /// A live input joined to the track it is heard through.
@@ -514,7 +518,7 @@ impl RenderGraph {
             master_scratch,
             master_peak: [0.0, 0.0],
             scope: Arc::new(crate::scope::Scope::new()),
-            monitor: None,
+            monitors: Vec::new(),
         }
     }
 
@@ -527,7 +531,7 @@ impl RenderGraph {
         self.scope = scope;
     }
 
-    /// Plays a live input through `track`, or stops doing so with `None`.
+    /// Plays a live input through each named track, and stops doing so through every other.
     ///
     /// Handed in after building for the same reason the scope is, and re-applied on every rebuild:
     /// a graph is replaced whenever the document changes structurally, and a monitor that did not
@@ -536,11 +540,17 @@ impl RenderGraph {
     /// A track id the graph does not hold silently monitors nothing, the way an unknown plugin id
     /// silently plays nothing — a document and a device disagreeing is not a reason to stop the
     /// audio thread.
-    pub fn set_monitor(&mut self, monitor: Option<(Arc<crate::monitor::MonitorRing>, TrackId)>) {
-        self.monitor = monitor.and_then(|(ring, id)| {
-            let track = self.tracks.iter().position(|track| track.id == id)?;
-            Some(MonitorTap { ring, track })
-        });
+    pub fn set_monitors(&mut self, monitors: &[(Arc<crate::monitor::MonitorRing>, TrackId)]) {
+        self.monitors.clear();
+        self.monitors.reserve(monitors.len());
+        for (ring, id) in monitors {
+            if let Some(track) = self.tracks.iter().position(|track| track.id == *id) {
+                self.monitors.push(MonitorTap {
+                    ring: Arc::clone(ring),
+                    track,
+                });
+            }
+        }
     }
 
     /// Rate this graph was prepared for.

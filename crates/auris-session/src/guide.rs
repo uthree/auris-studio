@@ -239,6 +239,11 @@ pub mod architecture {
     //! frames the input callback fills and the *render graph* empties, joined to a track so the
     //! input arrives before the effects, the fader and the sends.
     //!
+    //! **A ring per monitored track, all of them made when the device opens.** The set changes
+    //! while the input callback is running and that callback may not allocate, so the slots exist
+    //! before they are wanted and a switch is an atomic flag on one of them. That is also the
+    //! whole of why there is a limit on how many tracks can be monitored at once.
+    //!
     //! The two clocks turn up again here and get the opposite answer from the one
     //! [`auris_engine::capture`] gives. A take may not be silently corrected, because a take is
     //! being kept. A monitor may, because it is being *listened to*: when drift closes the gap or

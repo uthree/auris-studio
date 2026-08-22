@@ -157,7 +157,7 @@ impl AurisApp {
                 looping: self.project().loop_enabled,
                 punching: self.project().punch_enabled,
                 recording: self.session.is_recording(),
-                monitoring: self.session.monitored_track().is_some(),
+                monitoring: self.session.monitoring(),
                 metronome: self.session.metronome(),
                 musical_typing: self.session.typing_keyboard().enabled(),
             },

@@ -327,7 +327,7 @@ pub struct Session {
     take: Option<record::Take>,
     /// The track the live input is being played through, if anybody asked for that. See
     /// [`monitor`].
-    monitored: Option<TrackId>,
+    monitored: Vec<TrackId>,
     /// The computer keyboard, when it is being played as one. See [`typing`].
     ///
     /// Outside the document for the same reason [`Self::armed`] is: which octave somebody's hands
@@ -480,7 +480,7 @@ impl Session {
             input_channels: None,
             counting: None,
             input: None,
-            monitored: None,
+            monitored: Vec::new(),
             typing: MusicalTyping::default(),
             take: None,
             hosted: hosted::HostedPlugins::default(),
@@ -972,7 +972,7 @@ impl Session {
         // Re-attached rather than remembered by the graph, for the same reason the scope is: this
         // runs on every structural edit, and a monitor that did not survive one would go quiet the
         // moment somebody added a track while playing.
-        graph.set_monitor(self.monitor_ring().zip(self.monitored));
+        graph.set_monitors(&self.monitor_taps());
         if let Err(error) = self.engine.set_graph(graph) {
             log::warn!("could not update the render graph: {error}");
         }

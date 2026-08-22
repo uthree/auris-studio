@@ -229,6 +229,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::AlreadyRecording => Key::ErrorAlreadyRecording.get(language).to_string(),
         SessionError::NothingToStem => Key::ErrorNothingToStem.get(language).to_string(),
         SessionError::NotOverlapping => Key::ErrorNotOverlapping.get(language).to_string(),
+        SessionError::TooManyMonitors { limit } => messages::too_many_monitors(language, *limit),
         SessionError::RecordingInProgress => {
             Key::ErrorRecordingInProgress.get(language).to_string()
         }

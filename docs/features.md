@@ -735,9 +735,10 @@ Two things follow from there being one device rather than several:
 * **A channel the interface does not have records silence.** An arm outlives the box it was made
   for, so a project armed to inputs 5-8 opened on a laptop gives you those tracks silent rather
   than four copies of the built-in microphone.
-* **Monitoring is still one track.** It follows that track's own input channels, so listening to
-  a track armed to input 5 plays input 5 — but a room recording together hears itself through the
-  interface, which is what the interface is for.
+* **Every track can monitor at once**, up to eight, each through its own input channels: the
+  singer hears the microphone their take will be made of, at their own track's fader and through
+  its effects. Past eight it says so rather than quietly listening to fewer — every ring is made
+  when the device opens, because the input callback may not make one while it is running.
 * **Every armed track has its own meter**, a thin bar to the left of the one that shows what the
   track puts out. It reads the channels that track is armed to, so four microphones are four
   readings rather than one number for the interface — which is what the transport bar's input
@@ -825,9 +826,15 @@ about to be recorded into, at the level the fader is set to, and a muted track s
 It works with the transport stopped, which is when you set a level in the first place, and it does
 not need a take running. Recording and monitoring are independent switches on the same device.
 
-**One track at a time**, unlike the arm — there is one path back into the mix, so pressing **I**
-on another track moves it. It plays the channels that track is armed to read, so a track armed to
-input 5 monitors input 5 and one that is not armed monitors the first pair.
+**A switch per track**, like the arm: press **I** on as many as you like and every one of them
+plays, each through its own strip. Each plays the channels *that* track is armed to read, so a
+track armed to input 5 monitors input 5, one armed to 7-8 monitors that pair, and one that is not
+armed monitors the first pair. A band therefore hears itself the way it will be recorded — each
+player through their own fader, their own effects and their own microphone.
+
+**Eight at once** is the limit. Every path back into the mix is a buffer that has to exist before
+the input device starts running, so they are made when the device opens rather than on demand; the
+ninth says so instead of quietly listening to fewer.
 
 **Software monitoring costs latency and an interface's own does not.** The signal has to travel
 input device → Auris → output device, and Auris holds three blocks of buffer in the middle so the

@@ -9,6 +9,14 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### The whole band can hear itself
+
+* **Monitoring is a switch per track**, like the arm, and up to eight play at once — each through
+  its own strip and its own armed input channels. A band therefore hears itself the way it will be
+  recorded: every player through their own fader, their own effects and their own microphone.
+* The ninth is refused rather than silently dropped. Every path back into the mix is a ring that
+  has to exist before the input device starts, because the input callback may not make one.
+
 ### A meter for every armed track
 
 * Each armed track's header shows **what is arriving on its own input channels**, as a thin bar

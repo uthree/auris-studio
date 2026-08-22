@@ -1328,7 +1328,9 @@ impl AurisApp {
         // The per-track button is for monitoring one track while looking at another.
         match self
             .session
-            .monitored_track()
+            .monitored_tracks()
+            .first()
+            .copied()
             .or_else(|| self.record_target())
         {
             Some(track) => self.toggle_monitoring(track),

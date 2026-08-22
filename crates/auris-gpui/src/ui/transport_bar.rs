@@ -910,27 +910,26 @@ impl AurisApp {
 
     /// Plays the live input through `track`, or stops doing so if it already was.
     ///
-    /// One track at a time, unlike the arm: there is one ring and it carries one stereo pair, so
-    /// the monitor has one place to come out. It listens to the channels that track is armed to
-    /// read, so what is heard is what would be kept.
+    /// A switch per track, like the arm: a band monitors as a band, and each track hears the
+    /// channels *it* is armed to read, so what is heard is what would be kept.
     ///
     /// The status line names the device *and* what listening this way costs, every time rather
     /// than once. Somebody recording through an interface that monitors in hardware and who turns
     /// this on as well hears themselves twice, a few milliseconds apart, and the fix is to turn
     /// one of them off — which is only obvious to somebody who has been told there are two.
     pub(crate) fn toggle_monitoring(&mut self, track: TrackId) {
-        let wanted = match self.session.monitored_track() == Some(track) {
-            true => None,
-            false => Some(track),
-        };
-        if let Err(error) = self.session.set_monitoring(wanted) {
+        let wanted = !self.session.is_monitored(track);
+        if let Err(error) = self.session.set_track_monitoring(track, wanted) {
             let line = self.failure(Key::CmdToggleMonitoring, &error);
             self.set_failed_status(line);
             return;
         }
         self.monitor_gaps = 0;
         let line = match self.session.monitor_status() {
-            Some(status) => messages::monitoring_on(self.language, &status.device),
+            Some(status) => match status.tracks.len() {
+                1 => messages::monitoring_on(self.language, &status.device),
+                heard => messages::monitoring_tracks(self.language, heard, &status.device),
+            },
             None => self.t(Key::MonitoringOff).to_string(),
         };
         self.set_status(line);

@@ -180,7 +180,7 @@ impl AurisApp {
                 );
                 // No `Ready` state to match the arm's: monitoring is never inferred from a
                 // selection, because it is a thing that costs and those are switched on by hand.
-                let monitored = self.session.monitored_track() == Some(id);
+                let monitored = self.session.is_monitored(id);
                 // What is arriving on the channels this track is armed to, and only while it is
                 // armed and something is listening. The transport bar's meter is the *device* —
                 // one number for the whole interface — which cannot tell a room where one

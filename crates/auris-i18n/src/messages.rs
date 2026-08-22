@@ -629,6 +629,18 @@ messages! {
         ja: "{count} 本のステムを {folder} に書き出しました"
     }
 
+    /// More tracks asked to monitor at once than there are rings to carry them.
+    fn too_many_monitors(limit: usize) {
+        en: "no more than {limit} tracks can be monitored at once",
+        ja: "同時にモニターできるのは {limit} トラックまでです"
+    }
+
+    /// Several tracks listening to the live input at once.
+    fn monitoring_tracks(tracks: usize, device: &str) {
+        en: "monitoring {tracks} tracks through {device} — an interface that monitors in hardware does it with less delay",
+        ja: "{device} から {tracks} トラックをモニターしています（ハードウェアモニタリングのほうが遅延は小さくなります）"
+    }
+
     /// How long the join two crossfaded clips came out.
     fn crossfaded(seconds: f64) {
         en: "crossfaded over {seconds:.2} seconds",
