@@ -44,7 +44,7 @@ use auris_clap::{
 };
 use auris_core::asset::AssetPath;
 use auris_core::param::{ParamDescriptor, ParamId};
-use auris_core::plugin::{Parameterized, PluginState, PrepareContext};
+use auris_core::plugin::{Effect, Parameterized, PluginState, PrepareContext};
 use auris_core::project::{EffectSlotId, Project, TrackId};
 use auris_engine::{PlacedEffects, PlacedInstruments};
 
@@ -98,6 +98,12 @@ struct HostedSlot {
     /// A wish about the slot, held here rather than read off an instance, because the instance a
     /// window is drawn by can change under it and the wish must not.
     editor: bool,
+    /// Whether the plugin declared a port for a key, as its last activation reported.
+    ///
+    /// Recorded when the effect is built rather than asked for on demand, because asking a
+    /// `ClapPlugin` about its ports is `&mut` — it reads them back off the plugin — and a
+    /// frontend deciding whether to draw a source picker is not.
+    sidechain: bool,
     /// What the plugin last said its parameters were, by [`ParamId`].
     ///
     /// Read from the plugin rather than from the document, because for a hosted plugin the
@@ -139,6 +145,14 @@ impl HostedPlugins {
             .get(&track)?
             .plugin()
             .map(ClapPlugin::parameters)
+    }
+
+    /// Whether a hosted slot's plugin declared a port for a key.
+    ///
+    /// `false` for a slot that is not hosted and for one whose plugin has never been built, which
+    /// is the same answer either way: nothing to offer a source to.
+    pub(super) fn wants_sidechain(&self, slot: EffectSlotId) -> bool {
+        self.slots.get(&slot).is_some_and(|slot| slot.sidechain)
     }
 
     /// What a hosted slot's plugin calls itself.
@@ -454,6 +468,7 @@ impl HostedSlot {
     ) -> Result<ClapEffect, ClapError> {
         let mut plugin = self.incoming(library, state)?;
         let mut effect = plugin.activate(prepare)?;
+        self.sidechain = effect.wants_sidechain();
         // The document's parameter map last, so a value the user automated wins over the one
         // baked into the patch.
         effect.load_state(state);
@@ -566,6 +581,7 @@ fn fit<'a, K: Ord + Copy>(
         // from under an open editor comes back with none — and the one that was open closed with
         // the instance it belonged to.
         editor: false,
+        sidechain: false,
         values: Vec::new(),
     };
     let slot = slots.entry(key).or_insert_with(fresh);
@@ -952,6 +968,7 @@ mod tests {
             live: None,
             spare: None,
             editor: false,
+            sidechain: false,
             values: Vec::new(),
         }
     }
@@ -1239,6 +1256,22 @@ mod tests {
             "an instance nobody can reach is an instance nobody can free"
         );
         assert_eq!(session.hosted_instrument_name(track), None);
+    }
+
+    #[test]
+    fn a_hosted_plugin_that_declares_a_sidechain_port_is_offered_a_source() {
+        // The fixture declares one; the built-in reverb does not. A frontend draws the picker off
+        // this answer, and it has to come from the *plugin* — the registry has never heard of a
+        // hosted one, and two slots can hold the same plugin out of two different files.
+        let (mut session, file) = session_with_fixture();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let hosted = session
+            .add_hosted_effect(Some(track), &file, FIXTURE_ID)
+            .expect("the fixture is in the library");
+        let built_in = session.add_effect(Some(track), "auris.fx.reverb").unwrap();
+
+        assert!(session.effect_wants_sidechain(Some(track), hosted));
+        assert!(!session.effect_wants_sidechain(Some(track), built_in));
     }
 
     #[test]

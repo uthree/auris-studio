@@ -148,6 +148,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::RemoveEffect => Key::EditRemoveEffect,
         Edit::BypassEffect => Key::EditBypassEffect,
         Edit::ReorderEffects => Key::EditReorderEffects,
+        Edit::SetEffectSidechain => Key::EditSetEffectSidechain,
         Edit::AdjustParameter(_) => Key::EditAdjustParameter,
         Edit::WriteAutomation(_) => Key::EditWriteAutomation,
         Edit::EraseAutomation => Key::EditEraseAutomation,

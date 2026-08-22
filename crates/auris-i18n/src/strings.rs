@@ -841,6 +841,7 @@ strings! {
     EditRemoveEffect { en: "removing an effect", ja: "エフェクトの削除" }
     EditBypassEffect { en: "bypassing an effect", ja: "エフェクトのバイパス" }
     EditReorderEffects { en: "reordering the effects", ja: "エフェクトの並べ替え" }
+    EditSetEffectSidechain { en: "changing the sidechain", ja: "サイドチェインの変更" }
     EditAdjustParameter { en: "the parameter change", ja: "パラメーターの変更" }
     MenuFreezeTrack { en: "Keep Every Take Here", ja: "このトラックをすべて確定" }
     MenuTrackColor { en: "Colour", ja: "カラー" }

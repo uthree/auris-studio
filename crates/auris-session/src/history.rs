@@ -147,6 +147,8 @@ pub enum Edit {
     BypassEffect,
     /// A chain was reordered.
     ReorderEffects,
+    /// An effect was pointed at a track to key from, or stopped listening to one.
+    SetEffectSidechain,
     /// A parameter value changed.
     ///
     /// Which parameter travels along, because repeated-edit coalescing compares whole `Edit`

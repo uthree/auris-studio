@@ -278,6 +278,13 @@ pub struct Session {
     analyzer: auris_dsp::SpectrumAnalyzer,
 
     param_cache: HashMap<String, Arc<Vec<ParamDescriptor>>>,
+    /// Which built-in effects listen to a key, by plugin id.
+    ///
+    /// The only way to ask is to build one, and the frontend asks while it is drawing — every
+    /// frame, for every slot on screen. The answer cannot change for a given id, so it is worth
+    /// exactly one instantiation each. A hosted plugin is not here: it is asked about by slot,
+    /// because two slots can hold the same plugin out of two different files.
+    keyed_cache: HashMap<String, bool>,
     waveforms: HashMap<SourceId, Arc<WaveformPeaks>>,
 
     /// What was last cut or copied.
@@ -441,6 +448,7 @@ impl Session {
             scope: Arc::new(auris_engine::Scope::new()),
             analyzer: auris_dsp::SpectrumAnalyzer::new(auris_engine::SCOPE_WINDOW),
             param_cache: HashMap::new(),
+            keyed_cache: HashMap::new(),
             waveforms: HashMap::new(),
             clipboard: Clipboard::default(),
             armed: None,

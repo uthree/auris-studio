@@ -115,6 +115,95 @@ impl Session {
         self.invalidate_graph();
     }
 
+    /// Which track keys an effect slot, or `None` when nothing does.
+    pub fn effect_sidechain(&self, track: Option<TrackId>, slot: EffectSlotId) -> Option<TrackId> {
+        self.strip(track)?
+            .effects
+            .iter()
+            .find(|s| s.id == slot)?
+            .sidechain
+    }
+
+    /// Points an effect slot at a track to key from, or clears it with `None`.
+    ///
+    /// Refused when the source is not a track, or when keying from it would leave a strip waiting
+    /// for itself — checked before anything is recorded, for the reason
+    /// [`Self::set_track_output`] gives.
+    pub fn set_effect_sidechain(
+        &mut self,
+        track: Option<TrackId>,
+        slot: EffectSlotId,
+        source: Option<TrackId>,
+    ) -> Result<(), SessionError> {
+        if self.effect_enabled(track, slot).is_none() {
+            return Ok(());
+        }
+        if let Some(source) = source {
+            self.require_track(source)?;
+            if self.project.sidechain_would_cycle(track, source) {
+                return Err(SessionError::RoutingLoop {
+                    from: source.0,
+                    to: track.map_or(0, |id| id.0),
+                });
+            }
+        }
+        if self.effect_sidechain(track, slot) == source {
+            return Ok(());
+        }
+        self.record(Edit::SetEffectSidechain);
+        if let Some(strip) = self.strip_mut(track)
+            && let Some(effect) = strip.effects.iter_mut().find(|s| s.id == slot)
+        {
+            effect.sidechain = source;
+        }
+        // A structural change, not a parameter: which track feeds which chain decides the order
+        // the graph is rendered in and which taps it carries.
+        self.invalidate_graph();
+        Ok(())
+    }
+
+    /// Every track an effect on this strip could key from, in project order.
+    ///
+    /// What a frontend puts in front of somebody choosing one. A track that would close a loop is
+    /// left out rather than offered and refused — the strip's own track among them, which is the
+    /// one most likely to be tried.
+    pub fn sidechain_sources(&self, track: Option<TrackId>) -> Vec<TrackId> {
+        self.project
+            .tracks
+            .iter()
+            .map(|entry| entry.id)
+            .filter(|source| !self.project.sidechain_would_cycle(track, *source))
+            .collect()
+    }
+
+    /// Whether the effect in a slot listens to a key, so a frontend knows to offer a source.
+    ///
+    /// The only way to find out is to ask an instance of the plugin, so a hosted slot is asked
+    /// about by slot — its plugin is already built — and a built-in by id, once, because the
+    /// answer cannot change and the question is asked on every frame that draws the chain.
+    pub fn effect_wants_sidechain(&mut self, track: Option<TrackId>, slot: EffectSlotId) -> bool {
+        if self.hosted.wants_sidechain(slot) {
+            return true;
+        }
+        let Some(effect_id) = self
+            .strip(track)
+            .and_then(|strip| strip.effects.iter().find(|s| s.id == slot))
+            .filter(|entry| !entry.is_hosted())
+            .map(|entry| entry.effect_id.clone())
+        else {
+            return false;
+        };
+        if let Some(known) = self.keyed_cache.get(&effect_id) {
+            return *known;
+        }
+        let wants = self
+            .registry
+            .create_effect(&effect_id)
+            .is_ok_and(|effect| effect.wants_sidechain());
+        self.keyed_cache.insert(effect_id, wants);
+        wants
+    }
+
     fn strip_mut(&mut self, track: Option<TrackId>) -> Option<&mut auris_core::MixerStrip> {
         match track {
             Some(id) => self.project.track_mut(id).map(|t| &mut t.mixer),
@@ -608,6 +697,112 @@ mod tests {
     use super::*;
     use crate::session::fixtures::{Scratch, session, undo_depth};
     use auris_core::param::ParamId;
+
+    /// The compressor's registry id, which is the one built-in that listens to a key.
+    const COMPRESSOR: &str = "auris.fx.compressor";
+
+    #[test]
+    fn only_an_effect_that_listens_is_offered_a_source() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Bass").unwrap();
+        let keyed = session.add_effect(Some(track), COMPRESSOR).unwrap();
+        let plain = session.add_effect(Some(track), "auris.fx.reverb").unwrap();
+        assert!(session.effect_wants_sidechain(Some(track), keyed));
+        assert!(!session.effect_wants_sidechain(Some(track), plain));
+        // Asked twice, because the answer is cached after the first instantiation and a cache
+        // that answers differently the second time is worse than no cache.
+        assert!(session.effect_wants_sidechain(Some(track), keyed));
+    }
+
+    #[test]
+    fn a_key_is_written_down_and_taken_back() {
+        let mut session = session();
+        let kick = session.add_default_instrument_track("Kick").unwrap();
+        let bass = session.add_default_instrument_track("Bass").unwrap();
+        let slot = session.add_effect(Some(bass), COMPRESSOR).unwrap();
+        assert_eq!(session.effect_sidechain(Some(bass), slot), None);
+
+        session
+            .set_effect_sidechain(Some(bass), slot, Some(kick))
+            .expect("the kick is upstream of nothing");
+        assert_eq!(session.effect_sidechain(Some(bass), slot), Some(kick));
+
+        // Writing the same key again is not an edit, so it cannot cost an undo step: one undo
+        // still has to reach all the way back past the write that did happen.
+        session
+            .set_effect_sidechain(Some(bass), slot, Some(kick))
+            .expect("no change");
+        session.undo();
+        assert_eq!(session.effect_sidechain(Some(bass), slot), None);
+    }
+
+    #[test]
+    fn a_key_that_cannot_be_rendered_is_refused_without_costing_an_undo_step() {
+        let mut session = session();
+        let kick = session.add_default_instrument_track("Kick").unwrap();
+        let bus = session.add_bus_track("Drums");
+        session
+            .set_track_output(kick, auris_core::project::Output::Bus(bus))
+            .expect("a bus is a bus");
+        let bass = session.add_default_instrument_track("Bass").unwrap();
+        let slot = session.add_effect(Some(kick), COMPRESSOR).unwrap();
+        session
+            .set_effect_sidechain(Some(kick), slot, Some(bass))
+            .expect("the bass is downstream of nothing");
+
+        // The kick already feeds the bus, so the bus cannot be rendered before it.
+        assert!(matches!(
+            session.set_effect_sidechain(Some(kick), slot, Some(bus)),
+            Err(SessionError::RoutingLoop { from, to }) if from == bus.0 && to == kick.0
+        ));
+        // Nor can a chain key from the track it is sitting on.
+        assert!(matches!(
+            session.set_effect_sidechain(Some(kick), slot, Some(kick)),
+            Err(SessionError::RoutingLoop { .. })
+        ));
+        // Nor from a track that is not there.
+        assert!(matches!(
+            session.set_effect_sidechain(Some(kick), slot, Some(TrackId(9_999))),
+            Err(SessionError::UnknownTrack(_))
+        ));
+        assert_eq!(session.effect_sidechain(Some(kick), slot), Some(bass));
+        // A refusal is not an edit: one undo has to reach past all three of them to the write
+        // that succeeded, rather than being spent on a step that reverses nothing.
+        session.undo();
+        assert_eq!(session.effect_sidechain(Some(kick), slot), None);
+    }
+
+    #[test]
+    fn the_sources_offered_are_the_ones_that_could_actually_be_used() {
+        let mut session = session();
+        let kick = session.add_default_instrument_track("Kick").unwrap();
+        let bass = session.add_default_instrument_track("Bass").unwrap();
+        let bus = session.add_bus_track("Drums");
+        session
+            .set_track_output(kick, auris_core::project::Output::Bus(bus))
+            .expect("a bus is a bus");
+
+        // On the bass: everything but itself, since nothing is downstream of it.
+        assert_eq!(session.sidechain_sources(Some(bass)), vec![kick, bus]);
+        // On the kick: not itself, and not the bus it feeds.
+        assert_eq!(session.sidechain_sources(Some(kick)), vec![bass]);
+        // On the master, which runs last: everything.
+        assert_eq!(session.sidechain_sources(None), vec![kick, bass, bus]);
+    }
+
+    #[test]
+    fn deleting_the_track_a_chain_was_keyed_from_clears_the_key() {
+        let mut session = session();
+        let kick = session.add_default_instrument_track("Kick").unwrap();
+        let bass = session.add_default_instrument_track("Bass").unwrap();
+        let slot = session.add_effect(Some(bass), COMPRESSOR).unwrap();
+        session
+            .set_effect_sidechain(Some(bass), slot, Some(kick))
+            .expect("upstream of nothing");
+
+        session.remove_track(kick).expect("the kick is there");
+        assert_eq!(session.effect_sidechain(Some(bass), slot), None);
+    }
 
     #[test]
     fn parameters_round_trip_through_the_document() {
