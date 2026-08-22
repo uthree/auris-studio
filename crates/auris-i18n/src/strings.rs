@@ -876,6 +876,7 @@ strings! {
     EditGenerateClip { en: "writing a clip", ja: "クリップの自動生成" }
     EditFreezeClip { en: "keeping a clip", ja: "クリップの確定" }
     EditCompose { en: "composing a piece", ja: "自動作曲" }
+    EditBalanceLevels { en: "balancing the mix", ja: "ミックスの自動調整" }
 
     // ------------------------------------------------------------------ errors
     ErrorUnknownTrack { en: "that track no longer exists", ja: "そのトラックは存在しません" }

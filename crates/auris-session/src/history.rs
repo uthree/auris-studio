@@ -205,6 +205,8 @@ pub enum Edit {
     FreezeClip,
     /// The document was replaced by a composed piece.
     Compose,
+    /// Every fader was set from a measurement of what the mix actually sounds like.
+    BalanceLevels,
 }
 
 impl Edit {

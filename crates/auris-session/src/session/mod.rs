@@ -40,6 +40,7 @@ mod files;
 mod generated;
 mod harmony;
 mod hosted;
+mod levels;
 mod mixer;
 mod monitor;
 mod notes;
@@ -58,6 +59,10 @@ pub use clipboard::{Clipboard, CopiedClip, CopiedContent};
 pub use compose::{composed_gain_db, kit_trim_db};
 pub use files::{LoadedFont, decode_audio, read_soundfont};
 pub use hosted::PluginWindow;
+pub use levels::{
+    BalanceReport, CEILING_DB, LIMITER_ALLOWANCE_DB, TARGET_LUFS, TrackLevel, fader_for,
+    faders_lift_db, master_gain_db,
+};
 pub use monitor::MonitorStatus;
 pub use notes::{Quantize, quantized};
 pub use record::{RecordingReport, RecordingStatus};
@@ -108,6 +113,13 @@ pub struct SessionOptions {
     /// runner is a document two test runs would disagree about. It also saves reading two hundred
     /// megabytes per session in a suite that opens hundreds of them.
     pub shipped_fonts: bool,
+    /// Set a composed piece's levels by rendering it and measuring what came out.
+    ///
+    /// On, because a level the composer guessed is a guess about an instrument nobody had heard
+    /// yet — see [`Session::balance_levels`]. Off is for a caller that wants the numbers the
+    /// composer wrote and nothing else: the tests that are *about* those numbers, and anything
+    /// that cannot afford a render per part.
+    pub balance_composed: bool,
     /// Write the document back over itself as it changes, once it has somewhere to be written.
     ///
     /// On by default, and off for a headless session: a batch tool holds a document for a few
@@ -125,6 +137,7 @@ impl Default for SessionOptions {
             audio_preferences: AudioPreferences::default(),
             sample_rate: 48_000.0,
             shipped_fonts: true,
+            balance_composed: true,
             autosave: true,
         }
     }
@@ -149,6 +162,12 @@ impl SessionOptions {
     /// Whether to read the SoundFonts the application ships with.
     pub fn with_shipped_fonts(mut self, shipped_fonts: bool) -> Self {
         self.shipped_fonts = shipped_fonts;
+        self
+    }
+
+    /// Whether composing ends by measuring the piece and setting its levels from what it heard.
+    pub fn with_balance(mut self, balance_composed: bool) -> Self {
+        self.balance_composed = balance_composed;
         self
     }
 
@@ -215,6 +234,8 @@ pub struct Session {
     /// Whether this session reads the shipped library at all — see
     /// [`SessionOptions::shipped_fonts`].
     shipped_library: bool,
+    /// Whether composing ends by measuring the piece — see [`SessionOptions::balance_composed`].
+    balance_composed: bool,
     registry: Arc<PluginRegistry>,
     engine: EngineHandle,
     device: Option<AudioDevice>,
@@ -339,6 +360,12 @@ pub struct ComposeReport {
     pub length: Ticks,
     /// Instruments a part asked for that this build does not have.
     pub substituted: Vec<String>,
+    /// What setting the mix by measurement did, or `None` if the piece could not be rendered.
+    ///
+    /// Composing ends by listening to what it wrote — see [`Session::balance_levels`] — because
+    /// the level a part wants depends on the instrument that answered, and the composer chooses
+    /// the part while the session finds the instrument.
+    pub balance: Option<BalanceReport>,
 }
 
 struct Transaction {
@@ -395,6 +422,7 @@ impl Session {
             fonts,
             shipped: HashMap::new(),
             shipped_library: options.shipped_fonts,
+            balance_composed: options.balance_composed,
             registry,
             engine,
             device: Some(device),
@@ -652,6 +680,16 @@ impl Session {
     /// because the half that can build one may not leave it. An export that did not do this would
     /// bounce the mix minus every plugin the user loaded.
     pub fn render_job(&mut self) -> RenderJob {
+        self.job_for(self.project.clone())
+    }
+
+    /// A job that renders `project` rather than the document, with this session's sounds.
+    ///
+    /// What the balance pass measures is a *variation* on the open document — one track soloed,
+    /// or the same piece with different faders — and it must be rendered through the same bank,
+    /// the same registry and the same hosted plugins as the real thing, or the measurement would
+    /// be of something else.
+    pub(crate) fn job_for(&mut self, project: Project) -> RenderJob {
         // The export's own instances, at the project's rate rather than the device's. A plugin
         // that is already rendering keeps doing so: `place` hands out a second instance and takes
         // the first back when the export drops it.
@@ -660,10 +698,10 @@ impl Session {
             self.engine.max_block(),
             auris_engine::RENDER_CHANNELS,
         );
-        let placed = self.hosted.place(&self.project, &prepare);
-        let instruments = self.hosted.place_instruments(&self.project, &prepare);
+        let placed = self.hosted.place(&project, &prepare);
+        let instruments = self.hosted.place_instruments(&project, &prepare);
         RenderJob::new(
-            self.project.clone(),
+            project,
             self.bank.clone(),
             Arc::clone(&self.registry),
             placed,

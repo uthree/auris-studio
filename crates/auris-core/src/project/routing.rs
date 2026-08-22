@@ -146,6 +146,18 @@ pub struct MixerStrip {
     pub solo: bool,
     /// Effects, applied in order before the fader.
     pub effects: Vec<EffectSlot>,
+    /// How loud this strip is meant to be, in LUFS, or `None` for one nobody has aimed.
+    ///
+    /// A fader position is not a level: what a track is worth depends on the instrument that
+    /// answered, and two instruments at the same number are not within ten decibels of each other.
+    /// This is the level the fader is *trying* to reach, which is a thing a fader cannot say by
+    /// itself — and it is what lets a mix be set by rendering it and measuring what came out.
+    ///
+    /// Written by the composer, which is the only part of this program that knows what a track is
+    /// for. `None` everywhere else, and that is not a gap to be filled with a guess: a track
+    /// somebody made by hand is aimed whereever they put it.
+    #[serde(default)]
+    pub target_lufs: Option<f32>,
 }
 
 impl Default for MixerStrip {
@@ -156,6 +168,7 @@ impl Default for MixerStrip {
             mute: false,
             solo: false,
             effects: Vec::new(),
+            target_lufs: None,
         }
     }
 }

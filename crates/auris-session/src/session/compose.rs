@@ -163,6 +163,7 @@ impl Session {
             notes: 0,
             length: composition.length,
             substituted: Vec::new(),
+            balance: None,
         };
 
         // The buses first, so that the tracks routed into them have somewhere to land. They are
@@ -261,6 +262,10 @@ impl Session {
                 // both, because it is the one place a part's `program` has been resolved against
                 // a font that is actually installed.
                 entry.mixer.gain_db = composed_gain_db(track.gain_db, sound);
+                // Where that level is trying to get to, which is a different statement and the one
+                // `Session::balance_levels` can actually check by listening. The line above is a
+                // guess about an instrument nobody has heard yet; this survives being wrong.
+                entry.mixer.target_lufs = Some(track.target_lufs);
                 entry.mixer.pan = track.pan;
                 // A draft names a bus by its position in the composition, because the composer has
                 // no ids to name it by; this is where the two meet.
@@ -362,6 +367,25 @@ impl Session {
         self.record(Edit::Compose);
         self.replace_project(project);
         self.install_shipped_fonts();
+        // After the fonts and not before: the levels are set by listening to the piece, and what
+        // it sounds like is decided by which font answered the call for a sound. Before them, this
+        // would be measuring the fallback oscillators and writing down a mix of a piece nobody is
+        // about to hear.
+        //
+        // Part of composing rather than a step after it, so Undo takes back the piece and not the
+        // mix of it. A piece that could not be rendered keeps the levels the composer guessed,
+        // which is what every piece had before this existed — worth a line in the log and not
+        // worth failing over.
+        report.balance = match self.balance_composed.then(|| self.balance_now()) {
+            Some(Ok(balance)) => Some(balance),
+            Some(Err(error)) => {
+                log::warn!(
+                    "the composed mix could not be measured ({error}); levels are as written"
+                );
+                None
+            }
+            None => None,
+        };
         self.dirty = true;
         Ok(report)
     }
@@ -371,6 +395,7 @@ impl Session {
 mod tests {
     use super::*;
     use crate::param::ParamTarget;
+    use crate::session::SessionOptions;
     use crate::session::fixtures::session;
     use auris_core::{ClipId, ClipPreset, ClipRecipe};
 
@@ -753,7 +778,13 @@ mod tests {
         // megabytes are on this machine is a fact about the machine — `session()` is headless
         // precisely so that a document does not come out different on a CI runner — so what is
         // asserted below is the rule rather than one machine's number.
-        let mut session = session();
+        //
+        // Without the balance pass, which would then measure the piece and put the fader wherever
+        // the instrument that answered turned out to need. That is the right thing for a piece
+        // somebody is going to listen to and the wrong thing for this test, whose whole subject is
+        // the number the composer wrote before anybody listened.
+        let mut session = Session::new(SessionOptions::headless().with_balance(false))
+            .expect("a headless session always opens");
         let spec = auris_compose::SongSpec::parse(
             r#"
                 form = ["verse"]
@@ -1008,8 +1039,30 @@ mod tests {
             "with the ceiling the piece was measured against written down"
         );
 
+        // The piece as it was composed, first: balanced, and under the ceiling by construction —
+        // the master fader is only ever raised as far as the measured peak leaves room for.
+        let rendered = session
+            .render_job()
+            .render(
+                &auris_engine::OfflineOptions::whole_project(),
+                &mut auris_engine::RenderProgress::default(),
+            )
+            .unwrap();
+        let ceiling = auris_core::param::db_to_gain(MASTER_CEILING_DB);
+        assert!(
+            rendered.peak() <= ceiling,
+            "the composed piece peaks at {} through a ceiling of {ceiling}",
+            rendered.peak()
+        );
+
         // Twenty decibels of drive, which is far more than any preset has ever asked for, so that
         // what is measured is the ceiling holding rather than the piece happening to be quiet.
+        //
+        // Measured against the ceiling *plus the master fader*, because that is the promise the
+        // chain actually makes: a strip's effects run before its fader, so the limiter guarantees
+        // what leaves the chain and not what leaves the mixer. Where the fader sits is a
+        // measurement of this piece, and a mix driven twenty decibels past it afterwards is no
+        // longer the piece that was measured.
         let tracks: Vec<TrackId> = session
             .project()
             .tracks
@@ -1026,7 +1079,8 @@ mod tests {
                 &mut auris_engine::RenderProgress::default(),
             )
             .unwrap();
-        let ceiling = auris_core::param::db_to_gain(MASTER_CEILING_DB);
+        let ceiling =
+            auris_core::param::db_to_gain(MASTER_CEILING_DB + session.project().master.gain_db);
         assert!(
             rendered.peak() > ceiling * 0.9,
             "the drive did not reach the limiter, peak {}",

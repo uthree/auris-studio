@@ -174,6 +174,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::GenerateClip => Key::EditGenerateClip,
         Edit::FreezeClip => Key::EditFreezeClip,
         Edit::Compose => Key::EditCompose,
+        Edit::BalanceLevels => Key::EditBalanceLevels,
     }
 }
 

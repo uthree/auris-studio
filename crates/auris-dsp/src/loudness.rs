@@ -187,6 +187,17 @@ pub fn integrated_lufs(buffer: &AudioBuffer) -> Option<f32> {
     gated_mean(&block_powers(buffer)).map(|power| block_lufs(power) as f32)
 }
 
+/// The loudness of the `quantile` loudest of `buffer`'s blocks, in LUFS.
+pub fn loudness_quantile(buffer: &AudioBuffer, quantile: f64) -> Option<f32> {
+    let mut blocks = block_powers(buffer);
+    if blocks.is_empty() {
+        return None;
+    }
+    blocks.sort_by(|a, b| a.partial_cmp(b).expect("a power is never NaN"));
+    let at = ((blocks.len() - 1) as f64 * quantile.clamp(0.0, 1.0)).round() as usize;
+    Some(block_lufs(blocks[at]) as f32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

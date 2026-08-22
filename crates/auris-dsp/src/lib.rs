@@ -55,7 +55,7 @@ pub use eq::{
 };
 pub use gain::GainPan;
 pub use limiter::Limiter;
-pub use loudness::{integrated_lufs, k_weighting};
+pub use loudness::{integrated_lufs, k_weighting, loudness_quantile};
 pub use pack::DspPack;
 pub use reverb::Reverb;
 pub use smooth::{SmoothedValue, one_pole_coefficient};

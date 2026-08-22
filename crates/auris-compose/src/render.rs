@@ -76,6 +76,18 @@ pub struct TrackDraft {
     pub state: PluginState,
     /// Level trim in decibels.
     pub gain_db: f32,
+    /// How loud this part should end up, in LUFS, measured on its own.
+    ///
+    /// [`Role::target_lufs`] for what the part plays, moved by however far the specification asked
+    /// this part to sit from its role's usual place. The two halves matter separately: the first
+    /// is the balance a band strikes and the second is what *this* piece wants — a jazz kit
+    /// written six decibels down is a decision about brushes, and a balance pass that pushed it
+    /// back up to where a rock kit sits would be overruling the preset with an average.
+    ///
+    /// [`Self::gain_db`] is where the fader starts and this is where it is trying to get to. They
+    /// are not the same statement and cannot be: a fader is a number about a signal path, and this
+    /// is a number about a sound.
+    pub target_lufs: f32,
     /// Stereo position.
     pub pan: f32,
     /// Which bus this track's output goes to, by position in [`Composition::buses`].
@@ -354,6 +366,13 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
             color: role.unwrap_or(Role::Melody).color(),
             state,
             gain_db: draft.gain_db,
+            target_lufs: {
+                // Against the role's own default rather than against nothing: what the
+                // specification said is the *distance* from where a part of this kind usually
+                // sits, and that is the half of the level a measurement must not throw away.
+                let role = role.unwrap_or(Role::Melody);
+                role.target_lufs() + (draft.gain_db - role.default_gain_db())
+            },
             pan: draft.pan,
             output,
             sends,

@@ -186,6 +186,41 @@ impl Role {
         }
     }
 
+    /// How loud a part of this role should end up, in LUFS, measured on its own.
+    ///
+    /// The balance [`Self::default_gain_db`] is trying to describe, said in the units it is
+    /// actually heard in. A fader position only means something if every instrument is equally
+    /// loud at unity, and none of them are: the same number on the same fader is a General MIDI
+    /// piano out of one font and a square wave out of the built-in synth, which are not within ten
+    /// decibels of each other. `auris_session::Session::balance_levels` renders each part alone,
+    /// measures it and moves the fader until it reads the number here — so the mix is the same mix
+    /// whatever answered the call for a sound.
+    ///
+    /// **Calibrated, not chosen.** These are what the eight presets measure today, per role,
+    /// through the faders that were set by ear; a piece balanced against them comes out where it
+    /// already came out, and the arithmetic only bites when an instrument is not the one the
+    /// numbers were taken on. The measurement is `Session::balance_levels` itself — a role whose
+    /// target is what it already measures is a fixed point, which is the property to check when
+    /// any of this moves.
+    ///
+    /// They are absolute rather than relative to the tune, and that is deliberate: a piece with
+    /// three parts and a piece with eight would sit at different levels if these were relative,
+    /// and the whole mix is moved onto `auris_session::TARGET_LUFS` afterwards anyway.
+    pub fn target_lufs(self) -> f32 {
+        match self {
+            Role::Melody => -23.2,
+            Role::Chords => -26.3,
+            Role::Pad => -31.6,
+            Role::Arp => -32.6,
+            Role::Stab => -29.0,
+            Role::Bass => -27.1,
+            Role::Kick => -23.9,
+            Role::Snare => -27.4,
+            Role::Hat => -43.6,
+            Role::Crash => -29.6,
+        }
+    }
+
     /// The colour a track of this role is drawn in.
     ///
     /// A composed song used to take the palette in order, so which colour a part got depended on
