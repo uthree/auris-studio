@@ -1,15 +1,16 @@
 //! Offline rendering, detached from the session that produced it.
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use auris_core::param::gain_to_db;
-use auris_core::project::{UNSTRETCHED, stretch_key};
-use auris_core::{AudioBuffer, AudioSourceBank, PluginRegistry, Project, SourceId};
+use auris_core::project::{TrackKind, UNSTRETCHED, stretch_key};
+use auris_core::{AudioBuffer, AudioSourceBank, PluginRegistry, Project, SourceId, TrackId};
 use auris_dsp::stretch::time_stretch;
 use auris_engine::{
-    OfflineOptions, PlacedEffects, PlacedInstruments, RenderProgress, render_project_using,
+    OfflineOptions, OfflineRender, PlacedEffects, PlacedInstruments, RenderProgress,
+    render_project_using,
 };
 use auris_io::{WavExportSettings, resample_buffer, write_wav};
 
@@ -220,6 +221,158 @@ impl RenderJob {
     }
 }
 
+/// One stem of a stem export: which track it is, and what became of it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StemSummary {
+    /// The track the stem is of.
+    pub track: TrackId,
+    /// The track's name, which is also what the file is called.
+    pub name: String,
+    /// Where it was written.
+    pub path: PathBuf,
+    /// What the render produced: its length, its peak, and how many channels it has.
+    pub summary: ExportSummary,
+}
+
+/// The tracks a stem export would write a file for, in project order.
+///
+/// **Tracks that make a sound of their own**, which is every kind but a bus. What comes out of a
+/// bus is already in the stems of the tracks feeding it — a reverb bus exported beside the tracks
+/// sent to it would be that reverb twice over when the stems are added back together.
+///
+/// **Muted tracks are left out**, so the set of stems is the mix taken apart rather than the mix
+/// plus a handful of silent files nobody asked for. A solo is ignored: it is how somebody is
+/// listening this minute, and an export that obeyed it would hand over one stem of a piece with
+/// twenty.
+pub fn stem_tracks(project: &Project) -> Vec<(TrackId, String)> {
+    project
+        .tracks
+        .iter()
+        .filter(|track| !track.mixer.mute && !matches!(track.kind, TrackKind::Bus))
+        .map(|track| (track.id, track.name.clone()))
+        .collect()
+}
+
+/// A file name for a stem, unique within `taken`, which it is added to.
+///
+/// Two tracks may have the same name — nothing stops it and duplicating a track is how it usually
+/// happens — and two stems that agreed on a file name would leave one of them holding the other's
+/// audio. The second is numbered.
+fn stem_file_name(name: &str, taken: &mut HashSet<String>) -> String {
+    let base = sanitised_name(name);
+    let mut candidate = format!("{base}.wav");
+    let mut number = 2;
+    while !taken.insert(candidate.to_lowercase()) {
+        candidate = format!("{base} {number}.wav");
+        number += 1;
+    }
+    candidate
+}
+
+/// A track name with everything a file name cannot hold taken out.
+///
+/// A track may be called anything at all, including things a filesystem will refuse — `Gtr/Bass`
+/// is one slash away from being a directory that does not exist. What is left is trimmed, and an
+/// empty result falls back rather than producing a file called nothing.
+fn sanitised_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_matches('.').trim();
+    match trimmed.is_empty() {
+        true => "Track".to_string(),
+        false => trimmed.to_string(),
+    }
+}
+
+impl RenderJob {
+    /// The tracks [`Self::render_stems`] would write a file for.
+    ///
+    /// Asked separately so a caller can refuse before it has collected a folder from somebody, and
+    /// so a progress bar knows how many renders it is waiting for.
+    pub fn stem_tracks(&self) -> Vec<(TrackId, String)> {
+        stem_tracks(&self.project)
+    }
+
+    /// Renders one WAV file per track into `folder`, and says what each of them was.
+    ///
+    /// A stem is **the track as it is heard when it alone is soloed**, so it carries the buses it
+    /// is routed through and whatever those buses do to it — a part sent to a reverb arrives with
+    /// its reverb, which is the difference between a stem somebody can mix with and a dry file
+    /// they have to rebuild the session around. [`stem_tracks`] says which tracks get one.
+    ///
+    /// Two things follow from that and are worth knowing before the files are handed to anybody:
+    ///
+    /// * **The master chain is in every stem**, because a stem is what the mix sounds like with
+    ///   one part in it. Where that chain is linear the stems add back up to the mix exactly;
+    ///   where it is a limiter or a compressor they do not, because each stem was limited on its
+    ///   own. A master chain that has to survive being taken apart is one to bypass first.
+    /// * **One graph, played once per track.** Building it again per stem would instantiate every
+    ///   hosted plugin again, and rendering is what takes the time anyway — see
+    ///   [`OfflineRender`].
+    ///
+    /// The folder must exist. Progress runs from 0 to 1 across the whole set, and a cancellation
+    /// leaves the stems already written where they are: they are finished files, and deleting
+    /// them would throw away the part of the export that succeeded.
+    pub fn render_stems(
+        &mut self,
+        folder: &Path,
+        settings: &WavExportSettings,
+        options: &OfflineOptions,
+        progress: &mut RenderProgress<'_>,
+    ) -> Result<Vec<StemSummary>, SessionError> {
+        let tracks = stem_tracks(&self.project);
+        if tracks.is_empty() {
+            return Err(SessionError::NothingToStem);
+        }
+        let rate = options.sample_rate.unwrap_or(self.project.sample_rate);
+        let mut bank = bank_at_rate(&self.bank, rate);
+        fill_stretches(&self.project, &mut bank);
+
+        let mut render = OfflineRender::new(
+            &self.project,
+            &bank,
+            &self.registry,
+            &mut self.placed,
+            &mut self.instruments,
+            options,
+        )?;
+        let settings = WavExportSettings {
+            sample_rate: render.sample_rate().round().max(1.0) as u32,
+            ..*settings
+        };
+        let mut out = render.buffer();
+        let span = 1.0 / tracks.len() as f32;
+        let mut taken = HashSet::new();
+        let mut stems = Vec::with_capacity(tracks.len());
+        for (index, (track, name)) in tracks.into_iter().enumerate() {
+            render.set_audible(&self.project.soloed_alone(track));
+            progress.within(index as f32 * span, span, |progress| {
+                render.render(&mut out, progress)
+            })?;
+            let path = folder.join(stem_file_name(&name, &mut taken));
+            write_wav(&path, &out, &settings)?;
+            stems.push(StemSummary {
+                track,
+                name,
+                path,
+                summary: ExportSummary {
+                    seconds: out.duration_seconds(),
+                    frames: out.frame_count() as u64,
+                    channels: out.channel_count(),
+                    peak_db: gain_to_db(out.peak()),
+                },
+            });
+        }
+        Ok(stems)
+    }
+}
+
 impl std::fmt::Debug for RenderJob {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RenderJob")
@@ -348,6 +501,111 @@ mod tests {
             PlacedInstruments::new(),
         );
         assert!(job.loop_options(OfflineOptions::whole_project()).is_none());
+    }
+
+    #[test]
+    fn a_bus_is_not_a_stem_and_neither_is_a_muted_track() {
+        let mut project = Project::new("Stems", 48_000.0);
+        let kick = project.add_audio_track("Kick");
+        let snare = project.add_audio_track("Snare");
+        project.add_bus_track("Drum Bus");
+        project.track_mut(snare).expect("the track").mixer.mute = true;
+
+        let named: Vec<TrackId> = stem_tracks(&project)
+            .into_iter()
+            .map(|(track, _)| track)
+            .collect();
+        assert_eq!(named, vec![kick], "a bus or a muted track was offered");
+    }
+
+    #[test]
+    fn two_tracks_of_one_name_do_not_write_one_file() {
+        // Duplicating a track is how this happens, and it happens constantly. The second stem
+        // would otherwise be written over the first and the export would come back one short.
+        let mut taken = HashSet::new();
+        assert_eq!(stem_file_name("Gtr", &mut taken), "Gtr.wav");
+        assert_eq!(stem_file_name("Gtr", &mut taken), "Gtr 2.wav");
+        assert_eq!(stem_file_name("gtr", &mut taken), "gtr 3.wav");
+        // A name a filesystem would refuse still makes a file, and one made of nothing still
+        // makes one with a name.
+        assert_eq!(stem_file_name("Gtr/Bass", &mut taken), "Gtr-Bass.wav");
+        assert_eq!(stem_file_name("   ", &mut taken), "Track.wav");
+    }
+
+    #[test]
+    fn every_stem_holds_its_own_track_and_only_that() {
+        // Two tracks, one clip each, at levels a decibel apart so the files can be told apart by
+        // their peaks alone. What each stem must contain is its own track at full level, and
+        // nothing of the other.
+        let mut project = Project::new("Stems", 48_000.0);
+        let loud = project.add_audio_track("Loud");
+        let quiet = project.add_audio_track("Quiet");
+        let source = project.add_audio_source(
+            "s",
+            auris_core::AssetPath::inside("Audio/s.wav"),
+            48_000,
+            48_000.0,
+            2,
+        );
+        project
+            .add_audio_clip(loud, source, Ticks::ZERO)
+            .expect("a clip");
+        project
+            .add_audio_clip(quiet, source, Ticks::ZERO)
+            .expect("a clip");
+        project.track_mut(quiet).expect("the track").mixer.gain_db = -20.0;
+
+        let folder = std::env::temp_dir().join("auris-stem-test");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("a folder");
+
+        let mut job = RenderJob::new(
+            project,
+            bank_at(source, 48_000.0),
+            plugin_catalogue(),
+            PlacedEffects::new(),
+            PlacedInstruments::new(),
+        );
+        let stems = job
+            .render_stems(
+                &folder,
+                &WavExportSettings::default(),
+                &OfflineOptions::whole_project(),
+                &mut RenderProgress::default(),
+            )
+            .expect("stems");
+
+        assert_eq!(stems.len(), 2);
+        assert_eq!(stems[0].name, "Loud");
+        assert!(stems[0].path.exists(), "the file was not written");
+        // The loud one at 0.5, the quiet one twenty decibels under it: each stem is its own
+        // track, not the mix and not the other.
+        assert!((stems[0].summary.peak_db - gain_to_db(0.5)).abs() < 0.1);
+        assert!((stems[1].summary.peak_db - gain_to_db(0.05)).abs() < 0.5);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_project_with_nothing_but_buses_says_so_rather_than_writing_nothing() {
+        let mut project = Project::new("Buses", 48_000.0);
+        project.add_bus_track("Bus");
+        let mut job = RenderJob::new(
+            project,
+            AudioSourceBank::new(),
+            plugin_catalogue(),
+            PlacedEffects::new(),
+            PlacedInstruments::new(),
+        );
+        let folder = std::env::temp_dir();
+        assert!(matches!(
+            job.render_stems(
+                &folder,
+                &WavExportSettings::default(),
+                &OfflineOptions::whole_project(),
+                &mut RenderProgress::default(),
+            ),
+            Err(SessionError::NothingToStem)
+        ));
     }
 
     #[test]

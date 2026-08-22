@@ -651,6 +651,7 @@ fn render(args: &[String]) -> Result<(), String> {
     let mut settings = WavExportSettings::default();
     let mut options = OfflineOptions::whole_project();
     let mut loop_only = false;
+    let mut stems: Option<PathBuf> = None;
 
     let mut index = 2;
     while index < args.len() {
@@ -679,6 +680,16 @@ fn render(args: &[String]) -> Result<(), String> {
             "--dither" => settings.dither = true,
             "--no-tail" => options.include_tail = false,
             "--loop" => loop_only = true,
+            "--stems" => {
+                index += 1;
+                stems = Some(PathBuf::from(args.get(index).ok_or_else(|| {
+                    messages::option_needs_value(
+                        LANGUAGE,
+                        "--stems",
+                        Key::CliNeedsPath.get(LANGUAGE),
+                    )
+                })?));
+            }
             other => return Err(messages::unknown_option(LANGUAGE, other)),
         }
         index += 1;
@@ -700,6 +711,46 @@ fn render(args: &[String]) -> Result<(), String> {
             .loop_options(options)
             .ok_or_else(|| Key::CliNoCycle.get(LANGUAGE).to_string())?;
     }
+    // Each stem reports its own line, so the whole set reads as a list of files rather than as
+    // one number that went round eight times.
+    if let Some(folder) = stems {
+        std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+        let mut last_percent = -1i32;
+        let written = job
+            .render_stems(
+                &folder,
+                &settings,
+                &options,
+                &mut auris_session::prelude::RenderProgress::reporting(&mut |fraction| {
+                    let percent = (fraction * 100.0) as i32;
+                    if percent != last_percent {
+                        last_percent = percent;
+                        warned_partial(format!(
+                            "\r{}",
+                            messages::render_progress(LANGUAGE, percent)
+                        ));
+                    }
+                }),
+            )
+            .map_err(|error| error.to_string())?;
+        warned("");
+        for stem in &written {
+            printed(writeln!(
+                std::io::stdout(),
+                "{}",
+                messages::wrote_file(
+                    LANGUAGE,
+                    &stem.path.display().to_string(),
+                    &Seconds(stem.summary.seconds).format_clock(),
+                    stem.summary.channels,
+                    settings.bit_depth.bits(),
+                    stem.summary.peak_db,
+                )
+            ))?;
+        }
+        return Ok(());
+    }
+
     let mut last_percent = -1i32;
     let summary = job
         .render_to_wav(

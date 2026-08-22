@@ -39,6 +39,8 @@ actions!(
         ExportAudio,
         /// Render only the cycle region to a WAV file.
         ExportCycle,
+        /// Render one WAV file per track into a folder.
+        ExportStems,
         /// Show the list of projects opened lately, to open one again.
         OpenRecent,
         /// Show what this build is.
@@ -408,6 +410,7 @@ bindable! {
         "file.collect",         GroupFile,      CmdCollectAssets,      "secondary-shift-a" => CollectAssets;
         "file.export",          GroupFile,      CmdExportWav,          "secondary-e" => ExportAudio;
         "file.export_cycle",    GroupFile,      CmdExportCycle,        "secondary-shift-e" => ExportCycle;
+        "file.export_stems",    GroupFile,      CmdExportStems,        "secondary-alt-e" => ExportStems;
         // No keystroke: the list it opens is the point, and every letter worth spending is
         // already spent. It is on the File menu, which is where anybody looks for it.
         "file.recent",          GroupFile,      CmdOpenRecent,         "" => OpenRecent;

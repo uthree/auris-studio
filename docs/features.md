@@ -962,6 +962,32 @@ from the command line. The range ends the way pressing Stop there sounds: the vo
 released at the boundary and the tail holds the ring-out of what was inside the range, never a
 performance of the material beyond it.
 
+### Stems
+
+*File → Export Stems…* asks for a folder and writes **one file per track** into it, named after
+the track. `auris render Song.auris --stems Stems/` does the same from the command line.
+
+A stem is the track **as it sounds when it alone is soloed**, which is not the same as the track
+on its own: it carries the buses it is routed through, so a part sent to a reverb arrives with its
+reverb rather than dry. That is the difference between a stem somebody else can mix with and a
+file they have to rebuild the session around.
+
+* **One file per track that makes a sound.** Buses do not get their own — what comes out of one is
+  already inside the stems of the tracks feeding it, and exporting both would be that reverb twice
+  over when the stems are added back up.
+* **Muted tracks are left out** rather than written as silence, so what you get is the mix taken
+  apart. A solo is ignored: it is how you are listening this minute, not what the piece is.
+* **Two tracks of one name still make two files** — the second is numbered.
+* **The master chain is in every stem**, because a stem is what the mix sounds like with one part
+  in it. Where that chain is linear the stems add back up to the mix exactly; where it is a
+  limiter or a compressor they will not, because each stem was limited on its own. Bypass it
+  first if the stems have to sum.
+
+Everything is rendered from one graph rather than one per track, so the hosted plugins are
+instantiated once — but the rendering itself happens once per track, and a twenty-track project
+takes twenty times as long as its mixdown. There is a progress bar and a Cancel; whatever was
+finished before you press it stays on disk.
+
 ## GPU acceleration
 
 `auris-gpu` runs the large, embarrassingly parallel offline reductions on the GPU through

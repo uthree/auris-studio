@@ -226,6 +226,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
             Key::ErrorNothingToRecordOnto.get(language).to_string()
         }
         SessionError::AlreadyRecording => Key::ErrorAlreadyRecording.get(language).to_string(),
+        SessionError::NothingToStem => Key::ErrorNothingToStem.get(language).to_string(),
         SessionError::RecordingInProgress => {
             Key::ErrorRecordingInProgress.get(language).to_string()
         }

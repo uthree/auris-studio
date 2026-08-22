@@ -201,6 +201,11 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
             actions::ExportCycle,
             "file.export_cycle",
         ),
+        command(
+            t(Key::MenuExportStemsItem),
+            actions::ExportStems,
+            "file.export_stems",
+        ),
     ];
     // Under Open rather than at the bottom, which is where every application on both platforms
     // puts it. A row rather than a submenu: gpui's menu rows carry an action and nothing else,

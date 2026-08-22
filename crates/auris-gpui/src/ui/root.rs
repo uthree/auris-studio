@@ -130,6 +130,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_collect_assets))
             .on_action(cx.listener(Self::on_export_audio))
             .on_action(cx.listener(Self::on_export_cycle))
+            .on_action(cx.listener(Self::on_export_stems))
             .on_action(cx.listener(Self::on_open_recent))
             .on_action(cx.listener(Self::on_show_about))
             .on_action(cx.listener(Self::on_add_instrument_track))
@@ -1506,6 +1507,15 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.start_export_cycle(window, cx);
+    }
+
+    fn on_export_stems(
+        &mut self,
+        _: &actions::ExportStems,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_export_stems(window, cx);
     }
 
     fn on_open_recent(

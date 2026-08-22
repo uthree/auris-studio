@@ -756,6 +756,19 @@ impl RenderGraph {
         }
     }
 
+    /// Chooses which tracks are heard, by position, with no fade.
+    ///
+    /// The solo resolution for a render that has not begun yet — see
+    /// [`OfflineRender::set_audible`](crate::OfflineRender::set_audible), which is the only
+    /// caller and the only place the distinction from a mute matters. Tracks past the end of
+    /// `audible` are left alone rather than silenced: a shorter list is a caller that has lost
+    /// track of the project, and answering it with silence would be answering it with a stem.
+    pub fn set_audible(&mut self, audible: &[bool]) {
+        for (track, &heard) in self.tracks.iter_mut().zip(audible) {
+            track.strip.settle_audible(heard);
+        }
+    }
+
     /// Moves one of a track's send levels. Out-of-range indices are ignored.
     ///
     /// Addressed by position in the track's send list, the same way an effect is addressed by

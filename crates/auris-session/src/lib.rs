@@ -58,7 +58,7 @@ pub use history::{Edit, History};
 pub use library::{GENERAL_MIDI, LIBRARY_DIR_VAR, LIBRARY_FOLDER, ShippedFont};
 pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
-pub use render::{ExportSummary, RenderJob};
+pub use render::{ExportSummary, RenderJob, StemSummary, stem_tracks};
 pub use session::{
     AccompanyReport, Arm, AudioStatus, BalanceReport, CEILING_DB, Clipboard, ComposeReport,
     CopiedClip, CopiedContent, DEFAULT_OCTAVE, DEFAULT_PARTS, DEFAULT_VELOCITY, InputChannels,
@@ -191,7 +191,7 @@ pub mod prelude {
         AccompanyReport, Arm, AudioPreferences, Clipboard, ComposeReport, CopiedClip,
         CopiedContent, DEFAULT_PARTS, Edit, ExportPreferences, ExportSummary, InputChannels,
         LoadedFont, MusicalTyping, ParamTarget, Quantize, RecordingReport, RecordingStatus,
-        RenderJob, SaveReport, Session, SessionError, SessionOptions, Settings, TakeReport,
-        decode_audio, read_soundfont,
+        RenderJob, SaveReport, Session, SessionError, SessionOptions, Settings, StemSummary,
+        TakeReport, decode_audio, read_soundfont,
     };
 }

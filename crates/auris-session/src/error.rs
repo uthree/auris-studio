@@ -139,6 +139,13 @@ pub enum SessionError {
     #[error("a recording is already running")]
     AlreadyRecording,
 
+    /// Stems were asked for from a project with no track that makes a sound of its own.
+    ///
+    /// Buses are not stems — what comes out of one is already in the stems of the tracks feeding
+    /// it — so a project of nothing but buses has nothing to take apart.
+    #[error("there is nothing to export as stems; add a track that makes a sound")]
+    NothingToStem,
+
     /// Something was asked for that cannot be done while a take is being written.
     ///
     /// Separate from [`Self::AlreadyRecording`] because it is the other way round: that one

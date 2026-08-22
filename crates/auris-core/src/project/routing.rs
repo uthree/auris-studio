@@ -583,6 +583,32 @@ impl Project {
         if !self.has_solo() {
             return vec![true; self.tracks.len()];
         }
+        self.audible_through(&|index| self.tracks[index].mixer.solo)
+    }
+
+    /// Which tracks are audible when `track` alone is soloed, whatever the solo switches say.
+    ///
+    /// A stem: one track and everywhere its audio has to travel to be heard. That is the same
+    /// question [`Self::solo_resolution`] answers and is asked here of a solo nobody switched on,
+    /// which is why the two share a walk — a stem worked out by a second, simpler rule would send
+    /// a drum track routed through a drum bus to a silent file, and only on the projects that use
+    /// buses.
+    ///
+    /// Every track when `track` is not in the project, for the reason a project with no solo is
+    /// entirely audible: nothing was excluded.
+    pub fn soloed_alone(&self, track: TrackId) -> Vec<bool> {
+        match self.track_index(track) {
+            Some(only) => self.audible_through(&|index| index == only),
+            None => vec![true; self.tracks.len()],
+        }
+    }
+
+    /// The solo walk, over whichever tracks `soloed` names.
+    ///
+    /// Two passes over [`Self::routing_order`], one each way, and they stay separate on purpose —
+    /// merging them would let a bus made audible from below drag in its *other* feeders, and
+    /// soloing one drum track would quietly play the whole kit.
+    fn audible_through(&self, soloed: &dyn Fn(usize) -> bool) -> Vec<bool> {
         let order = self.routing_order();
         let index_of = |id: TrackId| self.track_index(id);
 
@@ -590,8 +616,7 @@ impl Project {
         let mut reaches = vec![false; self.tracks.len()];
         for &index in order.iter().rev() {
             reaches[index] = self.tracks[index].feeds().any(|target| {
-                index_of(target)
-                    .is_some_and(|target| self.tracks[target].mixer.solo || reaches[target])
+                index_of(target).is_some_and(|target| soloed(target) || reaches[target])
             });
         }
 
@@ -600,12 +625,12 @@ impl Project {
         for &index in &order {
             let id = self.tracks[index].id;
             fed[index] = self.tracks.iter().enumerate().any(|(feeder, other)| {
-                (other.mixer.solo || fed[feeder]) && other.feeds().any(|target| target == id)
+                (soloed(feeder) || fed[feeder]) && other.feeds().any(|target| target == id)
             });
         }
 
         (0..self.tracks.len())
-            .map(|index| self.tracks[index].mixer.solo || reaches[index] || fed[index])
+            .map(|index| soloed(index) || reaches[index] || fed[index])
             .collect()
     }
 }
@@ -614,6 +639,30 @@ impl Project {
 mod tests {
     use super::*;
     use crate::project::fixtures::bussed_project;
+
+    #[test]
+    fn a_stem_carries_the_buses_its_track_is_routed_through() {
+        // A drum track's stem is the drum track *and the drum bus*: the audio has nowhere else to
+        // come out, and a stem that silenced the bus would be a silent file.
+        let (project, kick, snare, bus) = bussed_project();
+        let audible = project.soloed_alone(kick);
+        let at = |id| project.track_index(id).expect("in the project");
+        assert!(audible[at(kick)]);
+        assert!(audible[at(bus)], "the bus the kick feeds was silenced");
+        assert!(
+            !audible[at(snare)],
+            "the other track was in the kick's stem"
+        );
+    }
+
+    #[test]
+    fn a_stem_of_a_track_that_is_gone_leaves_everything_audible() {
+        let (project, ..) = bussed_project();
+        assert_eq!(
+            project.soloed_alone(TrackId(9_999)),
+            vec![true; project.tracks.len()]
+        );
+    }
 
     #[test]
     fn a_bus_is_ordered_after_everything_that_feeds_it() {

@@ -9,6 +9,20 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### The mix, taken apart
+
+* **Stem export**: *File → Export Stems…*, or `auris render --stems <folder>`, writes one WAV per
+  track into a folder, named after the track. Each one is that track as it sounds soloed — the
+  buses it is routed through included, so a part sent to a reverb arrives with its reverb.
+* Buses get no stem of their own and muted tracks are skipped, so the set of files is the mix
+  taken apart rather than the mix plus a handful of silent ones. Two tracks of one name still make
+  two files.
+* Every stem carries the master chain, because a stem is what the mix sounds like with one part in
+  it. That means they sum back to the mix exactly where the chain is linear, and not where it is a
+  limiter — one to bypass before exporting stems that have to add up.
+* One graph, played once per track: a hosted plugin is instantiated once for the whole export
+  rather than once per stem.
+
 ### Four bars before you have to play anything
 
 * **A count-in**, one to four bars, chosen by right-clicking the metronome button. Press Record

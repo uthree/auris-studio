@@ -81,6 +81,9 @@ impl OfflineOptions {
 pub struct RenderProgress<'a> {
     report: Option<&'a mut dyn FnMut(f32)>,
     cancel: Option<&'a std::sync::atomic::AtomicBool>,
+    /// Where this render sits inside the job the caller is watching: a start and a width, both
+    /// fractions of the whole. `(0.0, 1.0)` for a render that is the whole of what is happening.
+    window: (f32, f32),
 }
 
 impl<'a> RenderProgress<'a> {
@@ -89,7 +92,25 @@ impl<'a> RenderProgress<'a> {
         Self {
             report: Some(report),
             cancel: None,
+            window: (0.0, 1.0),
         }
+    }
+
+    /// Runs `job`, whose progress covers `base..base + span` of what this is watching.
+    ///
+    /// What an export made of several renders needs: each of them believes it is running from
+    /// nothing to everything, and a bar that jumped back to zero four times over would be a bar
+    /// saying the export had restarted. Nesting works, because the window a job is given is
+    /// measured inside whatever window it was already in.
+    ///
+    /// A scope rather than a second `RenderProgress`, because there is only one reporter and it
+    /// belongs to the caller: handing out a copy would mean handing out the borrow.
+    pub fn within<T>(&mut self, base: f32, span: f32, job: impl FnOnce(&mut Self) -> T) -> T {
+        let outer = self.window;
+        self.window = (outer.0 + base * outer.1, span * outer.1);
+        let result = job(self);
+        self.window = outer;
+        result
     }
 
     /// The same render, stopped when `flag` becomes true.
@@ -102,10 +123,11 @@ impl<'a> RenderProgress<'a> {
         self
     }
 
-    /// Reports how far along the render is, from 0.0 to 1.0.
+    /// Reports how far along the render is, from 0.0 to 1.0 — of its own window, not of the job.
     fn report(&mut self, fraction: f32) {
+        let (base, span) = self.window;
         if let Some(report) = self.report.as_mut() {
-            report(fraction);
+            report(base + fraction * span);
         }
     }
 
@@ -173,117 +195,209 @@ pub fn render_project_using(
     options: &OfflineOptions,
     progress: &mut RenderProgress<'_>,
 ) -> Result<AudioBuffer, EngineError> {
-    let sample_rate = options.sample_rate.unwrap_or(project.sample_rate);
-    if !sample_rate.is_finite() || sample_rate <= 0.0 {
-        return Err(EngineError::InvalidSampleRate(sample_rate));
-    }
-    let block_frames = options.block_frames.max(1);
+    let mut render = OfflineRender::new(project, bank, registry, placed, instruments, options)?;
+    let mut out = render.buffer();
+    render.render(&mut out, progress)?;
+    Ok(out)
+}
 
-    let mut graph = RenderGraph::build_with(
-        project,
-        bank,
-        registry,
-        placed,
-        instruments,
-        block_frames,
-        sample_rate,
-    );
+/// A built graph and the geometry of the render it was built for, playable more than once.
+///
+/// [`render_project_using`] is one call of this, and is what almost everything wants. What the
+/// object is for is the export that needs the *same* graph played several times over — stems, one
+/// per track — because building it twice is not the same thing twice. A hosted plugin is
+/// instantiated when the graph is built and cannot be built again for the same slot without two
+/// of it existing at once, and everything else that is expensive here (sources resolved, notes
+/// flattened, chains prepared) would be paid for again on every pass.
+///
+/// Between passes, [`Self::set_audible`] chooses what is heard and [`Self::render`] silences
+/// whatever the last pass left ringing. Nothing else carries over.
+pub struct OfflineRender {
+    graph: RenderGraph,
+    sample_rate: f64,
+    block_frames: usize,
+    start_frames: u64,
+    /// Frames the output holds: the range, plus the tail when one was asked for.
+    total: usize,
+    /// Frames to render, which is [`Self::total`] plus the compensation lead-in.
+    end: usize,
+    /// Frames of plugin delay compensation to throw away off the front.
+    latency: usize,
+    /// Whether the render has an explicit end to stop the transport at.
+    ranged: bool,
+    /// Frames of the output the transport is rolling for; the rest is tail.
+    performed: usize,
+}
 
-    let end_frames = options.end_frames.unwrap_or_else(|| {
-        // Both figures measure the same thing, but `Project::end_tick` rounds an audio clip's
-        // length to whole ticks on the way through while the graph converts it to frames
-        // directly, so they can land a frame or two apart. Taking whichever reaches further can
-        // only ever add silence; using the tick figure alone would chop the end off a clip.
-        let from_ticks = project
-            .tempo_map
-            .ticks_to_samples(project.end_tick(), sample_rate)
-            .raw();
-        from_ticks.max(graph.end_frame())
-    });
-    if end_frames < options.start_frames {
-        return Err(EngineError::InvalidRange {
-            start: options.start_frames,
-            end: end_frames,
+impl OfflineRender {
+    /// Builds the graph and works out the geometry of the render.
+    pub fn new(
+        project: &Project,
+        bank: &AudioSourceBank,
+        registry: &PluginRegistry,
+        placed: &mut crate::graph::PlacedEffects,
+        instruments: &mut crate::graph::PlacedInstruments,
+        options: &OfflineOptions,
+    ) -> Result<Self, EngineError> {
+        let sample_rate = options.sample_rate.unwrap_or(project.sample_rate);
+        if !sample_rate.is_finite() || sample_rate <= 0.0 {
+            return Err(EngineError::InvalidSampleRate(sample_rate));
+        }
+        let block_frames = options.block_frames.max(1);
+
+        let graph = RenderGraph::build_with(
+            project,
+            bank,
+            registry,
+            placed,
+            instruments,
+            block_frames,
+            sample_rate,
+        );
+
+        let end_frames = options.end_frames.unwrap_or_else(|| {
+            // Both figures measure the same thing, but `Project::end_tick` rounds an audio clip's
+            // length to whole ticks on the way through while the graph converts it to frames
+            // directly, so they can land a frame or two apart. Taking whichever reaches further
+            // can only ever add silence; using the tick figure alone would chop the end off a
+            // clip.
+            let from_ticks = project
+                .tempo_map
+                .ticks_to_samples(project.end_tick(), sample_rate)
+                .raw();
+            from_ticks.max(graph.end_frame())
         });
-    }
-
-    let tail = if options.include_tail {
-        graph.tail_frames()
-    } else {
-        0
-    };
-    // A corrupt tempo map or a bad `end_frames` can make this span astronomically large, and the
-    // buffer that follows would then panic inside the allocator rather than returning an error.
-    let span = end_frames - options.start_frames;
-    let too_long = || EngineError::RenderTooLong {
-        frames: span,
-        limit: MAX_RENDER_FRAMES,
-    };
-    if span > MAX_RENDER_FRAMES {
-        return Err(too_long());
-    }
-    let total = usize::try_from(span)
-        .ok()
-        .and_then(|span| span.checked_add(tail))
-        .ok_or_else(too_long)?;
-
-    let mut out = AudioBuffer::new(RENDER_CHANNELS, total, sample_rate);
-    progress.report(0.0);
-    if total == 0 {
-        progress.report(1.0);
-        return Ok(out);
-    }
-
-    // Plugin delay compensation holds the whole mix back, so the first `latency` frames out of
-    // the graph are the lead-in of empty delay lines rather than anything on the timeline. The
-    // render runs that much longer and the file starts where the lead-in ends, which is what
-    // keeps an export lined up with what the arrangement shows.
-    let latency = graph.latency_frames();
-    let end = total.checked_add(latency).ok_or_else(too_long)?;
-
-    // Only an explicit range can have material lying beyond its end; a whole-project render
-    // ends where the material does, and stopping it there would cut the natural releases out
-    // of its own tail.
-    let ranged = options.end_frames.is_some();
-    let performed = total - tail;
-
-    let mut transport = Transport::playing_from(options.start_frames);
-    let mut scratch = AudioBuffer::new(RENDER_CHANNELS, block_frames, sample_rate);
-    let mut rendered = 0;
-    while rendered < end {
-        // The range's end is a Stop, exactly as realtime playback stops there: the voices are
-        // released and what runs on into the tail is the effects' ring-out — not the material
-        // that lies beyond the range, which used to keep performing straight through it.
-        if ranged && transport.playing && rendered >= performed {
-            transport.playing = false;
-            graph.reset_voices();
+        if end_frames < options.start_frames {
+            return Err(EngineError::InvalidRange {
+                start: options.start_frames,
+                end: end_frames,
+            });
         }
-        let mut frames = block_frames.min(end - rendered);
-        if ranged && transport.playing {
-            // Never render across the boundary; the block after this one starts stopped.
-            frames = frames.min(performed - rendered);
+
+        let tail = if options.include_tail {
+            graph.tail_frames()
+        } else {
+            0
+        };
+        // A corrupt tempo map or a bad `end_frames` can make this span astronomically large, and
+        // the buffer that follows would then panic inside the allocator rather than returning an
+        // error.
+        let span = end_frames - options.start_frames;
+        let too_long = || EngineError::RenderTooLong {
+            frames: span,
+            limit: MAX_RENDER_FRAMES,
+        };
+        if span > MAX_RENDER_FRAMES {
+            return Err(too_long());
         }
-        scratch.set_frame_count(frames);
-        render_block(&mut graph, &mut transport, &mut scratch, true);
-        // How much of this block is still lead-in, and where the rest lands in the file.
-        let skip = latency.saturating_sub(rendered).min(frames);
-        if skip < frames {
-            let at = rendered + skip - latency;
-            let count = (frames - skip).min(total - at);
-            for channel in 0..RENDER_CHANNELS {
-                out.channel_mut(channel)[at..at + count]
-                    .copy_from_slice(&scratch.channel(channel)[skip..skip + count]);
+        let total = usize::try_from(span)
+            .ok()
+            .and_then(|span| span.checked_add(tail))
+            .ok_or_else(too_long)?;
+
+        // Plugin delay compensation holds the whole mix back, so the first `latency` frames out
+        // of the graph are the lead-in of empty delay lines rather than anything on the timeline.
+        // The render runs that much longer and the file starts where the lead-in ends, which is
+        // what keeps an export lined up with what the arrangement shows.
+        let latency = graph.latency_frames();
+        let end = total.checked_add(latency).ok_or_else(too_long)?;
+
+        Ok(Self {
+            graph,
+            sample_rate,
+            block_frames,
+            start_frames: options.start_frames,
+            total,
+            end,
+            latency,
+            // Only an explicit range can have material lying beyond its end; a whole-project
+            // render ends where the material does, and stopping it there would cut the natural
+            // releases out of its own tail.
+            ranged: options.end_frames.is_some(),
+            performed: total - tail,
+        })
+    }
+
+    /// Frames one pass produces.
+    pub fn frames(&self) -> usize {
+        self.total
+    }
+
+    /// The rate the render runs at, which is not always the project's.
+    pub fn sample_rate(&self) -> f64 {
+        self.sample_rate
+    }
+
+    /// An output buffer of the right size and rate for [`Self::render`].
+    pub fn buffer(&self) -> AudioBuffer {
+        AudioBuffer::new(RENDER_CHANNELS, self.total, self.sample_rate)
+    }
+
+    /// Chooses which tracks are heard, by project position, settled rather than faded.
+    ///
+    /// The solo resolution rather than a mute: what a caller hands over is the answer to "which
+    /// tracks lie on a path through the one I am exporting", which
+    /// [`Project::solo_resolution`](auris_core::project::Project::solo_resolution) works out. A
+    /// drum track's stem needs the drum bus left open, or it has nowhere to come out.
+    pub fn set_audible(&mut self, audible: &[bool]) {
+        self.graph.set_audible(audible);
+    }
+
+    /// Renders one pass into `out`, which must be [`Self::frames`] long.
+    ///
+    /// Overwrites `out` and silences the graph first, so a second pass carries nothing over from
+    /// the first: no ringing reverb, no delay line still emptying, no note still sounding.
+    pub fn render(
+        &mut self,
+        out: &mut AudioBuffer,
+        progress: &mut RenderProgress<'_>,
+    ) -> Result<(), EngineError> {
+        self.graph.panic();
+        out.clear();
+        progress.report(0.0);
+        if self.total == 0 {
+            progress.report(1.0);
+            return Ok(());
+        }
+
+        let mut transport = Transport::playing_from(self.start_frames);
+        let mut scratch = AudioBuffer::new(RENDER_CHANNELS, self.block_frames, self.sample_rate);
+        let mut rendered = 0;
+        while rendered < self.end {
+            // The range's end is a Stop, exactly as realtime playback stops there: the voices are
+            // released and what runs on into the tail is the effects' ring-out — not the material
+            // that lies beyond the range, which used to keep performing straight through it.
+            if self.ranged && transport.playing && rendered >= self.performed {
+                transport.playing = false;
+                self.graph.reset_voices();
+            }
+            let mut frames = self.block_frames.min(self.end - rendered);
+            if self.ranged && transport.playing {
+                // Never render across the boundary; the block after this one starts stopped.
+                frames = frames.min(self.performed - rendered);
+            }
+            scratch.set_frame_count(frames);
+            render_block(&mut self.graph, &mut transport, &mut scratch, true);
+            // How much of this block is still lead-in, and where the rest lands in the file.
+            let skip = self.latency.saturating_sub(rendered).min(frames);
+            if skip < frames {
+                let at = rendered + skip - self.latency;
+                let count = (frames - skip).min(self.total - at);
+                for channel in 0..RENDER_CHANNELS {
+                    out.channel_mut(channel)[at..at + count]
+                        .copy_from_slice(&scratch.channel(channel)[skip..skip + count]);
+                }
+            }
+            rendered += frames;
+            progress.report(rendered as f32 / self.end as f32);
+            // Between blocks, which is the only place a render can be interrupted — and cheap
+            // enough that the check costs nothing next to the block that just ran.
+            if progress.cancelled() {
+                return Err(EngineError::RenderCancelled);
             }
         }
-        rendered += frames;
-        progress.report(rendered as f32 / end as f32);
-        // Between blocks, which is the only place a render can be interrupted — and cheap
-        // enough that the check costs nothing next to the block that just ran.
-        if progress.cancelled() {
-            return Err(EngineError::RenderCancelled);
-        }
+        Ok(())
     }
-    Ok(out)
 }
 
 #[cfg(test)]
@@ -325,6 +439,83 @@ mod tests {
         assert_eq!(rendered.frame_count(), 96_000);
         assert_eq!(rendered.sample_rate(), SAMPLE_RATE);
         assert!((rendered.channel(0)[95_999] - TONE_AMPLITUDE).abs() < 1e-5);
+    }
+
+    #[test]
+    fn the_same_render_played_twice_produces_the_same_samples() {
+        // What a stem export rests on. A second pass over one graph has to begin where the first
+        // one did and with nothing left ringing, or every stem after the first would carry the
+        // tail of the one before it.
+        let project = four_beat_project();
+        let mut render = OfflineRender::new(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &mut crate::graph::PlacedEffects::new(),
+            &mut crate::graph::PlacedInstruments::new(),
+            &OfflineOptions::default(),
+        )
+        .expect("a render");
+
+        let mut first = render.buffer();
+        render
+            .render(&mut first, &mut RenderProgress::default())
+            .expect("the first pass");
+        let mut again = render.buffer();
+        render
+            .render(&mut again, &mut RenderProgress::default())
+            .expect("the second pass");
+        assert_eq!(first.channel(0), again.channel(0));
+        assert!(first.peak() > 0.0, "the passes agreed on silence");
+    }
+
+    #[test]
+    fn a_track_left_out_of_the_audible_list_is_not_in_the_render() {
+        let project = four_beat_project();
+        let mut render = OfflineRender::new(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &mut crate::graph::PlacedEffects::new(),
+            &mut crate::graph::PlacedInstruments::new(),
+            &OfflineOptions::default(),
+        )
+        .expect("a render");
+
+        let mut out = render.buffer();
+        render.set_audible(&[false]);
+        render
+            .render(&mut out, &mut RenderProgress::default())
+            .expect("render");
+        assert_eq!(out.peak(), 0.0, "a silenced track was still heard");
+
+        // And back again, from the first frame rather than fading in over it.
+        render.set_audible(&[true]);
+        render
+            .render(&mut out, &mut RenderProgress::default())
+            .expect("render");
+        assert!(
+            (out.channel(0)[0].abs() - TONE_AMPLITUDE).abs() < 1e-5,
+            "the pass began with a fade on it: {}",
+            out.channel(0)[0]
+        );
+    }
+
+    #[test]
+    fn progress_inside_a_window_is_reported_against_the_whole_job() {
+        let mut seen = Vec::new();
+        let mut report = |fraction: f32| seen.push(fraction);
+        let mut progress = RenderProgress::reporting(&mut report);
+
+        progress.within(0.0, 0.5, |progress| progress.report(1.0));
+        progress.within(0.5, 0.5, |progress| {
+            progress.report(0.0);
+            // Nested, because a job made of jobs is still one bar.
+            progress.within(0.5, 0.5, |progress| progress.report(1.0));
+        });
+        // And the window is put back afterwards.
+        progress.report(1.0);
+        assert_eq!(seen, vec![0.5, 0.5, 1.0, 1.0]);
     }
 
     #[test]

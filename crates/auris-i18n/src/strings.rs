@@ -358,6 +358,7 @@ strings! {
     CmdCollectAssets { en: "Collect Assets", ja: "アセットを集める" }
     CmdExportWav { en: "Export WAV", ja: "WAV を書き出す" }
     CmdExportCycle { en: "Export Cycle as WAV", ja: "サイクル範囲を WAV に書き出す" }
+    CmdExportStems { en: "Export Stems", ja: "ステムを書き出す" }
     CmdQuit { en: "Quit", ja: "終了" }
     CmdUndo { en: "Undo", ja: "取り消す" }
     CmdRedo { en: "Redo", ja: "やり直す" }
@@ -436,6 +437,8 @@ strings! {
     MenuCollectAssetsItem { en: "Collect Assets into Project", ja: "アセットをプロジェクトにまとめる" }
     MenuExportWavItem { en: "Export WAV…", ja: "WAV を書き出す…" }
     MenuExportCycleItem { en: "Export Cycle…", ja: "サイクル範囲を書き出す…" }
+    MenuExportStemsItem { en: "Export Stems…", ja: "ステムを書き出す…" }
+    DialogExportStems { en: "Choose a folder for the stems", ja: "ステムの書き出し先フォルダを選択" }
     MenuDelete { en: "Delete", ja: "削除" }
 
     // ------------------------------------------------------------------ panels and their docks
@@ -938,6 +941,10 @@ strings! {
         ja: "録音先のオーディオトラックを選択するか、録音待機にしてください"
     }
     ErrorAlreadyRecording { en: "a recording is already running", ja: "すでに録音中です" }
+    ErrorNothingToStem {
+        en: "there is nothing to export as stems; add a track that makes a sound",
+        ja: "ステム書き出しの対象がありません。音を出すトラックを追加してください"
+    }
     ErrorRecordingInProgress { en: "stop the recording before changing the audio device", ja: "オーディオデバイスを変更する前に録音を停止してください" }
     ErrorNotRecording { en: "no recording is running", ja: "録音していません" }
     ErrorFile { en: "file error", ja: "ファイルエラー" }
@@ -985,6 +992,7 @@ RENDER OPTIONS
         --dither                  Add TPDF dither, for 16-bit masters
         --no-tail                 Stop at the last clip instead of letting effect tails ring
         --loop                    Render only the project's cycle region
+        --stems <folder>          Write one file per track into a folder instead of a mix
 
 NEW OPTIONS
         --bpm <tempo>             Tempo of the new project (default: 120)
@@ -1028,6 +1036,7 @@ render のオプション
         --dither                  TPDF ディザを付加（16bit マスター向け）
         --no-tail                 エフェクトの残響を待たず最後のクリップで終える
         --loop                    サイクル範囲のみを書き出す
+        --stems <folder>          ミックスの代わりにトラックごとのファイルをフォルダに書き出す
 
 new のオプション
         --bpm <tempo>             新規プロジェクトのテンポ（既定: 120）

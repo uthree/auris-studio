@@ -144,6 +144,12 @@ impl MuteFade {
         self.open = open;
     }
 
+    /// Puts the fade where it would have ended up, with nothing left to slide.
+    fn settle(&mut self, open: bool) {
+        self.open = open;
+        self.position = if open { self.length } else { 0 };
+    }
+
     /// `true` once the fade has reached silence, so the strip can be skipped outright rather
     /// than rendered into samples that are about to be multiplied by zero.
     fn is_closed(&self) -> bool {
@@ -393,6 +399,16 @@ impl RenderStrip {
     pub fn set_mute(&mut self, mute: bool) {
         self.mute = mute;
         self.fade.set_open(self.is_active());
+    }
+
+    /// Sets the solo-resolved audibility flag without a fade, for a render that has not started.
+    ///
+    /// A settled fade rather than a sliding one, for the reason a project that opens with a track
+    /// muted opens silent: there is nothing before the first frame for a slide to come from, and
+    /// a stem that faded in over its first few milliseconds would be a stem with a fade on it.
+    pub fn settle_audible(&mut self, audible: bool) {
+        self.audible = audible;
+        self.fade.settle(audible && !self.mute);
     }
 
     /// Sets the solo-resolved audibility flag. Faded like a mute, for the same reason.

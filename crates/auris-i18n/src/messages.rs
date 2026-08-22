@@ -623,6 +623,12 @@ messages! {
         ja: "録音の前に {length} カウントします"
     }
 
+    /// How many stems were written, and where they went.
+    fn exported_stems(count: usize, folder: &str) {
+        en: "wrote {count} stems to {folder}",
+        ja: "{count} 本のステムを {folder} に書き出しました"
+    }
+
     /// A take that produced nothing, which reads as a failure until it is explained.
     fn recorded_nothing() {
         en: "the take was empty; nothing was kept",

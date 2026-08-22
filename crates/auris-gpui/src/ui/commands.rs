@@ -1410,6 +1410,112 @@ impl AurisApp {
         self.begin_export(true, cx);
     }
 
+    /// Prompts for a folder and renders one WAV file per track into it.
+    ///
+    /// The same flow as [`Self::start_export`] — one snapshot, one background render, one overlay
+    /// with a bar and a Cancel — with a folder in place of a file name. It is a separate command
+    /// rather than a checkbox on the export sheet because it answers a different question: an
+    /// export is a piece to listen to, and stems are a session for somebody else to open.
+    pub(crate) fn start_export_stems(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.choosing_export || self.export.as_ref().is_some_and(|e| e.result.is_none()) {
+            self.set_status(self.t(Key::ExportAlreadyRunning));
+            return;
+        }
+        let mut job = self.session.render_job();
+        // Refused before the dialog opens, for the reason a cycle export is: a folder chosen for
+        // an export that cannot happen is a question asked for nothing.
+        let stems = job.stem_tracks().len();
+        if stems == 0 {
+            self.set_failed_status(self.t(Key::ErrorNothingToStem));
+            return;
+        }
+        let export = self.settings.export;
+        let options = OfflineOptions {
+            sample_rate: export.sample_rate.map(f64::from),
+            ..OfflineOptions::whole_project()
+        };
+        let settings =
+            export.wav_settings(options.sample_rate.unwrap_or(job.project().sample_rate));
+        self.choosing_export = true;
+        let language = self.language();
+
+        cx.spawn(async move |this, cx| {
+            let handle = rfd::AsyncFileDialog::new()
+                .set_title(Key::DialogExportStems.get(language))
+                .pick_folder()
+                .await;
+            let Some(handle) = handle else {
+                let _ = this.update(cx, |this, _| this.choosing_export = false);
+                return;
+            };
+            let folder = handle.path().to_path_buf();
+
+            let progress = Arc::new(AtomicU32::new(0));
+            let cancel = Arc::new(AtomicBool::new(false));
+            let _ = this.update(cx, |this, cx| {
+                this.choosing_export = false;
+                this.export = Some(ExportState {
+                    path: folder.clone(),
+                    progress: Arc::clone(&progress),
+                    result: None,
+                    cancel: Arc::clone(&cancel),
+                });
+                cx.notify();
+            });
+
+            let render_folder = folder.clone();
+            let rendered = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut report = |fraction: f32| {
+                        progress.store(fraction.to_bits(), Ordering::Relaxed);
+                    };
+                    job.render_stems(
+                        &render_folder,
+                        &settings,
+                        &options,
+                        &mut RenderProgress::reporting(&mut report).cancelled_by(&cancel),
+                    )
+                    .map(|stems| stems.len())
+                    .map_err(|error| (error.is_cancellation(), error.to_string()))
+                })
+                .await;
+
+            let _ = this.update(cx, |this, cx| {
+                let language = this.language();
+                let message = match rendered {
+                    Ok(written) => {
+                        let text = messages::exported_stems(
+                            language,
+                            written,
+                            &folder.display().to_string(),
+                        );
+                        this.set_status(text.clone());
+                        Ok(text)
+                    }
+                    // Whatever was finished before the button was pressed stays on disk, which is
+                    // why this is not phrased as a failure either.
+                    Err((true, _)) => {
+                        let text = Key::ExportCancelled.get(language).to_string();
+                        this.set_status(text.clone());
+                        Ok(text)
+                    }
+                    Err((false, error)) => {
+                        let text =
+                            messages::failed(language, Key::CmdExportStems.get(language), &error);
+                        this.set_failed_status(text.clone());
+                        Err(text)
+                    }
+                };
+                if let Some(export) = this.export.as_mut() {
+                    export.result = Some(message);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// The export flow behind both commands: the whole arrangement, or the cycle region.
     fn begin_export(&mut self, cycle: bool, cx: &mut Context<Self>) {
         // `export` is not set until a path comes back, so the running check alone let a second
