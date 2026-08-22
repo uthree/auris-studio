@@ -704,10 +704,12 @@ you put it until you click it off, and clicking it off hands the aim back to the
 audio tracks show the button at all.
 
 **Arm several tracks and they all record**, each from its own input channel — a band goes down at
-once, one file and one clip per track. The first track you arm takes the whole device, and every
-one after it takes the lowest input nobody else is reading, so arming four tracks on a four-input
-interface gives you inputs 1, 2, 3 and 4 without choosing anything. The status line names the
-input each time, because the button is one lamp and cannot.
+once, one file and one clip per track. A track takes the whole device where that is a pair or less
+— a laptop's microphone, a stereo interface — and a single channel otherwise: the lowest one
+nobody else is reading. So arming four tracks on a four-input interface gives you inputs 1, 2, 3
+and 4 without choosing anything, and recording one track through a stereo interface records both
+sides the way it always did. The status line names the input each time, because the button is one
+lamp and cannot.
 
 **To choose the input yourself**, right-click the track — in the arrangement or in the mixer — and
 open **Record Input**. Every channel is offered on its own and every pair together: a microphone

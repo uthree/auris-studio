@@ -14,10 +14,11 @@ format rather than a convention: `## <version> — <date>`.
 * **Every armed track records**, each from its own input channel — one file and one clip per
   track, from one press of Record. Arming a second track adds a take rather than moving the first
   one, which is what the arm button did before.
-* The first arm takes the whole device and every one after it takes the lowest input nobody else
-  is reading, so four armed tracks on a four-input interface land on inputs 1 to 4 without
-  anything being chosen. **Record Input** on a track's menu offers every channel on its own and
-  every pair together, and picking one arms the track as well.
+* A track takes the whole device where that is a pair or less and a single channel otherwise — the
+  lowest one nobody else is reading — so four armed tracks on a four-input interface land on
+  inputs 1 to 4 without anything being chosen, and one track through a stereo interface still
+  records both sides. **Record Input** on a track's menu offers every channel on its own and every
+  pair together, and picking one arms the track as well.
 * A channel the interface does not have records silence rather than its neighbour: an arm outlives
   the box it was made for, and a take holding the wrong microphone would pass for a good one.
 * Monitoring follows the channels the track it plays is armed to read, so listening to a track
