@@ -59,6 +59,18 @@ pub(crate) fn recording_summary(report: &RecordingReport, language: Language) ->
     }
 }
 
+/// How a run of input channels is written for a person: from one, and a pair joined by a dash.
+///
+/// Every channel below this line is counted from zero, and every channel printed on the back of
+/// an interface is counted from one. The number somebody is looking at while they choose is the
+/// one on the box.
+pub(crate) fn input_label(input: InputChannels) -> String {
+    match input.count {
+        1 => format!("{}", input.first + 1),
+        _ => format!("{}-{}", input.first + 1, input.end()),
+    }
+}
+
 /// What is going wrong with a take while it runs.
 ///
 /// The session has counted both of these since recording was written and neither has ever been
@@ -810,19 +822,59 @@ impl AurisApp {
     /// the override and the way to record more than one: it pins a take to a track that is not
     /// the one being looked at, and clicking the last one off hands the aim back to the selection.
     pub(crate) fn toggle_arm(&mut self, track: TrackId) {
-        if self.session.track_arm(track).is_some() {
-            self.session.disarm_track(track);
+        match self.session.track_arm(track).is_some() {
+            true => self.set_track_input(track, None),
+            false => self.arm_on(track, None),
+        }
+    }
+
+    /// Arms a track on particular channels, or disarms it with `None`.
+    ///
+    /// What the input picker runs. Arming through here rather than through the button as well,
+    /// because choosing an input is also how somebody arms a track they had not armed yet.
+    pub(crate) fn set_track_input(&mut self, track: TrackId, input: Option<InputChannels>) {
+        match input {
+            Some(input) => self.arm_on(track, Some(input)),
+            None => {
+                self.session.disarm_track(track);
+                let name = self.track_name(track);
+                self.set_status(messages::disarmed_track(self.language, &name));
+            }
+        }
+    }
+
+    /// Arms `track`, and says which input it will be recording from.
+    ///
+    /// The channel is in the status line because it is otherwise invisible: the arm button is one
+    /// lamp and the session chose the channel. Somebody arming four tracks in a row needs to see
+    /// them land on four different inputs, and the first time they do not is the take that comes
+    /// back with four copies of the same microphone.
+    fn arm_on(&mut self, track: TrackId, input: Option<InputChannels>) {
+        if let Err(error) = self.session.arm_track(track, input) {
+            self.report_session_error(&error);
             return;
         }
-        if let Err(error) = self.session.arm_track(track, None) {
-            self.report_session_error(&error);
-        }
+        let Some(armed) = self.session.track_arm(track) else {
+            return;
+        };
+        let name = self.track_name(track);
+        let line = messages::armed_on_input(self.language, &name, &input_label(armed));
+        self.set_status(line);
+    }
+
+    /// A track's name, or an empty one for a track that has gone.
+    fn track_name(&self, track: TrackId) -> String {
+        self.project()
+            .track(track)
+            .map(|found| found.name.clone())
+            .unwrap_or_default()
     }
 
     /// Plays the live input through `track`, or stops doing so if it already was.
     ///
-    /// One track at a time, like the arm and for the same reason: one input stream, and it has to
-    /// come out somewhere in particular.
+    /// One track at a time, unlike the arm: there is one ring and it carries one stereo pair, so
+    /// the monitor has one place to come out. It listens to the channels that track is armed to
+    /// read, so what is heard is what would be kept.
     ///
     /// The status line names the device *and* what listening this way costs, every time rather
     /// than once. Somebody recording through an interface that monitors in hardware and who turns
@@ -1120,6 +1172,19 @@ mod tests {
             seconds,
             outside_punch,
         }
+    }
+
+    #[test]
+    fn an_input_is_named_the_way_the_interface_numbers_it() {
+        // From one. Channel zero is what the code calls it and input 1 is what is written beside
+        // the socket somebody is plugging into.
+        assert_eq!(input_label(InputChannels::mono(0)), "1");
+        assert_eq!(input_label(InputChannels::mono(4)), "5");
+        // A pair is both ends rather than the first one and a count, because "3-4" is what the
+        // interface calls that socket too.
+        assert_eq!(input_label(InputChannels::stereo(0)), "1-2");
+        assert_eq!(input_label(InputChannels::stereo(2)), "3-4");
+        assert_eq!(input_label(InputChannels::new(0, 4)), "1-4");
     }
 
     #[test]

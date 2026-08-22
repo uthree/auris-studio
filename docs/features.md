@@ -700,9 +700,29 @@ that rather than reaching past it for the nearest audio track.
 
 **Filling that R button in aims a take somewhere other than where you are looking**, which is the
 only thing the selection cannot say: record the vocal while you read the drum part. It stays where
-you put it until you click it off, and clicking it off hands the aim back to the selection. One
-track at a time either way — there is one input stream, and arming a second track moves the arm
-rather than adding one. Only audio tracks show the button at all.
+you put it until you click it off, and clicking it off hands the aim back to the selection. Only
+audio tracks show the button at all.
+
+**Arm several tracks and they all record**, each from its own input channel — a band goes down at
+once, one file and one clip per track. The first track you arm takes the whole device, and every
+one after it takes the lowest input nobody else is reading, so arming four tracks on a four-input
+interface gives you inputs 1, 2, 3 and 4 without choosing anything. The status line names the
+input each time, because the button is one lamp and cannot.
+
+**To choose the input yourself**, right-click the track — in the arrangement or in the mixer — and
+open **Record Input**. Every channel is offered on its own and every pair together: a microphone
+is one input and a stereo keyboard is two. Picking one arms the track as well, so it is also how
+you arm a track on something other than what was picked for it. Inputs are numbered the way they
+are printed on the interface, from 1.
+
+Two things follow from there being one device rather than several:
+
+* **A channel the interface does not have records silence.** An arm outlives the box it was made
+  for, so a project armed to inputs 5-8 opened on a laptop gives you those tracks silent rather
+  than four copies of the built-in microphone.
+* **Monitoring is still one track.** It follows that track's own input channels, so listening to
+  a track armed to input 5 plays input 5 — but a room recording together hears itself through the
+  interface, which is what the interface is for.
 
 **Recording needs a saved project**, and pressing Record on one that has never been saved opens
 the save dialog rather than refusing. The take is written straight to disk while it happens, into
@@ -765,6 +785,10 @@ about to be recorded into, at the level the fader is set to, and a muted track s
 
 It works with the transport stopped, which is when you set a level in the first place, and it does
 not need a take running. Recording and monitoring are independent switches on the same device.
+
+**One track at a time**, unlike the arm — there is one path back into the mix, so pressing **I**
+on another track moves it. It plays the channels that track is armed to read, so a track armed to
+input 5 monitors input 5 and one that is not armed monitors the first pair.
 
 **Software monitoring costs latency and an interface's own does not.** The signal has to travel
 input device → Auris → output device, and Auris holds three blocks of buffer in the middle so the

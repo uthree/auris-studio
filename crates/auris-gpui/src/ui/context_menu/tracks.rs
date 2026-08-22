@@ -13,6 +13,7 @@ use gpui::{Pixels, Point, SharedString};
 
 use crate::app::AurisApp;
 use crate::ui::automation::automation_offer;
+use crate::ui::transport_bar::input_label;
 
 use super::{ContextMenu, MenuCommand};
 
@@ -37,6 +38,9 @@ impl AurisApp {
             })
             .unwrap_or(0);
         let current_color = entry.color;
+        // Only an audio track has an input to be recorded from; an instrument track's comes from
+        // whatever is playing it.
+        let records = entry.kind.as_audio().is_some();
         let menu = ContextMenu::new(anchor, entry.name.clone())
             .item(
                 self.t(Key::MenuDuplicateTrack),
@@ -61,7 +65,17 @@ impl AurisApp {
                     track: Some(track),
                     at: anchor,
                 },
-            )
+            );
+        // Where a take would come from, which is also the only way to arm a track on anything
+        // other than the channels the session picked for it.
+        let menu = match records {
+            true => menu.item(
+                self.t(Key::MenuRecordInput),
+                MenuCommand::ShowInputPicker { track, at: anchor },
+            ),
+            false => menu,
+        };
+        let menu = menu
             .separator()
             .item(
                 self.t(Key::MenuRouteTo),
@@ -418,6 +432,57 @@ impl AurisApp {
                     source: Some(id),
                 },
                 current == Some(id),
+            );
+        }
+        menu
+    }
+
+    /// The device inputs a track could be recorded from.
+    ///
+    /// Every channel on its own and then every pair, because a microphone is one and a keyboard
+    /// is two and the track does not know which it is about to be given. Numbered from one, the
+    /// way the numbers are printed on the interface — everything below this line counts from zero
+    /// and nobody choosing a socket does.
+    ///
+    /// Choosing one arms the track as well as pointing it, so this is a way to start recording
+    /// and not only a way to adjust it. `&mut` because how many channels the device has is
+    /// remembered rather than asked for; see
+    /// [`Session::input_channel_count`](auris_session::Session::input_channel_count).
+    pub(crate) fn input_menu(&mut self, anchor: Point<Pixels>, track: TrackId) -> ContextMenu {
+        let current = self.session.track_arm(track);
+        let channels = self.session.input_channel_count();
+        let mut menu = ContextMenu::new(anchor, self.t(Key::MenuRecordInput))
+            .toggle(
+                self.t(Key::MenuInputOff),
+                MenuCommand::SetTrackInput { track, input: None },
+                current.is_none(),
+            )
+            .separator();
+        for first in 0..channels {
+            let input = InputChannels::mono(first);
+            menu = menu.toggle(
+                input_label(input),
+                MenuCommand::SetTrackInput {
+                    track,
+                    input: Some(input),
+                },
+                current == Some(input),
+            );
+        }
+        if channels > 1 {
+            menu = menu.separator();
+        }
+        // Pairs from the odd-numbered channels only. An interface's stereo inputs are 1-2 and
+        // 3-4; offering 2-3 as well would double the list to describe a cable nobody has.
+        for first in (0..channels.saturating_sub(1)).step_by(2) {
+            let input = InputChannels::stereo(first);
+            menu = menu.toggle(
+                input_label(input),
+                MenuCommand::SetTrackInput {
+                    track,
+                    input: Some(input),
+                },
+                current == Some(input),
             );
         }
         menu

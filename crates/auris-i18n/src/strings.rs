@@ -845,6 +845,8 @@ strings! {
     CmdSetEffectSidechain { en: "key this effect from that track", ja: "エフェクトをそのトラックでキーする" }
     MenuSidechain { en: "Sidechain", ja: "サイドチェイン" }
     MenuSidechainNone { en: "None", ja: "なし" }
+    MenuRecordInput { en: "Record Input", ja: "録音入力" }
+    MenuInputOff { en: "Not Armed", ja: "録音待機しない" }
     EditAdjustParameter { en: "the parameter change", ja: "パラメーターの変更" }
     MenuFreezeTrack { en: "Keep Every Take Here", ja: "このトラックをすべて確定" }
     MenuTrackColor { en: "Colour", ja: "カラー" }

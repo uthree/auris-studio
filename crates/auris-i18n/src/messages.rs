@@ -607,6 +607,22 @@ messages! {
         ja: "音が入っていなかったため、何も保存しませんでした"
     }
 
+    /// A track armed, and the input it will be recording from.
+    ///
+    /// The channel is said out loud because it is otherwise invisible: the arm button is one lamp
+    /// and the session chose the channel. Somebody arming four tracks needs to watch them land on
+    /// four different inputs.
+    fn armed_on_input(track: &str, input: &str) {
+        en: "{track} will record from input {input}",
+        ja: "{track} を入力 {input} から録音します"
+    }
+
+    /// A track that is no longer armed.
+    fn disarmed_track(track: &str) {
+        en: "{track} is no longer armed",
+        ja: "{track} の録音待機を解除しました"
+    }
+
     /// Several tracks recorded at once, which is one press of Record and several takes.
     ///
     /// The count rather than the names: four tracks named in a status line is a line nobody can

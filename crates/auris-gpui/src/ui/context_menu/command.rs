@@ -315,6 +315,20 @@ pub enum MenuCommand {
         /// Where to put the menu.
         at: Point<Pixels>,
     },
+    /// Open the list of device inputs a track could be recorded from.
+    ShowInputPicker {
+        /// The track to arm.
+        track: TrackId,
+        /// Where to put the menu.
+        at: Point<Pixels>,
+    },
+    /// Arm a track on particular input channels, or disarm it.
+    SetTrackInput {
+        /// The track.
+        track: TrackId,
+        /// The channels to read, or `None` to disarm it.
+        input: Option<InputChannels>,
+    },
     /// Point one effect at a track to key from, or stop it listening to one.
     SetEffectSidechain {
         /// Strip the effect sits in, or `None` for the master bus.
@@ -938,6 +952,11 @@ impl AurisApp {
                 let menu = self.effect_picker_menu(at, track);
                 self.open_menu(menu);
             }
+            MenuCommand::ShowInputPicker { track, at } => {
+                let menu = self.input_menu(at, track);
+                self.open_menu(menu);
+            }
+            MenuCommand::SetTrackInput { track, input } => self.set_track_input(track, input),
             MenuCommand::ShowSidechainPicker { track, slot, at } => {
                 let menu = self.sidechain_menu(at, track, slot);
                 self.open_menu(menu);

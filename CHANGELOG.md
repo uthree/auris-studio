@@ -9,6 +9,23 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### A band can go down at once
+
+* **Every armed track records**, each from its own input channel — one file and one clip per
+  track, from one press of Record. Arming a second track adds a take rather than moving the first
+  one, which is what the arm button did before.
+* The first arm takes the whole device and every one after it takes the lowest input nobody else
+  is reading, so four armed tracks on a four-input interface land on inputs 1 to 4 without
+  anything being chosen. **Record Input** on a track's menu offers every channel on its own and
+  every pair together, and picking one arms the track as well.
+* A channel the interface does not have records silence rather than its neighbour: an arm outlives
+  the box it was made for, and a take holding the wrong microphone would pass for a good one.
+* Monitoring follows the channels the track it plays is armed to read, so listening to a track
+  armed to input 5 plays input 5. Still one track at a time — there is one ring and it carries one
+  stereo pair.
+* A take on several tracks is one undo step, and the report says which of them came back with
+  nothing.
+
 ### An effect can listen to another track
 
 * **A compressor can be keyed from the kick drum.** An effect slot names a track to listen to, and
