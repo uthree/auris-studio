@@ -641,6 +641,16 @@ messages! {
         ja: "{device} から {tracks} トラックをモニターしています（ハードウェアモニタリングのほうが遅延は小さくなります）"
     }
 
+    /// Joins made by dropping a clip over its neighbour.
+    ///
+    /// Said out loud because nothing was clicked to ask for it: a fade that appeared on its own
+    /// is a fade somebody should be told about, or the first they know of it is a clip that
+    /// sounds quieter at the end than it did a moment ago.
+    fn crossfaded_landings(joins: usize) {
+        en: "crossfaded {joins} joins",
+        ja: "{joins} 箇所をクロスフェードしました"
+    }
+
     /// How long the join two crossfaded clips came out.
     fn crossfaded(seconds: f64) {
         en: "crossfaded over {seconds:.2} seconds",

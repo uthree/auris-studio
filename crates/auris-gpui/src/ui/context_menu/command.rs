@@ -10,7 +10,7 @@ use auris_session::prelude::*;
 
 use gpui::{Context, Pixels, Point};
 
-use crate::app::AurisApp;
+use crate::app::{AurisApp, FadeEdge};
 use crate::dock::{Dock, Panel};
 use crate::ui::compose_sheet::song_dials;
 use crate::ui::prompt::{Prompt, PromptTarget};
@@ -314,6 +314,24 @@ pub enum MenuCommand {
         slot: EffectSlotId,
         /// Where to put the menu.
         at: Point<Pixels>,
+    },
+    /// Open the list of shapes one of a clip's fades could take.
+    ShowFadeShapePicker {
+        /// The clip whose fade it is.
+        clip: ClipId,
+        /// Which of its two edges.
+        edge: FadeEdge,
+        /// Where to put the menu.
+        at: Point<Pixels>,
+    },
+    /// Set the shape of one of a clip's fades.
+    SetFadeCurve {
+        /// The clip whose fade it is.
+        clip: ClipId,
+        /// Which of its two edges.
+        edge: FadeEdge,
+        /// The shape to give it.
+        curve: FadeCurve,
     },
     /// Open the list of device inputs a track could be recorded from.
     ShowInputPicker {
@@ -1093,6 +1111,16 @@ impl AurisApp {
                 let _ = self.session.set_clip_fades(clip, 0, 0);
             }
             MenuCommand::Crossfade(clip) => self.crossfade_clip(clip),
+            MenuCommand::ShowFadeShapePicker { clip, edge, at } => {
+                let menu = self.fade_shape_menu(at, clip, edge);
+                self.open_menu(menu);
+            }
+            MenuCommand::SetFadeCurve { clip, edge, curve } => {
+                let _ = match edge {
+                    FadeEdge::In => self.session.set_fade_in_curve(clip, curve),
+                    FadeEdge::Out => self.session.set_fade_out_curve(clip, curve),
+                };
+            }
             MenuCommand::SetChordAt(tick) => {
                 let current = self
                     .project()

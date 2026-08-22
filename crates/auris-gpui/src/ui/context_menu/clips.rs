@@ -11,7 +11,7 @@ use auris_session::prelude::*;
 
 use gpui::{Pixels, Point};
 
-use crate::app::AurisApp;
+use crate::app::{AurisApp, FadeEdge};
 use crate::ui::prompt::{Prompt, PromptTarget};
 
 use super::{ContextMenu, MenuCommand};
@@ -102,6 +102,28 @@ impl AurisApp {
                 self.t(Key::MenuCrossfade),
                 MenuCommand::Crossfade(clip),
             )
+            // A shape each, and only for an edge that has a fade to shape. What a crossfade sets
+            // for itself, offered by hand for a join somebody made by dragging a fade instead.
+            .item_if(
+                self.audio_clip_shape(clip)
+                    .is_some_and(|(_, _, _, _, fade_in, _)| fade_in > 0),
+                self.t(Key::MenuFadeInShape),
+                MenuCommand::ShowFadeShapePicker {
+                    clip,
+                    edge: FadeEdge::In,
+                    at: anchor,
+                },
+            )
+            .item_if(
+                self.audio_clip_shape(clip)
+                    .is_some_and(|(_, _, _, _, _, fade_out)| fade_out > 0),
+                self.t(Key::MenuFadeOutShape),
+                MenuCommand::ShowFadeShapePicker {
+                    clip,
+                    edge: FadeEdge::Out,
+                    at: anchor,
+                },
+            )
             .item_if(
                 self.audio_clip_shape(clip)
                     .is_some_and(|(_, _, _, _, fade_in, fade_out)| fade_in > 0 || fade_out > 0),
@@ -140,6 +162,42 @@ impl AurisApp {
                 MenuCommand::AccompanyClip(clip),
             );
         self.generated_clip_rows(menu, clip)
+    }
+
+    /// The shapes one of a clip's fades can take.
+    ///
+    /// Two rows, because there are two shapes and each is right for a different job — a fade to
+    /// silence wants the straight one and a join wants the other. Which edge is in the row that
+    /// opened this, so the picker says only what the shape is.
+    pub(crate) fn fade_shape_menu(
+        &self,
+        anchor: Point<Pixels>,
+        clip: ClipId,
+        edge: FadeEdge,
+    ) -> ContextMenu {
+        let current = self
+            .session
+            .fade_curves(clip)
+            .map(|(into, out)| match edge {
+                FadeEdge::In => into,
+                FadeEdge::Out => out,
+            });
+        let title = match edge {
+            FadeEdge::In => Key::MenuFadeInShape,
+            FadeEdge::Out => Key::MenuFadeOutShape,
+        };
+        let mut menu = ContextMenu::new(anchor, self.t(title));
+        for (curve, label) in [
+            (FadeCurve::Linear, Key::MenuFadeLinear),
+            (FadeCurve::EqualPower, Key::MenuFadeEqualPower),
+        ] {
+            menu = menu.toggle(
+                self.t(label),
+                MenuCommand::SetFadeCurve { clip, edge, curve },
+                current == Some(curve),
+            );
+        }
+        menu
     }
 
     /// Crossfades a clip with the one it overlaps, and says how long the join came out.

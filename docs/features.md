@@ -192,11 +192,15 @@ is on its right-click menu, in decibels, applied before the track's effects; whi
 0 dB the clip prints the number beside its name, and *Remove Fades* on the same menu takes both
 fades back off.
 
-**To crossfade two takes**, drag one over the other on the same track so they overlap, then
-right-click either and choose *Crossfade*. The earlier clip fades out across the overlap while
-the later one fades in across the same stretch, and the two together are one Undo. Nothing moves:
-how long the join is is how far you dragged, so the way to lengthen a crossfade is to lengthen
-the overlap and ask again.
+**To crossfade two takes**, drag one over the other on the same track so they overlap. The join is
+shaped when you let go — the earlier clip fades out across the overlap while the later one fades
+in across the same stretch — and it is part of the same Undo as the move, because the fade only
+exists because the clip landed there. Nothing moves to make room: how long the join is is how far
+you dragged, so the way to lengthen a crossfade is to lengthen the overlap.
+
+**A fade you drew is never written over.** The drop shapes a join only where neither of the two
+meeting edges already carries a fade; where one does, *Crossfade* on either clip's right-click
+menu does it on demand.
 
 A join uses a different fade shape from an edge. A fade **to or from silence** is a straight line
 in amplitude, which is what it looks like it should be. A **crossfade** is a quarter of a sine
@@ -204,6 +208,10 @@ against a quarter of a cosine, because two straight ramps crossing sum to about 
 less in the middle than at either end whenever the two clips are not the same performance — a hole
 in the join. The shapes are drawn as they sound: a crossfade's ramp is bowed where an edge fade's
 is straight.
+
+Either shape can be chosen by hand — *Fade-In Shape* and *Fade-Out Shape* on the clip's menu,
+which appear once that edge has a fade on it. That is for the joins made another way: a fade
+dragged out by its handle over a neighbour, or a clip trimmed back until it met one.
 
 The middle of the transport bar holds three readouts: the position, the tempo and the time
 signature. The first two are typeable — double-click either and the number can be entered

@@ -804,6 +804,10 @@ strings! {
     EditSetClipFade { en: "the fade", ja: "フェードの変更" }
     EditCrossfade { en: "the crossfade", ja: "クロスフェード" }
     MenuCrossfade { en: "Crossfade", ja: "クロスフェード" }
+    MenuFadeInShape { en: "Fade-In Shape", ja: "フェードインの形" }
+    MenuFadeOutShape { en: "Fade-Out Shape", ja: "フェードアウトの形" }
+    MenuFadeLinear { en: "Straight", ja: "直線" }
+    MenuFadeEqualPower { en: "Equal Power", ja: "等パワー" }
     CmdCrossfade { en: "crossfade the clips", ja: "クリップをクロスフェード" }
     EditSetClipTempo { en: "the clip's tempo", ja: "クリップのテンポ" }
     EditAddInstrumentTrack { en: "adding an instrument track", ja: "ソフト音源トラックの追加" }

@@ -27,10 +27,13 @@ format rather than a convention: `## <version> — <date>`.
 
 ### Two takes can be joined without a hole in the join
 
-* **Crossfades.** Drag one clip over another on the same track and choose **Crossfade** from
-  either one's menu: the earlier fades out across the overlap while the later fades in across the
-  same stretch, as one undo step. How long the join is is how far you dragged — nothing moves to
-  make room.
+* **Crossfades.** Drag one clip over another on the same track and let go: the join is shaped as
+  part of the same undo step as the move, the earlier fading out across the overlap while the
+  later fades in across the same stretch. How long the join is is how far you dragged — nothing
+  moves to make room. A fade you drew is never written over, and **Crossfade** on either clip's
+  menu makes the join on demand where one is.
+* **Fade-In Shape** and **Fade-Out Shape** on the same menu choose the curve by hand, for a join
+  made by dragging a fade rather than by asking for one.
 * A clip's fades now carry a **shape**, one for each edge. An edge fade stays a straight line;
   a crossfade uses the equal-power curve, so the pair holds its level through the middle of the
   join instead of dipping about three decibels there. The arrangement draws the curve it plays.

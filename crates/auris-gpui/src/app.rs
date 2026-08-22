@@ -1392,6 +1392,19 @@ impl AurisApp {
         let Some(drag) = self.drag.take() else {
             return;
         };
+        // A clip dropped over its neighbour is a join, and the join is shaped before the gesture
+        // closes so that it is part of the same undo step: the fade exists because the clip
+        // landed there, and undoing the move without it would leave a fade over nothing.
+        //
+        // Only where neither meeting edge already carries one — see
+        // `Session::crossfade_landings`, which is where that rule lives and is tested.
+        if let Drag::ClipMove { origins, .. } = &drag {
+            let moved: Vec<ClipId> = origins.iter().map(|(clip, _)| *clip).collect();
+            let joins = self.session.crossfade_landings(&moved);
+            if joins > 0 {
+                self.set_status(messages::crossfaded_landings(self.language, joins));
+            }
+        }
         if drag.edit().is_some() {
             // A gesture that changed nothing records no undo step and triggers no rebuild.
             self.session.end_transaction();

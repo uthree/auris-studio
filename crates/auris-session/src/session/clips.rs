@@ -777,6 +777,71 @@ impl Session {
         first: ClipId,
         second: ClipId,
     ) -> Result<Ticks, SessionError> {
+        self.begin_transaction(Edit::Crossfade);
+        match self.shape_join(first, second) {
+            Ok(overlap) => {
+                self.invalidate_graph();
+                self.end_transaction();
+                Ok(overlap)
+            }
+            Err(error) => {
+                self.revert_transaction();
+                Err(error)
+            }
+        }
+    }
+
+    /// Crossfades every join the named clips have just landed in, and says how many were made.
+    ///
+    /// What a clip dropped over its neighbour gets. It is deliberately **not** every overlap in
+    /// the project — only the clips the caller says have moved — and deliberately not one that
+    /// somebody has already shaped: a join is made only where *neither* meeting edge carries a
+    /// fade, so a hand-drawn fade is never written over by a drag.
+    ///
+    /// Called inside whatever transaction the move is already recording, so the join and the move
+    /// it came from are one undo step. There is nothing to undo separately: the fade exists
+    /// because the clip landed there.
+    pub fn crossfade_landings(&mut self, clips: &[ClipId]) -> usize {
+        let mut made = 0;
+        for clip in clips {
+            let Some((partner, _)) = self.crossfade_partner(*clip) else {
+                continue;
+            };
+            if !self.join_is_clear(*clip, partner) {
+                continue;
+            }
+            if self.shape_join(*clip, partner).is_ok() {
+                made += 1;
+            }
+        }
+        if made > 0 {
+            self.invalidate_graph();
+        }
+        made
+    }
+
+    /// Whether the two edges that would meet in a join are both bare.
+    ///
+    /// The test a drag has to pass before it shapes anything. A fade somebody drew is a decision
+    /// about how that clip ends, and a gesture aimed at *where the clip sits* has no business
+    /// rewriting it.
+    fn join_is_clear(&self, first: ClipId, second: ClipId) -> bool {
+        let (Some(one), Some(two)) = (
+            self.project.audio_clip(first),
+            self.project.audio_clip(second),
+        ) else {
+            return false;
+        };
+        let (early, late) = match one.start <= two.start {
+            true => (one, two),
+            false => (two, one),
+        };
+        early.fade_out_frames == 0 && late.fade_in_frames == 0
+    }
+
+    /// The whole of a crossfade except the undo step, so a caller already recording one can
+    /// borrow it.
+    fn shape_join(&mut self, first: ClipId, second: ClipId) -> Result<Ticks, SessionError> {
         if first == second {
             return Err(SessionError::NotOverlapping);
         }
@@ -807,7 +872,6 @@ impl Session {
 
         let out_frames = fade_frames(overlap, early_pass, early.length_frames);
         let in_frames = fade_frames(overlap, late_pass, late.length_frames);
-        self.begin_transaction(Edit::Crossfade);
         self.set_clip_fades(early.id, early.fade_in_frames, out_frames)?;
         self.set_clip_fades(late.id, in_frames, late.fade_out_frames)?;
         if let Some(audio) = self.project.audio_clip_mut(early.id) {
@@ -816,9 +880,51 @@ impl Session {
         if let Some(audio) = self.project.audio_clip_mut(late.id) {
             audio.fade_in_curve = FadeCurve::EqualPower;
         }
-        self.invalidate_graph();
-        self.end_transaction();
         Ok(overlap)
+    }
+
+    /// Sets the shape of an audio clip's fade-in.
+    ///
+    /// The shape a crossfade sets for itself, offered by hand for the joins somebody made another
+    /// way — a fade drawn by dragging, or a clip trimmed back until it met its neighbour. The
+    /// shapes and what each is for are [`FadeCurve`].
+    pub fn set_fade_in_curve(
+        &mut self,
+        clip: ClipId,
+        curve: FadeCurve,
+    ) -> Result<(), SessionError> {
+        if self.require_audio_clip(clip)?.fade_in_curve == curve {
+            return Ok(());
+        }
+        self.record(Edit::SetClipFade);
+        if let Some(audio) = self.project.audio_clip_mut(clip) {
+            audio.fade_in_curve = curve;
+        }
+        self.invalidate_graph();
+        Ok(())
+    }
+
+    /// Sets the shape of an audio clip's fade-out.
+    pub fn set_fade_out_curve(
+        &mut self,
+        clip: ClipId,
+        curve: FadeCurve,
+    ) -> Result<(), SessionError> {
+        if self.require_audio_clip(clip)?.fade_out_curve == curve {
+            return Ok(());
+        }
+        self.record(Edit::SetClipFade);
+        if let Some(audio) = self.project.audio_clip_mut(clip) {
+            audio.fade_out_curve = curve;
+        }
+        self.invalidate_graph();
+        Ok(())
+    }
+
+    /// The shapes of an audio clip's two fades, in and out.
+    pub fn fade_curves(&self, clip: ClipId) -> Option<(FadeCurve, FadeCurve)> {
+        let audio = self.project.audio_clip(clip)?;
+        Some((audio.fade_in_curve, audio.fade_out_curve))
     }
 
     /// The audio clip called `clip`, or the error saying what was addressed instead.
@@ -1421,6 +1527,99 @@ mod tests {
         // The same second of the timeline is a quarter of the long clip's four beats, and so a
         // quarter of the 96 000 frames behind them.
         assert_eq!(audio_shape(&session, first), (0.0, 0, 24_000));
+    }
+
+    #[test]
+    fn a_fade_shape_can_be_chosen_by_hand_and_comes_back_on_undo() {
+        // What a crossfade sets for itself, for the joins somebody made another way — a fade
+        // drawn by dragging, or a clip trimmed back until it met its neighbour.
+        let mut session = session();
+        let clip = audio_clip(&mut session, 48_000);
+        session.set_clip_fades(clip, 1_000, 2_000).unwrap();
+        session.forget_history();
+        assert_eq!(
+            session.fade_curves(clip),
+            Some((FadeCurve::Linear, FadeCurve::Linear))
+        );
+
+        session
+            .set_fade_out_curve(clip, FadeCurve::EqualPower)
+            .unwrap();
+        assert_eq!(
+            session.fade_curves(clip),
+            Some((FadeCurve::Linear, FadeCurve::EqualPower)),
+            "the other edge was shaped as well"
+        );
+        assert_eq!(session.undo(), Some(Edit::SetClipFade));
+        assert_eq!(
+            session.fade_curves(clip),
+            Some((FadeCurve::Linear, FadeCurve::Linear))
+        );
+
+        // Writing the shape it already has is not an edit.
+        session.set_fade_in_curve(clip, FadeCurve::Linear).unwrap();
+        assert!(!session.can_undo());
+        // And a note clip has no fades to shape.
+        let midi = session
+            .add_default_instrument_track("Synth")
+            .and_then(|track| session.add_midi_clip(track, "Clip", Ticks::ZERO, Ticks::QUARTER))
+            .expect("a midi clip");
+        assert!(matches!(
+            session.set_fade_in_curve(midi, FadeCurve::EqualPower),
+            Err(SessionError::NotAudio(_))
+        ));
+    }
+
+    #[test]
+    fn a_clip_dropped_over_its_neighbour_is_joined_to_it() {
+        // The gesture: drag a clip until it overlaps, let go, and the join is shaped. It goes in
+        // the move's own transaction, so the fade and the move are one undo step — the fade
+        // exists because the clip landed there.
+        let mut session = session();
+        let (first, second) = overlapping(&mut session, 48_000, Ticks::QUARTER);
+        session.forget_history();
+
+        session.begin_transaction(Edit::MoveClip);
+        assert_eq!(session.crossfade_landings(&[second]), 1);
+        assert!(session.end_transaction());
+        assert_eq!(audio_shape(&session, first), (0.0, 0, 24_000));
+        assert_eq!(audio_shape(&session, second), (0.0, 24_000, 0));
+        assert_eq!(session.undo(), Some(Edit::MoveClip));
+        assert_eq!(audio_shape(&session, first), (0.0, 0, 0));
+        assert!(!session.can_undo(), "the join was a second step");
+    }
+
+    #[test]
+    fn a_drop_never_writes_over_a_fade_somebody_drew() {
+        // A fade is a decision about how that clip ends, and a gesture aimed at *where the clip
+        // sits* has no business rewriting it. The join is left for the menu row to make.
+        let mut session = session();
+        let (first, second) = overlapping(&mut session, 48_000, Ticks::QUARTER);
+        session.set_clip_fades(first, 0, 1_000).unwrap();
+        session.forget_history();
+
+        assert_eq!(session.crossfade_landings(&[second]), 0);
+        assert_eq!(audio_shape(&session, first), (0.0, 0, 1_000));
+        assert_eq!(audio_shape(&session, second), (0.0, 0, 0));
+
+        // The same for a fade on the other side of the join.
+        session.set_clip_fades(first, 0, 0).unwrap();
+        session.set_clip_fades(second, 1_000, 0).unwrap();
+        assert_eq!(session.crossfade_landings(&[second]), 0);
+    }
+
+    #[test]
+    fn a_clip_dropped_where_nothing_meets_it_is_left_alone() {
+        let mut session = session();
+        let (_, second) = overlapping(&mut session, 48_000, Ticks::QUARTER * 2);
+        assert_eq!(session.crossfade_landings(&[second]), 0);
+        assert_eq!(audio_shape(&session, second), (0.0, 0, 0));
+        // And a clip that is not audio at all is simply not a join.
+        let midi = session
+            .add_default_instrument_track("Synth")
+            .and_then(|track| session.add_midi_clip(track, "Clip", Ticks::ZERO, Ticks::QUARTER))
+            .expect("a midi clip");
+        assert_eq!(session.crossfade_landings(&[midi]), 0);
     }
 
     #[test]
