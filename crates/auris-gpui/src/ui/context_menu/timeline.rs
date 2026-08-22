@@ -7,7 +7,7 @@
 //! position is the same decision as the row that opened it, and the aiming itself is free
 //! functions at the foot of the file so it can be checked without a window.
 
-use auris_i18n::{Key, messages};
+use auris_i18n::{Key, Language, messages};
 use auris_session::prelude::*;
 
 use gpui::{Pixels, Point};
@@ -18,6 +18,29 @@ use crate::ui::prompt::{Prompt, PromptTarget};
 use super::{ContextMenu, MenuCommand};
 
 impl AurisApp {
+    /// How many bars are counted in front of a take.
+    ///
+    /// Hung off the metronome button, because a count-in is the click doing one particular job
+    /// and that is the only other place in the application where the click is switched. A list
+    /// rather than a switch: "on" is not an answer to how many bars, and a count-in that guessed
+    /// would be guessing at the one number the setting exists to say.
+    pub(crate) fn count_in_menu(&self, anchor: Point<Pixels>) -> ContextMenu {
+        let current = self.session.count_in_bars();
+        let mut menu = ContextMenu::new(anchor, self.t(Key::CountIn)).toggle(
+            self.t(Key::MenuCountInOff),
+            MenuCommand::SetCountIn { bars: 0 },
+            current == 0,
+        );
+        for bars in 1..=Session::MAX_COUNT_IN_BARS {
+            menu = menu.toggle(
+                count_in_label(self.language, bars),
+                MenuCommand::SetCountIn { bars },
+                current == bars,
+            );
+        }
+        menu
+    }
+
     /// The menu for the bar ruler: the cycle above, the tempo below.
     pub(crate) fn ruler_menu(&self, anchor: Point<Pixels>, tick: Ticks) -> ContextMenu {
         ContextMenu::new(anchor, self.t(Key::MenuCycleTitle))
@@ -305,6 +328,17 @@ struct HarmonyTarget {
     removable_key: bool,
 }
 
+/// How a count-in of `bars` is written on a menu row.
+///
+/// One bar is spelled out separately because English will not have "1 bars". Japanese counts both
+/// the same way and says so twice, which is cheaper than a language that pluralised the wrong one.
+pub(crate) fn count_in_label(language: Language, bars: u32) -> String {
+    match bars {
+        1 => messages::count_in_one_bar(language),
+        bars => messages::count_in_bars(language, bars),
+    }
+}
+
 /// What a right-click at `tick` aims the harmony menu at, `placed` being that position rounded.
 ///
 /// Editing a chord means editing the one you can see, and a chord occupies everything from where
@@ -332,6 +366,15 @@ fn harmony_target(harmony: &Harmony, tick: Ticks, placed: Ticks) -> HarmonyTarge
 mod tests {
     use super::*;
     use crate::ui::context_menu::meters;
+
+    #[test]
+    fn a_count_in_is_named_in_bars_and_never_in_one_bars() {
+        assert_eq!(count_in_label(Language::English, 1), "1 bar");
+        assert_eq!(count_in_label(Language::English, 2), "2 bars");
+        // Japanese counts both the same way, which is the case the special row exists to survive.
+        assert_eq!(count_in_label(Language::Japanese, 1), "1 小節");
+        assert_eq!(count_in_label(Language::Japanese, 2), "2 小節");
+    }
 
     #[test]
     fn a_progression_goes_where_the_cycle_is_when_there_is_one() {

@@ -601,6 +601,28 @@ messages! {
         ja: "{duration} を録音しました"
     }
 
+    /// How long a count-in is, for the menu row that sets it.
+    ///
+    /// Bars, because that is what is being chosen. English pluralises; Japanese counts bars with
+    /// 小節 and needs no plural, which is the whole reason this is a message and not a format
+    /// string written at the call site.
+    fn count_in_bars(bars: u32) {
+        en: "{bars} bars",
+        ja: "{bars} 小節"
+    }
+
+    /// A one-bar count-in, where English will not have "1 bars".
+    fn count_in_one_bar() {
+        en: "1 bar",
+        ja: "1 小節"
+    }
+
+    /// How long the count in front of the next take will be.
+    fn count_in_set(length: &str) {
+        en: "takes are counted in for {length}",
+        ja: "録音の前に {length} カウントします"
+    }
+
     /// A take that produced nothing, which reads as a failure until it is explained.
     fn recorded_nothing() {
         en: "the take was empty; nothing was kept",

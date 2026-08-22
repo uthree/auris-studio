@@ -61,6 +61,21 @@
 //! track's own channels. A room full of players recording at once hears itself through the
 //! interface, which is what an interface is for.
 //!
+//! # Counting in
+//!
+//! A take that is started from a standstill can have bars counted in front of it, and the count
+//! is a property of the *transport*: the playhead is held where the take will begin while the
+//! click counts, and nothing in the arrangement sounds. `auris_engine::transport::CountIn` is
+//! where that is arranged and why it is not a stretch of the timeline.
+//!
+//! What happens here is the two ends of it. [`count_in_for`] decides how many beats a press of
+//! Record is worth — the meter at the playhead, the tempo at the playhead, and nothing at all
+//! when the transport is already rolling. And the take, which begins during the count rather than
+//! after it, has whatever it caught of the count taken off the front of it on the way to becoming
+//! a clip. The file keeps it, in the same way punch leaves the whole take on disk: what the
+//! player heard is part of what happened, and a take trimmed to the wrong bar can be recovered by
+//! hand from the project folder.
+//!
 //! # Where the take lands
 //!
 //! At the playhead the transport was at when the *first block of audio arrived*, which
@@ -72,8 +87,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use auris_core::time::{SignatureMap, TempoMap};
 use auris_core::{AssetPath, Seconds, Ticks, TrackId};
-use auris_engine::{CaptureReader, CaptureSettings};
+use auris_engine::{CaptureReader, CaptureSettings, CountIn, EngineCommand};
 use auris_io::{IoError, WavRecorder, import_audio_file};
 
 use super::Session;
@@ -666,11 +682,28 @@ impl Session {
             }
         };
 
+        // The count is written down before it is asked for, and before the take opens, so that a
+        // first block arriving in the gap between the command and the audio thread picking it up
+        // finds a count rather than a zero — see `EngineHandle::expect_count_in`.
+        let count = self.count_in();
+        if let Some(count) = count {
+            self.engine.expect_count_in(count.remaining_frames);
+        }
+
         // Last, so the callback starts feeding the pool with a writer already draining it.
         self.input
             .as_ref()
             .expect("the input was just opened")
             .begin_take();
+
+        // And the transport after that, because a count-in is a thing the transport does: the
+        // file is already open, so what the count occupies at the head of it is trimmed off on
+        // the way to becoming a clip rather than missed.
+        self.counting = count;
+        if let Some(count) = count {
+            self.send(EngineCommand::CountIn(count));
+            self.play();
+        }
         self.take = Some(Take {
             writer,
             files,
@@ -689,14 +722,18 @@ impl Session {
         let Take { writer, files, .. } = take;
 
         // Read before the take is closed, because closing it is what stops them moving.
-        let (started_at, dropped_frames) = match self.input.as_ref() {
+        let (started_at, count_in_frames, dropped_frames) = match self.input.as_ref() {
             Some(capture) => {
-                let seen = (capture.started_at(), capture.dropped_frames());
+                let seen = (
+                    capture.started_at(),
+                    capture.count_in_at_start(),
+                    capture.dropped_frames(),
+                );
                 // The writer's signal. The device stays open if somebody is monitoring through it.
                 capture.end_take();
                 seen
             }
-            None => (None, 0),
+            None => (None, 0, 0),
         };
         let frames = match writer.join() {
             Ok((reader, result)) => {
@@ -747,9 +784,13 @@ impl Session {
         // stamp is in *engine* frames, and the two rates are free to disagree.
         let project_rate = self.project.sample_rate.max(1.0);
         let engine_rate = self.engine.sample_rate().max(1.0);
-        let take_start = started_at.map_or(0, |frame| {
-            (frame as f64 / engine_rate * project_rate).round() as u64
-        });
+        let in_project_frames =
+            |frame: u64| (frame as f64 / engine_rate * project_rate).round() as u64;
+        let take_start = started_at.map_or(0, in_project_frames);
+        // Whatever the take caught of its own count-in sits at the head of every one of its
+        // files, in front of the position they were stamped with: the playhead does not move
+        // while a count is played. Dropping it is what puts the clip on the downbeat.
+        let count_in = in_project_frames(count_in_frames);
 
         // A transaction rather than a single `record`, because clearing the punch region goes
         // through `split_clip` and `remove_clip` and each of those records a step of its own when
@@ -764,7 +805,7 @@ impl Session {
         self.begin_transaction(Edit::RecordTake);
         let mut takes = Vec::with_capacity(files.len());
         for file in &files {
-            match self.land_take(file, take_start, project_rate) {
+            match self.land_take(file, take_start, count_in, project_rate) {
                 Ok(report) => takes.push(report),
                 Err(error) => {
                     // The take's own files stay — they are what was played — but the document
@@ -793,6 +834,7 @@ impl Session {
         &mut self,
         file: &TakeFile,
         take_start: u64,
+        count_in: u64,
         project_rate: f64,
     ) -> Result<TakeReport, SessionError> {
         // Read back through the importer rather than kept from the pool: the engine renders every
@@ -800,23 +842,31 @@ impl Session {
         // written a file at its own.
         let buffer = import_audio_file(&file.path, self.project.sample_rate)?;
         let punch = self.punch_frames_at(project_rate);
-        let Some((offset, kept)) = punch_window(punch, take_start, buffer.frame_count() as u64)
-            .filter(|(_, kept)| *kept > 0)
+        // The count-in comes off the front before the punch is worked out, because everything the
+        // punch is measured in — the take's position, what it covers — begins where the count
+        // ends. A take stopped during its own count leaves nothing to keep.
+        let played = (buffer.frame_count() as u64).saturating_sub(count_in);
+        let Some((offset, kept)) =
+            punch_window(punch, take_start, played).filter(|(_, kept)| *kept > 0)
         else {
             // The take never reached the punch region — rolled past it, or stopped before it. The
             // file stays: it is what was played, and the punch being set to the wrong bar is the
             // likeliest reason to be standing here.
+            //
+            // Or there was no region and the take was stopped during its own count-in, which is
+            // nothing kept for an entirely different reason. Saying "outside the punch" about a
+            // project that has no punch would send somebody looking for a region to fix.
             return Ok(TakeReport {
                 track: file.track,
                 clip: None,
                 path: Some(file.path.clone()),
                 seconds: 0.0,
-                outside_punch: true,
+                outside_punch: punch.is_some(),
             });
         };
-        let buffer = match (offset, kept == buffer.frame_count() as u64) {
+        let buffer = match (count_in + offset, kept == buffer.frame_count() as u64) {
             (0, true) => buffer,
-            _ => buffer.slice(offset as usize, kept as usize),
+            (from, _) => buffer.slice(from as usize, kept as usize),
         };
         let seconds = buffer.frame_count() as f64 / project_rate;
         let start = self
@@ -869,6 +919,21 @@ impl Session {
         })
     }
 
+    /// The count-in a press of Record would get, from where the playhead is now.
+    ///
+    /// `None` for a project that asks for none and for a transport that is already rolling; the
+    /// rule, and the reason for it, is the free `count_in_for` at the foot of this module.
+    pub fn count_in(&self) -> Option<CountIn> {
+        count_in_for(
+            self.project.count_in_bars,
+            self.is_playing(),
+            self.playhead(),
+            &self.project.signatures,
+            &self.project.tempo_map,
+            self.engine.sample_rate(),
+        )
+    }
+
     /// Where an engine frame sits on the musical timeline.
     fn tick_of_frame(&self, frame: u64) -> Ticks {
         let rate = self.engine.sample_rate().max(1.0);
@@ -876,6 +941,44 @@ impl Session {
             .tempo_map
             .seconds_to_ticks(Seconds(frame as f64 / rate))
     }
+}
+
+/// The count-in a press of Record gets, in frames of whatever clock `rate` counts.
+///
+/// Nothing to do with a document or a device, so the rule can be read and tested on its own: how
+/// many beats, how long each of them is, and which of them are downbeats.
+///
+/// **Bars are counted in the meter at `at`**, so two bars of 7/8 is fourteen beats and two bars of
+/// 6/8 is four — the felt beat, the one somebody counts out loud, which is the same beat the click
+/// uses. **One tempo throughout**, read where the take begins: a count that accelerated into the
+/// first bar would be a count nobody could play to, and the number a musician needs from it is the
+/// one the song is about to be at.
+///
+/// `None` when no bars were asked for, and when the transport is **already rolling** — a count-in
+/// is how a take begins from a standstill. Somebody who is playing along to the song already has
+/// their bars in front of them, and stopping the music to count them again would be a strange
+/// thing for Record to do.
+fn count_in_for(
+    bars: u32,
+    playing: bool,
+    at: Ticks,
+    signatures: &SignatureMap,
+    tempo_map: &TempoMap,
+    rate: f64,
+) -> Option<CountIn> {
+    if bars == 0 || playing {
+        return None;
+    }
+    let at = at.max_zero();
+    let signature = signatures.signature_at(signatures.bar_floor(at));
+    let per_bar = signature.felt_beats().max(1);
+    let rate = rate.max(1.0);
+    let from = tempo_map.ticks_to_samples(at, rate).raw();
+    let to = tempo_map
+        .ticks_to_samples(at + signature.beat_ticks(), rate)
+        .raw();
+    let beat_frames = to.saturating_sub(from);
+    (beat_frames > 0).then(|| CountIn::new(bars * per_bar, beat_frames, per_bar))
 }
 
 /// The tracks a Record press lands on: everything armed, or the selection when nothing is.
@@ -1094,10 +1197,110 @@ fn sanitised(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use auris_core::time::TimeSignature;
+
     use crate::{Session, SessionOptions};
 
     fn session() -> Session {
         Session::new(SessionOptions::headless()).expect("a headless session")
+    }
+
+    /// A count-in of `bars` at 120 BPM in `signature`, from the start of the song.
+    fn counted(bars: u32, signature: TimeSignature) -> Option<CountIn> {
+        count_in_for(
+            bars,
+            false,
+            Ticks::ZERO,
+            &SignatureMap::constant(signature),
+            &TempoMap::constant(120.0),
+            48_000.0,
+        )
+    }
+
+    #[test]
+    fn a_count_in_is_as_many_beats_as_the_meter_puts_in_a_bar() {
+        // Two bars of four at 120: eight beats of half a second.
+        let count = counted(2, TimeSignature::new(4, 4)).expect("a count");
+        assert_eq!(count.beats, 8);
+        assert_eq!(count.per_bar, 4);
+        assert_eq!(count.beat_frames, 24_000);
+        assert_eq!(count.total_frames(), 192_000);
+
+        // Seven-eight is counted in sevens, and the beat is the eighth it is written in.
+        let seven = counted(1, TimeSignature::new(7, 8)).expect("a count");
+        assert_eq!(seven.beats, 7);
+        assert_eq!(seven.per_bar, 7);
+        assert_eq!(seven.beat_frames, 12_000);
+
+        // And a compound meter is counted in the beats it is felt in: two dotted quarters, not
+        // six eighths, which is the same beat the click takes.
+        let six = counted(1, TimeSignature::new(6, 8)).expect("a count");
+        assert_eq!(six.beats, 2);
+        assert_eq!(six.per_bar, 2);
+        assert_eq!(six.beat_frames, 36_000);
+    }
+
+    #[test]
+    fn nothing_is_counted_in_when_nothing_was_asked_for() {
+        assert_eq!(counted(0, TimeSignature::new(4, 4)), None);
+    }
+
+    #[test]
+    fn a_transport_that_is_already_rolling_is_not_counted_in() {
+        // The bars are going past already. Stopping the song to count them again is not what
+        // pressing Record over a playing arrangement means.
+        assert_eq!(
+            count_in_for(
+                2,
+                true,
+                Ticks::ZERO,
+                &SignatureMap::default(),
+                &TempoMap::constant(120.0),
+                48_000.0,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_count_in_takes_the_tempo_where_the_take_begins() {
+        // Ninety at the top and one-eighty from bar three; a take starting at bar three is
+        // counted in at one-eighty, which is what the player is about to have to play at.
+        let mut tempo_map = TempoMap::constant(90.0);
+        let bar_three = SignatureMap::default().bar_start(3);
+        tempo_map.set_point(bar_three, 180.0);
+        let count = count_in_for(
+            1,
+            false,
+            bar_three,
+            &SignatureMap::default(),
+            &tempo_map,
+            48_000.0,
+        )
+        .expect("a count");
+        assert_eq!(
+            count.beat_frames, 16_000,
+            "a beat at 180 is a third of a second"
+        );
+    }
+
+    #[test]
+    fn the_count_in_setting_is_kept_but_never_recorded() {
+        let mut session = session();
+        assert_eq!(session.count_in_bars(), 0);
+        assert!(session.count_in().is_none());
+
+        session.set_count_in_bars(2);
+        assert_eq!(session.count_in_bars(), 2);
+        assert!(session.is_dirty(), "the setting has to reach the file");
+        assert!(
+            !session.can_undo(),
+            "counting in is preparation, not an edit"
+        );
+
+        // And it is bounded, so that nobody sits through sixteen bars twice.
+        session.set_count_in_bars(99);
+        assert_eq!(session.count_in_bars(), Session::MAX_COUNT_IN_BARS);
     }
 
     /// The tracks a take would land on, by id, which is what most of these are asking about.

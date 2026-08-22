@@ -9,6 +9,22 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### Four bars before you have to play anything
+
+* **A count-in**, one to four bars, chosen by right-clicking the metronome button. Press Record
+  from a standstill and the click counts those bars before the song moves: the playhead waits
+  where the take will begin, and the transport bar counts the beats down where it usually shows
+  the take's clock.
+* Bars are counted in the meter you are in and at the tempo where the take begins — fourteen beats
+  for two bars of 7/8, four for two bars of 6/8 — and the click sounds for the count whether or
+  not the click itself is switched on.
+* It works at bar one, which is where it is wanted most: the count is held in front of the
+  playhead rather than played through a stretch of timeline that would have to exist.
+* Recording begins with the count rather than after it, so nothing of the first beat is lost to a
+  device opening. The count is trimmed off the clip and kept in the file.
+* Pressing Record over a song that is already playing starts recording at once. The bars are going
+  past already.
+
 ### A band can go down at once
 
 * **Every armed track records**, each from its own input channel — one file and one clip per

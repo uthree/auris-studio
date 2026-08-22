@@ -210,6 +210,14 @@ pub mod architecture {
     //! the take. A track armed to a channel the device does not have records silence rather than
     //! its neighbour, so a missing input says which one went missing.
     //!
+    //! **A count-in is a phase of the transport, not a stretch of the timeline.** The playhead is
+    //! held at the position the take will begin from while the click counts, and the arrangement
+    //! is silent — `auris_engine::transport::Transport::rolling` is what every source asks, and
+    //! the difference between that and `playing` is the whole feature. Nothing else would let
+    //! bar one be counted in, there being no timeline in front of it. The take opens *during* the
+    //! count, so its file holds however much of the count the input caught: the capture stamps
+    //! that alongside the position, and the head is trimmed on the way to a clip.
+    //!
     //! # Monitoring, and why the device stopped belonging to the take
     //!
     //! Ending a take used to be `drop`: closing the device dropped the sender, and a disconnected

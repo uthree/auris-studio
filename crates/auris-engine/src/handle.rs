@@ -73,6 +73,19 @@ impl EngineHandle {
         self.count_in.load(Ordering::Relaxed)
     }
 
+    /// Declares a count-in that has been asked for but has not reached the audio thread yet.
+    ///
+    /// Sent commands are applied at the top of the next callback, and an input stream can hand
+    /// over its first block before that happens. Whatever reads this then would find a zero and
+    /// conclude the count was over — and a take trimmed by nothing is a take that begins a whole
+    /// count-in early, which is the one way this can be wrong that anybody would notice.
+    ///
+    /// So the count is written down *before* it is sent, and the audio thread overwrites it with
+    /// the truth from its very next block onwards.
+    pub fn expect_count_in(&self, frames: u64) {
+        self.count_in.store(frames, Ordering::Relaxed);
+    }
+
     /// The count-in cell itself, for the same reader [`Self::playhead_cell`] exists for.
     ///
     /// A take that was counted in opens its file during the count, and how much of the count it

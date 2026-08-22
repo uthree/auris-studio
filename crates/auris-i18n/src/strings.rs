@@ -847,6 +847,9 @@ strings! {
     MenuSidechainNone { en: "None", ja: "なし" }
     MenuRecordInput { en: "Record Input", ja: "録音入力" }
     MenuInputOff { en: "Not Armed", ja: "録音待機しない" }
+    MenuCountInOff { en: "No Count-In", ja: "カウントインしない" }
+    CountInOff { en: "Count-in off", ja: "カウントイン オフ" }
+    CountIn { en: "Count-In", ja: "カウントイン" }
     EditAdjustParameter { en: "the parameter change", ja: "パラメーターの変更" }
     MenuFreezeTrack { en: "Keep Every Take Here", ja: "このトラックをすべて確定" }
     MenuTrackColor { en: "Colour", ja: "カラー" }

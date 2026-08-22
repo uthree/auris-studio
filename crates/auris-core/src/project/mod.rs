@@ -240,6 +240,20 @@ pub struct Project {
     /// note of it correctly, with the click off.
     #[serde(default)]
     pub metronome: bool,
+    /// How many bars are counted in front of a take, or zero for none.
+    ///
+    /// Bars rather than beats, because that is how a count-in is asked for — "give me two" — and
+    /// because how many beats those are is a question the meter answers. A piece in 7/8 counted
+    /// in two bars gets fourteen beats without anybody having to work that out.
+    ///
+    /// A property of the document for the same reason the click is: a piece somebody comes back
+    /// to wanting counting in is one they wanted counting in last week, and a preference that
+    /// followed them into the next project would be wrong there as often as it was right.
+    ///
+    /// Not a bump: a build that has never heard of this field opens the document and plays every
+    /// note of it correctly, without counting anybody in.
+    #[serde(default)]
+    pub count_in_bars: u32,
     /// Editing grid size, in ticks.
     #[serde(default = "default_grid")]
     pub grid: Ticks,
@@ -391,6 +405,7 @@ impl Project {
             punch_region: None,
             punch_enabled: false,
             metronome: false,
+            count_in_bars: 0,
             grid: default_grid(),
             song_spec: None,
             next_id: 1,

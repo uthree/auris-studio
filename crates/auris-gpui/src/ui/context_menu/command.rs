@@ -322,6 +322,11 @@ pub enum MenuCommand {
         /// Where to put the menu.
         at: Point<Pixels>,
     },
+    /// Set how many bars are counted in front of a take, or none.
+    SetCountIn {
+        /// Bars to count, or zero for no count-in.
+        bars: u32,
+    },
     /// Arm a track on particular input channels, or disarm it.
     SetTrackInput {
         /// The track.
@@ -957,6 +962,7 @@ impl AurisApp {
                 self.open_menu(menu);
             }
             MenuCommand::SetTrackInput { track, input } => self.set_track_input(track, input),
+            MenuCommand::SetCountIn { bars } => self.set_count_in(bars),
             MenuCommand::ShowSidechainPicker { track, slot, at } => {
                 let menu = self.sidechain_menu(at, track, slot);
                 self.open_menu(menu);

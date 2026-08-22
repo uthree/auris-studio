@@ -753,6 +753,26 @@ Two things worth knowing:
   before that can happen. If it does, the take is still usable — but everything after the gap has
   moved earlier by that much.
 
+## Counting in
+
+Right-click the metronome button to choose a count-in: **No Count-In**, or one to four bars. Then
+press Record from a standstill and the click counts those bars before anything moves — the song
+does not play, the playhead sits where the take will begin, and the transport bar shows the beats
+left where it normally shows the take's clock.
+
+* **Bars are counted in the meter you are in.** Two bars of 7/8 is fourteen beats; two bars of 6/8
+  is four, because 6/8 is felt in two. The tempo is the one where the take begins, and it does not
+  change part way through the count.
+* **It counts at bar one as well.** The count is a pause in front of the playhead rather than a
+  stretch of timeline before it, so a song that starts at the very beginning is counted in like
+  any other.
+* **The click sounds whether or not the click is on.** Turning it on for the count and off for the
+  take is the ordinary way to work, so the count-in does not ask you to leave the click running.
+* **Already rolling? No count.** Pressing Record over a song that is playing starts recording at
+  once: the bars are already going past.
+* **Recording starts immediately, and the count is trimmed off.** The file in `Audio/` therefore
+  holds the count as well — a lead-in you played early is still there if you want it back.
+
 ## Punching in
 
 One bad bar in a good take does not need the take recorded again. Right-click the ruler → **Punch

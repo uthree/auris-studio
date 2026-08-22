@@ -7,6 +7,7 @@ use gpui::{Axis, IntoElement, Pixels, Window, div, prelude::*, px};
 
 use crate::app::{AurisApp, Drag};
 use crate::theme::Metrics;
+use crate::ui::context_menu::count_in_label;
 use crate::ui::icons::Icon;
 use crate::ui::prompt::{Prompt, PromptTarget};
 use crate::ui::widgets::{
@@ -267,6 +268,10 @@ impl AurisApp {
         let looping = self.project().loop_enabled;
         let punching = self.project().punch_enabled;
         let clicking = self.session.metronome();
+        // A count being played lights the click whether or not the click is on, because that is
+        // what is coming out of the speakers.
+        let counting_in = self.session.count_in_beats_left();
+        let clicking = clicking || counting_in > 0;
         let recording = self.session.is_recording();
         let playhead = self.playhead_ticks();
         let position = format_position(playhead, &self.project().signatures);
@@ -300,6 +305,13 @@ impl AurisApp {
             };
             (Seconds(status.seconds).format_clock(), trouble)
         });
+        // While the count is being played the take's clock reads zero and stays there, which
+        // looks like a recording that has failed. The beats left say what is actually happening,
+        // in the unit somebody counting themselves in is already using.
+        let take = match counting_in {
+            0 => take,
+            beats => Some((beats.to_string(), None)),
+        };
 
         // Three columns of equal weight, so the middle one lands on the window's centre line
         // however wide the sides grow. Every hardware transport and every DAW puts the
@@ -486,6 +498,14 @@ impl AurisApp {
                                         cx.notify();
                                     }),
                                 )
+                                // The count-in hangs off this button because a count-in is the
+                                // click doing one particular job, and because the alternative
+                                // was a second lamp on the bar for a setting nobody changes
+                                // twice in a session.
+                                .on_mouse_down(
+                                    gpui::MouseButton::Right,
+                                    Self::opens_menu(cx, |this, at| this.count_in_menu(at)),
+                                )
                                 .tooltip(self.tip(Key::CmdToggleMetronome, "transport.metronome")),
                             ),
                     )
@@ -541,7 +561,11 @@ impl AurisApp {
                     // input for the same reason the input is left of the master: it is the
                     // earliest thing in the chain the bar reports on.
                     .children(take.map(|(clock, trouble)| {
-                        take_block(self.t(Key::TakeClock), clock, trouble, &theme)
+                        let label = match counting_in {
+                            0 => self.t(Key::TakeClock),
+                            _ => self.t(Key::CountIn),
+                        };
+                        take_block(label, clock, trouble, &theme)
                     }))
                     //
                     // What is coming in, and only while something is: a bar reading silence
@@ -793,6 +817,20 @@ impl AurisApp {
             false => Key::MetronomeOff,
         };
         self.set_status(self.t(key));
+    }
+
+    /// Sets how many bars are counted in front of the next take, and says so.
+    ///
+    /// The status line for the same reason the click has one: nothing happens when it is set, and
+    /// the next thing that does happen is a Record button that sits still for two bars. Somebody
+    /// who did not mean to set it should be told now rather than then.
+    pub(crate) fn set_count_in(&mut self, bars: u32) {
+        self.session.set_count_in_bars(bars);
+        let status = match self.session.count_in_bars() {
+            0 => self.t(Key::CountInOff).to_string(),
+            bars => messages::count_in_set(self.language, &count_in_label(self.language, bars)),
+        };
+        self.set_status(status);
     }
 
     /// The first track a take would land on: an armed one, or the selected track when it is audio.

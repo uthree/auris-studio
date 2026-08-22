@@ -308,6 +308,13 @@ pub struct Session {
     /// Asking means talking to the OS audio server, and a channel picker asks while it draws.
     /// Cleared when the audio settings change, which is the only thing that can make it stale.
     input_channels: Option<usize>,
+    /// The count-in last sent to the audio thread, for reading the one running.
+    ///
+    /// The engine publishes how many frames of it are left and nothing else, which is all the
+    /// transport needs and one number short of what a readout does: turning frames back into
+    /// "three beats to go" needs the length of a beat, and this side is where that was worked
+    /// out. Stale between takes, and harmless — nothing reads it while the count is over.
+    counting: Option<auris_engine::CountIn>,
     /// The input device, open while a take is running or somebody is monitoring.
     ///
     /// One device serving both, because it is one device: a take that closed it on stopping would
@@ -395,6 +402,14 @@ struct Transaction {
 }
 
 impl Session {
+    /// The longest count-in that can be asked for, in bars.
+    ///
+    /// Four, which is a bar more than anybody counts and two more than anybody should have to sit
+    /// through twice. The cap is here because the count is time a musician spends waiting: a
+    /// setting that allowed sixteen bars would be a setting somebody hit by accident once and
+    /// then had to stop and stare at.
+    pub const MAX_COUNT_IN_BARS: u32 = 4;
+
     /// Opens a session.
     ///
     /// Never fails for want of audio hardware: the engine falls back to running silently, so a
@@ -461,6 +476,7 @@ impl Session {
             clipboard: Clipboard::default(),
             armed: Vec::new(),
             input_channels: None,
+            counting: None,
             input: None,
             monitored: None,
             typing: MusicalTyping::default(),

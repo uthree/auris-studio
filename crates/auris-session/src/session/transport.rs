@@ -156,6 +156,54 @@ impl Session {
         self.set_metronome(!self.project.metronome);
     }
 
+    /// How many bars are counted in front of a take, or zero when none are.
+    pub fn count_in_bars(&self) -> u32 {
+        self.project.count_in_bars
+    }
+
+    /// Sets how many bars are counted in front of a take.
+    ///
+    /// Clamped to [`Session::MAX_COUNT_IN_BARS`], and not recorded — it is preparation, the same
+    /// as arming a track or switching the click on, and a pass of try-it-and-undo would fill the
+    /// stack with settings and push the take off the end of it. Marked dirty all the same, so it
+    /// reaches the file rather than being quietly lost at the next close.
+    pub fn set_count_in_bars(&mut self, bars: u32) {
+        let bars = bars.min(Self::MAX_COUNT_IN_BARS);
+        if self.project.count_in_bars == bars {
+            return;
+        }
+        self.project.count_in_bars = bars;
+        self.dirty = true;
+    }
+
+    /// Frames of count-in left before the transport starts moving, zero when none is running.
+    ///
+    /// For a frontend that has to show why Record is lit and nothing is happening yet. It counts
+    /// down in the *engine's* frames, which is what a readout wants: the count is a wait in the
+    /// room, not a distance along the timeline.
+    pub fn count_in_frames(&self) -> u64 {
+        self.engine.count_in_frames()
+    }
+
+    /// `true` while a count-in is being played.
+    pub fn counting_in(&self) -> bool {
+        self.count_in_frames() > 0
+    }
+
+    /// Beats of the count-in still to be played, counting the one sounding now.
+    ///
+    /// Zero when no count is running. What a readout wants: a count-in is heard in beats, and
+    /// "three" beside a Record button that has not started moving says what is happening in the
+    /// one unit somebody is already counting in their head.
+    pub fn count_in_beats_left(&self) -> u32 {
+        let frames = self.count_in_frames();
+        let beat = self.counting.map_or(0, |count| count.beat_frames);
+        match (frames, beat) {
+            (0, _) | (_, 0) => 0,
+            (frames, beat) => frames.div_ceil(beat) as u32,
+        }
+    }
+
     /// Remembers that the bar lines have moved, and republishes them if anything is listening.
     fn meter_changed(&mut self) {
         self.meter_is_stale = true;
