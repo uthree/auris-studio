@@ -1284,8 +1284,8 @@ mod tests {
         let params = session.hosted_parameters(slot);
         assert_eq!(
             params.len(),
-            4,
-            "the fixture's gain, its port report, its tick count and its window report"
+            5,
+            "the fixture's gain and its four reports back about what the host did"
         );
         assert_eq!(params[0].key, "clap.4242");
 
@@ -1373,7 +1373,7 @@ mod tests {
             1.0f32.to_le_bytes(),
             "the fixture's state is its gain, which starts at unity"
         );
-        assert_eq!(session.hosted_parameters(slot).len(), 4);
+        assert_eq!(session.hosted_parameters(slot).len(), 5);
     }
 
     #[test]

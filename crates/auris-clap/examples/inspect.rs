@@ -89,12 +89,17 @@ fn inspect(file: &Path) {
 ///
 /// A second input port is a sidechain, and it is not optional: a plugin that declares one indexes
 /// it whether or not the host has anything to send there. Printing the layout is how a plugin that
-/// is about to be hosted gets checked against the buffers it is going to be handed.
+/// is about to be hosted gets checked against the buffers it is going to be handed — and the
+/// sidechain line is what says whether a slot holding this plugin will offer a track to key from.
 fn report_ports(plugin: &mut ClapPlugin) {
     let ports = plugin.ports(2);
     println!(
-        "    ports: in {:?} (main {:?}), out {:?} (main {:?})",
-        ports.inputs, ports.main_input, ports.outputs, ports.main_output
+        "    ports: in {:?} (main {:?}), out {:?} (main {:?}), key {:?}",
+        ports.inputs,
+        ports.main_input,
+        ports.outputs,
+        ports.main_output,
+        ports.sidechain_input()
     );
 }
 

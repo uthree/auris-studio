@@ -14,11 +14,12 @@
 //! * its gain is shared between the two threads, so a parameter the audio side was given can be
 //!   read back from the main side;
 //! * its state is four bytes of gain, so a round trip through the opaque stream is checkable;
-//! * it declares a **sidechain** input it does not use, and reports through [`PORTS_ID`] how many
-//!   input ports it was actually handed. A host that passes only the ports it cares about is not
-//!   making a layout mistake the plugin can notice — it is handing the plugin an array shorter
-//!   than the one the plugin was told to index. Surge XT Effects has exactly this shape, and
-//!   reading the missing port took the whole application down.
+//! * it declares a **sidechain** input, reports through [`PORTS_ID`] how many input ports it was
+//!   actually handed, and through [`KEY_ID`] the loudest thing it heard on the second one. A host
+//!   that passes only the ports it cares about is not making a layout mistake the plugin can
+//!   notice — it is handing the plugin an array shorter than the one the plugin was told to
+//!   index. Surge XT Effects has exactly this shape, and reading the missing port took the whole
+//!   application down.
 //! * it registers a **timer** with the host and counts the ticks it gets through [`TICKS_ID`],
 //!   which is the only way to tell a host that runs a plugin's clock from one that quietly does
 //!   not. The visible symptom of the latter is a window that never repaints, which looks exactly
@@ -75,6 +76,12 @@ pub const TICKS_ID: u32 = 4344;
 ///
 /// Its value is the [`gui_step`] flags, added together, in the order they happened to arrive.
 pub const GUI_ID: u32 = 4345;
+/// Read-only parameter reporting the loudest sample the fixture saw on its sidechain port during
+/// the last block it processed.
+///
+/// Zero until it has run, and zero for a host that hands the port over silent — which is what it
+/// should do while nothing is keying the slot.
+pub const KEY_ID: u32 = 4346;
 
 /// What a host can have done to the fixture's window, one bit each.
 ///
@@ -125,6 +132,8 @@ pub struct Shared {
     /// Input ports the last `process` call arrived with. `u32::MAX` until there has been one, so
     /// "nobody has rendered yet" cannot be mistaken for "the host passed none".
     ports_seen: AtomicU32,
+    /// The loudest sample seen on the sidechain port, held as `f32::to_bits`.
+    key_peak: AtomicU32,
     /// How many times the host has fired the timer the fixture registered.
     ticks: AtomicU32,
     /// Which of the [`gui_step`] calls the host has made.
@@ -319,6 +328,20 @@ impl<'a> PluginAudioProcessor<'a, Shared, MainThread<'a>> for Processor<'a> {
             .ports_seen
             .store(audio.input_port_count() as u32, Ordering::Relaxed);
 
+        // And what was in the sidechain port, so a test can tell a host that routes a key from
+        // one that declares the port and hands it silence.
+        let key = audio
+            .input_port(1)
+            .and_then(|port| port.channels().ok()?.into_f32())
+            .map(|channels| {
+                channels
+                    .iter()
+                    .flatten()
+                    .fold(0.0f32, |peak, sample| peak.max(sample.abs()))
+            })
+            .unwrap_or(0.0);
+        self.shared.key_peak.store(key.to_bits(), Ordering::Relaxed);
+
         for event in events.input {
             if let Some(event) = event.as_event::<ParamValueEvent>()
                 && event.param_id().map(|id| id.get()) == Some(GAIN_ID)
@@ -396,7 +419,7 @@ impl PluginAudioPortsImpl for MainThread<'_> {
 
 impl PluginMainThreadParams for MainThread<'_> {
     fn count(&mut self) -> u32 {
-        4
+        5
     }
 
     fn get_info(&mut self, param_index: u32, info: &mut ParamInfoWriter) {
@@ -439,6 +462,15 @@ impl PluginMainThreadParams for MainThread<'_> {
                 default_value: 0.0,
                 ..common
             }),
+            4 => info.set(&ParamInfo {
+                id: ClapId::new(KEY_ID),
+                flags: ParamInfoFlags::IS_READONLY,
+                name: b"Sidechain Peak",
+                min_value: 0.0,
+                max_value: 1.0,
+                default_value: 0.0,
+                ..common
+            }),
             _ => {}
         }
     }
@@ -452,6 +484,9 @@ impl PluginMainThreadParams for MainThread<'_> {
             },
             TICKS_ID => Some(self.shared.ticks.load(Ordering::Relaxed) as f64),
             GUI_ID => Some(self.shared.gui.load(Ordering::Relaxed) as f64),
+            KEY_ID => Some(f64::from(f32::from_bits(
+                self.shared.key_peak.load(Ordering::Relaxed),
+            ))),
             _ => None,
         }
     }

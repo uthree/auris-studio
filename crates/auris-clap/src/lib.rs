@@ -30,8 +30,10 @@
 //! * **No `PluginRegistry` entry.** A registry factory is `Fn() -> Box<dyn Effect>`, which cannot
 //!   produce the main-thread half a CLAP plugin also needs. A hosted plugin is placed by the
 //!   session, not built by the registry.
-//! * **No sidechain.** Every audio port a plugin declares is handed to it, but only the main one
-//!   carries anything; nothing in Auris can route a second track into a plugin yet.
+//! * **One key, not several.** A plugin's first spare input port is fed from the track its slot
+//!   names; a second spare port is handed over silent, as every port with nothing routed to it
+//!   is. Nothing in the document can name two sources for one slot, and no plugin has been found
+//!   that wants them.
 //! * **No plugin interface inside a panel.** A plugin's own interface opens in a window of its
 //!   own, above the application, whether the plugin made that window or this crate lent it one.
 //!   [`gui`] gives the account, and `auris_clap::window` the platform half of it.

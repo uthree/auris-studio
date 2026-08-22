@@ -26,6 +26,12 @@ fn hosted() -> ClapPlugin {
         .expect("the fixture plugin must instantiate")
 }
 
+fn tone_hosted() -> ClapPlugin {
+    instrument_library()
+        .instantiate(TONE_ID)
+        .expect("the instrument fixture must instantiate")
+}
+
 fn context() -> PrepareContext {
     PrepareContext::new(48_000.0, 64, 2)
 }
@@ -69,7 +75,7 @@ fn a_plugin_that_is_not_in_the_file_is_an_error_not_a_panic() {
 fn a_hosted_plugin_reports_its_parameters_by_the_plugins_own_id() {
     let plugin = hosted();
     let params = plugin.parameters();
-    assert_eq!(params.len(), 4);
+    assert_eq!(params.len(), 5);
     assert_eq!(params[0].id, ParamId(0), "the slice position");
     assert_eq!(params[0].key, "clap.4242", "the plugin's own id");
     assert_eq!(params[0].name, "Gain");
@@ -262,17 +268,51 @@ fn every_port_the_plugin_declared_is_handed_to_it() {
 
 #[test]
 fn a_plugin_with_a_sidechain_still_renders_through_its_main_port() {
-    // The sidechain is silent, and the audio has to come back out of the *main* output rather
-    // than out of whichever port happened to be first in the list.
+    // The audio has to come back out of the *main* output rather than out of whichever port
+    // happened to be first in the list, and the key must not have been mistaken for the audio.
     let mut plugin = hosted();
     let mut effect = plugin.activate(&context()).expect("must activate");
 
     let mut buffer = block(0.5, 32);
-    effect.process(&mut buffer, &playing(32));
+    effect.process_with_sidechain(&mut buffer, &block(0.25, 32), &playing(32));
     assert_eq!(buffer.channel(0)[0], 0.5);
     assert_eq!(buffer.channel(1)[31], 0.5);
 
     plugin.deactivate(effect);
+}
+
+#[test]
+fn a_key_reaches_the_port_the_plugin_declared_for_one() {
+    // The fixture reports the loudest thing it saw on its second input port, which is the only
+    // way to tell a host that routes a key from one that declares the port and fills it with
+    // silence. Those two are indistinguishable from the output, because nothing about the
+    // fixture's main path changes.
+    let mut plugin = hosted();
+    assert_eq!(plugin.ports(2).sidechain_input(), Some(1));
+    let mut effect = plugin.activate(&context()).expect("must activate");
+    assert!(
+        effect.wants_sidechain(),
+        "the plugin declared a port for one"
+    );
+
+    effect.process_with_sidechain(&mut block(0.5, 32), &block(0.25, 32), &playing(32));
+    assert_eq!(plugin.value(ParamId(4)), Some(0.25));
+
+    // And the very next block with no key hands the port silence rather than leaving the last
+    // one in it, which is what a slot that has stopped being keyed has to hear.
+    effect.process(&mut block(0.5, 32), &playing(32));
+    assert_eq!(plugin.value(ParamId(4)), Some(0.0));
+    plugin.deactivate(effect);
+}
+
+#[test]
+fn a_plugin_with_no_spare_port_is_not_offered_a_key() {
+    // The tone fixture declares no audio input at all, so there is nothing for a key to go in
+    // and a frontend should not be offering a source to key from.
+    let mut plugin = tone_hosted();
+    assert_eq!(plugin.ports(2).sidechain_input(), None);
+    let instrument = plugin.activate_instrument(&context()).expect("activates");
+    plugin.deactivate_instrument(instrument);
 }
 
 #[test]

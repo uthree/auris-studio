@@ -53,6 +53,21 @@ impl PortLayout {
     pub fn output_channels(&self) -> usize {
         self.outputs.iter().sum()
     }
+
+    /// Which input port a key goes in: the first one that is not the main one and has channels.
+    ///
+    /// CLAP has no flag for "this is the sidechain" — `IS_MAIN` marks the one that is not, and
+    /// everything else is described only by its name, which a plugin may spell however it likes.
+    /// So the rule is positional, and it is the rule every host uses: the first port left over.
+    /// A plugin with two spare inputs gets its key in the first of them and silence in the other,
+    /// which is what it was already getting in both.
+    ///
+    /// Derived rather than stored so there is one answer to compare against the port list, and no
+    /// second field for a caller building a layout by hand to leave disagreeing with it.
+    pub fn sidechain_input(&self) -> Option<usize> {
+        (0..self.inputs.len())
+            .find(|index| Some(*index) != self.main_input && self.inputs[*index] > 0)
+    }
 }
 
 /// Which port a host should put the track's audio in.
@@ -127,5 +142,23 @@ mod tests {
         assert_eq!(layout.input_channels(), 4);
         assert_eq!(layout.output_channels(), 2);
         assert_eq!(PortLayout::stereo_pair(2).input_channels(), 2);
+    }
+
+    #[test]
+    fn the_key_goes_in_the_first_port_that_is_not_the_main_one() {
+        let layout = |inputs: Vec<usize>, main_input| PortLayout {
+            inputs,
+            outputs: vec![2],
+            main_input,
+            main_output: Some(0),
+        };
+        assert_eq!(layout(vec![2, 2], Some(0)).sidechain_input(), Some(1));
+        // A plugin that flags a later port as the main one is describing its own layout, and the
+        // key belongs in whatever is left over rather than at a fixed index.
+        assert_eq!(layout(vec![2, 2], Some(1)).sidechain_input(), Some(0));
+        // Nothing to key: one input, or a spare port with no channels in it.
+        assert_eq!(layout(vec![2], Some(0)).sidechain_input(), None);
+        assert_eq!(layout(vec![2, 0], Some(0)).sidechain_input(), None);
+        assert_eq!(layout(vec![2, 0, 2], Some(0)).sidechain_input(), Some(2));
     }
 }

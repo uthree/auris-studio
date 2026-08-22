@@ -58,6 +58,8 @@ pub(crate) struct Bridge {
     /// Which port the track's audio goes in and comes out of.
     main_input: Option<usize>,
     main_output: Option<usize>,
+    /// Which port a key goes in, for a plugin that declared somewhere to put one.
+    sidechain_input: Option<usize>,
     /// What the plugin's note input port speaks, or `None` if it has none — which is what an
     /// effect has, and also what an instrument Auris cannot drive has.
     language: Option<NoteLanguage>,
@@ -107,6 +109,7 @@ impl Bridge {
             ),
             input: ports.inputs.iter().map(room).collect(),
             output: ports.outputs.iter().map(room).collect(),
+            sidechain_input: ports.sidechain_input(),
             main_input: ports.main_input,
             main_output: ports.main_output,
             language,
@@ -127,6 +130,11 @@ impl Bridge {
 
     pub(crate) fn latency(&self) -> usize {
         self.latency
+    }
+
+    /// Whether the plugin declared a port for a key to go in.
+    pub(crate) fn has_sidechain(&self) -> bool {
+        self.sidechain_input.is_some()
     }
 
     pub(crate) fn parameters(&self) -> &[ParamDescriptor] {
@@ -162,11 +170,16 @@ impl Bridge {
     /// `overwrite` says what happens when the plugin produces nothing: an instrument's contract is
     /// to overwrite its output, so a plugin that refuses to run has to leave silence, while an
     /// effect leaving the buffer alone passes the audio through untouched.
+    ///
+    /// `sidechain` goes in the first port that is not the main one, where the plugin declared one
+    /// to put it in. `None` fills that port with silence rather than leaving it — a slot that has
+    /// stopped being keyed must not go on hearing the last block it was given.
     pub(crate) fn render(
         &mut self,
         buffer: &mut AudioBuffer,
         notes: &[NoteEvent],
         overwrite: bool,
+        sidechain: Option<&AudioBuffer>,
     ) {
         let frames = buffer.frame_count().min(self.max_frames);
         if frames == 0 {
@@ -187,6 +200,7 @@ impl Bridge {
             output,
             main_input,
             main_output,
+            sidechain_input,
             language,
             steady_time,
             ..
@@ -214,13 +228,15 @@ impl Bridge {
             }
         }
 
-        // Only the main port is filled. Every other one — a vocoder's modulator, a compressor's
-        // sidechain — is left at silence, which is the honest answer while nothing in Auris can
-        // route audio to it, and is a great deal better than not passing it at all.
+        // The track's audio in the main port, the key in the first spare one, and silence in
+        // everything either of them does not reach. Silence rather than "left alone" throughout:
+        // a channel the source is too narrow for, and a spare port on a block where nothing is
+        // keying, would otherwise still be holding whatever was last written there.
         if let Some(port) = main_input.and_then(|index| input.get_mut(index)) {
-            for (index, channel) in port.iter_mut().enumerate().take(buffer.channel_count()) {
-                channel[..frames].copy_from_slice(&buffer.channel(index)[..frames]);
-            }
+            fill_port(port, Some(buffer), frames);
+        }
+        if let Some(port) = sidechain_input.and_then(|index| input.get_mut(index)) {
+            fill_port(port, sidechain, frames);
         }
 
         let Ok(processor) = processor.ensure_processing_started() else {
@@ -270,6 +286,25 @@ impl Bridge {
             _ if overwrite => silence(buffer, frames),
             _ => {}
         }
+    }
+}
+
+/// Copies `source` into one port's channels, silencing whatever it does not reach.
+///
+/// A plugin indexes its ports itself, so every channel of every port it declared has to hold
+/// something meant for it. Silence is what a channel gets when the source has none to give it —
+/// a stereo track feeding a four-channel port, or a port with nothing routed to it at all — and
+/// it has to be written rather than assumed, because the buffer is kept from block to block.
+fn fill_port(port: &mut [Vec<f32>], source: Option<&AudioBuffer>, frames: usize) {
+    for (index, channel) in port.iter_mut().enumerate() {
+        let taken = source
+            .and_then(|buffer| buffer.channels().get(index))
+            .map_or(0, |samples| {
+                let count = frames.min(samples.len());
+                channel[..count].copy_from_slice(&samples[..count]);
+                count
+            });
+        channel[taken..frames].fill(0.0);
     }
 }
 
