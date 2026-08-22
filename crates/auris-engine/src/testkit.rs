@@ -82,6 +82,8 @@ pub(crate) const COUNTER_ID: &str = "test.counter";
 pub(crate) const HUGE_TAIL_ID: &str = "test.huge-tail";
 /// Registry id of [`Lookahead`].
 pub(crate) const LOOKAHEAD_ID: &str = "test.lookahead";
+/// Registry id of [`KeyedGain`].
+pub(crate) const KEYED_ID: &str = "test.keyed";
 
 /// Frames [`Lookahead`] holds its input back by, and declares as its latency.
 pub(crate) const LOOKAHEAD_FRAMES: usize = 64;
@@ -101,7 +103,64 @@ pub(crate) fn registry() -> PluginRegistry {
     registry.register_effect(|| Box::new(BlockCounter));
     registry.register_effect(|| Box::new(HugeTail));
     registry.register_effect(|| Box::new(Lookahead::new()));
+    registry.register_effect(|| Box::new(KeyedGain));
     registry
+}
+
+/// Multiplies its input by its key, frame for frame, so what a chain was handed is readable
+/// straight out of what it produced.
+///
+/// Silences the audio when it is given no key at all, which is the other half of what has to be
+/// checked: an effect that asked for one and did not get it must be able to say so.
+pub(crate) struct KeyedGain;
+
+impl Parameterized for KeyedGain {
+    fn parameters(&self) -> &[ParamDescriptor] {
+        &[]
+    }
+
+    fn param(&self, _id: ParamId) -> f32 {
+        0.0
+    }
+
+    fn set_param(&mut self, _id: ParamId, _value: f32) {}
+}
+
+impl Effect for KeyedGain {
+    fn descriptor(&self) -> PluginDescriptor {
+        PluginDescriptor::effect(
+            KEYED_ID,
+            "Keyed Gain",
+            "Multiplies by its sidechain, or by nothing when it has none",
+            PluginCategory::Dynamics,
+        )
+    }
+
+    fn prepare(&mut self, _ctx: &PrepareContext) {}
+
+    fn reset(&mut self) {}
+
+    fn process(&mut self, buffer: &mut AudioBuffer, _ctx: &ProcessContext) {
+        buffer.apply_gain(0.0);
+    }
+
+    fn wants_sidechain(&self) -> bool {
+        true
+    }
+
+    fn process_with_sidechain(
+        &mut self,
+        buffer: &mut AudioBuffer,
+        sidechain: &AudioBuffer,
+        _ctx: &ProcessContext,
+    ) {
+        for frame in 0..buffer.frame_count() {
+            let key = sidechain.channel(0).get(frame).copied().unwrap_or(0.0);
+            for channel in buffer.channels_mut() {
+                channel[frame] *= key;
+            }
+        }
+    }
 }
 
 /// Emits a DC level proportional to the number of notes currently held.

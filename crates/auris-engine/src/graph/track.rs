@@ -100,6 +100,12 @@ pub struct RenderTrack {
     pub(crate) chase_velocity: [f32; PITCH_COUNT],
     /// Post-fader peak of the last block, published to the meters by the engine.
     pub(crate) peak: f32,
+    /// Which of the graph's sidechain taps this track's output is copied into, if any chain in
+    /// the project keys from it.
+    ///
+    /// `None` for a track nobody listens to, which is nearly all of them — so a project with no
+    /// sidechain in it does not copy a single buffer for this.
+    pub(crate) tap: Option<usize>,
 }
 
 impl RenderTrack {

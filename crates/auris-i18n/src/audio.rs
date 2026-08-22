@@ -144,8 +144,8 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
         "ピッチスイープとバンドパスを掛けた LFSR ノイズ。サンプラー無しでキック・スネア・ハット",
     ),
     (
-        "Soft-knee compressor with stereo-linked peak detection",
-        "ソフトニー、ステレオリンクのピーク検出コンプレッサー",
+        "Soft-knee compressor, stereo-linked and keyable from another track",
+        "ソフトニー、ステレオリンクのコンプレッサー。他トラックでキー入力できる",
     ),
     (
         "Feedback delay with damping and a ping-pong mode",

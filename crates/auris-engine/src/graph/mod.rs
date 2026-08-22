@@ -41,7 +41,7 @@ use std::sync::Arc;
 
 use auris_core::param::db_to_gain;
 use auris_core::plugin::{Effect, Instrument, PrepareContext};
-use auris_core::project::{AudioSourceBank, EffectSlotId, Project, TrackId, TrackKind};
+use auris_core::project::{AudioSourceBank, EffectSlotId, MixerStrip, Project, TrackId, TrackKind};
 use auris_core::registry::PluginRegistry;
 use auris_core::time::{Samples, TempoMap};
 use auris_core::{AudioBuffer, ParamId};
@@ -133,6 +133,17 @@ pub struct RenderGraph {
     /// Which track each bus input belongs to, so the latency plan can be written in track indices
     /// while the render loop addresses buffers directly.
     bus_tracks: Vec<usize>,
+    /// What each keyed effect listens to: one buffer per track some chain in the project keys
+    /// from, holding what that track last put into the mix.
+    ///
+    /// Cleared at the start of every segment and filled as the routing order is walked, exactly
+    /// like [`Self::bus_inputs`] — and for the same reason. The order is what makes it work: a
+    /// sidechain is an edge in the routing, so a track that keys another is walked first and its
+    /// tap is waiting by the time the chain that reads it runs.
+    ///
+    /// Empty for a project with no sidechain in it, which is what keeps the whole feature free
+    /// when it is not in use.
+    pub(crate) sidechain_taps: Vec<AudioBuffer>,
     /// Track indices ordered so that everything feeding a bus comes before it.
     pub(crate) order: Vec<usize>,
     /// Total latency the delay lines were laid out for: playhead to output, in frames.
@@ -388,10 +399,61 @@ impl RenderGraph {
                 chase_counts: [0; PITCH_COUNT],
                 chase_velocity: [0.0; PITCH_COUNT],
                 peak: 0.0,
+                // Filled in below, once every strip in the project has been asked what it is
+                // listening to.
+                tap: None,
             });
         }
 
-        let master = RenderStrip::from_mixer(&project.master, true, registry, placed, &prepare);
+        let mut master = RenderStrip::from_mixer(&project.master, true, registry, placed, &prepare);
+
+        // Sidechain taps. Resolved after the strips are built rather than while, because only the
+        // built effect can say whether it has any use for a key: a slot naming a source in front
+        // of an effect that ignores one would otherwise cost a buffer and a copy per block for
+        // nothing. A tap is made the first time some chain asks for it, so the count is the
+        // number of tracks actually listened to and not the number of slots listening.
+        let mut tap_tracks: Vec<usize> = Vec::new();
+        let mut keys_for =
+            |mixer: &MixerStrip, effects: &[Box<dyn Effect>], owner: Option<usize>| {
+                mixer
+                    .effects
+                    .iter()
+                    .enumerate()
+                    .map(|(slot, entry)| {
+                        let source = project.track_index(entry.sidechain?)?;
+                        if !effects.get(slot)?.wants_sidechain() {
+                            return None;
+                        }
+                        // A slot cannot key from the track it sits on. The tap is written when that
+                        // track's own strip has finished, so the chain would be listening to the
+                        // segment before this one — which is not a sidechain, it is a fault with a
+                        // delay in it. The document forbids it; this is the second lock.
+                        if owner == Some(source) {
+                            return None;
+                        }
+                        Some(match tap_tracks.iter().position(|track| *track == source) {
+                            Some(tap) => tap,
+                            None => {
+                                tap_tracks.push(source);
+                                tap_tracks.len() - 1
+                            }
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            };
+        for (index, track) in project.tracks.iter().enumerate() {
+            let keys = keys_for(&track.mixer, &tracks[index].strip.effects, Some(index));
+            tracks[index].strip.sidechain = keys;
+        }
+        let keys = keys_for(&project.master, &master.effects, None);
+        master.sidechain = keys;
+        let mut sidechain_taps = Vec::with_capacity(tap_tracks.len());
+        for (tap, source) in tap_tracks.iter().enumerate() {
+            tracks[*source].tap = Some(tap);
+            let mut buffer = AudioBuffer::new(RENDER_CHANNELS, max_block, sample_rate);
+            buffer.reserve_frames(max_block);
+            sidechain_taps.push(buffer);
+        }
         let mut master_scratch = AudioBuffer::new(RENDER_CHANNELS, max_block, sample_rate);
         master_scratch.reserve_frames(max_block);
 
@@ -437,6 +499,7 @@ impl RenderGraph {
             max_block,
             bus_inputs,
             bus_tracks,
+            sidechain_taps,
             order,
             latency: plan.total,
             built_latencies,

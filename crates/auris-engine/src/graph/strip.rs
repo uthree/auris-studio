@@ -247,6 +247,13 @@ pub struct RenderStrip {
     pub(crate) effects: Vec<Box<dyn Effect>>,
     /// Bypass flags, parallel to `effects`, so toggling a bypass keeps slot indices stable.
     pub(crate) enabled: Vec<bool>,
+    /// Which of the graph's sidechain taps each slot listens to, parallel to `effects`.
+    ///
+    /// `None` for every slot that names no source, for one whose source is not in this project,
+    /// and for one whose effect has no reading for a key — resolved once when the graph is built,
+    /// by [`RenderGraph::build_with`](crate::graph::RenderGraph::build_with), which is the only
+    /// place that can see the whole routing at once.
+    pub(crate) sidechain: Vec<Option<usize>>,
 }
 
 impl RenderStrip {
@@ -265,6 +272,7 @@ impl RenderStrip {
             fade: MuteFade::new(audible && !mute, sample_rate),
             effects: Vec::new(),
             enabled: Vec::new(),
+            sidechain: Vec::new(),
         }
     }
 
@@ -323,6 +331,9 @@ impl RenderStrip {
                 }
             }
         }
+        // Filled in by the caller, which is the only place that can see what every other strip in
+        // the project is listening to.
+        strip.sidechain = vec![None; strip.effects.len()];
         strip
     }
 
@@ -442,6 +453,33 @@ impl RenderStrip {
     pub fn reset(&mut self) {
         for effect in &mut self.effects {
             effect.reset();
+        }
+    }
+
+    /// Runs the chain over `buffer`, handing every slot that listens to one the tap it names.
+    ///
+    /// Shared by the tracks and the master so that a keyed effect behaves the same wherever it is
+    /// placed. A slot naming a tap the graph does not have falls back to the plain call rather
+    /// than being skipped: an effect that cannot be given its key should still process the audio.
+    pub(crate) fn process_chain(
+        &mut self,
+        buffer: &mut AudioBuffer,
+        taps: &[AudioBuffer],
+        ctx: &ProcessContext,
+    ) {
+        let keyed = self
+            .effects
+            .iter_mut()
+            .zip(&self.enabled)
+            .zip(&self.sidechain);
+        for ((effect, enabled), key) in keyed {
+            if !*enabled {
+                continue;
+            }
+            match key.and_then(|tap| taps.get(tap)) {
+                Some(key) => effect.process_with_sidechain(buffer, key, ctx),
+                None => effect.process(buffer, ctx),
+            }
         }
     }
 

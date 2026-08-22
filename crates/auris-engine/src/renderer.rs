@@ -101,6 +101,16 @@ fn render_segment(
         input.clear();
     }
 
+    // And the same for the keys, for the same reason and one more: a track that is muted long
+    // enough to be skipped outright never reaches the line that fills its tap, so what a chain
+    // keyed from it reads has to be silence rather than the last block it played. Which is also
+    // the right answer — a muted track keys nothing, because a muted track is not in the mix.
+    let sidechain_taps = &mut graph.sidechain_taps;
+    for tap in sidechain_taps.iter_mut() {
+        tap.set_frame_count(frames);
+        tap.clear();
+    }
+
     // A separate field borrow, the same way `master_scratch` is one, so the scope stays reachable
     // while the tracks are being walked mutably.
     let scope = &graph.scope;
@@ -142,11 +152,9 @@ fn render_segment(
         if let Some(tap) = monitor.filter(|tap| tap.track == index) {
             tap.ring.read_into(&mut track.scratch, ctx.sample_rate);
         }
-        for (effect, enabled) in track.strip.effects.iter_mut().zip(&track.strip.enabled) {
-            if *enabled {
-                effect.process(&mut track.scratch, &ctx);
-            }
-        }
+        track
+            .strip
+            .process_chain(&mut track.scratch, sidechain_taps, &ctx);
         // Delay compensation sits between the chain and the fader: the chain is what runs late,
         // and putting it here keeps the fader and the mute acting when they are moved rather
         // than a few milliseconds afterwards. Every copy the track goes on to produce is taken
@@ -175,6 +183,20 @@ fn render_segment(
             track.silence_voices();
         }
 
+        // The key, if anything is listening: the signal this track puts into the mix, its chain,
+        // its fader and its pan applied and its mute honoured. Taken here rather than anywhere
+        // earlier so that turning a kick drum down ducks less and muting it stops the duck — a
+        // key is what the track is contributing, not what it would contribute if it were open.
+        //
+        // It is aligned with the track it keys exactly when nothing in the graph looks ahead,
+        // which is every graph without a lookahead plugin on a *track* — the master's limiter is
+        // past all of this and costs nothing here. Where one exists the key runs behind the audio
+        // it keys by the graph's own compensation, because the chain reading it has not been
+        // delayed yet and this signal has.
+        if let Some(tap) = track.tap.and_then(|tap| sidechain_taps.get_mut(tap)) {
+            tap.copy_from(&track.scratch);
+        }
+
         track.peak = track.peak.max(track.scratch.peak());
         // A spectrum display, if one is open on this strip, reads what the strip actually sends
         // to the bus — the chain applied, the fader applied. The check is one relaxed load per
@@ -192,11 +214,9 @@ fn render_segment(
         }
     }
 
-    for (effect, enabled) in graph.master.effects.iter_mut().zip(&graph.master.enabled) {
-        if *enabled {
-            effect.process(master_scratch, &ctx);
-        }
-    }
+    graph
+        .master
+        .process_chain(master_scratch, sidechain_taps, &ctx);
     graph.master.apply_gain_and_pan(master_scratch);
     // Mute is the last stage of the strip: the effects still run — so a reverb tail does not
     // freeze and un-muting does not pop — but nothing leaves the bus.
@@ -478,7 +498,7 @@ mod tests {
     use auris_core::ParamId;
     use auris_core::automation::AutomationCurve;
     use auris_core::param::{ParamTarget, db_to_gain};
-    use auris_core::project::{AudioSourceBank, AuxSend, Note, Output, Project};
+    use auris_core::project::{AudioSourceBank, AuxSend, Note, Output, Project, TrackId};
     use auris_core::time::Ticks;
     use std::sync::Arc;
 
@@ -531,6 +551,138 @@ mod tests {
             &testkit::registry(),
             block,
         )
+    }
+
+    /// Two tone tracks, the second keyed from the first through a [`testkit::KeyedGain`].
+    ///
+    /// `keyed_first` stores the listening track *before* the one it listens to, which is what
+    /// makes the difference between walking the track list and walking the routing observable.
+    fn keyed_project(keyed_first: bool) -> (Project, TrackId, TrackId) {
+        let mut project = Project::new("Key", SAMPLE_RATE);
+        let hold = |project: &mut Project, name: &str| {
+            let track = project.add_instrument_track(name, testkit::TONE_ID);
+            let clip = project
+                .add_midi_clip(track, "Clip", Ticks::ZERO, Ticks::from_beats(8.0))
+                .unwrap();
+            project.midi_clip_mut(clip).unwrap().notes.push(Note::new(
+                60,
+                Ticks::ZERO,
+                Ticks::from_beats(8.0),
+            ));
+            track
+        };
+        let (kick, bass) = match keyed_first {
+            true => {
+                let bass = hold(&mut project, "Bass");
+                (hold(&mut project, "Kick"), bass)
+            }
+            false => (hold(&mut project, "Kick"), hold(&mut project, "Bass")),
+        };
+        let slot = project.add_effect(Some(bass), testkit::KEYED_ID).unwrap();
+        let strip = &mut project.track_mut(bass).unwrap().mixer;
+        strip
+            .effects
+            .iter_mut()
+            .find(|effect| effect.id == slot)
+            .unwrap()
+            .sidechain = Some(kick);
+        (project, kick, bass)
+    }
+
+    /// The peak the keyed track reached, which is the key multiplied by its own tone.
+    fn keyed_peak(project: &Project, bass: TrackId) -> f32 {
+        let mut graph = build(project, 512);
+        render_range(&mut graph, &mut Transport::playing_from(0), 4_096, 512);
+        let index = project.track_index(bass).unwrap();
+        graph.track_peak(index)
+    }
+
+    #[test]
+    fn a_keyed_effect_reads_what_the_track_it_names_put_into_the_mix() {
+        let (project, _, bass) = keyed_project(false);
+        // The key is a held tone at `TONE_AMPLITUDE` and so is the audio it keys, so the product
+        // is that squared — and it can only be that if the whole path arrived intact.
+        let peak = keyed_peak(&project, bass);
+        assert!(
+            (peak - TONE_AMPLITUDE * TONE_AMPLITUDE).abs() < 1e-5,
+            "keyed track peaked at {peak}"
+        );
+    }
+
+    #[test]
+    fn a_track_that_keys_another_is_rendered_before_it_wherever_it_is_stored() {
+        // The order tracks are stored in is the user's; the order they are rendered in is the
+        // routing's, and a sidechain is an edge in that routing like any other. Stored the wrong
+        // way round, a renderer walking the list would hand the chain the buffer it cleared at
+        // the top of the segment.
+        let (project, _, bass) = keyed_project(true);
+        let peak = keyed_peak(&project, bass);
+        assert!(
+            (peak - TONE_AMPLITUDE * TONE_AMPLITUDE).abs() < 1e-5,
+            "keyed track peaked at {peak}"
+        );
+    }
+
+    #[test]
+    fn a_key_is_taken_past_the_fader_of_the_track_it_comes_from() {
+        // Turning the kick down has to duck less, which is the whole reason the tap is where it
+        // is. Half the amplitude in, half the reduction out.
+        let (mut project, kick, bass) = keyed_project(false);
+        project.track_mut(kick).unwrap().mixer.gain_db = -6.0206;
+        let peak = keyed_peak(&project, bass);
+        let expected = TONE_AMPLITUDE * TONE_AMPLITUDE * 0.5;
+        assert!(
+            (peak - expected).abs() < 1e-4,
+            "keyed track peaked at {peak}"
+        );
+    }
+
+    #[test]
+    fn muting_the_source_leaves_nothing_to_key_from() {
+        // A muted track is not in the mix, so it keys nothing. The mute fade means the first few
+        // frames still carry some of it; by the end of the block it is gone.
+        let (mut project, kick, bass) = keyed_project(false);
+        project.track_mut(kick).unwrap().mixer.mute = true;
+        assert_eq!(keyed_peak(&project, bass), 0.0);
+    }
+
+    #[test]
+    fn a_key_nobody_asked_for_costs_no_buffer() {
+        // The taps are made from what the chains actually listen to, so a project with no
+        // sidechain in it does not carry one — and neither does a slot naming a source in front
+        // of an effect with no reading for a key.
+        let (project, _, _) = keyed_project(false);
+        assert_eq!(build(&project, 512).sidechain_taps.len(), 1);
+
+        let mut plain = project.clone();
+        for track in &mut plain.tracks {
+            for effect in &mut track.mixer.effects {
+                effect.effect_id = testkit::GAIN_ID.to_string();
+            }
+        }
+        assert!(build(&plain, 512).sidechain_taps.is_empty());
+        assert!(
+            build(&one_note_project(Ticks::ZERO, Ticks::from_beats(1.0)), 512)
+                .sidechain_taps
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn keying_allocates_nothing_on_the_block_path() {
+        let (project, _, _) = keyed_project(false);
+        let mut graph = build(&project, 512);
+        let mut transport = Transport::playing_from(0);
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+        // The first block is where a lazily grown buffer would grow; the count is taken over the
+        // ones after it, which is the state playback actually runs in.
+        render_block(&mut graph, &mut transport, &mut out, false);
+        let allocations = testkit::count_allocations(|| {
+            for _ in 0..8 {
+                render_block(&mut graph, &mut transport, &mut out, false);
+            }
+        });
+        assert_eq!(allocations, 0);
     }
 
     /// An audio track carrying one panned, faded, trimmed clip — every per-sample multiplier the
