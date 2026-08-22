@@ -607,6 +607,24 @@ messages! {
         ja: "音が入っていなかったため、何も保存しませんでした"
     }
 
+    /// Several tracks recorded at once, which is one press of Record and several takes.
+    ///
+    /// The count rather than the names: four tracks named in a status line is a line nobody can
+    /// read at a glance, and the clips that just appeared are on screen saying which they were.
+    fn recorded_takes(tracks: usize, duration: &str) {
+        en: "recorded {duration} on {tracks} tracks",
+        ja: "{tracks} トラックに {duration} を録音しました"
+    }
+
+    /// Several tracks at once, with a hole in all of them.
+    ///
+    /// One pool feeds every file, so a block the disk could not keep up with is missing from all
+    /// of them at the same moment.
+    fn recorded_takes_with_gaps(tracks: usize, duration: &str, frames: u64) {
+        en: "recorded {duration} on {tracks} tracks, but {frames} frames were dropped — there is a gap in each",
+        ja: "{tracks} トラックに {duration} を録音しましたが、{frames} フレームが欠落しています"
+    }
+
     /// A take with a hole in it, because the disk could not keep up.
     fn recorded_with_gaps(duration: &str, frames: u64) {
         en: "recorded {duration}, but {frames} frames were dropped — there is a gap in it",

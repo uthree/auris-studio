@@ -65,7 +65,7 @@ pub use levels::{
 };
 pub use monitor::MonitorStatus;
 pub use notes::{Quantize, quantized};
-pub use record::{RecordingReport, RecordingStatus};
+pub use record::{Arm, InputChannels, RecordingReport, RecordingStatus, TakeReport};
 pub use tracks::{MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT};
 pub use typing::{
     DEFAULT_OCTAVE, DEFAULT_VELOCITY, LAYOUT, MusicalTyping, OCTAVE_RANGE, Played, Release, Struck,
@@ -294,12 +294,20 @@ pub struct Session {
     /// somebody is about to paste. See [`clipboard`].
     clipboard: Clipboard,
 
-    /// The audio track a take would be recorded onto.
+    /// The audio tracks a take would be recorded onto, each with the input channels it reads.
+    ///
+    /// A list because a take can land on several tracks at once, one device channel to each. In
+    /// the order they were armed, which is the order the files come out in.
     ///
     /// Not in the document, for the same reason the clipboard is not: arming is how somebody
     /// prepares to play rather than something they wrote, and an Undo that disarmed the track
     /// they were about to record onto would be a surprise with a microphone already live.
-    armed: Option<TrackId>,
+    armed: Vec<record::Arm>,
+    /// Channels the input device has, remembered from the last time anybody found out.
+    ///
+    /// Asking means talking to the OS audio server, and a channel picker asks while it draws.
+    /// Cleared when the audio settings change, which is the only thing that can make it stale.
+    input_channels: Option<usize>,
     /// The input device, open while a take is running or somebody is monitoring.
     ///
     /// One device serving both, because it is one device: a take that closed it on stopping would
@@ -451,7 +459,8 @@ impl Session {
             keyed_cache: HashMap::new(),
             waveforms: HashMap::new(),
             clipboard: Clipboard::default(),
-            armed: None,
+            armed: Vec::new(),
+            input_channels: None,
             input: None,
             monitored: None,
             typing: MusicalTyping::default(),

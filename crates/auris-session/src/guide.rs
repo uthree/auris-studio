@@ -110,14 +110,16 @@ pub mod architecture {
     //!
     //! Several commands mean something different depending on what is selected, and none of them
     //! holds a selection: [`audition_track`](crate::Session::audition_track) sounds a chord on
-    //! whatever instrument is to hand, and [`record_target`](crate::Session::record_target) says
+    //! whatever instrument is to hand, and [`record_targets`](crate::Session::record_targets) says
     //! where a take would land. Both take an `Option<TrackId>` from the caller.
     //!
     //! A selection belongs to whatever is *showing* the document. The command line has none at all,
     //! two windows onto one session would have one each, and a `selected` field on the session
     //! would be a piece of view state that every frontend then had to remember to keep true. What
-    //! the session does own is the deliberate half — the armed track is stored, because arming is
-    //! something a person did rather than somewhere they happen to be looking.
+    //! the session does own is the deliberate half — the armed tracks are stored, because arming is
+    //! something a person did rather than somewhere they happen to be looking. A selection can
+    //! stand in for exactly one arm, which is why arming is what a band recording at once does:
+    //! there is only one thing an eye can be on.
     //!
     //! # The two threads
     //!
@@ -198,6 +200,15 @@ pub mod architecture {
     //! UI's, and a modal dialog that blocks it for a second would cost the take a second of audio.
     //! That in turn is why `Capture` hands out a separate reader: `cpal::Stream` is not `Send` on
     //! every host cpal supports, so the device cannot travel and the pool's far end must.
+    //!
+    //! **One thread however many tracks are armed.** A take on four tracks is one device's
+    //! channels split four ways, not four devices, and the pool has exactly one consumer by
+    //! construction — so the block is split by channel where it is drained, and each part goes to
+    //! its own file. That is the whole of multitrack recording below the session, and the only
+    //! thing it asked of the callback was that a pooled buffer end on a frame boundary: one that
+    //! stopped half way through a frame would file every channel one place along for the rest of
+    //! the take. A track armed to a channel the device does not have records silence rather than
+    //! its neighbour, so a missing input says which one went missing.
     //!
     //! # Monitoring, and why the device stopped belonging to the take
     //!

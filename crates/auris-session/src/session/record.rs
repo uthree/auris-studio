@@ -39,6 +39,28 @@
 //! What a take may never do is pick a track for itself; a take on a track nobody chose is a take
 //! nobody finds.
 //!
+//! # More than one track at once
+//!
+//! Every armed track records, each from its own input channels: [`InputChannels`] is a run of
+//! them, one wide for a microphone and two for anything stereo. There is still one device, one
+//! pool and one thread emptying it — the block that comes off the callback is split by channel
+//! and written to a file per track, which is why `auris_engine::capture` takes care to hand over
+//! whole frames.
+//!
+//! A selection standing in for an arm takes the whole device, so a stereo interface with one
+//! track selected records what it always did. Arming a second track is what says the inputs are
+//! separate players rather than two halves of one signal, and from then on an arm is one channel
+//! — [`free_channels`] is where a new one lands and why.
+//!
+//! Channels the device does not have are recorded as silence rather than refused. An arm outlives
+//! the interface it was made for, and a track that came back silent is a thing somebody can see
+//! and re-point; a take that would not start because of an arm made last week is not.
+//!
+//! What is deliberately *not* here is a monitor per armed track. There is one ring and it carries
+//! one stereo pair, so monitoring follows the single track it was pointed at and takes that
+//! track's own channels. A room full of players recording at once hears itself through the
+//! interface, which is what an interface is for.
+//!
 //! # Where the take lands
 //!
 //! At the playhead the transport was at when the *first block of audio arrived*, which
@@ -73,21 +95,79 @@ const POLL: Duration = Duration::from_millis(10);
 /// [`Session::set_monitoring`]. What ends the take is [`Capture::end_take`]; the writer sees the
 /// flag go false and closes the file after a quiet pass or two.
 pub(super) struct Take {
-    /// The thread writing the file. It hands back the pool's reader — there is one, and the next
+    /// The thread writing the files. It hands back the pool's reader — there is one, and the next
     /// take needs it — along with the frame count, or why it stopped.
     writer: std::thread::JoinHandle<(CaptureReader, Result<u64, IoError>)>,
-    /// Where the file is, absolute.
-    path: PathBuf,
-    /// Its name inside the project folder, which is what the document will store.
-    inside: PathBuf,
-    /// The track the clip will land on.
-    track: TrackId,
+    /// One file per armed track, in the order they were armed.
+    files: Vec<TakeFile>,
     /// Whether the playhead has been inside the punch region since the take began.
     ///
     /// What makes rolling out automatic work under a cycle. "Past the punch-out" is not a
     /// condition a looping transport ever meets — it wraps before it gets there — so what is
     /// watched for is *leaving* the region, and leaving needs having been in.
     pub(super) entered_punch: bool,
+}
+
+/// One track's half of a take: a file being written, and where it will land.
+struct TakeFile {
+    /// Where the file is, absolute.
+    path: PathBuf,
+    /// Its name inside the project folder, which is what the document will store.
+    inside: PathBuf,
+    /// The track the clip will land on.
+    track: TrackId,
+}
+
+/// A run of input channels one take reads.
+///
+/// One channel wide for a microphone, two for anything stereo. Wider is allowed and nothing
+/// stops it, because a device with more channels than a pair is exactly the device this exists
+/// for and an ambisonic rig is not worth refusing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InputChannels {
+    /// The device channel the take's first channel comes from, counting from zero.
+    pub first: usize,
+    /// How many channels, so the file is mono at one and stereo at two.
+    pub count: usize,
+}
+
+impl InputChannels {
+    /// A run of `count` channels starting at `first`, never narrower than one.
+    pub fn new(first: usize, count: usize) -> Self {
+        Self {
+            first,
+            count: count.max(1),
+        }
+    }
+
+    /// One channel.
+    pub fn mono(first: usize) -> Self {
+        Self::new(first, 1)
+    }
+
+    /// A pair, starting at `first`.
+    pub fn stereo(first: usize) -> Self {
+        Self::new(first, 2)
+    }
+
+    /// One past the last channel this reads.
+    pub fn end(self) -> usize {
+        self.first + self.count
+    }
+
+    /// Whether device channel `channel` is one of these.
+    pub fn contains(self, channel: usize) -> bool {
+        (self.first..self.end()).contains(&channel)
+    }
+}
+
+/// A track armed to record, and where its audio comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Arm {
+    /// The track a take will land on.
+    pub track: TrackId,
+    /// The device channels it reads.
+    pub input: InputChannels,
 }
 
 /// How a take that is running is doing.
@@ -105,21 +185,17 @@ pub struct RecordingStatus {
     pub running: bool,
 }
 
-/// What a finished take produced.
+/// What one armed track's half of a finished take produced.
 #[derive(Clone, Debug, PartialEq)]
-pub struct RecordingReport {
+pub struct TakeReport {
+    /// The track it was recorded onto.
+    pub track: TrackId,
     /// The clip, or `None` when the take was empty and nothing was kept.
     pub clip: Option<auris_core::ClipId>,
     /// The file, if one was kept.
     pub path: Option<PathBuf>,
     /// How long it turned out to be.
     pub seconds: f64,
-    /// Frames the disk could not keep up with.
-    ///
-    /// Not an error and not silently swallowed either: the take is usable and everything after
-    /// the gap has moved earlier by that much, which is a thing to be told rather than to
-    /// discover in a mix a week later.
-    pub dropped_frames: u64,
     /// The take was recorded and none of it fell inside the punch region.
     ///
     /// A different thing from an empty take and it has to read as one: nothing was wrong with the
@@ -127,6 +203,53 @@ pub struct RecordingReport {
     /// is kept — see [`Self::path`] — because a punch set to the wrong bar is the likeliest reason
     /// to be reading this.
     pub outside_punch: bool,
+}
+
+/// What a finished take produced, one entry per track that was armed for it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecordingReport {
+    /// Each armed track's half, in the order they were armed.
+    ///
+    /// Never empty for a take that started: a track that came back with nothing still has an
+    /// entry, because "which of the four came back silent" is the question somebody reading this
+    /// is asking.
+    pub takes: Vec<TakeReport>,
+    /// Frames the disk could not keep up with.
+    ///
+    /// One number for the whole take rather than one per track: there is a single pool behind
+    /// every file, and a block lost is lost from all of them at once.
+    ///
+    /// Not an error and not silently swallowed either: the take is usable and everything after
+    /// the gap has moved earlier by that much, which is a thing to be told rather than to
+    /// discover in a mix a week later.
+    pub dropped_frames: u64,
+}
+
+impl RecordingReport {
+    /// How many of the armed tracks came back with a clip.
+    pub fn clips(&self) -> usize {
+        self.takes.iter().filter(|take| take.clip.is_some()).count()
+    }
+
+    /// How long the take was, from the longest of its tracks.
+    ///
+    /// The longest rather than a sum: they were all recorded at once and are the same length,
+    /// unless a punch region trimmed one of them differently.
+    pub fn seconds(&self) -> f64 {
+        self.takes
+            .iter()
+            .map(|take| take.seconds)
+            .fold(0.0, f64::max)
+    }
+
+    /// Nothing became a clip, and at least one track was recorded and missed the punch region.
+    ///
+    /// The question a status line asks to tell "the microphone was dead" from "you played
+    /// outside your own punch", and it has to be asked of the whole take: one track landing in
+    /// the region and another missing it is a take that worked.
+    pub fn outside_punch(&self) -> bool {
+        self.clips() == 0 && self.takes.iter().any(|take| take.outside_punch)
+    }
 }
 
 impl Session {
@@ -139,63 +262,154 @@ impl Session {
         auris_engine::input_devices()
     }
 
-    /// The track that has been armed by hand, if any.
+    /// Every track that has been armed by hand, and the channels each one reads.
     ///
     /// Not the same question as "where would a take land" — that is
-    /// [`record_target`](Session::record_target), which falls back to the selection. This one is
-    /// for drawing the arm button, which has to show what was *chosen* rather than what would
+    /// [`record_targets`](Session::record_targets), which falls back to the selection. This one is
+    /// for drawing arm buttons, which have to show what was *chosen* rather than what would
     /// happen.
-    pub fn armed_track(&self) -> Option<TrackId> {
-        self.armed
+    pub fn armed_tracks(&self) -> &[Arm] {
+        &self.armed
     }
 
-    /// The track a take would be recorded onto, given whatever the caller has selected.
+    /// The channels `track` is armed to read, if it is armed at all.
+    pub fn track_arm(&self, track: TrackId) -> Option<InputChannels> {
+        self.armed
+            .iter()
+            .find(|arm| arm.track == track)
+            .map(|arm| arm.input)
+    }
+
+    /// Whether a take would land on `track` without it having been armed.
+    ///
+    /// The selection standing in for an arm, which is what makes recording "click the track and
+    /// press Record". Separate from [`track_arm`](Session::track_arm) because a button has to
+    /// show the difference: one of them is a choice somebody made and the other is where the eye
+    /// happens to be.
+    pub fn is_record_target(&self, track: TrackId, selected: Option<TrackId>) -> bool {
+        self.armed.is_empty() && selected == Some(track) && self.records_audio(track)
+    }
+
+    /// The tracks a take would be recorded onto, given whatever the caller has selected.
     ///
     /// The selection is passed in rather than held, because a selection belongs to whatever is
     /// showing the document — a headless session has none, and two windows onto one session would
     /// have one each.
-    pub fn record_target(&self, selected: Option<TrackId>) -> Option<TrackId> {
-        let records = selected
-            .and_then(|id| self.project.track(id))
-            .is_some_and(|track| track.kind.as_audio().is_some());
-        take_track(self.armed, selected, records)
+    ///
+    /// `&mut` because an implicit target has to be given channels, and how many the device has is
+    /// remembered rather than asked for every time. See
+    /// [`input_channel_count`](Session::input_channel_count).
+    pub fn record_targets(&mut self, selected: Option<TrackId>) -> Vec<Arm> {
+        let records = selected.is_some_and(|id| self.records_audio(id));
+        let channels = self.input_channel_count();
+        take_tracks(&self.armed, selected, records, channels)
     }
 
-    /// Arms an audio track for recording, or disarms whatever was armed with `None`.
+    /// Arms an audio track for recording, on `input` or on whatever channels are free.
     ///
-    /// Only needed to record onto something other than the selection — see
-    /// [`record_target`](Session::record_target). Arming used to be the only way to name a track
-    /// at all, which made every take begin with a button press that said what the selection
-    /// already said.
+    /// Every armed track records, each from its own channels, which is how a band goes down at
+    /// once. Arming a track that is already armed re-points it rather than adding a second entry;
+    /// passing `None` for one leaves the channels it already has, so a caller that only wants it
+    /// armed does not have to know where it is listening.
     ///
-    /// One at a time. Multitrack recording is a real thing and this is not it: one input device
-    /// produces one stream, and arming three tracks would either record the same audio onto all
-    /// of them or need a channel-to-track map nobody has been asked for yet.
+    /// Only an audio track, because only an audio track has anywhere for a take to land.
     ///
     /// Deliberately not an undo step. Arming is how somebody prepares to play, not something they
     /// wrote, and a take is usually preceded by several attempts at arming the right track.
-    pub fn arm_track(&mut self, track: Option<TrackId>) -> Result<(), SessionError> {
-        match track {
-            None => {
-                self.armed = None;
-                Ok(())
-            }
-            Some(id) => {
-                let found = self
-                    .project
-                    .track(id)
-                    .ok_or(SessionError::UnknownTrack(id.0))?;
-                if found.kind.as_audio().is_none() {
-                    return Err(SessionError::WrongTrackKind {
-                        id: id.0,
-                        actual: found.kind.label(),
-                        expected: "Audio",
-                    });
-                }
-                self.armed = Some(id);
-                Ok(())
+    pub fn arm_track(
+        &mut self,
+        track: TrackId,
+        input: Option<InputChannels>,
+    ) -> Result<(), SessionError> {
+        let found = self
+            .project
+            .track(track)
+            .ok_or(SessionError::UnknownTrack(track.0))?;
+        if found.kind.as_audio().is_none() {
+            return Err(SessionError::WrongTrackKind {
+                id: track.0,
+                actual: found.kind.label(),
+                expected: "Audio",
+            });
+        }
+        match (self.armed.iter().position(|arm| arm.track == track), input) {
+            (Some(at), Some(input)) => self.armed[at].input = input,
+            (Some(_), None) => {}
+            (None, given) => {
+                let claimed: Vec<InputChannels> = self.armed.iter().map(|arm| arm.input).collect();
+                let channels = self.input_channel_count();
+                let input = given.unwrap_or_else(|| free_channels(&claimed, channels));
+                self.armed.push(Arm { track, input });
             }
         }
+        self.point_monitor();
+        Ok(())
+    }
+
+    /// Takes a track out of the arm, leaving every other one where it was.
+    pub fn disarm_track(&mut self, track: TrackId) {
+        self.armed.retain(|arm| arm.track != track);
+        self.point_monitor();
+    }
+
+    /// Disarms everything, so a take would follow the selection again.
+    pub fn disarm_all(&mut self) {
+        self.armed.clear();
+        self.point_monitor();
+    }
+
+    /// How many channels the input device has, as far as the session knows.
+    ///
+    /// The open device's own count, or the last count seen, or what the host says the configured
+    /// device offers. Remembered rather than asked for each time, because a picker asks this
+    /// while it draws and [`input_devices`](Session::input_devices) talks to the OS audio server.
+    /// Forgotten when the audio settings change, which is the only thing that can make it stale.
+    pub fn input_channel_count(&mut self) -> usize {
+        if let Some(capture) = self.input.as_ref() {
+            let channels = capture.channel_count().max(1);
+            self.input_channels = Some(channels);
+            return channels;
+        }
+        if let Some(channels) = self.input_channels {
+            return channels;
+        }
+        if self.headless {
+            // A headless session has no device policy and nothing to play through, and asking the
+            // OS audio server what the interface can do is a question that would be answered
+            // differently on every machine a test ran on. Not remembered either, so a device
+            // opened later is still read from.
+            return 2;
+        }
+        let wanted = self.audio.input_device.clone();
+        let found =
+            auris_engine::input_devices()
+                .into_iter()
+                .find(|device| match wanted.as_deref() {
+                    Some(name) => device.name == name,
+                    None => device.is_default,
+                });
+        // Two, when there is no device to ask. It is what a laptop has, and the alternative is
+        // arming a track to a device with no channels at all.
+        let channels = found.map_or(2, |device| (device.max_channels as usize).max(1));
+        self.input_channels = Some(channels);
+        channels
+    }
+
+    /// Points the monitor's ring at the channels the track it plays is armed to read.
+    ///
+    /// Called wherever either of those can change. An unarmed track monitors the first pair,
+    /// which is what a laptop microphone is and what this did before an arm named channels at all.
+    pub(super) fn point_monitor(&self) {
+        if let (Some(track), Some(ring)) = (self.monitored, self.monitor_ring()) {
+            ring.set_source(self.track_arm(track).map_or(0, |input| input.first));
+        }
+    }
+
+    /// Whether `track` is one a take could land on.
+    fn records_audio(&self, track: TrackId) -> bool {
+        self.project
+            .track(track)
+            .is_some_and(|found| found.kind.as_audio().is_some())
     }
 
     /// `true` while a take is running.
@@ -270,6 +484,10 @@ impl Session {
     /// nothing. Losing the microphone is worth saying out loud, which the caller does by noticing
     /// [`monitoring`](Session::monitoring) has gone false.
     pub(super) fn restart_input(&mut self) {
+        // Whatever else happens below, the device this counted the channels of may not be the
+        // device any more. Cleared here rather than at every call site, because this is the one
+        // funnel a change of input passes through.
+        self.input_channels = None;
         if self.input.is_none() || self.take.is_some() {
             return;
         }
@@ -319,18 +537,27 @@ impl Session {
         if let Some(capture) = self.input.as_ref() {
             capture.end_take();
         }
-        let path = take.path;
+        let files: Vec<String> = take
+            .files
+            .iter()
+            .map(|file| file.path.display().to_string())
+            .collect();
+        let named = files.join(", ");
         match take.writer.join() {
-            Ok((_, Ok(frames))) => log::info!("closed {} at {frames} frames", path.display()),
-            Ok((_, Err(error))) => log::warn!("could not finish {}: {error}", path.display()),
-            Err(_) => log::warn!("the thread writing {} panicked", path.display()),
+            Ok((_, Ok(frames))) => log::info!("closed {named} at {frames} frames"),
+            Ok((_, Err(error))) => log::warn!("could not finish {named}: {error}"),
+            Err(_) => log::warn!("the thread writing {named} panicked"),
         }
     }
 
-    /// Starts recording onto [`record_target(selected)`](Session::record_target).
+    /// Starts recording onto every track [`record_targets`](Session::record_targets) names.
     ///
     /// Opens the input device and begins writing immediately; the transport is left alone, so a
     /// caller that wants to record *against* the rest of the song plays it as well.
+    ///
+    /// One file per track, all of them fed by one thread from one pool, because they are one
+    /// device's channels split up rather than several devices. A track armed to channels the
+    /// device does not have records silence — see the module note on why that is not a refusal.
     ///
     /// The arm is left exactly as it was found. A take that armed the track it landed on would
     /// pin the next one there too, so selecting another track and pressing Record again would
@@ -339,22 +566,29 @@ impl Session {
         if self.take.is_some() {
             return Err(SessionError::AlreadyRecording);
         }
-        let track = self
-            .record_target(selected)
-            .ok_or(SessionError::NothingToRecordOnto)?;
-        // Re-checked rather than trusted: the track may have been deleted, or turned into
-        // something else, since it was armed.
-        let name = match self.project.track(track) {
-            Some(found) if found.kind.as_audio().is_some() => found.name.clone(),
-            Some(found) => {
-                return Err(SessionError::WrongTrackKind {
-                    id: track.0,
-                    actual: found.kind.label(),
-                    expected: "Audio",
-                });
+        let targets = self.record_targets(selected);
+        if targets.is_empty() {
+            return Err(SessionError::NothingToRecordOnto);
+        }
+        // Re-checked rather than trusted: a track may have been deleted, or turned into something
+        // else, since it was armed. All of them before any file is opened, so a take that cannot
+        // happen leaves nothing behind.
+        let mut named = Vec::with_capacity(targets.len());
+        for arm in targets {
+            match self.project.track(arm.track) {
+                Some(found) if found.kind.as_audio().is_some() => {
+                    named.push((arm, found.name.clone()));
+                }
+                Some(found) => {
+                    return Err(SessionError::WrongTrackKind {
+                        id: arm.track.0,
+                        actual: found.kind.label(),
+                        expected: "Audio",
+                    });
+                }
+                None => return Err(SessionError::UnknownTrack(arm.track.0)),
             }
-            None => return Err(SessionError::UnknownTrack(track.0)),
-        };
+        }
         let folder = self
             .project_folder()
             .ok_or(SessionError::RecordingNeedsFolder)?
@@ -368,30 +602,62 @@ impl Session {
             self.input = None;
             self.open_input()?;
         }
-        let capture = self.input.as_mut().expect("the input was just opened");
-        let reader = capture
+        let reader = self
+            .input
+            .as_mut()
+            .expect("the input was just opened")
             .take_reader()
             .expect("a fresh capture has its reader");
 
-        let inside = PathBuf::from(auris_io::AUDIO_DIR).join(take_file_name(&folder, &name));
-        let path = folder.join(&inside);
-        let recorder =
-            match WavRecorder::create(&path, reader.sample_rate(), reader.channel_count()) {
-                Ok(recorder) => recorder,
+        let rate = reader.sample_rate();
+        let mut files: Vec<TakeFile> = Vec::with_capacity(named.len());
+        let mut streams = Vec::with_capacity(named.len());
+        for (arm, name) in named {
+            // Named after the track, and free by the time the next one is chosen: creating the
+            // file is what stops two tracks of the same name landing on one path.
+            let inside = PathBuf::from(auris_io::AUDIO_DIR).join(take_file_name(&folder, &name));
+            let path = folder.join(&inside);
+            match WavRecorder::create(&path, rate, arm.input.count) {
+                Ok(recorder) => {
+                    streams.push(TakeStream::new(recorder, arm.input));
+                    files.push(TakeFile {
+                        path,
+                        inside,
+                        track: arm.track,
+                    });
+                }
                 Err(error) => {
-                    // The reader has to go back even when nothing is going to use it, or the device
-                    // is stuck with no consumer and every later take reopens it.
-                    capture.restore_reader(reader);
+                    // Everything this take had already opened goes with it. Those files hold
+                    // nothing, and a folder with three empty takes in it from a recording that
+                    // never started is litter somebody has to work out the meaning of.
+                    drop(streams);
+                    for file in &files {
+                        let _ = std::fs::remove_file(&file.path);
+                    }
+                    // The reader has to go back even when nothing is going to use it, or the
+                    // device is stuck with no consumer and every later take reopens it.
+                    if let Some(capture) = self.input.as_mut() {
+                        capture.restore_reader(reader);
+                    }
                     self.close_input_if_idle();
                     return Err(error.into());
                 }
-            };
+            }
+        }
+
         let writer = match std::thread::Builder::new()
             .name("auris-record".to_string())
-            .spawn(move || write_take(reader, recorder))
+            .spawn(move || write_take(reader, streams))
         {
             Ok(writer) => writer,
             Err(error) => {
+                let path = files
+                    .first()
+                    .map(|file| file.path.clone())
+                    .unwrap_or_else(|| folder.clone());
+                for file in &files {
+                    let _ = std::fs::remove_file(&file.path);
+                }
                 self.close_input_if_idle();
                 return Err(SessionError::Io(IoError::Filesystem {
                     path,
@@ -407,9 +673,7 @@ impl Session {
             .begin_take();
         self.take = Some(Take {
             writer,
-            path,
-            inside,
-            track,
+            files,
             entered_punch: false,
         });
         Ok(())
@@ -422,13 +686,7 @@ impl Session {
     /// there is nothing in the document to undo.
     pub fn stop_recording(&mut self) -> Result<RecordingReport, SessionError> {
         let take = self.take.take().ok_or(SessionError::NotRecording)?;
-        let Take {
-            writer,
-            path,
-            inside,
-            track,
-            ..
-        } = take;
+        let Take { writer, files, .. } = take;
 
         // Read before the take is closed, because closing it is what stops them moving.
         let (started_at, dropped_frames) = match self.input.as_ref() {
@@ -454,28 +712,37 @@ impl Session {
                 self.close_input_if_idle();
                 return Err(SessionError::Io(IoError::WavWrite(format!(
                     "the thread writing {} panicked",
-                    path.display()
+                    files
+                        .first()
+                        .map(|file| file.path.display().to_string())
+                        .unwrap_or_default()
                 ))));
             }
         };
 
         if frames == 0 {
             // Nothing arrived: the device opened and produced no audio before it was stopped. An
-            // empty file and a zero-length clip would both be litter.
-            let _ = std::fs::remove_file(&path);
+            // empty file and a zero-length clip would both be litter. Every track still gets an
+            // entry, because which of them came back with nothing is the question being asked.
+            let takes = files
+                .iter()
+                .map(|file| {
+                    let _ = std::fs::remove_file(&file.path);
+                    TakeReport {
+                        track: file.track,
+                        clip: None,
+                        path: None,
+                        seconds: 0.0,
+                        outside_punch: false,
+                    }
+                })
+                .collect();
             return Ok(RecordingReport {
-                clip: None,
-                path: None,
-                seconds: 0.0,
+                takes,
                 dropped_frames,
-                outside_punch: false,
             });
         }
 
-        // Read back through the importer rather than kept from the pool: the engine renders every
-        // source at the project's rate, and a device that could not give us that rate has just
-        // written a file at its own.
-        let buffer = import_audio_file(&path, self.project.sample_rate)?;
         // Everything from here counts in project frames, including where the take begins: the
         // stamp is in *engine* frames, and the two rates are free to disagree.
         let project_rate = self.project.sample_rate.max(1.0);
@@ -484,6 +751,54 @@ impl Session {
             (frame as f64 / engine_rate * project_rate).round() as u64
         });
 
+        // A transaction rather than a single `record`, because clearing the punch region goes
+        // through `split_clip` and `remove_clip` and each of those records a step of its own when
+        // there is no transaction open. Punching over one clip that spanned the region pushed four
+        // entries — the take, two splits and a removal — so the one Undo the user expected to
+        // reverse "the recording" instead landed them between the splits, holding three fragments
+        // with new ids and no take.
+        //
+        // One transaction for the whole press, however many tracks it landed on: four tracks
+        // recorded at once are one thing that happened, and undoing three quarters of it is not a
+        // state anybody meant to be in.
+        self.begin_transaction(Edit::RecordTake);
+        let mut takes = Vec::with_capacity(files.len());
+        for file in &files {
+            match self.land_take(file, take_start, project_rate) {
+                Ok(report) => takes.push(report),
+                Err(error) => {
+                    // The take's own files stay — they are what was played — but the document
+                    // goes back the way it was. A cleared punch region with no clip to show for
+                    // it is not a state one Undo could sort out, and the transaction is what
+                    // makes putting it back possible.
+                    self.revert_transaction();
+                    return Err(error);
+                }
+            }
+        }
+        self.invalidate_graph();
+        self.end_transaction();
+
+        Ok(RecordingReport {
+            takes,
+            dropped_frames,
+        })
+    }
+
+    /// Turns one finished file into a clip on the track it was recorded for.
+    ///
+    /// Called inside the take's transaction, once per armed track. Everything it does to the
+    /// document is undone with the rest of the take when a later track fails.
+    fn land_take(
+        &mut self,
+        file: &TakeFile,
+        take_start: u64,
+        project_rate: f64,
+    ) -> Result<TakeReport, SessionError> {
+        // Read back through the importer rather than kept from the pool: the engine renders every
+        // source at the project's rate, and a device that could not give us that rate has just
+        // written a file at its own.
+        let buffer = import_audio_file(&file.path, self.project.sample_rate)?;
         let punch = self.punch_frames_at(project_rate);
         let Some((offset, kept)) = punch_window(punch, take_start, buffer.frame_count() as u64)
             .filter(|(_, kept)| *kept > 0)
@@ -491,11 +806,11 @@ impl Session {
             // The take never reached the punch region — rolled past it, or stopped before it. The
             // file stays: it is what was played, and the punch being set to the wrong bar is the
             // likeliest reason to be standing here.
-            return Ok(RecordingReport {
+            return Ok(TakeReport {
+                track: file.track,
                 clip: None,
-                path: Some(path),
+                path: Some(file.path.clone()),
                 seconds: 0.0,
-                dropped_frames,
                 outside_punch: true,
             });
         };
@@ -509,41 +824,32 @@ impl Session {
             .tempo_map
             .seconds_to_ticks(Seconds((take_start + offset) as f64 / project_rate));
 
-        // A transaction rather than a single `record`, because clearing the punch region goes
-        // through `split_clip` and `remove_clip` and each of those records a step of its own when
-        // there is no transaction open. Punching over one clip that spanned the region pushed four
-        // entries — the take, two splits and a removal — so the one Undo the user expected to
-        // reverse "the recording" instead landed them between the splits, holding three fragments
-        // with new ids and no take.
-        self.begin_transaction(Edit::RecordTake);
-        // Inside the same undo step, and before the new clip exists so it cannot clear itself.
-        // Only what the take actually covers: a player who rolled in late replaces less.
+        // Before the new clip exists so it cannot clear itself. Only what the take actually
+        // covers: a player who rolled in late replaces less.
         if punch.is_some() {
             let over = self
                 .project
                 .tempo_map
                 .seconds_to_ticks(Seconds((take_start + offset + kept) as f64 / project_rate));
-            self.clear_punch_range(track, start, over);
+            self.clear_punch_range(file.track, start, over);
         }
-        let name = path
+        let name = file
+            .path
             .file_stem()
             .map(|stem| stem.to_string_lossy().to_string())
             .unwrap_or_else(|| "Take".to_string());
         let source = self.project.add_audio_source(
             name,
-            AssetPath::inside(&inside),
+            AssetPath::inside(&file.inside),
             buffer.frame_count() as u64,
             buffer.sample_rate(),
             buffer.channel_count(),
         );
-        self.record_source_size(source, &path);
-        let Some(clip) = self.project.add_audio_clip(track, source, start) else {
-            // The take's own file stays — it is what was played — but the document goes back the
-            // way it was. A cleared punch region with no clip to show for it is not a state one
-            // Undo could sort out, and the transaction is what makes putting it back possible.
-            self.revert_transaction();
-            return Err(SessionError::UnknownTrack(track.0));
-        };
+        self.record_source_size(source, &file.path);
+        let clip = self
+            .project
+            .add_audio_clip(file.track, source, start)
+            .ok_or(SessionError::UnknownTrack(file.track.0))?;
         // A take knows what tempo it was played at, because the transport was running it. Stamped
         // rather than switched on: a take does not *follow* the tempo by default — a vocal that
         // moved when somebody nudged the tempo would be a surprise — but the day it is asked to,
@@ -553,14 +859,12 @@ impl Session {
             audio.source_bpm = Some(played_at);
         }
         self.install_source(source, Arc::new(buffer));
-        self.invalidate_graph();
-        self.end_transaction();
 
-        Ok(RecordingReport {
+        Ok(TakeReport {
+            track: file.track,
             clip: Some(clip),
-            path: Some(path),
+            path: Some(file.path.clone()),
             seconds,
-            dropped_frames,
             outside_punch: false,
         })
     }
@@ -574,46 +878,131 @@ impl Session {
     }
 }
 
-/// The track a Record press lands on: whatever is armed, or the selection when nothing is.
+/// The tracks a Record press lands on: everything armed, or the selection when nothing is.
 ///
-/// Takes what the two tracks *are* rather than looking them up, so the rule can be read and tested
-/// without a document, a device or a folder to write into. It is the whole of the feature, and
-/// inside a method that opens a sound stream it would be a rule with no test.
+/// Takes what the arms and the selection *are* rather than looking anything up, so the rule can be
+/// read and tested without a document, a device or a folder to write into. It is the whole of the
+/// feature, and inside a method that opens a sound stream it would be a rule with no test.
 ///
 /// Arming wins, and that is what keeping both is for: the selection is where somebody is *looking*,
-/// and there is no other way to say "record the vocal while I read the drum part". A selection
+/// and there is no other way to say "record the vocals while I read the drum part". A selection
 /// that could not hold a take — an instrument track, a bus — is not a target and does not become
 /// one by being the only thing selected.
-fn take_track(
-    armed: Option<TrackId>,
+fn take_tracks(
+    armed: &[Arm],
     selected: Option<TrackId>,
     selected_records: bool,
-) -> Option<TrackId> {
-    armed.or_else(|| selected.filter(|_| selected_records))
+    device_channels: usize,
+) -> Vec<Arm> {
+    if !armed.is_empty() {
+        return armed.to_vec();
+    }
+    selected
+        .filter(|_| selected_records)
+        .map(|track| Arm {
+            track,
+            input: free_channels(&[], device_channels),
+        })
+        .into_iter()
+        .collect()
 }
 
-/// Drains the capture into the file until the take ends, then closes the file.
+/// Where a newly armed track listens, given what the other arms have taken.
+///
+/// The whole device when it has a pair or fewer and nothing else is armed, because that is what
+/// recording did before there was a second arm at all: a laptop's microphone is one channel and an
+/// interface's pair is a pair, and a stereo synth plugged into both should not come back as its
+/// left half. Every arm after that is a single channel, because a second armed track means a
+/// second player rather than the other half of one signal.
+///
+/// The lowest channel nobody else has taken. When they all have, the last one, shared: two tracks
+/// reading one input is a strange thing to have asked for and a visible one, where a refusal at
+/// the moment somebody armed a track would be neither.
+fn free_channels(claimed: &[InputChannels], device_channels: usize) -> InputChannels {
+    let channels = device_channels.max(1);
+    if claimed.is_empty() && channels <= 2 {
+        return InputChannels::new(0, channels);
+    }
+    let free = (0..channels).find(|channel| !claimed.iter().any(|input| input.contains(*channel)));
+    InputChannels::mono(free.unwrap_or(channels - 1))
+}
+
+/// The channels of an interleaved `block` that belong to one take, lifted out of it.
+///
+/// `out` is cleared and refilled with `input.count` samples per frame. Channels the device does
+/// not have come out silent rather than shifting the others along: an arm outlives the interface
+/// it was made for, and a track that came back silent says which input went missing where a track
+/// that came back holding its neighbour's audio would not.
+///
+/// A free function over three numbers because it is the whole of the channel map, and this is the
+/// one place a mistake in it would be inaudible until the take was over.
+fn pick_channels(block: &[f32], channels: usize, input: InputChannels, out: &mut Vec<f32>) {
+    let channels = channels.max(1);
+    out.clear();
+    for frame in 0..block.len() / channels {
+        let base = frame * channels;
+        for channel in input.first..input.end() {
+            out.push(match channel < channels {
+                true => block[base + channel],
+                false => 0.0,
+            });
+        }
+    }
+}
+
+/// One track's file inside a running take, and where its channels come from.
+struct TakeStream {
+    /// The file being written.
+    recorder: WavRecorder,
+    /// The device channels that go into it.
+    input: InputChannels,
+    /// Its own channels, lifted out of the interleaved block. Kept between blocks so that
+    /// emptying the pool allocates nothing after the first one.
+    scratch: Vec<f32>,
+}
+
+impl TakeStream {
+    /// A stream writing `input`'s channels into `recorder`.
+    fn new(recorder: WavRecorder, input: InputChannels) -> Self {
+        Self {
+            recorder,
+            input,
+            scratch: Vec::new(),
+        }
+    }
+}
+
+/// Drains the capture into the files until the take ends, then closes them.
 ///
 /// Runs on a thread of its own rather than on the session's, because the session's thread is a
 /// UI's: a dialog that blocks it for a second would cost the take a second of audio, and the pool
 /// this is emptying is the only thing standing between that and a hole in the recording.
 ///
+/// One thread for every armed track rather than one each, because there is one pool and it has
+/// exactly one consumer by construction. Each block is split by channel as it comes off.
+///
 /// Hands the reader back whatever happened, including on a write error. There is one reader, the
 /// next take needs it, and a full disk should cost this take rather than every take after it.
 fn write_take(
     mut reader: CaptureReader,
-    mut recorder: WavRecorder,
+    mut streams: Vec<TakeStream>,
 ) -> (CaptureReader, Result<u64, IoError>) {
+    let channels = reader.channel_count();
     let mut quiet = 0;
     let result = loop {
         let mut failure = None;
         let samples = reader.drain(|block| {
             // The whole block is still taken from the pool after a failure — the buffers have to
             // go back or the callback starts dropping audio into a take nobody is keeping.
-            if failure.is_none()
-                && let Err(error) = recorder.write(block)
-            {
-                failure = Some(error);
+            if failure.is_some() {
+                return;
+            }
+            for stream in streams.iter_mut() {
+                pick_channels(block, channels, stream.input, &mut stream.scratch);
+                if let Err(error) = stream.recorder.write(&stream.scratch) {
+                    failure = Some(error);
+                    break;
+                }
             }
         });
         if let Some(error) = failure {
@@ -622,7 +1011,7 @@ fn write_take(
         // The device itself went away — unplugged, or the whole capture dropped. Nothing more is
         // coming and the pool is drained.
         if reader.is_finished() {
-            break recorder.finish();
+            break finish_all(streams);
         }
         // The take was stopped. Not a reason to close at once: the callback may have been part way
         // through a block when the flag went false, and that block belongs in the file. Two empty
@@ -633,7 +1022,7 @@ fn write_take(
                 _ => quiet = 0,
             }
             if quiet >= 2 {
-                break recorder.finish();
+                break finish_all(streams);
             }
         }
         if samples == 0 {
@@ -641,6 +1030,26 @@ fn write_take(
         }
     };
     (reader, result)
+}
+
+/// Closes every file the take was writing, and says how long it turned out to be.
+///
+/// All of them, even after one has failed. A WAV whose header was never patched says it holds
+/// nothing, whatever is actually in the file, and losing three good tracks to one bad one would
+/// be a worse answer than the error itself.
+fn finish_all(streams: Vec<TakeStream>) -> Result<u64, IoError> {
+    let mut frames = 0;
+    let mut failure = None;
+    for stream in streams {
+        match stream.recorder.finish() {
+            Ok(written) => frames = frames.max(written),
+            Err(error) => failure = failure.or(Some(error)),
+        }
+    }
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(frames),
+    }
 }
 
 /// A file name for a take on `track`, not already taken inside `folder`.
@@ -691,21 +1100,76 @@ mod tests {
         Session::new(SessionOptions::headless()).expect("a headless session")
     }
 
+    /// The tracks a take would land on, by id, which is what most of these are asking about.
+    fn targets(session: &mut Session, selected: Option<TrackId>) -> Vec<TrackId> {
+        session
+            .record_targets(selected)
+            .into_iter()
+            .map(|arm| arm.track)
+            .collect()
+    }
+
     #[test]
     fn only_an_audio_track_can_be_armed() {
         // An instrument track has no clips a recording could become, and arming one would either
         // fail at the far end of a take or quietly put the audio somewhere else.
         let mut session = session();
         let instrument = session.add_default_instrument_track("Synth").unwrap();
-        assert!(session.arm_track(Some(instrument)).is_err());
-        assert_eq!(session.armed_track(), None);
+        assert!(session.arm_track(instrument, None).is_err());
+        assert!(session.armed_tracks().is_empty());
 
         let audio = session.add_audio_track("Vocals");
-        session.arm_track(Some(audio)).unwrap();
-        assert_eq!(session.armed_track(), Some(audio));
+        session.arm_track(audio, None).unwrap();
+        assert_eq!(session.track_arm(audio), Some(InputChannels::stereo(0)));
 
-        session.arm_track(None).unwrap();
-        assert_eq!(session.armed_track(), None);
+        session.disarm_track(audio);
+        assert!(session.armed_tracks().is_empty());
+    }
+
+    #[test]
+    fn every_armed_track_stays_armed_and_takes_its_own_channel() {
+        // The whole of multitrack recording as the document sees it: arming a second track adds
+        // a second take rather than moving the first one.
+        let mut session = session();
+        let kick = session.add_audio_track("Kick");
+        let snare = session.add_audio_track("Snare");
+        session
+            .arm_track(kick, Some(InputChannels::mono(0)))
+            .unwrap();
+        session.arm_track(snare, None).unwrap();
+
+        assert_eq!(session.armed_tracks().len(), 2);
+        assert_eq!(session.track_arm(kick), Some(InputChannels::mono(0)));
+        assert_eq!(
+            session.track_arm(snare),
+            Some(InputChannels::mono(1)),
+            "the second arm should have found the channel the first left"
+        );
+
+        // Arming one of them again re-points it rather than adding a third entry.
+        session
+            .arm_track(snare, Some(InputChannels::stereo(0)))
+            .unwrap();
+        assert_eq!(session.armed_tracks().len(), 2);
+        assert_eq!(session.track_arm(snare), Some(InputChannels::stereo(0)));
+
+        session.disarm_all();
+        assert!(session.armed_tracks().is_empty());
+    }
+
+    #[test]
+    fn deleting_a_track_takes_its_arm_with_it() {
+        // An arm on a track that has gone would refuse the next take rather than being ignored by
+        // it, and the button that could have cleared it went with the track.
+        let mut session = session();
+        let kick = session.add_audio_track("Kick");
+        let snare = session.add_audio_track("Snare");
+        session.arm_track(kick, None).unwrap();
+        session.arm_track(snare, None).unwrap();
+
+        session.remove_track(kick).unwrap();
+        assert_eq!(session.armed_tracks().len(), 1);
+        assert_eq!(session.armed_tracks()[0].track, snare);
     }
 
     #[test]
@@ -715,8 +1179,8 @@ mod tests {
         let mut session = session();
         let audio = session.add_audio_track("Vocals");
         let before = session.history.undo_edit();
-        session.arm_track(Some(audio)).unwrap();
-        session.arm_track(None).unwrap();
+        session.arm_track(audio, None).unwrap();
+        session.disarm_track(audio);
         assert_eq!(
             session.history.undo_edit(),
             before,
@@ -758,16 +1222,24 @@ mod tests {
         let mut session = session();
         let vocals = session.add_audio_track("Vocals");
         let guitar = session.add_audio_track("Guitar");
-        assert_eq!(session.record_target(Some(vocals)), Some(vocals));
-        assert_eq!(session.record_target(Some(guitar)), Some(guitar));
-        assert_eq!(session.armed_track(), None, "nothing was armed by asking");
+        assert!(session.is_record_target(vocals, Some(vocals)));
+        assert!(!session.is_record_target(vocals, Some(guitar)));
+        assert_eq!(targets(&mut session, Some(guitar)), vec![guitar]);
+        assert!(
+            session.armed_tracks().is_empty(),
+            "nothing was armed by asking"
+        );
 
         // And an arm overrides it, because "record the vocal while I read the drum part" has no
         // other way of being said.
-        session.arm_track(Some(vocals)).unwrap();
-        assert_eq!(session.record_target(Some(guitar)), Some(vocals));
-        session.arm_track(None).unwrap();
-        assert_eq!(session.record_target(Some(guitar)), Some(guitar));
+        session.arm_track(vocals, None).unwrap();
+        assert_eq!(targets(&mut session, Some(guitar)), vec![vocals]);
+        assert!(
+            !session.is_record_target(guitar, Some(guitar)),
+            "a selection standing in for an arm, with an arm already there"
+        );
+        session.disarm_track(vocals);
+        assert_eq!(targets(&mut session, Some(guitar)), vec![guitar]);
     }
 
     #[test]
@@ -777,8 +1249,8 @@ mod tests {
         let mut session = session();
         let synth = session.add_default_instrument_track("Synth").unwrap();
         session.add_audio_track("Vocals");
-        assert_eq!(session.record_target(Some(synth)), None);
-        assert_eq!(session.record_target(None), None);
+        assert!(targets(&mut session, Some(synth)).is_empty());
+        assert!(targets(&mut session, None).is_empty());
         assert!(matches!(
             session.start_recording(Some(synth)),
             Err(SessionError::NothingToRecordOnto)
@@ -787,13 +1259,90 @@ mod tests {
 
     #[test]
     fn the_arm_wins_and_the_selection_only_stands_in_for_it() {
-        let armed = TrackId(1);
-        let selected = TrackId(2);
-        assert_eq!(take_track(Some(armed), Some(selected), true), Some(armed));
-        assert_eq!(take_track(Some(armed), None, false), Some(armed));
-        assert_eq!(take_track(None, Some(selected), true), Some(selected));
-        assert_eq!(take_track(None, Some(selected), false), None);
-        assert_eq!(take_track(None, None, false), None);
+        let kick = Arm {
+            track: TrackId(1),
+            input: InputChannels::mono(0),
+        };
+        let snare = Arm {
+            track: TrackId(2),
+            input: InputChannels::mono(1),
+        };
+        let selected = TrackId(3);
+        // Every armed track, in the order they were armed, whatever is selected.
+        assert_eq!(
+            take_tracks(&[kick, snare], Some(selected), true, 8),
+            vec![kick, snare]
+        );
+        assert_eq!(take_tracks(&[kick], None, false, 8), vec![kick]);
+        // Nothing armed: the selection, and only when it could hold a take.
+        assert_eq!(
+            take_tracks(&[], Some(selected), true, 2),
+            vec![Arm {
+                track: selected,
+                input: InputChannels::stereo(0),
+            }]
+        );
+        assert!(take_tracks(&[], Some(selected), false, 2).is_empty());
+        assert!(take_tracks(&[], None, false, 2).is_empty());
+    }
+
+    #[test]
+    fn a_new_arm_takes_the_lowest_channel_nobody_else_is_reading() {
+        // A device with a pair or fewer and nothing else armed: the whole thing, which is what
+        // recording did before an arm could name channels at all.
+        assert_eq!(free_channels(&[], 2), InputChannels::stereo(0));
+        assert_eq!(free_channels(&[], 1), InputChannels::mono(0));
+        // An interface: one channel, because a second armed track is a second player.
+        assert_eq!(free_channels(&[], 8), InputChannels::mono(0));
+        assert_eq!(
+            free_channels(&[InputChannels::stereo(0)], 8),
+            InputChannels::mono(2)
+        );
+        // The lowest gap rather than the next one along, so disarming a track and arming another
+        // fills the hole.
+        assert_eq!(
+            free_channels(&[InputChannels::mono(0), InputChannels::mono(2)], 4),
+            InputChannels::mono(1)
+        );
+        // Every channel spoken for: the last one, shared. Two tracks on one input is visible;
+        // refusing to arm a track would only be baffling.
+        assert_eq!(
+            free_channels(&[InputChannels::stereo(0)], 2),
+            InputChannels::mono(1)
+        );
+    }
+
+    #[test]
+    fn a_take_reads_only_the_channels_its_track_was_armed_to() {
+        // Four inputs, each carrying its own number, one frame after another.
+        let block: Vec<f32> = (0..3)
+            .flat_map(|frame| [0.0, 1.0, 2.0, 3.0].map(|channel| frame as f32 + channel / 10.0))
+            .collect();
+        let mut out = Vec::new();
+
+        pick_channels(&block, 4, InputChannels::mono(2), &mut out);
+        assert_eq!(out, vec![0.2, 1.2, 2.2]);
+
+        pick_channels(&block, 4, InputChannels::stereo(1), &mut out);
+        assert_eq!(out, vec![0.1, 0.2, 1.1, 1.2, 2.1, 2.2]);
+
+        // The whole device, which is the ordinary single-track take.
+        pick_channels(&block, 4, InputChannels::new(0, 4), &mut out);
+        assert_eq!(out, block);
+    }
+
+    #[test]
+    fn a_channel_the_device_does_not_have_is_recorded_as_silence() {
+        // Not as its neighbour. An arm outlives the interface it was made for, and a track that
+        // came back holding the microphone next door would pass for a good take.
+        let block = vec![0.5, -0.5, 0.5, -0.5];
+        let mut out = Vec::new();
+
+        pick_channels(&block, 2, InputChannels::stereo(1), &mut out);
+        assert_eq!(out, vec![-0.5, 0.0, -0.5, 0.0]);
+
+        pick_channels(&block, 2, InputChannels::stereo(6), &mut out);
+        assert_eq!(out, vec![0.0; 4]);
     }
 
     #[test]

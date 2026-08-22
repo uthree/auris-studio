@@ -94,6 +94,8 @@ impl Session {
             // turned off for a minute does not come back a minute behind.
             ring.set_enabled(track.is_some());
         }
+        // At the channels this track would record from, so what is heard is what would be kept.
+        self.point_monitor();
         // The tap lives in the graph, and the graph is what has to be told which track.
         self.rebuild_graph();
         self.close_input_if_idle();

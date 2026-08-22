@@ -35,20 +35,27 @@ const GRID_OFF_LABEL: &str = "";
 
 /// What a finished take gets reported as.
 ///
-/// A free function because the four answers are a decision — the two that produced no clip in
+/// A free function because the answers are a decision — the two that produced no clip in
 /// particular, neither of which is a failure and both of which read as one unless they are said
 /// out loud — and a decision in a view is a decision with no test.
+///
+/// The count only appears once there is more than one track to count. A band going down at once
+/// wants to know all four arrived; somebody recording a vocal does not need telling it was one.
 pub(crate) fn recording_summary(report: &RecordingReport, language: Language) -> String {
-    let duration = Seconds(report.seconds).format_clock();
-    match (report.clip.is_some(), report.dropped_frames) {
+    let duration = Seconds(report.seconds()).format_clock();
+    match (report.clips(), report.dropped_frames) {
         // Played, but not where the punch was. Nothing is wrong with the microphone and saying
         // "the take was empty" would send somebody to check it.
-        (false, _) if report.outside_punch => messages::recorded_outside_punch(language),
-        (false, _) => messages::recorded_nothing(language),
-        (true, 0) => messages::recorded_take(language, &duration),
+        (0, _) if report.outside_punch() => messages::recorded_outside_punch(language),
+        (0, _) => messages::recorded_nothing(language),
+        (1, 0) => messages::recorded_take(language, &duration),
         // The take is kept and usable, and everything after the gap has moved earlier by that
         // much. Something a person needs told now rather than found in a mix next week.
-        (true, dropped) => messages::recorded_with_gaps(language, &duration, dropped),
+        (1, dropped) => messages::recorded_with_gaps(language, &duration, dropped),
+        (tracks, 0) => messages::recorded_takes(language, tracks, &duration),
+        (tracks, dropped) => {
+            messages::recorded_takes_with_gaps(language, tracks, &duration, dropped)
+        }
     }
 }
 
@@ -776,28 +783,38 @@ impl AurisApp {
         self.set_status(self.t(key));
     }
 
-    /// The track a take would land on: the armed one, or the selected track when it is audio.
+    /// The first track a take would land on: an armed one, or the selected track when it is audio.
     ///
     /// The selection lives here rather than in the session — a session has no window and so no
     /// idea what is selected — so every question about where a take would go comes through this.
-    pub(crate) fn record_target(&self) -> Option<TrackId> {
-        self.session.record_target(self.selected_track)
+    ///
+    /// The *first*, for the two callers that can only point at one thing: monitoring, which has
+    /// one ring, and a status line naming a track. Where the take actually goes is every armed
+    /// track, and that question is [`Session::record_targets`](auris_session::Session::record_targets).
+    pub(crate) fn record_target(&mut self) -> Option<TrackId> {
+        let selected = self.selected_track;
+        self.session
+            .record_targets(selected)
+            .first()
+            .map(|arm| arm.track)
     }
 
     /// Arms an audio track for recording, or disarms it if it already was.
     ///
-    /// One at a time, so clicking a second track's button moves the arm rather than adding one:
-    /// there is one input stream, and it has to go somewhere in particular.
+    /// Every armed track records, each from its own input channel, so clicking a second track's
+    /// button adds a take rather than moving the first one. Which channel it lands on is
+    /// [`Session::arm_track`](auris_session::Session::arm_track)'s choice until somebody says
+    /// otherwise.
     ///
-    /// Arming is no longer how a take is aimed — selecting the track does that — so this is the
-    /// override: it pins a take to a track that is not the one being looked at, and clicking it
-    /// off hands the aim back to the selection.
+    /// Arming is not how a take is aimed at one track — selecting it does that — so this is both
+    /// the override and the way to record more than one: it pins a take to a track that is not
+    /// the one being looked at, and clicking the last one off hands the aim back to the selection.
     pub(crate) fn toggle_arm(&mut self, track: TrackId) {
-        let wanted = match self.session.armed_track() == Some(track) {
-            true => None,
-            false => Some(track),
-        };
-        if let Err(error) = self.session.arm_track(wanted) {
+        if self.session.track_arm(track).is_some() {
+            self.session.disarm_track(track);
+            return;
+        }
+        if let Err(error) = self.session.arm_track(track, None) {
             self.report_session_error(&error);
         }
     }
@@ -1094,17 +1111,25 @@ mod tests {
         );
     }
 
+    /// A report for one track, whatever it came back with.
+    fn take(clip: Option<ClipId>, seconds: f64, outside_punch: bool) -> auris_session::TakeReport {
+        auris_session::TakeReport {
+            track: TrackId(1),
+            clip,
+            path: None,
+            seconds,
+            outside_punch,
+        }
+    }
+
     #[test]
     fn a_take_that_recorded_nothing_is_not_reported_as_a_take() {
         // The status line is the only answer a record button gives. "recorded 00:00" over a
         // timeline with no new clip on it reads as a bug in the clip drawing rather than as an
         // input that was never connected.
         let empty = RecordingReport {
-            clip: None,
-            path: None,
-            seconds: 0.0,
+            takes: vec![take(None, 0.0, false)],
             dropped_frames: 0,
-            outside_punch: false,
         };
         for language in Language::ALL {
             let line = recording_summary(&empty, language);
@@ -1117,11 +1142,8 @@ mod tests {
         // Two different things that both produce no clip, and they send somebody to two different
         // places: one to their cable, the other to the punch region they set.
         let missed = RecordingReport {
-            clip: None,
-            path: Some(std::path::PathBuf::from("Vocals 3.wav")),
-            seconds: 0.0,
+            takes: vec![take(None, 0.0, true)],
             dropped_frames: 0,
-            outside_punch: true,
         };
         for language in Language::ALL {
             assert_eq!(
@@ -1140,11 +1162,8 @@ mod tests {
         // A dropped block moves everything after it earlier. Reporting the take as a plain
         // success would leave that to be found in a mix next week.
         let good = RecordingReport {
-            clip: Some(ClipId(1)),
-            path: None,
-            seconds: 12.5,
+            takes: vec![take(Some(ClipId(1)), 12.5, false)],
             dropped_frames: 0,
-            outside_punch: false,
         };
         let holed = RecordingReport {
             dropped_frames: 480,
@@ -1158,6 +1177,39 @@ mod tests {
             assert!(
                 recording_summary(&holed, language).contains("480"),
                 "the number of lost frames is the whole point of the line"
+            );
+        }
+    }
+
+    #[test]
+    fn a_take_on_several_tracks_says_how_many_came_back() {
+        // Four players recorded at once and three clips on the timeline is the thing this line
+        // has to be able to say, and the one somebody would otherwise count by eye.
+        let band = RecordingReport {
+            takes: vec![
+                take(Some(ClipId(1)), 12.5, false),
+                take(Some(ClipId(2)), 12.5, false),
+                take(None, 0.0, false),
+            ],
+            dropped_frames: 0,
+        };
+        for language in Language::ALL {
+            let line = recording_summary(&band, language);
+            assert!(
+                line.contains('2'),
+                "{line} should say how many tracks came back"
+            );
+        }
+        // One track is the ordinary take and says nothing about counts: a vocal recorded on its
+        // own does not need telling it was one track.
+        let alone = RecordingReport {
+            takes: vec![take(Some(ClipId(1)), 12.5, false)],
+            dropped_frames: 0,
+        };
+        for language in Language::ALL {
+            assert_eq!(
+                recording_summary(&alone, language),
+                messages::recorded_take(language, &Seconds(12.5).format_clock()),
             );
         }
     }

@@ -219,6 +219,9 @@ impl Session {
         self.require_track(id)?;
         self.record(Edit::DeleteTrack);
         self.project.remove_track(id);
+        // An arm on a track that no longer exists would refuse the next take rather than being
+        // ignored by it, and the button that could clear it has gone with the track.
+        self.disarm_track(id);
         self.invalidate_graph();
         Ok(())
     }

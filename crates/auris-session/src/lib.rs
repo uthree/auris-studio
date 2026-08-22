@@ -60,12 +60,13 @@ pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob};
 pub use session::{
-    AccompanyReport, AudioStatus, BalanceReport, CEILING_DB, Clipboard, ComposeReport, CopiedClip,
-    CopiedContent, DEFAULT_OCTAVE, DEFAULT_PARTS, DEFAULT_VELOCITY, LAYOUT, LIMITER_ALLOWANCE_DB,
-    LoadedFont, MusicalTyping, OCTAVE_RANGE, Played, PluginWindow, Quantize, RecordingReport,
-    RecordingStatus, Release, SaveReport, Session, SessionOptions, Struck, TARGET_LUFS,
-    TYPING_BEND, TrackLevel, TypingRole, VELOCITY_STEP, WHEEL_STEPS, decode_audio, fader_for,
-    faders_lift_db, master_gain_db, quantized, read_soundfont, shadows_musical_typing,
+    AccompanyReport, Arm, AudioStatus, BalanceReport, CEILING_DB, Clipboard, ComposeReport,
+    CopiedClip, CopiedContent, DEFAULT_OCTAVE, DEFAULT_PARTS, DEFAULT_VELOCITY, InputChannels,
+    LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont, MusicalTyping, OCTAVE_RANGE, Played, PluginWindow,
+    Quantize, RecordingReport, RecordingStatus, Release, SaveReport, Session, SessionOptions,
+    Struck, TARGET_LUFS, TYPING_BEND, TakeReport, TrackLevel, TypingRole, VELOCITY_STEP,
+    WHEEL_STEPS, decode_audio, fader_for, faders_lift_db, master_gain_db, quantized,
+    read_soundfont, shadows_musical_typing,
 };
 pub use settings::{
     AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings, WindowPlacement, config_dir,
@@ -187,9 +188,10 @@ pub mod prelude {
     pub use auris_sampler::{SAMPLER_ENVELOPE_KEY, SAMPLER_ID};
 
     pub use crate::{
-        AccompanyReport, AudioPreferences, Clipboard, ComposeReport, CopiedClip, CopiedContent,
-        DEFAULT_PARTS, Edit, ExportPreferences, ExportSummary, LoadedFont, MusicalTyping,
-        ParamTarget, Quantize, RecordingReport, RecordingStatus, RenderJob, SaveReport, Session,
-        SessionError, SessionOptions, Settings, decode_audio, read_soundfont,
+        AccompanyReport, Arm, AudioPreferences, Clipboard, ComposeReport, CopiedClip,
+        CopiedContent, DEFAULT_PARTS, Edit, ExportPreferences, ExportSummary, InputChannels,
+        LoadedFont, MusicalTyping, ParamTarget, Quantize, RecordingReport, RecordingStatus,
+        RenderJob, SaveReport, Session, SessionError, SessionOptions, Settings, TakeReport,
+        decode_audio, read_soundfont,
     };
 }

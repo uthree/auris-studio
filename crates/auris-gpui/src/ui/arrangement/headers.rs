@@ -29,14 +29,17 @@ const RESIZE_BAND: Pixels = px(4.0);
 
 /// How a track's arm button is latched.
 ///
-/// Three answers rather than two, because the button has two jobs now: it says which track was
-/// armed by hand, and it says where a take would actually land. Those parted company when the
-/// selection became a target of its own — an audio track that is merely selected has to look like
-/// somewhere Record would go, without claiming to have been chosen.
+/// Three answers rather than two, because the button has two jobs: it says this track was armed
+/// by hand, and it says a take would land here anyway. Those parted company when the selection
+/// became a target of its own — an audio track that is merely selected has to look like somewhere
+/// Record would go, without claiming to have been chosen.
+///
+/// Several tracks can be `On` at once, and only one can ever be `Ready`: arming is a list and a
+/// selection standing in for one is not.
 ///
 /// A free function because it is a rule, and a rule inside a view is a rule with no test.
-fn arm_latch(track: TrackId, armed: Option<TrackId>, target: Option<TrackId>) -> Latch {
-    match (armed == Some(track), target == Some(track)) {
+fn arm_latch(armed: bool, target: bool) -> Latch {
+    match (armed, target) {
         (true, _) => Latch::On,
         (false, true) => Latch::Ready,
         (false, false) => Latch::Off,
@@ -171,7 +174,10 @@ impl AurisApp {
                 // anywhere for a take to land. An instrument track showing a disabled one would
                 // be an invitation to a thing that cannot happen.
                 let records = track.kind.as_audio().is_some();
-                let armed = arm_latch(id, self.session.armed_track(), self.record_target());
+                let armed = arm_latch(
+                    self.session.track_arm(id).is_some(),
+                    self.session.is_record_target(id, selected),
+                );
                 // No `Ready` state to match the arm's: monitoring is never inferred from a
                 // selection, because it is a thing that costs and those are switched on by hand.
                 let monitored = self.session.monitored_track() == Some(id);
@@ -568,21 +574,14 @@ mod tests {
 
     #[test]
     fn the_arm_button_shows_where_a_take_would_land_as_well_as_what_was_armed() {
-        let vocals = TrackId(1);
-        let guitar = TrackId(2);
-
-        // Nothing armed and the vocal selected: the vocal's button is the one that says Record
-        // would come here, and it says it without claiming anybody pressed it.
-        assert_eq!(arm_latch(vocals, None, Some(vocals)), Latch::Ready);
-        assert_eq!(arm_latch(guitar, None, Some(vocals)), Latch::Off);
-
-        // Armed by hand: filled, and filled on that track alone even while another is selected —
-        // which is the case the arm button exists for, and the case a user would otherwise have
-        // no way of seeing.
-        assert_eq!(arm_latch(vocals, Some(vocals), Some(vocals)), Latch::On);
-        assert_eq!(arm_latch(guitar, Some(vocals), Some(vocals)), Latch::Off);
-
+        // Nothing armed and this track selected: its button is the one that says Record would
+        // come here, and it says it without claiming anybody pressed it.
+        assert_eq!(arm_latch(false, true), Latch::Ready);
+        // Armed by hand: filled, and filled whether or not the eye is on it — which is the case
+        // the arm button exists for, and the case a user would otherwise have no way of seeing.
+        assert_eq!(arm_latch(true, false), Latch::On);
+        assert_eq!(arm_latch(true, true), Latch::On);
         // And nothing at all when there is nowhere for a take to go.
-        assert_eq!(arm_latch(vocals, None, None), Latch::Off);
+        assert_eq!(arm_latch(false, false), Latch::Off);
     }
 }
