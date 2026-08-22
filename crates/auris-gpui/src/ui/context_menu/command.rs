@@ -404,6 +404,8 @@ pub enum MenuCommand {
     ClipGain(ClipId),
     /// Remove an audio clip's fades.
     ClearFades(ClipId),
+    /// Crossfade an audio clip with the clip it overlaps.
+    Crossfade(ClipId),
     /// Type the chord that sounds from a position.
     SetChordAt(Ticks),
     /// Remove the chord change at a position.
@@ -1090,6 +1092,7 @@ impl AurisApp {
             MenuCommand::ClearFades(clip) => {
                 let _ = self.session.set_clip_fades(clip, 0, 0);
             }
+            MenuCommand::Crossfade(clip) => self.crossfade_clip(clip),
             MenuCommand::SetChordAt(tick) => {
                 let current = self
                     .project()

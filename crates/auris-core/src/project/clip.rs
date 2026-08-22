@@ -395,6 +395,16 @@ pub struct AudioClip {
     /// Fade-out length in frames.
     #[serde(default)]
     pub fade_out_frames: u64,
+    /// The shape of the fade-in.
+    #[serde(default)]
+    pub fade_in_curve: FadeCurve,
+    /// The shape of the fade-out.
+    ///
+    /// One each rather than one for the clip, because the two edges are doing different jobs. A
+    /// clip can begin out of a crossfade with the take before it and end in silence at the close
+    /// of the song, and the shape that is right for a join is the wrong one for an ending.
+    #[serde(default)]
+    pub fade_out_curve: FadeCurve,
     /// Whether the clip is skipped during playback.
     #[serde(default)]
     pub muted: bool,
@@ -457,6 +467,8 @@ impl AudioClip {
             gain_db: 0.0,
             fade_in_frames: 0,
             fade_out_frames: 0,
+            fade_in_curve: FadeCurve::Linear,
+            fade_out_curve: FadeCurve::Linear,
             muted: false,
             source_bpm: None,
             follows_tempo: false,
@@ -544,16 +556,146 @@ impl AudioClip {
     pub fn fade_gain_at(&self, position: u64) -> f32 {
         let mut gain = 1.0f32;
         if self.fade_in_frames > 0 && position < self.fade_in_frames {
-            gain *= position as f32 / self.fade_in_frames as f32;
+            gain *= self
+                .fade_in_curve
+                .gain_in(position as f32 / self.fade_in_frames as f32);
         }
         if self.fade_out_frames > 0 {
             let fade_start = self.length_frames.saturating_sub(self.fade_out_frames);
             if position >= fade_start {
                 let into_fade = position - fade_start;
-                gain *= 1.0 - (into_fade as f32 / self.fade_out_frames as f32).min(1.0);
+                gain *= self
+                    .fade_out_curve
+                    .gain_out(into_fade as f32 / self.fade_out_frames as f32);
             }
         }
         gain
+    }
+}
+
+/// The shape one of a clip's fades takes between silence and unity.
+///
+/// Two shapes, because the two jobs a fade does want different curves and no single one is right
+/// for both.
+///
+/// A fade **to or from silence** wants the amplitude to move in a straight line: there is nothing
+/// on the other side of it, so what matters is that the ramp is smooth, and a straight one is what
+/// a drawn fade looks like it should be.
+///
+/// A **crossfade** wants constant *power*. Two straight ramps crossing each other sum to about
+/// three decibels less in the middle than at either end, whenever the two pieces of audio are not
+/// the same performance — which is a dip audible as a hole in the join. A quarter of a sine on the
+/// way in against a quarter of a cosine on the way out squares up to exactly one at every point of
+/// the crossing, so nothing dips.
+///
+/// The one place the second is wrong is the very case the first is for: an equal-power fade from
+/// silence starts *steeply*, which on a fade-in from nothing is heard as arriving early.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FadeCurve {
+    /// A straight line in amplitude. What a fade to or from silence wants, and the default.
+    #[default]
+    Linear,
+    /// A quarter of a sine, so that two of them crossing sum to constant power.
+    EqualPower,
+}
+
+impl FadeCurve {
+    /// The gain `fraction` of the way *into* a fade: 0.0 is silence, 1.0 is unity.
+    pub fn gain_in(self, fraction: f32) -> f32 {
+        let fraction = fraction.clamp(0.0, 1.0);
+        match self {
+            Self::Linear => fraction,
+            Self::EqualPower => (fraction * std::f32::consts::FRAC_PI_2).sin(),
+        }
+    }
+
+    /// The gain `fraction` of the way *through* a fade out: 0.0 is unity, 1.0 is silence.
+    ///
+    /// The same curve read backwards, which is what makes a pair of them meet: the sine that
+    /// takes one clip up is the cosine that takes the other down.
+    pub fn gain_out(self, fraction: f32) -> f32 {
+        self.gain_in(1.0 - fraction.clamp(0.0, 1.0))
+    }
+}
+
+/// Two clips crossing, and what the pair of them add up to.
+#[cfg(test)]
+mod fade_tests {
+    use super::*;
+
+    /// A clip 100 frames long with a fade of `fade` frames on the named edge.
+    fn faded(fade_in: u64, fade_out: u64, curve: FadeCurve) -> AudioClip {
+        AudioClip {
+            id: ClipId(1),
+            name: "Clip".to_string(),
+            start: Ticks::ZERO,
+            source: crate::project::SourceId(1),
+            offset_frames: 0,
+            length_frames: 100,
+            gain_db: 0.0,
+            fade_in_frames: fade_in,
+            fade_out_frames: fade_out,
+            fade_in_curve: curve,
+            fade_out_curve: curve,
+            muted: false,
+            source_bpm: None,
+            follows_tempo: false,
+            tempo_anchor: None,
+            loop_end: Ticks::ZERO,
+        }
+    }
+
+    #[test]
+    fn a_linear_fade_is_a_straight_line_in_amplitude() {
+        let clip = faded(40, 40, FadeCurve::Linear);
+        assert_eq!(clip.fade_gain_at(0), 0.0);
+        assert!((clip.fade_gain_at(20) - 0.5).abs() < 1e-6);
+        assert_eq!(clip.fade_gain_at(40), 1.0);
+        // And down again over the last forty.
+        assert_eq!(clip.fade_gain_at(60), 1.0);
+        assert!((clip.fade_gain_at(80) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn two_equal_power_fades_crossing_hold_their_power() {
+        // The whole reason the shape exists. One clip fading out over its last forty frames while
+        // another fades in over its first forty: at every point of the crossing the two gains
+        // must square up to one, or the join has a hole in it.
+        let out = faded(0, 40, FadeCurve::EqualPower);
+        let into = faded(40, 0, FadeCurve::EqualPower);
+        for step in 0..=40u64 {
+            let leaving = out.fade_gain_at(60 + step);
+            let arriving = into.fade_gain_at(step);
+            let power = leaving * leaving + arriving * arriving;
+            assert!(
+                (power - 1.0).abs() < 1e-5,
+                "the join dips to {power} of its power {step} frames in"
+            );
+        }
+    }
+
+    #[test]
+    fn two_linear_fades_crossing_are_the_dip_the_other_curve_exists_for() {
+        // Stated as a test because it is the reason there are two shapes, and because a change
+        // that quietly made the linear curve equal-power would otherwise pass everything.
+        let out = faded(0, 40, FadeCurve::Linear);
+        let into = faded(40, 0, FadeCurve::Linear);
+        let middle = out.fade_gain_at(80) * out.fade_gain_at(80) + {
+            let arriving = into.fade_gain_at(20);
+            arriving * arriving
+        };
+        assert!(
+            (middle - 0.5).abs() < 1e-5,
+            "half the power is what two straight ramps meet at, and this was {middle}"
+        );
+    }
+
+    #[test]
+    fn a_clip_with_no_fades_is_left_alone() {
+        let clip = faded(0, 0, FadeCurve::EqualPower);
+        assert_eq!(clip.fade_gain_at(0), 1.0);
+        assert_eq!(clip.fade_gain_at(99), 1.0);
     }
 }
 

@@ -95,6 +95,13 @@ impl AurisApp {
                 self.t(Key::MenuClipGain),
                 MenuCommand::ClipGain(clip),
             )
+            // Only where there is a join to shape. A row that answered "those clips do not
+            // overlap" would be a row offering to do nothing, on every clip in the project.
+            .item_if(
+                !is_midi && self.session.crossfade_partner(clip).is_some(),
+                self.t(Key::MenuCrossfade),
+                MenuCommand::Crossfade(clip),
+            )
             .item_if(
                 self.audio_clip_shape(clip)
                     .is_some_and(|(_, _, _, _, fade_in, fade_out)| fade_in > 0 || fade_out > 0),
@@ -133,6 +140,29 @@ impl AurisApp {
                 MenuCommand::AccompanyClip(clip),
             );
         self.generated_clip_rows(menu, clip)
+    }
+
+    /// Crossfades a clip with the one it overlaps, and says how long the join came out.
+    ///
+    /// The partner is worked out here rather than chosen, because there is nothing to choose: a
+    /// clip overlaps at most one neighbour in any arrangement somebody meant, and the nearest is
+    /// the join in every arrangement they did not.
+    pub(crate) fn crossfade_clip(&mut self, clip: ClipId) {
+        let Some((partner, _)) = self.session.crossfade_partner(clip) else {
+            self.set_failed_status(self.t(Key::ErrorNotOverlapping));
+            return;
+        };
+        match self.session.crossfade_clips(clip, partner) {
+            Ok(overlap) => {
+                let seconds = self.project().tempo_map.ticks_to_seconds(overlap).0;
+                let status = messages::crossfaded(self.language, seconds);
+                self.set_status(status);
+            }
+            Err(error) => {
+                let text = self.failure(Key::CmdCrossfade, &error);
+                self.set_failed_status(text);
+            }
+        }
     }
 
     /// Opens the sheet that takes an audio clip's gain in decibels.

@@ -802,6 +802,9 @@ strings! {
     EditRemoveSignaturePoint { en: "removing a signature change", ja: "拍子記号の削除" }
     EditSetClipGain { en: "the clip gain", ja: "クリップゲインの変更" }
     EditSetClipFade { en: "the fade", ja: "フェードの変更" }
+    EditCrossfade { en: "the crossfade", ja: "クロスフェード" }
+    MenuCrossfade { en: "Crossfade", ja: "クロスフェード" }
+    CmdCrossfade { en: "crossfade the clips", ja: "クリップをクロスフェード" }
     EditSetClipTempo { en: "the clip's tempo", ja: "クリップのテンポ" }
     EditAddInstrumentTrack { en: "adding an instrument track", ja: "ソフト音源トラックの追加" }
     EditAddAudioTrack { en: "adding an audio track", ja: "オーディオトラックの追加" }
@@ -941,6 +944,10 @@ strings! {
         ja: "録音先のオーディオトラックを選択するか、録音待機にしてください"
     }
     ErrorAlreadyRecording { en: "a recording is already running", ja: "すでに録音中です" }
+    ErrorNotOverlapping {
+        en: "those clips do not overlap on one track; drag one over the other first",
+        ja: "そのクリップは重なっていません。片方をもう片方に重ねてください"
+    }
     ErrorNothingToStem {
         en: "there is nothing to export as stems; add a track that makes a sound",
         ja: "ステム書き出しの対象がありません。音を出すトラックを追加してください"

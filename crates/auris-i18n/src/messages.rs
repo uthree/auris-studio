@@ -629,6 +629,12 @@ messages! {
         ja: "{count} 本のステムを {folder} に書き出しました"
     }
 
+    /// How long the join two crossfaded clips came out.
+    fn crossfaded(seconds: f64) {
+        en: "crossfaded over {seconds:.2} seconds",
+        ja: "{seconds:.2} 秒でクロスフェードしました"
+    }
+
     /// A take that produced nothing, which reads as a failure until it is explained.
     fn recorded_nothing() {
         en: "the take was empty; nothing was kept",

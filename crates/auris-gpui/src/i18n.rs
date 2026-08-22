@@ -133,6 +133,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::LoopClip => Key::EditLoopClip,
         Edit::SetClipGain => Key::EditSetClipGain,
         Edit::SetClipFade => Key::EditSetClipFade,
+        Edit::Crossfade => Key::EditCrossfade,
         Edit::SetClipTempo => Key::EditSetClipTempo,
         Edit::AddNote => Key::EditAddNote,
         Edit::DeleteNotes => Key::EditDeleteNotes,
@@ -227,6 +228,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         }
         SessionError::AlreadyRecording => Key::ErrorAlreadyRecording.get(language).to_string(),
         SessionError::NothingToStem => Key::ErrorNothingToStem.get(language).to_string(),
+        SessionError::NotOverlapping => Key::ErrorNotOverlapping.get(language).to_string(),
         SessionError::RecordingInProgress => {
             Key::ErrorRecordingInProgress.get(language).to_string()
         }

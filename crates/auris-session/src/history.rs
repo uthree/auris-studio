@@ -114,6 +114,12 @@ pub enum Edit {
     SetClipGain,
     /// An audio clip's fade-in or fade-out changed.
     SetClipFade,
+    /// Two overlapping clips were crossfaded into each other.
+    ///
+    /// Its own variant rather than [`Edit::SetClipFade`] because it is one decision about a join
+    /// and it moves the fades on two clips: an undo labelled "the fade" would say nothing about
+    /// which of them was about to change back, and it changes both.
+    Crossfade,
     /// What tempo an audio clip was recorded at, or whether it follows the piece's, changed.
     ///
     /// One step for the pair, because they are one decision: telling a clip its tempo is what

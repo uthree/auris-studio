@@ -11,7 +11,7 @@ use std::sync::Arc;
 use auris_core::AudioBuffer;
 use auris_core::param::db_to_gain;
 use auris_core::plugin::NoteEvent;
-use auris_core::project::{AudioClip, AudioSourceBank, MidiClip};
+use auris_core::project::{AudioClip, AudioSourceBank, FadeCurve, MidiClip};
 use auris_core::time::{TempoMap, Ticks};
 
 /// A note event pinned to an absolute position on the timeline.
@@ -43,22 +43,32 @@ pub struct RenderAudioClip {
     pub fade_in: u64,
     /// Fade-out length in frames.
     pub fade_out: u64,
+    /// The shape of the fade-in.
+    pub fade_in_curve: FadeCurve,
+    /// The shape of the fade-out.
+    pub fade_out_curve: FadeCurve,
 }
 
 impl RenderAudioClip {
     /// Fade multiplier `position` frames into the clip.
     ///
-    /// Mirrors [`AudioClip::fade_gain_at`] so what the arrangement draws is what plays.
+    /// Mirrors [`AudioClip::fade_gain_at`] so what the arrangement draws is what plays — the
+    /// curve included, which is what makes a crossfade hold its power rather than dip through
+    /// the middle of the join.
     pub fn fade_gain(&self, position: u64) -> f32 {
         let mut gain = 1.0f32;
         if self.fade_in > 0 && position < self.fade_in {
-            gain *= position as f32 / self.fade_in as f32;
+            gain *= self
+                .fade_in_curve
+                .gain_in(position as f32 / self.fade_in as f32);
         }
         if self.fade_out > 0 {
             let fade_start = self.length.saturating_sub(self.fade_out);
             if position >= fade_start {
                 let into_fade = position - fade_start;
-                gain *= 1.0 - (into_fade as f32 / self.fade_out as f32).min(1.0);
+                gain *= self
+                    .fade_out_curve
+                    .gain_out(into_fade as f32 / self.fade_out as f32);
             }
         }
         gain
@@ -269,6 +279,8 @@ pub(super) fn resolve_audio_clip(
                 true => convert(clip.fade_out_frames).min(frames),
                 false => 0,
             },
+            fade_in_curve: clip.fade_in_curve,
+            fade_out_curve: clip.fade_out_curve,
         });
     }
 }

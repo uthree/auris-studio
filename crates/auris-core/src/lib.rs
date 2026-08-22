@@ -48,9 +48,9 @@ pub use plugin::{
 };
 pub use project::{
     AudioClip, AudioSource, AudioSourceBank, AudioTrack, AuxSend, ClipId, ClipPreset, ClipRecipe,
-    Color, EffectSlot, EffectSlotId, InstrumentTrack, MidiClip, MixerStrip, Note, Output,
-    PresetRef, Project, SendId, SoundFontId, SoundFontRef, SourceId, Subdivision, Track, TrackId,
-    TrackKind, default_loop_end, loop_passes, notes_trimmed_from_front, sounding_length,
+    Color, EffectSlot, EffectSlotId, FadeCurve, InstrumentTrack, MidiClip, MixerStrip, Note,
+    Output, PresetRef, Project, SendId, SoundFontId, SoundFontRef, SourceId, Subdivision, Track,
+    TrackId, TrackKind, default_loop_end, loop_passes, notes_trimmed_from_front, sounding_length,
 };
 pub use registry::{PluginPack, PluginRegistry};
 pub use structure::{SectionMap, SectionPoint, SectionSpan};

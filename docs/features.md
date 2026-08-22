@@ -192,6 +192,19 @@ is on its right-click menu, in decibels, applied before the track's effects; whi
 0 dB the clip prints the number beside its name, and *Remove Fades* on the same menu takes both
 fades back off.
 
+**To crossfade two takes**, drag one over the other on the same track so they overlap, then
+right-click either and choose *Crossfade*. The earlier clip fades out across the overlap while
+the later one fades in across the same stretch, and the two together are one Undo. Nothing moves:
+how long the join is is how far you dragged, so the way to lengthen a crossfade is to lengthen
+the overlap and ask again.
+
+A join uses a different fade shape from an edge. A fade **to or from silence** is a straight line
+in amplitude, which is what it looks like it should be. A **crossfade** is a quarter of a sine
+against a quarter of a cosine, because two straight ramps crossing sum to about three decibels
+less in the middle than at either end whenever the two clips are not the same performance — a hole
+in the join. The shapes are drawn as they sound: a crossfade's ramp is bowed where an edge fade's
+is straight.
+
 The middle of the transport bar holds three readouts: the position, the tempo and the time
 signature. The first two are typeable — double-click either and the number can be entered
 directly. A wheel is for finding a tempo by feel and a drag for nudging it, but neither is any

@@ -135,6 +135,14 @@ pub enum SessionError {
     #[error("select an audio track to record onto, or arm one")]
     NothingToRecordOnto,
 
+    /// A crossfade was asked for between two clips that do not overlap on one track.
+    ///
+    /// Nothing is moved to make them: a crossfade shapes a join somebody has already made by
+    /// dragging one clip over another, and a command that dragged clips about on its own would be
+    /// a command that undid an arrangement to fix a fade.
+    #[error("those clips do not overlap on one track; drag one over the other first")]
+    NotOverlapping,
+
     /// A second take was started while one was already running.
     #[error("a recording is already running")]
     AlreadyRecording,

@@ -19,7 +19,7 @@
 //! so the commands here are the ones that act on it too — which is why resizing and trimming call
 //! [`Session::phrase`] back across that boundary.
 
-use auris_core::project::{ClipCurve, CurvePoint};
+use auris_core::project::{ClipCurve, CurvePoint, FadeCurve};
 use auris_core::time::{Seconds, TempoMap, Ticks};
 use auris_core::{ClipId, TrackId};
 
@@ -734,6 +734,93 @@ impl Session {
         Ok(())
     }
 
+    /// The clip `clip` overlaps on its own track, and by how much.
+    ///
+    /// `None` when nothing overlaps it, which is the ordinary case: clips sit end to end. The
+    /// nearest one wins where several overlap, because a crossfade is a join and the join is with
+    /// the neighbour.
+    pub fn crossfade_partner(&self, clip: ClipId) -> Option<(ClipId, Ticks)> {
+        let track = self.track_of_clip(clip)?;
+        let audio = self.project.track(track)?.kind.as_audio()?;
+        let this = audio.clips.iter().find(|other| other.id == clip)?;
+        let span = |clip: &auris_core::AudioClip| {
+            (
+                clip.start,
+                clip.start + self.project.audio_clip_sounding_ticks(clip),
+            )
+        };
+        let (start, end) = span(this);
+        audio
+            .clips
+            .iter()
+            .filter(|other| other.id != clip)
+            .filter_map(|other| {
+                let (their_start, their_end) = span(other);
+                let overlap = end.min(their_end) - start.max(their_start);
+                (overlap > Ticks::ZERO).then_some((other.id, overlap))
+            })
+            .min_by_key(|(_, overlap)| *overlap)
+    }
+
+    /// Crossfades two overlapping audio clips into each other, and says how long the join is.
+    ///
+    /// The earlier clip fades out across the overlap while the later one fades in across the same
+    /// stretch, both on the [`equal-power`](auris_core::project::FadeCurve::EqualPower) curve —
+    /// which is what a join wants and a fade from silence does not. Nothing moves: the overlap is
+    /// whatever dragging one clip over the other already made, and this shapes it.
+    ///
+    /// Refused when the two are on different tracks, when either is not audio, and when they do
+    /// not overlap. A crossfade over nothing would be two fades of no length, which is what the
+    /// clips already have.
+    pub fn crossfade_clips(
+        &mut self,
+        first: ClipId,
+        second: ClipId,
+    ) -> Result<Ticks, SessionError> {
+        if first == second {
+            return Err(SessionError::NotOverlapping);
+        }
+        let track = self.track_of_clip(first);
+        if track.is_none() || track != self.track_of_clip(second) {
+            return Err(SessionError::NotOverlapping);
+        }
+        // Both looked up before anything is written, so a pair that cannot be crossfaded leaves
+        // the document exactly as it was.
+        let one = self.require_audio_clip(first)?.clone();
+        let two = self.require_audio_clip(second)?.clone();
+        let (early, late) = match one.start <= two.start {
+            true => (one, two),
+            false => (two, one),
+        };
+        let early_pass = self.project.audio_clip_length_ticks(&early);
+        let late_pass = self.project.audio_clip_length_ticks(&late);
+        let early_end = early.start + self.project.audio_clip_sounding_ticks(&early);
+        let late_end = late.start + self.project.audio_clip_sounding_ticks(&late);
+        // Never longer than one pass of either clip: the fades sit on the clips' own edges, so a
+        // join longer than the audio behind it is a fade that could not be drawn.
+        let overlap = (early_end.min(late_end) - late.start)
+            .min(early_pass)
+            .min(late_pass);
+        if overlap <= Ticks::ZERO {
+            return Err(SessionError::NotOverlapping);
+        }
+
+        let out_frames = fade_frames(overlap, early_pass, early.length_frames);
+        let in_frames = fade_frames(overlap, late_pass, late.length_frames);
+        self.begin_transaction(Edit::Crossfade);
+        self.set_clip_fades(early.id, early.fade_in_frames, out_frames)?;
+        self.set_clip_fades(late.id, in_frames, late.fade_out_frames)?;
+        if let Some(audio) = self.project.audio_clip_mut(early.id) {
+            audio.fade_out_curve = FadeCurve::EqualPower;
+        }
+        if let Some(audio) = self.project.audio_clip_mut(late.id) {
+            audio.fade_in_curve = FadeCurve::EqualPower;
+        }
+        self.invalidate_graph();
+        self.end_transaction();
+        Ok(overlap)
+    }
+
     /// The audio clip called `clip`, or the error saying what was addressed instead.
     fn require_audio_clip(&self, clip: ClipId) -> Result<&auris_core::AudioClip, SessionError> {
         let found = self
@@ -874,6 +961,24 @@ impl Session {
         self.set_clip_loop(clip, auris_core::default_loop_end(start, content, next))?;
         Ok(true)
     }
+}
+
+/// How many source frames of a clip cover `span` of the timeline.
+///
+/// Worked out as a fraction of the clip rather than through the sample rate, and deliberately: a
+/// clip's fades are counted in the frames of the file it came from, which is not the rate the
+/// project runs at, and a clip that follows the tempo plays more of them or fewer than it holds.
+/// The fraction carries all three at once — it is the same arithmetic the arrangement uses to draw
+/// a fade across a clip's width, so a join that covers half a clip on screen covers half of it in
+/// the file.
+///
+/// Nothing when the clip has no length in either unit, there being no fraction of it to take.
+fn fade_frames(span: Ticks, length_ticks: Ticks, length_frames: u64) -> u64 {
+    if length_ticks <= Ticks::ZERO || length_frames == 0 {
+        return 0;
+    }
+    let fraction = (span.raw() as f64 / length_ticks.raw() as f64).clamp(0.0, 1.0);
+    (fraction * length_frames as f64).round() as u64
 }
 
 #[cfg(test)]
@@ -1197,6 +1302,165 @@ mod tests {
         assert_eq!(session.undo(), Some(Edit::SetClipGain));
         assert_eq!(audio_shape(&session, clip).0, 0.0);
         assert!(!session.can_undo());
+    }
+
+    /// Two clips of `frames` frames on one track, the second starting at `second`.
+    fn overlapping(session: &mut Session, frames: u64, second: Ticks) -> (ClipId, ClipId) {
+        let rate = session.project().sample_rate;
+        let track = session.project.add_audio_track("Take");
+        let source = session.project.add_audio_source(
+            "take",
+            AssetPath::external("/audio/take.wav"),
+            frames,
+            rate,
+            2,
+        );
+        let first = session
+            .project
+            .add_audio_clip(track, source, Ticks::ZERO)
+            .expect("the track was just added");
+        let next = session
+            .project
+            .add_audio_clip(track, source, second)
+            .expect("the track was just added");
+        (first, next)
+    }
+
+    /// The curves on a clip's two edges.
+    fn curves(session: &Session, clip: ClipId) -> (FadeCurve, FadeCurve) {
+        let audio = session.project().audio_clip(clip).expect("the clip exists");
+        (audio.fade_in_curve, audio.fade_out_curve)
+    }
+
+    #[test]
+    fn a_crossfade_covers_the_overlap_from_both_sides() {
+        // Two two-beat clips, the second starting one beat in: they overlap by a beat, which is
+        // half of each clip — so half of each clip's frames become its half of the join.
+        let mut session = session();
+        let (first, second) = overlapping(&mut session, 48_000, Ticks::QUARTER);
+        session.forget_history();
+
+        let overlap = session.crossfade_clips(first, second).expect("a crossfade");
+        assert_eq!(overlap, Ticks::QUARTER);
+        assert_eq!(audio_shape(&session, first), (0.0, 0, 24_000));
+        assert_eq!(audio_shape(&session, second), (0.0, 24_000, 0));
+        // Equal power on the two edges that meet, and nothing said about the two that do not.
+        assert_eq!(curves(&session, first).1, FadeCurve::EqualPower);
+        assert_eq!(curves(&session, second).0, FadeCurve::EqualPower);
+        assert_eq!(curves(&session, first).0, FadeCurve::Linear);
+        assert_eq!(curves(&session, second).1, FadeCurve::Linear);
+
+        // One step for the pair. Two would leave an Undo holding half a join.
+        assert_eq!(session.undo(), Some(Edit::Crossfade));
+        assert_eq!(audio_shape(&session, first), (0.0, 0, 0));
+        assert_eq!(audio_shape(&session, second), (0.0, 0, 0));
+        assert!(!session.can_undo());
+    }
+
+    #[test]
+    fn the_order_the_clips_are_named_in_does_not_matter() {
+        let mut session = session();
+        let (first, second) = overlapping(&mut session, 48_000, Ticks::QUARTER);
+        session.crossfade_clips(second, first).expect("a crossfade");
+        assert_eq!(audio_shape(&session, first), (0.0, 0, 24_000));
+        assert_eq!(audio_shape(&session, second), (0.0, 24_000, 0));
+    }
+
+    #[test]
+    fn clips_that_do_not_overlap_are_not_crossfaded() {
+        let mut session = session();
+        // Two beats each, the second starting at beat two: they touch and do not overlap.
+        let (first, second) = overlapping(&mut session, 48_000, Ticks::QUARTER * 2);
+        assert!(matches!(
+            session.crossfade_clips(first, second),
+            Err(SessionError::NotOverlapping)
+        ));
+        assert!(!session.can_undo(), "a refusal wrote to the document");
+
+        // And neither is a clip with itself.
+        assert!(matches!(
+            session.crossfade_clips(first, first),
+            Err(SessionError::NotOverlapping)
+        ));
+    }
+
+    #[test]
+    fn a_clip_swallowed_by_another_crossfades_over_its_own_length() {
+        // The second clip is shorter and sits entirely inside the first. The join can only be as
+        // long as the shorter clip, or the fade would run past the audio behind it.
+        let mut session = session();
+        let rate = session.project().sample_rate;
+        let track = session.project.add_audio_track("Take");
+        let long = session.project.add_audio_source(
+            "long",
+            AssetPath::external("/audio/long.wav"),
+            96_000,
+            rate,
+            2,
+        );
+        let short = session.project.add_audio_source(
+            "short",
+            AssetPath::external("/audio/short.wav"),
+            24_000,
+            rate,
+            2,
+        );
+        let first = session
+            .project
+            .add_audio_clip(track, long, Ticks::ZERO)
+            .expect("a clip");
+        let inside = session
+            .project
+            .add_audio_clip(track, short, Ticks::QUARTER)
+            .expect("a clip");
+
+        let overlap = session.crossfade_clips(first, inside).expect("a crossfade");
+        // The short clip is 24 000 frames at 48 kHz, which is half a second — one beat at 120.
+        assert_eq!(overlap, Ticks::QUARTER);
+        assert_eq!(audio_shape(&session, inside), (0.0, 24_000, 0));
+        // The same second of the timeline is a quarter of the long clip's four beats, and so a
+        // quarter of the 96 000 frames behind them.
+        assert_eq!(audio_shape(&session, first), (0.0, 0, 24_000));
+    }
+
+    #[test]
+    fn the_nearest_neighbour_is_the_one_a_clip_would_join() {
+        let mut session = session();
+        let (first, second) = overlapping(&mut session, 48_000, Ticks::QUARTER);
+        assert_eq!(
+            session.crossfade_partner(first),
+            Some((second, Ticks::QUARTER))
+        );
+        assert_eq!(
+            session.crossfade_partner(second),
+            Some((first, Ticks::QUARTER))
+        );
+
+        // A clip on its own has nobody to join.
+        let alone = audio_clip(&mut session, 48_000);
+        assert_eq!(session.crossfade_partner(alone), None);
+    }
+
+    #[test]
+    fn a_fade_is_the_fraction_of_the_clip_the_join_covers() {
+        // Free of everything: what the conversion has to get right is that a clip's fades are
+        // counted in the frames of its file while a join is measured in ticks.
+        assert_eq!(
+            fade_frames(Ticks::QUARTER, Ticks::QUARTER * 2, 48_000),
+            24_000
+        );
+        assert_eq!(
+            fade_frames(Ticks::QUARTER * 2, Ticks::QUARTER * 2, 48_000),
+            48_000
+        );
+        // A join longer than the clip takes all of it rather than more than all of it.
+        assert_eq!(
+            fade_frames(Ticks::QUARTER * 4, Ticks::QUARTER * 2, 48_000),
+            48_000
+        );
+        // And a clip with no length in either unit has no fraction to take.
+        assert_eq!(fade_frames(Ticks::QUARTER, Ticks::ZERO, 48_000), 0);
+        assert_eq!(fade_frames(Ticks::QUARTER, Ticks::QUARTER, 0), 0);
     }
 
     #[test]

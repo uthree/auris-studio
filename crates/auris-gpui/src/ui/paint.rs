@@ -916,6 +916,12 @@ pub fn waveform(
     }
 }
 
+/// How many segments a fade's ramp is drawn in.
+///
+/// A straight line needs one and gets sixteen, which costs nothing; a quarter of a sine over the
+/// width of a clip is smooth at this and visibly faceted at four.
+const FADE_STEPS: usize = 16;
+
 /// Draws an audio clip's fades over its content: a dimming wedge across what each fade takes
 /// away, the ramp itself, and a handle at the top of each ramp where a drag takes hold.
 ///
@@ -923,11 +929,17 @@ pub fn waveform(
 /// counts, so this stays a pure painter. The handles are drawn even for a fade of nothing —
 /// sitting in the clip's top corners, which is where a fade is first picked up — while the
 /// wedge and the ramp appear only once there is a fade to show.
+///
+/// The curves are the clip's own, so an equal-power join is drawn bowed where a fade to silence
+/// is drawn straight: what a fade *looks* like is the only thing on screen that says which shape
+/// it has, and two joins that behaved differently while looking identical would be a mystery
+/// nobody could reach the bottom of.
 pub fn clip_fades(
     window: &mut Window,
     bounds: Bounds<Pixels>,
     fade_in: f32,
     fade_out: f32,
+    curves: (FadeCurve, FadeCurve),
     theme: &Theme,
 ) {
     let width = f32::from(bounds.size.width);
@@ -938,38 +950,66 @@ pub fn clip_fades(
     // A black scrim rather than a theme surface: it has to read as "quieter" over the
     // waveform in every scheme, light ones included.
     let scrim = Theme::translucent(gpui::black(), 0.32);
+    let height = bottom - top;
 
     if fade_in > 0.5 {
-        let end = left + px(fade_in.min(width));
+        let span = fade_in.min(width);
+        // The ramp as a run of points along the curve, and the wedge as the same run closed off
+        // above it, so the two cannot disagree about where the line is.
+        let ramp: Vec<Point<Pixels>> = (0..=FADE_STEPS)
+            .map(|step| {
+                let fraction = step as f32 / FADE_STEPS as f32;
+                let gain = curves.0.gain_in(fraction);
+                point(left + px(span * fraction), bottom - height * gain)
+            })
+            .collect();
         let mut wedge = gpui::PathBuilder::fill();
-        wedge.move_to(point(left, top));
-        wedge.line_to(point(end, top));
-        wedge.line_to(point(left, bottom));
+        wedge.move_to(ramp[0]);
+        for at in &ramp[1..] {
+            wedge.line_to(*at);
+        }
+        wedge.line_to(point(left + px(span), top));
+        wedge.line_to(point(left, top));
         wedge.close();
         if let Ok(path) = wedge.build() {
             window.paint_path(path, scrim);
         }
-        let mut ramp = gpui::PathBuilder::stroke(px(1.0));
-        ramp.move_to(point(left, bottom));
-        ramp.line_to(point(end, top));
-        if let Ok(path) = ramp.build() {
+        let mut line = gpui::PathBuilder::stroke(px(1.0));
+        line.move_to(ramp[0]);
+        for at in &ramp[1..] {
+            line.line_to(*at);
+        }
+        if let Ok(path) = line.build() {
             window.paint_path(path, theme.text_muted);
         }
     }
     if fade_out > 0.5 {
-        let start = right - px(fade_out.min(width));
+        let span = fade_out.min(width);
+        let start = right - px(span);
+        let ramp: Vec<Point<Pixels>> = (0..=FADE_STEPS)
+            .map(|step| {
+                let fraction = step as f32 / FADE_STEPS as f32;
+                let gain = curves.1.gain_out(fraction);
+                point(start + px(span * fraction), bottom - height * gain)
+            })
+            .collect();
         let mut wedge = gpui::PathBuilder::fill();
-        wedge.move_to(point(right, top));
+        wedge.move_to(ramp[0]);
+        for at in &ramp[1..] {
+            wedge.line_to(*at);
+        }
+        wedge.line_to(point(right, top));
         wedge.line_to(point(start, top));
-        wedge.line_to(point(right, bottom));
         wedge.close();
         if let Ok(path) = wedge.build() {
             window.paint_path(path, scrim);
         }
-        let mut ramp = gpui::PathBuilder::stroke(px(1.0));
-        ramp.move_to(point(start, top));
-        ramp.line_to(point(right, bottom));
-        if let Ok(path) = ramp.build() {
+        let mut line = gpui::PathBuilder::stroke(px(1.0));
+        line.move_to(ramp[0]);
+        for at in &ramp[1..] {
+            line.line_to(*at);
+        }
+        if let Ok(path) = line.build() {
             window.paint_path(path, theme.text_muted);
         }
     }

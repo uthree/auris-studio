@@ -9,6 +9,19 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### Two takes can be joined without a hole in the join
+
+* **Crossfades.** Drag one clip over another on the same track and choose **Crossfade** from
+  either one's menu: the earlier fades out across the overlap while the later fades in across the
+  same stretch, as one undo step. How long the join is is how far you dragged — nothing moves to
+  make room.
+* A clip's fades now carry a **shape**, one for each edge. An edge fade stays a straight line;
+  a crossfade uses the equal-power curve, so the pair holds its level through the middle of the
+  join instead of dipping about three decibels there. The arrangement draws the curve it plays.
+* **The project format is version 16.** An older build ignores the shapes, so every crossfade in
+  the piece would play as two straight ramps with a hole in the middle — and the next save would
+  write the shapes away.
+
 ### The mix, taken apart
 
 * **Stem export**: *File → Export Stems…*, or `auris render --stems <folder>`, writes one WAV per

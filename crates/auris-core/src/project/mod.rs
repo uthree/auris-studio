@@ -41,9 +41,9 @@ mod track;
 mod fixtures;
 
 pub use clip::{
-    AudioClip, AudioSource, AudioSourceBank, MAX_STRETCH, MIN_STRETCH, MidiClip, Note, UNSTRETCHED,
-    default_loop_end, loop_passes, notes_trimmed_from_front, quantised_stretch, sounding_length,
-    stretch_key,
+    AudioClip, AudioSource, AudioSourceBank, FadeCurve, MAX_STRETCH, MIN_STRETCH, MidiClip, Note,
+    UNSTRETCHED, default_loop_end, loop_passes, notes_trimmed_from_front, quantised_stretch,
+    sounding_length, stretch_key,
 };
 pub use curve::{
     BEND_LIMIT, CONTROLLER_LIMIT, CURVE_STEP, ClipCurve, CurvePoint, curve_at, curve_events,
@@ -374,7 +374,13 @@ impl Project {
     /// field, so a compressor keyed from the kick drum runs on the bass alone and the duck that
     /// holds the low end apart simply is not there. The save afterwards writes the key away, and
     /// with it the only record of which track the effect was listening to.
-    pub const FORMAT_VERSION: u32 = 15;
+    /// 16 since a clip's fades carry a shape — [`FadeCurve`], one for
+    /// each edge. Version 5's case one more time, and the one that is easiest to mistake for a bad
+    /// edit: a version 15 build ignores both fields, so every crossfade in the piece plays as two
+    /// straight ramps crossing and dips about three decibels in the middle of each join. Nothing
+    /// looks wrong, nothing is reported, and the save afterwards writes the shapes away — leaving
+    /// a piece whose joins all have a hole in them and no record that they ever did not.
+    pub const FORMAT_VERSION: u32 = 16;
 
     /// An empty project.
     ///

@@ -205,6 +205,8 @@ pub(super) fn paint_lane(
                     length_frames,
                     fade_in_frames,
                     fade_out_frames,
+                    fade_in_curve,
+                    fade_out_curve,
                     ..
                 } => {
                     if let Some(peaks) = peaks.get(source) {
@@ -252,6 +254,7 @@ pub(super) fn paint_lane(
                             } else {
                                 0.0
                             },
+                            (*fade_in_curve, *fade_out_curve),
                             theme,
                         );
                     }

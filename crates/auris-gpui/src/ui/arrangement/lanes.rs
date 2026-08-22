@@ -440,6 +440,8 @@ impl AurisApp {
                                     gain_db: clip.gain_db,
                                     fade_in_frames: clip.fade_in_frames,
                                     fade_out_frames: clip.fade_out_frames,
+                                    fade_in_curve: clip.fade_in_curve,
+                                    fade_out_curve: clip.fade_out_curve,
                                 },
                             }
                         })
@@ -532,5 +534,7 @@ pub(super) enum ClipContent {
         gain_db: f32,
         fade_in_frames: u64,
         fade_out_frames: u64,
+        fade_in_curve: FadeCurve,
+        fade_out_curve: FadeCurve,
     },
 }
