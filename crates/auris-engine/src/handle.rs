@@ -22,6 +22,7 @@ pub struct EngineHandle {
     pub(crate) commands: Sender<EngineCommand>,
     pub(crate) returned_graphs: GraphReceiver,
     pub(crate) playhead: Arc<AtomicU64>,
+    pub(crate) count_in: Arc<AtomicU64>,
     pub(crate) meters: Arc<MeterBank>,
     pub(crate) running: Arc<AtomicBool>,
     pub(crate) playing: Arc<AtomicBool>,
@@ -62,6 +63,24 @@ impl EngineHandle {
     /// take that lines up and one that has to be nudged by hand every time.
     pub fn playhead_cell(&self) -> Arc<AtomicU64> {
         Arc::clone(&self.playhead)
+    }
+
+    /// Frames of count-in left before the transport starts moving, zero when none is running.
+    ///
+    /// Read by a frontend to show that Record has been pressed and the song has not started yet,
+    /// which is otherwise indistinguishable from a transport that is rolling and stuck.
+    pub fn count_in_frames(&self) -> u64 {
+        self.count_in.load(Ordering::Relaxed)
+    }
+
+    /// The count-in cell itself, for the same reader [`Self::playhead_cell`] exists for.
+    ///
+    /// A take that was counted in opens its file during the count, and how much of the count it
+    /// caught is the difference between a clip that lands on the beat and one that lands a bar
+    /// early. The input callback stamps this at the same instant it stamps the playhead, so the
+    /// two are one reading rather than two.
+    pub fn count_in_cell(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.count_in)
     }
 
     /// Playhead position in seconds.

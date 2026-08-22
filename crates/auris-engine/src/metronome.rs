@@ -18,6 +18,17 @@
 //! loop end, so every segment covers one contiguous stretch of ticks, and the segment after a wrap
 //! asks about the loop start the same way any other asks about anywhere.
 //!
+//! # Counting somebody in
+//!
+//! A count-in is the one thing here that does not come off the timeline at all. The playhead is
+//! held still for the length of it — see [`Transport::count_in`] — so there is nothing to walk;
+//! [`count_in_clicks`] counts beats of a fixed length from the moment the count began. That is
+//! what lets bar one be counted in, where a click read off the timeline would have to run
+//! backwards past the start of the song to find its beats.
+//!
+//! It also sounds whether or not the click is switched on, which is the other half of the same
+//! thought: somebody who wanted the click for the take would have turned the click on.
+//!
 //! # Which beat
 //!
 //! The *felt* beat — [`TimeSignature::beat_ticks`] — so a bar of 6/8 is counted in two dotted
@@ -27,6 +38,8 @@
 
 use auris_core::AudioBuffer;
 use auris_core::time::{Samples, SignatureMap, TempoMap, Ticks, TimeSignature};
+
+use crate::transport::{CountIn, Transport};
 
 /// Pitch of the click on a bar line, in hertz.
 const ACCENT_HZ: f64 = 1_600.0;
@@ -121,6 +134,35 @@ pub fn clicks_in_block(
     }
 }
 
+/// The clicks of a count-in falling inside the next `frames`.
+///
+/// Nothing here reads the timeline. A count-in is a fixed number of beats of a fixed length —
+/// [`CountIn`] says why — so the beats are `count.beat_frames` apart from the moment the count
+/// began, and where that moment was is [`CountIn::elapsed_frames`]. The first beat lands on the
+/// first frame of the count and the last one beat before the transport rolls, which is what makes
+/// "one, two, three, four" arrive with the downbeat on the *next* bar rather than on the fourth.
+///
+/// `out` is emptied first and never grown, exactly as [`clicks_in_block`] leaves it.
+pub fn count_in_clicks(count: CountIn, frames: usize, out: &mut Vec<Click>) {
+    out.clear();
+    if frames == 0 || count.beat_frames == 0 {
+        return;
+    }
+    let from = count.elapsed_frames();
+    let to = from + frames as u64;
+    let mut beat = from.div_ceil(count.beat_frames);
+    while beat < count.beats as u64 && beat * count.beat_frames < to {
+        if out.len() == MAX_CLICKS {
+            return;
+        }
+        out.push(Click {
+            frame: (beat * count.beat_frames - from) as usize,
+            accent: beat.is_multiple_of(count.per_bar.max(1) as u64),
+        });
+        beat += 1;
+    }
+}
+
 /// The first beat at or after `tick`.
 fn first_beat_from(signatures: &SignatureMap, tick: Ticks) -> Ticks {
     let tick = tick.max_zero();
@@ -207,23 +249,30 @@ impl Metronome {
     /// Struck only while the transport rolls — a metronome is for playing along to — but a click
     /// already sounding when the transport stops is allowed to ring out, for the same reason
     /// switching the metronome off does not cut one short.
+    ///
+    /// A count-in is the exception to every part of that. It sounds whether or not the click is
+    /// switched on, because counting somebody in is what they asked for when they set it and not
+    /// a side effect of the click being on; and it is counted from the count itself rather than
+    /// from the timeline, because the playhead does not move until it is over.
     pub fn render(
         &mut self,
         out: &mut AudioBuffer,
-        playing: bool,
-        position: u64,
+        transport: &Transport,
         tempo_map: &TempoMap,
         sample_rate: f64,
     ) {
         let frames = out.frame_count();
-        if frames == 0 || (!self.enabled && self.voice.remaining == 0) {
+        let counting = transport.count_in.filter(|_| transport.playing);
+        if frames == 0 || (!self.enabled && self.voice.remaining == 0 && counting.is_none()) {
             return;
         }
-        if self.enabled && playing {
+        if let Some(count) = counting {
+            count_in_clicks(count, frames, &mut self.block);
+        } else if self.enabled && transport.rolling() {
             clicks_in_block(
                 &self.signatures,
                 tempo_map,
-                position,
+                transport.position_frames,
                 frames,
                 sample_rate,
                 &mut self.block,
@@ -293,6 +342,27 @@ mod tests {
 
     /// At 120 BPM a quarter note is half a second: 24 000 frames.
     const BEAT_FRAMES: u64 = 24_000;
+
+    /// A transport at `position`, rolling or not, with no count-in in front of it.
+    fn at(position: u64, playing: bool) -> Transport {
+        Transport {
+            playing,
+            position_frames: position,
+            ..Transport::new()
+        }
+    }
+
+    fn counting(count: CountIn) -> Transport {
+        let mut transport = at(0, true);
+        transport.set_count_in(count);
+        transport
+    }
+
+    fn count_clicks(count: CountIn, frames: usize) -> Vec<Click> {
+        let mut out = Vec::with_capacity(MAX_CLICKS);
+        count_in_clicks(count, frames, &mut out);
+        out
+    }
 
     fn clicks(signatures: &SignatureMap, position: u64, frames: usize) -> Vec<Click> {
         let mut out = Vec::with_capacity(MAX_CLICKS);
@@ -422,18 +492,18 @@ mod tests {
         let mut out = AudioBuffer::new(2, 512, RATE);
 
         // Stopped from the start: nothing at all, and no state left behind.
-        metronome.render(&mut out, false, 0, &tempo, RATE);
+        metronome.render(&mut out, &at(0, false), &tempo, RATE);
         assert_eq!(out.peak(), 0.0);
 
         // Rolling from the downbeat: the accent strikes.
         out.clear();
-        metronome.render(&mut out, true, 0, &tempo, RATE);
+        metronome.render(&mut out, &at(0, true), &tempo, RATE);
         assert!(out.peak() > 0.1, "got {}", out.peak());
 
         // The transport stops mid-click. What is already sounding rings out rather than stepping
         // to silence, which would be a louder noise than the click it cut short.
         out.clear();
-        metronome.render(&mut out, false, 512, &tempo, RATE);
+        metronome.render(&mut out, &at(512, false), &tempo, RATE);
         assert!(out.peak() > 0.0, "the click was cut off at the stop");
     }
 
@@ -445,7 +515,7 @@ mod tests {
         metronome.set_enabled(true);
         let tempo = TempoMap::constant(120.0);
         let mut out = AudioBuffer::new(2, BEAT_FRAMES as usize * 4, RATE);
-        metronome.render(&mut out, true, 0, &tempo, RATE);
+        metronome.render(&mut out, &at(0, true), &tempo, RATE);
         assert!(
             out.peak() <= ACCENT_AMPLITUDE + 1e-6,
             "the click peaked at {}",
@@ -465,7 +535,7 @@ mod tests {
         let tempo = TempoMap::constant(120.0);
         let frames = (CLICK_SECONDS * RATE) as usize + 16;
         let mut out = AudioBuffer::new(2, frames, RATE);
-        metronome.render(&mut out, true, 0, &tempo, RATE);
+        metronome.render(&mut out, &at(0, true), &tempo, RATE);
 
         let tail = out.channel(0)[frames - 20..frames - 16]
             .iter()
@@ -481,7 +551,7 @@ mod tests {
         let mut metronome = Metronome::new(SignatureMap::default());
         let tempo = TempoMap::constant(120.0);
         let mut out = AudioBuffer::new(2, 512, RATE);
-        metronome.render(&mut out, true, 0, &tempo, RATE);
+        metronome.render(&mut out, &at(0, true), &tempo, RATE);
         assert_eq!(out.peak(), 0.0);
         assert!(!metronome.is_enabled());
     }
@@ -494,12 +564,86 @@ mod tests {
         metronome.set_enabled(true);
         let tempo = TempoMap::constant(120.0);
         let mut out = AudioBuffer::new(2, BEAT_FRAMES as usize * 2, RATE);
-        metronome.render(&mut out, true, 0, &tempo, RATE);
+        metronome.render(&mut out, &at(0, true), &tempo, RATE);
 
         let struck = |at: usize| out.channel(0)[at..at + 64].iter().any(|s| s.abs() > 0.01);
         assert!(struck(0), "no click on the downbeat");
         assert!(struck(BEAT_FRAMES as usize), "no click on the second beat");
         // And silence between them, where the envelope has long since run out.
+        assert!(!struck(BEAT_FRAMES as usize / 2));
+    }
+
+    #[test]
+    fn a_count_in_is_one_click_a_beat_ending_before_the_downbeat() {
+        // Two bars of four at 120: eight clicks, the first of each bar accented, and the eighth
+        // one beat before the transport rolls rather than on the downbeat itself.
+        let count = CountIn::new(8, BEAT_FRAMES, 4);
+        let all = count_clicks(count, count.total_frames() as usize);
+        assert_eq!(all.len(), 8);
+        assert_eq!(all[0].frame, 0);
+        assert_eq!(all[7].frame, BEAT_FRAMES as usize * 7);
+        let accents: Vec<usize> = all
+            .iter()
+            .enumerate()
+            .filter(|(_, click)| click.accent)
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(accents, vec![0, 4]);
+    }
+
+    #[test]
+    fn a_count_in_beat_is_claimed_by_exactly_one_block() {
+        let mut count = CountIn::new(4, BEAT_FRAMES, 4);
+        // The block ending on the second beat does not claim it...
+        count.remaining_frames = count.total_frames() - (BEAT_FRAMES - 512);
+        assert!(count_clicks(count, 512).is_empty());
+        // ...and the block beginning on it does.
+        count.remaining_frames = count.total_frames() - BEAT_FRAMES;
+        let struck = count_clicks(count, 512);
+        assert_eq!(struck.len(), 1);
+        assert_eq!(struck[0].frame, 0);
+        assert!(!struck[0].accent);
+    }
+
+    #[test]
+    fn nothing_is_counted_once_the_count_has_run_out() {
+        let mut count = CountIn::new(4, BEAT_FRAMES, 4);
+        count.remaining_frames = 0;
+        assert!(count_clicks(count, 4_096).is_empty());
+    }
+
+    #[test]
+    fn a_count_in_sounds_whether_or_not_the_click_is_switched_on() {
+        // The click being off is why somebody set a count-in in the first place: they want to be
+        // counted in and then left alone.
+        let mut metronome = Metronome::new(SignatureMap::default());
+        assert!(!metronome.is_enabled());
+        let tempo = TempoMap::constant(120.0);
+        let mut out = AudioBuffer::new(2, 512, RATE);
+        metronome.render(
+            &mut out,
+            &counting(CountIn::new(4, BEAT_FRAMES, 4)),
+            &tempo,
+            RATE,
+        );
+        assert!(out.peak() > 0.1, "got {}", out.peak());
+    }
+
+    #[test]
+    fn the_beats_of_a_count_in_are_not_the_beats_of_the_timeline() {
+        // A count-in at a position that is nowhere near a bar line still counts from its own
+        // first beat: the playhead is not moving, so the timeline has nothing to say about it.
+        let mut metronome = Metronome::new(SignatureMap::default());
+        metronome.set_enabled(true);
+        let tempo = TempoMap::constant(120.0);
+        let mut transport = at(BEAT_FRAMES * 3 + 7_000, true);
+        transport.set_count_in(CountIn::new(4, BEAT_FRAMES, 4));
+        let mut out = AudioBuffer::new(2, BEAT_FRAMES as usize * 2, RATE);
+        metronome.render(&mut out, &transport, &tempo, RATE);
+
+        let struck = |at: usize| out.channel(0)[at..at + 64].iter().any(|s| s.abs() > 0.01);
+        assert!(struck(0), "the count did not begin on its own first frame");
+        assert!(struck(BEAT_FRAMES as usize));
         assert!(!struck(BEAT_FRAMES as usize / 2));
     }
 }

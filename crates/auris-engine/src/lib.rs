@@ -111,4 +111,4 @@ pub use offline::{
 };
 pub use renderer::render_block;
 pub use scope::{SCOPE_WINDOW, Scope, ScopeSource};
-pub use transport::Transport;
+pub use transport::{CountIn, Transport};

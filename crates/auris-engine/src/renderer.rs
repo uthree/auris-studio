@@ -50,18 +50,28 @@ pub fn render_block(
 }
 
 /// Length of the next segment: bounded by what is left, by the prepared block size, and — while
-/// the transport is rolling — by the distance to the loop end.
+/// the transport is rolling — by the distance to the loop end or to the end of a count-in.
 ///
 /// A stopped transport is excluded because [`Transport::advance`] leaves it where it is: it can
 /// never reach the loop end, so splitting there would only re-run the whole graph on a one-frame
 /// segment for every remaining frame of the callback, and turn every gain ramp into a step.
+///
+/// The count-in end is split at for the same reason the loop end is, and it matters more: the
+/// frame the count runs out on is the frame the song starts on and the frame a punched take is
+/// measured from. Rounding it up to a block would put the first beat of every counted-in take up
+/// to a block late.
 fn segment_frames(graph: &RenderGraph, transport: &Transport, remaining: usize) -> usize {
     let mut frames = remaining.min(graph.max_block());
-    if transport.playing
-        && let Some(to_loop_end) = transport.frames_to_loop_end()
-        && to_loop_end < frames as u64
-    {
-        frames = to_loop_end as usize;
+    if transport.playing {
+        let next_edge = match transport.frames_to_count_in_end() {
+            Some(to_count_end) => Some(to_count_end),
+            None => transport.frames_to_loop_end(),
+        };
+        if let Some(edge) = next_edge
+            && edge < frames as u64
+        {
+            frames = edge as usize;
+        }
     }
     frames.max(1)
 }
@@ -85,7 +95,7 @@ fn render_segment(
         block_frames: frames,
         playhead_samples: transport.position_frames,
         bpm: graph.bpm_at_frame(transport.position_frames),
-        is_playing: transport.playing,
+        is_playing: transport.rolling(),
         is_offline: offline,
     };
 
@@ -238,13 +248,9 @@ fn render_segment(
     // the same path as playback through this whole function, and this line is the only thing that
     // makes the two differ: it is what guarantees a bounce cannot contain the click.
     if !offline {
-        graph.metronome.render(
-            master_scratch,
-            transport.playing,
-            transport.position_frames,
-            &graph.tempo_map,
-            ctx.sample_rate,
-        );
+        graph
+            .metronome
+            .render(master_scratch, transport, &graph.tempo_map, ctx.sample_rate);
     }
 
     write_segment(out, offset, master_scratch, frames);
@@ -331,7 +337,7 @@ fn render_source(
     match source {
         RenderSource::Instrument { instrument, events } => {
             block_events.clear();
-            if transport.playing {
+            if transport.rolling() {
                 let start = transport.position_frames;
                 // A block that does not continue where the last one stopped means the playhead
                 // jumped, so re-issue the notes that are meant to be sounding here.
@@ -348,7 +354,7 @@ fn render_source(
             for event in audition.drain(..) {
                 block_events.push(event);
             }
-            if transport.playing {
+            if transport.rolling() {
                 let start = transport.position_frames;
                 let end = start + ctx.block_frames as u64;
                 // A binary search rather than a cursor, so seeking and looping need no state.
@@ -368,7 +374,7 @@ fn render_source(
         }
         RenderSource::Audio { clips } => {
             scratch.clear();
-            if transport.playing {
+            if transport.rolling() {
                 for clip in clips.iter() {
                     mix_clip(clip, scratch, transport.position_frames, ctx.block_frames);
                 }
@@ -495,6 +501,7 @@ mod tests {
     use super::*;
     use crate::graph::RENDER_CHANNELS;
     use crate::testkit::{self, TONE_AMPLITUDE};
+    use crate::transport::CountIn;
     use auris_core::ParamId;
     use auris_core::automation::AutomationCurve;
     use auris_core::param::{ParamTarget, db_to_gain};
@@ -813,6 +820,7 @@ mod tests {
             loop_enabled: true,
             loop_start_frames: 0,
             loop_end_frames: 1_000,
+            count_in: None,
         };
         let mut out = AudioBuffer::new(RENDER_CHANNELS, 1_024, SAMPLE_RATE);
         render_block(&mut graph, &mut transport, &mut out, false);
@@ -1037,6 +1045,55 @@ mod tests {
         assert_eq!(transport.position_frames, 512);
     }
 
+    #[test]
+    fn a_count_in_holds_the_song_at_the_gate_and_then_lets_it_go() {
+        // Rendered offline so that the click — which is the only thing a count-in *should* make —
+        // is out of the picture, and what is left to measure is the arrangement.
+        let project = one_note_project(Ticks::ZERO, Ticks::from_beats(4.0));
+        let mut graph = build(&project, 512);
+        let mut transport = Transport::playing_from(0);
+        transport.set_count_in(CountIn::new(2, 512, 4));
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+
+        render_block(&mut graph, &mut transport, &mut out, true);
+        assert_eq!(out.peak(), 0.0, "the note sounded during the count");
+        assert_eq!(transport.position_frames, 0, "the playhead moved");
+
+        render_block(&mut graph, &mut transport, &mut out, true);
+        assert_eq!(out.peak(), 0.0);
+        assert!(
+            !transport.counting_in(),
+            "the count outlasted its own frames"
+        );
+
+        // And the note begins on the first frame past the count rather than a block later.
+        render_block(&mut graph, &mut transport, &mut out, true);
+        assert!(
+            out.peak() > 0.0,
+            "the song did not start when the count ran out"
+        );
+        assert_eq!(transport.position_frames, 512);
+    }
+
+    #[test]
+    fn a_block_is_cut_where_the_count_runs_out() {
+        // A callback longer than what is left of the count must not spend the overshoot on the
+        // playhead: the first beat of the take would land that far into the song.
+        let project = one_note_project(Ticks::ZERO, Ticks::from_beats(4.0));
+        let mut graph = build(&project, 1_024);
+        let mut transport = Transport::playing_from(96_000);
+        transport.set_count_in(CountIn::new(1, 100, 1));
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 1_024, SAMPLE_RATE);
+
+        render_block(&mut graph, &mut transport, &mut out, true);
+        assert!(!transport.counting_in());
+        assert_eq!(
+            transport.position_frames,
+            96_000 + 924,
+            "the frames of the block past the count were not rendered as song"
+        );
+    }
+
     /// A transport stopped one frame short of the loop end — what pressing Stop while looping
     /// leaves behind.
     fn stopped_at_the_loop_end() -> Transport {
@@ -1046,6 +1103,7 @@ mod tests {
             loop_enabled: true,
             loop_start_frames: 1_000,
             loop_end_frames: 5_000,
+            count_in: None,
         }
     }
 
@@ -1312,6 +1370,7 @@ mod tests {
             loop_enabled: true,
             loop_start_frames: 12_000,
             loop_end_frames: 48_000,
+            count_in: None,
         };
         let mut out = AudioBuffer::new(RENDER_CHANNELS, 2_048, SAMPLE_RATE);
         render_block(&mut graph, &mut transport, &mut out, false);
@@ -1503,6 +1562,7 @@ mod tests {
             loop_enabled: true,
             loop_start_frames: 2_000,
             loop_end_frames: 5_000,
+            count_in: None,
         };
         let mut out = AudioBuffer::new(RENDER_CHANNELS, 1_000, SAMPLE_RATE);
         render_block(&mut graph, &mut transport, &mut out, false);
@@ -1521,6 +1581,7 @@ mod tests {
             loop_enabled: true,
             loop_start_frames: 1_000,
             loop_end_frames: 1_001,
+            count_in: None,
         };
         let mut out = AudioBuffer::new(RENDER_CHANNELS, 64, SAMPLE_RATE);
         render_block(&mut graph, &mut transport, &mut out, false);

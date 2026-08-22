@@ -7,6 +7,7 @@
 use auris_core::param::ParamId;
 
 use crate::graph::RenderGraph;
+use crate::transport::CountIn;
 
 /// One instruction for the audio thread.
 ///
@@ -18,6 +19,12 @@ pub enum EngineCommand {
     SetGraph(Box<RenderGraph>),
     /// Starts the transport.
     Play,
+    /// Counts a number of beats in front of the playhead before it starts moving.
+    ///
+    /// Sent alongside [`Self::Play`] rather than instead of it: the transport is running for the
+    /// whole count — the button is down, a take is being written — and the count is what it is
+    /// waiting on. A count of nothing ends whatever count was running.
+    CountIn(CountIn),
     /// Stops the transport and releases every sounding note.
     Stop,
     /// Moves the playhead. Sounding notes are released so nothing hangs.
@@ -139,6 +146,7 @@ impl std::fmt::Debug for EngineCommand {
                 .field("tracks", &graph.track_count())
                 .finish(),
             Self::Play => f.write_str("Play"),
+            Self::CountIn(count) => f.debug_tuple("CountIn").field(count).finish(),
             Self::Stop => f.write_str("Stop"),
             Self::Seek { frames } => f.debug_struct("Seek").field("frames", frames).finish(),
             Self::SetLoop {

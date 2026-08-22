@@ -13,6 +13,12 @@
 //! position was when the button went down. Everything after that is counted from there at the
 //! input device's own rate.
 //!
+//! A take that was counted in begins during the count, so its file opens with however much of the
+//! count the input stream caught. The playhead is not moving then and cannot say how much that
+//! was — so the first block stamps the *pair*: where the playhead is, and what was left of the
+//! count at that instant. [`Capture::count_in_at_start`] is the second half, and trimming it is
+//! what puts a counted-in clip on the downbeat rather than a bar in front of it.
+//!
 //! Two clocks means the count and the playhead drift apart — a few frames a minute between two
 //! ordinary devices, which is under a millisecond and inaudible, and rather more between a cheap
 //! USB interface and a laptop's own output. Nothing here corrects for it. Correcting would mean
@@ -145,6 +151,12 @@ struct CaptureShared {
     dropped: AtomicU64,
     /// Engine playhead when the first block arrived; [`NOT_STARTED`] until then.
     started_at: AtomicU64,
+    /// Frames of count-in still to come when that same first block arrived.
+    ///
+    /// Stamped in the same breath as `started_at` and meaningless apart from it. The playhead
+    /// does not move during a count-in, so a take that began in the middle of one is a file whose
+    /// first samples belong in front of the position it was stamped with — this says how many.
+    count_in_at_start: AtomicU64,
     /// Loudest sample since the meter was last read, as an `f32` bit pattern.
     peak: AtomicU32,
     /// Frames handed to the pool, which is the length of the take so far.
@@ -291,6 +303,15 @@ impl Capture {
         }
     }
 
+    /// How much count-in the take's first frames hold, in frames of the input device.
+    ///
+    /// Zero unless Record was pressed with a count-in in front of it, and zero again once the
+    /// count has been played: what a take opened during a count contains, before anything the
+    /// player did, is the rest of that count. Trimming it is what puts the clip on the downbeat.
+    pub fn count_in_at_start(&self) -> u64 {
+        self.shared.count_in_at_start.load(Ordering::Relaxed)
+    }
+
     /// How many frames have been handed over, which is how long the take is so far.
     pub fn frames(&self) -> u64 {
         self.shared.frames.load(Ordering::Relaxed)
@@ -322,6 +343,7 @@ impl Capture {
         self.shared.dropped.store(0, Ordering::Relaxed);
         self.shared.peak.store(0, Ordering::Relaxed);
         self.shared.started_at.store(NOT_STARTED, Ordering::Relaxed);
+        self.shared.count_in_at_start.store(0, Ordering::Relaxed);
         self.shared.recording.store(true, Ordering::Release);
     }
 
@@ -389,6 +411,8 @@ struct CaptureSink {
     empty: Receiver<Vec<f32>>,
     shared: Arc<CaptureShared>,
     playhead: Arc<AtomicU64>,
+    /// The count-in cell, read at the same moment as the playhead and for the same reason.
+    count_in: Arc<AtomicU64>,
     channels: usize,
     /// The other reader of these samples: the render graph, when somebody is monitoring.
     ///
@@ -420,6 +444,16 @@ impl CaptureSink {
         }
         // The first block is what fixes the take to the timeline. `compare_exchange` rather than
         // a store, so every later block leaves it alone.
+        //
+        // The count-in goes down with it, and *before* it, so that a block which loses the race
+        // to stamp the position has not already overwritten the count belonging to the one that
+        // won. The two are one reading of one moment: a position on the timeline, and how much
+        // of the count was still to be played when the first sample of the take was taken.
+        if self.shared.started_at.load(Ordering::Relaxed) == NOT_STARTED {
+            self.shared
+                .count_in_at_start
+                .store(self.count_in.load(Ordering::Relaxed), Ordering::Relaxed);
+        }
         let _ = self.shared.started_at.compare_exchange(
             NOT_STARTED,
             self.playhead.load(Ordering::Relaxed),
@@ -491,6 +525,7 @@ fn pool(input_rate: f64) -> (Capture, CaptureSink, Arc<CaptureShared>) {
         recording: AtomicBool::new(false),
         dropped: AtomicU64::new(0),
         started_at: AtomicU64::new(NOT_STARTED),
+        count_in_at_start: AtomicU64::new(0),
         peak: AtomicU32::new(0),
         frames: AtomicU64::new(0),
     });
@@ -516,6 +551,7 @@ fn pool(input_rate: f64) -> (Capture, CaptureSink, Arc<CaptureShared>) {
         empty: empty_rx,
         shared: Arc::clone(&shared),
         playhead: Arc::new(AtomicU64::new(0)),
+        count_in: Arc::new(AtomicU64::new(0)),
         channels: 1,
         monitor,
     };
@@ -536,6 +572,7 @@ pub fn start_capture(
 
     let (mut capture, mut sink, shared) = pool(sample_rate);
     sink.playhead = engine.playhead_cell();
+    sink.count_in = engine.count_in_cell();
     sink.channels = channels;
     shared.running.store(true, Ordering::Relaxed);
 
@@ -705,6 +742,33 @@ mod tests {
         assert_eq!(drained(&mut reader), vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
         assert_eq!(capture.frames(), 3, "six samples of stereo is three frames");
         assert_eq!(capture.dropped_frames(), 0);
+    }
+
+    #[test]
+    fn a_take_counted_in_remembers_how_much_of_the_count_it_caught() {
+        // The playhead does not move during a count-in, so where the take begins says nothing
+        // about how much of the count is sitting at the front of its file. The pair does: the
+        // position, and the count that was still to be played when the first sample arrived.
+        let (capture, _reader, mut sink, playhead) = wired(1);
+        let count_in = Arc::new(AtomicU64::new(24_000));
+        sink.count_in = Arc::clone(&count_in);
+        playhead.store(96_000, Ordering::Relaxed);
+
+        sink.push(&[0.5f32; 64]);
+        assert_eq!(capture.started_at(), Some(96_000));
+        assert_eq!(capture.count_in_at_start(), 24_000);
+
+        // The count runs down and the take goes on: the stamp is of one moment, not of the last
+        // block to arrive.
+        count_in.store(0, Ordering::Relaxed);
+        sink.push(&[0.5f32; 64]);
+        assert_eq!(capture.count_in_at_start(), 24_000);
+
+        // And the next take, started after the count, carries none of it.
+        capture.end_take();
+        capture.begin_take();
+        sink.push(&[0.5f32; 64]);
+        assert_eq!(capture.count_in_at_start(), 0);
     }
 
     #[test]

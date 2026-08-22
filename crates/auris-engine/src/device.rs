@@ -238,6 +238,7 @@ fn start_with_device(
     let (command_tx, command_rx) = crossbeam_channel::bounded(capacity);
     let (graph_tx, graph_rx) = crossbeam_channel::bounded(capacity);
     let playhead = Arc::new(AtomicU64::new(0));
+    let count_in = Arc::new(AtomicU64::new(0));
     let meters = Arc::new(MeterBank::new(settings.meter_tracks));
     let running = Arc::new(AtomicBool::new(false));
     let playing = Arc::new(AtomicBool::new(false));
@@ -254,6 +255,7 @@ fn start_with_device(
             command_rx.clone(),
             graph_tx.clone(),
             Arc::clone(&playhead),
+            Arc::clone(&count_in),
             Arc::clone(&meters),
             Arc::clone(&playing),
             Arc::clone(&latency_stale),
@@ -296,6 +298,7 @@ fn start_with_device(
         commands: command_tx,
         returned_graphs: graph_rx,
         playhead,
+        count_in,
         meters,
         running,
         playing,
@@ -339,6 +342,7 @@ pub fn start_silent(settings: &AudioSettings) -> (AudioDevice, EngineHandle) {
         commands: command_tx,
         returned_graphs: graph_rx,
         playhead: Arc::new(AtomicU64::new(0)),
+        count_in: Arc::new(AtomicU64::new(0)),
         meters: Arc::new(MeterBank::new(settings.meter_tracks)),
         running: Arc::new(AtomicBool::new(false)),
         // A silent engine never renders, so nothing ever sets these; the transport reads as
@@ -508,6 +512,14 @@ pub(crate) struct AudioEngine {
     #[allow(clippy::vec_box)]
     retired: Vec<Box<RenderGraph>>,
     playhead: Arc<AtomicU64>,
+    /// Frames of count-in left, published beside the playhead and read by the same stranger.
+    ///
+    /// A take started with a count-in in front of it begins writing at once, so its file opens
+    /// with however much of the count the input stream happened to catch. The two streams run on
+    /// their own clocks and neither can say where the other began — but the pair of numbers a
+    /// capture stamps together, at the first block that reaches it, can. This is the other half
+    /// of that pair.
+    count_in: Arc<AtomicU64>,
     meters: Arc<MeterBank>,
     /// Mirrors `transport.playing` for the UI, published once per callback.
     playing: Arc<AtomicBool>,
@@ -531,6 +543,7 @@ impl AudioEngine {
         commands: Receiver<EngineCommand>,
         returned_graphs: Sender<Box<RenderGraph>>,
         playhead: Arc<AtomicU64>,
+        count_in: Arc<AtomicU64>,
         meters: Arc<MeterBank>,
         playing: Arc<AtomicBool>,
         latency_stale: Arc<AtomicBool>,
@@ -548,6 +561,7 @@ impl AudioEngine {
             returned_graphs,
             retired: Vec::with_capacity(RETIRED_GRAPH_SLOTS),
             playhead,
+            count_in,
             meters,
             playing,
             latency_stale,
@@ -598,6 +612,10 @@ impl AudioEngine {
 
         self.playhead
             .store(self.transport.position_frames, Ordering::Relaxed);
+        self.count_in.store(
+            self.transport.frames_to_count_in_end().unwrap_or(0),
+            Ordering::Relaxed,
+        );
         self.playing
             .store(self.transport.playing, Ordering::Relaxed);
     }
@@ -668,14 +686,21 @@ impl AudioEngine {
                 self.publish_latency();
             }
             EngineCommand::Play => self.transport.playing = true,
+            EngineCommand::CountIn(count) => self.transport.set_count_in(count),
             EngineCommand::Stop => {
                 self.transport.playing = false;
+                // A count nobody is going to play to is over. Left running, it would hold the
+                // next press of Play at the position this one was stopped at, counting out the
+                // rest of a bar somebody has already walked away from.
+                self.transport.count_in = None;
                 if let Some(graph) = &mut self.graph {
                     graph.reset_voices();
                 }
             }
             EngineCommand::Seek { frames } => {
                 self.transport.seek(frames);
+                // Counted in to a position the transport is no longer at.
+                self.transport.count_in = None;
                 // Jumping the playhead must not leave notes hanging.
                 if let Some(graph) = &mut self.graph {
                     graph.reset_voices();
@@ -846,6 +871,7 @@ mod tests {
             command_rx,
             graph_tx,
             Arc::clone(&playhead),
+            Arc::new(AtomicU64::new(0)),
             Arc::clone(&meters),
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
@@ -984,6 +1010,7 @@ mod tests {
             command_rx,
             graph_tx,
             Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
             Arc::new(MeterBank::new(8)),
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
@@ -1039,6 +1066,7 @@ mod tests {
         let mut engine = AudioEngine::new(
             command_rx,
             graph_tx,
+            Arc::new(AtomicU64::new(0)),
             Arc::new(AtomicU64::new(0)),
             Arc::new(MeterBank::new(8)),
             Arc::new(AtomicBool::new(false)),
@@ -1102,6 +1130,7 @@ mod tests {
         let mut engine = AudioEngine::new(
             command_rx,
             graph_tx,
+            Arc::new(AtomicU64::new(0)),
             Arc::new(AtomicU64::new(0)),
             Arc::new(MeterBank::new(8)),
             Arc::new(AtomicBool::new(false)),
