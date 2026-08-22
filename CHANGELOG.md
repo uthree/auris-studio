@@ -9,6 +9,30 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### A composed piece arrives mixed
+
+* **Composing ends by listening to what it wrote.** Every track is rendered on its own, measured as
+  programme loudness to ITU-R BS.1770, and its fader moved until the part sits where a part of that
+  kind belongs; then the whole piece is lifted onto −14 LUFS. A fader position is not a level — what
+  a track is worth depends on the instrument that answered, and the same number on the same fader
+  is a lead at −18.6 LUFS on the built-in synth and −25.8 through the shipped font. The eight
+  presets used to span ten decibels, from −17.0 to −27.0 LUFS; they now sit between −14.0 and
+  −17.9.
+* **Compose → Balance the Mix** does it to the open project, for a piece written before this
+  existed or one whose instruments have changed since. Only a track that knows what it is gets
+  moved — the composer writes down what each part is aiming at, and a hand-made track has no such
+  number — so running it over a mix of your own normalises the loudness and leaves your balance
+  alone. Running it twice does nothing the second time.
+* It costs a render per part and two of the whole piece, which is about two and a half seconds for
+  an eight-part song, and the window does not answer while it runs.
+* Two limits it reports rather than hides: a fader stops at +12 dB, so a part on an instrument
+  quieter than that can reach ends up short and the status line says by how much; and the master
+  fader sits after the master's effects, so the limiter's ceiling now guarantees what leaves the
+  chain rather than what leaves the mixer.
+* `auris_dsp::loudness` is the meter behind all of it — the K-weighting, 400 ms blocks and the two
+  gates, with the filter re-derived per sample rate rather than tabulated at 48 kHz. Checked
+  against libebur128 on five composed renders, agreeing within a tenth of a decibel.
+
 ### The composer plays steadier
 
 * **A composed part no longer varies how hard it strikes by half its own level.** Every difference

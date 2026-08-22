@@ -325,6 +325,14 @@ surprised by:
 The same is true of dragging a composed clip's edge, since that is a request to write it over a new
 stretch — exactly as it is for a clip written by hand. If a take is the keeper, Keep This One first.
 
+A composed piece also arrives **mixed**. The last thing composing does is render every part on its
+own, measure how loud it actually turned out, and move its fader until it sits where a part of that
+kind belongs — then lift the whole piece onto −14 LUFS. That takes a couple of seconds and it is
+why: the composer chooses the *part* and the session finds out which SoundFont, if any, is
+installed to play it, so a level decided without listening is a guess about an instrument nobody
+had heard yet. It is **Balance the Mix** on the Compose menu when a piece needs it again — see
+[the feature notes](features.md#setting-the-levels-by-listening).
+
 ## Accompanying something you played
 
 The composer read backwards. Write a melody into a clip — by hand, from a MIDI file, on the

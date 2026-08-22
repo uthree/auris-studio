@@ -425,6 +425,14 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                 actions::AccompanyMelody,
                 "file.accompany",
             ),
+            // With the composer rather than with the mixer, because this is what composing already
+            // does at the end of every piece — the row is here for the piece that was written
+            // before it existed, and for the one whose instruments have been changed since.
+            command(
+                t(Key::CmdBalanceLevels),
+                actions::BalanceLevels,
+                "mix.balance",
+            ),
         ],
     });
 

@@ -60,11 +60,12 @@ pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob};
 pub use session::{
-    AccompanyReport, AudioStatus, Clipboard, ComposeReport, CopiedClip, CopiedContent,
-    DEFAULT_OCTAVE, DEFAULT_PARTS, DEFAULT_VELOCITY, LAYOUT, LoadedFont, MusicalTyping,
-    OCTAVE_RANGE, Played, PluginWindow, Quantize, RecordingReport, RecordingStatus, Release,
-    SaveReport, Session, SessionOptions, Struck, TYPING_BEND, TypingRole, VELOCITY_STEP,
-    WHEEL_STEPS, decode_audio, quantized, read_soundfont, shadows_musical_typing,
+    AccompanyReport, AudioStatus, BalanceReport, CEILING_DB, Clipboard, ComposeReport, CopiedClip,
+    CopiedContent, DEFAULT_OCTAVE, DEFAULT_PARTS, DEFAULT_VELOCITY, LAYOUT, LIMITER_ALLOWANCE_DB,
+    LoadedFont, MusicalTyping, OCTAVE_RANGE, Played, PluginWindow, Quantize, RecordingReport,
+    RecordingStatus, Release, SaveReport, Session, SessionOptions, Struck, TARGET_LUFS,
+    TYPING_BEND, TrackLevel, TypingRole, VELOCITY_STEP, WHEEL_STEPS, decode_audio, fader_for,
+    faders_lift_db, master_gain_db, quantized, read_soundfont, shadows_musical_typing,
 };
 pub use settings::{
     AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings, WindowPlacement, config_dir,

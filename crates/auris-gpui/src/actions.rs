@@ -21,6 +21,8 @@ actions!(
         ComposeFromSpec,
         /// Read the selected clip's melody and write a band behind it.
         AccompanyMelody,
+        /// Render every track alone, measure it, and set the mix from what came out.
+        BalanceLevels,
         /// Save the current project.
         SaveProject,
         /// Save the current project under a new name.
@@ -423,6 +425,10 @@ bindable! {
         // this one has neither, and squatting on a third combination would take it from whoever
         // wanted it more. The row is here so it can be given one.
         "file.accompany",       GroupCompose,   CmdAccompanyMelody,    ""            => AccompanyMelody;
+        // No default either, and for a different reason: this one renders the piece once per part
+        // before it answers, which is seconds rather than milliseconds. A command that costs that
+        // much is one to reach for on purpose, not one to land on with a slip of the hand.
+        "mix.balance",          GroupCompose,   CmdBalanceLevels,      ""            => BalanceLevels;
 
         "edit.undo",            GroupEdit,      CmdUndo,               "secondary-z" => Undo;
         "edit.redo",            GroupEdit,      CmdRedo,               "secondary-shift-z" => Redo;

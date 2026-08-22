@@ -671,6 +671,24 @@ messages! {
         ja: "{tracks} トラック · {notes} ノートを作曲しました · シード {seed} · {missing} 個の音源を代替しました"
     }
 
+    /// Confirmation that a mix was set by measuring it.
+    fn mix_balanced(parts: usize, lufs: f32) {
+        en: "balanced {parts} parts · {lufs:.1} LUFS",
+        ja: "{parts} パートのバランスを調整しました · {lufs:.1} LUFS"
+    }
+
+    /// The same, where a fader ran out of travel before its part reached the level it wanted.
+    fn mix_balanced_short(parts: usize, lufs: f32, short: f32) {
+        en: "balanced {parts} parts · {lufs:.1} LUFS · one part is {short:.0} dB short of its level",
+        ja: "{parts} パートのバランスを調整しました · {lufs:.1} LUFS · 1 パートは目標より {short:.0} dB 小さいままです"
+    }
+
+    /// What the balance pass did, as a tail on the line that says a piece was composed.
+    fn mixed_to(lufs: f32) {
+        en: "mixed to {lufs:.1} LUFS",
+        ja: "ミックスを {lufs:.1} LUFS に調整"
+    }
+
     /// A part asked for an instrument this build does not have.
     fn instrument_substituted(id: &str) {
         en: "warning: no instrument `{id}`; using the default instead",

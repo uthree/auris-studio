@@ -944,7 +944,7 @@ impl AurisApp {
                 if let Some(track) = first {
                     self.select_track(track);
                 }
-                self.set_status(if report.substituted.is_empty() {
+                let written = if report.substituted.is_empty() {
                     messages::composed_document(language, report.tracks, report.notes, seed)
                 } else {
                     messages::composed_document_substituted(
@@ -954,9 +954,39 @@ impl AurisApp {
                         seed,
                         report.substituted.len(),
                     )
+                };
+                // Composing ends by listening to the piece and setting its levels from what it
+                // heard, and a line that did not mention it would leave the seconds it takes
+                // looking like the composer being slow.
+                self.set_status(match report.balance.as_ref().and_then(|it| it.now_lufs) {
+                    Some(lufs) => format!("{written} · {}", messages::mixed_to(language, lufs)),
+                    None => written,
                 });
             }
             Err(error) => self.set_failed_status(self.failure(Key::CmdComposeSong, &error)),
+        }
+    }
+
+    /// Renders every track alone, measures it, and sets the mix from what came out.
+    ///
+    /// Nothing is spawned. It is seconds of work on the thread that draws, and the window is
+    /// unresponsive for them — which is the honest shape of the current arrangement rather than a
+    /// choice: a render needs the session, the session is not `Send`, and the way an export gets
+    /// off this thread is `Session::render_job`, which hands over a *copy* and could not write the
+    /// faders back. Worth doing properly the day this is a command people run in a loop.
+    pub(crate) fn balance_levels(&mut self) {
+        let language = self.language();
+        match self.session.balance_levels() {
+            Ok(report) => {
+                let parts = report.tracks.len();
+                let lufs = report.now_lufs.unwrap_or(auris_session::TARGET_LUFS);
+                let short = report.short_by_db();
+                self.set_status(match short >= 1.0 {
+                    true => messages::mix_balanced_short(language, parts, lufs, short),
+                    false => messages::mix_balanced(language, parts, lufs),
+                });
+            }
+            Err(error) => self.set_failed_status(self.failure(Key::CmdBalanceLevels, &error)),
         }
     }
 

@@ -311,6 +311,41 @@ back the tracks that *do not* pass through it, so the mix stays in step; and a t
 master dry while sending to that same bus has each copy delayed on its own, so the dry and the wet
 still arrive together instead of comb-filtering each other.
 
+## Setting the levels by listening
+
+**Compose → Balance the Mix** renders every track on its own, measures it, and moves its fader
+until the part sits where it is supposed to sit. Then it renders the whole mix and lifts it onto
+−14 LUFS, which is where streaming services normalise to. Composing a piece ends by doing this, so
+the command is for a piece written before it existed, or one whose instruments have changed since.
+
+The measurement is programme loudness to ITU-R BS.1770 — the same one every broadcaster and
+streaming service uses — and not a peak or an RMS. A peak is one sample and hears nothing about the
+rest; an RMS weights 40 Hz the same as 3 kHz, where the ear is twenty decibels more sensitive. A
+balance struck by either comes out wrong in the same direction every time: the kick too quiet
+because it is peaky, the pad too loud because it is not.
+
+What it is *for* is that a fader position is not a level. What a track is worth depends on the
+instrument that answered — the composer picks the part and the session finds out which SoundFont,
+if any, is installed to play it — and the same number on the same fader is a lead at −18.6 LUFS on
+the built-in synth and −25.8 through the shipped font. Before this, which preset you picked decided
+how loud your piece was: the eight of them spanned ten decibels, from −17.0 to −27.0 LUFS. They now
+sit between −14.0 and −17.9.
+
+Only a track that knows what it is gets moved. The composer writes down what each part is aiming at
+and a hand-made track has no such number, so running this over a project you mixed yourself
+normalises its loudness and leaves your balance alone. Running it twice does nothing the second
+time.
+
+It costs a render per track and two of the whole piece — about two and a half seconds for an
+eight-part song, on top of the moment composing already takes — and the window does not answer
+while it runs.
+
+Two limits it will tell you about rather than hide. A fader stops at +12 dB, so a part playing an
+instrument that is quieter than that can reach may end up short of where it wanted to be, and the
+status line says so. And the master fader is *after* the master's effects, so a piece driven hard
+after it was measured can push past the limiter's ceiling — the ceiling guarantees what leaves the
+effect chain, not what leaves the mixer.
+
 ## The time signature
 
 So can the meter. The signature readout shows the one the playhead is in, and clicking it drops

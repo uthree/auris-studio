@@ -120,6 +120,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_compose_song))
             .on_action(cx.listener(Self::on_compose_from_spec))
             .on_action(cx.listener(Self::on_accompany_melody))
+            .on_action(cx.listener(Self::on_balance_levels))
             .on_action(cx.listener(Self::on_save_project))
             .on_action(cx.listener(Self::on_save_project_as))
             .on_action(cx.listener(Self::on_import_audio))
@@ -1282,6 +1283,17 @@ impl AurisApp {
             Some(clip) => self.run_menu_command(MenuCommand::AccompanyClip(clip), cx),
             None => self.set_status(self.t(Key::NoClipToAccompany)),
         }
+        cx.notify();
+    }
+
+    /// Sets every fader from a measurement of what the piece actually sounds like.
+    fn on_balance_levels(
+        &mut self,
+        _: &actions::BalanceLevels,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.balance_levels();
         cx.notify();
     }
 

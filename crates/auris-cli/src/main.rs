@@ -412,6 +412,15 @@ fn compose(args: &[String]) -> Result<(), String> {
             piece.seed,
         )
     ))?;
+    // What listening to the piece did about its levels. On its own line rather than appended,
+    // because the summary below is a table and this is about the whole of it.
+    if let Some(lufs) = report.balance.as_ref().and_then(|balance| balance.now_lufs) {
+        printed(writeln!(
+            std::io::stdout(),
+            "{}",
+            messages::mixed_to(LANGUAGE, lufs)
+        ))?;
+    }
     printed(write!(std::io::stdout(), "{}", piece.summary()))?;
     Ok(())
 }
