@@ -4,6 +4,10 @@
 //! action, which is the same path the keystroke and the menu bar take — so the palette cannot
 //! drift out of step with either, and a command added to [`BINDABLE`] appears here for free.
 //!
+//! Every row is matched in the interface language *and* in English, so the palette answers to the
+//! name a command has in the documentation and in every other program whatever the window is
+//! drawn in.
+//!
 //! The matching and the row arithmetic are free functions, so what a query finds and what the
 //! arrow keys land on can be checked without a window.
 
@@ -56,6 +60,14 @@ pub struct PaletteEntry {
     pub label: SharedString,
     /// The keystroke that also runs it, written the way this platform writes it.
     pub keystroke: Option<String>,
+    /// The same row in English, or `None` in a window already drawn in English.
+    ///
+    /// A palette is typed into, and what a person types is whatever the command is called in
+    /// their head. That is often not the language on screen: the documentation, the menus of
+    /// every other audio program and this project's own source all say "quantise", so a window
+    /// answering only to クオンタイズ asks people to spell out a word they were not thinking in.
+    /// Both spellings find the row, and neither is preferred — see [`PaletteEntry::score`].
+    pub english: Option<String>,
 }
 
 impl PaletteEntry {
@@ -67,6 +79,34 @@ impl PaletteEntry {
     pub fn haystack(&self) -> String {
         format!("{} {}", self.group, self.label)
     }
+
+    /// How well `query` finds this row, in either spelling of it.
+    pub fn score(&self, query: &str) -> Option<i32> {
+        best_score(query, &self.haystack(), self.english.as_deref())
+    }
+}
+
+/// How well `query` finds a row drawn as `drawn` and also written `english`.
+///
+/// The better of the two scores rather than their sum: a row must not out-rank another merely by
+/// being matched twice, and a query that fits the English spelling well is answered as though the
+/// window had been in English all along. A query in the interface language cannot be dragged down
+/// by the English text either, since that text will simply not match it.
+pub fn best_score(query: &str, drawn: &str, english: Option<&str>) -> Option<i32> {
+    let drawn = match_score(query, drawn);
+    let english = english.and_then(|text| match_score(query, text));
+    match (drawn, english) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (found, other) => found.or(other),
+    }
+}
+
+/// The English text a row is also matched against, or `None` when `language` is English already.
+///
+/// A row is `group` then `label`, the same shape as [`PaletteEntry::haystack`], because half of
+/// what a query is aimed at is the heading a command sits under.
+pub fn english_haystack(language: Language, group: Key, label: &str) -> Option<String> {
+    (language != Language::English).then(|| format!("{} {}", group.get(Language::English), label))
 }
 
 /// Every command the palette offers, in the language the window is drawn in.
@@ -89,22 +129,39 @@ pub fn entries(
             group: command.group.get(language),
             label: command.label.get(language).into(),
             keystroke: Some(menu_keystroke(&keystroke_of(command))),
+            english: english_haystack(
+                language,
+                command.group,
+                command.label.get(Language::English),
+            ),
         })
         .collect();
     rows.extend(
         crate::ui::transport_bar::GRID_CHOICES
             .iter()
-            .map(|(label, ticks)| PaletteEntry {
-                command: PaletteCommand::Grid(Ticks(*ticks)),
-                group: Key::Grid.get(language),
+            .map(|(label, ticks)| {
                 // The one entry whose label is a word rather than a fraction is the one that
                 // turns snapping off, and the button on the transport bar says the same thing.
-                label: if label.is_empty() {
-                    Key::GridFree.get(language).into()
-                } else {
-                    SharedString::new_static(label)
-                },
-                keystroke: None,
+                let free = label.is_empty();
+                PaletteEntry {
+                    command: PaletteCommand::Grid(Ticks(*ticks)),
+                    group: Key::Grid.get(language),
+                    label: if free {
+                        Key::GridFree.get(language).into()
+                    } else {
+                        SharedString::new_static(label)
+                    },
+                    keystroke: None,
+                    english: english_haystack(
+                        language,
+                        Key::Grid,
+                        if free {
+                            Key::GridFree.get(Language::English)
+                        } else {
+                            label
+                        },
+                    ),
+                }
             }),
     );
     rows.extend(TimeSignature::COMMON.iter().map(|signature| PaletteEntry {
@@ -112,12 +169,15 @@ pub fn entries(
         group: Key::Signature.get(language),
         label: signature.to_string().into(),
         keystroke: None,
+        // The label is a pair of numbers in any language; the heading above it is not.
+        english: english_haystack(language, Key::Signature, &signature.to_string()),
     }));
     rows.extend(SCHEMES.iter().map(|scheme| PaletteEntry {
         command: PaletteCommand::Scheme(scheme),
         group: Key::AppearanceHeading.get(language),
         label: scheme.name.into(),
         keystroke: None,
+        english: english_haystack(language, Key::AppearanceHeading, scheme.name),
     }));
     // Each named in itself, and under a heading in itself: the two rows read `Language · English`
     // and `言語 · 日本語`. A list of languages written in the language currently on screen is of
@@ -127,6 +187,10 @@ pub fn entries(
         group: Key::LanguageHeading.get(*choice),
         label: choice.endonym().into(),
         keystroke: None,
+        // The row's own language, not the window's: these rows are the one place where what is
+        // drawn does not follow the setting, so `language` has to find 言語 · 日本語 whichever
+        // language the window is currently in.
+        english: english_haystack(*choice, Key::LanguageHeading, choice.endonym()),
     }));
     rows
 }
@@ -178,9 +242,7 @@ pub fn matches(entries: &[PaletteEntry], query: &str) -> Vec<usize> {
     let mut scored: Vec<(usize, i32)> = entries
         .iter()
         .enumerate()
-        .filter_map(|(index, entry)| {
-            match_score(query, &entry.haystack()).map(|score| (index, score))
-        })
+        .filter_map(|(index, entry)| entry.score(query).map(|score| (index, score)))
         .collect();
     // A stable sort, which is what keeps the tie-break above true.
     scored.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
@@ -625,6 +687,83 @@ mod tests {
             .expect("Japanese is offered");
         assert_eq!(japanese.label, "日本語");
         assert_eq!(japanese.group, Key::LanguageHeading.get(Language::Japanese));
+    }
+
+    #[test]
+    fn a_command_is_found_by_its_english_name_in_any_language() {
+        // The reason this exists: the window is in Japanese, the row reads 保存, and the person
+        // typing learned the command as Save — from the documentation, from every other program,
+        // or from the keystroke chart.
+        let japanese = entries(Language::Japanese, |command| {
+            command.default.unwrap_or_default().to_string()
+        });
+        let english = entries(Language::English, |command| {
+            command.default.unwrap_or_default().to_string()
+        });
+        let first = |rows: &[PaletteEntry], query: &str| rows[matches(rows, query)[0]].command;
+
+        for query in ["save", "undo", "mixer", "1/16", "6/8"] {
+            assert_eq!(
+                first(&japanese, query),
+                first(&english, query),
+                "`{query}` found something else in a Japanese window"
+            );
+        }
+        // And the language it is drawn in still finds it, which is the half that already worked.
+        assert!(!matches(&japanese, "保存").is_empty());
+
+        // A window in English has nothing to add, and says so rather than carrying the same
+        // string twice. Except for the language rows, which are drawn in their own language
+        // whatever the window is set to and so need the alias in both directions.
+        assert!(
+            english
+                .iter()
+                .filter(|entry| !matches!(entry.command, PaletteCommand::Language(_)))
+                .all(|entry| entry.english.is_none())
+        );
+        assert!(
+            japanese
+                .iter()
+                .any(|entry| entry.english.as_deref() == Some("File Save")),
+            "the Japanese rows carry their English spelling"
+        );
+    }
+
+    #[test]
+    fn a_language_row_answers_to_its_english_name_from_either_language() {
+        // The language rows are the one place where what is drawn does not follow the setting:
+        // each names itself, in itself. So `language` has to reach both of them from both.
+        for language in Language::ALL {
+            let rows = entries(language, |command| {
+                command.default.unwrap_or_default().to_string()
+            });
+            let found: Vec<PaletteCommand> = matches(&rows, "language")
+                .iter()
+                .map(|index| rows[*index].command)
+                .collect();
+            for choice in Language::ALL {
+                assert!(
+                    found.contains(&PaletteCommand::Language(choice)),
+                    "{choice:?} was not found by `language` in a {language:?} window"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_second_spelling_ranks_a_row_no_higher_than_one_spelling_would() {
+        // Matching twice must not be worth more than matching once, or every translated row
+        // would out-rank the untranslated ones on a query that happens to fit both.
+        let once = best_score("save", "File Save", None).expect("Save matches");
+        let twice = best_score("save", "File Save", Some("File Save")).expect("Save matches");
+        assert_eq!(once, twice);
+        // The better of the two is what counts, from whichever side it comes.
+        assert_eq!(
+            best_score("save", "ファイル 保存", Some("File Save")),
+            Some(once)
+        );
+        assert!(best_score("保存", "ファイル 保存", Some("File Save")).is_some());
+        assert_eq!(best_score("zzz", "ファイル 保存", Some("File Save")), None);
     }
 
     #[test]

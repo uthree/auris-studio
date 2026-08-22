@@ -810,6 +810,12 @@ it. `nit` reaches New Instrument Track; a match at the start of a word counts fo
 the middle, so `save` puts Save above Add Audio Track. Every rebindable command is there with its
 keystroke beside it, which is also how you find out a command *has* one.
 
+Every row answers to its English name as well as to the one on screen, whatever language the
+interface is set to. A window drawn in Japanese still finds Save by `save` — that is the name the
+documentation, the keystroke chart and every other audio program use, and typing is not the moment
+to make somebody switch alphabets. The same goes for the key search in the settings window, so a
+query means the same thing in both lists.
+
 It also sets values, which is the part that would otherwise mean a trip to a window or to a corner
 of the transport bar: type `1/16` for the editing grid, `6/8` for the meter of the stretch the
 playhead is in, a colour scheme's name to repaint the window, or `日本語` to switch language — the

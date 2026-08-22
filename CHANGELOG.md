@@ -7,6 +7,21 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
+## Unreleased
+
+### The palette answers to English too
+
+* **A command is found by its English name whatever language the interface is in.** A window drawn
+  in Japanese shows 保存 and now also matches `save`, which is what the documentation, the
+  keystroke chart and every other audio program call it — the language on screen is a display
+  choice, and it should not decide which alphabet somebody has to type in. Both spellings are
+  matched and neither is preferred: the better of the two scores counts, so a row cannot out-rank
+  another merely by being matched twice. The key search in the settings window reads the same way,
+  since the two lists are supposed to mean the same thing.
+* The language rows are matched from both sides, since they are the one place where what is drawn
+  does not follow the setting: `language` now finds 言語 · 日本語 from an English window, as it
+  already found Language · English from a Japanese one.
+
 ## 0.3.0 — 2026-08-22
 
 ### Plugins somebody else wrote

@@ -18,6 +18,7 @@ use crate::gestures::{PointerGesture, PointerGestures};
 use crate::keymap::Keymap;
 use crate::theme::{Metrics, SCHEMES, Theme, scheme_or_default};
 use crate::ui::icons::Icon;
+use crate::ui::palette;
 use crate::ui::text_field::{HasTextField, KeyEffect, TextField};
 use crate::ui::widgets::{ButtonStyle, button, chain_button, divider};
 
@@ -850,16 +851,22 @@ impl SettingsWindow {
 
     /// The commands the search box is showing.
     ///
-    /// Matched on the group and the name together, by the same scoring the command palette uses,
-    /// so a query means the same thing in both lists. Filtered but *not* reordered: this list is
-    /// arranged under section headings, and sorting by score would scatter the sections.
+    /// Matched on the group and the name together, in this language and in English, by the same
+    /// scoring the command palette uses — so a query means the same thing in both lists. Filtered
+    /// but *not* reordered: this list is arranged under section headings, and sorting by score
+    /// would scatter the sections.
     fn found_commands(&self) -> Vec<&'static Bindable> {
         let query = self.search.content();
         BINDABLE
             .iter()
             .filter(|command| {
-                let haystack = format!("{} {}", self.t(command.group), self.t(command.label));
-                crate::ui::palette::match_score(query, &haystack).is_some()
+                let drawn = format!("{} {}", self.t(command.group), self.t(command.label));
+                let english = palette::english_haystack(
+                    self.language,
+                    command.group,
+                    command.label.get(Language::English),
+                );
+                palette::best_score(query, &drawn, english.as_deref()).is_some()
             })
             .collect()
     }
