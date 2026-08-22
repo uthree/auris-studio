@@ -130,7 +130,9 @@ impl MonitorRing {
     /// Turns monitoring on or off.
     ///
     /// Switching on re-seats the reader rather than resuming where it stopped, because what is in
-    /// the ring is however many seconds old the pause was.
+    /// the ring is however many seconds old the pause was. Which is also why a caller that may be
+    /// switching on something already on should ask [`Self::is_enabled`] first: re-seating a ring
+    /// that never stopped is a gap somebody hears for no reason at all.
     pub fn set_enabled(&self, enabled: bool) {
         if enabled {
             self.read.store(NOT_STARTED, Ordering::Relaxed);

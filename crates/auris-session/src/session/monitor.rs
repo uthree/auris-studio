@@ -158,7 +158,13 @@ impl Session {
             match self.monitored.get(slot) {
                 Some(track) => {
                     ring.set_source(self.track_arm(*track).map_or(0, |input| input.first));
-                    ring.set_enabled(true);
+                    // Only where it was not already listening. Switching a ring on re-seats its
+                    // reader at the live edge, which is right for one that has been off and is a
+                    // heard gap for one that has not — and this runs whenever an arm changes, so
+                    // arming a track would otherwise drop out every monitor in the room.
+                    if !ring.is_enabled() {
+                        ring.set_enabled(true);
+                    }
                 }
                 None => ring.set_enabled(false),
             }
@@ -226,6 +232,23 @@ mod tests {
         session.stop_monitoring();
         assert!(!session.monitoring());
         assert_eq!(session.monitor_status(), None);
+    }
+
+    #[test]
+    fn arming_a_track_does_not_drop_out_the_monitors() {
+        // Pointing the rings at their channels runs whenever an arm changes, and switching a ring
+        // on re-seats its reader — so a monitor that was already listening must be left alone, or
+        // arming a track would be a heard gap in everybody's headphones.
+        let mut session = session();
+        let vocal = session.add_audio_track("Vocal");
+        let guitar = session.add_audio_track("Guitar");
+        session.set_track_monitoring(vocal, true).unwrap();
+        session.arm_track(guitar, None).unwrap();
+        // Nothing to assert on but the state that survived it: the ring is the engine's and there
+        // is no device behind a headless session. What this pins is that the call is made and
+        // does not disturb what was listening.
+        assert_eq!(session.monitored_tracks(), [vocal]);
+        assert!(session.is_monitored(vocal));
     }
 
     #[test]
