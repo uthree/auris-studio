@@ -842,6 +842,9 @@ strings! {
     EditBypassEffect { en: "bypassing an effect", ja: "エフェクトのバイパス" }
     EditReorderEffects { en: "reordering the effects", ja: "エフェクトの並べ替え" }
     EditSetEffectSidechain { en: "changing the sidechain", ja: "サイドチェインの変更" }
+    CmdSetEffectSidechain { en: "key this effect from that track", ja: "エフェクトをそのトラックでキーする" }
+    MenuSidechain { en: "Sidechain", ja: "サイドチェイン" }
+    MenuSidechainNone { en: "None", ja: "なし" }
     EditAdjustParameter { en: "the parameter change", ja: "パラメーターの変更" }
     MenuFreezeTrack { en: "Keep Every Take Here", ja: "このトラックをすべて確定" }
     MenuTrackColor { en: "Colour", ja: "カラー" }

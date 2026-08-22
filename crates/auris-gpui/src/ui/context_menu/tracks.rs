@@ -331,20 +331,33 @@ impl AurisApp {
 
     /// The menu for one effect in a chain.
     pub(crate) fn effect_menu(
-        &self,
+        &mut self,
         anchor: Point<Pixels>,
         track: Option<TrackId>,
         slot: EffectSlotId,
         name: impl Into<SharedString>,
     ) -> ContextMenu {
         let enabled = self.session.effect_enabled(track, slot).unwrap_or(true);
-        ContextMenu::new(anchor, name)
-            .toggle(
-                self.t(Key::MenuEnabled),
-                MenuCommand::ToggleEffect { track, slot },
-                enabled,
-            )
-            .separator()
+        // Only where the plugin has somewhere to put a key. An effect with no reading for one
+        // offered a source would be a row that does nothing, and the menu is short enough that
+        // every row in it should mean something.
+        let keyed = self.session.effect_wants_sidechain(track, slot);
+        let mut menu = ContextMenu::new(anchor, name).toggle(
+            self.t(Key::MenuEnabled),
+            MenuCommand::ToggleEffect { track, slot },
+            enabled,
+        );
+        if keyed {
+            menu = menu.item(
+                self.t(Key::MenuSidechain),
+                MenuCommand::ShowSidechainPicker {
+                    track,
+                    slot,
+                    at: anchor,
+                },
+            );
+        }
+        menu.separator()
             .item(
                 self.t(Key::MenuMoveUp),
                 MenuCommand::MoveEffect {
@@ -367,6 +380,47 @@ impl AurisApp {
                 self.t(Key::MenuAddEffect),
                 MenuCommand::ShowEffectPicker { track, at: anchor },
             )
+    }
+
+    /// Every track an effect could be keyed from, with a tick on the one it listens to now.
+    ///
+    /// The tracks that would close a loop are simply not here — the session leaves them out of
+    /// [`Session::sidechain_sources`](auris_session::Session::sidechain_sources) — because a row
+    /// that can only be refused is worse than no row. "None" leads, and is what a slot starts on.
+    pub(crate) fn sidechain_menu(
+        &self,
+        anchor: Point<Pixels>,
+        track: Option<TrackId>,
+        slot: EffectSlotId,
+    ) -> ContextMenu {
+        let current = self.session.effect_sidechain(track, slot);
+        let sources: Vec<(TrackId, String)> = self
+            .session
+            .sidechain_sources(track)
+            .into_iter()
+            .filter_map(|id| Some((id, self.project().track(id)?.name.clone())))
+            .collect();
+        let mut menu = ContextMenu::new(anchor, self.t(Key::MenuSidechain)).toggle(
+            self.t(Key::MenuSidechainNone),
+            MenuCommand::SetEffectSidechain {
+                track,
+                slot,
+                source: None,
+            },
+            current.is_none(),
+        );
+        for (id, name) in sources {
+            menu = menu.toggle(
+                name,
+                MenuCommand::SetEffectSidechain {
+                    track,
+                    slot,
+                    source: Some(id),
+                },
+                current == Some(id),
+            );
+        }
+        menu
     }
 
     /// Every effect the registry knows, aimed at one particular strip.

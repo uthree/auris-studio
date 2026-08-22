@@ -9,6 +9,23 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### An effect can listen to another track
+
+* **A compressor can be keyed from the kick drum.** An effect slot names a track to listen to, and
+  the effect hears *that* instead of the signal passing through it — the built-in compressor, and
+  any hosted CLAP plugin with a sidechain input, which has been handed a silent port since the day
+  ports were handed over at all. The **Sidechain** row appears on the slots whose plugin has
+  somewhere to put a key and nowhere else.
+* What the effect hears is what the source puts into the mix: its chain, its fader, its pan and its
+  mute. Pulling the kick down ducks less; muting it stops the duck.
+* A key is an edge in the routing like an output or a send, so the track that makes it is mixed
+  first, and one that would leave a strip waiting for itself is refused — left off the list rather
+  than offered and then rejected. Deleting a track clears the keys read from it, and a file
+  carrying an impossible one is repaired on open.
+* Nothing pays for it unless it is used: a buffer per track something actually listens to, and only
+  where the effect in the slot has a reading for one. A project with no key in it copies nothing.
+* Format version 15.
+
 ### The shipped font's pianos play
 
 * **`rustysynth` is forked into `vendor/rustysynth`, and reads the modulator lists the published

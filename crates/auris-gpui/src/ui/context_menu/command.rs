@@ -306,6 +306,24 @@ pub enum MenuCommand {
         /// Where to put the menu.
         at: Point<Pixels>,
     },
+    /// Open the list of tracks an effect could be keyed from.
+    ShowSidechainPicker {
+        /// Strip the effect sits in, or `None` for the master bus.
+        track: Option<TrackId>,
+        /// Which slot in it.
+        slot: EffectSlotId,
+        /// Where to put the menu.
+        at: Point<Pixels>,
+    },
+    /// Point one effect at a track to key from, or stop it listening to one.
+    SetEffectSidechain {
+        /// Strip the effect sits in, or `None` for the master bus.
+        track: Option<TrackId>,
+        /// Which slot in it.
+        slot: EffectSlotId,
+        /// The track to key from, or `None` for nothing.
+        source: Option<TrackId>,
+    },
     /// Add one effect to one strip.
     AddEffect {
         /// Strip to add to, or `None` for the master bus.
@@ -920,6 +938,15 @@ impl AurisApp {
                 let menu = self.effect_picker_menu(at, track);
                 self.open_menu(menu);
             }
+            MenuCommand::ShowSidechainPicker { track, slot, at } => {
+                let menu = self.sidechain_menu(at, track, slot);
+                self.open_menu(menu);
+            }
+            MenuCommand::SetEffectSidechain {
+                track,
+                slot,
+                source,
+            } => self.set_effect_sidechain(track, slot, source),
             MenuCommand::AddEffect { track, effect_id } => self.add_effect_to(track, &effect_id),
 
             MenuCommand::ShowProgressionPicker { at, anchor } => {

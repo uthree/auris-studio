@@ -302,6 +302,10 @@ its audio has nowhere else to go; soloing the drum *bus* leaves the drum tracks 
 has nothing of its own to play. A track is heard exactly when it lies on a path through something
 soloed.
 
+Keying an effect from a track is a route as well, and counts as one here: a compressor on the bass
+listening to the kick means the kick has to be mixed first. See **Built-in effects** for what that
+is for.
+
 A route that would send a signal back into itself is refused, in the mixer and in the picker both:
 the list of destinations only ever holds the legal ones. A project file that somehow holds a loop —
 nothing here can write one — is repaired on open rather than refused, with a line in the log.
@@ -633,7 +637,7 @@ second, which is close to how a General MIDI patch already behaves.
 | --- | --- | --- |
 | `auris.fx.gain` | Gain & Pan | Constant-power pan law, stereo width, phase invert |
 | `auris.fx.eq` | Equalizer | Six bands (HP, low shelf, two peaks, high shelf, LP) with a live response curve |
-| `auris.fx.compressor` | Compressor | Soft knee, gain-reduction metering |
+| `auris.fx.compressor` | Compressor | Soft knee, gain-reduction metering, keyable from another track |
 | `auris.fx.delay` | Delay | Ping-pong, damped feedback |
 | `auris.fx.reverb` | Reverb | Freeverb-style comb/all-pass network |
 | `auris.fx.distortion` | Distortion | Soft clip, hard clip, wavefolder, bitcrusher |
@@ -653,6 +657,17 @@ the same strip, in the inspector or on the mixer; the chain rearranges as the po
 what you are looking at is the order itself rather than a line predicting it. Dropping it on the
 empty slot at the end puts it last. The chevrons beside each row do the same thing one step at a
 time, and the menu on each slot still offers bypass, reorder and remove.
+
+**An effect can listen to another track.** The compressor does, and so does any CLAP plugin with a
+sidechain input — those are the slots whose menu has a **Sidechain** row, and whose window carries
+one under its title. Pick a track there and the effect keys off *that* signal instead of the one
+passing through it: a bass compressor pointed at the kick pulls the bass down when the kick lands
+and leaves it alone otherwise, which is how a low end with both in it stays legible.
+
+What the effect hears is what the source puts into the mix — its own chain, fader, pan and mute.
+So pulling the kick down ducks less, and muting it stops the duck altogether. The list only offers
+tracks that can actually be used: one that would leave a strip waiting for itself is not on it, and
+neither is the track the effect is sitting on. Deleting a track clears the keys read from it.
 
 **The equalizer draws its curve.** The spectrum going into it sits behind, the response it is
 making is drawn over that, and each band that is switched in has a node on the curve:

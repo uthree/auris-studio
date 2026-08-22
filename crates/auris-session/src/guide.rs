@@ -319,6 +319,32 @@ pub mod architecture {
     //! A loop has no order it can be rendered in, so the session refuses to close one and
     //! [`Project::repair_routing`](auris_core::Project::repair_routing) breaks any that arrives in
     //! a file. What routing does to plugin delay compensation is in [`super::realtime`].
+    //!
+    //! # A key is an edge too, and it faces the other way
+    //!
+    //! An effect slot may name a track to be **keyed** from: a compressor on the bass listening to
+    //! the kick drum, or a hosted plugin with a sidechain port. That is
+    //! [`EffectSlot::sidechain`](auris_core::project::EffectSlot::sidechain), and three things
+    //! follow from where it is written down.
+    //!
+    //! **It is recorded on the listener, not the source.** The effect is the end that wants one; a
+    //! track has no idea how many chains are keyed from it. So it is the one edge in the routing
+    //! stored facing backwards, and
+    //! [`Project::routing_order`](auris_core::Project::routing_order) turns it round rather than
+    //! every walk doing so again. The question "would this loop?" therefore has two names —
+    //! [`routing_would_cycle`](auris_core::Project::routing_would_cycle) for an output or a send,
+    //! and [`sidechain_would_cycle`](auris_core::Project::sidechain_would_cycle) for a key, whose
+    //! whole content is the swap.
+    //!
+    //! **The key is what the source puts into the mix.** The engine taps it after that track's
+    //! chain, fader, pan and mute — so turning a kick down ducks less, and muting it stops the
+    //! duck. A solo elsewhere silences a key for the same reason, which is consistent: under that
+    //! solo the source is contributing nothing either.
+    //!
+    //! **Nothing pays for it unless it is used.** A tap is made per track some chain actually
+    //! listens to, and only where the effect in the slot answers
+    //! [`Effect::wants_sidechain`](auris_core::plugin::Effect::wants_sidechain) — so a project
+    //! with no key in it carries no extra buffer and copies nothing.
 }
 
 pub mod realtime {

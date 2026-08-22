@@ -755,6 +755,22 @@ impl AurisApp {
     pub(crate) fn remove_effect(&mut self, slot: EffectSlotId) {
         self.session.remove_effect(slot);
     }
+
+    /// Points an effect at a track to key from, or stops it listening to one.
+    ///
+    /// A refusal is reported rather than swallowed. The menu only offers sources that can be
+    /// used, so getting one here means the routing changed under an open menu — which is worth a
+    /// line in the log rather than a click that silently did nothing.
+    pub(crate) fn set_effect_sidechain(
+        &mut self,
+        track: Option<TrackId>,
+        slot: EffectSlotId,
+        source: Option<TrackId>,
+    ) {
+        if let Err(error) = self.session.set_effect_sidechain(track, slot, source) {
+            self.set_failed_status(self.failure(Key::CmdSetEffectSidechain, &error));
+        }
+    }
 }
 
 /// A plugin's display name, translated where the term is known.

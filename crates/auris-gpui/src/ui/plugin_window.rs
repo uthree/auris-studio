@@ -85,6 +85,9 @@ impl PluginSubject {
 /// How tall the caution strip is drawn.
 const CAUTION_HEIGHT: Pixels = px(30.0);
 
+/// How tall the row naming the track an effect is keyed from is drawn.
+const SIDECHAIN_HEIGHT: Pixels = px(28.0);
+
 /// What a plugin's window has to warn about, given the state of its switch.
 ///
 /// One plugin and one switch, and both are named here rather than asked of the plugin, for the
@@ -289,6 +292,23 @@ impl AurisApp {
         // Asked every frame rather than remembered: it is a question about a plugin instance, and
         // a graph rebuild can put a different one behind the same slot between frames.
         let own_window = self.session.plugin_window_exists(subject.hosted_window());
+        // Which track keys this effect, for the one row that can say so — and `None` for every
+        // effect with no reading for a key, which is what keeps the row off the other plugins.
+        // The name is resolved here rather than in the row so a source deleted between frames
+        // shows as nothing rather than as a number.
+        let keyed_from = match subject {
+            PluginSubject::Insert { track, slot }
+                if self.session.effect_wants_sidechain(track, slot) =>
+            {
+                let source = self
+                    .session
+                    .effect_sidechain(track, slot)
+                    .and_then(|id| self.project().track(id))
+                    .map(|entry| entry.name.clone());
+                Some((track, slot, source))
+            }
+            _ => None,
+        };
         let has_curve = analyser.is_some();
         // Everything above the scrolling list, none of which scrolls, so all of it is room the
         // window needs on top of whatever the controls come to.
@@ -300,6 +320,9 @@ impl AurisApp {
             false => px(0.0),
         } + match caution.is_some() {
             true => CAUTION_HEIGHT,
+            false => px(0.0),
+        } + match keyed_from.is_some() {
+            true => SIDECHAIN_HEIGHT,
             false => px(0.0),
         };
         let frame = PluginWindow::frame(has_curve, above);
@@ -409,6 +432,40 @@ impl AurisApp {
                 )
                 .children(analyser)
                 .children(envelope.map(|env| self.envelope_display(subject, env, cx)))
+                // Under the header and above the controls, because it is a fact about the whole
+                // plugin rather than one of its parameters — and because the answer changes what
+                // every parameter below it is doing.
+                .children(keyed_from.map(|(track, slot, source)| {
+                    div()
+                        .h(SIDECHAIN_HEIGHT)
+                        .w_full()
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_1()
+                        .px_2()
+                        .border_b_1()
+                        .border_color(theme.border)
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.text_muted)
+                                .child(self.t(Key::MenuSidechain)),
+                        )
+                        .child(crate::ui::widgets::button(
+                            "pw-key",
+                            source.unwrap_or_else(|| self.t(Key::MenuSidechainNone).to_string()),
+                            crate::ui::widgets::ButtonStyle::Ghost,
+                            true,
+                            theme.accent_soft,
+                            &theme,
+                            Self::opens_menu(cx, move |this, at| {
+                                this.sidechain_menu(at, track, slot)
+                            }),
+                        ))
+                        .into_any_element()
+                }))
                 .children(caution.map(|key| caution_strip(self.t(key), &theme)))
                 .child(
                     div()
