@@ -9,6 +9,25 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### The composer plays steadier
+
+* **A composed part no longer varies how hard it strikes by half its own level.** Every difference
+  in strength the composer writes — the metric hierarchy, a ghost note, the lean across a phrase,
+  the rise through a fill — is now played at a quarter of what it says, so a part's strokes sit
+  within about a tenth of the level it is played at instead of a fifth to a half of it. The kit is
+  where it was most audible: a rock hat ran from 0.20 to 1.00, which on an instrument whose every
+  stroke is the same sound reads as a drummer who cannot hit the thing evenly. The proportions are
+  scaled and not replaced, so a ghost is still the quietest thing in the bar and a downbeat still
+  the loudest.
+* **The timing wander is 6 ms at the top of the humanize dial rather than 15.** Fifteen was chosen
+  against the default setting alone, and the presets ask for more than the default: measured across
+  the eight of them it moved a jazz piano by up to 27 ms and an ambient bell by 25, which is not a
+  player relaxing. Two parts written on one tick still do not land on one tick, and nobody is
+  waiting for anybody.
+* A section's intensity is untouched and keeps the whole of its travel: how hard a passage is
+  played is a different question from how much one stroke of it varies, and it was the second one
+  that sounded like bad playing. Both dials still reach 0, which is still a sequencer.
+
 ### The palette answers to English too
 
 * **A command is found by its English name whatever language the interface is in.** A window drawn

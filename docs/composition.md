@@ -235,6 +235,14 @@ the level stays where the intensity put it rather than sagging with the spread. 
 source of variation at once: the metric hierarchy, the accents, the lean across a phrase and the
 crescendo of a drum fill.
 
+Both of the dials that vary the playing are narrow at the top on purpose. At the top of the
+dynamics a part's strokes sit within about a tenth of their own level, and at the top of humanize a
+pitched note lands within six milliseconds of where it was written — two at the default, at
+whatever tempo the piece is playing. That is a band phrasing; wider than that and the same idea
+reads as a band that has not rehearsed, which is what both of these were until they were measured
+across the presets and pulled in. The kit is exempt from the timing half entirely and keeps only
+its constant lean, because a drummer holding the time is what everybody else is loose against.
+
 A kit reads the density around the middle, and the middle **plays the groove**: a beat is never
 thinned there, a weak sixteenth sometimes is, and a quiet section thins further. Below the middle
 the groove thins from its weakest hits upward and never loses a downbeat; above it the steps the

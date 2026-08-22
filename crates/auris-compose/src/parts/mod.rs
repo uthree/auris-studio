@@ -223,16 +223,21 @@ fn shorten(played: &[PartSpec], notes: &mut [Draft]) {
 /// How far a pitched part's timing wanders at `humanize` 1, as a standard deviation in
 /// milliseconds.
 ///
-/// Fifteen because the default humanisation is 0.35 and 15 × 0.35 is 5.25 ms, which is about where
-/// a band that is playing well sits: tight enough to be together, loose enough not to be a
-/// sequencer. The other end follows from it rather than being chosen — 15 ms with the three-sigma
-/// bound the jitter already has means the wander never reaches 45 ms, which is as far as "sloppy"
-/// can go before it stops being one band.
+/// Six because the default humanisation is 0.35 and 6 × 0.35 is 2.1 ms, which is about where a
+/// band that is playing well sits: far enough apart that two parts written on one tick no longer
+/// land on one tick, near enough that nobody is waiting for anybody. The other end follows from it
+/// rather than being chosen — 6 ms with the three-sigma bound the jitter already has means the
+/// wander never reaches 18 ms, which is as far as "sloppy" can go before it stops being one band.
 ///
-/// A round number and not a fitted one. The target was "about 5 ms at the default", and a constant
+/// Fifteen was the first answer and it was too much. It was chosen against the default alone, and
+/// the presets ask for more than the default: measured across the eight of them it moved a jazz
+/// piano by up to 27 ms and an ambient bell by 25, and a note that far from its neighbours is not
+/// a player relaxing, it is a player missing.
+///
+/// A round number and not a fitted one. The target was "about 2 ms at the default", and a constant
 /// carried to two decimal places would be claiming a precision that the ear, which cannot hear the
-/// difference between 5 and 5.25 ms of spread, does not have.
-const WANDER_MS: f32 = 15.0;
+/// difference between 2 and 2.1 ms of spread, does not have.
+const WANDER_MS: f32 = 6.0;
 
 /// Swings, nudges and softens the timing so the part does not sound quantised.
 ///

@@ -360,8 +360,8 @@ pub struct SongSpec {
     /// How far timing and velocity wander, from 0 for a machine to 1 for a sloppy band.
     ///
     /// The timing half is a *time* and not a number of ticks: at 1 a pitched note lands within a
-    /// standard deviation of fifteen milliseconds of where it was written, and at the default of
-    /// 0.35 within about five, at whatever tempo the piece is played. That is what makes one
+    /// standard deviation of six milliseconds of where it was written, and at the default of
+    /// 0.35 within about two, at whatever tempo the piece is played. That is what makes one
     /// setting mean one thing — the same dial used to read as a slight looseness at 148 BPM and as
     /// nobody being together at 64, because the wander was a fraction of a beat and a beat is not
     /// a fixed length of time.
@@ -379,6 +379,12 @@ pub struct SongSpec {
     ///
     /// How much the playing varies, where [`Self::mood`]'s energy says how hard it is played at
     /// all. At 0 every note is struck alike — a sequencer, which is sometimes the point.
+    ///
+    /// The top of the dial is narrower than the vocabulary it scales: a ghost note is written at
+    /// a little over half strength and played at nine tenths of a normal one, so a part's strokes
+    /// sit within about a tenth of their own level rather than spanning half of it. Playing every
+    /// written difference in full sounded like a band that could not strike two notes alike, and
+    /// most of all on a kit, where every stroke is otherwise the same sound.
     pub dynamics: f32,
     /// How much of a section's last bar the snare runs as a fill, from 0 to 1.
     pub fill: f32,

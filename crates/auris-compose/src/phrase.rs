@@ -523,22 +523,22 @@ mod tests {
         }
 
         // And the wander is the one that was asked for, rather than merely the same at both
-        // tempos. 7.5 ms is `parts`' own `WANDER_MS` of 15 at half the dial; the number is
-        // written out here because that constant is private to the module that decides it, and a
-        // clip agreeing with it is exactly what is at stake — a phrase is meant to be written by
-        // the same machinery as a whole song and to feel like it.
+        // tempos. 3 ms is `parts`' own `WANDER_MS` of 6 at half the dial; the number is written
+        // out here because that constant is private to the module that decides it, and a clip
+        // agreeing with it is exactly what is at stake — a phrase is meant to be written by the
+        // same machinery as a whole song and to feel like it.
         //
         // Fifteen per cent, which is what the song's test allows and for the same reasons: the
         // jitter is clamped at three sigma, a note that leans off the front of the clip is held
         // at tick zero, and twenty notes a take is a sample rather than a distribution. Measured,
-        // the lead sits at 7.55 ms and the comp, which is not asserted on here, at 7.12.
+        // the lead sits at 3.02 ms and the comp, which is not asserted on here, at 2.85.
         for (tempo, measured) in [
             (60.0, spread(&displacements(ClipPreset::Lead, 60.0, 0.5))),
             (180.0, spread(&displacements(ClipPreset::Lead, 180.0, 0.5))),
         ] {
             assert!(
-                (measured - 7.5).abs() < 7.5 * 0.15,
-                "{tempo} BPM: a clip wandered by {measured:.2} ms against the 7.5 asked for"
+                (measured - 3.0).abs() < 3.0 * 0.15,
+                "{tempo} BPM: a clip wandered by {measured:.2} ms against the 3.0 asked for"
             );
         }
     }

@@ -12,7 +12,7 @@ use crate::frame::{Frame, SectionPlan};
 use crate::rhythm::{Accent, DrumVoice};
 use crate::spec::PartSpec;
 
-use super::writer::{bar_stream, dynamic, part_grid, phrase_shape, velocity};
+use super::writer::{bar_stream, dynamic, part_grid, phrase_shape, velocity, width};
 use super::{Draft, ScoreSettings};
 
 /// One drum voice.
@@ -184,7 +184,7 @@ fn fill(
         // being the one crescendo left standing in a part played at one level on purpose.
         let through = (step - from) as f32 / (steps - from).max(1) as f32;
         let mean = 0.70;
-        let rise = mean + (0.45 + 0.5 * through - mean) * settings.dynamics.clamp(0.0, 1.0);
+        let rise = mean + (0.45 + 0.5 * through - mean) * width(settings.dynamics);
         notes.push(Draft {
             section: index,
             // The same note the groove is being played on, or the fill would run on the snare a

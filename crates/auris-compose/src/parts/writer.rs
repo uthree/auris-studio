@@ -61,13 +61,38 @@ pub(super) fn density(settings: &ScoreSettings, part: &PartSpec, section: &Secti
 /// audibly flatter, which is the one thing this is meant not to do.
 const MEAN_WEIGHT: f32 = 1.0;
 
+/// How far apart the composer strikes two notes at the top of the `dynamics` dial, as the
+/// fraction of a written difference in strength that is actually played.
+///
+/// A quarter, because the whole of it was too much. Every difference in strength this crate
+/// writes — the grid hierarchy, a ghost note, the lean across a phrase, the rise through a fill —
+/// arrives as a proportion, and playing all of every one of them put a rock kit's hat between
+/// 0.20 and 1.00. That is five to one on an instrument whose every stroke is the same sound, and
+/// it reads as a drummer who cannot hit the thing evenly rather than as one who is phrasing.
+/// Measured over the eight presets, the velocities of a part were spread by a fifth to nearly a
+/// half of their own level; at a quarter they sit within five to ten per cent of it, which is
+/// where a stroke varies without the variation becoming the thing being listened to.
+///
+/// The proportions are scaled and not replaced, so a ghost is still the quietest thing in the bar
+/// and a downbeat still the loudest. All that changes is how far apart they sit.
+///
+/// A section's intensity is not one of these proportions and keeps the whole of its travel: how
+/// hard a passage is played is a different question from how much one stroke of it varies, and
+/// the answer to the second one is what sounded like bad playing.
+const WIDEST: f32 = 0.25;
+
+/// How much of a written difference in strength is played, from the `dynamics` dial.
+pub(super) fn width(dynamics: f32) -> f32 {
+    dynamics.clamp(0.0, 1.0) * WIDEST
+}
+
 /// A velocity for a note at grid weight `weight` in a section of `intensity`.
 ///
 /// `dynamics` opens the spread *around* the level rather than raising the top of it, which is why
 /// it is measured from a beat and not from zero. Widening it otherwise would quietly play the
 /// whole part louder, and a control that changes two things is a control nobody can aim.
 pub(super) fn velocity(weight: u8, intensity: f32, dynamics: f32) -> f32 {
-    let spread = (f32::from(weight) - MEAN_WEIGHT) * 0.11 * dynamics.clamp(0.0, 1.0);
+    let spread = (f32::from(weight) - MEAN_WEIGHT) * 0.11 * width(dynamics);
     let base = 0.45 + MEAN_WEIGHT * 0.11 + spread;
     (base * (0.7 + 0.35 * intensity)).clamp(0.08, 1.0)
 }
@@ -78,7 +103,7 @@ pub(super) fn velocity(weight: u8, intensity: f32, dynamics: f32) -> f32 {
 /// either side of unity, and flattening the hierarchy while leaving those at full strength would
 /// leave a dial at zero still not flat. This is what makes it mean the same thing everywhere.
 pub(super) fn dynamic(factor: f32, dynamics: f32) -> f32 {
-    1.0 + (factor - 1.0) * dynamics.clamp(0.0, 1.0)
+    1.0 + (factor - 1.0) * width(dynamics)
 }
 
 /// How hard a moment of a section is played, as a multiplier on its notes' velocity.
@@ -321,10 +346,14 @@ mod tests {
             0,
             "at zero every note is struck alike"
         );
+        // Both ends of the claim, because both are the decision. A dial that did nothing at 1
+        // would leave the hierarchy inaudible; a dial that scattered a part across half its own
+        // level is what `WIDEST` was written to stop, and a lead over eight bars sits within a
+        // few per cent of where it sits on average either way.
+        let opened = spread(&wide_levels);
         assert!(
-            spread(&wide_levels) > 10,
-            "at one the hierarchy is barely audible: {} percent",
-            spread(&wide_levels)
+            (4..=15).contains(&opened),
+            "at one the hierarchy is {opened} percent wide, which is not what `WIDEST` asks for"
         );
 
         // And the level stays roughly where it was. Roughly and not exactly: the spread opens
@@ -377,5 +406,61 @@ mod tests {
             off_the_beat(awkward),
             off_the_beat(square)
         );
+    }
+
+    /// How far a part's strokes sit from the level the section is played at, pooled over its
+    /// sections, as a fraction of that level.
+    ///
+    /// Per section and not per part, because a quiet verse followed by a loud chorus is a
+    /// difference in strength nobody would call unsteady — pooling the two would report the shape
+    /// of the piece as unsteadiness. A clip is a section, which is what makes this the measurement
+    /// it looks like.
+    fn stroke_spread(track: &crate::render::TrackDraft) -> f32 {
+        let mut squares = 0.0;
+        let mut counted = 0usize;
+        let mut level = 0.0;
+        for clip in &track.clips {
+            if clip.notes.len() < 2 {
+                continue;
+            }
+            let mean =
+                clip.notes.iter().map(|note| note.velocity).sum::<f32>() / clip.notes.len() as f32;
+            squares += clip
+                .notes
+                .iter()
+                .map(|note| (note.velocity - mean) * (note.velocity - mean))
+                .sum::<f32>();
+            level += mean * clip.notes.len() as f32;
+            counted += clip.notes.len();
+        }
+        if counted == 0 {
+            return 0.0;
+        }
+        (squares / counted as f32).sqrt() / (level / counted as f32)
+    }
+
+    #[test]
+    fn no_preset_varies_one_part_by_more_than_a_stroke_should() {
+        // The complaint this came out of was a kit that sounded badly played rather than humanly
+        // played, and here is what was behind it: a rock hat ran from 0.20 to 1.00 and its strokes
+        // were spread by 43 per cent of their own level, a city-pop snare by 44, a jazz ride by
+        // 43, and every lead in the set by a quarter. A stroke varying is a player phrasing; a
+        // level varying by half is a player missing.
+        //
+        // A sixth, which is a little over the ten per cent this was aimed at: the parts that reach
+        // it are the ghosted grooves, where the quiet strokes are quiet on purpose and are the
+        // whole point of the pattern.
+        for preset in crate::PRESETS {
+            for track in crate::compose(&preset.spec()).tracks {
+                let spread = stroke_spread(&track);
+                assert!(
+                    spread < 0.16,
+                    "{} · {} varies by {:.0} per cent of its own level",
+                    preset.name,
+                    track.name,
+                    spread * 100.0
+                );
+            }
+        }
     }
 }
