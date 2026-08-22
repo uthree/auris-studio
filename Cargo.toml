@@ -2,6 +2,11 @@
 # another. `cargo run` still launches the desktop application through `default-members`.
 [workspace]
 members = ["crates/*"]
+# Somebody else's crate, forked and kept here — see `vendor/rustysynth/README.md`. Out of the
+# workspace on purpose: `--workspace` runs this project's tests, lints and doc build, and holding
+# a third party's code to house rules it was never written against would fail the build over
+# nothing. Its own tests are run from its own directory.
+exclude = ["vendor/rustysynth"]
 default-members = ["crates/auris-gpui"]
 resolver = "3"
 
@@ -61,7 +66,10 @@ rubato = "4.0"
 # Reads SoundFont files *and* plays them. Named once here because two crates share the type:
 # `auris-io` hands out an `Arc<SoundFont>` and `auris-sampler` renders it, and two resolved
 # copies of the library would be two unrelated types with the same name.
-rustysynth = "1.3"
+# Forked: the published crate reads a SoundFont's modulator lists and throws them away, which
+# leaves the shipped font's pianos playing through a filter nothing ever opens. See
+# `vendor/rustysynth/README.md`.
+rustysynth = { path = "vendor/rustysynth" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 symphonia = { version = "0.6", features = ["all"] }

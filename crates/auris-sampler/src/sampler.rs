@@ -91,8 +91,10 @@ const NOMINAL_VOLUME: f32 = 2.0;
 ///
 /// A SoundFont synthesiser makes amplitude proportional to the *square* of MIDI velocity — the
 /// format's default velocity-to-attenuation curve, which rustysynth implements as a fixed
-/// `2 * 20 * log10(velocity / 127)` decibels and which no font can override, because the
-/// modulator chunks that could are discarded when the font is read. Everything else in Auris is
+/// `2 * 20 * log10(velocity / 127)` decibels and which no font can override here: the fork in
+/// `vendor/rustysynth` reads the modulator lists the published crate discards, but deliberately
+/// applies only the two that reach the *filter*, so that a font's own velocity-to-loudness
+/// shaping is not counted twice on top of this curve. Everything else in Auris is
 /// linear: the built-in instruments' voice allocator assigns `level = velocity`, and a built-in
 /// part rendered at 0.56 instead of 1.0 measures -5.04 dB against the sampler's -10.10 dB for
 /// the same part.
@@ -227,10 +229,16 @@ pub fn register_sampler(registry: &mut PluginRegistry, fonts: SharedSoundFonts) 
 /// A velocity chooses a *sample*, not only a level. Raising the number handed to the
 /// synthesiser moves a multi-sampled program up its velocity layers, so a kit or a piano
 /// answers a mid-strength note with a harder recorded hit than it did before — a change of
-/// timbre and not only of level. Of the 142 programs measured in MuseScore General, 19 depart
-/// from the smooth law by more than 1 dB at some velocity and 9 by more than 3 dB, but those
-/// same programs departed by the same amounts before: what linearising moves is the written
-/// velocity each discontinuity sits at, not how large it is.
+/// timbre and not only of level. Swept every third velocity from 40 to 127 across the 128
+/// melodic programs of MuseScore General, one program departs from the smooth law by more than
+/// 3 dB: the jazz guitar, by 4.8 dB, where its layers change. What linearising moves is the
+/// written velocity each discontinuity sits at, not how large it is.
+///
+/// It used to be three programs and 21 dB. The two acoustic pianos and the honky-tonk set a low
+/// filter in their generators and open it with a modulator, and the published rustysynth
+/// discards modulators — so the filter stayed shut and a layer boundary that swapped one static
+/// `modEnvToFilterFc` for another read as a twenty-decibel cliff that *fell* as the note was
+/// struck harder. `vendor/rustysynth` reads them; its README carries the measurement.
 ///
 /// A chord can exceed full scale, and is meant to be able to. One note at velocity 1.0 with the
 /// gain flat peaks around -6 dBFS on a typical program, a triad around -1, and ten fingers

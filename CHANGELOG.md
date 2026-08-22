@@ -9,6 +9,28 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### The shipped font's pianos play
+
+* **`rustysynth` is forked into `vendor/rustysynth`, and reads the modulator lists the published
+  crate discards.** A modulator is how a SoundFont says that a controller reaches a parameter, and
+  the ordinary way to make a sampled sound respond to how hard it is played is to set a filter low
+  in the generators and open it with one driven by velocity. MuseScore General's acoustic pianos do
+  exactly that, so with the modulators thrown away the piano played through a filter nothing ever
+  opened — twenty decibels under every other program in the font, and *falling* by twenty more
+  between MIDI velocity 74 and 76, where a layer boundary swapped one static filter setting for
+  another that the discarded modulators were meant to override. Playing harder made it quieter.
+* One note at middle C now runs -21.1, -20.2, -18.4, -17.6, -14.3, -13.4, -12.1 and -11.3 dBFS
+  across velocities 70 to 115, monotonic and level with the rest of the font. The jazz trio preset,
+  whose piano and lead were both 25 dB under their own bass, composes to -14.1 LUFS instead of
+  -16.9 with no fader running out of travel; it was -27.0 before any of this.
+* Of the 128 melodic programs, 101 are unchanged to the sample, the three acoustic pianos come up
+  19.9, 19.5 and 11.7 dB, and the other 24 move by less than 3 dB.
+* Deliberately partial, and the fork's README says why: only the two filter destinations are read
+  through modulators, only controllers that hold still for the length of a note are modelled, and
+  the specification's own default modulator list is still not implemented. What a font says about
+  loudness with a modulator is left alone, because the velocity-to-attenuation curve the sampler
+  already compensates for would otherwise be counted twice.
+
 ### A composed piece arrives mixed
 
 * **Composing ends by listening to what it wrote.** Every track is rendered on its own, measured as

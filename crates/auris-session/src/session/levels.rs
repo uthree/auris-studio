@@ -387,8 +387,15 @@ mod tests {
             let spec = auris_compose::preset(name)
                 .expect("a shipped preset")
                 .spec();
-            let mut session = Session::new(SessionOptions::headless().with_shipped_fonts(true))
-                .expect("a session opens");
+            // With the library, and *without* the balance pass: the table below is derived from
+            // what the composer wrote, and measuring a piece whose faders have already been set by
+            // measurement would only tell us that they had been.
+            let mut session = Session::new(
+                SessionOptions::headless()
+                    .with_shipped_fonts(true)
+                    .with_balance(false),
+            )
+            .expect("a session opens");
             session
                 .compose(&auris_compose::compose(&spec))
                 .expect("a preset composes");
@@ -532,5 +539,77 @@ mod tests {
             level.now_db,
             report.lift_db
         );
+    }
+
+    /// A program with velocity layers gets louder as it is struck harder.
+    ///
+    /// Ignored for the reason `calibration` above is — it needs the shipped SoundFont, and
+    /// whether that is installed is a fact about the machine:
+    ///
+    /// ```text
+    /// cargo test -p auris-session --lib strikes_harder -- --ignored --nocapture
+    /// ```
+    ///
+    /// It guards the fork in `vendor/rustysynth`. The published crate reads a font's modulator
+    /// lists and throws them away, and MuseScore General's Grand Piano opens its filter with one:
+    /// without it the piano fell *twenty decibels* between MIDI velocity 74 and 76, where a
+    /// velocity layer changes. A dependency bump that quietly took the fork away would put it
+    /// back, and nothing else here would notice — the piece would still compose, still balance,
+    /// and still be wrong.
+    #[test]
+    #[ignore]
+    fn strikes_harder() {
+        use super::super::SessionOptions;
+        use auris_core::time::Ticks;
+        use auris_core::{Note, PresetRef};
+
+        let mut session = Session::new(
+            SessionOptions::headless()
+                .with_shipped_fonts(true)
+                .with_balance(false),
+        )
+        .expect("a session opens");
+        session.install_shipped_fonts();
+        let Some(font) = session.project().soundfonts.keys().next().copied() else {
+            panic!("this test needs the shipped library; see `tools/fetch-soundfonts.sh`");
+        };
+        let track = session
+            .add_default_instrument_track("piano")
+            .expect("a track");
+        session
+            .set_track_preset(
+                track,
+                PresetRef {
+                    font,
+                    bank: 0,
+                    patch: 0,
+                },
+            )
+            .expect("the grand piano");
+        let clip = session
+            .add_midi_clip(track, "one note", Ticks::ZERO, Ticks::from_beats(4.0))
+            .expect("a clip");
+
+        let mut last: Option<(i32, f32)> = None;
+        for midi in [60, 70, 74, 76, 80, 100, 106, 108, 120] {
+            session.remove_notes(clip, &[0]).ok();
+            let mut note = Note::new(60, Ticks::ZERO, Ticks::from_beats(2.0));
+            // Undoing the sampler's own compensation, so the number below is the velocity the
+            // synthesiser is actually handed and the layer boundaries can be named exactly.
+            note.velocity = (midi as f32 / 127.0).powi(2);
+            session.add_note(clip, note).expect("a note");
+            let rendered = session
+                .render_snapshot(session.project().clone())
+                .expect("one note renders");
+            let peak = analyze_loudness_cpu(&rendered).peak_db();
+            if let Some((was_midi, was)) = last {
+                assert!(
+                    peak > was - 0.5,
+                    "struck at {midi} the piano peaked at {peak:.1} dBFS, under the {was:.1} it \
+                     reached at {was_midi} — the font's modulators are not being read"
+                );
+            }
+            last = Some((midi, peak));
+        }
     }
 }

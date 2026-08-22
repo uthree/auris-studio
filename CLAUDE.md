@@ -35,6 +35,18 @@ keep them alive:
 wgpu's `dx12` backend is off because it does not compile at these versions — `gpu-allocator`
 resolves `windows` to 0.61 while `wgpu-hal` uses 0.62. Windows runs `auris-gpu` on Vulkan.
 
+## The vendored synthesiser
+
+`rustysynth` is a **fork**, kept in `vendor/rustysynth` and excluded from the workspace so that
+`--workspace` does not hold somebody else's code to this project's lints and doc rules. The
+published crate discards a SoundFont's modulator lists, which left the shipped font's pianos
+playing through a filter nothing ever opened — twenty decibels down, and *falling* as the note was
+struck harder. `vendor/rustysynth/README.md` is the account: what was added, what was deliberately
+left out, and the measurement.
+
+Its own tests run from its own directory. Two of the upstream ones fail there, because they want
+SoundFont files the published crate does not ship.
+
 ## Layout
 
 The rules below are the short form, kept here because they are needed on every task and a page
@@ -44,6 +56,7 @@ it gets edited first: when the two disagree, the guide is right and this is stal
 
 ```
 Cargo.toml               virtual manifest; `default-members` points at the desktop app
+vendor/rustysynth        somebody else's crate, forked — see its README; excluded from the workspace
 crates/auris-core        types, music theory, plugin traits, project model — no local dependencies
 crates/auris-dsp         effects and DSP primitives
 crates/auris-synth       built-in chiptune instruments; depends on auris-dsp

@@ -565,6 +565,16 @@ been looked at is still unmodified. And because a project saved on one machine n
 reference most likely to break when a project is sent to somebody else is also the one that always
 has an answer.
 
+**Its pianos work now.** A SoundFont says how a sound answers the way it is played partly in
+*modulators* — "this controller reaches that parameter" — and the synthesiser library this is built
+on read them and threw them away. MuseScore General's acoustic pianos set a filter low and open it
+with a modulator driven by velocity, so without them the piano played through a filter nothing ever
+opened: twenty decibels under everything else in the font, and *quieter* the harder it was struck,
+because a velocity-layer boundary sat in the middle of the range. The library is forked in
+`vendor/rustysynth` and reads them; the piano now gets louder and brighter as you lean on it, like
+the other hundred and twenty-seven programs always did. Of those, a hundred and one are unchanged
+to the sample and the rest move by less than 3 dB.
+
 ## Importing a SoundFont of your own
 
 **File → Import SoundFont…** — or dropping the file on the window — reads an `.sf2` and puts its
