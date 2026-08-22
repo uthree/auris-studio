@@ -34,7 +34,7 @@
 //! somebody a syllable rather than costing them a take. It is the opposite of the call
 //! [`capture`](crate::capture) makes for the recording itself, and for the opposite reason.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use auris_core::AudioBuffer;
 use cpal::{FromSample, Sample};
@@ -88,6 +88,8 @@ pub struct MonitorRing {
     /// Times the reader had to re-seat itself: the writer stalled, or lapped it, or drift closed
     /// the gap. Each one is a short silence somebody heard.
     rebuffers: AtomicU64,
+    /// The first device channel to listen to. See [`Self::set_source`].
+    source: AtomicUsize,
 }
 
 impl MonitorRing {
@@ -103,7 +105,21 @@ impl MonitorRing {
             input_rate: input_rate.max(1.0),
             enabled: AtomicBool::new(false),
             rebuffers: AtomicU64::new(0),
+            source: AtomicUsize::new(0),
         }
+    }
+
+    /// Points the monitor at the device channel a take would read from.
+    ///
+    /// The first channel of the pair; the one beside it comes with it. What makes monitoring a
+    /// track armed to input 5 play input 5 rather than the microphone on input 1 — a monitor that
+    /// listened somewhere other than where the take was going would be a level meter for the
+    /// wrong signal.
+    ///
+    /// One ring, so one answer: monitoring is one track at a time, and pointing it somewhere is
+    /// what re-pointing it costs.
+    pub fn set_source(&self, first: usize) {
+        self.source.store(first, Ordering::Relaxed);
     }
 
     /// Whether the renderer should be mixing this in.
@@ -133,9 +149,9 @@ impl MonitorRing {
 
     /// Accepts one input callback's worth of interleaved samples.
     ///
-    /// Takes the device's own format, so the conversion happens once. Anything past the second
-    /// channel is dropped and a mono device is fanned across both, which is what makes a laptop
-    /// microphone monitor in the middle rather than hard left.
+    /// Takes the device's own format, so the conversion happens once. Two channels of it, from
+    /// wherever [`set_source`](Self::set_source) points; a mono device is fanned across both,
+    /// which is what makes a laptop microphone monitor in the middle rather than hard left.
     pub fn write<T>(&self, block: &[T], channels: usize)
     where
         T: Copy,
@@ -149,13 +165,19 @@ impl MonitorRing {
         if frames == 0 {
             return;
         }
+        let pair = monitor_pair(self.source.load(Ordering::Relaxed), channels);
         let written = self.written.load(Ordering::Relaxed);
         for frame in 0..frames {
             let base = frame * channels;
-            let left = f32::from_sample(block[base]);
-            let right = match channels > 1 {
-                true => f32::from_sample(block[base + 1]),
-                false => left,
+            // Silent rather than substituted when the channel is not there: a track pointed at an
+            // input the device does not have records silence, and hearing the first channel in
+            // its place would hide that until the take was over.
+            let (left, right) = match pair {
+                Some((left, right)) => (
+                    f32::from_sample(block[base + left]),
+                    f32::from_sample(block[base + right]),
+                ),
+                None => (0.0, 0.0),
             };
             let slot = ((written + frame as u64) % RING_FRAMES as u64) as usize * CHANNELS;
             self.samples[slot].store(left.to_bits(), Ordering::Relaxed);
@@ -232,6 +254,20 @@ impl MonitorRing {
         let slot = (frame % RING_FRAMES as u64) as usize * CHANNELS + channel;
         f32::from_bits(self.samples[slot].load(Ordering::Relaxed))
     }
+}
+
+/// Which two samples of a frame the monitor takes, counting from the channel it was pointed at.
+///
+/// The pair starting at `first`, or that one channel twice where the device has nothing beside it
+/// — a mono interface, or the last channel of an odd-numbered one. `None` when the device has no
+/// such channel at all, which is the case worth having a rule for: an arm can name an input that
+/// was there when it was made and is not there now, and the answer to that is silence rather than
+/// somebody else's microphone.
+///
+/// A free function because it is the whole of the rule, and a rule inside a callback is a rule
+/// with no test.
+fn monitor_pair(first: usize, channels: usize) -> Option<(usize, usize)> {
+    (first < channels).then(|| (first, (first + 1).min(channels - 1)))
 }
 
 /// What the reader should do with the block it has been asked for.
@@ -540,5 +576,58 @@ mod tests {
             Seat::Reseat(at) => assert!(at >= 490, "it re-seated back to {at}"),
             other => assert_eq!(other, Seat::Wait),
         }
+    }
+
+    #[test]
+    fn the_pair_the_monitor_takes_starts_where_it_was_pointed() {
+        // The ordinary interface: the first two channels, which is where an unpointed monitor and
+        // a track armed to input 1 both land.
+        assert_eq!(monitor_pair(0, 2), Some((0, 1)));
+        assert_eq!(monitor_pair(2, 8), Some((2, 3)));
+        // A mono device, and the last channel of an odd-numbered one: the same channel twice, so
+        // it is heard in the middle rather than hard left.
+        assert_eq!(monitor_pair(0, 1), Some((0, 0)));
+        assert_eq!(monitor_pair(2, 3), Some((2, 2)));
+        // An input that is not there.
+        assert_eq!(monitor_pair(2, 2), None);
+        assert_eq!(monitor_pair(0, 0), None);
+    }
+
+    #[test]
+    fn a_monitor_pointed_at_a_later_channel_hears_that_one() {
+        // A four-input interface with the take on inputs 3 and 4. Every channel carries its own
+        // number, so what came through says which one it was.
+        let ring = ring(48_000.0);
+        ring.set_source(2);
+        let block: Vec<f32> = (0..4_096).flat_map(|_| [0.1_f32, 0.2, 0.3, 0.4]).collect();
+        ring.write(&block, 4);
+
+        let mut buffer = out(64);
+        ring.read_into(&mut buffer, 48_000.0);
+        assert!(
+            (buffer.channel(0)[0] - 0.3).abs() < 1.0e-3,
+            "the left came out as {}",
+            buffer.channel(0)[0]
+        );
+        assert!(
+            (buffer.channel(1)[0] - 0.4).abs() < 1.0e-3,
+            "the right came out as {}",
+            buffer.channel(1)[0]
+        );
+    }
+
+    #[test]
+    fn a_monitor_pointed_past_the_last_channel_hears_nothing() {
+        // Not the first channel in its place. An arm can name an input that was there when the
+        // interface was plugged in and is not there now, and a monitor that quietly played the
+        // microphone instead would pass for a working take until it was over.
+        let ring = ring(48_000.0);
+        ring.set_source(6);
+        let block: Vec<f32> = (0..4_096).flat_map(|_| [0.5_f32, 0.5]).collect();
+        ring.write(&block, 2);
+
+        let mut buffer = out(64);
+        ring.read_into(&mut buffer, 48_000.0);
+        assert_eq!(buffer.peak(), 0.0);
     }
 }

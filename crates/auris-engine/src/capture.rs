@@ -427,6 +427,7 @@ impl CaptureSink {
             Ordering::Relaxed,
         );
 
+        let channels = self.channels.max(1);
         while !data.is_empty() {
             let Ok(mut buffer) = self.empty.try_recv() else {
                 // The pool is empty: the reader has not run in over a second. Dropping is the
@@ -437,12 +438,17 @@ impl CaptureSink {
                     .fetch_add(data.len() as u64, Ordering::Relaxed);
                 return;
             };
-            let take = data.len().min(buffer.capacity());
+            // Whole frames, never a fraction of one. The block a reader is handed is split by
+            // channel — one file per armed track — and a buffer that ended half way through a
+            // frame would put the next block's first channel where the last one's second was.
+            // Rounding down costs at most `channels - 1` samples out of four thousand.
+            let room = (buffer.capacity() - buffer.capacity() % channels).max(1);
+            let take = data.len().min(room);
             // `clear` then `extend` over an exact-size iterator: the capacity is already there,
             // so this is a conversion and a copy with no allocation in it.
             buffer.clear();
             buffer.extend(data[..take].iter().map(|sample| f32::from_sample(*sample)));
-            let frames = (take / self.channels.max(1)) as u64;
+            let frames = (take / channels) as u64;
             match self.full.try_send(buffer) {
                 Ok(()) => self.shared.frames.fetch_add(frames, Ordering::Relaxed),
                 Err(_) => self
@@ -728,6 +734,32 @@ mod tests {
         sink.push(&block);
         assert_eq!(drained(&mut reader).len(), block.len());
         assert_eq!(capture.dropped_frames(), 0);
+    }
+
+    #[test]
+    fn a_split_block_is_cut_between_frames_and_never_through_one() {
+        // Three channels, because a pooled buffer holds 4096 samples and three does not divide
+        // it. Whoever drains this splits each block by channel to write one file per armed
+        // track, and a block that began half way through a frame would file every channel one
+        // place along for the rest of the take.
+        let channels = 3;
+        let (_capture, mut reader, mut sink, _) = wired(channels);
+        // Whole frames going in, because that is what a device delivers.
+        let frames = POOL_SAMPLES * 2 / channels;
+        let block: Vec<f32> = (0..frames * channels).map(|n| n as f32).collect();
+        sink.push(&block);
+
+        let mut lengths = Vec::new();
+        let mut all = Vec::new();
+        reader.drain(|part| {
+            lengths.push(part.len());
+            all.extend_from_slice(part);
+        });
+        for length in &lengths {
+            assert_eq!(length % channels, 0, "a block of {length} split a frame");
+        }
+        // And nothing was lost or reordered on the way through.
+        assert_eq!(all, block);
     }
 
     #[test]
