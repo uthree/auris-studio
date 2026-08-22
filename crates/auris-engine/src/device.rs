@@ -520,6 +520,12 @@ pub(crate) struct AudioEngine {
     /// capture stamps together, at the first block that reaches it, can. This is the other half
     /// of that pair.
     count_in: Arc<AtomicU64>,
+    /// Whether the last callback had a count-in running, so the end of one is published once.
+    ///
+    /// The cell above is written from both threads and this is what keeps them out of each
+    /// other's way: the audio thread only writes it while it is counting, and for the one
+    /// callback that finishes a count.
+    counting_in: bool,
     meters: Arc<MeterBank>,
     /// Mirrors `transport.playing` for the UI, published once per callback.
     playing: Arc<AtomicBool>,
@@ -562,6 +568,7 @@ impl AudioEngine {
             retired: Vec::with_capacity(RETIRED_GRAPH_SLOTS),
             playhead,
             count_in,
+            counting_in: false,
             meters,
             playing,
             latency_stale,
@@ -612,10 +619,23 @@ impl AudioEngine {
 
         self.playhead
             .store(self.transport.position_frames, Ordering::Relaxed);
-        self.count_in.store(
-            self.transport.frames_to_count_in_end().unwrap_or(0),
-            Ordering::Relaxed,
-        );
+        // Only while there is a count to report, and once more when it ends. Publishing a zero
+        // every callback would look harmless and is the one thing this cell must not do: the UI
+        // thread writes the count it is *about* to ask for before sending the command, because an
+        // input stream can hand over its first block before the audio thread has picked the
+        // command up — and a callback in that gap would overwrite the figure with a zero, which
+        // reads as "the count is over" and leaves a whole count-in at the head of the take.
+        match self.transport.frames_to_count_in_end() {
+            Some(left) => {
+                self.count_in.store(left, Ordering::Relaxed);
+                self.counting_in = true;
+            }
+            None if self.counting_in => {
+                self.count_in.store(0, Ordering::Relaxed);
+                self.counting_in = false;
+            }
+            None => {}
+        }
         self.playing
             .store(self.transport.playing, Ordering::Relaxed);
     }
@@ -826,6 +846,7 @@ where
 mod tests {
     use super::*;
     use crate::testkit::{self, TONE_AMPLITUDE};
+    use crate::transport::CountIn;
     use auris_core::ParamId;
     use auris_core::project::{AudioSourceBank, Note, Project};
     use auris_core::time::Ticks;
@@ -880,6 +901,96 @@ mod tests {
             256,
         );
         (engine, command_tx, graph_rx, meters, playhead)
+    }
+
+    /// The same, with the count-in cell handed back as well.
+    ///
+    /// The return queue comes back too, and only because it must outlive the engine: a receiver
+    /// dropped early turns every retired graph into a stash entry, which is another test's
+    /// subject and noise in this one.
+    #[allow(clippy::type_complexity)]
+    fn counting_engine() -> (
+        AudioEngine,
+        Sender<EngineCommand>,
+        Arc<AtomicU64>,
+        Receiver<Box<RenderGraph>>,
+    ) {
+        let (command_tx, command_rx) = crossbeam_channel::bounded(16);
+        let (graph_tx, graph_rx) = crossbeam_channel::bounded(16);
+        let count_in = Arc::new(AtomicU64::new(0));
+        let engine = AudioEngine::new(
+            command_rx,
+            graph_tx,
+            Arc::new(AtomicU64::new(0)),
+            Arc::clone(&count_in),
+            Arc::new(MeterBank::new(8)),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+            SAMPLE_RATE,
+            2,
+            256,
+        );
+        (engine, command_tx, count_in, graph_rx)
+    }
+
+    #[test]
+    fn a_count_in_that_has_been_asked_for_is_not_published_away_before_it_arrives() {
+        // The bug this exists for: a take opens the moment Record is pressed, and its first block
+        // of audio can reach the capture before the audio thread has picked the command up. The
+        // count is therefore written down by the thread that asked for it — and a callback in
+        // that gap must not put a zero back over it, which reads as "the count is over" and
+        // leaves a whole count-in at the head of the take.
+        let (mut engine, commands, count_in, _graphs) = counting_engine();
+        commands.send(EngineCommand::SetGraph(graph())).unwrap();
+        let mut data = [0.0f32; 512];
+
+        count_in.store(1_000, Ordering::Relaxed);
+        engine.fill(&mut data);
+        assert_eq!(
+            count_in.load(Ordering::Relaxed),
+            1_000,
+            "the callback published a zero over a count that had been asked for"
+        );
+
+        // Once the command lands, the audio thread owns the figure and counts it down. 512
+        // samples of interleaved stereo is 256 frames.
+        commands
+            .send(EngineCommand::CountIn(CountIn::new(1, 1_000, 1)))
+            .unwrap();
+        commands.send(EngineCommand::Play).unwrap();
+        engine.fill(&mut data);
+        assert_eq!(count_in.load(Ordering::Relaxed), 744);
+
+        // And the end of the count is published, once, so the take after this one is not trimmed
+        // by a count nobody played.
+        for _ in 0..4 {
+            engine.fill(&mut data);
+        }
+        assert_eq!(count_in.load(Ordering::Relaxed), 0);
+        count_in.store(2_000, Ordering::Relaxed);
+        engine.fill(&mut data);
+        assert_eq!(
+            count_in.load(Ordering::Relaxed),
+            2_000,
+            "the cell was not left alone"
+        );
+    }
+
+    #[test]
+    fn a_cancelled_count_in_is_published_as_over() {
+        let (mut engine, commands, count_in, _graphs) = counting_engine();
+        commands.send(EngineCommand::SetGraph(graph())).unwrap();
+        let mut data = [0.0f32; 512];
+        commands
+            .send(EngineCommand::CountIn(CountIn::new(8, 24_000, 4)))
+            .unwrap();
+        commands.send(EngineCommand::Play).unwrap();
+        engine.fill(&mut data);
+        assert!(count_in.load(Ordering::Relaxed) > 0);
+
+        commands.send(EngineCommand::Stop).unwrap();
+        engine.fill(&mut data);
+        assert_eq!(count_in.load(Ordering::Relaxed), 0);
     }
 
     #[test]

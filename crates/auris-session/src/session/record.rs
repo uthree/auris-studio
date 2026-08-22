@@ -686,9 +686,8 @@ impl Session {
         // first block arriving in the gap between the command and the audio thread picking it up
         // finds a count rather than a zero — see `EngineHandle::expect_count_in`.
         let count = self.count_in();
-        if let Some(count) = count {
-            self.engine.expect_count_in(count.remaining_frames);
-        }
+        self.engine
+            .expect_count_in(count.map_or(0, |count| count.remaining_frames));
 
         // Last, so the callback starts feeding the pool with a writer already draining it.
         self.input

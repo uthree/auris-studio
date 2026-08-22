@@ -80,8 +80,12 @@ impl EngineHandle {
     /// conclude the count was over — and a take trimmed by nothing is a take that begins a whole
     /// count-in early, which is the one way this can be wrong that anybody would notice.
     ///
-    /// So the count is written down *before* it is sent, and the audio thread overwrites it with
-    /// the truth from its very next block onwards.
+    /// So the count is written down *before* it is sent, and the audio thread only overwrites it
+    /// once it has a count of its own to report — publishing a zero every callback would put the
+    /// figure back before the command it is waiting for ever arrived.
+    ///
+    /// Every take declares one, zero included. A take that followed one which was cancelled part
+    /// way through its count would otherwise find that count still written down here.
     pub fn expect_count_in(&self, frames: u64) {
         self.count_in.store(frames, Ordering::Relaxed);
     }
