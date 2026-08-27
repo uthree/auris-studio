@@ -679,7 +679,13 @@ pub fn start_capture(
 
     let on_error = {
         let shared = Arc::clone(&shared);
+        // Same discrimination as the output stream: a rerouted default device keeps recording,
+        // and declaring it dead would paint "device lost" over a take that is landing fine.
         move |error: cpal::Error| {
+            if crate::device::stream_survives(error.kind()) {
+                log::warn!("audio input notice: {error}; the recording stream keeps running");
+                return;
+            }
             shared.running.store(false, Ordering::Relaxed);
             log::error!("audio input error: {error}; the recording stream is dead");
         }

@@ -456,6 +456,21 @@ fn supports_rate(
     }
 }
 
+/// Whether the stream is still running after reporting this error.
+///
+/// cpal's error callback carries more than deaths. `DeviceChanged` is the default device being
+/// rerouted under a still-running stream — its own documentation says no rebuild is required —
+/// and `RealtimeDenied` is a refused scheduling promotion on a stream that keeps playing.
+/// Treating those as fatal would clear `running` while the audio thread is still consuming the
+/// command queue, and [`AudioDevice::discard_pending`] would then start draining commands out
+/// from under it: two consumers on one queue, every later command landing on either at random.
+pub(crate) fn stream_survives(kind: cpal::ErrorKind) -> bool {
+    matches!(
+        kind,
+        cpal::ErrorKind::DeviceChanged | cpal::ErrorKind::RealtimeDenied
+    )
+}
+
 fn build_stream(
     device: &cpal::Device,
     config: StreamConfig,
@@ -468,8 +483,13 @@ fn build_stream(
     // callback for good while the stream object lives on, and everything reading `is_running`
     // would go on seeing a live engine: the playhead frozen, the queue filling, every later
     // command silently refused. Clearing the flag is what turns "the device is gone" into a
-    // state the rest of the application can see.
+    // state the rest of the application can see — but only for an error that really is a
+    // death; see `stream_survives`.
     let on_error = move |error: cpal::Error| {
+        if stream_survives(error.kind()) {
+            log::warn!("audio stream notice: {error}; the stream keeps running");
+            return;
+        }
         running.store(false, Ordering::Relaxed);
         log::error!("audio stream error: {error}; the output stream is dead");
     };
@@ -852,6 +872,21 @@ mod tests {
     use auris_core::time::Ticks;
 
     const SAMPLE_RATE: f64 = 48_000.0;
+
+    #[test]
+    fn a_rerouted_default_device_is_not_a_dead_stream() {
+        // cpal documents both of these as errors the stream survives; treating them as deaths
+        // hands the command queue to `discard_pending` while the callback is still consuming it.
+        assert!(stream_survives(cpal::ErrorKind::DeviceChanged));
+        assert!(stream_survives(cpal::ErrorKind::RealtimeDenied));
+    }
+
+    #[test]
+    fn a_lost_device_still_kills_the_stream() {
+        assert!(!stream_survives(cpal::ErrorKind::DeviceNotAvailable));
+        assert!(!stream_survives(cpal::ErrorKind::StreamInvalidated));
+        assert!(!stream_survives(cpal::ErrorKind::HostUnavailable));
+    }
 
     fn held_note_project() -> Project {
         let mut project = Project::new("Device", SAMPLE_RATE);
