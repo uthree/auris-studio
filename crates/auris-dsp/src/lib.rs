@@ -25,6 +25,31 @@ mod bank;
 /// 480, and a delay set to a whole number of samples would then interpolate between two taps.
 pub(crate) const MILLISECONDS_PER_SECOND: f32 = 1_000.0;
 
+/// State below this magnitude is flushed to zero by [`settled`].
+///
+/// Well above the largest subnormal `f32` (about 1.2e-38) and far below anything audible, so a
+/// decaying filter tail cannot drag the audio thread into microcoded denormal arithmetic.
+pub(crate) const DENORMAL_FLOOR: f32 = 1.0e-30;
+
+/// A recirculating state variable, settled: denormals flushed to zero, and NaN or infinity
+/// replaced by it.
+///
+/// Every feedback loop in the crate passes its state through this. The denormal half is about
+/// speed — see [`DENORMAL_FLOOR`]. The non-finite half is about recovery: arithmetic never
+/// clears a NaN (`0.0 * NaN` is still `NaN`, and a NaN fails every comparison a plain flush
+/// could ask), so one non-finite sample from a broken import or a misbehaving plugin would
+/// otherwise latch the loop silent until `reset` — long after the audio itself recovered, with
+/// nothing on screen to say why. Zeroed, the loop heals itself within one pass: the same answer
+/// [`EnvelopeFollower::process`] and [`DelayLine::read`] give a non-finite value.
+#[inline]
+pub(crate) fn settled(value: f32) -> f32 {
+    if value.is_finite() && value.abs() >= DENORMAL_FLOOR {
+        value
+    } else {
+        0.0
+    }
+}
+
 pub mod adsr;
 pub mod biquad;
 pub mod compressor;

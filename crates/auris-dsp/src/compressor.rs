@@ -217,7 +217,9 @@ impl Compressor {
             } else {
                 self.release_coefficient
             };
-            self.gain_db = target_db + (self.gain_db - target_db) * coefficient;
+            // Settled because the gain recirculates: `peak_at` keeps the level finite, but a
+            // NaN that found any other way in would otherwise sit in this line for ever.
+            self.gain_db = crate::settled(target_db + (self.gain_db - target_db) * coefficient);
 
             let gain = db_to_gain(self.gain_db + makeup_db);
             for channel in buffer.channels_mut() {
@@ -238,6 +240,11 @@ fn peak_at(buffer: &AudioBuffer, frame: usize) -> f32 {
         .iter()
         .filter_map(|channel| channel.get(frame))
         .fold(0.0f32, |peak, sample| peak.max(sample.abs()))
+        // An infinite sample reads as "as loud as a number gets" rather than poisoning the dB
+        // arithmetic: `gain_to_db(f32::MAX)` is about 770 dB and finite, and the compressor
+        // answers it by closing, which is the right answer to an infinitely loud input. A NaN
+        // never survives the fold at all — `max` keeps the other operand.
+        .min(f32::MAX)
 }
 
 #[cfg(test)]
@@ -466,5 +473,26 @@ mod tests {
         let mut buffer = AudioBuffer::stereo(512, SR);
         plugin.process(&mut buffer, &context(512));
         assert_eq!(buffer.peak(), 0.0);
+    }
+
+    #[test]
+    fn an_infinite_sample_closes_the_compressor_instead_of_breaking_it() {
+        // `gain_to_db(inf)` is infinite, and infinity arithmetic lands the smoothed gain on
+        // NaN — where it used to stay for ever, muting every later block. Read as "as loud as
+        // a number gets", the burst just slams the gain down, and the release brings it back.
+        let mut plugin = keyed();
+        let frames = 24_000;
+
+        let mut burst = constant(frames, 0.1);
+        burst.channel_mut(0)[100] = f32::INFINITY;
+        plugin.process(&mut burst, &context(frames));
+
+        // -30 dB sits 10 dB under the threshold: once the release has run, it has to come
+        // through untouched rather than through a latched NaN gain.
+        let mut buffer = constant(frames, db_to_gain(-30.0));
+        plugin.process(&mut buffer, &context(frames));
+        assert!(buffer.channel(0).iter().all(|s| s.is_finite()));
+        let out_db = gain_to_db(buffer.slice(frames - 1_000, 1_000).peak());
+        assert!((out_db + 30.0).abs() < 0.1, "output settled at {out_db} dB");
     }
 }

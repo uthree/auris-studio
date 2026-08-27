@@ -50,9 +50,6 @@ const MAX_PRE_DELAY_MS: f32 = 200.0;
 /// Ceiling on the reported tail so a maximum-size room does not add a minute to every export.
 const MAX_TAIL_SECONDS: f32 = 10.0;
 
-/// State below this magnitude is flushed; see [`crate::biquad`] for the reasoning.
-const DENORMAL_FLOOR: f32 = 1.0e-30;
-
 /// A low-pass damped feedback comb filter.
 struct Comb {
     buffer: Vec<f32>,
@@ -78,11 +75,11 @@ impl Comb {
     /// `damp` is the low-pass coefficient inside the feedback path; `feedback` sets the decay.
     #[inline]
     fn process(&mut self, input: f32, feedback: f32, damp: f32) -> f32 {
-        let output = self.buffer[self.index];
-        self.filter_store = output * (1.0 - damp) + self.filter_store * damp;
-        if self.filter_store.abs() < DENORMAL_FLOOR {
-            self.filter_store = 0.0;
-        }
+        // The read is settled — see `crate::settled` — so a non-finite slot (one bad input
+        // sample, a lap ago) re-enters neither the feedback path nor the wet sum. The slot
+        // itself heals when this lap's write reaches it.
+        let output = crate::settled(self.buffer[self.index]);
+        self.filter_store = crate::settled(output * (1.0 - damp) + self.filter_store * damp);
         self.buffer[self.index] = input + self.filter_store * feedback;
         self.index += 1;
         if self.index >= self.buffer.len() {
@@ -113,7 +110,8 @@ impl Allpass {
 
     #[inline]
     fn process(&mut self, input: f32) -> f32 {
-        let buffered = self.buffer[self.index];
+        // Settled for the same reason the comb's read is: this slot feeds its own next value.
+        let buffered = crate::settled(self.buffer[self.index]);
         let output = buffered - input;
         self.buffer[self.index] = input + buffered * ALLPASS_FEEDBACK;
         self.index += 1;
@@ -611,5 +609,35 @@ mod tests {
         let mut buffer = AudioBuffer::stereo(4_096, SR);
         plugin.process(&mut buffer, &context(4_096));
         assert_eq!(buffer.peak(), 0.0);
+    }
+
+    #[test]
+    fn a_non_finite_sample_does_not_silence_the_tail() {
+        // A NaN reaching a comb used to poison its whole ring within one lap — for good, since
+        // no arithmetic clears a NaN and `feedback * 0` never gets the chance — and the reverb
+        // fell silent until reset. The reads are settled now, so the network heals and a later
+        // impulse still grows a tail.
+        let mut plugin = prepared();
+        plugin.set_param_by_key("mix", 1.0);
+
+        let mut poisoned = impulse(4_800);
+        poisoned.channel_mut(0)[1] = f32::NAN;
+        poisoned.channel_mut(1)[1] = f32::INFINITY;
+        plugin.process(&mut poisoned, &context(4_800));
+        // The poisoned frame itself passes through — the dry term is `NaN * 0.0`, and hiding a
+        // source's own bad sample is the master sanitize's job — but it must not spread.
+        let leaked = poisoned
+            .channel(0)
+            .iter()
+            .enumerate()
+            .filter(|(frame, sample)| *frame != 1 && !sample.is_finite())
+            .count();
+        assert_eq!(leaked, 0, "the poison spread beyond its own frame");
+
+        let mut buffer = impulse(48_000);
+        plugin.process(&mut buffer, &context(48_000));
+        assert!(buffer.channel(0).iter().all(|s| s.is_finite()));
+        let tail = buffer.slice(2_400, 4_800).channel_rms(0);
+        assert!(tail > 1e-4, "the tail never came back: {tail}");
     }
 }

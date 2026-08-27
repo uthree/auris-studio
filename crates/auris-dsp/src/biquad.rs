@@ -282,12 +282,6 @@ pub struct Biquad {
     s2: f32,
 }
 
-/// State below this magnitude is flushed to zero.
-///
-/// Well above the largest subnormal `f32` (about 1.2e-38) and far below anything audible, so
-/// a decaying filter tail cannot drag the audio thread into microcoded denormal arithmetic.
-const DENORMAL_FLOOR: f32 = 1.0e-30;
-
 impl Default for Biquad {
     fn default() -> Self {
         Self::new(BiquadCoefficients::identity())
@@ -323,16 +317,14 @@ impl Biquad {
     /// Filters one sample.
     #[inline]
     pub fn process_sample(&mut self, input: f32) -> f32 {
+        // Silence, not arithmetic: both state taps recirculate through every later output, so
+        // one non-finite input would latch the filter — see `crate::settled`, which also
+        // flushes the taps' denormal tails on the way through.
+        let input = if input.is_finite() { input } else { 0.0 };
         let c = &self.coefficients;
         let output = c.b0 * input + self.s1;
-        self.s1 = c.b1 * input - c.a1 * output + self.s2;
-        self.s2 = c.b2 * input - c.a2 * output;
-        if self.s1.abs() < DENORMAL_FLOOR {
-            self.s1 = 0.0;
-        }
-        if self.s2.abs() < DENORMAL_FLOOR {
-            self.s2 = 0.0;
-        }
+        self.s1 = crate::settled(c.b1 * input - c.a1 * output + self.s2);
+        self.s2 = crate::settled(c.b2 * input - c.a2 * output);
         output
     }
 
@@ -554,6 +546,27 @@ mod tests {
                     "{name} at {frequency} Hz: curve {predicted} dB, audio {measured} dB"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_non_finite_sample_does_not_latch_the_filter() {
+        // One NaN used to sit in the state taps for ever — every later output NaN, and the
+        // denormal flush blind to it, a NaN failing every comparison — so one bad sample
+        // silenced the band until reset. The filter has to keep answering afterwards.
+        for poison in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut filter = Biquad::new(BiquadCoefficients::peaking(SR, 1_000.0, 1.0, 6.0));
+            filter.process_sample(0.5);
+            filter.process_sample(poison);
+
+            let step = std::f32::consts::TAU * 1_000.0 / SR as f32;
+            let mut peak = 0.0f32;
+            for n in 0..1_000 {
+                let output = filter.process_sample((step * n as f32).sin());
+                assert!(output.is_finite(), "{poison}: output went non-finite");
+                peak = peak.max(output.abs());
+            }
+            assert!(peak > 0.5, "{poison}: the filter never recovered ({peak})");
         }
     }
 }

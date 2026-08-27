@@ -227,6 +227,27 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
         )));
     }
 
+    // A broken float file carries NaN and infinity as readily as audio — the bit pattern *is*
+    // the sample — and one such sample is enough to latch every feedback filter it later flows
+    // through. Read as silence at the door, the way the export path writes it, so the poison
+    // never enters the project at all. Counted rather than silent: a file that needed this is
+    // a file worth a line in the log.
+    let mut poisoned = 0usize;
+    for channel in &mut channels {
+        for sample in channel.iter_mut() {
+            if !sample.is_finite() {
+                *sample = 0.0;
+                poisoned += 1;
+            }
+        }
+    }
+    if poisoned > 0 {
+        log::warn!(
+            "{poisoned} non-finite samples in {} were read as silence",
+            path.display()
+        );
+    }
+
     let channel_count = channels.len();
     let buffer = AudioBuffer::from_planar(channels, sample_rate)
         .map_err(|e| IoError::Decode(e.to_string()))?;
@@ -462,6 +483,37 @@ mod tests {
         for expected in ["wav", "flac", "mp3", "ogg", "m4a", "aiff"] {
             assert!(extensions.contains(&expected), "missing `{expected}`");
         }
+    }
+
+    #[test]
+    fn non_finite_samples_read_as_silence() {
+        // The exporter refuses to write these, so the file is built by hand: a minimal 32-bit
+        // float WAV whose middle samples are a NaN and an infinity, which a broken encoder
+        // writes as readily as audio — the bit pattern *is* the sample. One of them is enough
+        // to latch a feedback filter downstream, so the importer has to read them as silence.
+        let file = TempFile::new("poisoned.wav");
+        let samples = [0.25f32, f32::NAN, f32::NEG_INFINITY, -0.25];
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&52u32.to_le_bytes());
+        bytes.extend_from_slice(b"WAVE");
+        bytes.extend_from_slice(b"fmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&3u16.to_le_bytes()); // IEEE float
+        bytes.extend_from_slice(&1u16.to_le_bytes()); // mono
+        bytes.extend_from_slice(&48_000u32.to_le_bytes());
+        bytes.extend_from_slice(&(48_000u32 * 4).to_le_bytes());
+        bytes.extend_from_slice(&4u16.to_le_bytes());
+        bytes.extend_from_slice(&32u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        for sample in samples {
+            bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+        std::fs::write(file.path(), &bytes).unwrap();
+
+        let decoded = decode_audio_file(file.path()).unwrap();
+        assert_eq!(decoded.buffer.channel(0), &[0.25, 0.0, 0.0, -0.25]);
     }
 
     #[test]

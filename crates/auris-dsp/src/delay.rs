@@ -199,11 +199,13 @@ impl Effect for Delay {
             for (left_sample, right_sample) in left.iter_mut().zip(right.iter_mut()) {
                 let delay = self.time.next_value();
                 let mix = self.mix.next_value();
-                let delayed_left = left_line.read(delay);
-                let delayed_right = right_line.read(delay);
+                // Settled reads: a non-finite slot in the ring (one bad input sample) stays out
+                // of both the wet mix and the feedback path, and heals when overwritten.
+                let delayed_left = crate::settled(left_line.read(delay));
+                let delayed_right = crate::settled(right_line.read(delay));
 
-                left_damp = flushed(left_damp + alpha * (delayed_right - left_damp));
-                right_damp = flushed(right_damp + alpha * (delayed_left - right_damp));
+                left_damp = crate::settled(left_damp + alpha * (delayed_right - left_damp));
+                right_damp = crate::settled(right_damp + alpha * (delayed_left - right_damp));
                 // The crossed feedback is what makes repeats alternate between the speakers.
                 left_line.write(*left_sample + feedback * left_damp);
                 right_line.write(*right_sample + feedback * right_damp);
@@ -225,8 +227,8 @@ impl Effect for Delay {
             for sample in buffer.channel_mut(channel)[..frames].iter_mut() {
                 let delay = time.next_value();
                 let wet_amount = mix.next_value();
-                let delayed = line.read(delay);
-                damp = flushed(damp + alpha * (delayed - damp));
+                let delayed = crate::settled(line.read(delay));
+                damp = crate::settled(damp + alpha * (delayed - damp));
                 line.write(*sample + feedback * damp);
                 *sample = *sample * (1.0 - wet_amount) + delayed * wet_amount;
             }
@@ -250,18 +252,6 @@ impl Effect for Delay {
         let frames = delay_samples * repeats;
         (frames).clamp(0.0, MAX_TAIL_SECONDS * self.sample_rate) as usize
     }
-}
-
-/// The damping state, flushed to zero once it decays past hearing.
-///
-/// This is the crate's one other feedback loop, and `biquad.rs` says why its sibling is
-/// flushed: a decaying tail must not drag the audio thread into microcoded denormal
-/// arithmetic. The floor is the biquad's — far below anything audible, well above the largest
-/// subnormal — and because the loop recirculates *through* the damp, zeroing it here is what
-/// lets the whole tail reach actual silence instead of grinding towards it.
-#[inline]
-fn flushed(value: f32) -> f32 {
-    if value.abs() < 1.0e-30 { 0.0 } else { value }
 }
 
 #[cfg(test)]
@@ -433,5 +423,28 @@ mod tests {
             plugin.process(&mut buffer, &context(4_096));
             assert!(buffer.channel(0).iter().all(|s| s.is_finite()));
         }
+    }
+
+    #[test]
+    fn a_non_finite_sample_does_not_stick_in_the_feedback_path() {
+        // The damp state recirculates even at feedback zero — `0.0 * NaN` is still NaN — so one
+        // bad sample used to fill the whole ring for good and the wet path fell silent until
+        // reset, with the feedback knob powerless to bring it back.
+        let mut plugin = dry_tap(10.0);
+        let mut buffer = impulse(2_048);
+        buffer.channel_mut(0)[0] = f32::NAN;
+        buffer.channel_mut(1)[0] = f32::INFINITY;
+        plugin.process(&mut buffer, &context(2_048));
+
+        // A fresh impulse afterwards has to come back exactly as a dry tap returns one.
+        let mut buffer = impulse(2_048);
+        plugin.process(&mut buffer, &context(2_048));
+        let channel = buffer.channel(0);
+        assert!(channel.iter().all(|s| s.is_finite()));
+        assert!(
+            (channel[480] - 1.0).abs() < 1e-6,
+            "the echo never came back: {}",
+            channel[480]
+        );
     }
 }
