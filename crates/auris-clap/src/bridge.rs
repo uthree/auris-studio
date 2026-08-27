@@ -63,6 +63,11 @@ pub(crate) struct Bridge {
     /// What the plugin's note input port speaks, or `None` if it has none — which is what an
     /// effect has, and also what an instrument Auris cannot drive has.
     language: Option<NoteLanguage>,
+    /// How many events `outgoing` and `replies` were sized for, parameters included.
+    ///
+    /// Written down because [`EventBuffer`] cannot be asked its capacity, and
+    /// [`Self::reserve_events`] needs the old answer to know whether a new one is bigger.
+    event_room: usize,
     max_frames: usize,
     latency: usize,
     /// A counter that only ever goes up, which is what CLAP asks of `steady_time`. The project
@@ -86,8 +91,8 @@ impl Bridge {
         // What the host says a block can carry, and the old flat guess as a floor under it: a
         // host that says nothing — an effect prepared on its own, a test — still gets room for a
         // reasonable block, and one that has counted the arrangement gets the count.
-        let event_room = ctx.max_block_events.max(EVENT_HEADROOM);
         let count = params.descriptors.len();
+        let event_room = count + ctx.max_block_events.max(EVENT_HEADROOM);
         let values = params.descriptors.iter().map(|p| p.default).collect();
         let room = |port: &usize| vec![vec![0.0; frames]; *port];
 
@@ -97,8 +102,8 @@ impl Bridge {
             params,
             values,
             changed: vec![false; count],
-            outgoing: EventBuffer::with_capacity(count + event_room),
-            replies: EventBuffer::with_capacity(count + event_room),
+            outgoing: EventBuffer::with_capacity(event_room),
+            replies: EventBuffer::with_capacity(event_room),
             input_ports: AudioPorts::with_capacity(
                 ports.input_channels().max(1),
                 ports.inputs.len().max(1),
@@ -113,6 +118,7 @@ impl Bridge {
             main_input: ports.main_input,
             main_output: ports.main_output,
             language,
+            event_room,
             max_frames: frames,
             latency,
             steady_time: 0,
@@ -124,12 +130,36 @@ impl Bridge {
         self.processor.into_stopped()
     }
 
+    /// Grows the event buffers to hold what a block is now known to carry.
+    ///
+    /// Activation sized them, but activation happens before the render graph has counted the
+    /// arrangement — the session prepares a plugin with a count of zero and the graph corrects
+    /// it through [`Instrument::prepare`](auris_core::plugin::Instrument::prepare) afterwards.
+    /// Rate and block size cannot be told to a CLAP plugin twice; these buffers are the host's
+    /// own, and re-sizing them here, off the audio thread, is what keeps `render`'s pushes from
+    /// allocating on it.
+    pub(crate) fn reserve_events(&mut self, max_block_events: usize) {
+        let count = self.params.descriptors.len();
+        let room = count + max_block_events.max(EVENT_HEADROOM);
+        if room > self.event_room {
+            self.outgoing = EventBuffer::with_capacity(room);
+            self.replies = EventBuffer::with_capacity(room);
+            self.event_room = room;
+        }
+    }
+
     pub(crate) fn descriptor(&self) -> PluginDescriptor {
         self.descriptor.clone()
     }
 
     pub(crate) fn latency(&self) -> usize {
         self.latency
+    }
+
+    /// How many events the queues hold before a push would allocate. For tests.
+    #[cfg(test)]
+    pub(crate) fn event_room(&self) -> usize {
+        self.event_room
     }
 
     /// Whether the plugin declared a port for a key to go in.

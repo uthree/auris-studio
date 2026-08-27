@@ -36,6 +36,12 @@ impl ClapInstrument {
     pub(crate) fn into_stopped(self) -> StoppedPluginAudioProcessor<AurisHost> {
         self.0.into_stopped()
     }
+
+    /// How many events the queues hold before a push would allocate. For tests.
+    #[cfg(test)]
+    pub(crate) fn event_room(&self) -> usize {
+        self.0.event_room()
+    }
 }
 
 impl Parameterized for ClapInstrument {
@@ -57,9 +63,13 @@ impl Instrument for ClapInstrument {
         self.0.descriptor()
     }
 
-    fn prepare(&mut self, _ctx: &PrepareContext) {
-        // Nothing, for the reason `ClapEffect::prepare` gives: activation is where a CLAP plugin
-        // is told its rate and block size, and it cannot be told again.
+    fn prepare(&mut self, ctx: &PrepareContext) {
+        // Rate and block size were fixed at activation and cannot be told again — but
+        // `max_block_events` is the render graph's count of the arrangement, made *after*
+        // activation, and the event buffers it sizes are the host's own. Ignoring it left them
+        // at the activation guess, and a denser block than that guess allocated on the audio
+        // thread. See [`Bridge::reserve_events`].
+        self.0.reserve_events(ctx.max_block_events);
     }
 
     fn reset(&mut self) {

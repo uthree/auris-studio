@@ -432,6 +432,31 @@ fn a_note_reaches_a_hosted_instrument_on_the_frame_it_was_scheduled_for() {
 }
 
 #[test]
+fn prepare_grows_the_event_queues_off_the_audio_thread() {
+    // Activation happens before the render graph has counted the arrangement, so the session
+    // activates with a count of zero and the graph corrects it through `prepare` afterwards.
+    // The correction has to land: a queue left at the activation guess would grow on the audio
+    // thread instead, on the first block denser than that guess.
+    let mut plugin = tone();
+    let mut instrument = plugin
+        .activate_instrument(&context())
+        .expect("must activate");
+    let floor = instrument.event_room();
+
+    instrument.prepare(&context().with_max_block_events(4096));
+    let grown = instrument.event_room();
+    assert!(grown >= 4096, "the graph's count must stick");
+    assert!(floor < grown);
+
+    // A smaller count later never shrinks it: capacity kept is capacity that cannot have to be
+    // allocated again.
+    instrument.prepare(&context().with_max_block_events(8));
+    assert_eq!(instrument.event_room(), grown);
+
+    plugin.deactivate_instrument(instrument);
+}
+
+#[test]
 fn a_note_held_across_a_block_boundary_keeps_sounding() {
     let mut plugin = tone();
     let mut instrument = plugin
