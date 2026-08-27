@@ -30,10 +30,18 @@ impl Default for Grid {
 
 impl Grid {
     /// A grid in `signature` whose step is a quarter note divided `steps_per_quarter` ways.
+    ///
+    /// A step is never longer than the bar. The meter and the subdivision are chosen
+    /// independently — both halves of `1/16` with eighth-note steps pass their own validation —
+    /// and a step that outlasted the bar made `steps_per_bar` zero and every note a bar too
+    /// long, overlapping its neighbours in a single voice. The subdivision is raised to the
+    /// coarsest that still fits, so the degenerate pairing writes one bar-long step per bar.
     pub fn new(signature: TimeSignature, steps_per_quarter: u32) -> Self {
+        let bar = signature.ticks_per_bar().raw().max(1);
+        let fits_the_bar = ((Ticks::QUARTER.raw() + bar - 1) / bar).max(1) as u32;
         Self {
             signature,
-            steps_per_quarter: steps_per_quarter.max(1),
+            steps_per_quarter: steps_per_quarter.max(1).max(fits_the_bar),
         }
     }
 
@@ -57,9 +65,13 @@ impl Grid {
     }
 
     /// How many steps make up one bar.
+    ///
+    /// At least one, like [`Self::steps_per_beat`]: `new` keeps the step inside the bar, but a
+    /// grid built as a literal has made no such promise, and a bar of zero steps turns every
+    /// `0..steps` loop downstream into silence.
     pub fn steps_per_bar(self) -> usize {
         let step = self.step_ticks().raw().max(1);
-        (self.bar_ticks().raw() / step) as usize
+        ((self.bar_ticks().raw() / step) as usize).max(1)
     }
 
     /// The tick a step index falls on.
@@ -546,6 +558,20 @@ mod tests {
 
     fn four_four() -> Grid {
         Grid::default()
+    }
+
+    #[test]
+    fn a_step_never_outlasts_its_bar() {
+        // meter 1/16 with eighth-note steps: both valid alone, and together the step used to be
+        // twice the bar — steps_per_bar of zero, and every generated note a bar too long,
+        // overlapping the next bar's note in a single voice.
+        let grid = Grid::new(TimeSignature::new(1, 16), 2);
+        assert!(grid.step_ticks() <= grid.bar_ticks());
+        assert_eq!(grid.steps_per_bar(), 1);
+        assert_eq!(grid.step_ticks(), grid.bar_ticks());
+
+        // And an ordinary pairing is left exactly as asked.
+        assert_eq!(Grid::new(TimeSignature::new(4, 4), 2).steps_per_bar(), 8);
     }
 
     #[test]
