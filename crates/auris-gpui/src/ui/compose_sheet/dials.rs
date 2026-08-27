@@ -428,6 +428,19 @@ pub fn give_section_chart(dials: &mut SongDials, index: usize, name: &str, chart
     true
 }
 
+/// Leaves the section at `index` with a progression the composer will invent.
+///
+/// Filed under the section's own name, the same way a progression written out by hand is, so
+/// choosing おまかせ for the chorus and later writing one out are edits to the same slot. The
+/// marker is what is stored — the invention itself happens when the song is written, from the
+/// seed, which is what keeps the seed dial re-dealing it.
+pub fn invent_section_chart(dials: &mut SongDials, index: usize) -> bool {
+    let Some(name) = dials.sections.get(index).map(|held| held.name.clone()) else {
+        return false;
+    };
+    give_section_chart(dials, index, &name, Chart::unwritten())
+}
+
 /// How a chart is named on the sheet: the progression it quotes, or its own key.
 pub fn chart_label(name: &str, chart: &Chart) -> String {
     chart.quoted_as.clone().unwrap_or_else(|| name.to_string())
@@ -1460,6 +1473,45 @@ mod tests {
         // And it survives the file, which is what makes it the song's rather than the picker's.
         let spec = song_spec(&dials);
         assert_eq!(SongSpec::parse(&spec.to_toml()), Ok(spec));
+    }
+
+    #[test]
+    fn leaving_a_section_to_the_composer_files_the_request_under_its_own_name() {
+        let mut dials = SongDials::default();
+        let verse = dials
+            .sections
+            .iter()
+            .position(|section| section.name == "verse")
+            .unwrap();
+        let chorus = dials
+            .sections
+            .iter()
+            .position(|section| section.name == "chorus")
+            .unwrap();
+
+        assert!(invent_section_chart(&mut dials, chorus));
+        assert_eq!(dials.sections[chorus].chords, "chorus");
+        assert!(
+            dials
+                .charts
+                .iter()
+                .find(|(name, _)| name == "chorus")
+                .is_some_and(|(_, chart)| chart.is_unwritten()),
+            "what is filed is the request, not any particular deal"
+        );
+
+        // Two sections left to the composer are two requests — two names, so two progressions
+        // when the song is written. One おまかせ chorus quietly deciding the verse's chords is
+        // not what anyone picking おまかせ for the verse meant.
+        assert!(invent_section_chart(&mut dials, verse));
+        assert_ne!(dials.sections[verse].chords, dials.sections[chorus].chords);
+
+        // The request survives the file, which is what keeps the seed dial re-dealing it.
+        let spec = song_spec(&dials);
+        assert_eq!(SongSpec::parse(&spec.to_toml()), Ok(spec));
+
+        // And a section past the list is refused rather than filed somewhere.
+        assert!(!invent_section_chart(&mut dials, 99));
     }
 
     #[test]

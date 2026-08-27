@@ -9,6 +9,7 @@ pub mod melodic;
 pub mod parts;
 pub mod phrase;
 pub mod preset;
+pub mod progression;
 pub mod render;
 pub mod rhythm;
 pub mod rng;

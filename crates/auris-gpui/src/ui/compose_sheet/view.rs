@@ -390,7 +390,15 @@ impl AurisApp {
                 .charts
                 .iter()
                 .find(|(known, _)| known == &section.chords)
-                .map(|(known, chart)| self.progression_name(&chart_label(known, chart)))
+                .map(|(known, chart)| {
+                    // An unwritten chart's own label is just its name, which says nothing about
+                    // the one thing the row should say: that the composer is inventing here.
+                    if chart.is_unwritten() {
+                        self.t(Key::SongChordsOwn).to_string()
+                    } else {
+                        self.progression_name(&chart_label(known, chart))
+                    }
+                })
                 .unwrap_or_else(|| section.chords.clone());
 
             let mut dial_row = div().flex().gap_2();

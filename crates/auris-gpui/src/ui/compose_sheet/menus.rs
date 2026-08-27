@@ -60,6 +60,12 @@ impl AurisApp {
             .unwrap_or_default();
         if let Some(dials) = self.song_sheet.as_ref() {
             for (name, chart) in &dials.charts {
+                // An unwritten chart is a request, not a progression: its row here would say
+                // おまかせ while quietly *sharing* another section's deal, which is not what
+                // anyone picking おまかせ means. The row below files a fresh one instead.
+                if chart.is_unwritten() {
+                    continue;
+                }
                 menu = menu.item(
                     self.progression_name(&chart_label(name, chart)),
                     MenuCommand::SongSectionChords {
@@ -69,10 +75,15 @@ impl AurisApp {
                 );
             }
         }
-        // Writing one out, and keeping the one written. The second only appears where there is
-        // something to keep: a section playing a quoted progression already has a name, and
-        // offering to file 丸サ進行 under a second one would be a way to end up with two.
+        // Leaving it to the composer, writing one out, and keeping the one written. The last
+        // only appears where there is something to keep: a section playing a quoted progression
+        // already has a name, and offering to file 丸サ進行 under a second one would be a way to
+        // end up with two.
         menu = menu.separator();
+        menu = menu.item(
+            self.t(Key::SongChordsOwn),
+            MenuCommand::SongInventProgression(section),
+        );
         menu = menu.item(
             self.t(Key::SongWriteProgression),
             MenuCommand::SongWriteProgression(section),
@@ -129,7 +140,9 @@ impl AurisApp {
                     .charts
                     .iter()
                     .find(|(name, _)| name == &section.chords)?;
-                Some(chart.quoted_as.is_none())
+                // An unwritten chart has nothing to keep — the bars do not exist until the song
+                // is written, and would be different bars next seed anyway.
+                Some(chart.quoted_as.is_none() && !chart.is_unwritten())
             })
             .unwrap_or(false)
     }

@@ -88,6 +88,25 @@ impl Chart {
         }
     }
 
+    /// A progression nobody has written yet: the request that the composer invent one.
+    ///
+    /// A marker, not a chart — it has no bars, and anything that resolved it directly would get
+    /// silence. Whoever plans a piece is expected to ask [`Self::is_unwritten`] and put a real
+    /// progression in its place; keeping the marker in the ordinary `Chart` type is what lets a
+    /// song file, a picker and a specification all point a section at "whatever the composer
+    /// comes up with" without a second kind of chart existing everywhere charts travel.
+    pub fn unwritten() -> Self {
+        Self::new(Vec::new(), ChartOrigin::Generated)
+    }
+
+    /// `true` for the [`Self::unwritten`] marker: a progression left to the composer to invent.
+    ///
+    /// An empty *given* chart is not one — that is a chart somebody cleared, and it means
+    /// silence, not "surprise me".
+    pub fn is_unwritten(&self) -> bool {
+        self.bars.is_empty() && self.origin == ChartOrigin::Generated
+    }
+
     /// The same progression, its numerals read against `key`.
     ///
     /// A named progression is written in a mode, and asking for it in the other one used to read
@@ -696,6 +715,21 @@ mod tests {
             .map(|event| event.chord.bass_class().sharp_name())
             .collect();
         assert_eq!(bass, ["C", "B", "A", "G", "F", "E", "D", "G"]);
+    }
+
+    #[test]
+    fn an_unwritten_chart_is_a_marker_and_nothing_else_is() {
+        let marker = Chart::unwritten();
+        assert!(marker.is_unwritten());
+        assert!(marker.is_empty());
+        assert_eq!(marker.origin, ChartOrigin::Generated);
+
+        // A chart with bars is a chart, whoever made it up.
+        assert!(!catalog("axis").unwrap().is_unwritten());
+        let generated = Chart::new(catalog("axis").unwrap().bars, ChartOrigin::Generated);
+        assert!(!generated.is_unwritten());
+        // And an empty *given* chart is something somebody cleared, not a request to invent.
+        assert!(!Chart::new(Vec::new(), ChartOrigin::Given).is_unwritten());
     }
 
     #[test]

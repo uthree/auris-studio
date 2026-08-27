@@ -506,9 +506,17 @@ impl SongDoc {
 
         // `chords` is the shortest possible way to name a progression, and `[harmony]` the
         // general one. Both are merged into the defaults rather than replacing them, so a
-        // document with one of each keeps both.
+        // document with one of each keeps both. A `?` is a progression deliberately left to the
+        // composer to invent — see `Chart::unwritten` — and not a chart this can parse.
+        let read_chart = |text: &str| {
+            if text.trim() == "?" {
+                Some(Chart::unwritten())
+            } else {
+                Chart::parse(text)
+            }
+        };
         if let Some(text) = &self.chords {
-            match Chart::parse(text) {
+            match read_chart(text) {
                 Some(chart) => {
                     spec.charts.insert("main".to_string(), chart);
                 }
@@ -516,7 +524,7 @@ impl SongDoc {
             }
         }
         for (name, text) in &self.harmony {
-            match Chart::parse(text) {
+            match read_chart(text) {
                 Some(chart) => {
                     spec.charts.insert(name.clone(), chart);
                 }
@@ -836,14 +844,20 @@ impl From<&SongSpec> for SongDoc {
                 // A chart the composer invented is not something the document said. Leaving it
                 // out is what gives the composer the same freedom when this is read back — a
                 // written one would come back marked as quoted, and never be coloured again.
-                .filter(|(_, chart)| chart.origin == ChartOrigin::Given)
+                // The *request* to invent is something the document said, and `?` is how it
+                // said it, so that one generated chart does survive the round trip.
+                .filter(|(_, chart)| chart.origin == ChartOrigin::Given || chart.is_unwritten())
                 // A quotation is written back as the quotation. Spelling its bars out would be
                 // longer to read and would lose the *mode* it was written in, which is what
                 // lets 丸サ進行 be asked for in a minor key and still be 丸サ進行.
                 .map(|(name, chart)| {
-                    let text = match &chart.quoted_as {
-                        Some(quoted) => format!("@{quoted}"),
-                        None => chart.to_string(),
+                    let text = if chart.is_unwritten() {
+                        "?".to_string()
+                    } else {
+                        match &chart.quoted_as {
+                            Some(quoted) => format!("@{quoted}"),
+                            None => chart.to_string(),
+                        }
                     };
                     (name.clone(), text)
                 })
@@ -1100,6 +1114,50 @@ mod tests {
         assert_eq!(spec.charts.len(), 2);
         assert!(spec.charts.contains_key("main"));
         assert!(spec.charts.contains_key("bridge"));
+    }
+
+    #[test]
+    fn a_question_mark_asks_the_composer_to_invent_the_progression() {
+        // `?` is the request itself, not a chart: it reads as the unwritten marker, and
+        // `chart_for` answers it with a progression invented from the seed.
+        let spec = SongSpec::parse(
+            r#"
+            seed = 7
+            chords = "?"
+            form = ["verse", "chorus", "verse"]
+
+            [harmony]
+            sabi = "?"
+
+            [section.verse]
+            [section.chorus]
+            chords = "sabi"
+            "#,
+        )
+        .unwrap();
+        assert!(spec.charts["main"].is_unwritten());
+        assert!(spec.charts["sabi"].is_unwritten());
+
+        let verse = spec.chart_for(&spec.sections["verse"]);
+        let chorus = spec.chart_for(&spec.sections["chorus"]);
+        assert!(!verse.is_unwritten(), "the marker is resolved, not played");
+        assert_eq!(verse.bar_count(), 8);
+        assert_eq!(
+            verse.origin,
+            ChartOrigin::Generated,
+            "so the mood may colour it"
+        );
+        // Two names, two progressions; one name, one progression however often it plays.
+        assert_ne!(verse.bars, chorus.bars);
+        assert_eq!(verse, spec.chart_for(&spec.sections["verse"]));
+
+        // The request survives the round trip — as the request, not as the bars it produced,
+        // which is what keeps the seed dial re-dealing it.
+        let written = spec.to_toml();
+        assert!(written.contains("\"?\""), "{written}");
+        let again = SongSpec::parse(&written).unwrap();
+        assert!(again.charts["main"].is_unwritten());
+        assert_eq!(again.chart_for(&again.sections["verse"]), verse);
     }
 
     #[test]

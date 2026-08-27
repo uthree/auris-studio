@@ -501,13 +501,25 @@ impl SongSpec {
     }
 
     /// The chart a section plays, falling back to `main` and then to anything at all.
+    ///
+    /// An [unwritten](Chart::is_unwritten) chart is resolved *here*, into the progression the
+    /// composer invents for it, so every caller — the planner, a picker showing what a section
+    /// will play, a clip being re-taken — sees the same real bars and none of them has to know
+    /// the marker exists. The invention is drawn from the song's seed and the chart's own name,
+    /// which is what makes two sections naming one unwritten chart play one progression.
     pub fn chart_for(&self, section: &SectionSpec) -> Chart {
-        self.charts
-            .get(&section.chords)
-            .or_else(|| self.charts.get("main"))
-            .or_else(|| self.charts.values().next())
-            .cloned()
-            .unwrap_or_else(|| Chart::new(Vec::new(), ChartOrigin::Given))
+        let named = self
+            .charts
+            .get_key_value(&section.chords)
+            .or_else(|| self.charts.get_key_value("main"))
+            .or_else(|| self.charts.iter().next());
+        match named {
+            Some((name, chart)) if chart.is_unwritten() => {
+                crate::progression::invent_chart(self.seed, name, self.key, self.mood)
+            }
+            Some((_, chart)) => chart.clone(),
+            None => Chart::new(Vec::new(), ChartOrigin::Given),
+        }
     }
 
     /// The tempo a section is played at: its own, or the song's.

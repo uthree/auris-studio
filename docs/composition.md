@@ -86,10 +86,17 @@ naming nobody is already how *everybody* is spelled. Turn the last one back on a
 saying everybody, so a part added later plays there too.
 
 **A progression is chosen per section**, which is what lets one change partway through a song. The
-picker lists the ones this song already carries, then **Write one…** and **Keep in the catalogue…**,
-then the progressions this installation has been taught, then the whole built-in catalogue.
-Choosing a catalogue entry the song does not carry is what adds it — there is no chart list to fill
-in first.
+picker lists the ones this song already carries, then **the composer's own**, **Write one…** and
+**Keep in the catalogue…**, then the progressions this installation has been taught, then the whole
+built-in catalogue. Choosing a catalogue entry the song does not carry is what adds it — there is
+no chart list to fill in first.
+
+**The composer's own** leaves the section's progression to the composer to invent — a fresh one
+per seed, drawn from the same corpus of moves the named progressions are made of, leaning onto its
+dominant at the phrase ends. What is stored is the request (`"?"` in the file), not any particular
+deal, so **Another Take** re-deals the chords along with everything else. Two sections left to the
+composer get two different progressions; point one section at the other's chart by name to share
+one.
 
 **Write one…** takes bars of roman numerals (`| IVmaj7 | III7 | vi7 | I7 |`) and files them under
 the section's own name, so a second section can reach the same chords from the same picker.
@@ -174,6 +181,15 @@ I7` of an aeolian scale, which shares one chord with it and lands nowhere near. 
 other way just as well: `@epic`, written in minor degrees, is the loop on the relative minor when
 a piece is in major. A progression you write out yourself declares no mode and is taken at face
 value, because those are the degrees you meant.
+
+A third answer is to give no progression at all: `chords = "?"` (or any `[harmony]` entry set to
+`"?"`) asks the composer to **invent** one. The invention is a weighted walk over the moves the
+catalogue itself makes — counted from its major-mode entries, so 王道進行's V → iii is in the
+vocabulary — shaped into two four-bar phrases that lean onto the dominant, with a `| ii V |` bar
+appearing as the mood's tension rises. It is deterministic in the seed and the chart's name:
+`seed = 7` always deals the same chords, and a section repeated is the same section. Being the
+composer's own, it is the one kind of progression the mood may recolour and the turnaround may
+lean on.
 
 Each part is built from one short figure invented per section and then restated bar after bar,
 which is what gives a section something an ear can hold on to; the fourth bar of every phrase

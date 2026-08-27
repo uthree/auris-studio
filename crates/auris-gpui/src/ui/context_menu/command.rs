@@ -86,6 +86,8 @@ pub enum MenuCommand {
         /// A progression the song already carries, or one the catalogue knows.
         name: String,
     },
+    /// Leave one section's progression to the composer to invent, fresh from the seed.
+    SongInventProgression(usize),
     /// Write out the progression one section of the song sheet plays.
     SongWriteProgression(usize),
     /// Keep the progression one section plays, in the book that outlives this song.
@@ -623,6 +625,11 @@ impl AurisApp {
                     crate::ui::compose_sheet::give_section_chart(dials, section, &name, chart);
                 }
             }
+            MenuCommand::SongInventProgression(section) => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    crate::ui::compose_sheet::invent_section_chart(dials, section);
+                }
+            }
             MenuCommand::SongWriteProgression(section) => {
                 let title = self.t(Key::SongChords);
                 let current = self
@@ -632,7 +639,9 @@ impl AurisApp {
                         let held = dials.sections.get(section)?;
                         let (_, chart) =
                             dials.charts.iter().find(|(name, _)| name == &held.chords)?;
-                        Some(chart.to_string())
+                        // An unwritten chart has no bars to prefill; an empty prompt reads as
+                        // "write one", where its `|` would read as a chart of nothing.
+                        (!chart.is_unwritten()).then(|| chart.to_string())
                     })
                     .unwrap_or_default();
                 self.open_prompt(crate::ui::prompt::Prompt::new(
