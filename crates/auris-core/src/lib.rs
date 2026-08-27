@@ -43,14 +43,15 @@ pub use error::{CoreError, Result};
 pub use harmony::{ChordMap, ChordPoint, Harmony, KeyMap, KeyPoint};
 pub use param::{ParamDescriptor, ParamId, ParamTarget, ParamUnit, ParamValueCurve};
 pub use plugin::{
-    CC_MODULATION, CONTROLLER_MAX, Effect, Instrument, NoteEvent, Parameterized, PluginCategory,
-    PluginDescriptor, PluginKind, PluginState, PrepareContext, ProcessContext,
+    CC_EXPRESSION, CC_MODULATION, CONTROLLER_MAX, Effect, Instrument, NoteEvent, Parameterized,
+    PluginCategory, PluginDescriptor, PluginKind, PluginState, PrepareContext, ProcessContext,
 };
 pub use project::{
     AudioClip, AudioSource, AudioSourceBank, AudioTrack, AuxSend, ClipId, ClipPreset, ClipRecipe,
     Color, EffectSlot, EffectSlotId, FadeCurve, InstrumentTrack, MidiClip, MixerStrip, Note,
-    Output, PresetRef, Project, SendId, SoundFontId, SoundFontRef, SourceId, Subdivision, Track,
-    TrackId, TrackKind, default_loop_end, loop_passes, notes_trimmed_from_front, sounding_length,
+    Output, PresetRef, Project, SendId, SingerTrack, SoundFontId, SoundFontRef, SourceId,
+    Subdivision, Track, TrackId, TrackKind, default_frame_hop, default_loop_end, loop_passes,
+    notes_trimmed_from_front, sounding_length,
 };
 pub use registry::{PluginPack, PluginRegistry};
 pub use structure::{SectionMap, SectionPoint, SectionSpan};
@@ -64,7 +65,7 @@ pub mod prelude {
     pub use crate::buffer::AudioBuffer;
     pub use crate::param::{ParamDescriptor, ParamId, ParamUnit, ParamValueCurve};
     pub use crate::plugin::{
-        CC_MODULATION, CONTROLLER_MAX, Effect, Instrument, NoteEvent, Parameterized,
+        CC_EXPRESSION, CC_MODULATION, CONTROLLER_MAX, Effect, Instrument, NoteEvent, Parameterized,
         PluginCategory, PluginDescriptor, PluginKind, PluginState, PrepareContext, ProcessContext,
     };
     pub use crate::registry::PluginRegistry;

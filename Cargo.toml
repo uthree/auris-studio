@@ -28,6 +28,7 @@ auris-synth = { path = "crates/auris-synth", version = "0.3.0" }
 auris-gpu = { path = "crates/auris-gpu", version = "0.3.0" }
 auris-i18n = { path = "crates/auris-i18n", version = "0.3.0" }
 auris-io = { path = "crates/auris-io", version = "0.3.0" }
+auris-vocal = { path = "crates/auris-vocal", version = "0.3.0" }
 auris-engine = { path = "crates/auris-engine", version = "0.3.0" }
 auris-session = { path = "crates/auris-session", version = "0.3.0" }
 

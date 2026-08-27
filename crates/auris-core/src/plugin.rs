@@ -330,6 +330,13 @@ pub const CC_MODULATION: u8 = 1;
 /// The highest controller number MIDI has.
 pub const CONTROLLER_MAX: u8 = 127;
 
+/// The expression pedal: controller 11.
+///
+/// Spelt out for the same reason [`CC_MODULATION`] is: it is a controller the application reads
+/// by number on its own account — a singer track's energy follows it — and a bare
+/// `Controller(11)` at those sites would be a magic number where a name was available.
+pub const CC_EXPRESSION: u8 = 11;
+
 /// Converts a MIDI note number to frequency in Hz using equal temperament with A4 = 440 Hz.
 pub fn pitch_to_hz(pitch: f32) -> f32 {
     440.0 * ((pitch - 69.0) / 12.0).exp2()
