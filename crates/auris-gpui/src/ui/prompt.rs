@@ -1812,3 +1812,156 @@ mod tests {
         assert!(prompt.completing().is_none());
     }
 }
+
+/// The unsaved-work guard, driven through the window.
+///
+/// The one path in the application where getting it wrong loses an afternoon, and until now the
+/// only way to check it was to make a change, press ⌘N and watch. Every answer is reachable from
+/// here: the sheet's three buttons carry names a test can find them by.
+#[cfg(test)]
+mod window_tests {
+    use gpui::TestAppContext;
+
+    use crate::actions;
+    use crate::harness::{CLIP_LENGTH, click, open, paint, with_a_clip};
+
+    /// Whether a sheet is open, and what it is asking.
+    fn asking(app: &gpui::Entity<crate::app::AurisApp>, cx: &gpui::TestAppContext) -> bool {
+        app.read_with(cx, |this, _| {
+            matches!(
+                this.prompt,
+                Some(super::Prompt {
+                    body: super::PromptBody::Ask(super::Question::Unsaved(_)),
+                    ..
+                })
+            )
+        })
+    }
+
+    /// How many tracks the document has, which is what says whether it was replaced.
+    fn tracks(app: &gpui::Entity<crate::app::AurisApp>, cx: &gpui::TestAppContext) -> usize {
+        app.read_with(cx, |this, _| this.session.project().tracks.len())
+    }
+
+    /// A document with unsaved work in it, and the window showing it.
+    fn with_unsaved_work(
+        cx: &mut TestAppContext,
+    ) -> (
+        gpui::Entity<crate::app::AurisApp>,
+        &mut gpui::VisualTestContext,
+    ) {
+        let (app, cx, _, _) = with_a_clip(cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.session.is_dirty(), "the fixture left work to lose");
+        });
+        (app, cx)
+    }
+
+    #[gpui::test]
+    fn a_new_project_asks_before_throwing_unsaved_work_away(cx: &mut TestAppContext) {
+        let (app, cx) = with_unsaved_work(cx);
+        let before = tracks(&app, cx);
+
+        cx.dispatch_action(actions::NewProject);
+
+        assert!(asking(&app, cx), "the sheet is up");
+        assert_eq!(tracks(&app, cx), before, "and nothing has happened yet");
+    }
+
+    /// The answer that costs the work, which is the one that has to do exactly what it says.
+    #[gpui::test]
+    fn discarding_at_the_sheet_carries_out_the_command_that_raised_it(cx: &mut TestAppContext) {
+        let (app, cx) = with_unsaved_work(cx);
+        cx.dispatch_action(actions::NewProject);
+        paint(&app, cx);
+
+        click("prompt-deny", cx);
+
+        assert!(!asking(&app, cx), "the sheet is gone");
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.session.project().tracks.iter().all(|track| track
+                    .kind
+                    .as_instrument()
+                    .is_none_or(|inner| inner.clips.is_empty())),
+                "a new document, with the clip that was in the way gone"
+            );
+        });
+    }
+
+    /// Cancelling has to leave *both* things alone: the sheet and the document.
+    #[gpui::test]
+    fn cancelling_at_the_sheet_keeps_the_document(cx: &mut TestAppContext) {
+        let (app, cx) = with_unsaved_work(cx);
+        let before = tracks(&app, cx);
+        cx.dispatch_action(actions::NewProject);
+        paint(&app, cx);
+
+        click("prompt-cancel", cx);
+
+        assert!(!asking(&app, cx), "the sheet is gone");
+        assert_eq!(tracks(&app, cx), before, "and the work is still here");
+        app.read_with(cx, |this, _| assert!(this.session.is_dirty()));
+    }
+
+    /// Escape is the same answer as Cancel, and is the one a hand reaches for first.
+    #[gpui::test]
+    fn escape_at_the_sheet_is_a_cancel(cx: &mut TestAppContext) {
+        let (app, cx) = with_unsaved_work(cx);
+        let before = tracks(&app, cx);
+        cx.dispatch_action(actions::NewProject);
+
+        cx.simulate_keystrokes("escape");
+
+        assert!(!asking(&app, cx));
+        assert_eq!(tracks(&app, cx), before);
+    }
+
+    /// Nothing to lose, nothing to ask. A question over a clean document is a question that
+    /// teaches people to dismiss the sheet without reading it.
+    #[gpui::test]
+    fn a_clean_document_is_replaced_without_a_question(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.read_with(cx, |this, _| {
+            assert!(!this.session.is_dirty(), "a window opens clean");
+        });
+
+        cx.dispatch_action(actions::NewProject);
+
+        assert!(!asking(&app, cx));
+    }
+
+    /// The sheet claims the keyboard while it is up, so a keystroke bound to the window behind it
+    /// must not reach through and act on a document the user is being asked about.
+    #[gpui::test]
+    fn a_binding_behind_the_sheet_does_not_fire_through_it(cx: &mut TestAppContext) {
+        let (app, cx) = with_unsaved_work(cx);
+        cx.dispatch_action(actions::NewProject);
+        let looping = app.read_with(cx, |this, _| this.session.project().loop_enabled);
+
+        cx.simulate_keystrokes("secondary-l");
+
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.session.project().loop_enabled,
+                looping,
+                "the cycle did not toggle behind the question"
+            );
+        });
+        assert!(asking(&app, cx), "and the sheet is still asking");
+    }
+
+    /// The fixture's clip is what makes the document dirty; if that ever stops being true every
+    /// test above would pass while checking nothing.
+    #[gpui::test]
+    fn the_fixture_really_does_leave_something_to_lose(cx: &mut TestAppContext) {
+        let (app, cx, _, clip) = with_a_clip(cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.session.midi_clip(clip).expect("still there").length,
+                CLIP_LENGTH
+            );
+            assert!(this.session.is_dirty());
+        });
+    }
+}

@@ -104,8 +104,13 @@ where
         theme.hovered(background, 0.12)
     };
 
+    // The id again, as a name a test can find the button by — see the note in `icon_button`.
+    let id: ElementId = id.into();
+    let handle = id.clone();
+
     div()
-        .id(id.into())
+        .id(id)
+        .debug_selector(move || handle.to_string())
         .flex()
         .items_center()
         .justify_center()
