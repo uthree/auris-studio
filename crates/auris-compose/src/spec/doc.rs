@@ -198,6 +198,34 @@ fn parse_meter(text: &str) -> Result<TimeSignature, String> {
     Ok(TimeSignature::new(numerator, denominator))
 }
 
+/// Reads a motif: whitespace-separated scale steps around the figure's anchor, `0 2 4 2`.
+///
+/// Scale steps rather than note names, because a motif here is a *shape* — the same numbers
+/// serve in every key and either mode, which is what lets a piece transpose a section without
+/// the tune going out of tune. The bounds are musical: past a ninth either way is further than
+/// a tune wanders from its anchor, one note has no line in it, and past thirty-two notes it is
+/// a melody somebody should give to [`crate::analysis::read_melody`] instead.
+pub fn parse_motif(text: &str) -> Result<Vec<i32>, String> {
+    let mut motif = Vec::new();
+    for token in text.split_whitespace() {
+        let degree: i32 = token
+            .parse()
+            .map_err(|_| format!("`{token}` is not a scale step; write numbers like 0 2 4 2"))?;
+        if !(-9..=9).contains(&degree) {
+            return Err(format!(
+                "`{token}` is further from the anchor than a tune wanders; steps run from -9 to 9"
+            ));
+        }
+        motif.push(degree);
+    }
+    match motif.len() {
+        0 => Err("there are no steps in it; write numbers like 0 2 4 2".to_string()),
+        1 => Err("one note is not a line; give it at least two".to_string()),
+        2..=32 => Ok(motif),
+        _ => Err("more than 32 notes is a melody rather than a motif".to_string()),
+    }
+}
+
 /// A list, or the same list written as one string.
 ///
 /// `["intro", "verse"]` is what TOML wants and what [`SongSpec::to_toml`] writes. `"intro
@@ -249,6 +277,8 @@ struct SongDoc {
     groove: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     ending: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    motif: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     swing: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -456,6 +486,12 @@ impl SongDoc {
                 None => errors.push(SpecError::about(format!(
                     "`{text}` is not an ending; try held or none"
                 ))),
+            }
+        }
+        if let Some(text) = &self.motif {
+            match parse_motif(text) {
+                Ok(motif) => spec.motif = motif,
+                Err(why) => errors.push(SpecError::about(format!("motif `{text}`: {why}"))),
             }
         }
         if let Some(swing) = self.swing {
@@ -823,6 +859,13 @@ impl From<&SongSpec> for SongDoc {
             seed: Some(spec.seed),
             groove: Some(spec.groove.clone()),
             ending: Some(spec.ending.name().to_string()),
+            motif: (!spec.motif.is_empty()).then(|| {
+                spec.motif
+                    .iter()
+                    .map(i32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            }),
             swing: Some(u32::from(spec.swing)),
             humanize: Some(spec.humanize),
             dynamics: Some(spec.dynamics),
@@ -1158,6 +1201,32 @@ mod tests {
         let again = SongSpec::parse(&written).unwrap();
         assert!(again.charts["main"].is_unwritten());
         assert_eq!(again.chart_for(&again.sections["verse"]), verse);
+    }
+
+    #[test]
+    fn a_motif_is_given_read_and_kept() {
+        let spec = SongSpec::parse("motif = \"0 2 4 2\"").unwrap();
+        assert_eq!(spec.motif, [0, 2, 4, 2]);
+        let written = spec.to_toml();
+        assert!(written.contains("motif = \"0 2 4 2\""), "{written}");
+        assert_eq!(SongSpec::parse(&written).unwrap().motif, [0, 2, 4, 2]);
+
+        // No motif given writes no motif, so the composer keeps drawing its own.
+        assert!(
+            !SongSpec::default().to_toml().contains("motif"),
+            "the default carries none"
+        );
+
+        // And what is not a motif is refused with a reason rather than guessed at.
+        let too_long = "1 ".repeat(40);
+        for bad in ["x y", "3", "", "0 99", too_long.as_str()] {
+            let errors = SongSpec::parse(&format!("motif = \"{bad}\"")).unwrap_err();
+            assert!(
+                errors[0].message.contains("motif"),
+                "`{bad}` was not refused as a motif: {:?}",
+                errors[0]
+            );
+        }
     }
 
     #[test]

@@ -631,6 +631,13 @@ strings! {
     SongKeepProgression { en: "Keep in the catalogue…", ja: "カタログに登録…" }
     HintProgression { en: "Bars of roman numerals: | IVmaj7 | III7 | vi7 | I7 |",
                       ja: "ローマ数字を小節ごとに: | IVmaj7 | III7 | vi7 | I7 |" }
+    // The tune's contour, given by hand or taken from a clip; empty leaves it to the composer.
+    SongMotif { en: "Motif", ja: "モチーフ" }
+    HintMotif { en: "Scale steps around the anchor: 0 2 4 2 — empty leaves it to the composer",
+                ja: "アンカーからのスケール度数: 0 2 4 2 — 空欄ならおまかせ" }
+    MenuComposeFromMotif { en: "Take as the Motif…", ja: "モチーフとして取り込む…" }
+    ErrorMotifTooShort { en: "that clip has no line to take as a motif",
+                         ja: "モチーフにできる旋律がクリップにありません" }
     // The roster. `Part` alone is the heading on a single generated clip, so this one is plural.
     SongPartsHeading { en: "Parts", ja: "パート" }
     SongPartName { en: "Name", ja: "名前" }

@@ -485,6 +485,8 @@ pub enum MenuCommand {
     },
     /// Read a melody's harmony and write a band behind it.
     AccompanyClip(ClipId),
+    /// Take a clip's tune as the motif and open the song sheet holding it.
+    TakeClipAsMotif(ClipId),
     /// Write a generated clip's notes again, from the harmony as it now stands.
     RegenerateClip(ClipId),
     /// Write another take of a generated clip.
@@ -1089,6 +1091,28 @@ impl AurisApp {
                         ));
                     }
                     Err(error) => self.set_failed_status(self.failure(Key::MenuAccompany, &error)),
+                }
+            }
+            MenuCommand::TakeClipAsMotif(clip) => {
+                // The notes and the key in force where the clip sits, read before the sheet is
+                // borrowed. The document's key rather than a detected one: a clip in the piece
+                // is in the piece's key, and a note that strays is pulled to the nearest degree
+                // exactly as playback would pull it.
+                let notes = self.session.midi_clip(clip).map(|midi| midi.notes.clone());
+                let start = self.clip_extent(clip).map(|(start, _)| start);
+                if let (Some(notes), Some(start)) = (notes, start) {
+                    let key = self.session.project().harmony.key_at(start);
+                    let motif = motif_of(&notes, key);
+                    if motif.len() < 2 {
+                        self.set_failed_status(self.t(Key::ErrorMotifTooShort).to_string());
+                    } else {
+                        let count = motif.len();
+                        self.open_song_sheet();
+                        if let Some(dials) = self.song_sheet.as_mut() {
+                            dials.motif = motif;
+                        }
+                        self.set_status(messages::motif_taken(self.language(), count));
+                    }
                 }
             }
             MenuCommand::RegenerateClip(clip) => match self.session.regenerate_clip(clip) {

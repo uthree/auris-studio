@@ -111,6 +111,11 @@ pub struct ScoreSettings {
     pub variation: f32,
     /// Which drum groove the rhythm section plays.
     pub groove: String,
+    /// The tune's contour, when it was given rather than left to the seed.
+    ///
+    /// Scale steps around the figure's anchor; empty means the melody draws its own germ. See
+    /// [`SongSpec::motif`] for what a given motif is and is not.
+    pub motif: Vec<i32>,
 }
 
 impl From<&SongSpec> for ScoreSettings {
@@ -123,6 +128,7 @@ impl From<&SongSpec> for ScoreSettings {
             fill: spec.fill,
             variation: spec.variation,
             groove: spec.groove.clone(),
+            motif: spec.motif.clone(),
         }
     }
 }

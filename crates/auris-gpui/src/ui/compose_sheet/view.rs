@@ -298,6 +298,29 @@ impl AurisApp {
         );
         rows.push(
             self.sheet_picker(
+                "song-motif",
+                Key::SongMotif,
+                // The row says おまかせ when no motif was given, because that is what it means:
+                // the composer draws the piece's germ from the seed.
+                if dials.motif.is_empty() {
+                    self.t(Key::SongChordsOwn).to_string()
+                } else {
+                    motif_text(&dials.motif)
+                },
+                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                    let title = this.t(Key::SongMotif);
+                    let current = this
+                        .song_sheet
+                        .as_ref()
+                        .map_or_else(String::new, |dials| motif_text(&dials.motif));
+                    this.open_prompt(Prompt::new(title, PromptTarget::SongMotif, current));
+                    cx.notify();
+                }),
+            )
+            .into_any_element(),
+        );
+        rows.push(
+            self.sheet_picker(
                 "song-seed",
                 Key::PartSeed,
                 dials.seed.to_string(),

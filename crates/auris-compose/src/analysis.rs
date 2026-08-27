@@ -186,6 +186,43 @@ fn correlation(a: &[f64; 12], b: &[f64]) -> f64 {
     covariance / spread
 }
 
+/// The line of a melody, written as the scale steps a motif is given in.
+///
+/// The bridge from "this clip" to `motif = "0 2 4 2"`: the top voice of each onset — chords in
+/// a melody clip are voicings, and what a person hums back is the top of them — read as scale
+/// degrees of `key` and written relative to the first note, which is the anchor every generated
+/// figure starts from. A note outside the scale is pulled onto the nearest degree, exactly as a
+/// transposed figure would be when it is played back.
+///
+/// What comes back obeys the motif field's own bounds — steps clamped to a ninth either way,
+/// at most thirty-two of them — so it can be written into a specification verbatim. Fewer than
+/// two notes come back as fewer than two, and the caller says "that is not a line" rather than
+/// this inventing one.
+pub fn motif_of(notes: &[Note], key: Key) -> Vec<i32> {
+    let mut ordered: Vec<(Ticks, i32)> = Vec::new();
+    let mut sorted: Vec<&Note> = notes.iter().collect();
+    sorted.sort_by_key(|note| (note.start, note.pitch));
+    for note in sorted {
+        match ordered.last_mut() {
+            // The top voice of a chord: the last note wins because the sort put it highest.
+            Some((start, pitch)) if *start == note.start => *pitch = i32::from(note.pitch),
+            _ => ordered.push((note.start, i32::from(note.pitch))),
+        }
+    }
+    let degrees: Vec<i32> = ordered
+        .iter()
+        .map(|(_, pitch)| key.scale.nearest_degree(pitch - key.tonic.semitones()))
+        .collect();
+    let Some(first) = degrees.first().copied() else {
+        return Vec::new();
+    };
+    degrees
+        .iter()
+        .map(|degree| (degree - first).clamp(-9, 9))
+        .take(32)
+        .collect()
+}
+
 /// A chord for every bar of a melody, in `key`.
 ///
 /// One chord per bar. Half-bar chords are perfectly musical and are not what a first draft should
@@ -382,6 +419,47 @@ mod tests {
         assert!(!key.is_minor());
         // And a melody with no length in it is the same case rather than a division by zero.
         assert_eq!(detect_key(&[Note::new(60, Ticks::ZERO, Ticks(0))]), key);
+    }
+
+    #[test]
+    fn a_melody_reads_back_as_the_motif_that_would_restate_it() {
+        let key = Key::new(PitchClass::new(0), ScaleId::Major);
+        // C E G E: up a third, up a third, back — the axis of every motif test in this crate.
+        let melody = vec![
+            note(60, 0, 0.0, 1.0),
+            note(64, 0, 1.0, 1.0),
+            note(67, 0, 2.0, 1.0),
+            note(64, 0, 3.0, 1.0),
+        ];
+        assert_eq!(motif_of(&melody, key), [0, 2, 4, 2]);
+
+        // A chord under the tune is a voicing, and the line is its top: the same motif with a
+        // C struck under the E reads back as the same motif.
+        let mut voiced = melody.clone();
+        voiced.push(note(48, 0, 1.0, 1.0));
+        assert_eq!(motif_of(&voiced, key), [0, 2, 4, 2]);
+
+        // A note off the scale is pulled onto the nearest degree, as playback would pull it.
+        let chromatic = vec![note(60, 0, 0.0, 1.0), note(61, 0, 1.0, 1.0)];
+        let read = motif_of(&chromatic, key);
+        assert_eq!(read.len(), 2);
+        assert!((0..=1).contains(&read[1]), "{read:?}");
+
+        // The line is relative to its own first note, so the register does not matter.
+        let high: Vec<Note> = melody
+            .iter()
+            .map(|held| Note::new(held.pitch + 12, held.start, held.length))
+            .collect();
+        assert_eq!(motif_of(&high, key), [0, 2, 4, 2]);
+
+        // And what comes back fits the field it is written into: at most 32 steps, and fewer
+        // than two notes are returned as fewer than two rather than padded into a line.
+        let long: Vec<Note> = (0..40i64)
+            .map(|index| note(60 + (index % 5) as u8, index / 4, (index % 4) as f64, 1.0))
+            .collect();
+        assert_eq!(motif_of(&long, key).len(), 32);
+        assert!(motif_of(&[], key).is_empty());
+        assert_eq!(motif_of(&[note(60, 0, 0.0, 1.0)], key), [0]);
     }
 
     #[test]

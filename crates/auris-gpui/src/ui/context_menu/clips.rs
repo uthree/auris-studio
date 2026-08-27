@@ -173,6 +173,15 @@ impl AurisApp {
                     .is_some_and(|midi| !midi.notes.is_empty()),
                 self.t(Key::MenuAccompany),
                 MenuCommand::AccompanyClip(clip),
+            )
+            // The other direction: this clip's line becomes the tune the composer restates.
+            // Gated the same way, because a clip with no notes has no line to take.
+            .item_if(
+                self.session
+                    .midi_clip(clip)
+                    .is_some_and(|midi| !midi.notes.is_empty()),
+                self.t(Key::MenuComposeFromMotif),
+                MenuCommand::TakeClipAsMotif(clip),
             );
         self.generated_clip_rows(menu, clip)
     }
@@ -520,6 +529,48 @@ mod window_tests {
                 "the menu is titled after a clip it has also selected"
             );
         });
+    }
+
+    /// A clip's tune can be taken as the motif, and the sheet opens holding its line.
+    ///
+    /// The line and not the notes: what lands on the sheet is scale steps around the first
+    /// note, which is exactly the text `motif = "0 2 4 2"` would put in a specification.
+    #[gpui::test]
+    fn taking_a_clip_as_the_motif_opens_the_sheet_holding_its_line(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        // C E G E in the document's C major: the line `0 2 4 2`.
+        app.update(cx, |this, _| {
+            for (index, pitch) in [60u8, 64, 67, 64].into_iter().enumerate() {
+                this.session
+                    .add_note(
+                        clip,
+                        Note::new(pitch, Ticks(index as i64 * 960), Ticks(960)),
+                    )
+                    .expect("the clip takes a note");
+            }
+        });
+        paint(&app, cx);
+        let at = lane_point(&app, cx, track, HALF_CLIP);
+
+        right_press(cx, at);
+        assert!(offers(&app, cx, &MenuCommand::TakeClipAsMotif(clip)));
+        choose(&app, cx, &MenuCommand::TakeClipAsMotif(clip));
+
+        app.read_with(cx, |this, _| {
+            let dials = this.song_sheet.as_ref().expect("the song sheet opened");
+            assert_eq!(dials.motif, [0, 2, 4, 2]);
+        });
+    }
+
+    /// An empty clip has no line, and its menu does not offer to take one.
+    #[gpui::test]
+    fn an_empty_clip_offers_no_motif_to_take(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        let at = lane_point(&app, cx, track, HALF_CLIP);
+
+        right_press(cx, at);
+
+        assert!(!offers(&app, cx, &MenuCommand::TakeClipAsMotif(clip)));
     }
 
     /// Empty lane is a different menu, and getting this wrong offers commands about a clip that

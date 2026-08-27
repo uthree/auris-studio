@@ -401,21 +401,42 @@ pub(super) fn melody(
     // statements of one tune rather than two tunes in a row. Keyed by no section at all, so
     // every section of every playing reaches for the same shape. Only its degrees survive —
     // the rhythm it is drawn with is scaffolding for the walk and is discarded below.
-    let mut germinate = Rng::stream(
-        frame.seed,
-        &[
-            RngKey::Word("part"),
-            RngKey::Word(&part.name),
-            RngKey::Word("motif"),
-        ],
-    );
-    let germ = motif(
-        grid,
-        part.rhythm.as_ref(),
-        density_at(settings, part, GERM_INTENSITY),
-        settings.mood.syncopation,
-        &mut germinate,
-    );
+    // A motif somebody gave *is* the germ, verbatim: the whole point of giving one is that the
+    // piece says your line and not a line of its own. Its cells carry only the shape, because
+    // that is all `dressed` reads — the rhythm every section says it in stays the section's.
+    // Nothing is drawn from the germ stream in that case, which is safe precisely because it is
+    // its own stream: no other decision in the piece shares it, so skipping it shifts nothing.
+    let germ = if settings.motif.len() >= 2 {
+        Motif {
+            cells: settings
+                .motif
+                .iter()
+                .enumerate()
+                .map(|(position, degree)| Cell {
+                    step: position,
+                    accent: Accent::Normal,
+                    length: 1,
+                    degree: *degree,
+                })
+                .collect(),
+        }
+    } else {
+        let mut germinate = Rng::stream(
+            frame.seed,
+            &[
+                RngKey::Word("part"),
+                RngKey::Word(&part.name),
+                RngKey::Word("motif"),
+            ],
+        );
+        motif(
+            grid,
+            part.rhythm.as_ref(),
+            density_at(settings, part, GERM_INTENSITY),
+            settings.mood.syncopation,
+            &mut germinate,
+        )
+    };
 
     // One figure per part and section, restated bar after bar. Keyed by neither the bar nor the
     // instance, so every bar of every playing reaches for the same one. Its rhythm is the
@@ -884,6 +905,53 @@ mod tests {
         let verse = shape_of(0);
         assert!(!verse.is_empty(), "the verse played nothing");
         assert_eq!(verse, shape_of(1), "two sections, two different tunes");
+    }
+
+    #[test]
+    fn a_given_motif_is_the_tune_the_whole_piece_says() {
+        // `motif` hands the germ over instead of drawing it: four onsets wearing four degrees
+        // wear them one for one, so the opening bar rises where the motif rises and falls where
+        // it falls — in both sections, because a germ belongs to the piece.
+        let (_, frame, parts) = draft(
+            r#"
+                form = ["verse", "chorus"]
+                chords = "@axis"
+                humanize = 0
+                variation = 0
+                ending = "none"
+                motif = "0 2 4 2"
+
+                [section.verse]
+                bars = 4
+
+                [section.chorus]
+                bars = 4
+
+                [[part]]
+                name = "lead"
+                rhythm = "x.x.x.x........."
+                "#,
+        );
+        let lead = part(&parts, "lead");
+        let shape_of = |section: usize| -> Vec<i64> {
+            let notes = crate::parts::fixture::section_notes(&frame, lead, section);
+            let bar = frame.grid.bar_ticks().raw();
+            let opening: Vec<i64> = notes
+                .iter()
+                .filter(|(start, ..)| *start < bar)
+                .map(|(_, pitch, ..)| i64::from(*pitch))
+                .collect();
+            opening
+                .windows(2)
+                .map(|pair| (pair[1] - pair[0]).signum())
+                .collect()
+        };
+        assert_eq!(shape_of(0), [1, 1, -1], "the verse does not sing the motif");
+        assert_eq!(
+            shape_of(1),
+            [1, 1, -1],
+            "the chorus does not sing the motif"
+        );
     }
 
     #[test]

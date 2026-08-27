@@ -182,6 +182,17 @@ other way just as well: `@epic`, written in minor degrees, is the loop on the re
 a piece is in major. A progression you write out yourself declares no mode and is taken at face
 value, because those are the degrees you meant.
 
+**The tune can be given too.** Every section's melody is built by restating one piece-level
+contour — the *germ* — resampled onto each section's own rhythm, and `motif = "0 2 4 2"` hands
+that contour over instead of leaving it to the seed: scale steps around the first note, the same
+numbers in every key. A busy chorus fills the given line in with passing steps and a sparse verse
+says it in fewer, wider words; the rhythm each section says it in stays the section's own (a
+part's `rhythm` pattern pins that half by hand). On the song sheet the **Motif** row edits it —
+empty means おまかせ, the seed draws its own — and right-clicking a MIDI clip offers **Take as
+the Motif…**, which reads the clip's top voice as scale steps in the document's key and opens
+the sheet holding the result. From the command line, `--set "motif: 0 2 4 2"` does the same to
+any specification.
+
 A third answer is to give no progression at all: `chords = "?"` (or any `[harmony]` entry set to
 `"?"`) asks the composer to **invent** one. The invention is a weighted walk over the moves the
 catalogue itself makes — counted from its major-mode entries, so 王道進行's V → iii is in the

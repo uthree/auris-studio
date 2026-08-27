@@ -71,7 +71,7 @@ use crate::theory::key::Key;
 
 // Re-exported, so `spec::Role` and the rest are the paths they have always been: which file an
 // item is written in is not part of the vocabulary a specification is read with.
-pub use self::doc::SpecError;
+pub use self::doc::{SpecError, parse_motif};
 pub use self::mood::Mood;
 pub use self::role::Role;
 
@@ -432,6 +432,14 @@ pub struct SongSpec {
     pub variation: f32,
     /// The drum groove.
     pub groove: String,
+    /// The tune's contour, given rather than invented: scale steps around the figure's anchor.
+    ///
+    /// Empty means the composer draws its own germ from the seed. Given, this *is* the germ —
+    /// the line every section's melody wears, re-sampled onto each section's own rhythm — so a
+    /// motif hummed into four numbers is restated by the whole piece. Only the line: what the
+    /// piece takes from a motif is which way it moves, and the rhythm a section says it in
+    /// remains the section's business (a part's `rhythm` pattern pins that half by hand).
+    pub motif: Vec<i32>,
     /// How the piece closes: a held tonic bar after the last section, or nothing at all.
     pub ending: Ending,
     /// The charts, by name. `main` is the one a section gets when it does not say.
@@ -470,6 +478,7 @@ impl Default for SongSpec {
             fill: 0.5,
             variation: 0.25,
             groove: "basic-rock".to_string(),
+            motif: Vec::new(),
             ending: Ending::default(),
             charts,
             sections,

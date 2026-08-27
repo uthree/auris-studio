@@ -141,6 +141,11 @@ pub struct SongDials {
     /// `ending = "none"` survives the round trip through the dialog instead of silently gaining
     /// its ending back.
     pub ending: Ending,
+    /// The tune's contour, when one was given: scale steps around the figure's anchor.
+    ///
+    /// Carried for the same reason as `ending` — the sheet draws no control for it yet, and a
+    /// specification that gave the piece a tune must not come back having forgotten it.
+    pub motif: Vec<i32>,
     /// The progressions the song carries, [`MAIN_CHART`] first.
     ///
     /// More than one is what lets a chorus play something the verse does not. They arrive by
@@ -187,6 +192,7 @@ pub fn song_spec(dials: &SongDials) -> SongSpec {
         variation: dials.variation,
         groove: dials.groove.clone(),
         ending: dials.ending,
+        motif: dials.motif.clone(),
         charts: dials.charts.iter().cloned().collect(),
         sections: dials
             .sections
@@ -269,6 +275,7 @@ pub fn song_dials(spec: &SongSpec) -> SongDials {
         fill: spec.fill,
         variation: spec.variation,
         ending: spec.ending,
+        motif: spec.motif.clone(),
         charts,
         sections,
         form: spec.form.clone(),
@@ -444,6 +451,18 @@ pub fn invent_section_chart(dials: &mut SongDials, index: usize) -> bool {
 /// How a chart is named on the sheet: the progression it quotes, or its own key.
 pub fn chart_label(name: &str, chart: &Chart) -> String {
     chart.quoted_as.clone().unwrap_or_else(|| name.to_string())
+}
+
+/// How a motif is written — on the sheet's row and in the field that edits it.
+///
+/// The same text `motif = "…"` holds in a `.asong`, so what the row shows is what the file
+/// would say and what the prompt comes up holding is what typing it back in would mean.
+pub fn motif_text(motif: &[i32]) -> String {
+    motif
+        .iter()
+        .map(i32::to_string)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The same song, next take.

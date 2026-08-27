@@ -486,6 +486,18 @@ messages! {
         ja: "`{text}` はコードではありません — `IV`、`vi`、`bVII7` のように"
     }
 
+    /// The text typed into the motif prompt is not a motif.
+    fn not_a_motif(text: &str) {
+        en: "`{text}` is not a motif — scale steps like `0 2 4 2`",
+        ja: "`{text}` はモチーフではありません — `0 2 4 2` のようにスケール度数で"
+    }
+
+    /// A clip's tune was taken as the motif the composer will restate.
+    fn motif_taken(count: usize) {
+        en: "Motif taken — {count} steps for the whole piece to say",
+        ja: "モチーフを取り込みました — {count} 音の線で曲全体を書きます"
+    }
+
     /// The text typed into the seed prompt is not a number.
     fn not_a_seed(text: &str) {
         en: "`{text}` is not a seed — any whole number will do",

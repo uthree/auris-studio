@@ -285,6 +285,8 @@ pub fn write_phrase(
         // One clip is one playing of one section, so there is no repeat to depart from.
         variation: 0.0,
         groove: recipe.groove.clone(),
+        // And no song around it to have given one a tune.
+        motif: Vec::new(),
     };
 
     let roster: Vec<PartSpec> = roles_of(recipe.preset)

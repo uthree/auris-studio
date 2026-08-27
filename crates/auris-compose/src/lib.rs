@@ -24,7 +24,7 @@ pub mod spec;
 #[doc(no_inline)]
 pub use auris_core::theory;
 
-pub use analysis::{Reading, detect_key, harmonise, read_melody};
+pub use analysis::{Reading, detect_key, harmonise, motif_of, read_melody};
 pub use phrase::{
     SEED_RANGE, clip_seed, default_instrument, preset_of, recipe_for, roles_of, write_phrase,
 };

@@ -116,6 +116,11 @@ pub enum PromptTarget {
     SongSeed,
     /// The name of the part at this position in the song sheet's roster.
     SongPartName(usize),
+    /// The tune's contour on the song sheet, as scale steps: `0 2 4 2`.
+    ///
+    /// The one prompt where emptiness is an answer: no motif means the composer draws its own
+    /// germ from the seed, and clearing the field is how that freedom is given back.
+    SongMotif,
     /// The chords the section at this position in the song sheet plays, written out.
     SongSectionChart(usize),
     /// The name to keep the chart of the section at this position under.
@@ -140,6 +145,8 @@ pub enum Notation {
     Key,
     /// One chord as a roman numeral, `V7` or `bVII`.
     Chord,
+    /// A motif, as scale steps around its anchor: `0 2 4 2`.
+    Motif,
     /// A whole progression, bar by bar: `| IVmaj7 | III7 | vi7 | I7 |`.
     Progression,
     /// The name of a section of the song.
@@ -165,6 +172,7 @@ impl PromptTarget {
         Some(match self {
             PromptTarget::Key(_) | PromptTarget::SongKey => Notation::Key,
             PromptTarget::Chord(_) => Notation::Chord,
+            PromptTarget::SongMotif => Notation::Motif,
             PromptTarget::SongSectionChart(_) => Notation::Progression,
             PromptTarget::Section(_) => Notation::Section,
             PromptTarget::Signature(_) | PromptTarget::SignatureFrom(_) => Notation::Signature,
@@ -207,6 +215,7 @@ impl Notation {
         match self {
             Notation::Key => Key::HintKey,
             Notation::Chord => Key::HintChord,
+            Notation::Motif => Key::HintMotif,
             Notation::Progression => Key::HintProgression,
             Notation::Section => Key::HintSection,
             Notation::Signature => Key::HintSignature,
@@ -228,8 +237,13 @@ impl Notation {
             Notation::Chord | Notation::Progression => CHORD_VOCABULARY,
             Notation::Section => SECTION_VOCABULARY,
             Notation::Signature => SIGNATURE_VOCABULARY,
-            // 174 is not on any list worth reading.
-            Notation::Seed | Notation::Tempo | Notation::Gain | Notation::Position => &[],
+            // 174 is not on any list worth reading, and neither is every signed number a motif
+            // step could be.
+            Notation::Seed
+            | Notation::Tempo
+            | Notation::Gain
+            | Notation::Position
+            | Notation::Motif => &[],
         }
     }
 
@@ -624,6 +638,8 @@ impl AurisApp {
             PromptTarget::Lyric { .. }
                 | PromptTarget::Phonemes { .. }
                 | PromptTarget::Lyrics { .. }
+                // No motif is an answer here — it hands the tune back to the seed.
+                | PromptTarget::SongMotif
         );
         if text.is_empty() && !empty_clears {
             self.set_status(self.t(Key::NameCannotBeEmpty));
@@ -759,6 +775,29 @@ impl AurisApp {
                     part.name = text;
                 }
                 Ok(())
+            }
+            // The tune, given by hand. What is stored is the contour the germ would otherwise
+            // be drawn as, so every section restates it; empty hands the tune back to the seed.
+            PromptTarget::SongMotif => {
+                if text.is_empty() {
+                    if let Some(dials) = self.song_sheet.as_mut() {
+                        dials.motif.clear();
+                    }
+                    Ok(())
+                } else {
+                    match auris_session::prelude::parse_motif(&text) {
+                        Ok(motif) => {
+                            if let Some(dials) = self.song_sheet.as_mut() {
+                                dials.motif = motif;
+                            }
+                            Ok(())
+                        }
+                        Err(_) => {
+                            self.set_failed_status(messages::not_a_motif(self.language(), &text));
+                            return;
+                        }
+                    }
+                }
             }
             // A progression written out by hand. Named after the section it was written for, so
             // there is one prompt rather than two — and a second section can still reach it, from
@@ -1634,6 +1673,7 @@ mod tests {
             PromptTarget::SongKey,
             PromptTarget::SongSeed,
             PromptTarget::SongPartName(0),
+            PromptTarget::SongMotif,
             PromptTarget::SongSectionChart(0),
             PromptTarget::KeepProgression(0),
         ]
