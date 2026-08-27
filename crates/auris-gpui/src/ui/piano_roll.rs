@@ -192,6 +192,13 @@ impl AurisApp {
             .flex_col()
             .flex_1()
             .min_h(px(80.0))
+            // Sized by the dock it is in and not by the widest thing inside it. Without this the
+            // panel's own smallest width is its header strip's — over a thousand pixels of title,
+            // tools, hint, button and slider — so a narrow window gave it that much anyway and it
+            // ran out through the side of the window, taking the slider and the curve-lane button
+            // somewhere no pointer could reach. The dock clips, so the damage was invisible and
+            // the controls were simply gone.
+            .min_w_0()
             .bg(theme.surface_sunken)
             .child(
                 div()
@@ -205,20 +212,46 @@ impl AurisApp {
                     .border_color(theme.border)
                     .text_xs()
                     .text_color(theme.text_muted)
-                    .child(messages::piano_roll_title(self.language(), &clip_name))
+                    // The strip is words first and controls last, and a window narrow enough that
+                    // they do not all fit has to give the words up rather than the controls: the
+                    // dock clips, so whatever is pushed past its edge cannot be reached at all,
+                    // and the two things at the end are the only way to open a curve lane or
+                    // change the zoom. `min_w_0` on the row and on each run of text is what lets
+                    // the text be the part that goes; without it the row's smallest width is the
+                    // sum of every word in it, and the slider was the first thing over the side.
+                    .min_w_0()
+                    .child(
+                        div()
+                            .flex_shrink()
+                            .min_w_0()
+                            .truncate()
+                            .child(messages::piano_roll_title(self.language(), &clip_name)),
+                    )
                     .child(self.tool_strip(cx))
-                    .child(div().flex_1())
+                    .child(div().flex_1().min_w_0())
                     // The hint describes the tool in hand. It named the create and delete
                     // gestures unconditionally, and holding the velocity tool while being told
                     // how to add a note is being told about a different editor.
-                    .child(match self.tool {
-                        RollTool::Pointer => messages::piano_roll_hint(
-                            self.language(),
-                            self.t(self.pointer.create.label()),
-                            self.t(self.pointer.delete.label()),
-                        ),
-                        RollTool::Velocity => messages::piano_roll_velocity_hint(self.language()),
-                    })
+                    //
+                    // The first thing to be given up, and the right one: it is a reminder of a
+                    // gesture rather than a way of making one, so a hand that cannot see all of
+                    // it has lost nothing it needs.
+                    .child(
+                        div()
+                            .flex_shrink()
+                            .min_w_0()
+                            .truncate()
+                            .child(match self.tool {
+                                RollTool::Pointer => messages::piano_roll_hint(
+                                    self.language(),
+                                    self.t(self.pointer.create.label()),
+                                    self.t(self.pointer.delete.label()),
+                                ),
+                                RollTool::Velocity => {
+                                    messages::piano_roll_velocity_hint(self.language())
+                                }
+                            }),
+                    )
                     .child(button(
                         "roll-lanes",
                         self.t(Key::CurveLanes),
@@ -583,6 +616,9 @@ impl AurisApp {
             .flex()
             .items_center()
             .gap_1()
+            // The tool in hand is the one thing in the header strip a hand reaches for while
+            // editing, so it keeps its width whatever the window does.
+            .flex_shrink_0()
             .children(RollTool::ALL.map(|tool| {
                 button(
                     ("roll-tool", tool as usize),

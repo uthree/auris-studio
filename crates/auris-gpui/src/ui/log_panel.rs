@@ -40,6 +40,11 @@ impl AurisApp {
             .flex_col()
             .flex_1()
             .min_h(px(80.0))
+            // The mixer's note, for the same reason: a flex item's `min-width` is `auto`, which
+            // is its content's width, and a log holding one long path claims the width of that
+            // path. The dock hands it over and clips it, so the Clear button at the end of the
+            // strip ends up somewhere no pointer can reach.
+            .min_w_0()
             .bg(theme.surface_sunken)
             .child(
                 div()

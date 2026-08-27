@@ -740,8 +740,14 @@ where
     D: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
 {
     let fraction = fraction.clamp(0.0, 1.0);
+    // The id again, as a name a test can find the slider by — see the note in `icon_button`. It
+    // is the last thing in the strips it sits in, so it is the first to be pushed off the edge.
+    let id: ElementId = id.into();
+    let handle = id.clone();
+
     div()
-        .id(id.into())
+        .id(id)
+        .debug_selector(move || handle.to_string())
         .flex()
         .items_center()
         .w(ZOOM_SLIDER_WIDTH)

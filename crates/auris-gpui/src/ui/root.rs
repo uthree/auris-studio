@@ -341,12 +341,20 @@ impl AurisApp {
             // Clipped, because a panel can now be given a dock it was never laid out for: the
             // roll's header strip is wider than a side column, and without this it would paint
             // its zoom slider across the arrangement next door.
-            .overflow_hidden();
+            .overflow_hidden()
+            // And *sized* by its dock rather than by what is in it, on the axis the dock does not
+            // measure. Without this the bottom dock took the width of the widest thing in the
+            // panel — the roll's header strip is over a thousand pixels of it — and grew straight
+            // through the middle column and out past the window, taking the two controls at the
+            // end of that strip somewhere no pointer could reach. `overflow_hidden` hid the
+            // damage without preventing it.
+            .min_w_0()
+            .min_h_0();
         let content = self.render_panel(panel, window, cx);
         Some(
             match dock.is_side() {
                 true => wrapper.w(size),
-                false => wrapper.h(size),
+                false => wrapper.h(size).w_full(),
             }
             .child(content),
         )
@@ -2312,6 +2320,7 @@ impl AurisApp {
 mod window_tests {
     use gpui::{TestAppContext, px, size};
 
+    use crate::dock::Panel;
     use crate::harness::{WINDOW, resize, with_a_clip};
 
     /// Every surface the pointer works in, and where it was drawn.
@@ -2334,6 +2343,46 @@ mod window_tests {
             })
             .collect()
         })
+    }
+
+    /// The controls at the end of a panel's header strip stay reachable in a narrow window.
+    ///
+    /// A dock is clipped, so anything pushed past its edge cannot be clicked at all — and what
+    /// sits at the end of a strip is the part that goes first, because a flex item's `min-width`
+    /// is `auto` and a panel that will not shrink below its own content takes the width it wants
+    /// whatever the dock says. The words in front of the controls are what should give way.
+    ///
+    /// Both panels that share the bottom dock and had this shape. The mixer, which had it first,
+    /// already carries the fix and the note explaining it.
+    #[gpui::test]
+    fn a_panels_header_controls_stay_on_screen_in_a_narrow_window(cx: &mut TestAppContext) {
+        let (app, cx, _, clip) = with_a_clip(cx);
+        app.update(cx, |this, _| this.open_clip_in_editor(clip));
+
+        // 640×480 is the smallest window `main` will open — see `fitted_size`.
+        for viewport in [WINDOW, size(px(900.), px(600.)), size(px(640.), px(480.))] {
+            for (panel, controls) in [
+                (Panel::PianoRoll, ["roll-lanes", "roll-zoom"].as_slice()),
+                (Panel::Log, ["log-clear"].as_slice()),
+            ] {
+                app.update(cx, |this, _| this.show_panel(panel));
+                resize(&app, cx, viewport);
+                for control in controls {
+                    let bounds = cx
+                        .debug_bounds(control)
+                        .unwrap_or_else(|| panic!("`{control}` was not drawn at all"));
+                    assert!(
+                        bounds.right() <= viewport.width,
+                        "`{control}` reaches {:?}, past the right of a {viewport:?} window",
+                        bounds.right()
+                    );
+                    assert!(
+                        bounds.size.width > px(0.0),
+                        "`{control}` was squeezed to nothing in a {viewport:?} window"
+                    );
+                }
+            }
+        }
     }
 
     /// Every surface the pointer works in is still reachable when the window is small.
