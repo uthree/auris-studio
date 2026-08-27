@@ -216,18 +216,20 @@ impl AurisApp {
             return;
         }
 
-        let from = match grabbed {
-            Some(tick) => tick,
-            None => {
-                // A press on empty lane writes the point it is about to drag, so one gesture both
-                // places a value and shapes it.
-                if !self.session.set_automation_point(target, at, value) {
-                    return;
-                }
-                at
-            }
-        };
+        let from = grabbed.unwrap_or(at);
+        // The transaction opens first and the point lands inside it — the order note creation
+        // keeps, and the guide's one-undo-per-gesture rule. Written before the transaction, the
+        // point was a step of its own, and the pixel of wobble between press and release made a
+        // second: Undo then nudged the value back a pixel and left the point standing.
         self.begin_drag(Drag::AutomationPoint { target, at: from });
+        if grabbed.is_none() {
+            // A press on empty lane writes the point it is about to drag, so one gesture both
+            // places a value and shapes it.
+            if !self.session.set_automation_point(target, at, value) {
+                self.abandon_drag();
+                return;
+            }
+        }
         cx.notify();
     }
 
@@ -515,6 +517,54 @@ mod tests {
                 .expect("the clip is still there")
                 .start
         })
+    }
+
+    #[gpui::test]
+    fn placing_an_automation_point_with_a_wobble_is_one_undo_step(cx: &mut TestAppContext) {
+        // The transaction opens before the point lands, so the press that writes a point and
+        // the pixel the pointer wobbles before release are one undo step. They used to be two:
+        // the first Undo nudged the value back a pixel and the point stayed.
+        let (app, cx, track, _clip) = crate::harness::with_a_clip(cx);
+        let target = auris_session::ParamTarget::TrackGain(track);
+        app.update(cx, |this, _| {
+            this.automation_lanes.insert(track, target);
+        });
+        paint(&app, cx);
+
+        let at = app.read_with(cx, |this, _| {
+            let origin = this.lanes_origin();
+            let row = this
+                .lane_rows()
+                .into_iter()
+                .find(|row| row.track == track && row.target().is_some())
+                .expect("the automation lane is open");
+            gpui::point(
+                origin.x + this.timeline.tick_to_x(FOUR_BEATS),
+                origin.y + row.top + row.height / 2.0 - this.lane_scroll,
+            )
+        });
+        press(cx, at);
+        crate::harness::drag_to(cx, gpui::point(at.x, at.y + gpui::px(1.0)));
+        release(cx, at);
+
+        app.update(cx, |this, _| {
+            assert_eq!(
+                this.session
+                    .automation()
+                    .lane(target)
+                    .map(|lane| lane.points().len()),
+                Some(1),
+                "the press placed a point"
+            );
+            this.session.undo();
+            assert!(
+                this.session
+                    .automation()
+                    .lane(target)
+                    .is_none_or(|lane| lane.points().is_empty()),
+                "one undo takes the whole gesture back"
+            );
+        });
     }
 
     #[gpui::test]

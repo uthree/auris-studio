@@ -1735,23 +1735,22 @@ impl AurisApp {
 
         let row =
             f32::from(event.position.y - bounds.origin.y) / f32::from(bounds.size.height).max(1.0);
-        let from = match grabbed {
-            Some(existing) => existing,
-            None => {
-                if !self
-                    .session
-                    .set_curve_point(clip, which, at, curve_of_row(which, row))
-                {
-                    return;
-                }
-                at
-            }
-        };
+        let from = grabbed.unwrap_or(at);
+        // Transaction first, point inside it — the same order `press_automation` and note
+        // creation keep, so writing the point and the wobble before release undo as one step.
         self.begin_drag(Drag::CurvePoint {
             clip,
             which,
             at: from,
         });
+        if grabbed.is_none()
+            && !self
+                .session
+                .set_curve_point(clip, which, at, curve_of_row(which, row))
+        {
+            self.abandon_drag();
+            return;
+        }
         cx.notify();
     }
 

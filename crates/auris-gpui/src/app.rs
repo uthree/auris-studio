@@ -1412,6 +1412,21 @@ impl AurisApp {
         self.drag = Some(drag);
     }
 
+    /// Lets go of a gesture whose first edit refused.
+    ///
+    /// For the create-and-drag gestures, which open their transaction *before* the write so
+    /// that placing a point and shaping it undo as one step: when the write then refuses,
+    /// this closes the transaction it opened — recording nothing, since nothing changed —
+    /// rather than leaving it to swallow whatever edit comes next.
+    pub(crate) fn abandon_drag(&mut self) {
+        let Some(drag) = self.drag.take() else {
+            return;
+        };
+        if drag.edit().is_some() {
+            self.session.end_transaction();
+        }
+    }
+
     /// Ends any gesture in progress.
     pub(crate) fn end_drag(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
         let Some(drag) = self.drag.take() else {
