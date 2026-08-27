@@ -179,6 +179,14 @@ pub struct Settings {
     /// carried to another one names the plugins it uses, and where *that* machine keeps them is
     /// that machine's business.
     pub plugin_paths: Vec<PathBuf>,
+    /// Folder holding a compiled Japanese dictionary — a prebuilt `naist-jdic` — for reading
+    /// kanji lyrics on a singer track.
+    ///
+    /// A fact about the machine for the reason a plugin folder is: kana lyrics need nothing
+    /// installed, and a document written with kanji opens fine on a machine without this — only
+    /// the command that turns *new* kanji into phonemes asks for it, and it names this setting
+    /// when it is missing.
+    pub japanese_dictionary: Option<PathBuf>,
 }
 
 impl Default for Settings {
@@ -194,6 +202,7 @@ impl Default for Settings {
             window: None,
             recent: Vec::new(),
             plugin_paths: Vec::new(),
+            japanese_dictionary: None,
         }
     }
 }

@@ -145,9 +145,9 @@ pub mod prelude {
     pub use auris_core::{
         AudioBuffer, AudioClip, AudioSource, AuxSend, ClipId, ClipPreset, ClipRecipe, Color,
         EffectSlotId, FadeCurve, MidiClip, MixerStrip, Note, Output, PluginRegistry, PresetRef,
-        Project, SectionMap, SectionPoint, SectionSpan, SendId, SoundFontId, SoundFontRef,
-        SourceId, Subdivision, Track, TrackId, TrackKind, default_loop_end, loop_passes,
-        sounding_length,
+        Project, SectionMap, SectionPoint, SectionSpan, SendId, SingerTrack, SoundFontId,
+        SoundFontRef, SourceId, Subdivision, Track, TrackId, TrackKind, default_frame_hop,
+        default_loop_end, loop_passes, sounding_length,
     };
     /// The equalizer's band table, the settings a display reads out of one, and the curve those
     /// settings make.
@@ -160,6 +160,9 @@ pub mod prelude {
         EQ_BAND_COUNT, EQ_LAYOUT, EQUALIZER_ID, EqBandKind, EqBandLayout, EqBandSetting,
         eq_response_db,
     };
+    /// What a singer track stores and what its voice model is fed — see [`auris_vocal`] and
+    /// the singer commands on [`Session`].
+    pub use auris_vocal::{SILENCE, SingerFrames, VocalError, split_kana_moras};
     // The curves a clip carries, and how far each may go. A frontend drawing one has to know the
     // range it is drawing against, and may not reach past this crate to find out.
     pub use auris_core::plugin::{CC_MODULATION, CONTROLLER_MAX};

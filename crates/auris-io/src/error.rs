@@ -82,7 +82,7 @@ impl IoError {
     ///
     /// A missing file is by far the most common failure and deserves its own message, so it is
     /// split out from the generic case here rather than at every call site.
-    pub(crate) fn from_fs(path: &Path, source: std::io::Error) -> Self {
+    pub fn from_fs(path: &Path, source: std::io::Error) -> Self {
         if source.kind() == std::io::ErrorKind::NotFound {
             IoError::FileNotFound(path.to_path_buf())
         } else {

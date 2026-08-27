@@ -812,6 +812,7 @@ strings! {
     CmdCrossfade { en: "crossfade the clips", ja: "クリップをクロスフェード" }
     EditSetClipTempo { en: "the clip's tempo", ja: "クリップのテンポ" }
     EditAddInstrumentTrack { en: "adding an instrument track", ja: "ソフト音源トラックの追加" }
+    EditAddSingerTrack { en: "adding a singer track", ja: "シンガートラックの追加" }
     EditAddAudioTrack { en: "adding an audio track", ja: "オーディオトラックの追加" }
     EditAddBusTrack { en: "adding a bus", ja: "バスの追加" }
     EditDeleteTrack { en: "deleting a track", ja: "トラックの削除" }
@@ -848,6 +849,10 @@ strings! {
     EditMoveNotes { en: "moving notes", ja: "ノートの移動" }
     EditResizeNote { en: "resizing a note", ja: "ノートの長さ変更" }
     EditQuantizeNotes { en: "quantising", ja: "クオンタイズ" }
+    EditSetLyric { en: "writing a lyric", ja: "歌詞の入力" }
+    EditWriteLyrics { en: "writing lyrics", ja: "歌詞の流し込み" }
+    EditSetPhonemes { en: "editing phonemes", ja: "音素の編集" }
+    EditSetFrameHop { en: "changing the frame hop", ja: "フレーム間隔の変更" }
     EditAddEffect { en: "adding an effect", ja: "エフェクトの追加" }
     EditRemoveEffect { en: "removing an effect", ja: "エフェクトの削除" }
     EditBypassEffect { en: "bypassing an effect", ja: "エフェクトのバイパス" }
@@ -935,6 +940,18 @@ strings! {
     ErrorWrongTrackKind {
         en: "that command does not apply to this kind of track",
         ja: "この種類のトラックには使えない操作です"
+    }
+    ErrorUnknownNote {
+        en: "that note no longer exists",
+        ja: "そのノートは存在しません"
+    }
+    ErrorNeedsDictionary {
+        en: "reading kanji lyrics needs a Japanese dictionary; point the settings at a naist-jdic folder",
+        ja: "漢字の歌詞を読むには日本語辞書が必要です。設定で naist-jdic フォルダを指定してください"
+    }
+    ErrorLyric {
+        en: "the lyric could not be read",
+        ja: "歌詞を読み取れませんでした"
     }
     ErrorNoPath {
         en: "the project has no path yet; save it somewhere first",

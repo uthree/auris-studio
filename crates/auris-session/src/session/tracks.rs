@@ -324,7 +324,12 @@ impl Session {
         {
             return Err(SessionError::WrongTrackKind {
                 id: id.0,
-                actual: "an audio track",
+                // The track's own word for itself: a singer track refuses here too, because
+                // its preview voice is chosen by its kind rather than by a picker.
+                actual: self
+                    .project
+                    .track(id)
+                    .map_or("a track", |track| track.kind.label()),
                 expected: "an instrument track",
             });
         }
@@ -373,7 +378,12 @@ impl Session {
         {
             return Err(SessionError::WrongTrackKind {
                 id: id.0,
-                actual: "an audio track",
+                // The track's own word for itself: a singer track refuses here too, because
+                // its preview voice is chosen by its kind rather than by a picker.
+                actual: self
+                    .project
+                    .track(id)
+                    .map_or("a track", |track| track.kind.label()),
                 expected: "an instrument track",
             });
         }

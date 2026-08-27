@@ -47,6 +47,19 @@ pub enum SessionError {
     #[error("no clip with id {0}")]
     UnknownClip(u64),
 
+    /// The clip exists but holds no note at that index.
+    ///
+    /// Most many-note commands quietly skip indices a stale selection no longer covers; the
+    /// commands that write *words* refuse instead, because a lyric that silently landed nowhere
+    /// is a lyric somebody typed and lost.
+    #[error("clip {clip} has no note {index}")]
+    UnknownNote {
+        /// The clip that was addressed.
+        clip: u64,
+        /// The index that named nothing.
+        index: usize,
+    },
+
     /// The requested send does not exist on that track.
     #[error("track {track} has no send with id {send}")]
     UnknownSend {
@@ -108,6 +121,10 @@ pub enum SessionError {
     /// than saying which clip was empty.
     #[error("clip {0} has no notes to accompany")]
     NothingToAccompany(u64),
+
+    /// A lyric could not be turned into phonemes, or the Japanese dictionary failed.
+    #[error(transparent)]
+    Vocal(#[from] auris_vocal::VocalError),
 
     /// The operation only applies to one kind of track.
     #[error("track {id} is {actual}, but this needs {expected}")]

@@ -695,6 +695,7 @@ dependencies = [
  "auris-io",
  "auris-sampler",
  "auris-synth",
+ "auris-vocal",
  "log",
  "serde",
  "serde_json",

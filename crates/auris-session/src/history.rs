@@ -45,6 +45,8 @@ pub enum Edit {
     RemoveSignaturePoint,
     /// An instrument track was added.
     AddInstrumentTrack,
+    /// A singer track was added.
+    AddSingerTrack,
     /// An audio track was added.
     AddAudioTrack,
     /// A bus was added.
@@ -145,6 +147,14 @@ pub enum Edit {
     ResizeNote,
     /// Notes were snapped onto a division of the beat.
     QuantizeNotes,
+    /// A note was given its word.
+    SetLyric,
+    /// A phrase was laid across a run of notes, one mora each.
+    WriteLyrics,
+    /// A note's phonemes were corrected by hand.
+    SetPhonemes,
+    /// A singer track's frame hop was changed.
+    SetFrameHop,
     /// An effect was added to a chain.
     AddEffect,
     /// An effect was removed from a chain.

@@ -46,6 +46,7 @@ mod monitor;
 mod notes;
 mod punch;
 mod record;
+mod singer;
 mod tracks;
 mod transport;
 mod typing;
@@ -65,6 +66,8 @@ pub use levels::{
 };
 pub use monitor::MonitorStatus;
 pub use notes::{Quantize, quantized};
+pub use singer::LYRIC_CONTINUATION;
+
 pub use record::{
     Arm, InputChannels, RecordingReport, RecordingStatus, TakeReport, input_level_of,
 };
@@ -325,6 +328,12 @@ pub struct Session {
     input: Option<auris_engine::Capture>,
     /// The take that is running, if one is. See [`record`].
     take: Option<record::Take>,
+    /// The Japanese text frontend, loaded once the settings name a dictionary folder.
+    ///
+    /// `None` on most machines, and the session sings anyway: kana lyrics go through the
+    /// built-in table. Owned here rather than loaded per lyric because opening the folder
+    /// parses a compiled dictionary — work worth doing once. See [`singer`].
+    japanese: Option<auris_vocal::JapaneseDictionary>,
     /// The track the live input is being played through, if anybody asked for that. See
     /// [`monitor`].
     monitored: Vec<TrackId>,
@@ -483,6 +492,7 @@ impl Session {
             monitored: Vec::new(),
             typing: MusicalTyping::default(),
             take: None,
+            japanese: None,
             hosted: hosted::HostedPlugins::default(),
         };
         session.install_shipped_fonts();

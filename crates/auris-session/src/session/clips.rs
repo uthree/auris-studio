@@ -145,7 +145,8 @@ impl Session {
         true
     }
 
-    /// Adds an empty MIDI clip to an instrument track.
+    /// Adds an empty MIDI clip to a track that holds notes — an instrument track or a singer
+    /// track.
     pub fn add_midi_clip(
         &mut self,
         track: TrackId,
@@ -154,13 +155,13 @@ impl Session {
         length: Ticks,
     ) -> Result<ClipId, SessionError> {
         let index = self.require_track(track)?;
-        if self.project.tracks[index].kind.as_instrument().is_none() {
+        if !self.project.tracks[index].kind.holds_notes() {
             return Err(SessionError::WrongTrackKind {
                 id: track.0,
                 // The track's own word for itself, rather than "an audio track" — which was true
                 // of the only other kind there used to be, and is a lie about a bus.
                 actual: self.project.tracks[index].kind.label(),
-                expected: "an instrument track",
+                expected: "a track that holds notes",
             });
         }
         self.record(Edit::AddClip);

@@ -19,6 +19,7 @@ auris-i18n.workspace = true
 auris-io.workspace = true
 auris-sampler.workspace = true
 auris-synth.workspace = true
+auris-vocal.workspace = true
 log.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

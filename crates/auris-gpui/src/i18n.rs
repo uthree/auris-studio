@@ -104,6 +104,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::SetSignaturePoint => Key::EditSetSignaturePoint,
         Edit::RemoveSignaturePoint => Key::EditRemoveSignaturePoint,
         Edit::AddInstrumentTrack => Key::EditAddInstrumentTrack,
+        Edit::AddSingerTrack => Key::EditAddSingerTrack,
         Edit::AddAudioTrack => Key::EditAddAudioTrack,
         Edit::AddBusTrack => Key::EditAddBusTrack,
         Edit::DeleteTrack => Key::EditDeleteTrack,
@@ -145,6 +146,10 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::MoveNotes => Key::EditMoveNotes,
         Edit::ResizeNote => Key::EditResizeNote,
         Edit::QuantizeNotes => Key::EditQuantizeNotes,
+        Edit::SetLyric => Key::EditSetLyric,
+        Edit::WriteLyrics => Key::EditWriteLyrics,
+        Edit::SetPhonemes => Key::EditSetPhonemes,
+        Edit::SetFrameHop => Key::EditSetFrameHop,
         Edit::AddEffect => Key::EditAddEffect,
         Edit::RemoveEffect => Key::EditRemoveEffect,
         Edit::BypassEffect => Key::EditBypassEffect,
@@ -207,6 +212,13 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::UnknownPlugin(id) => messages::unknown_plugin(language, id),
         SessionError::UnknownTrack(_) => Key::ErrorUnknownTrack.get(language).to_string(),
         SessionError::UnknownClip(_) => Key::ErrorUnknownClip.get(language).to_string(),
+        SessionError::UnknownNote { .. } => Key::ErrorUnknownNote.get(language).to_string(),
+        // The one vocal error a person can *fix* gets the sentence naming the fix; the others
+        // carry the loader's or the frontend's own words, which name the folder or the text.
+        SessionError::Vocal(VocalError::NeedsDictionary { .. }) => {
+            Key::ErrorNeedsDictionary.get(language).to_string()
+        }
+        SessionError::Vocal(inner) => with(Key::ErrorLyric, inner.to_string()),
         SessionError::UnknownSend { .. } => Key::ErrorUnknownSend.get(language).to_string(),
         SessionError::NotABus(_) => Key::ErrorNotABus.get(language).to_string(),
         SessionError::RoutingLoop { .. } => Key::ErrorRoutingLoop.get(language).to_string(),
