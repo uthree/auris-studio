@@ -2067,3 +2067,93 @@ fn audio_line(status: &auris_session::AudioStatus, language: Language) -> String
     };
     format!("{engine} · {gpu}")
 }
+
+/// One gesture, one undo step — checked by making the gesture rather than by calling what it
+/// calls.
+///
+/// Every drag opens a transaction on the way down and closes it on the way up, and a drag is a
+/// hundred pointer moves that each edit the document. The number of steps a gesture leaves behind
+/// is invisible on screen: the only way to find out it had become a hundred was to press ⌘Z a
+/// hundred times.
+#[cfg(test)]
+mod window_tests {
+    use gpui::TestAppContext;
+
+    use super::AurisApp;
+    use auris_session::prelude::{ClipId, TICKS_PER_QUARTER, Ticks};
+
+    use crate::actions;
+    use crate::harness::{CLIP_LENGTH, drag, lane_point, with_a_clip};
+
+    /// Halfway along the fixture's clip.
+    const HALF_CLIP: Ticks = Ticks(CLIP_LENGTH.0 / 2);
+
+    /// Four beats, the distance these drags travel.
+    const FOUR_BEATS: Ticks = Ticks(4 * TICKS_PER_QUARTER);
+
+    /// Where the clip starts now.
+    fn start(app: &gpui::Entity<AurisApp>, cx: &gpui::TestAppContext, clip: ClipId) -> Ticks {
+        app.read_with(cx, |this, _| {
+            this.session
+                .midi_clip(clip)
+                .expect("the clip is still there")
+                .start
+        })
+    }
+
+    #[gpui::test]
+    fn one_drag_takes_one_undo_to_put_back(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        let from = lane_point(&app, cx, track, HALF_CLIP);
+        let to = lane_point(&app, cx, track, HALF_CLIP + FOUR_BEATS);
+
+        drag(cx, from, to);
+        assert_eq!(start(&app, cx, clip), FOUR_BEATS, "the drag landed");
+
+        cx.dispatch_action(actions::Undo);
+
+        assert_eq!(
+            start(&app, cx, clip),
+            Ticks::ZERO,
+            "one Undo, not one per pointer move"
+        );
+    }
+
+    /// And the way back out again, since a step that cannot be redone is half a step.
+    #[gpui::test]
+    fn redo_puts_the_drag_back_where_it_landed(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        let from = lane_point(&app, cx, track, HALF_CLIP);
+        let to = lane_point(&app, cx, track, HALF_CLIP + FOUR_BEATS);
+
+        drag(cx, from, to);
+        cx.dispatch_action(actions::Undo);
+        cx.dispatch_action(actions::Redo);
+
+        assert_eq!(start(&app, cx, clip), FOUR_BEATS);
+    }
+
+    /// A gesture that changed nothing must leave nothing behind, or every stray click on the
+    /// arrangement costs a step of the history that anybody using it has to walk back through.
+    #[gpui::test]
+    fn a_gesture_that_moved_nothing_records_no_step(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        // Something to undo *to*, so a spurious step would show up as this not coming back.
+        app.update(cx, |this, _| {
+            this.session
+                .move_clip(clip, FOUR_BEATS)
+                .expect("the clip may be moved");
+        });
+        crate::harness::paint(&app, cx);
+
+        let at = lane_point(&app, cx, track, FOUR_BEATS + HALF_CLIP);
+        drag(cx, at, at);
+
+        cx.dispatch_action(actions::Undo);
+        assert_eq!(
+            start(&app, cx, clip),
+            Ticks::ZERO,
+            "the one Undo reached the move, so the press left no step of its own"
+        );
+    }
+}
