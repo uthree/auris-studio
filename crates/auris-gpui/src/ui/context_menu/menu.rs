@@ -49,8 +49,17 @@ pub struct MenuItem {
     pub label: SharedString,
     /// What choosing it does.
     pub command: MenuCommand,
-    /// A greyed-out row explains that an action exists but does not apply right now, which is
-    /// more use than hiding it and leaving the user wondering where it went.
+    /// Whether the row can be chosen.
+    ///
+    /// `false` in three places in the application and no more, all of them lists: a bus that
+    /// would loop if it were routed to, and the line that stands in for an empty Recent menu.
+    /// There the greyed row is itself the answer — a bus quietly missing from the list of every
+    /// bus reads as a bus that has been deleted.
+    ///
+    /// Everywhere else a row that does not apply is simply not built; see
+    /// [`ContextMenu::item_if`]. A menu is titled after one object, and a row offering to clear
+    /// the fades of a clip that has none is not saying "not now" — it is saying something untrue
+    /// about the clip in its own title.
     pub enabled: bool,
     /// Whether the row shows a tick, for the items that latch.
     pub checked: bool,
@@ -145,8 +154,46 @@ impl ContextMenu {
         self.push(label, command, true, false)
     }
 
-    /// Adds a row that is only usable when `enabled`.
+    /// Adds a row only when `shown`, and leaves it out entirely otherwise.
+    ///
+    /// The default for anything conditional, because a context menu is titled after one object
+    /// and its rows are the things that can be done to *that* object. A MIDI clip has no fades,
+    /// so a menu offering to clear them is not saying "not now" — it is saying something untrue
+    /// about the clip it is named after. The rest of the application answers "nothing selected"
+    /// with a line in the status bar rather than with a row.
+    ///
+    /// [`Self::item_greyed_unless`] is the other case, and is rare: a row worth keeping on screen
+    /// *because* being unavailable is itself the answer.
     pub fn item_if(
+        self,
+        shown: bool,
+        label: impl Into<SharedString>,
+        command: MenuCommand,
+    ) -> Self {
+        match shown {
+            true => self.push(label, command, true, false),
+            false => self,
+        }
+    }
+
+    /// Adds a run of rows that share one condition.
+    pub fn items_if<L: Into<SharedString>>(
+        self,
+        shown: bool,
+        rows: impl IntoIterator<Item = (L, MenuCommand)>,
+    ) -> Self {
+        rows.into_iter().fold(self, |menu, (label, command)| {
+            menu.item_if(shown, label, command)
+        })
+    }
+
+    /// Adds a row that is always on screen and is greyed unless `enabled`.
+    ///
+    /// For the row whose unavailability is the point. Three in the application, and each is the
+    /// answer to a question the user is about to ask: a bus that cannot be routed to because it
+    /// would loop, and the "no recent projects" line that stops an empty menu reading as a menu
+    /// that failed. Everything else conditional wants [`Self::item_if`].
+    pub fn item_greyed_unless(
         self,
         enabled: bool,
         label: impl Into<SharedString>,
@@ -155,19 +202,25 @@ impl ContextMenu {
         self.push(label, command, enabled, false)
     }
 
-    /// Adds a run of rows that share one enabled condition.
-    pub fn items_if<L: Into<SharedString>>(
+    /// Adds a row that shows a tick when `checked`, only when `shown`.
+    pub fn toggle_if(
         self,
-        enabled: bool,
-        rows: impl IntoIterator<Item = (L, MenuCommand)>,
+        shown: bool,
+        label: impl Into<SharedString>,
+        command: MenuCommand,
+        checked: bool,
     ) -> Self {
-        rows.into_iter().fold(self, |menu, (label, command)| {
-            menu.item_if(enabled, label, command)
-        })
+        match shown {
+            true => self.push(label, command, true, checked),
+            false => self,
+        }
     }
 
-    /// Adds a row that shows a tick when `checked` and is only usable when `enabled`.
-    pub fn toggle_if(
+    /// A ticking row that is always on screen and greyed unless `enabled`.
+    ///
+    /// [`Self::item_greyed_unless`]'s reasoning, for a row that also has to say which way it is
+    /// set — the bus a track is routed to, listed beside the ones it may not be routed to.
+    pub fn toggle_greyed_unless(
         self,
         enabled: bool,
         label: impl Into<SharedString>,
@@ -568,7 +621,7 @@ mod tests {
         let menu = ContextMenu::new(gpui::point(px(0.0), px(0.0)), "Track 1")
             .item("Rename", MenuCommand::NewAudioTrack)
             .separator()
-            .item_if(false, "Delete", MenuCommand::NewAudioTrack)
+            .item_greyed_unless(false, "Delete", MenuCommand::NewAudioTrack)
             .item("Duplicate", MenuCommand::NewAudioTrack);
 
         let mut walking = menu.clone();
@@ -668,5 +721,106 @@ mod tests {
             built.size().height,
             TITLE_HEIGHT + PADDING * 2.0 + BORDER * 2.0 + ITEM_HEIGHT * 2.0 + SEPARATOR_HEIGHT
         );
+    }
+}
+
+/// Every menu the application can raise, asked whether it has anything in it.
+///
+/// `open_menu` drops an empty menu on the floor, so a menu whose every row turned out to be
+/// conditional does not open at all — which reads as a broken control rather than as a menu with
+/// nothing to offer. That became a live risk when `item_if` started leaving rows out instead of
+/// greying them, and it is exactly the kind of thing that only shows up in the one document state
+/// nobody tries by hand.
+#[cfg(test)]
+mod window_tests {
+    use gpui::{TestAppContext, point, px};
+
+    use auris_session::prelude::*;
+
+    use crate::harness::{open, with_a_clip};
+
+    /// Where a menu is anchored. Nothing here depends on it.
+    fn anchor() -> gpui::Point<gpui::Pixels> {
+        point(px(100.0), px(100.0))
+    }
+
+    /// Every menu that can be raised over an empty document, by name.
+    fn menus_of_an_empty_document(
+        this: &mut crate::app::AurisApp,
+    ) -> Vec<(&'static str, super::ContextMenu)> {
+        let at = anchor();
+        vec![
+            ("arrangement", this.arrangement_menu(at)),
+            ("ruler", this.ruler_menu(at, Ticks::ZERO)),
+            ("signature", this.signature_menu(at, Ticks::ZERO)),
+            ("structure", this.structure_menu(at, Ticks::ZERO)),
+            ("harmony", this.harmony_menu(at, Ticks::ZERO)),
+            (
+                "progression picker",
+                this.progression_picker_menu(at, Ticks::ZERO),
+            ),
+            ("count-in", this.count_in_menu(at)),
+            ("recent", this.recent_menu(at)),
+        ]
+    }
+
+    #[gpui::test]
+    fn no_menu_over_an_empty_document_opens_onto_nothing(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            for (name, menu) in menus_of_an_empty_document(this) {
+                assert!(
+                    !menu.is_empty(),
+                    "the {name} menu has no rows, so it would not open at all"
+                );
+            }
+        });
+    }
+
+    /// The states a menu about a *clip* can be raised in, including the emptiest: a clip with no
+    /// notes, nothing selected, and nothing on the clipboard.
+    #[gpui::test]
+    fn no_menu_about_a_clip_opens_onto_nothing(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        app.update(cx, |this, _| {
+            this.selected_notes.clear();
+            assert!(
+                this.session.clipboard().is_empty(),
+                "the emptiest case is the one worth checking"
+            );
+            let at = anchor();
+            for (name, menu) in [
+                ("clip", this.clip_menu(at, clip)),
+                ("track", this.track_menu(at, track)),
+                ("lane", this.lane_menu(at, track, Ticks::ZERO)),
+                ("output", this.output_menu(at, track)),
+                ("effect picker", this.effect_picker_menu(at, Some(track))),
+                ("clip preset", this.clip_preset_menu(at, clip)),
+                ("clip subdivision", this.clip_subdivision_menu(at, clip)),
+                ("clip octave", this.clip_octave_menu(at, clip)),
+                ("clip groove", this.clip_groove_menu(at, clip)),
+            ] {
+                assert!(
+                    !menu.is_empty(),
+                    "the {name} menu has no rows, so it would not open at all"
+                );
+            }
+        });
+    }
+
+    /// The piano roll's menu, in the state that has the least in it: empty grid, nothing
+    /// selected, nothing to paste. Every row but one is conditional on a selection.
+    #[gpui::test]
+    fn the_roll_menu_over_empty_grid_still_has_something_in_it(cx: &mut TestAppContext) {
+        let (app, cx, _, clip) = with_a_clip(cx);
+        app.update(cx, |this, _| {
+            this.selected_notes.clear();
+            this.open_clip_in_editor(clip);
+            let menu = this.roll_menu(anchor(), None, 60, Ticks::ZERO);
+            assert!(
+                !menu.is_empty(),
+                "a right-press on empty grid has to offer at least Add Note Here"
+            );
+        });
     }
 }

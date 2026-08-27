@@ -227,8 +227,9 @@ impl AurisApp {
         let mut menu = ContextMenu::new(anchor, self.t(Key::CmdOpenRecent));
         if self.settings.recent.is_empty() {
             // A disabled row rather than an empty menu. A menu that opens with nothing in it
-            // reads as a menu that failed.
-            return menu.item_if(
+            // reads as a menu that failed — and one that refuses to open at all reads as a
+            // broken button, since `open_menu` drops an empty one on the floor.
+            return menu.item_greyed_unless(
                 false,
                 self.t(Key::MenuNoRecentProjects),
                 MenuCommand::ForgetRecent,
@@ -540,7 +541,10 @@ impl AurisApp {
             current == Output::Master,
         );
         for (bus, name) in self.bus_names() {
-            menu = menu.toggle_if(
+            // Greyed rather than left out: the list is every bus in the project, and a bus that
+            // silently went missing from it would look like a bus that had been deleted. The
+            // dimmed row is the answer to why this one cannot be chosen.
+            menu = menu.toggle_greyed_unless(
                 self.session.can_route(track, bus),
                 name,
                 MenuCommand::SetTrackOutput(track, Output::Bus(bus)),
@@ -558,7 +562,9 @@ impl AurisApp {
     pub(crate) fn send_picker_menu(&self, anchor: Point<Pixels>, track: TrackId) -> ContextMenu {
         let mut menu = ContextMenu::new(anchor, self.t(Key::MenuAddSend));
         for (bus, name) in self.bus_names() {
-            menu = menu.item_if(
+            // Greyed, for the reason `output_menu` gives: this is the whole list of buses, and
+            // one quietly absent from it reads as one that no longer exists.
+            menu = menu.item_greyed_unless(
                 self.session.can_route(track, bus),
                 name,
                 MenuCommand::AddSend { track, bus },

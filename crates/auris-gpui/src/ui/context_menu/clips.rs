@@ -448,8 +448,9 @@ mod window_tests {
 
     /// Every row of the open menu, with whether it can be chosen.
     ///
-    /// Both halves, because `ContextMenu::item_if` greys a row rather than leaving it out: a
-    /// command's *presence* says nothing about whether the menu is offering it.
+    /// Both halves, because a row can be on screen and not choosable —
+    /// `ContextMenu::item_greyed_unless` is what makes one, and the bus pickers use it. Everything
+    /// else conditional is simply not there, which is what `item_if` now means.
     fn rows(
         app: &gpui::Entity<crate::app::AurisApp>,
         cx: &gpui::TestAppContext,
@@ -514,18 +515,23 @@ mod window_tests {
         );
     }
 
-    /// A MIDI clip has no gain, no fades and no source tempo, and its menu must not offer them.
+    /// A MIDI clip has no gain, no fades and no source tempo, and its menu does not name them.
     ///
-    /// Seven rows, which is the case for checking it at all: each one is a separate `is_midi`
-    /// somebody could get the sense of backwards, and the only sign of that would be a row that
-    /// refuses when it is chosen.
+    /// Not greyed — *absent*. A menu is titled after one object and its rows are the things that
+    /// can be done to that object, so a row offering to clear the fades of a clip that has none
+    /// is not saying "not now", it is saying something untrue about the clip it is named after.
+    ///
+    /// Four rows, which is the case for checking it at all: each is a separate `is_midi` somebody
+    /// could get the sense of backwards, and the only sign of that would be a row that refuses
+    /// when it is chosen.
     #[gpui::test]
-    fn a_midi_clips_menu_offers_nothing_that_belongs_to_audio(cx: &mut TestAppContext) {
+    fn a_midi_clips_menu_does_not_name_anything_that_belongs_to_audio(cx: &mut TestAppContext) {
         let (app, cx, track, clip) = with_a_clip(cx);
         let at = lane_point(&app, cx, track, HALF_CLIP);
 
         right_press(cx, at);
 
+        let rows = rows(&app, cx);
         for command in [
             MenuCommand::ClipGain(clip),
             MenuCommand::Crossfade(clip),
@@ -533,12 +539,53 @@ mod window_tests {
             MenuCommand::ClipSourceTempo(clip),
         ] {
             assert!(
-                !offers(&app, cx, &command),
-                "{command:?} is not something a MIDI clip can do"
+                !rows.iter().any(|(row, _)| *row == command),
+                "{command:?} is not something a MIDI clip can do, so it is not in its menu"
             );
         }
         // And the one that only a MIDI clip can do is offered.
         assert!(offers(&app, cx, &MenuCommand::EditClip(clip)));
+    }
+
+    /// The rows that depend on a selection are not there when there is no selection.
+    ///
+    /// The note menu is nearly all of them — cut, copy, transpose, quantise, the dynamics — and
+    /// with nothing picked out it used to open as a wall of grey with one live row at the bottom.
+    #[gpui::test]
+    fn the_note_menu_with_nothing_selected_offers_only_what_needs_no_selection(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx, _, clip) = with_a_clip(cx);
+        let commands = app.update(cx, |this, _| {
+            this.open_clip_in_editor(clip);
+            this.selected_notes.clear();
+            this.roll_menu(
+                gpui::point(gpui::px(10.0), gpui::px(10.0)),
+                None,
+                60,
+                Ticks::ZERO,
+            )
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                MenuEntry::Item(item) => Some(item.command.clone()),
+                MenuEntry::Separator => None,
+            })
+            .collect::<Vec<_>>()
+        });
+
+        assert!(
+            !commands.contains(&MenuCommand::CutNotes)
+                && !commands.contains(&MenuCommand::DeleteNotes),
+            "nothing is selected, so there is nothing to cut or delete: {commands:?}"
+        );
+        assert!(
+            commands.contains(&MenuCommand::NewNote {
+                pitch: 60,
+                start: Ticks::ZERO
+            }),
+            "and what is left is the row that needs no selection: {commands:?}"
+        );
     }
 
     /// A cut on the clip's own edge would make an empty clip and leave the other exactly as it
