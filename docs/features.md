@@ -6,6 +6,8 @@ how a piece writes itself is in [Automatic composition](composition.md).
 ## Tracks
 
 * **Instrument tracks** — notes on a timeline, played by a software instrument.
+* **Singer tracks** — notes that carry words, for a singing-voice synthesiser; see
+  [Singer tracks](#singer-tracks).
 * **Audio tracks** — imported audio, arranged as clips with trim, gain and fades.
 * **Buses** — mixing points with no clips of their own; see [Buses and sends](#buses-and-sends).
 * Every track carries a **colour**, tinting its header and its clips. A new one takes the next
@@ -225,6 +227,34 @@ stretch the playhead is in; a change elsewhere is written from the ruler's right
 (*Tempo from Here…*), lands on the beat, and is marked along the ruler's lower edge with its
 number. The same menu removes the change in force under the pointer. The song's opening tempo
 at the start of the timeline is always there and cannot be removed, exactly like the key.
+
+## Singer tracks
+
+A singer track holds ordinary note clips — everything the piano roll does applies unchanged —
+but each note can carry a **lyric** and the **phonemes** it is sung as, written in IPA. The
+track is the frontend for a singing-voice synthesiser that renders offline; until one is wired
+in, it plays through the built-in **Vocal** preview instrument (a formant filter singing one
+open vowel), so a melody with words on it can be heard while it is written.
+
+**Double-click a note** to type its word. **Return commits and walks to the next note**, so a
+verse is typed word after word without touching the mouse; an empty field takes the word off.
+The note's right-click menu offers **Edit Lyric…**, **Edit Phonemes…** (space-separated IPA,
+for correcting a reading by hand — the lyric stays as spelt) and **Write Lyrics…**, which lays
+a phrase across the selected notes one mora to a note: こんにちは across five notes reads
+こ・ん・に・ち・は. A kanji word carries itself on the first note with `+` on the rest.
+
+Lyrics in **kana need nothing installed** — a built-in table reads them directly. **Kanji**
+goes through a Japanese dictionary named in the settings (*Settings → General → Japanese
+Dictionary*): a prebuilt `naist-jdic` folder from the
+[jpreprocess releases](https://github.com/jpreprocess/jpreprocess/releases), pointed at where
+it lies, like a SoundFont. A machine without one sings every kana lyric identically; only new
+kanji asks for it, with an error naming the setting.
+
+**File → Export Singer Frames…** writes what a voice model consumes: one phoneme id, one pitch
+in Hz and one energy per frame, as JSON, sampled at the track's frame hop (10 ms unless
+changed). Pitch is the note plus its bend curve; energy is the velocity shaped by an envelope
+and the expression pedal (controller 11), which the preview instrument also obeys — what you
+hear and what the model is told stay one story.
 
 ## MIDI files
 

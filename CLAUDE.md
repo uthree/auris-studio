@@ -67,6 +67,8 @@ crates/auris-engine      render graph, transport, cpal in and out, offline rende
 crates/auris-io          audio file import/export, project save/load
 crates/auris-gpu         optional wgpu compute for offline analysis
 crates/auris-compose     score-based automatic composition; depends on auris-core only
+crates/auris-vocal       singing: lyrics to IPA phonemes, notes to voice-model frames;
+                         depends on auris-core only
 crates/auris-i18n        interface text in every language; no local dependencies
 crates/auris-session     headless session: the document, the engine, every command
 crates/auris-gpui        desktop frontend (binary `auris-studio`)

@@ -9,6 +9,26 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### Singer tracks: notes that carry words
+
+* A new track kind for a singing-voice synthesiser. Its clips are ordinary note clips — the
+  piano roll, the lanes and every clip gesture apply unchanged, and a melody moves freely
+  between an instrument track and a singer track — but each note can carry a **lyric** and the
+  **IPA phonemes** it is sung as. The format version moves to 17 for the new track kind.
+* **Double-click a note to type its word**; Return commits and walks to the next note, so a
+  verse is typed straight through. *Write Lyrics…* lays a phrase across the selection one mora
+  to a note; *Edit Phonemes…* corrects a reading by hand and leaves the word as spelt.
+* **Kana lyrics need nothing installed.** Kanji is read through a Japanese dictionary — a
+  prebuilt `naist-jdic` folder from the jpreprocess releases, named in *Settings → General*
+  and loaded where it lies, like a SoundFont. Only new kanji ever asks for it, with an error
+  naming the setting.
+* **File → Export Singer Frames…** writes what a voice model consumes: phoneme id, pitch in
+  Hz and energy per 10 ms frame (the hop is stored on the track), as JSON. Pitch is the note
+  plus its bend curve; energy is the velocity under an envelope, scaled by controller 11.
+* Until a model is wired in, the track previews through **Vocal**, a new built-in instrument —
+  three formants over a saw, one open vowel — that answers the modulation wheel with vibrato
+  and the expression pedal with level, the same controller the frames read as energy.
+
 ### Four more colour schemes
 
 * **One Dark, One Light, GitHub Dark and GitHub Light** join the four the application shipped

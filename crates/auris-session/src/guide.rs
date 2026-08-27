@@ -52,6 +52,7 @@ pub mod architecture {
     //!   auris-io        audio file import/export, project save/load
     //!   auris-gpu       optional wgpu compute for offline analysis
     //!   auris-compose   score-based automatic composition
+    //!   auris-vocal     lyrics to phonemes, notes to voice-model frames → auris-core only
     //!   auris-i18n      interface text in every language
     //!   auris-session   the document, the engine and every command a frontend needs
     //!
@@ -991,6 +992,71 @@ pub mod composition {
     //! This is why the whole thing is one transaction rather than a document swap. Composing
     //! replaces what is there; accompanying must not, because the melody is the part somebody
     //! wrote.
+}
+
+pub mod singing {
+    //! The singer track: notes that carry words, and the frames a voice model is fed.
+    //!
+    //! A [`SingerTrack`](auris_core::SingerTrack) is the frontend for a singing-voice
+    //! synthesiser that renders offline and, today, does not exist yet. What exists is
+    //! everything around it: the notes carry lyrics, the lyrics become phonemes, the track
+    //! plays through a preview instrument, and
+    //! [`Session::export_singer_frames`](crate::Session::export_singer_frames) writes exactly
+    //! what such a model consumes.
+    //!
+    //! # Two representations, one stored
+    //!
+    //! A note on a singer track holds its [`lyric`](auris_core::Note::lyric) — what the person
+    //! typed — and its [`phonemes`](auris_core::Note::phonemes) — what the model is given, as
+    //! IPA tokens. The phonemes are **stored, not derived at the moment of use**, for two
+    //! reasons that are really one: deriving needs a grapheme-to-phoneme step that may consult
+    //! a dictionary the machine opening the document does not have, and a person corrects a
+    //! reading by hand, which only a stored list can remember. The command that sets a lyric
+    //! writes both fields; [`Session::set_note_phonemes`](crate::Session::set_note_phonemes)
+    //! writes the phonemes alone and leaves the word as spelt.
+    //!
+    //! The frame-level representation is never stored. It is a pure function of the track and
+    //! the tempo map — [`auris_vocal::render_frames`] — sampled at the track's
+    //! [`frame_hop`](auris_core::SingerTrack::frame_hop): one phoneme id, one pitch in Hz and
+    //! one energy per hop, with the bend curve moving the pitch and controller 11 scaling the
+    //! energy. The timing rules (consonants take sixty milliseconds at a note's edges,
+    //! syllabics stretch, one note sounds at a time) live in [`auris_vocal::frames`] beside
+    //! the tests that measure them.
+    //!
+    //! # One vocabulary, two readers
+    //!
+    //! Lyrics in kana go through a built-in table ([`auris_vocal::kana`]) and need nothing
+    //! installed; kanji and mixed text go through jpreprocess over a **dictionary folder loaded
+    //! at run time** — a prebuilt `naist-jdic`, named in the settings and opened where it lies,
+    //! exactly the policy a SoundFont gets and for the same reason: it is a library shared by
+    //! every project, and bundling it would mean a build script that downloads. The two paths
+    //! must emit identical tokens for the same syllable — the vocabulary is OpenJTalk's
+    //! phonemic analysis written in IPA glyphs — and a test in [`auris_vocal::openjtalk`] pins
+    //! them together, because one syllable spelt two ways is two symbols a model has to learn
+    //! were the same sound. Text that needs the dictionary on a machine without one is its own
+    //! error variant, so a frontend answers with the setting that fixes it.
+    //!
+    //! # Why the preview is an instrument and the model will not be `process`
+    //!
+    //! Until a model is wired in, a singer track plays through `auris.synth.vocal` — a formant
+    //! filter over a saw, one vowel, built from the same primitives as every other built-in —
+    //! by way of the same render-graph arm an instrument track uses: the track carries an
+    //! `instrument_id`, and the graph neither knows nor cares what kind of track handed it
+    //! over. Neural inference can never take that path. [`realtime`](super::realtime) is the
+    //! contract it would break — allocation, latency, everything — so the model, when it
+    //! arrives, renders **offline**: frames in, audio out, cached and played back the way an
+    //! audio clip is. The export exists now so the model can be developed against real
+    //! documents before that plumbing does.
+    //!
+    //! # Where each piece lives
+    //!
+    //! The same split as everything else. What a track *stores* is `auris-core`. How text
+    //! becomes phonemes and notes become frames is [`auris_vocal`], which depends on the
+    //! document model and nothing else local, the same shape as `auris-compose`. What a person
+    //! can *ask for* — add the track, set a lyric, lay a phrase across a selection, export —
+    //! is a command on [`Session`](crate::Session), so every frontend gets it. The lyric
+    //! sheet, the words on the roll and the folder picker are presentation, and stay in the
+    //! frontend.
 }
 
 pub mod documents {
