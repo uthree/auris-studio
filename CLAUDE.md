@@ -141,6 +141,15 @@ by the next one.
 * Run `cargo fmt --all` and `cargo clippy --workspace --all-targets` before committing.
 * DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths)
   rather than on "it runs".
+* **The window is testable.** `auris_gpui::harness` opens the whole application with no display,
+  no GPU and no audio device behind it, and drives it from `cargo test` — real keymap, real view
+  tree, real session. A gesture is made as a gesture (press, move, release) and the document is
+  asked what happened. `docs/development.md` has the account; the two limits are that nothing may
+  assert on a pixel (`NoopTextSystem` gives every glyph the same metrics and the scene is thrown
+  away) and that the transport is invisible (`is_playing` and the playhead are atomics the audio
+  thread writes, and there is no audio thread). The second is why a decision still belongs in a
+  free function even when a window test could nearly reach it.
+* `cargo test -p auris-gpui --bins`. That crate is a binary, so `--lib` finds no target.
 
 ## Realtime rules
 

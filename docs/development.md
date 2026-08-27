@@ -104,3 +104,37 @@ so a public item without a doc comment and a link that does not resolve are both
 That is also what keeps `auris_session::guide` honest: its examples are doctests, so the account
 of the system cannot drift away from the system without the build saying so.
 
+
+## Testing the window
+
+`crates/auris-gpui/src/harness.rs` opens the whole application in a window with no display, no
+GPU and no audio device behind it, and drives it from `cargo test`. gpui ships the platform that
+makes this possible; this crate's dev-dependency on `gpui/test-support` is what switches it on.
+
+```bash
+cargo test -p auris-gpui --bins        # this crate is a binary, so `--lib` finds nothing
+```
+
+Everything except the pixels and the hardware is real — the real keymap, the real view tree, the
+real session, the real commands — so a test presses keys, clicks controls by name and drags the
+pointer across the lanes, then asks the document what happened. The helpers are `open`,
+`with_a_clip`, `paint`, `click`, `choose`, `drag`, `lane_point` and `roll_point`; each carries a
+doc comment saying what it is for and what it costs.
+
+Two things it cannot check, both worth knowing before writing a test against it:
+
+* **Nothing may assert on a pixel.** Text is laid out through `NoopTextSystem`, which gives every
+  glyph the same metrics, and the test window throws the scene away instead of rasterising it.
+  Colour, spacing and legibility stay a human's job; *behaviour* stops being one.
+* **The transport is not observable.** `Session::is_playing` and the playhead are atomics the
+  *audio thread* writes, and a session with no device has no audio thread — so Play and Seek are
+  sent and nothing comes back. Assert on the document and on the view state, which are written
+  where the command runs.
+
+That second point is why the house rule about free functions matters as much as it did: a
+decision the window cannot reach still belongs somewhere a test can. See
+`crate::ui::context_menu::clips::splittable` for one that ended up there for exactly this reason.
+
+Every `icon_button`, `button`, context-menu row and menu-bar row carries a name the harness can
+find it by, from one line each. `debug_selector` compiles to nothing unless gpui is built with
+`test-support`, which only `cargo test` does.

@@ -48,7 +48,8 @@ const DYNAMICS: [(&str, u8); 6] = [
 ///
 /// Free-standing because the window cannot check it. A headless session's playhead is an atomic
 /// the *audio thread* writes and there is no audio thread, so a seek is invisible to a test that
-/// drives the window — see [`crate::harness`]. The rule is worth more than the line it takes.
+/// drives the window — see the harness in `src/harness.rs`, which is a test build only.
+/// The rule is worth more than the line it takes.
 pub fn splittable(playhead: Ticks, start: Ticks, end: Ticks) -> bool {
     playhead > start && playhead < end
 }
