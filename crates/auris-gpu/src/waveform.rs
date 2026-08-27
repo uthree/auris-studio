@@ -219,9 +219,24 @@ impl GpuContext {
             let mut first_bucket = 0;
             while first_bucket < buckets {
                 let count = buckets_per_chunk.min(buckets - first_bucket);
-                let start = first_bucket * stride;
+                // Both ends clamped, not only one: a chunk boundary past a short channel's end
+                // used to leave `start > end`, and the failed slice read as "the GPU failed" —
+                // sending every large ragged buffer to the CPU for no reason a log would show.
+                let start = (first_bucket * stride).min(usable);
                 let end = ((first_bucket + count) * stride).min(usable);
                 let chunk = samples.get(start..end)?;
+                if chunk.is_empty() {
+                    // Nothing left in this channel: the remaining buckets are the silence the
+                    // CPU reference writes, answered here rather than dispatched — a zero-length
+                    // storage binding is not a thing a device accepts.
+                    for _ in 0..count {
+                        peaks.min.push(0.0);
+                        peaks.max.push(0.0);
+                        peaks.rms.push(0.0);
+                    }
+                    first_bucket += count;
+                    continue;
+                }
 
                 let params = Params {
                     sample_count: chunk.len() as u32,
@@ -469,6 +484,46 @@ mod tests {
         assert_eq!(last.min, 8.0);
         assert_eq!(last.max, 9.0);
         assert!((last.rms - 72.5f32.sqrt()).abs() < 1e-4, "{last:?}");
+    }
+
+    #[test]
+    fn gpu_keeps_the_chunked_path_for_a_ragged_buffer() {
+        // The two conditions together: a channel shorter than the first *and* a buffer large
+        // enough to chunk. A chunk boundary past the short channel's end used to make an
+        // inverted slice, read as a GPU failure, and silently send exactly the buffers that
+        // wanted the GPU most to the CPU. The short channel's missing buckets are silence, as
+        // the CPU reference writes them.
+        let Some(mut gpu) = GpuContext::new() else {
+            return;
+        };
+        gpu.constrain_for_test(1000, 3);
+
+        let frames = 10_000usize;
+        let stride = 333u32;
+        let long: Vec<f32> = (0..frames)
+            .map(|i| (i as f32 * 0.01).sin() * 0.75)
+            .collect();
+        let mut buffer = AudioBuffer::from_planar(vec![long.clone(), long], 48_000.0).unwrap();
+        buffer.channels_mut()[1].truncate(500);
+
+        let expected = compute_peaks_cpu(&buffer, stride);
+        let actual = gpu
+            .compute_peaks(&buffer, stride)
+            .expect("a ragged buffer must not read as a GPU failure");
+
+        assert_eq!(actual.bucket_count(), expected.bucket_count());
+        for channel in 0..2 {
+            for bucket in 0..expected.bucket_count() {
+                let want = expected.bucket(channel, bucket).unwrap();
+                let got = actual.bucket(channel, bucket).unwrap();
+                assert!(
+                    (want.min - got.min).abs() < 1e-4
+                        && (want.max - got.max).abs() < 1e-4
+                        && (want.rms - got.rms).abs() < 1e-4,
+                    "channel {channel} bucket {bucket}: {want:?} vs {got:?}"
+                );
+            }
+        }
     }
 
     #[test]
