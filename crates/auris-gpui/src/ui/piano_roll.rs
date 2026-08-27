@@ -20,13 +20,13 @@ use crate::ui::widgets::{ButtonStyle, button};
 /// What the pointer does in the note grid.
 ///
 /// Logic Pro's tool menu, reduced to the two tools this editor has. A tool rather than a modifier
-/// because there is no modifier left to give it: â creates a note and suspends the grid, â¥
-/// deletes, â§ extends the selection, and Logic's own ââ¥-drag cannot arrive at all â gpui rewrites
-/// a â-left-click into a right-click on macOS, and strips the â off it on the way, so the gesture
+/// because there is no modifier left to give it: ⌘ creates a note and suspends the grid, ⌥
+/// deletes, ⇧ extends the selection, and Logic's own ⌃⌥-drag cannot arrive at all — gpui rewrites
+/// a ⌃-left-click into a right-click on macOS, and strips the ⌃ off it on the way, so the gesture
 /// reaches the window as a request for the context menu.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum RollTool {
-    /// Select, move, resize and create â everything the roll did before there were tools.
+    /// Select, move, resize and create — everything the roll did before there were tools.
     #[default]
     Pointer,
     /// Drag a note up or down to say how hard it is struck.
@@ -48,7 +48,7 @@ impl RollTool {
     /// The next tool along, wrapping round at the end.
     ///
     /// One bindable command rather than one per tool. Logic's tool key swaps back to the tool
-    /// before it when pressed twice, which with two tools is the same gesture as cycling â and
+    /// before it when pressed twice, which with two tools is the same gesture as cycling — and
     /// this way the keymap grows by one entry rather than by one for every tool there will ever
     /// be.
     pub fn next(self) -> Self {
@@ -65,7 +65,7 @@ const RESIZE_HANDLE: f32 = 5.0;
 
 /// How far the pointer travels for one step of MIDI velocity.
 ///
-/// The whole range is then about 190 pixels â a comfortable drag, short enough to reach either
+/// The whole range is then about 190 pixels — a comfortable drag, short enough to reach either
 /// end without letting go, and long enough that a single step is still deliberate.
 const PIXELS_PER_VELOCITY_STEP: f32 = 1.5;
 
@@ -84,7 +84,7 @@ fn midi_velocity(velocity: f32) -> u8 {
 /// Where a note struck at `origin` ends up after the pointer has travelled `dy` from where the
 /// drag began.
 ///
-/// Up is louder. Screen y grows downward, which is the negation â but every fader in the
+/// Up is louder. Screen y grows downward, which is the negation — but every fader in the
 /// application, every fader in every mixing desk, and Logic's own velocity tool all move that
 /// way, and a velocity drag that went the other way would be wrong however consistent the
 /// arithmetic was.
@@ -419,11 +419,11 @@ impl AurisApp {
     /// Under rather than beside, and spanning the same timeline: both are things that happen *at a
     /// moment in the phrase*, so the only useful way to look at one is with the notes it is
     /// shaping directly above it. The gutter on the left is the keyboard's width, for the same
-    /// reason the track headers reserve what the ruler spends â a strip that started at the panel
+    /// reason the track headers reserve what the ruler spends — a strip that started at the panel
     /// edge would put every point a keyboard's width away from the note it belongs to.
     ///
-    /// One function for both, because they differ in exactly two ways â what the vertical axis
-    /// means and what the gutter says â and a second copy would be a second set of gestures to
+    /// One function for both, because they differ in exactly two ways — what the vertical axis
+    /// means and what the gutter says — and a second copy would be a second set of gestures to
     /// keep in step with the first.
     fn render_curve_lane(
         &mut self,
@@ -468,7 +468,7 @@ impl AurisApp {
                     // be put away again.
                     .child(button(
                         ("curve-lane-close", lane_id(which)),
-                        "Ã",
+                        "×",
                         ButtonStyle::Ghost,
                         false,
                         theme.accent_soft,
@@ -512,7 +512,7 @@ impl AurisApp {
                     .on_mouse_down(
                         MouseButton::Right,
                         Self::opens_menu(cx, move |this, at| {
-                            // Taking points off one at a time is the â¥-click; this is the way
+                            // Taking points off one at a time is the ⌥-click; this is the way
                             // back from a curve that got away from somebody. With nothing
                             // selected there is nothing to straighten, and an empty menu is a
                             // menu `open_menu` declines to show.
@@ -556,7 +556,7 @@ impl AurisApp {
             |menu, which| {
                 let shown = self.panels.curve_lane(which);
                 let label = match carried.contains(&which) {
-                    true => format!("{} â¢", curve_label(which, language)),
+                    true => format!("{} •", curve_label(which, language)),
                     false => curve_label(which, language),
                 };
                 menu.toggle(
@@ -603,7 +603,7 @@ impl AurisApp {
     /// Window origin of the note grid, taken from where it was last painted.
     ///
     /// It used to be derived from the window height and the bottom panel's fixed height, which was
-    /// correct until that panel became resizable â after that, every note the user clicked was off
+    /// correct until that panel became resizable — after that, every note the user clicked was off
     /// by however far they had dragged the divider. The fallback below is only reached before the
     /// first paint, and reads the dock's *current* height for the same reason. It assumes the roll
     /// is in the bottom dock, which is where it starts and where it usually is; a roll parked down
@@ -814,7 +814,7 @@ impl AurisApp {
     /// The note a velocity drag has hold of and what it now says, for the tag drawn beside it.
     ///
     /// Read back out of the document rather than recomputed from the drag, so the tag reports
-    /// what was actually written â including the clamp at either end, which is the moment a
+    /// what was actually written — including the clamp at either end, which is the moment a
     /// number is worth having.
     fn velocity_tag(&self) -> Option<(usize, u8)> {
         let Some(Drag::NoteVelocity { clip, grabbed, .. }) = &self.drag else {
@@ -844,7 +844,7 @@ impl AurisApp {
     /// The arrangement's [`clip_edge_zones`](super::arrangement) for notes, and the same rule
     /// keeps it honest: the cursor lights up exactly what the press acts on. Only the *inner*
     /// half of the grab, because [`Self::note_at`] has to find a note under the pointer's tick
-    /// before the resize check is reached â the half hanging past the end is a zone no press can
+    /// before the resize check is reached — the half hanging past the end is a zone no press can
     /// land in. Only the end, too, because a note has no front trim.
     ///
     /// Empty while the velocity tool is in hand. That tool drags a note's velocity rather than
@@ -891,7 +891,7 @@ impl AurisApp {
             return Vec::new();
         };
         // The stretch of song on screen, from the grid as it was last painted. Before the first
-        // paint there is no width to ask about, and the whole song is the honest answer â the
+        // paint there is no width to ask about, and the whole song is the honest answer — the
         // painter culls per note anyway, so the worst of being wrong here is arithmetic.
         let width = self
             .canvas
@@ -974,8 +974,8 @@ impl AurisApp {
             self.pitch.zoom_by(factor, anchor);
         } else if event.modifiers.alt {
             // The same origin the vertical branch above uses, and the same one the painter does.
-            // `KEYBOARD_WIDTH` is only half of it â the roll starts after the panel's own padding
-            // as well â so the anchor was a constant off, and the notes slid sideways on every
+            // `KEYBOARD_WIDTH` is only half of it — the roll starts after the panel's own padding
+            // as well — so the anchor was a constant off, and the notes slid sideways on every
             // zoom notch instead of staying put under the pointer.
             let anchor = event.position.x - self.roll_origin().x;
             let factor = if delta.y > px(0.0) { 1.12 } else { 1.0 / 1.12 };
@@ -1047,7 +1047,7 @@ const GHOST_ALPHA: f32 = 0.34;
 ///
 /// No velocity in the fill and no selection outline, both of which the clip in hand has: these
 /// cannot be edited from here, and a ghost that read like a note would be an invitation to try.
-/// What they are for is the shape on either side â where the phrase before this one ended, and
+/// What they are for is the shape on either side — where the phrase before this one ended, and
 /// what the next one starts on.
 fn paint_ghost_notes(
     window: &mut Window,
@@ -1098,8 +1098,8 @@ const VELOCITY_BAR_MIN_ROW: f32 = 7.0;
 
 /// Width of the tag that reports the value during a drag.
 ///
-/// Fixed at three digits rather than measured, so the tag does not change width â and so the
-/// number does not shuffle sideways â as the value crosses 9 and 99.
+/// Fixed at three digits rather than measured, so the tag does not change width — and so the
+/// number does not shuffle sideways — as the value crosses 9 and 99.
 const VELOCITY_TAG_WIDTH: f32 = 30.0;
 
 /// Whether a note drawn this size has room for a legible velocity bar.
@@ -1270,7 +1270,7 @@ const CURVE_SCALE_TEXT: f32 = 9.0;
 
 /// What a strip is called, in the gutter and in the menu that opens it.
 ///
-/// A controller is named where MIDI has a name for it and numbered where it does not â see
+/// A controller is named where MIDI has a name for it and numbered where it does not — see
 /// `auris_i18n::controller`. The bend is not a controller and never was: it is fourteen bits of
 /// its own message, and calling it CC anything would be wrong in a way somebody would act on.
 pub fn curve_label(which: ClipCurve, language: Language) -> String {
@@ -1283,7 +1283,7 @@ pub fn curve_label(which: ClipCurve, language: Language) -> String {
 /// What a strip is called in its own gutter, which is a keyboard wide and no wider.
 ///
 /// The number rather than the name, for everything but the bend. Fifty-six pixels does not hold
-/// "ã¨ã¯ã¹ãã¬ãã·ã§ã³", and a name cut off after three characters says less than `CC11` does â
+/// "エクスプレッション", and a name cut off after three characters says less than `CC11` does —
 /// the menu that opened the lane is where the names are, and it is one click away.
 pub fn curve_tag(which: ClipCurve, language: Language) -> String {
     match which {
@@ -1308,7 +1308,7 @@ fn lane_id(which: ClipCurve) -> usize {
 /// The bend, then the controllers a keyboard actually has, then anything else this clip is
 /// already carrying or already showing. That last group is what makes an imported file usable: a
 /// part shaped by controller 85 has a lane to open, and it is the one lane somebody is looking
-/// for â a menu of eight fixed rows would leave that curve audible and undrawable.
+/// for — a menu of eight fixed rows would leave that curve audible and undrawable.
 pub fn curve_lane_choices(open: &[ClipCurve], carried: &[ClipCurve]) -> Vec<ClipCurve> {
     let mut rows = vec![ClipCurve::Bend];
     rows.extend(
@@ -1330,7 +1330,7 @@ pub fn curve_lane_choices(open: &[ClipCurve], carried: &[ClipCurve]) -> Vec<Clip
 
 /// Where `value` sits in the strip, from 0 at the top to 1 at the bottom.
 ///
-/// A bend gets the whole of its limit either way with nothing at the middle â not the two
+/// A bend gets the whole of its limit either way with nothing at the middle — not the two
 /// semitones MIDI assumes, because the document works in semitones and can hold an octave, and a
 /// strip that only reached a tone would make a dive of a fifth undrawable and, worse, unreadable
 /// once written. The wheel gets the bottom of the strip for nothing and the top for all the way
@@ -1362,7 +1362,7 @@ pub fn curve_of_row(which: ClipCurve, row: f32) -> f32 {
 /// mark it out as a line, and it was taken for a wheel that had come up full. Two numbers, one at
 /// each end, can only be a scale.
 ///
-/// The bend is written signed for the same reason â a lane labelled `12` and `-12` says at a
+/// The bend is written signed for the same reason — a lane labelled `12` and `-12` says at a
 /// glance that zero is between them.
 pub fn curve_scale(which: ClipCurve) -> (String, String) {
     let (low, high) = which.range();
@@ -1378,7 +1378,7 @@ pub fn curve_scale(which: ClipCurve) -> (String, String) {
 ///
 /// A radius is a *length*, which is why this is `width_to_duration` and can never be `x_to_tick`:
 /// the latter answers where a pixel column is, and so adds the scroll. Five bars along, seven
-/// pixels came back as some nineteen thousand ticks â a press on empty strip took hold of a point
+/// pixels came back as some nineteen thousand ticks — a press on empty strip took hold of a point
 /// a bar or more away and the first move of the pointer flung it across the clip, an alt-click
 /// deleted a point nowhere near it, and a curve that had one point could never be given a second
 /// anywhere on screen. Never less than a tick, so that zoomed far enough out the zone is at least
@@ -1424,7 +1424,7 @@ fn paint_curve(
     };
 
     // The stretch the clip covers, so a curve is read against the notes rather than against the
-    // whole song â the same tint the grid above uses for the same purpose.
+    // whole song — the same tint the grid above uses for the same purpose.
     paint::rect(
         window,
         Bounds {
@@ -1512,7 +1512,7 @@ impl AurisApp {
     /// A press in a curve strip: take a point off, take hold of one, or write one and drag it.
     ///
     /// The three cases in the order a hand expects them, which is the order the automation lane
-    /// put them in â delete first so the gesture bound to deleting takes a point off rather than
+    /// put them in — delete first so the gesture bound to deleting takes a point off rather than
     /// adding one on top of it, and a press on empty strip writes the point it is about to drag,
     /// so placing a bend and shaping it is one gesture rather than click, look, click again.
     fn press_curve_lane(
@@ -1611,7 +1611,7 @@ mod tests {
         let view = (Ticks::ZERO, bar * 4);
         assert_eq!(ghosted(&clips, id(2), view), vec![id(1), id(3)]);
 
-        // Far off to the right and outside the view, so not drawn â and once the view reaches it,
+        // Far off to the right and outside the view, so not drawn — and once the view reaches it,
         // drawn, without the roll having to know which clip is "next".
         assert!(!ghosted(&clips, id(2), view).contains(&id(4)));
         assert!(ghosted(&clips, id(2), (bar * 7, bar * 10)).contains(&id(4)));
@@ -1662,7 +1662,7 @@ mod tests {
             }
         }
         // A note drawn thinner than three pixels has no room for a zone that is not the whole
-        // note, and offers none â it can still be moved, which is the gesture left.
+        // note, and offers none — it can still be moved, which is the gesture left.
         assert_eq!(note_end_span(px(100.0), px(100.0)), None);
     }
 
@@ -1715,7 +1715,7 @@ mod tests {
         assert_eq!(
             dragged_velocity(64, px(-PIXELS_PER_VELOCITY_STEP / 3.0)),
             64,
-            "less than half a step is not a step â a press that wobbles must not rewrite the note",
+            "less than half a step is not a step — a press that wobbles must not rewrite the note",
         );
 
         let whole_range = 127.0 * PIXELS_PER_VELOCITY_STEP;
@@ -1846,7 +1846,7 @@ mod curve_tests {
     #[test]
     fn the_wheel_never_goes_below_nothing() {
         // Half a strip drawn under a control that cannot reach it would be half a strip of
-        // nothing â and a drag into it would write a negative wheel position, which is not a
+        // nothing — and a drag into it would write a negative wheel position, which is not a
         // thing.
         for row in [0.0, 0.5, 1.0, 2.0] {
             assert!(curve_of_row(ClipCurve::MODULATION, row) >= 0.0, "{row}");
@@ -1897,7 +1897,7 @@ mod curve_tests {
     #[test]
     fn the_grab_zone_is_a_length_and_stays_one_however_far_the_view_has_scrolled() {
         // Every other test in this file sits at the start of the song, which is the one place a
-        // length and a position are the same number â and so the one place this could not be
+        // length and a position are the same number — and so the one place this could not be
         // seen. The radius was read out of `x_to_tick`, which adds the scroll, so five bars in
         // the seven-pixel zone had swollen to the better part of twenty thousand ticks.
         let per_beat = 48.0;
@@ -2006,8 +2006,8 @@ mod curve_tests {
 
 /// The roll's gestures, driven through the window rather than through the handlers underneath.
 ///
-/// A press in the grid is a sequence of questions â velocity tool, delete, note under the pointer,
-/// empty grid â and the order they are asked in *is* the behaviour. The pure rules each have their
+/// A press in the grid is a sequence of questions — velocity tool, delete, note under the pointer,
+/// empty grid — and the order they are asked in *is* the behaviour. The pure rules each have their
 /// own test above; what these check is that a pointer at a position still reaches the right one.
 #[cfg(test)]
 mod window_tests {
@@ -2054,7 +2054,7 @@ mod window_tests {
         app.update(cx, |this, _| this.open_clip_in_editor(clip));
         paint(&app, cx);
         // The roll opens showing the top of the keyboard, and an empty clip gives
-        // `center_roll_on_selection` nothing to centre on â so middle C is a couple of octaves
+        // `center_roll_on_selection` nothing to centre on — so middle C is a couple of octaves
         // below the grid until somebody scrolls to it, which is what a hand does too.
         show_pitch(&app, cx, MIDDLE_C);
         (app, cx, clip)
@@ -2121,7 +2121,7 @@ mod window_tests {
     }
 
     /// The delete gesture takes a note off, and is asked before anything else could claim the
-    /// press â otherwise it would be unreachable.
+    /// press — otherwise it would be unreachable.
     #[gpui::test]
     fn the_delete_gesture_takes_a_note_off(cx: &mut TestAppContext) {
         let (app, cx, clip) = with_the_roll_open(cx);
