@@ -386,7 +386,9 @@ impl AurisApp {
             bottom: PanelLayout::bottom_height(
                 asked(Dock::Bottom),
                 viewport.height,
-                Metrics::TRANSPORT_HEIGHT + Metrics::STATUS_HEIGHT,
+                // The same chrome `resize_dock` clamps against — menu bar included, where one
+                // is drawn — or the drawn dock and the dragged limit disagree by a row.
+                Self::chrome_height(),
             ),
         }
     }

@@ -2004,6 +2004,21 @@ impl AurisApp {
         self.remember_layout();
     }
 
+    /// Fixed rows stacked above and below the central row: the transport, the status bar, and —
+    /// everywhere the application draws its own menu bar — that row too.
+    ///
+    /// One answer for both `resize_dock` and `drawn_dock_sizes`, because they have to subtract
+    /// the same chrome the layout actually stacks: the menu bar was once left out of both, and
+    /// on Windows a bottom dock dragged to its limit overflowed the window by exactly the 26
+    /// pixels the two forgot — a mistake macOS, where development happens, never showed.
+    pub(crate) fn chrome_height() -> Pixels {
+        let menu = match Self::wants_menu_bar() {
+            true => crate::ui::menu_bar::HEIGHT,
+            false => gpui::px(0.0),
+        };
+        Metrics::TRANSPORT_HEIGHT + Metrics::STATUS_HEIGHT + menu
+    }
+
     /// Applies a dock resize drag.
     pub(crate) fn resize_dock(&mut self, dock: Dock, start_size: Pixels, delta: Pixels) {
         // What the dock could grow into before the arrangement stops being usable. A side dock
@@ -2011,10 +2026,7 @@ impl AurisApp {
         // hit tests are measuring the same thing.
         let available = match dock {
             Dock::Bottom => {
-                self.viewport_height
-                    - Metrics::TRANSPORT_HEIGHT
-                    - Metrics::STATUS_HEIGHT
-                    - PanelLayout::MIN_ARRANGEMENT
+                self.viewport_height - Self::chrome_height() - PanelLayout::MIN_ARRANGEMENT
             }
             Dock::Left | Dock::Right => {
                 start_size + self.arrangement_width - PanelLayout::MIN_ARRANGEMENT_WIDTH

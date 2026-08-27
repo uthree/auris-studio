@@ -387,6 +387,19 @@ mod tests {
         assert!(ROW_HEIGHT < HEIGHT);
     }
 
+    #[test]
+    fn the_dock_chrome_counts_this_bar_where_it_is_drawn() {
+        // The dock limits and the drawn dock sizes both subtract `chrome_height`, and the
+        // menu bar was once missing from it: on Windows a bottom dock dragged to its limit
+        // overflowed the window by exactly these 26 pixels. `cfg!` keeps both arms compiled,
+        // so the Windows answer is pinned from a Mac and the Mac's from Windows.
+        let fixed = crate::theme::Metrics::TRANSPORT_HEIGHT + crate::theme::Metrics::STATUS_HEIGHT;
+        match AurisApp::wants_menu_bar() {
+            true => assert_eq!(AurisApp::chrome_height(), fixed + HEIGHT),
+            false => assert_eq!(AurisApp::chrome_height(), fixed),
+        }
+    }
+
     fn clicked(index: usize) -> Option<OpenMenu> {
         Some(OpenMenu::at(index))
     }
