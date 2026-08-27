@@ -1010,10 +1010,12 @@ impl Session {
     /// about assets that are about to arrive — and then thrown away and built again. Every other
     /// caller wants [`Self::replace_project`].
     fn adopt_project(&mut self, project: Project) {
-        // Hosted plugins belong to the document that named them: their slot ids come from it, and
-        // a new document reusing an id would inherit the old plugin. The loaded *files* are kept,
-        // because a `.clap` is the same code whichever project is open.
-        self.hosted.clear();
+        // The hosted slots are deliberately *not* cleared here. Undo, redo, a cancelled drag and
+        // a compose all arrive as a variant of the same document, whose slot ids still name the
+        // same plugins — keeping the instances is what lets a preset loaded inside a plugin
+        // survive an unrelated undo, and what keeps that undo from paying an instantiation. It
+        // is `Session::open`, where a *different* document takes over and could reuse an id for
+        // a different plugin, that clears them.
         self.project = project;
         self.transaction = None;
         self.needs_rebuild = false;

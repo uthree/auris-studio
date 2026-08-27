@@ -70,6 +70,14 @@ pub(super) struct HostedPlugins {
     /// is still a window; what makes it safe is that it names the application's own, which outlives
     /// the session — and dropping the session closes every plugin window before it goes.
     parent: Option<RawWindowHandle>,
+    /// Instances let go of while their rendering halves were still out.
+    ///
+    /// Dropping a [`ClapPlugin`] whose effect is still in a graph does not free it — clack's
+    /// `PluginInstance::Drop` deliberately *leaks* rather than hand ownership to the audio
+    /// thread — so a slot on its way out parks its instances here instead, and
+    /// [`Self::sweep_retired`] drops each one once its effect has come home down the engine's
+    /// return channel and been dropped there.
+    retiring: Vec<ClapPlugin>,
 }
 
 /// Which hosted plugin's own window is meant.
@@ -182,12 +190,27 @@ impl HostedPlugins {
             .ok()
     }
 
-    /// Forgets everything. Called when the document is replaced.
+    /// Forgets every slot. Called when a *different* document takes over — see
+    /// [`Session::open`]; an undo restoring a variant of the same document keeps its slots.
     pub(super) fn clear(&mut self) {
-        self.slots.clear();
-        self.instruments.clear();
+        for slot in std::mem::take(&mut self.slots).into_values() {
+            slot.retire_into(&mut self.retiring);
+        }
+        for slot in std::mem::take(&mut self.instruments).into_values() {
+            slot.retire_into(&mut self.retiring);
+        }
+        self.sweep_retired();
         // The libraries stay: the same file is the same code whichever project is open, and
         // reading Surge XT's data folder again on every **File → New** would be felt.
+    }
+
+    /// Drops every retired instance whose rendering half has come home, keeping the rest parked.
+    ///
+    /// [`ClapPlugin::release`] answers about the state, so an instance whose effect is still in
+    /// a graph somewhere simply waits for a later sweep — every tick takes one, and so does
+    /// every rebuild.
+    pub(super) fn sweep_retired(&mut self) {
+        self.retiring.retain_mut(|plugin| !plugin.release());
     }
 
     /// Builds the effect for every hosted slot in `project`.
@@ -197,19 +220,38 @@ impl HostedPlugins {
     /// for any effect it cannot build — a project with a plugin that is not installed opens, with
     /// that one slot silent.
     pub(super) fn place(&mut self, project: &Project, prepare: &PrepareContext) -> PlacedEffects {
+        self.sweep_retired();
         let wanted = hosted_slots(project);
-        self.slots.retain(|id, _| wanted.contains_key(id));
+        let leaving: Vec<EffectSlotId> = self
+            .slots
+            .keys()
+            .filter(|id| !wanted.contains_key(id))
+            .copied()
+            .collect();
+        for id in leaving {
+            if let Some(slot) = self.slots.remove(&id) {
+                // Not dropped: the slot's live effect may still be in the graph the engine
+                // holds, and letting go of the instance now would leak it — see `retiring`.
+                slot.retire_into(&mut self.retiring);
+            }
+        }
 
         let mut placed = PlacedEffects::new();
         for (id, request) in &wanted {
             let Some(file) = self.library_path(&request.file) else {
                 continue;
             };
-            let slot = fit(&mut self.slots, *id, &file, &request.clap_id);
+            let slot = fit(
+                &mut self.slots,
+                *id,
+                &file,
+                &request.clap_id,
+                &mut self.retiring,
+            );
             let Some(library) = self.libraries.get(&file) else {
                 continue;
             };
-            match slot.take_effect(library, request.state, prepare) {
+            match slot.take_effect(library, request.state, prepare, &mut self.retiring) {
                 Ok(effect) => {
                     placed.insert(*id, Box::new(effect) as Box<dyn auris_core::plugin::Effect>);
                 }
@@ -236,18 +278,34 @@ impl HostedPlugins {
         prepare: &PrepareContext,
     ) -> PlacedInstruments {
         let wanted = hosted_instruments(project);
-        self.instruments.retain(|id, _| wanted.contains_key(id));
+        let leaving: Vec<TrackId> = self
+            .instruments
+            .keys()
+            .filter(|id| !wanted.contains_key(id))
+            .copied()
+            .collect();
+        for id in leaving {
+            if let Some(slot) = self.instruments.remove(&id) {
+                slot.retire_into(&mut self.retiring);
+            }
+        }
 
         let mut placed = PlacedInstruments::new();
         for (track, request) in &wanted {
             let Some(file) = self.library_path(&request.file) else {
                 continue;
             };
-            let slot = fit(&mut self.instruments, *track, &file, &request.clap_id);
+            let slot = fit(
+                &mut self.instruments,
+                *track,
+                &file,
+                &request.clap_id,
+                &mut self.retiring,
+            );
             let Some(library) = self.libraries.get(&file) else {
                 continue;
             };
-            match slot.take_instrument(library, request.state, prepare) {
+            match slot.take_instrument(library, request.state, prepare, &mut self.retiring) {
                 Ok(instrument) => {
                     placed.insert(
                         *track,
@@ -328,6 +386,7 @@ impl HostedPlugins {
     /// Called from the session's tick. Returns whether any plugin reported that it had changed
     /// something about itself, which the caller owes the document a dirty mark for.
     pub(super) fn service(&mut self) -> bool {
+        self.sweep_retired();
         let mut dirty = false;
         for slot in self.slots.values_mut().chain(self.instruments.values_mut()) {
             dirty |= slot.service();
@@ -459,14 +518,27 @@ impl HostedSlot {
         }
     }
 
+    /// Drains the slot's instances into `graveyard` on the way out.
+    ///
+    /// The way a slot leaves — never by plain drop. An instance whose effect is still in the
+    /// engine's graph cannot be freed yet, and clack answers a drop at that moment by leaking
+    /// it; parked instead, it is dropped by a later sweep once the effect has come home.
+    fn retire_into(mut self, graveyard: &mut Vec<ClapPlugin>) {
+        for mut plugin in self.live.take().into_iter().chain(self.spare.take()) {
+            plugin.close_gui();
+            graveyard.push(plugin);
+        }
+    }
+
     /// Produces the effect for the next graph, reusing an instance when one is free.
     fn take_effect(
         &mut self,
         library: &ClapLibrary,
         state: &PluginState,
         prepare: &PrepareContext,
+        graveyard: &mut Vec<ClapPlugin>,
     ) -> Result<ClapEffect, ClapError> {
-        let mut plugin = self.incoming(library, state)?;
+        let mut plugin = self.incoming(library, state, graveyard)?;
         let mut effect = plugin.activate(prepare)?;
         self.sidechain = effect.wants_sidechain();
         // The document's parameter map last, so a value the user automated wins over the one
@@ -482,8 +554,9 @@ impl HostedSlot {
         library: &ClapLibrary,
         state: &PluginState,
         prepare: &PrepareContext,
+        graveyard: &mut Vec<ClapPlugin>,
     ) -> Result<ClapInstrument, ClapError> {
-        let mut plugin = self.incoming(library, state)?;
+        let mut plugin = self.incoming(library, state, graveyard)?;
         let mut instrument = plugin.activate_instrument(prepare)?;
         instrument.load_state(state);
         self.settle(plugin);
@@ -495,8 +568,9 @@ impl HostedSlot {
         &mut self,
         library: &ClapLibrary,
         state: &PluginState,
+        graveyard: &mut Vec<ClapPlugin>,
     ) -> Result<ClapPlugin, ClapError> {
-        self.reclaim();
+        self.reclaim(graveyard);
 
         let mut plugin = match self.spare.take() {
             Some(plugin) => plugin,
@@ -532,19 +606,22 @@ impl HostedSlot {
     ///
     /// Keeps at most one spare, and prefers the most recently used, which is the one carrying the
     /// newest state. A slot that is rebuilt rarely ends up back at a single instance.
-    fn reclaim(&mut self) {
+    fn reclaim(&mut self, graveyard: &mut Vec<ClapPlugin>) {
         if self.live.as_mut().is_some_and(ClapPlugin::release) {
             self.spare = self.live.take();
         }
         // A spare with an effect still out is not a spare: handing it to `activate` would be told
         // the plugin is already active, and the slot would go silent for no reason a user could
-        // see. Letting go of it is safe — the effect keeps the plugin itself alive until whatever
-        // is holding it is dropped — and its state was copied forward when it stopped being live.
+        // see. It cannot simply be dropped either — clack would leak an instance whose effect is
+        // still alive — so it is parked for a later sweep. Its state was copied forward when it
+        // stopped being live.
         //
         // This is not the two-instance case; it is the three-instance one, which an export
         // running while the transport plays produces.
-        if self.spare.as_mut().is_some_and(|spare| !spare.release()) {
-            self.spare = None;
+        if self.spare.as_mut().is_some_and(|spare| !spare.release())
+            && let Some(spare) = self.spare.take()
+        {
+            graveyard.push(spare);
         }
     }
 }
@@ -571,6 +648,7 @@ fn fit<'a, K: Ord + Copy>(
     key: K,
     file: &Path,
     clap_id: &str,
+    graveyard: &mut Vec<ClapPlugin>,
 ) -> &'a mut HostedSlot {
     let fresh = || HostedSlot {
         file: file.to_path_buf(),
@@ -586,7 +664,9 @@ fn fit<'a, K: Ord + Copy>(
     };
     let slot = slots.entry(key).or_insert_with(fresh);
     if slot.clap_id != clap_id || slot.file != file {
-        *slot = fresh();
+        // The old plugin's instances retire rather than drop — the outgoing effect may still be
+        // in the graph the engine holds, and dropping its instance now would leak it.
+        std::mem::replace(slot, fresh()).retire_into(graveyard);
     }
     slot
 }
@@ -1021,13 +1101,13 @@ mod tests {
         let state = PluginState::empty();
 
         let first = slot
-            .take_effect(&library, &state, &prepare())
+            .take_effect(&library, &state, &prepare(), &mut Vec::new())
             .expect("first");
         assert!(slot.live.is_some());
         assert!(slot.spare.is_none(), "nothing has been freed yet");
 
         let second = slot
-            .take_effect(&library, &state, &prepare())
+            .take_effect(&library, &state, &prepare(), &mut Vec::new())
             .expect("second");
         assert!(
             slot.spare.is_some(),
@@ -1045,12 +1125,12 @@ mod tests {
         let state = PluginState::empty();
 
         let first = slot
-            .take_effect(&library, &state, &prepare())
+            .take_effect(&library, &state, &prepare(), &mut Vec::new())
             .expect("first");
         drop(first); // the engine returned the graph and it was dropped
 
         let second = slot
-            .take_effect(&library, &state, &prepare())
+            .take_effect(&library, &state, &prepare(), &mut Vec::new())
             .expect("second");
         assert!(
             slot.spare.is_none(),
@@ -1068,14 +1148,14 @@ mod tests {
         let state = PluginState::empty();
 
         let mut first = slot
-            .take_effect(&library, &state, &prepare())
+            .take_effect(&library, &state, &prepare(), &mut Vec::new())
             .expect("first");
         first.set_param(ParamId(0), 0.5);
         assert_eq!(render(&mut first, 1.0), 0.5);
         drop(first);
 
         let mut second = slot
-            .take_effect(&library, &state, &prepare())
+            .take_effect(&library, &state, &prepare(), &mut Vec::new())
             .expect("second");
         assert_eq!(
             render(&mut second, 1.0),
@@ -1096,7 +1176,7 @@ mod tests {
         patched.params.insert("clap.4242".into(), 2.0);
 
         let mut effect = slot
-            .take_effect(&library, &patched, &prepare())
+            .take_effect(&library, &patched, &prepare(), &mut Vec::new())
             .expect("built");
         assert_eq!(render(&mut effect, 0.5), 1.0, "gain 2.0 from the document");
     }
@@ -1130,6 +1210,80 @@ mod tests {
         assert!(
             !hosted.slots.contains_key(&slot),
             "an instance nobody can reach is an instance nobody can free"
+        );
+    }
+
+    #[test]
+    fn an_instance_let_go_mid_flight_is_parked_until_its_effect_comes_home() {
+        // Dropping a `ClapPlugin` whose effect is still in the engine's graph does not free it:
+        // clack answers that drop by leaking the instance. So a slot leaving while its effect is
+        // still out has to park its instances, and only a sweep after the effect has come home
+        // may drop them for real.
+        let mut hosted = HostedPlugins::default();
+        hosted.libraries.insert(
+            PathBuf::from("/auris/testkit/test-gain.clap"),
+            fixture_library(),
+        );
+
+        let mut project = Project::new("Hosted", 48_000.0);
+        let track = project.add_instrument_track("Lead", "auris.synth.pulse");
+        let slot = project
+            .add_hosted_effect(
+                Some(track),
+                "clap:studio.auris.test.gain",
+                AssetPath::external("/auris/testkit/test-gain.clap"),
+            )
+            .unwrap();
+
+        let first = hosted.place(&project, &prepare());
+        assert_eq!(first.len(), 1);
+
+        // The slot leaves the project while `first` — the engine's graph — is still alive.
+        project.remove_effect(slot);
+        let second = hosted.place(&project, &prepare());
+        assert!(second.is_empty());
+        assert_eq!(
+            hosted.retiring.len(),
+            1,
+            "the live instance is parked, not dropped"
+        );
+        hosted.sweep_retired();
+        assert_eq!(
+            hosted.retiring.len(),
+            1,
+            "and stays parked while its effect is still out"
+        );
+
+        // The engine hands the old graph back and it is dropped off the audio thread.
+        drop(first);
+        hosted.sweep_retired();
+        assert!(
+            hosted.retiring.is_empty(),
+            "freed once its effect came home"
+        );
+    }
+
+    #[test]
+    fn an_unrelated_undo_keeps_the_hosted_slot_alive() {
+        // Undo restores a variant of the same document, whose slot ids still name the same
+        // plugins. Clearing the slots on every document swap — as undo once did — dropped a
+        // live instance whose effect was still in the engine's graph (a leak, see above) and
+        // threw away plugin-internal state the undo was never aimed at.
+        let (mut session, file) = session_with_fixture();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        session
+            .add_hosted_effect(Some(track), &file, FIXTURE_ID)
+            .expect("the fixture is in the library");
+        assert_eq!(session.hosted.slots.len(), 1);
+
+        session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::from_beats(4.0))
+            .unwrap();
+        session.undo();
+        assert_eq!(
+            session.hosted.slots.len(),
+            1,
+            "an unrelated undo must not evict the slot"
         );
     }
 
@@ -1478,14 +1632,14 @@ mod tests {
         let state = PluginState::empty();
 
         let first = slot
-            .take_effect(&library, &state, &prepare())
+            .take_effect(&library, &state, &prepare(), &mut Vec::new())
             .expect("first");
         slot.editor = true;
         slot.settle_editor(None).expect("opens");
         assert!(slot.live.as_ref().unwrap().gui_is_open());
 
         let second = slot
-            .take_effect(&library, &state, &prepare())
+            .take_effect(&library, &state, &prepare(), &mut Vec::new())
             .expect("second");
         assert!(slot.spare.is_some(), "the handover really did make a pair");
         slot.settle_editor(None).expect("moves");

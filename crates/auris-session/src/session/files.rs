@@ -223,6 +223,10 @@ impl Session {
         self.path = Some(path.to_path_buf());
         self.dirty = false;
         self.mark_saved();
+        // Hosted plugins belong to the document that named them: their slot ids come from it,
+        // and this document reusing an id would inherit the old plugin. The loaded *files* are
+        // kept — a `.clap` is the same code whichever project is open.
+        self.hosted.clear();
         self.adopt_project(project);
 
         let missing = self.reload_assets();
