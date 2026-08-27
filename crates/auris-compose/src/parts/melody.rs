@@ -701,6 +701,8 @@ mod tests {
         // six-bar verse used to run its figure straight over its own edge — no cadence and no
         // breath, because only `bar % 4 == 3` closed — so the melody's last note could be a
         // passing tone hanging over the bar line into the next section.
+        // The ending is off because this test asks the *verse's own* last bar to close, and the
+        // held final bar would otherwise be the last note found.
         let mut breathed = 0;
         for seed in 1..=8u64 {
             let (_, frame, parts) = draft(&format!(
@@ -708,6 +710,7 @@ mod tests {
                     form = "verse"
                     chords = "@axis"
                     humanize = 0
+                    ending = "none"
                     seed = {seed}
                     [section.verse]
                     bars = 6

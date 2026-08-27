@@ -355,10 +355,13 @@ mod tests {
     #[test]
     fn a_written_rhythm_survives_a_quiet_section() {
         // Thinning is a suggestion about the groove, not licence to ignore an instruction.
+        // The ending is off because it lands a kick of its own past the written bar, and this
+        // test reads the written rhythm back step for step.
         let (_, frame, parts) = draft(
             r#"
             form = "verse"
             humanize = 0
+            ending = "none"
             [section.verse]
             bars = 1
             intensity = 0.05
@@ -381,6 +384,7 @@ mod tests {
             r#"
             form = "verse"
             humanize = 0
+            ending = "none"
             [section.verse]
             bars = 1
             [[part]]
@@ -398,6 +402,71 @@ mod tests {
     }
 
     #[test]
+    fn the_last_section_fills_into_the_ending() {
+        // The held final bar is somewhere to land, so the section before it runs its fill — the
+        // fill into the final hit, which is how every live set ends. Without the ending that
+        // section used to play the groove flat to the stop.
+        let spec = |ending: &str| {
+            format!(
+                r#"
+                form = "verse"
+                chords = "@axis"
+                humanize = 0
+                fill = 1.0
+                ending = "{ending}"
+                [section.verse]
+                bars = 4
+                intensity = 0.8
+                "#
+            )
+        };
+        let hits_in_last_verse_bar = |text: &str| {
+            let (_, frame, parts) = draft(text);
+            let snare = part(&parts, "snare");
+            let verse = &frame.sections[0];
+            let bar = frame.grid.bar_ticks();
+            snare
+                .notes
+                .iter()
+                .filter(|note| note.section == 0 && note.start >= verse.start + verse.length - bar)
+                .count()
+        };
+        assert!(
+            hits_in_last_verse_bar(&spec("held")) > hits_in_last_verse_bar(&spec("none")),
+            "the verse did not fill into the ending"
+        );
+    }
+
+    #[test]
+    fn the_ending_is_one_kick_and_silence() {
+        // The kick lands once with the chord; the snare and the hat have nothing to keep time
+        // for. The cymbal is the joins writer's business and is asserted where it lives.
+        let (_, frame, parts) = draft(
+            r#"
+            form = "verse"
+            chords = "@axis"
+            humanize = 0
+            [section.verse]
+            bars = 4
+            "#,
+        );
+        let ending = frame.sections.last().expect("an ending");
+        assert!(ending.coda, "the fixture grew no ending");
+        let in_ending = |name: &str| {
+            part(&parts, name)
+                .notes
+                .iter()
+                .filter(|note| note.start >= ending.start)
+                .count()
+        };
+        assert_eq!(in_ending("kick"), 1, "one kick on the landing");
+        assert_eq!(in_ending("snare"), 0);
+        assert_eq!(in_ending("hat"), 0);
+        let landing = part(&parts, "kick").notes.last().expect("the kick plays");
+        assert_eq!(landing.start, ending.start, "on the downbeat, exactly");
+    }
+
+    #[test]
     fn a_louder_section_plays_more_drum_hits() {
         let quiet = draft(&BASE.replace("bars = 4", "bars = 4\nintensity = 0.1")).2;
         let loud = draft(&BASE.replace("bars = 4", "bars = 4\nintensity = 1.0")).2;
@@ -410,13 +479,15 @@ mod tests {
     #[test]
     fn a_section_runs_a_fill_into_the_one_that_follows() {
         // A section that stopped and was replaced sounded like an edit rather than an arrival.
-        // The last section of a piece has nothing to lead into, so it keeps the groove instead.
+        // With no ending written, the last section of a piece has nothing to lead into and keeps
+        // the groove instead — the ending is off here so that contrast is what gets measured.
         let (_, frame, parts) = draft(
             r#"
                 form = "verse verse"
                 chords = "@axis"
                 humanize = 0
                 variation = 0
+                ending = "none"
                 [section.verse]
                 bars = 4
                 intensity = 0.8

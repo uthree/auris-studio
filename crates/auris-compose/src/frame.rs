@@ -9,11 +9,12 @@ use auris_core::time::Ticks;
 
 use crate::rhythm::{Grid, Pattern};
 use crate::rng::{Key as RngKey, Rng};
-use crate::spec::{LeadIn, Mood, SectionSpec, SongSpec};
+use crate::spec::{Ending, LeadIn, Mood, SectionSpec, SongSpec};
 use crate::theory::chart::{ChartOrigin, HarmonicEvent};
 use crate::theory::chord::{Chord, Quality};
 use crate::theory::key::Key;
-use crate::theory::numeral::{Numeral, degree_of, diatonic_seventh};
+use crate::theory::numeral::{Numeral, degree_of, diatonic_quality, diatonic_seventh};
+use crate::theory::pitch::PitchClass;
 
 /// One playing of one section.
 #[derive(Clone, Debug)]
@@ -48,6 +49,10 @@ pub struct SectionPlan {
     pub parts: Vec<String>,
     /// What this section changes about how particular parts play, by part name.
     pub tweaks: std::collections::BTreeMap<String, crate::spec::PartTweak>,
+    /// `true` for the held final bar a piece ends on, which is written by its own small writer
+    /// rather than by the role writers: a figure over the last chord would be one more bar of
+    /// the piece, and what an ending is, is the piece stopping *on* something.
+    pub coda: bool,
 }
 
 impl SectionPlan {
@@ -178,6 +183,15 @@ pub fn plan(spec: &SongSpec) -> Frame {
                 turn_around(&mut events, key);
             }
         }
+        // The held ending is an arrival by construction — it opens on the tonic the whole piece
+        // has been heading for — so the composer's own chart turns around into it exactly as it
+        // does into any other arrival.
+        if chart.origin == ChartOrigin::Generated
+            && spec.ending == Ending::Held
+            && place + 1 == played.len()
+        {
+            turn_around(&mut events, key);
+        }
 
         // Before the skeleton, because the melody hangs on these chords: a line written against
         // the chord that was there and then played over the dominant that replaced it would be
@@ -205,6 +219,57 @@ pub fn plan(spec: &SongSpec) -> Frame {
             skeleton,
             parts: section.parts.clone(),
             tweaks: section.tweaks.clone(),
+            coda: false,
+        });
+        start += length;
+    }
+
+    // The ending: one bar of the final key's tonic after the last section, held by the band and
+    // struck once by the kick and the cymbal — the bar every performance of anything ends on.
+    // The last section used to play its loop out and stop mid-groove, as if the tape ran out.
+    //
+    // A plan-level section rather than a note pass, because everything downstream already speaks
+    // sections: it arrives as a labelled stretch on the timeline, a tonic in the harmony lane,
+    // and a clip per part, with nothing translated. The chord is built through one numeral so
+    // `event.chord == event.numeral.chord_in(event.key)` holds by construction, like everywhere
+    // else.
+    if spec.ending == Ending::Held
+        && let Some(last) = sections.last()
+    {
+        let key = last.key;
+        let (tempo, intensity) = (last.tempo, last.intensity);
+        let numeral = Numeral::new(1, diatonic_quality(key, 1).is_minor());
+        let chord = numeral.chord_in(key);
+        let length = grid.bar_ticks();
+        // The melody's landing: the tonic nearest the middle of its role's range, which is
+        // where the skeleton's arch has been living all along.
+        let (low, high) = crate::spec::Role::Melody.range();
+        let middle = (low + high) / 2;
+        let resting = (low..=high)
+            .filter(|pitch| PitchClass::new(*pitch) == key.tonic)
+            .min_by_key(|pitch| (pitch - middle).abs())
+            .unwrap_or(middle);
+        sections.push(SectionPlan {
+            name: "ending".to_string(),
+            instance: 1,
+            start,
+            length,
+            bars: 1,
+            key,
+            tempo,
+            intensity,
+            events: vec![HarmonicEvent {
+                numeral,
+                chord,
+                key,
+                start: Ticks::ZERO,
+                length,
+                bar: 0,
+            }],
+            skeleton: vec![resting],
+            parts: Vec::new(),
+            tweaks: Default::default(),
+            coda: true,
         });
         start += length;
     }
@@ -560,18 +625,21 @@ mod tests {
             bars = 8
             "#,
         ));
-        assert_eq!(frame.sections.len(), 3);
+        assert_eq!(frame.sections.len(), 4, "three of the form, and the ending");
         assert_eq!(frame.sections[0].start, Ticks::ZERO);
         assert_eq!(frame.sections[1].start, frame.grid.bar_ticks() * 4);
         assert_eq!(frame.sections[2].start, frame.grid.bar_ticks() * 12);
-        assert_eq!(frame.length, frame.grid.bar_ticks() * 20);
+        // The held final bar sits after the form and inside the piece's own length.
+        assert_eq!(frame.sections[3].start, frame.grid.bar_ticks() * 20);
+        assert!(frame.sections[3].coda);
+        assert_eq!(frame.length, frame.grid.bar_ticks() * 21);
     }
 
     #[test]
     fn a_repeated_section_counts_its_instances() {
         let frame = plan(&spec(r#"form = "verse chorus verse chorus""#));
         let instances: Vec<usize> = frame.sections.iter().map(|s| s.instance).collect();
-        assert_eq!(instances, [1, 1, 2, 2]);
+        assert_eq!(instances, [1, 1, 2, 2, 1], "and the ending is played once");
     }
 
     #[test]
@@ -663,13 +731,64 @@ mod tests {
             "the tune ends on {pitch}, which is not in {}",
             last.chord
         );
-        // A section with nothing after it is an ending, not a join, and plays its loop out.
-        let alone = plan(&spec(r#"form = "verse""#));
+        // With the held ending switched off there is nothing to arrive at, and the loop plays
+        // out as written — a turnaround into nothing would be a question nobody answers.
+        let alone = plan(&spec(
+            r#"
+            form = "verse"
+            ending = "none"
+            "#,
+        ));
         assert_ne!(
             alone.sections[0].events.last().expect("chords").chord,
             last.chord,
-            "the last section of a piece was turned around into nothing"
+            "a piece with no ending was turned around into nothing"
         );
+    }
+
+    #[test]
+    fn a_piece_ends_on_one_held_bar_of_its_tonic() {
+        // The last section used to play its loop out and stop mid-groove, as if the tape ran
+        // out. The ending is one bar: the final key's tonic, a labelled section the writers
+        // treat as a landing rather than as one more bar of the piece.
+        let frame = plan(&spec(r#"form = "verse""#));
+        assert_eq!(frame.sections.len(), 2);
+        let ending = frame.sections.last().unwrap();
+        assert!(ending.coda);
+        assert_eq!(ending.name, "ending");
+        assert_eq!(ending.bars, 1);
+        assert_eq!(ending.start + ending.length, frame.length);
+        let event = &ending.events[0];
+        assert_eq!(event.chord.root, ending.key.tonic);
+        assert_eq!(
+            event.chord,
+            event.numeral.chord_in(event.key),
+            "the lane and the parts agree, by construction"
+        );
+        assert!(
+            event.chord.contains_midi(ending.skeleton[0]),
+            "the melody's landing is not on the chord"
+        );
+
+        // In a minor key the tonic is the minor triad — the ending closes the piece in its own
+        // mode rather than picardying it.
+        let minor = plan(&spec(
+            r#"
+            key = "A minor"
+            form = "verse"
+            "#,
+        ));
+        let event = &minor.sections.last().unwrap().events[0];
+        assert_eq!(event.chord.quality, Quality::Minor);
+
+        // And `ending = "none"` is the loop played out, which is what an exported loop wants.
+        let plain = plan(&spec(
+            r#"
+            form = "verse"
+            ending = "none"
+            "#,
+        ));
+        assert_eq!(plain.sections.len(), 1);
     }
 
     #[test]

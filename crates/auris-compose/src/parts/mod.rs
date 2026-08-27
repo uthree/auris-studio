@@ -22,6 +22,7 @@
 
 mod arp;
 mod bass;
+mod coda;
 mod comp;
 mod drums;
 mod joins;
@@ -40,6 +41,7 @@ use crate::spec::{Mood, PartSpec, Role, SongSpec};
 
 use arp::arp;
 use bass::bass;
+use coda::coda;
 use comp::comp;
 use drums::drums;
 use joins::joins;
@@ -154,6 +156,14 @@ pub fn write_parts(settings: &ScoreSettings, roster: &[PartSpec], frame: &Frame)
                     continue;
                 }
                 let part = &played[index];
+                // The held final bar has a writer of its own: an ending is not one more bar of
+                // figures and grooves, it is the piece landing. The crash still goes through
+                // `joins`, because the ending is an arrival and that writer's whole question is
+                // whether one has happened.
+                if section.coda && part.role != Role::Crash {
+                    draft.notes.extend(coda(settings, section, index, part));
+                    continue;
+                }
                 let notes = match part.role {
                     Role::Melody => melody(settings, frame, section, index, part),
                     Role::Chords | Role::Pad | Role::Stab => {
@@ -1044,7 +1054,7 @@ mod tests {
                 bars = 4
                 "#,
         );
-        assert_eq!(frame.sections.len(), 2);
+        assert_eq!(frame.sections.len(), 3, "two verses and the ending");
         for draft in &parts {
             assert_eq!(
                 section_body(&frame, draft, 0),

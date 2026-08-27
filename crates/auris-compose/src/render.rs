@@ -305,7 +305,13 @@ fn clips_of(
             start: section.start,
             length: section.length,
             notes,
-            recipe: part
+            // No recipe on an ending clip: a recipe promises that another take is the same part
+            // played again, and `write_phrase` would answer with a figure over the tonic rather
+            // than the held landing — a promise nothing can keep is better not made, the same
+            // answer the crash already gives.
+            recipe: (!section.coda)
+                .then_some(part)
+                .flatten()
                 .map(|part| section.played(part))
                 .and_then(|played| recipe_for(settings, &played, section, frame.seed)),
         });
@@ -657,11 +663,14 @@ mod tests {
         for track in &piece.tracks {
             for clip in &track.clips {
                 let Some(recipe) = &clip.recipe else {
-                    // The crash is the one part no preset names; nothing else may be missing one.
-                    assert_eq!(
-                        track.name, "crash",
-                        "`{}` arrived with no recipe",
-                        track.name
+                    // The crash is the one part no preset names, and an ending clip makes a
+                    // promise nothing could keep: `write_phrase` would answer with a figure over
+                    // the tonic rather than the held landing. Nothing else may be missing one.
+                    assert!(
+                        track.name == "crash" || clip.name.starts_with("ending"),
+                        "`{}` arrived with no recipe on `{}`",
+                        track.name,
+                        clip.name
                     );
                     continue;
                 };
@@ -1207,7 +1216,13 @@ mod tests {
     /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
     /// a bug or a decision, and this is what makes anyone look.
     ///
-    /// It last moved when the fill grew a vocabulary: `parts::drums::FillShape` draws one of
+    /// It last moved when the piece learned to end: every fixture gains an `ending` section —
+    /// one bar of the final key's tonic, held, spelled through one numeral so the lane agrees —
+    /// and the two whose charts are the composer's own also turn their last bar around into it,
+    /// which is why `F → G7` and `Dm7 → E7` appear in their chord lines and the quoted fixtures'
+    /// lines gained only the ending bar. Every count rose by the landing's own notes.
+    ///
+    /// Before that it moved when the fill grew a vocabulary: `parts::drums::FillShape` draws one of
     /// four shapes per join where every fill used to be the rising run. The two multi-section
     /// fixtures moved — their counts by the few snare hits a sparser shape leaves out — and the
     /// two single-section ones did not, because a piece's last section runs no fill: which is
@@ -1280,8 +1295,9 @@ mod tests {
                     bars = 8
                     "#
             ),
-            "verse·1 C major | Cmaj7 Gm7 Am Fmaj7 Cmaj7 G7 Am9 F |\n\
-             162 notes, digest c2961e69ccdfd5b2\n"
+            "verse·1 C major | Cmaj7 Gm7 Am Fmaj7 Cmaj7 G7 Am9 G7 |\n\
+             ending·1 C major | C |\n\
+             175 notes, digest 37f66f409e681fb1\n"
         );
 
         // The same in a minor key, and the fixture that moved furthest when colouring stopped
@@ -1321,8 +1337,9 @@ mod tests {
                     bars = 8
                     "#
             ),
-            "verse·1 A minor | Am7 E9 Fmaj7 Dm Am7 Em7 Gbm7 Dm7 |\n\
-             236 notes, digest 2bc93c6746af7d16\n"
+            "verse·1 A minor | Am7 E9 Fmaj7 Dm Am7 Em7 Gbm7 E7 |\n\
+             ending·1 A minor | Am |\n\
+             244 notes, digest 8e829045b664ebe9\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats — and the one fixture
@@ -1335,7 +1352,8 @@ mod tests {
             "intro·1 C major | C G Am F |\n\
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
-             625 notes, digest 7426d039ee286591\n"
+             ending·1 C major | C |\n\
+             634 notes, digest d9d76cd4b11c82d3\n"
         );
 
         // A transposed section, which is a key change on the timeline — and the one fixture here
@@ -1362,7 +1380,8 @@ mod tests {
             ),
             "verse·1 C major | Fmaj7 E7 Am7 Bb7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
-             206 notes, digest d4ff0416a6a7b4fb\n"
+             ending·1 Eb major | Eb |\n\
+             213 notes, digest 7b569cfa4bb9bdab\n"
         );
     }
 
@@ -1424,9 +1443,15 @@ mod tests {
     fn every_section_becomes_a_clip_on_every_playing_part() {
         let piece = compose_text(BASE);
         for track in &piece.tracks {
+            // Three sections of the form, and the ending — which the snare and the hat sit out,
+            // because a held final bar has nothing for them to keep time for.
+            let expected = match track.name.as_str() {
+                "snare" | "hat" => 3,
+                _ => 4,
+            };
             assert_eq!(
                 track.clips.len(),
-                3,
+                expected,
                 "`{}` has {} clips",
                 track.name,
                 track.clips.len()
@@ -1438,7 +1463,9 @@ mod tests {
         assert_eq!(lead.clips[0].length, bar * 4);
         assert_eq!(lead.clips[1].start, bar * 4);
         assert_eq!(lead.clips[2].start, bar * 12);
-        assert_eq!(piece.length, bar * 20);
+        assert_eq!(lead.clips[3].start, bar * 20, "the ending, one bar");
+        assert_eq!(lead.clips[3].length, bar);
+        assert_eq!(piece.length, bar * 21);
     }
 
     #[test]

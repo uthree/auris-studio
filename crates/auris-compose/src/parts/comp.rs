@@ -468,10 +468,13 @@ mod tests {
         // The difference the two parts existed to have and did not. Both read the same harmony
         // through the same writer, so without this a pad was a comp that happened to have drawn
         // the held figure — which the comp could draw too, and did, four times in ten.
+        // The ending is off because this test walks every pad note against the verse's own
+        // chord changes, and the held final bar is a landing rather than a change.
         let roster = r#"
             form = "verse"
             chords = "@axis"
             humanize = 0
+            ending = "none"
             seed = 3
             [section.verse]
             bars = 4

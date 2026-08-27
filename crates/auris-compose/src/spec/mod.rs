@@ -269,6 +269,41 @@ impl LeadIn {
     }
 }
 
+/// How the piece closes.
+///
+/// A form is a list of sections and the last one used to play its loop out and stop — mid-figure,
+/// mid-groove, as if the tape ran out. A piece that ends is a piece; the difference between the
+/// two is one bar, and this is the word for whether that bar is written.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum Ending {
+    /// One extra bar after the last section: the final key's tonic, held by the band, the kick
+    /// and the cymbal striking it once. The bar every performance of anything ends on.
+    #[default]
+    Held,
+    /// No extra bar. The last section plays out and the piece simply stops — what a loop being
+    /// exported wants, and nothing else does.
+    None,
+}
+
+impl Ending {
+    /// The name the text format writes.
+    pub fn name(self) -> &'static str {
+        match self {
+            Ending::Held => "held",
+            Ending::None => "none",
+        }
+    }
+
+    /// Reads an ending name, accepting the obvious synonyms.
+    pub fn parse(text: &str) -> Option<Self> {
+        Some(match text.trim().to_ascii_lowercase().as_str() {
+            "held" | "hold" | "tonic" => Ending::Held,
+            "none" | "stop" | "off" => Ending::None,
+            _ => return None,
+        })
+    }
+}
+
 /// One section of the form.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SectionSpec {
@@ -397,6 +432,8 @@ pub struct SongSpec {
     pub variation: f32,
     /// The drum groove.
     pub groove: String,
+    /// How the piece closes: a held tonic bar after the last section, or nothing at all.
+    pub ending: Ending,
     /// The charts, by name. `main` is the one a section gets when it does not say.
     pub charts: BTreeMap<String, Chart>,
     /// The sections, by name.
@@ -433,6 +470,7 @@ impl Default for SongSpec {
             fill: 0.5,
             variation: 0.25,
             groove: "basic-rock".to_string(),
+            ending: Ending::default(),
             charts,
             sections,
             form: ["intro", "verse", "chorus", "verse", "chorus", "outro"]

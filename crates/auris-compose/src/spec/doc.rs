@@ -23,7 +23,7 @@ use crate::theory::chart::{Chart, ChartOrigin};
 use crate::theory::key::Key;
 use crate::theory::scale::ScaleId;
 
-use super::{LeadIn, Mood, PartSpec, PartTweak, Role, SectionSpec, SongSpec};
+use super::{Ending, LeadIn, Mood, PartSpec, PartTweak, Role, SectionSpec, SongSpec};
 
 /// Something wrong with a document.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -248,6 +248,8 @@ struct SongDoc {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     groove: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    ending: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     swing: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     humanize: Option<f32>,
@@ -446,6 +448,14 @@ impl SongDoc {
                     "`{text}` is not a groove; try one of {}",
                     names.join(", ")
                 )));
+            }
+        }
+        if let Some(text) = &self.ending {
+            match Ending::parse(text) {
+                Some(ending) => spec.ending = ending,
+                None => errors.push(SpecError::about(format!(
+                    "`{text}` is not an ending; try held or none"
+                ))),
             }
         }
         if let Some(swing) = self.swing {
@@ -804,6 +814,7 @@ impl From<&SongSpec> for SongDoc {
             )),
             seed: Some(spec.seed),
             groove: Some(spec.groove.clone()),
+            ending: Some(spec.ending.name().to_string()),
             swing: Some(u32::from(spec.swing)),
             humanize: Some(spec.humanize),
             dynamics: Some(spec.dynamics),

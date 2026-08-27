@@ -265,6 +265,8 @@ pub fn write_phrase(
             parts: Vec::new(),
             // A clip is one part in one stretch, so there is nothing to patch it against.
             tweaks: Default::default(),
+            // And it is a stretch of a piece, never the piece's ending.
+            coda: false,
         }],
         length,
         seed: recipe.seed,

@@ -141,6 +141,7 @@ mod tests {
                 skeleton: Vec::new(),
                 parts: Vec::new(),
                 tweaks: Default::default(),
+                coda: false,
             })
             .collect();
         (0..sections.len())
@@ -201,8 +202,10 @@ mod tests {
         let starts: Vec<i64> = crash.notes.iter().map(|note| note.start.raw()).collect();
         assert_eq!(
             starts,
-            [frame.sections[1].start.raw()],
-            "one cymbal, on the chorus downbeat"
+            [frame.sections[1].start.raw(), frame.sections[2].start.raw()],
+            "one cymbal on the chorus downbeat, and one on the final chord — the ending is an \
+             arrival by construction, and it reaches this writer through the same rule as any \
+             other join"
         );
         assert!(crash.notes.iter().all(|note| note.pitch == 49));
     }
@@ -212,11 +215,14 @@ mod tests {
         // The intro would take no cymbal at all on the form rule. A part that says where it lands
         // has answered the question this writer asks, and silently ignoring the line would be the
         // format dropping an instruction.
+        // The ending is off because a written rhythm plays through the ending section too, and
+        // this test reads the written bars back tick for tick.
         let (_, frame, parts) = draft(
             r#"
             form = "intro"
             chords = "@axis"
             humanize = 0
+            ending = "none"
             [section.intro]
             bars = 2
             intensity = 0.3
