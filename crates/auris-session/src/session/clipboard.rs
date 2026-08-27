@@ -256,7 +256,10 @@ impl Session {
                 let row = base + copied.lane;
                 let kind = &self.project.tracks.get(row)?.kind;
                 let fits = match (&copied.content, kind) {
-                    (CopiedContent::Midi(_), TrackKind::Instrument(_)) => true,
+                    // "Holds notes" rather than "is an instrument track", the same test every
+                    // other clip command asks: a melody pastes onto a singer track as freely as
+                    // it moves there, lyrics and all.
+                    (CopiedContent::Midi(_), kind) => kind.holds_notes(),
                     (CopiedContent::Audio(audio), TrackKind::Audio(_)) => {
                         self.project.audio_sources.contains_key(&audio.source)
                     }
@@ -279,13 +282,13 @@ impl Session {
                     let mut clip = *midi;
                     clip.id = id;
                     clip.start = start;
-                    if let Some(inner) = self
+                    if let Some(clips) = self
                         .project
                         .tracks
                         .get_mut(row)
-                        .and_then(|track| track.kind.as_instrument_mut())
+                        .and_then(|track| track.kind.note_clips_mut())
                     {
-                        inner.clips.push(clip);
+                        clips.push(clip);
                         pasted.push(id);
                     }
                 }
@@ -478,6 +481,28 @@ mod tests {
         assert_eq!(copy.length, BAR * 2);
         assert_eq!(session.clip_recipe(pasted[0]).map(|r| r.seed), Some(4));
         assert!(session.reroll_clip(pasted[0]).unwrap() > 0);
+    }
+
+    #[test]
+    fn a_melody_pastes_onto_a_singer_track() {
+        // The same "holds notes" contract every other clip command keeps: a melody moves freely
+        // between an instrument track and a singer track, so it pastes onto one too. This used
+        // to refuse silently — `Ok(vec![])`, no error, no undo step — which after a Cut was a
+        // lyric clip gone with only the undo history to bring it back.
+        let (mut session, _, clip) = session_with_clip();
+        let singer = session.add_singer_track("Melody");
+        assert_eq!(session.copy_clips(&[clip]), 1);
+
+        let pasted = session.paste_clips(singer, Ticks::ZERO).unwrap();
+        assert_eq!(pasted.len(), 1, "the melody must land on the singer track");
+        let landed = session
+            .project()
+            .track(singer)
+            .and_then(|track| track.kind.note_clips())
+            .expect("a singer track holds note clips");
+        assert_eq!(landed.len(), 1);
+        assert_eq!(landed[0].id, pasted[0]);
+        assert_eq!(landed[0].notes.len(), 2, "the notes travelled along");
     }
 
     #[test]
