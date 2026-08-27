@@ -21,9 +21,13 @@
 
 use std::sync::Once;
 
-use gpui::{Entity, Modifiers, Pixels, TestAppContext, VisualTestContext, point, px};
+use auris_session::prelude::*;
+use gpui::{
+    Entity, Modifiers, MouseButton, Pixels, Point, TestAppContext, VisualTestContext, point, px,
+};
 
 use crate::app::{AurisApp, Pane};
+use crate::ui::automation::RowKind;
 
 /// The rectangle the window is laid out in for a test.
 ///
@@ -66,6 +70,38 @@ pub(crate) fn open(cx: &mut TestAppContext) -> (Entity<AurisApp>, &mut VisualTes
     (app, cx)
 }
 
+/// How long the clip a fixture makes is.
+///
+/// Four beats, which at the opening zoom is a hundred and ninety-two pixels — wide enough that
+/// its middle is nowhere near either resize edge, so a press there is unambiguously a press on
+/// the clip itself.
+pub(crate) const CLIP_LENGTH: Ticks = Ticks(4 * TICKS_PER_QUARTER);
+
+/// A window holding one instrument track with one clip at the top of the timeline, painted.
+///
+/// Nearly every gesture in the arrangement needs something to take hold of, and the document a
+/// window opens with is empty. Built through the session rather than through the interface: what
+/// the fixture is for is the gesture the *test* makes, and a clip created by a gesture that is
+/// itself under test would leave two things able to fail in one line.
+pub(crate) fn with_a_clip(
+    cx: &mut TestAppContext,
+) -> (Entity<AurisApp>, &mut VisualTestContext, TrackId, ClipId) {
+    let (app, cx) = open(cx);
+    let (track, clip) = app.update(cx, |this, _| {
+        let track = this
+            .session
+            .add_default_instrument_track("Test")
+            .expect("the registry nominates an instrument");
+        let clip = this
+            .session
+            .add_midi_clip(track, "Clip", Ticks::ZERO, CLIP_LENGTH)
+            .expect("an instrument track takes a MIDI clip");
+        (track, clip)
+    });
+    paint(&app, cx);
+    (app, cx, track, clip)
+}
+
 /// Lays the window out and paints it, so that a click has something to land on.
 ///
 /// gpui's test window is never asked for a frame by a platform that does not exist, so nothing is
@@ -86,6 +122,62 @@ pub(crate) fn click(selector: &'static str, cx: &mut VisualTestContext) {
         .debug_bounds(selector)
         .unwrap_or_else(|| panic!("nothing called `{selector}` was drawn"));
     cx.simulate_click(bounds.center(), Modifiers::none());
+}
+
+/// Presses at `from`, moves to `to` and lets go — one whole gesture.
+///
+/// Two moves rather than one. A drag that jumps straight to its destination is a gesture no hand
+/// ever makes, and it would step over every rule that reads the *previous* position: the travel
+/// threshold that separates a press from a move, and the lane a selection is being carried
+/// through. The midpoint is where a real pointer would have been.
+pub(crate) fn drag(cx: &mut VisualTestContext, from: Point<Pixels>, to: Point<Pixels>) {
+    press(cx, from);
+    drag_to(cx, point((from.x + to.x) / 2., (from.y + to.y) / 2.));
+    drag_to(cx, to);
+    release(cx, to);
+}
+
+/// Puts the left button down at `at`, and leaves it down.
+pub(crate) fn press(cx: &mut VisualTestContext, at: Point<Pixels>) {
+    cx.simulate_mouse_down(at, MouseButton::Left, Modifiers::none());
+}
+
+/// Moves the pointer to `at` with the left button still held.
+pub(crate) fn drag_to(cx: &mut VisualTestContext, at: Point<Pixels>) {
+    cx.simulate_mouse_move(at, MouseButton::Left, Modifiers::none());
+}
+
+/// Lets the left button go at `at`.
+pub(crate) fn release(cx: &mut VisualTestContext, at: Point<Pixels>) {
+    cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::none());
+}
+
+/// The window point that lands on `track`'s clip lane at `tick`.
+///
+/// Read out of the view rather than worked out here: the arrangement scrolls in both directions
+/// and a track's height is the user's, so the only coordinate that means anything is the one the
+/// application itself would compute. The row's vertical centre, which is clear of the fade band
+/// along its top and of the seam with the row below.
+///
+/// [`paint`] has to have run, or the lanes have no recorded origin to measure from.
+pub(crate) fn lane_point(
+    app: &Entity<AurisApp>,
+    cx: &mut VisualTestContext,
+    track: TrackId,
+    tick: Ticks,
+) -> Point<Pixels> {
+    app.read_with(cx, |this, _| {
+        let origin = this.lanes_origin();
+        let row = this
+            .lane_rows()
+            .into_iter()
+            .find(|row| row.track == track && matches!(row.kind, RowKind::Clips))
+            .expect("every track has a clip lane");
+        point(
+            origin.x + this.timeline.tick_to_x(tick),
+            origin.y + row.top + row.height / 2.0 - this.lane_scroll,
+        )
+    })
 }
 
 #[cfg(test)]

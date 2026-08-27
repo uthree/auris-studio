@@ -489,3 +489,192 @@ impl AurisApp {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+
+    use crate::harness::{CLIP_LENGTH, drag, lane_point, paint, press, release};
+
+    use auris_session::prelude::*;
+
+    /// Four beats along, in ticks — the distance the tests below drag by.
+    const FOUR_BEATS: Ticks = Ticks(4 * TICKS_PER_QUARTER);
+
+    /// Halfway along the fixture's clip, which is where a press takes hold of it rather than of
+    /// either of its edges.
+    const HALF_CLIP: Ticks = Ticks(CLIP_LENGTH.0 / 2);
+
+    /// Where a clip starts, out of the document.
+    fn clip_start(app: &gpui::Entity<crate::app::AurisApp>, cx: &gpui::TestAppContext) -> Ticks {
+        app.read_with(cx, |this, _| {
+            this.session
+                .midi_clip(this.selected_clip.expect("a clip is selected"))
+                .expect("the clip is still there")
+                .start
+        })
+    }
+
+    #[gpui::test]
+    fn a_clip_dragged_along_its_lane_lands_where_it_was_let_go(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = crate::harness::with_a_clip(cx);
+        let from = lane_point(&app, cx, track, HALF_CLIP);
+        let to = lane_point(&app, cx, track, HALF_CLIP + FOUR_BEATS);
+
+        drag(cx, from, to);
+
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.session.midi_clip(clip).expect("still there").start,
+                FOUR_BEATS,
+                "the clip moved by what the pointer travelled"
+            );
+        });
+    }
+
+    /// The rule `past_drag_threshold` exists for, checked where it actually applies. A one-pixel
+    /// wobble on the way to letting go used to snap an off-grid clip onto the grid — undoable,
+    /// but it reads as the arrangement rearranging itself under the pointer.
+    #[gpui::test]
+    fn a_press_that_does_not_travel_leaves_the_clip_where_it_was(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = crate::harness::with_a_clip(cx);
+        // Off the grid, so that a snap would be visible in the answer.
+        app.update(cx, |this, _| {
+            this.session
+                .move_clip(clip, Ticks(100))
+                .expect("the clip may be moved");
+        });
+        paint(&app, cx);
+
+        let at = lane_point(&app, cx, track, Ticks(100) + HALF_CLIP);
+        press(cx, at);
+        crate::harness::drag_to(cx, gpui::point(at.x + gpui::px(1.0), at.y));
+        release(cx, at);
+
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.session.midi_clip(clip).expect("still there").start,
+                Ticks(100),
+                "a press that never travelled is a selection, not a move"
+            );
+        });
+    }
+
+    /// A press selects what it lands on, which is what every gesture after it acts through.
+    #[gpui::test]
+    fn a_press_on_a_clip_selects_it(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = crate::harness::with_a_clip(cx);
+        app.update(cx, |this, _| this.select_clip(None));
+
+        let at = lane_point(&app, cx, track, HALF_CLIP);
+        press(cx, at);
+        release(cx, at);
+
+        assert_eq!(clip_start(&app, cx), Ticks::ZERO);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.selected_clip, Some(clip));
+            assert_eq!(this.selected_track, Some(track));
+        });
+    }
+
+    /// Dragging a clip down onto the next track's lane carries it there.
+    #[gpui::test]
+    fn a_clip_dragged_onto_another_lane_changes_track(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = crate::harness::with_a_clip(cx);
+        let second = app.update(cx, |this, _| {
+            this.session
+                .add_default_instrument_track("Second")
+                .expect("the registry nominates an instrument")
+        });
+        paint(&app, cx);
+
+        let from = lane_point(&app, cx, track, HALF_CLIP);
+        let to = lane_point(&app, cx, second, HALF_CLIP);
+        drag(cx, from, to);
+
+        app.read_with(cx, |this, _| {
+            let carried = this
+                .project()
+                .tracks
+                .iter()
+                .find(|candidate| candidate.id == second)
+                .and_then(|candidate| candidate.kind.as_instrument())
+                .is_some_and(|inner| inner.clips.iter().any(|c| c.id == clip));
+            assert!(carried, "the clip is on the track it was dropped on");
+        });
+    }
+
+    /// Dragged left past the top of the timeline, a clip stops at zero instead of going negative.
+    #[gpui::test]
+    fn a_clip_dragged_off_the_front_of_the_timeline_stops_at_zero(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = crate::harness::with_a_clip(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .move_clip(clip, FOUR_BEATS)
+                .expect("the clip may be moved");
+        });
+        paint(&app, cx);
+
+        let from = lane_point(&app, cx, track, FOUR_BEATS + HALF_CLIP);
+        // Far enough left that an unclamped drag would land the clip before the start of the song.
+        let to = lane_point(&app, cx, track, Ticks(-FOUR_BEATS.0 * 2));
+        drag(cx, from, to);
+
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.session.midi_clip(clip).expect("still there").start,
+                Ticks::ZERO
+            );
+        });
+    }
+
+    /// A MIDI clip has nowhere to go on an audio track, and the drop has to refuse rather than
+    /// leave the document holding a clip the track cannot play.
+    #[gpui::test]
+    fn a_clip_dragged_onto_a_lane_that_cannot_hold_it_stays_where_it_was(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = crate::harness::with_a_clip(cx);
+        let audio = app.update(cx, |this, _| this.session.add_audio_track("Audio"));
+        paint(&app, cx);
+
+        let from = lane_point(&app, cx, track, HALF_CLIP);
+        let to = lane_point(&app, cx, audio, HALF_CLIP);
+        drag(cx, from, to);
+
+        app.read_with(cx, |this, _| {
+            let still_home = this
+                .project()
+                .tracks
+                .iter()
+                .find(|candidate| candidate.id == track)
+                .and_then(|candidate| candidate.kind.as_instrument())
+                .is_some_and(|inner| inner.clips.iter().any(|c| c.id == clip));
+            assert!(
+                still_home,
+                "the clip did not move to a track that cannot hold it"
+            );
+        });
+    }
+
+    /// The right edge is the one people drag, and it says what the clip *is* rather than how many
+    /// times it is heard.
+    ///
+    /// Taken hold of a few pixels *inside* the end rather than on it: the handle is only offered
+    /// over the clip, and the tick one past the last is not on the clip at all. That is the same
+    /// bargain the pointer makes on screen — the arrow changes shape a moment before the edge.
+    #[gpui::test]
+    fn dragging_a_clips_right_edge_makes_it_longer(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = crate::harness::with_a_clip(cx);
+        let end = lane_point(&app, cx, track, CLIP_LENGTH);
+        let from = gpui::point(end.x - gpui::px(3.0), end.y);
+        let to = lane_point(&app, cx, track, CLIP_LENGTH + FOUR_BEATS);
+
+        drag(cx, from, to);
+
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.session.midi_clip(clip).expect("still there").length,
+                CLIP_LENGTH + FOUR_BEATS
+            );
+        });
+    }
+}
