@@ -319,8 +319,12 @@ impl Capture {
     ///
     /// `None` means nothing has been recorded yet — the stream opened but no callback has run,
     /// which is the first few milliseconds of every take.
+    ///
+    /// The Acquire pairs with the callback's Release stamp: a caller that sees a position here
+    /// is promised the [`Self::count_in_at_start`] written just before it, because
+    /// `stop_recording` reads the two as one moment.
     pub fn started_at(&self) -> Option<u64> {
-        match self.shared.started_at.load(Ordering::Relaxed) {
+        match self.shared.started_at.load(Ordering::Acquire) {
             NOT_STARTED => None,
             frame => Some(frame),
         }
@@ -521,7 +525,11 @@ impl CaptureSink {
         // The count-in goes down with it, and *before* it, so that a block which loses the race
         // to stamp the position has not already overwritten the count belonging to the one that
         // won. The two are one reading of one moment: a position on the timeline, and how much
-        // of the count was still to be played when the first sample of the take was taken.
+        // of the count was still to be played when the first sample of the take was taken —
+        // which is why the stamp is a Release and `started_at()` an Acquire: program order
+        // inside this callback promises nothing to a reader on another core, and without the
+        // pairing a `stop_recording` that saw the position could still read the count as the
+        // zero `begin_take` reset it to.
         if self.shared.started_at.load(Ordering::Relaxed) == NOT_STARTED {
             self.shared
                 .count_in_at_start
@@ -530,7 +538,7 @@ impl CaptureSink {
         let _ = self.shared.started_at.compare_exchange(
             NOT_STARTED,
             self.playhead.load(Ordering::Relaxed),
-            Ordering::Relaxed,
+            Ordering::Release,
             Ordering::Relaxed,
         );
 
