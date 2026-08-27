@@ -4,20 +4,33 @@ use auris_i18n::{Key, messages};
 use auris_session::prelude::*;
 
 use gpui::{
-    AnyElement, Axis, Context, IntoElement, MouseMoveEvent, MouseUpEvent, Render, Window, div,
-    prelude::*, px, relative,
+    AnyElement, Axis, Context, IntoElement, MouseMoveEvent, MouseUpEvent, Pixels, Render, Window,
+    div, prelude::*, px, relative,
 };
 
 use crate::actions;
 use crate::app::{AurisApp, Drag, ExportOutcome, Pane};
-use crate::dock::{Dock, Panel};
+use crate::dock::{Dock, Panel, PanelLayout};
 use crate::gestures::past_drag_threshold;
 use crate::menu::MenuRow;
-use crate::theme::Theme;
+use crate::theme::{Metrics, Theme};
 use crate::ui::context_menu::MenuCommand;
 use crate::ui::drop::{drop_action, lanes_offset};
 use crate::ui::menu_bar;
 use crate::ui::widgets::splitter;
+
+/// The sizes the three docks are drawn at, once the window has had its say.
+///
+/// Not the sizes they are *set* to: those are the user's, kept in [`PanelLayout`] whatever the
+/// window does, so that narrowing a window and widening it again gives back what it took.
+struct DrawnDocks {
+    /// Width of the left dock.
+    left: Pixels,
+    /// Width of the right dock.
+    right: Pixels,
+    /// Height of the bottom dock.
+    bottom: Pixels,
+}
 
 impl Render for AurisApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -71,11 +84,18 @@ impl Render for AurisApp {
         let arrangement = self.render_arrangement(window, cx);
         let plugin_window = self.render_plugin_window(window.viewport_size(), cx);
         let typing_panel = self.render_typing_panel(window.viewport_size(), cx);
+        // What the docks may actually have of this window. The stored widths are the ones their
+        // splitters were dragged to and are kept whatever the window does; these are what is left
+        // once the arrangement has had the minimum it is entitled to. See
+        // [`PanelLayout::side_widths`] for why it is worked out here rather than by the flexbox:
+        // the middle column shrinks first by design, and with no floor a narrow window took it to
+        // nothing and left the whole arrangement unclickable.
+        let drawn = self.drawn_dock_sizes(window.viewport_size());
         // Built before the layout so each one can borrow the window to ask whether it has the
         // keyboard, which the layout below is too deep inside a builder chain to do.
-        let left = self.render_dock(Dock::Left, window, cx);
-        let bottom = self.render_dock(Dock::Bottom, window, cx);
-        let right = self.render_dock(Dock::Right, window, cx);
+        let left = self.render_dock(Dock::Left, drawn.left, window, cx);
+        let bottom = self.render_dock(Dock::Bottom, drawn.bottom, window, cx);
+        let right = self.render_dock(Dock::Right, drawn.right, window, cx);
         let left_divider = left.is_some().then(|| self.dock_divider(Dock::Left, cx));
         let bottom_divider = bottom
             .is_some()
@@ -309,11 +329,11 @@ impl AurisApp {
     fn render_dock(
         &mut self,
         dock: Dock,
+        size: Pixels,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Div> {
         let panel = self.panels.showing(dock)?;
-        let size = self.panels.size(dock);
         let wrapper = self
             .pane(panel.pane(), window, cx)
             .flex_shrink_0()
@@ -330,6 +350,35 @@ impl AurisApp {
             }
             .child(content),
         )
+    }
+
+    /// The sizes the three docks are drawn at in a window this size.
+    ///
+    /// A shut dock asks for nothing, so the arrangement is only made to share with panels that
+    /// are actually on screen.
+    fn drawn_dock_sizes(&self, viewport: gpui::Size<Pixels>) -> DrawnDocks {
+        let asked = |dock: Dock| match self.panels.showing(dock) {
+            Some(_) => self.panels.size(dock),
+            None => px(0.0),
+        };
+        // The headers sit in the same column as the lanes, so they are part of what has to be
+        // kept — the minimum is a width for the *lanes*, which is what `resize_dock` compares a
+        // dragged splitter against.
+        let keep = PanelLayout::MIN_ARRANGEMENT_WIDTH + self.panels.header_width;
+        let (left, right) = PanelLayout::side_widths(
+            (asked(Dock::Left), asked(Dock::Right)),
+            viewport.width,
+            keep,
+        );
+        DrawnDocks {
+            left,
+            right,
+            bottom: PanelLayout::bottom_height(
+                asked(Dock::Bottom),
+                viewport.height,
+                Metrics::TRANSPORT_HEIGHT + Metrics::STATUS_HEIGHT,
+            ),
+        }
     }
 
     /// What one panel draws.
@@ -2251,5 +2300,76 @@ impl AurisApp {
     ) {
         self.open_palette();
         cx.notify();
+    }
+}
+
+/// What the window as a whole does, driven through gpui's test platform.
+///
+/// The layout is the one thing here that has no pure function to test: it is the arrangement of
+/// real elements at a real size, and until now the only way to find out that a panel had fallen
+/// off the bottom edge was to drag the window smaller and look.
+#[cfg(test)]
+mod window_tests {
+    use gpui::{TestAppContext, px, size};
+
+    use crate::harness::{WINDOW, resize, with_a_clip};
+
+    /// Every surface the pointer works in, and where it was drawn.
+    fn surfaces(
+        app: &gpui::Entity<crate::app::AurisApp>,
+        cx: &gpui::TestAppContext,
+    ) -> Vec<(&'static str, gpui::Bounds<gpui::Pixels>)> {
+        app.read_with(cx, |this, _| {
+            [
+                ("the clip lanes", this.canvas.lanes.get()),
+                ("the bar ruler", this.canvas.ruler.get()),
+                ("the piano roll", this.canvas.roll.get()),
+            ]
+            .into_iter()
+            .map(|(name, bounds)| {
+                (
+                    name,
+                    bounds.unwrap_or_else(|| panic!("{name} was not drawn")),
+                )
+            })
+            .collect()
+        })
+    }
+
+    /// Every surface the pointer works in is still reachable when the window is small.
+    ///
+    /// Reachable, not *wholly on screen*: a dock is clipped on purpose, because a panel can be
+    /// given a dock it was never laid out for and the roll's header strip is wider than a side
+    /// column. What must not happen is a surface whose own corner is off the window or which has
+    /// been squeezed to nothing — either way the panel simply stops answering the pointer, which
+    /// reads as the panel being broken rather than as the window being too small for it.
+    #[gpui::test]
+    fn the_editing_surfaces_stay_reachable_in_a_small_window(cx: &mut TestAppContext) {
+        let (app, cx, _, clip) = with_a_clip(cx);
+        app.update(cx, |this, _| this.open_clip_in_editor(clip));
+
+        // The second is below the smallest window `main` will open — see `fitted_size` — so
+        // anything that survives it survives every window a user can be given.
+        for viewport in [WINDOW, size(px(600.), px(460.))] {
+            resize(&app, cx, viewport);
+            for (name, bounds) in surfaces(&app, cx) {
+                assert!(
+                    bounds.size.width > px(0.0) && bounds.size.height > px(0.0),
+                    "{name} was squeezed to nothing in a {viewport:?} window"
+                );
+                assert!(
+                    bounds.origin.x >= px(0.0)
+                        && bounds.origin.x < viewport.width
+                        && bounds.origin.y >= px(0.0)
+                        && bounds.origin.y < viewport.height,
+                    "{name} starts at {:?}, off a {viewport:?} window",
+                    bounds.origin
+                );
+                assert!(
+                    bounds.origin.y + bounds.size.height.min(viewport.height) > px(0.0),
+                    "{name} has no height left on screen in a {viewport:?} window"
+                );
+            }
+        }
     }
 }

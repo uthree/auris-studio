@@ -427,6 +427,54 @@ impl PanelLayout {
         wanted.max(floor).min(ceiling.max(floor))
     }
 
+    /// The widths the two side docks are actually drawn at, in a window `viewport` wide.
+    ///
+    /// [`Self::MIN_ARRANGEMENT_WIDTH`] was held in one direction only. Dragging a splitter until
+    /// the arrangement was too narrow is refused — see [`Self::resized`] — but nothing held the
+    /// other way round, so a window narrowed below the two docks plus that minimum took the whole
+    /// difference out of the arrangement. Below roughly seven hundred and eighty pixels the clip
+    /// lanes had no width left at all: not a small arrangement but one nothing could be clicked
+    /// in, and 640 is a width the application will open itself at — see `fitted_size`.
+    ///
+    /// The stored widths are left alone; only what is *drawn* gives way, so a window dragged
+    /// narrow and back returns the docks to the widths their splitters were put at. They give way
+    /// together and in proportion, because a rule that emptied one first would make which panel
+    /// disappears depend on which dock the constant happened to name.
+    ///
+    /// `asked` is what each would like, which is zero for a dock that is shut. `keep` is what the
+    /// column between them must be left with — the lane minimum *and* the track header column,
+    /// which shares that column and is the user's width too. [`Self::MIN_ARRANGEMENT_WIDTH`]
+    /// alone would be measuring the pane while meaning the lanes, and leave the lanes at nothing
+    /// with the headers still full width.
+    pub fn side_widths(
+        asked: (Pixels, Pixels),
+        viewport: Pixels,
+        keep: Pixels,
+    ) -> (Pixels, Pixels) {
+        let total = asked.0 + asked.1;
+        let room = (viewport - keep).max(px(0.0));
+        if total <= room {
+            return asked;
+        }
+        if total <= px(0.0) {
+            return (px(0.0), px(0.0));
+        }
+        // Shared out by flooring the first and giving the remainder to the second, so the two
+        // always add up to exactly the room there is rather than to a pixel more.
+        let left = px((f32::from(room) * f32::from(asked.0) / f32::from(total)).floor());
+        (left, room - left)
+    }
+
+    /// The height the bottom dock is actually drawn at, in a window `viewport` tall.
+    ///
+    /// The horizontal rule's other half, and broken the same way: the drag keeps
+    /// [`Self::MIN_ARRANGEMENT`] for the lanes and a shortening window kept nothing.
+    ///
+    /// `chrome` is what the transport and the status bar have already taken.
+    pub fn bottom_height(asked: Pixels, viewport: Pixels, chrome: Pixels) -> Pixels {
+        asked.min((viewport - chrome - Self::MIN_ARRANGEMENT).max(px(0.0)))
+    }
+
     /// Track-header column width after dragging its divider by `delta`.
     pub fn resized_headers(start_width: Pixels, delta: Pixels) -> Pixels {
         (start_width + delta)
@@ -779,6 +827,73 @@ mod tests {
         assert_eq!(
             PanelLayout::resized(Dock::Bottom, px(280.0), px(0.0), px(-50.0)),
             PanelLayout::MIN_BOTTOM
+        );
+    }
+
+    /// What a splitter drag is refused, a narrowing window must be refused too.
+    #[test]
+    fn a_window_with_room_to_spare_gives_the_docks_the_widths_they_were_set_to() {
+        let asked = (px(240.0), px(300.0));
+        assert_eq!(
+            PanelLayout::side_widths(asked, px(1920.0), px(480.0)),
+            asked,
+            "nothing is taken from a dock while there is room for the arrangement"
+        );
+    }
+
+    #[test]
+    fn a_narrow_window_takes_from_both_docks_and_leaves_the_arrangement_its_minimum() {
+        let asked = (px(240.0), px(300.0));
+        let keep = px(480.0);
+        let (left, right) = PanelLayout::side_widths(asked, px(600.0), keep);
+        assert_eq!(
+            left + right,
+            px(600.0) - keep,
+            "the docks share exactly what is left, to the pixel"
+        );
+        assert!(left < asked.0 && right < asked.1, "both gave way");
+        assert!(
+            right > left,
+            "in proportion, so the wider dock is still the wider one"
+        );
+    }
+
+    #[test]
+    fn a_window_narrower_than_the_arrangement_needs_leaves_the_docks_nothing() {
+        // There is nothing left to share, and a negative width is not a width. The panels are
+        // gone from a window this size; the arrangement is what stays.
+        assert_eq!(
+            PanelLayout::side_widths((px(240.0), px(300.0)), px(200.0), px(480.0)),
+            (px(0.0), px(0.0))
+        );
+    }
+
+    #[test]
+    fn shut_docks_ask_for_nothing_and_are_given_nothing() {
+        assert_eq!(
+            PanelLayout::side_widths((px(0.0), px(0.0)), px(300.0), px(480.0)),
+            (px(0.0), px(0.0)),
+            "no division by a total of zero"
+        );
+    }
+
+    #[test]
+    fn the_bottom_dock_gives_way_to_a_shortening_window() {
+        let chrome = px(106.0);
+        assert_eq!(
+            PanelLayout::bottom_height(px(280.0), px(1080.0), chrome),
+            px(280.0),
+            "a tall window changes nothing"
+        );
+        assert_eq!(
+            PanelLayout::bottom_height(px(280.0), px(460.0), chrome),
+            px(460.0) - chrome - PanelLayout::MIN_ARRANGEMENT,
+            "a short one leaves the lanes their minimum height"
+        );
+        assert_eq!(
+            PanelLayout::bottom_height(px(280.0), px(100.0), chrome),
+            px(0.0),
+            "and never a negative one"
         );
     }
 

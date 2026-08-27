@@ -616,8 +616,9 @@ mod tests {
         paint(&app, cx);
 
         let from = lane_point(&app, cx, track, FOUR_BEATS + HALF_CLIP);
-        // Far enough left that an unclamped drag would land the clip before the start of the song.
-        let to = lane_point(&app, cx, track, Ticks(-FOUR_BEATS.0 * 2));
+        // The very start of the timeline, which is as far left as a pointer can go. The clip was
+        // taken hold of half way along, so an unclamped drop would put its start before zero.
+        let to = lane_point(&app, cx, track, Ticks::ZERO);
         drag(cx, from, to);
 
         app.read_with(cx, |this, _| {

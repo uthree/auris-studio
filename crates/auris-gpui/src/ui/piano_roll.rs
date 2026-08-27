@@ -2003,3 +2003,158 @@ mod curve_tests {
         assert_eq!(seen.len(), rows.len(), "a row was offered twice: {rows:?}");
     }
 }
+
+/// The roll's gestures, driven through the window rather than through the handlers underneath.
+///
+/// A press in the grid is a sequence of questions — velocity tool, delete, note under the pointer,
+/// empty grid — and the order they are asked in *is* the behaviour. The pure rules each have their
+/// own test above; what these check is that a pointer at a position still reaches the right one.
+#[cfg(test)]
+mod window_tests {
+    use gpui::TestAppContext;
+
+    use auris_session::prelude::*;
+
+    use crate::harness::{
+        click_at, creating, deleting, drag, drag_with, paint, press, release, roll_point,
+        show_pitch, with_a_clip,
+    };
+
+    /// Middle C, which is far enough from either end of the keyboard that a pitch either side of
+    /// it is still a pitch.
+    const MIDDLE_C: u8 = 60;
+
+    /// One beat, the unit these tests place and move notes by.
+    const BEAT: Ticks = Ticks(TICKS_PER_QUARTER);
+
+    /// Half a beat, which is where a press lands on a one-beat note's body rather than on the
+    /// resize handle at its end.
+    const HALF_BEAT: Ticks = Ticks(TICKS_PER_QUARTER / 2);
+
+    /// The notes of the clip under test, in the order the document holds them.
+    fn notes(app: &gpui::Entity<crate::app::AurisApp>, cx: &gpui::TestAppContext) -> Vec<Note> {
+        app.read_with(cx, |this, _| {
+            this.session
+                .midi_clip(this.selected_clip.expect("a clip is open"))
+                .expect("the clip is still there")
+                .notes
+                .clone()
+        })
+    }
+
+    /// A window with the fixture's clip open in the roll, painted and ready to be pressed.
+    fn with_the_roll_open(
+        cx: &mut TestAppContext,
+    ) -> (
+        gpui::Entity<crate::app::AurisApp>,
+        &mut gpui::VisualTestContext,
+        ClipId,
+    ) {
+        let (app, cx, _, clip) = with_a_clip(cx);
+        app.update(cx, |this, _| this.open_clip_in_editor(clip));
+        paint(&app, cx);
+        // The roll opens showing the top of the keyboard, and an empty clip gives
+        // `center_roll_on_selection` nothing to centre on — so middle C is a couple of octaves
+        // below the grid until somebody scrolls to it, which is what a hand does too.
+        show_pitch(&app, cx, MIDDLE_C);
+        (app, cx, clip)
+    }
+
+    /// The create gesture writes a note and hands it straight to the resize, so placing a note and
+    /// giving it a length is one movement of the hand rather than click, look, click again.
+    #[gpui::test]
+    fn the_create_gesture_writes_a_note_and_stretches_it_in_one_go(cx: &mut TestAppContext) {
+        let (app, cx, _) = with_the_roll_open(cx);
+        let from = roll_point(&app, cx, BEAT, MIDDLE_C);
+        let to = roll_point(&app, cx, BEAT * 3, MIDDLE_C);
+
+        drag_with(cx, from, to, creating());
+
+        let notes = notes(&app, cx);
+        assert_eq!(notes.len(), 1, "one note, not one per pointer move");
+        assert_eq!(notes[0].pitch, MIDDLE_C);
+        assert_eq!(notes[0].start, BEAT);
+        assert_eq!(notes[0].end(), BEAT * 3, "stretched to where it was let go");
+    }
+
+    /// Dragging a note sideways and upwards moves it in both axes at once, which is the gesture
+    /// people actually make.
+    #[gpui::test]
+    fn a_note_dragged_up_and_along_changes_pitch_and_position(cx: &mut TestAppContext) {
+        let (app, cx, clip) = with_the_roll_open(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .add_note(clip, Note::new(MIDDLE_C, Ticks::ZERO, BEAT))
+                .expect("the clip takes a note");
+        });
+        paint(&app, cx);
+
+        // Half a beat in, so the press is on the note's body rather than on its right edge.
+        let from = roll_point(&app, cx, HALF_BEAT, MIDDLE_C);
+        let to = roll_point(&app, cx, BEAT + HALF_BEAT, MIDDLE_C + 2);
+        drag(cx, from, to);
+
+        let notes = notes(&app, cx);
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].pitch, MIDDLE_C + 2);
+        assert_eq!(notes[0].start, BEAT);
+    }
+
+    /// The same wobble guard the clips have: a press that never travelled is a selection.
+    #[gpui::test]
+    fn a_press_that_does_not_travel_leaves_the_note_where_it_was(cx: &mut TestAppContext) {
+        let (app, cx, clip) = with_the_roll_open(cx);
+        // Off the grid, so a snap would show up in the answer.
+        app.update(cx, |this, _| {
+            this.session
+                .add_note(clip, Note::new(MIDDLE_C, Ticks(70), BEAT))
+                .expect("the clip takes a note");
+        });
+        paint(&app, cx);
+
+        let at = roll_point(&app, cx, Ticks(70) + HALF_BEAT, MIDDLE_C);
+        press(cx, at);
+        crate::harness::drag_to(cx, gpui::point(at.x + gpui::px(1.0), at.y));
+        release(cx, at);
+
+        assert_eq!(notes(&app, cx)[0].start, Ticks(70));
+    }
+
+    /// The delete gesture takes a note off, and is asked before anything else could claim the
+    /// press — otherwise it would be unreachable.
+    #[gpui::test]
+    fn the_delete_gesture_takes_a_note_off(cx: &mut TestAppContext) {
+        let (app, cx, clip) = with_the_roll_open(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .add_note(clip, Note::new(MIDDLE_C, Ticks::ZERO, BEAT))
+                .expect("the clip takes a note");
+        });
+        paint(&app, cx);
+
+        let at = roll_point(&app, cx, HALF_BEAT, MIDDLE_C);
+        click_at(cx, at, deleting());
+
+        assert!(notes(&app, cx).is_empty());
+    }
+
+    /// A press below MIDI 0 must not act on pitch 0: the grid is unpainted down there, and a
+    /// click on nothing that wrote a note at the bottom of the keyboard would be a note nobody
+    /// asked for, in a place nobody was looking.
+    #[gpui::test]
+    fn a_press_off_the_bottom_of_the_keyboard_writes_nothing(cx: &mut TestAppContext) {
+        let (app, cx, _) = with_the_roll_open(cx);
+        let below = app.read_with(cx, |this, _| {
+            let origin = this.roll_origin();
+            // One row past pitch 0, which `pitch_at` answers `None` for.
+            gpui::point(
+                origin.x + this.timeline.tick_to_x(BEAT),
+                origin.y + this.pitch.pitch_to_y(0) + gpui::px(this.pitch.row_height * 1.5),
+            )
+        });
+
+        click_at(cx, below, creating());
+
+        assert!(notes(&app, cx).is_empty());
+    }
+}

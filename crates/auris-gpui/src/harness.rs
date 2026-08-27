@@ -29,14 +29,14 @@ use gpui::{
 use crate::app::{AurisApp, Pane};
 use crate::ui::automation::RowKind;
 
-/// The rectangle the window is laid out in for a test.
+/// The window a test opens in, which gpui's test platform makes 1920×1080 and never varies.
 ///
-/// The size `main` prefers, so that a panel which is only drawn when there is room for it is
-/// drawn here too — a layout that collapses at 640 pixels would otherwise hide half the controls
-/// a test is trying to click.
-const CANVAS: gpui::Size<Pixels> = gpui::Size {
-    width: px(1500.),
-    height: px(940.),
+/// Worth knowing rather than assuming: the interface was laid out at 1500×940, so a test window
+/// is *larger* than the one the design was drawn for and every panel that has a size at all has
+/// room for it. A test that wants a window too small for something asks with [`resize`].
+pub(crate) const WINDOW: gpui::Size<Pixels> = gpui::Size {
+    width: px(1920.),
+    height: px(1080.),
 };
 
 /// Points every `load()` in the frontend at a directory of this run's own.
@@ -102,14 +102,31 @@ pub(crate) fn with_a_clip(
     (app, cx, track, clip)
 }
 
-/// Lays the window out and paints it, so that a click has something to land on.
+/// Draws the window again, so that a click has the current layout to land on.
 ///
-/// gpui's test window is never asked for a frame by a platform that does not exist, so nothing is
-/// drawn until a test says so. Hit testing reads the last frame, which makes this the line that
-/// has to come before any [`click`].
+/// Hit testing and [`VisualTestContext::debug_bounds`] both read the last frame, so anything that
+/// changed the document behind the view's back has to be followed by this before a test can point
+/// at the result.
+///
+/// A notify and a turn of the loop, and deliberately *not* `VisualTestContext::draw`. gpui draws
+/// its dirty windows itself while flushing effects when it is built with `test-support`, so
+/// painting the root view explicitly paints it a second time into the same frame — and every
+/// mouse listener in the application is then registered twice. Each press fires its handler
+/// twice, which is invisible in a gesture that is idempotent and quietly wrong in one that is
+/// not: the note-create gesture makes a note and then, on the same press, takes hold of the note
+/// it has just made and drags it away.
 pub(crate) fn paint(app: &Entity<AurisApp>, cx: &mut VisualTestContext) {
-    let view = app.clone();
-    cx.draw(point(px(0.), px(0.)), CANVAS, |_, _| view);
+    app.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+}
+
+/// Resizes the window and paints it again.
+///
+/// Both halves, because either alone is a trap: a resize the view has not been redrawn after
+/// leaves every recorded canvas where the old layout put it.
+pub(crate) fn resize(app: &Entity<AurisApp>, cx: &mut VisualTestContext, size: gpui::Size<Pixels>) {
+    cx.simulate_resize(size);
+    paint(app, cx);
 }
 
 /// Clicks the control that [`crate::ui::widgets::icon_button`] gave this id.
@@ -173,11 +190,110 @@ pub(crate) fn lane_point(
             .into_iter()
             .find(|row| row.track == track && matches!(row.kind, RowKind::Clips))
             .expect("every track has a clip lane");
-        point(
+        let at = point(
             origin.x + this.timeline.tick_to_x(tick),
             origin.y + row.top + row.height / 2.0 - this.lane_scroll,
-        )
+        );
+        within(this.canvas.lanes.get(), at, "the clip lanes")
     })
+}
+
+/// `at`, once it is known to be inside the surface that was asked about.
+///
+/// A coordinate off the edge of its own canvas is the failure mode this harness is most able to
+/// hide: the press goes to whatever is drawn there instead, nothing happens, and a test that
+/// asserts something did *not* change passes for the wrong reason. The scroll positions and the
+/// zoom are the view's, so this is easy to walk into — better to be told than to be lied to.
+fn within(canvas: Option<gpui::Bounds<Pixels>>, at: Point<Pixels>, surface: &str) -> Point<Pixels> {
+    let Some(bounds) = canvas else {
+        panic!("{surface} has not been painted — call `paint` first");
+    };
+    assert!(
+        bounds.contains(&at),
+        "{at:?} is outside {surface}, which was drawn at {bounds:?}: \
+         scroll or zoom the view until the position asked for is on screen"
+    );
+    at
+}
+
+/// The window point that lands on the piano roll at `tick` and `pitch`.
+///
+/// `tick` is the timeline's, not the clip's: the roll draws against the same ruler the
+/// arrangement does, which is what lets a clip's notes line up with the bars around it. The row's
+/// vertical middle, so a rounding error in either direction stays inside the pitch that was asked
+/// for.
+///
+/// [`paint`] has to have run with a clip open, or the roll has no recorded origin to measure from.
+pub(crate) fn roll_point(
+    app: &Entity<AurisApp>,
+    cx: &mut VisualTestContext,
+    tick: Ticks,
+    pitch: u8,
+) -> Point<Pixels> {
+    app.read_with(cx, |this, _| {
+        let origin = this.roll_origin();
+        let at = point(
+            origin.x + this.timeline.tick_to_x(tick),
+            origin.y + this.pitch.pitch_to_y(pitch) + px(this.pitch.row_height / 2.0),
+        );
+        within(this.canvas.roll.get(), at, "the piano roll")
+    })
+}
+
+/// Scrolls the roll until `pitch` is in the middle of it, and paints again.
+///
+/// A window opens showing the top two octaves of the keyboard, because that is where the view
+/// starts and an empty clip gives `center_roll_on_selection` nothing to centre on. Anything a
+/// test wants to press has to be brought into view first — the same thing a hand does with the
+/// wheel before writing a note.
+pub(crate) fn show_pitch(app: &Entity<AurisApp>, cx: &mut VisualTestContext, pitch: u8) {
+    app.update(cx, |this, _| {
+        let height = this
+            .canvas
+            .roll
+            .get()
+            .map_or(px(0.0), |bounds| bounds.size.height);
+        this.pitch.center_on(pitch, height);
+    });
+    paint(app, cx);
+}
+
+/// Holds the platform's command modifier down for one gesture.
+///
+/// What the default create gesture is bound to, in the roll and on the lanes alike — ⌘ on macOS
+/// and Ctrl elsewhere, which is [`Modifiers::secondary_key`]'s whole job. Never spell out either.
+pub(crate) fn creating() -> Modifiers {
+    Modifiers::secondary_key()
+}
+
+/// Holds the option key down for one gesture, which is what the default delete is bound to.
+pub(crate) fn deleting() -> Modifiers {
+    Modifiers {
+        alt: true,
+        ..Modifiers::none()
+    }
+}
+
+/// Clicks at `at` with `modifiers` held.
+pub(crate) fn click_at(cx: &mut VisualTestContext, at: Point<Pixels>, modifiers: Modifiers) {
+    cx.simulate_click(at, modifiers);
+}
+
+/// Presses at `from` with `modifiers` held, drags to `to` and lets go.
+pub(crate) fn drag_with(
+    cx: &mut VisualTestContext,
+    from: Point<Pixels>,
+    to: Point<Pixels>,
+    modifiers: Modifiers,
+) {
+    cx.simulate_mouse_down(from, MouseButton::Left, modifiers);
+    cx.simulate_mouse_move(
+        point((from.x + to.x) / 2., (from.y + to.y) / 2.),
+        MouseButton::Left,
+        modifiers,
+    );
+    cx.simulate_mouse_move(to, MouseButton::Left, modifiers);
+    cx.simulate_mouse_up(to, MouseButton::Left, modifiers);
 }
 
 #[cfg(test)]
