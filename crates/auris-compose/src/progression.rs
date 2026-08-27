@@ -11,7 +11,8 @@
 //! A weighted walk over root degrees, eight bars long, shaped like a period: two four-bar
 //! phrases, the first leaning onto the dominant at its end and the second often restating the
 //! opening before closing toward a cadence. The walk's weights are **the catalogue, counted**:
-//! every move between two chords in the major-mode entries of [`CATALOG`], wraparound included
+//! every move between two chords in the major-mode entries of
+//! [`CATALOG`](crate::theory::chart::CATALOG), wraparound included
 //! because those charts are loops. That is the same trick the melody's interval table pulls —
 //! the named progressions are a corpus of what this music actually does, and 王道進行's
 //! V → iii "retrogression" is major vocabulary in it, where a textbook table would forbid the
@@ -74,7 +75,8 @@ const MINOR_STATES: [&str; 6] = ["i", "bIII", "iv", "V", "bVI", "bVII"];
 /// The major-mode moves, counted from the catalogue.
 ///
 /// `MAJOR_MOVES[from][to]` over [`MAJOR_STATES`]: the number of times the major-mode entries of
-/// [`CATALOG`] move from one degree to the other, adjacent chords within each chart plus the
+/// [`CATALOG`](crate::theory::chart::CATALOG) move from one degree to the other, adjacent
+/// chords within each chart plus the
 /// wraparound from its last chord to its first, secondary and slash chords counted by their
 /// root degree. `the_tables_are_the_catalogue_counted` recounts it, so a catalogue that gains
 /// an entry fails a test here rather than silently leaving this table describing a corpus that
