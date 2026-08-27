@@ -129,15 +129,24 @@
 //! into a closing bar, and that is left alone on purpose — the repeat share now sits *at* the
 //! corpus figure, and removing those too would push it under it.
 //!
+//! # The third pass: the anchor under a busy bar
+//!
+//! The bar line was not the only place the figure's footing moved without a join being chosen: a
+//! chord change *inside* a bar moved the anchor under a figure that was mid-flight, the same
+//! fault in a place the presets could not show — their charts are all one chord to the bar, so
+//! not one of the 5,147 intervals above crosses a mid-bar change. A two-chords-a-bar chart
+//! measured it at 3.32 semitones per crossing against 2.28 inside one chord, the bar line's old
+//! ratio almost exactly. The repair is the bar line's too: the figure is re-joined to the note
+//! it just played whenever it walks onto a new event, within `JOIN_REACH` of where it sat, and
+//! the crossings came in at 2.34 against 2.27. `a_chord_change_inside_a_bar_is_joined_like_a_bar_line`
+//! in `parts::melody` holds the chart that showed it.
+//!
 //! # What is still wrong
 //!
 //! Steps are 53.3% where a corpus says 68, and the difference now sits in thirds and leaps
-//! together — 36% of the line against the corpus' 21 for everything wider than a second. Two
-//! things are known and neither is fixed: a chord change *inside* a bar moves the anchor under a
-//! figure that is mid-flight, the same fault the bar line had before the join was chosen — it
-//! cannot show in the presets, whose charts are all one chord to the bar, but a busy written
-//! chart meets it; and resolving a dissonance onto a chord tone sometimes lands on the note
-//! beside it, which is refused where it would stutter but not otherwise.
+//! together — 36% of the line against the corpus' 21 for everything wider than a second. One
+//! thing is known and not fixed: resolving a dissonance onto a chord tone sometimes lands on the
+//! note beside it, which is refused where it would stutter but not otherwise.
 //!
 //! # What is not a code problem
 //!

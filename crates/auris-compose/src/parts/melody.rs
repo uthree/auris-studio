@@ -321,8 +321,10 @@ pub(super) fn melody(
         let bar_start = grid.bar_ticks() * bar as i64;
 
         // Where the whole figure sits this bar. The shape is the figure's; the height is whatever
-        // joins it to the bar before, within `JOIN_REACH` of the structural pitch.
-        let offset = match (left_off, cells.cells.first()) {
+        // joins it to the bar before, within `JOIN_REACH` of the structural pitch. Mutable
+        // because a chord change *inside* the bar re-joins the figure the same way — see the
+        // cell loop below.
+        let mut offset = match (left_off, cells.cells.first()) {
             (Some(previous), Some(first)) => {
                 let at = bar_start + grid.tick_of(first.step);
                 match section.chord_at(at) {
@@ -362,6 +364,9 @@ pub(super) fn melody(
 
         // The bar's pitches, before the harmony has its say over them.
         let mut bar_notes: Vec<(usize, i32, i32)> = Vec::with_capacity(cells.cells.len());
+        // Which event the current offset was joined against, so a change is noticed when the
+        // figure walks over one.
+        let mut carrying: Option<usize> = None;
         for (position, cell) in cells.cells.iter().enumerate() {
             let at = bar_start + grid.tick_of(cell.step);
             let Some(event) = section.chord_at(at) else {
@@ -381,6 +386,36 @@ pub(super) fn melody(
             // and in the scale the *chord* implies there, so a borrowed note is not answered by
             // the degree it borrowed from.
             let scale = ChordScale::new(event.key, event.chord);
+            // A chord change *inside* the bar moves the anchor under a figure that is
+            // mid-flight — the same fault the bar line had before the join was chosen, and the
+            // same repair: the figure is re-joined to the note it just played, within
+            // `JOIN_REACH` of where it already sat. Measured over a two-chords-a-bar chart, a
+            // mid-bar change used to cost 3.32 semitones against 2.28 inside one chord; it
+            // could not show in the presets, whose charts are all one chord to the bar.
+            if carrying != Some(event_index) {
+                if let Some(&(_, previous_pitch, _)) = bar_notes.last() {
+                    let snapped = weight >= 3;
+                    let landings: Vec<(i32, i32)> = (-JOIN_REACH..=JOIN_REACH)
+                        .map(|adjust| {
+                            let pitch = shift_within(
+                                &scale,
+                                anchor,
+                                cell.degree + offset + adjust,
+                                low,
+                                high,
+                            );
+                            let pitch = if snapped {
+                                fold_into(event.chord.nearest_tone(pitch), low, high)
+                            } else {
+                                pitch
+                            };
+                            (adjust, pitch)
+                        })
+                        .collect();
+                    offset += join_offset(previous_pitch, &landings);
+                }
+                carrying = Some(event_index);
+            }
             let mut pitch = shift_within(&scale, anchor, cell.degree + offset, low, high);
             // A note on a strong step has to agree with the chord, or the figure's shape wins an
             // argument with the harmony that it should not be having. The last note of a closing
@@ -601,6 +636,62 @@ mod tests {
             "the longest rest in eight bars is {} ticks, under one beat of {}",
             longest_rest.raw(),
             beat.raw()
+        );
+    }
+
+    #[test]
+    fn a_chord_change_inside_a_bar_is_joined_like_a_bar_line() {
+        // The last of the anchor faults. The figure is written in scale steps from each chord's
+        // structural pitch, so a chord change *inside* a bar moved the anchor under a figure that
+        // was mid-flight — the same fault the bar line had before `join_offset`, surviving there
+        // because the presets' charts are all one chord to the bar and nothing measured it. A
+        // busy written chart meets it head on.
+        let (mut across, mut inside) = (Vec::new(), Vec::new());
+        for seed in 1..=8u64 {
+            let (_, frame, parts) = draft(&format!(
+                r#"
+                    form = "verse"
+                    chords = "| I V | vi IV | I vi | ii V |"
+                    humanize = 0
+                    seed = {seed}
+                    [section.verse]
+                    bars = 8
+                    [[part]]
+                    name = "lead"
+                    "#
+            ));
+            let lead = part(&parts, "lead");
+            let section = &frame.sections[0];
+            let bar = frame.grid.bar_ticks().raw();
+            let mut notes = lead.notes.clone();
+            notes.sort_by_key(|note| note.start.raw());
+            for pair in notes.windows(2) {
+                let step = (i32::from(pair[1].pitch) - i32::from(pair[0].pitch)).abs();
+                if step == 0 || pair[0].start.raw() / bar != pair[1].start.raw() / bar {
+                    continue;
+                }
+                let a = section.event_index_at(pair[0].start - section.start);
+                let b = section.event_index_at(pair[1].start - section.start);
+                if a == b {
+                    inside.push(step);
+                } else {
+                    across.push(step);
+                }
+            }
+        }
+        let mean = |v: &[i32]| v.iter().map(|s| f64::from(*s)).sum::<f64>() / v.len().max(1) as f64;
+        assert!(
+            across.len() >= 30,
+            "only {} intervals cross a mid-bar change",
+            across.len()
+        );
+        // The same bound the bar-line statistic is held to: crossings in line with the rest of
+        // the line rather than wider.
+        assert!(
+            mean(&across) < mean(&inside) * 1.4,
+            "a mid-bar chord change costs {:.2} semitones against {:.2} inside one chord",
+            mean(&across),
+            mean(&inside)
         );
     }
 

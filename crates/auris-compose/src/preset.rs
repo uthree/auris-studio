@@ -231,6 +231,11 @@ program = "Standard Kit"
 "#;
 
 /// The 1980s Tokyo sound: a Rhodes, a slapped bass and a sixteen-beat under 丸サ進行.
+///
+/// The chorus plays 丸サ with its ii–V spelled out — `@marusa5` — which is how the genre itself
+/// intensifies the loop: the same four bars, one of them now moving twice. A chart with two
+/// chords in a bar was off limits until the melody learned to re-join its figure at a mid-bar
+/// change; see the third pass of [`crate::melodic`].
 const CITY_POP: &str = r#"
 title       = "City Pop"
 key         = "A major"
@@ -246,12 +251,16 @@ humanize    = 0.45
 seed        = 3
 form        = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
 
+[harmony]
+sabi = "@marusa5"
+
 [section.intro]
 bars      = 4
 intensity = 0.5
 
 [section.chorus]
 intensity = 0.9
+chords    = "sabi"
 
 [[part]]
 name    = "lead"
@@ -798,10 +807,11 @@ mod tests {
     #[test]
     fn the_band_presets_give_the_verse_and_the_chorus_different_progressions() {
         // A verse and a chorus on one loop is a form whose arrangement changes at every join
-        // over harmony that never does. The loop-built genres — city pop on 丸サ, synthwave on
-        // its own four bars — keep one progression *on purpose*, so this is asserted only where
-        // the genre wants the contrast.
-        for name in ["pop-band", "rock"] {
+        // over harmony that never does. The loop-built genres — synthwave, ambient, the jazz
+        // trio on its one cadence — keep one progression *on purpose*, so this is asserted only
+        // where the genre wants the contrast. City pop's contrast is the smallest kind: the same
+        // loop with its ii–V spelled out, which is how the genre itself lifts a サビ.
+        for name in ["pop-band", "rock", "city-pop"] {
             let spec = preset(name).expect("listed").spec();
             let chart_of = |section: &str| {
                 spec.chart_for(
