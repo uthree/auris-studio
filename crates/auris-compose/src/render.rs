@@ -1207,7 +1207,14 @@ mod tests {
     /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
     /// a bug or a decision, and this is what makes anyone look.
     ///
-    /// It last moved when the band stopped varying so much: `parts::writer::WIDEST` narrowed how
+    /// It last moved when the melody stopped repeating notes nobody drew — the second pass of
+    /// [`crate::melodic`]: the join is chosen against the chord-snapped landing and ranks a
+    /// repeat below anything within a fourth, and `unstick` undoes the repeat the range clamp
+    /// made by folding two degrees onto one pitch. All four digests moved and not one chord or
+    /// note count did, which is the scope of it: the tune's pitches are all that changed, and
+    /// repeated notes went from 22.8 per cent of the line to 10.5 against a corpus 11.
+    ///
+    /// Before that it moved when the band stopped varying so much: `parts::writer::WIDEST` narrowed how
     /// far apart two strokes of one part may sit, and `parts::WANDER_MS` how far the timing of a
     /// pitched one wanders. All four moved, the fourth included — it writes `humanize = 0` and so
     /// holds still in *time*, but a velocity is a velocity at every setting of that dial. Not one
@@ -1260,7 +1267,7 @@ mod tests {
                     "#
             ),
             "verse·1 C major | Cmaj7 Gm7 Am Fmaj7 Cmaj7 G7 Am9 F |\n\
-             164 notes, digest 61ae5731b0684c77\n"
+             164 notes, digest d82acca6f5ed6861\n"
         );
 
         // The same in a minor key, and the fixture that moved furthest when colouring stopped
@@ -1301,7 +1308,7 @@ mod tests {
                     "#
             ),
             "verse·1 A minor | Am7 E9 Fmaj7 Dm Am7 Em7 Gbm7 Dm7 |\n\
-             239 notes, digest 94affcdad605251d\n"
+             239 notes, digest 5c91af9672f854d2\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats — and the one fixture
@@ -1314,7 +1321,7 @@ mod tests {
             "intro·1 C major | C G Am F |\n\
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
-             629 notes, digest 58d3b3dd011c5928\n"
+             629 notes, digest e3923998253d0335\n"
         );
 
         // A transposed section, which is a key change on the timeline — and the one fixture here
@@ -1341,7 +1348,7 @@ mod tests {
             ),
             "verse·1 C major | Fmaj7 E7 Am7 Bb7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
-             204 notes, digest 5b2bef7d6f2e1d6e\n"
+             204 notes, digest e97389a2007533d2\n"
         );
     }
 

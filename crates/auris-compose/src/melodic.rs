@@ -90,12 +90,53 @@
 //! is standing on until something turns it round. Melodic regression to the mean is what turns it
 //! round, and it is in the literature for its own sake.
 //!
+//! # The second pass: the repeats nobody drew
+//!
+//! The table above left steps at 41.8% against the corpus 68, and most of the difference had gone
+//! into repeated notes: 22.8% of the line stood still where corpora say 11. The interval table
+//! draws a repeat one time in nine, so half of those were accidents — and classifying every
+//! repeated pair by where it sat said which accidents:
+//!
+//! | where the second note of a repeated pair sat | of 1,176 repeats |
+//! | --- | --- |
+//! | crossing a bar line | 221 |
+//! | within two semitones of a range edge | 155 |
+//! | in a closing bar, or beside a snapped strong step | 267 |
+//! | elsewhere — mostly the table's own draws | 533 |
+//!
+//! Two fixes in `parts::melody` came out of it:
+//!
+//! 1. **The join is chosen against the note that will actually play.** A bar's first note is
+//!    almost always on a strong step, where it is snapped onto a chord tone *after* the join is
+//!    chosen — so `join_offset` was optimising a pitch that never sounded, and the snap pulled a
+//!    fifth of all bar crossings back onto the very note the last bar had ended on. The landings
+//!    are snapped first now, and a repeated landing is ranked below anything within a fourth.
+//! 2. **A repeat the range made is undone.** `shift_within` shrinks an interval at the edge of
+//!    the range, and two cells that asked for *different* degrees could arrive on one pitch.
+//!    `unstick` moves the second of them one scale step onward — or back, at the very edge.
+//!
+//! | | before | after | corpus |
+//! | --- | --- | --- | --- |
+//! | step (1–2 semitones) | 41.8% | 53.3% | 68% |
+//! | repeated note | 22.8% | 10.5% | 11% |
+//! | leap of a fourth or wider | 15.1% | 15.0% | 21% for *all* leaps |
+//! | mean interval, repeats removed | 3.00 | 2.84 | 2.8 |
+//! | post-leap reversal | 73.7% | 71.2% | ~70% |
+//! | bar crossing against inside a bar | 3.09 / 2.98 | 2.97 / 2.81 | in line |
+//!
+//! The repeats were not redistributed at random: the leap share did not move, so every repeat the
+//! two fixes removed became a step or a third. `vary_motif` can still write a degree-space repeat
+//! into a closing bar, and that is left alone on purpose — the repeat share now sits *at* the
+//! corpus figure, and removing those too would push it under it.
+//!
 //! # What is still wrong
 //!
-//! Steps are 41.8% where a corpus says 68%, and the difference has gone into repeated notes and
-//! thirds rather than into leaps. Two things are known to be feeding it and neither is fixed:
-//! a chord change *inside* a bar moves the anchor under a figure that is mid-flight, the same fault
-//! the bar line had; and resolving a dissonance onto a chord tone sometimes lands on the note
+//! Steps are 53.3% where a corpus says 68, and the difference now sits in thirds and leaps
+//! together — 36% of the line against the corpus' 21 for everything wider than a second. Two
+//! things are known and neither is fixed: a chord change *inside* a bar moves the anchor under a
+//! figure that is mid-flight, the same fault the bar line had before the join was chosen — it
+//! cannot show in the presets, whose charts are all one chord to the bar, but a busy written
+//! chart meets it; and resolving a dissonance onto a chord tone sometimes lands on the note
 //! beside it, which is refused where it would stutter but not otherwise.
 //!
 //! # What is not a code problem

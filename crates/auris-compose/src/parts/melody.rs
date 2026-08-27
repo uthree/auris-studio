@@ -110,16 +110,21 @@ fn toward_middle(degree: i32, move_by: i32) -> i32 {
 /// the next was whatever fell out of the difference between two anchors — a leap of a fourth on
 /// average, nearly half of them wider than that, and not one of them chosen by anything.
 ///
-/// A *step* is preferred to landing on the note the last bar ended on. Restating a figure from
-/// the note it just finished on is a real melodic move and not one to make a third of the time,
-/// which is what taking the nearest landing outright did: the smoothest join available is always
-/// the one that does not move.
+/// Anything up to a *fourth* is preferred to landing on the note the last bar ended on. Restating
+/// a figure from the note it just finished on is a real melodic move and not one to make a third
+/// of the time, which is what taking the nearest landing outright did: the smoothest join
+/// available is always the one that does not move. The rank was 3 — a repeat lost only to a step
+/// — and a fifth of all bar crossings still restated the last note, because the landings are
+/// chord-snapped now and the nearest *other* chord tone is usually a third or a fourth away. At 5
+/// those win too, and what is left repeating is the join whose every alternative is a real leap,
+/// which is the one a repeat genuinely beats. Measured at 3, 4 and 5 over the presets: the mean
+/// join and the leap share did not move, and only the repeats did.
 fn join_offset(previous: i32, landings: &[(i32, i32)]) -> i32 {
     landings
         .iter()
         .min_by_key(|(offset, pitch)| {
             let distance = (pitch - previous).abs();
-            let ranked = if distance == 0 { 3 } else { distance };
+            let ranked = if distance == 0 { 5 } else { distance };
             (ranked, offset.abs())
         })
         .map(|(offset, _)| *offset)
@@ -325,12 +330,23 @@ pub(super) fn melody(
                             .get(section.event_index_at(at))
                             .copied()
                             .unwrap_or((low + high) / 2);
+                        // The landing as it will actually sound. A bar's first note is almost
+                        // always on a strong step, where the loop below snaps the pitch onto a
+                        // chord tone *after* the join has been chosen — so a join chosen against
+                        // the raw pitch was optimising a note that never played, and the snap
+                        // pulled a fifth of all bar crossings back onto the very note the last
+                        // bar ended on.
+                        let snapped = grid.weight(first.step) >= 3;
                         let landings: Vec<(i32, i32)> = (-JOIN_REACH..=JOIN_REACH)
                             .map(|offset| {
-                                (
-                                    offset,
-                                    shift_within(&scale, anchor, first.degree + offset, low, high),
-                                )
+                                let pitch =
+                                    shift_within(&scale, anchor, first.degree + offset, low, high);
+                                let pitch = if snapped {
+                                    fold_into(event.chord.nearest_tone(pitch), low, high)
+                                } else {
+                                    pitch
+                                };
+                                (offset, pitch)
                             })
                             .collect();
                         join_offset(previous, &landings)
@@ -370,6 +386,13 @@ pub(super) fn melody(
             let cadence = closing && position + 1 == cells.cells.len();
             if weight >= 3 || cadence {
                 pitch = fold_into(event.chord.nearest_tone(pitch), low, high);
+            } else if let Some(&(previous_position, previous_pitch, _)) = bar_notes.last() {
+                // Two cells that asked for different degrees and arrived on one pitch: the range
+                // has folded the walk flat, and the repeat is nobody's. See `unstick`.
+                let asked = cell.degree - cells.cells[previous_position].degree;
+                if pitch == previous_pitch && asked != 0 {
+                    pitch = unstick(&scale, pitch, asked.signum(), low, high);
+                }
             }
             bar_notes.push((position, pitch, i32::from(weight)));
         }
@@ -466,6 +489,28 @@ fn scale_shift(scale: &ChordScale, from: i32, steps: i32) -> i32 {
     let octaves = (from - tonic.midi(0) - semitones) / OCTAVE;
     let degree = scale.nearest_degree(semitones) + octaves * scale.degree_count() as i32;
     tonic.midi(0) + scale.semitone(degree + steps)
+}
+
+/// `pitch` moved one scale step off the note before it, for when the range has folded two
+/// different degrees onto one pitch.
+///
+/// Near the edge of its range [`shift_within`] shrinks an interval rather than folding it, and
+/// two cells that asked for *different* degrees can arrive on the same note — a repeat nobody
+/// drew, at the top of the figure's arch, which is exactly where the line is most audible.
+/// Measured over the presets, one repeat in eight sat within two semitones of a range edge.
+///
+/// The move goes the way the figure was going; at the very edge, where that direction has no
+/// room, it turns back instead, which is what regression to the mean would have done a note
+/// later anyway. A repeat the figure asked for — two cells on one degree — is not this
+/// function's business and never reaches it.
+fn unstick(scale: &ChordScale, pitch: i32, direction: i32, low: i32, high: i32) -> i32 {
+    for step in [direction, -direction] {
+        let moved = scale_shift(scale, pitch, step);
+        if (low..=high).contains(&moved) {
+            return moved;
+        }
+    }
+    pitch
 }
 
 /// `anchor` shifted by `degree` scale steps, kept inside `low..=high` by shrinking the interval.
@@ -601,8 +646,35 @@ mod tests {
         // smoothest join available is always the one that does not move, and taking it outright
         // restated a third of all bars from a repeated note.
         assert_eq!(join_offset(60, &[(-1, 60), (0, 62), (1, 67)]), 0);
-        // Unless nothing else is near, where repeating the note beats leaping off it.
-        assert_eq!(join_offset(60, &[(-1, 60), (0, 65), (1, 69)]), -1);
+        // And to a third. The landings are chord-snapped now, so the nearest *other* landing is
+        // usually a chord tone a third or fourth away — at the old rank of 3 the repeat beat
+        // every one of those, and a fifth of all bar crossings still restated the last note.
+        assert_eq!(join_offset(60, &[(-1, 60), (0, 63), (1, 67)]), 0);
+        // Unless nothing else is anywhere near, where repeating beats leaping off the note.
+        assert_eq!(join_offset(60, &[(-1, 60), (0, 67), (1, 69)]), -1);
+    }
+
+    #[test]
+    fn a_repeat_the_range_made_is_unstuck_and_a_drawn_one_never_reaches_it() {
+        // Near the edge of the range `shift_within` shrinks intervals, and two cells asking for
+        // different degrees can arrive on one pitch — a repeat nobody drew, at the top of the
+        // figure's arch. The move goes the way the figure was going, and turns back only at the
+        // very edge, where that direction has no room left.
+        let (_, frame, _) = draft(BASE);
+        let scale = ChordScale::of_key(frame.sections[0].key);
+        let (low, high) = Role::Melody.range();
+        let moved = unstick(&scale, 76, 1, low, high);
+        assert!(moved > 76, "going up with room above moves up: {moved}");
+        assert!(scale.contains(PitchClass::new(moved)));
+        // At the ceiling the intended direction has no room, so the note steps back instead —
+        // still not a repeat, which is the whole point.
+        let at_top = unstick(&scale, high, 1, low, high);
+        assert!(
+            at_top < high,
+            "at the ceiling the walk turns back: {at_top}"
+        );
+        // A window of one note has nowhere to go at all, and says so.
+        assert_eq!(unstick(&scale, 60, 1, 60, 60), 60);
     }
 
     #[test]
@@ -716,34 +788,36 @@ mod tests {
         };
 
         // A third of every move being a fourth or wider is an arpeggio's distribution, not a
-        // tune's. It was 34.3 per cent; the page reports 15.1 and a corpus 21 for all leaps.
+        // tune's. It was 34.3 per cent; the page reports 15.0 and a corpus 21 for all leaps.
         let leaps = share(all.iter().filter(|step| step.abs() >= 5).count());
         assert!(
             leaps < 18.0,
             "a leap of a fourth or wider is {leaps:.1}% of the line"
         );
 
-        // Steps were 31.4 per cent and the page reports 41.8, against a corpus 68.
+        // Steps were 31.4 per cent, then 41.8 after the five rules; the page reports 53.3 after
+        // the second pass took the accidental repeats out, against a corpus 68.
         let steps = share(
             all.iter()
                 .filter(|step| (1..=2).contains(&step.abs()))
                 .count(),
         );
-        assert!(steps > 38.0, "only {steps:.1}% of the line moves by a step");
+        assert!(steps > 48.0, "only {steps:.1}% of the line moves by a step");
         assert!(steps > leaps, "the line leaps as readily as it steps");
 
         // A repeated note is a melodic move like any other and `MOVES` gives it one weight in
-        // nine. The page reports 22.8 per cent against a corpus 11, and the risk is the other
-        // direction: inertia against a range clamp took it to 31 before regression to the mean
-        // was added to turn the walk round.
+        // nine. The page reports 10.5 per cent against a corpus 11 — the second pass took out
+        // the repeats the range clamp and the unsnapped join were writing, and the band guards
+        // both directions: over 15 is the accidents coming back, and under 6 is something eating
+        // the repeats the table legitimately draws.
         let repeats = share(all.iter().filter(|step| **step == 0).count());
         assert!(
-            (18.0..28.0).contains(&repeats),
+            (6.0..15.0).contains(&repeats),
             "{repeats:.1}% of the line stands still"
         );
 
-        // 3.89 before, 3.00 on the page, 2.8 in folk song with repetitions removed.
-        assert!(mean(&all) < 3.2, "the mean interval is {:.2}", mean(&all));
+        // 3.89 before, 2.84 on the page, 2.8 in folk song with repetitions removed.
+        assert!(mean(&all) < 3.0, "the mean interval is {:.2}", mean(&all));
 
         // The rule that was worth the most. The figure used to restart from its anchor every bar,
         // so the join between one bar and the next was whatever fell out of the difference
