@@ -15,7 +15,7 @@ use crate::frame::SectionPlan;
 use crate::rhythm::DrumVoice;
 use crate::spec::{PartSpec, Role};
 use crate::theory::chord::Chord;
-use crate::theory::pitch::{OCTAVE, PitchClass, fold_into};
+use crate::theory::pitch::{OCTAVE, fold_into};
 
 use super::writer::velocity;
 use super::{Draft, ScoreSettings};
@@ -124,6 +124,7 @@ pub(super) fn coda(
 mod tests {
     use super::*;
     use crate::theory::chord::Quality;
+    use crate::theory::pitch::PitchClass;
 
     #[test]
     fn the_resting_voicing_fits_the_range_and_sits_near_its_middle() {

@@ -470,8 +470,19 @@ mod tests {
             .copied()
             .filter(|clip| session.clip_recipe(*clip).is_some())
             .collect();
+        // The ending clips are the deliberate exception: a recipe promises another take of the
+        // same part, and another take of a held landing would be a figure over the tonic.
+        let landings = clips
+            .iter()
+            .filter(|clip| {
+                session
+                    .midi_clip(**clip)
+                    .is_some_and(|clip| clip.name.starts_with("ending"))
+            })
+            .count();
+        assert!(landings > 0, "the piece arrived without its ending");
         assert_eq!(
-            generated.len(),
+            generated.len() + landings,
             clips.len(),
             "a composed clip arrived without a recipe"
         );

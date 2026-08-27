@@ -135,6 +135,12 @@ pub struct SongDials {
     pub fill: f32,
     /// How much a repeat departs from what came before it.
     pub variation: f32,
+    /// How the piece closes: a held tonic bar after the last section, or nothing at all.
+    ///
+    /// Carried even though the sheet draws no control for it yet, so a specification that says
+    /// `ending = "none"` survives the round trip through the dialog instead of silently gaining
+    /// its ending back.
+    pub ending: Ending,
     /// The progressions the song carries, [`MAIN_CHART`] first.
     ///
     /// More than one is what lets a chorus play something the verse does not. They arrive by
@@ -180,6 +186,7 @@ pub fn song_spec(dials: &SongDials) -> SongSpec {
         fill: dials.fill,
         variation: dials.variation,
         groove: dials.groove.clone(),
+        ending: dials.ending,
         charts: dials.charts.iter().cloned().collect(),
         sections: dials
             .sections
@@ -261,6 +268,7 @@ pub fn song_dials(spec: &SongSpec) -> SongDials {
         dynamics: spec.dynamics,
         fill: spec.fill,
         variation: spec.variation,
+        ending: spec.ending,
         charts,
         sections,
         form: spec.form.clone(),
