@@ -195,6 +195,8 @@ impl AurisApp {
                         // window, which is what keeps it under the word that opened it.
                         .relative()
                         .id(("menu-title", index))
+                        // A name the harness finds the title by; nothing outside a test build.
+                        .debug_selector(move || format!("menu-title-{index}"))
                         .flex()
                         .items_center()
                         .h(px(20.0))
@@ -271,6 +273,7 @@ impl AurisApp {
                     let keystroke = self.keystroke_for(binding);
                     div()
                         .id(("menu-bar-item", section_index * 100 + index))
+                        .debug_selector(move || format!("menu-bar-item-{section_index}-{index}"))
                         .flex()
                         .items_center()
                         .gap_2()
@@ -552,5 +555,139 @@ mod tests {
         // Nor does the pointer resting on the open menu's own title change how it was opened.
         assert_eq!(after_hover(clicked(1), 1), clicked(1));
         assert_eq!(after_hover(slid(1), 1), slid(1));
+    }
+}
+
+/// The in-window menu bar, driven through the window.
+///
+/// This is the half of the application that rots, because nobody here develops on the platform it
+/// runs on: `wants_menu_bar` is false on macOS, so on a Mac none of the elements below are drawn
+/// at all. `cfg!` rather than `#[cfg]`, so both arms compile everywhere and the ones that can run
+/// do — which is the only reason a Mac can find out that the Windows menu bar has stopped opening.
+#[cfg(test)]
+mod window_tests {
+    use gpui::{Action, TestAppContext};
+
+    use crate::harness::{click, open, paint};
+    use crate::menu::MenuRow;
+
+    /// Where the row carrying `action` is, as the section it is in and its place in that section.
+    ///
+    /// By action name — `gpui::Action::name` is a stable identifier — because a row's label is in
+    /// whatever language the interface is in.
+    fn row_of(
+        app: &gpui::Entity<crate::app::AurisApp>,
+        cx: &gpui::TestAppContext,
+        action: &str,
+    ) -> (usize, usize) {
+        app.read_with(cx, |this, _| {
+            this.menu_model()
+                .iter()
+                .enumerate()
+                .find_map(|(section, model)| {
+                    model
+                        .rows
+                        .iter()
+                        .enumerate()
+                        .find_map(|(index, row)| match row {
+                            MenuRow::Command { action: a, .. } if a.name() == action => {
+                                Some((section, index))
+                            }
+                            _ => None,
+                        })
+                })
+                .unwrap_or_else(|| panic!("no menu row runs {action}"))
+        })
+    }
+
+    /// Which menu is dropped open, if any.
+    fn open_menu(
+        app: &gpui::Entity<crate::app::AurisApp>,
+        cx: &gpui::TestAppContext,
+    ) -> Option<usize> {
+        app.read_with(cx, |this, _| this.menu_bar.map(|open| open.index))
+    }
+
+    #[gpui::test]
+    fn a_click_on_a_title_drops_its_menu_open_and_a_second_shuts_it(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        if !crate::app::AurisApp::wants_menu_bar() {
+            // macOS puts these in the system bar, where this window has nothing to click.
+            assert!(open_menu(&app, cx).is_none());
+            return;
+        }
+        paint(&app, cx);
+
+        click("menu-title-0", cx);
+        assert_eq!(open_menu(&app, cx), Some(0));
+
+        paint(&app, cx);
+        click("menu-title-0", cx);
+        assert_eq!(open_menu(&app, cx), None, "the same title shuts it again");
+    }
+
+    /// A menu bar is a row of menus rather than a row of buttons: with one open, the next title
+    /// takes over instead of opening a second.
+    #[gpui::test]
+    fn a_second_title_takes_the_menu_over_rather_than_opening_another(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        if !crate::app::AurisApp::wants_menu_bar() {
+            return;
+        }
+        paint(&app, cx);
+
+        click("menu-title-0", cx);
+        paint(&app, cx);
+        click("menu-title-1", cx);
+
+        assert_eq!(open_menu(&app, cx), Some(1));
+    }
+
+    /// Choosing a row runs its command, through the same dispatch the keymap uses.
+    #[gpui::test]
+    fn choosing_a_row_runs_the_command_and_shuts_the_menu(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        if !crate::app::AurisApp::wants_menu_bar() {
+            return;
+        }
+        let (section, index) = row_of(&app, cx, crate::actions::ToggleLoop.name());
+        let before = app.read_with(cx, |this, _| this.session.project().loop_enabled);
+        paint(&app, cx);
+
+        let title: &'static str = Box::leak(format!("menu-title-{section}").into_boxed_str());
+        click(title, cx);
+        paint(&app, cx);
+        let row: &'static str =
+            Box::leak(format!("menu-bar-item-{section}-{index}").into_boxed_str());
+        click(row, cx);
+
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.session.project().loop_enabled,
+                !before,
+                "the row did what it says"
+            );
+        });
+        assert_eq!(open_menu(&app, cx), None, "and the menu shut behind it");
+    }
+
+    /// A switch in the menu reads back the state it set, which is the whole job of the tick
+    /// beside a label that is a noun.
+    #[gpui::test]
+    fn a_switch_in_the_menu_shows_the_state_it_is_in(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let (section, index) = row_of(&app, cx, crate::actions::ToggleLoop.name());
+        let ticked = |app: &gpui::Entity<crate::app::AurisApp>, cx: &gpui::TestAppContext| {
+            app.read_with(cx, |this, _| {
+                match &this.menu_model()[section].rows[index] {
+                    MenuRow::Command { checked, .. } => *checked,
+                    _ => panic!("row {index} of section {section} is not a command"),
+                }
+            })
+        };
+
+        assert!(!ticked(&app, cx), "a new project is not cycling");
+        cx.dispatch_action(crate::actions::ToggleLoop);
+        assert!(ticked(&app, cx), "and the row says so once it is");
     }
 }

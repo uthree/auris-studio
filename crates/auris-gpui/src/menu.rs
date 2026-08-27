@@ -900,3 +900,87 @@ mod tests {
         assert_eq!(model_rows, menu_items);
     }
 }
+
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+
+    /// Every keystroke a menu row shows is one the binding table actually has.
+    ///
+    /// `AurisApp::keystroke_for` answers an id nothing knows with an empty string, so a binding id
+    /// that has been renamed or mistyped shows a row with no key beside it — which looks exactly
+    /// like a command that was never given one. Both are silent, and only one is a mistake.
+    ///
+    /// An empty id is the deliberate case: Open Recent and About have no keystroke, because the
+    /// list one opens is the point and every letter worth spending is spent.
+    #[test]
+    fn every_binding_a_menu_row_names_is_one_the_table_has() {
+        for language in Language::ALL {
+            for section in model(language, &PanelLayout::default(), MenuState::default()) {
+                for row in &section.rows {
+                    let MenuRow::Command { binding, label, .. } = row else {
+                        continue;
+                    };
+                    assert!(
+                        binding.is_empty() || crate::actions::bindable(binding).is_some(),
+                        "the row `{label}` names a binding `{binding}` that no command has"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Every menu, in every language, has rows in it.
+    ///
+    /// A section that came out empty would be a word on the bar that opens onto nothing — and the
+    /// rows are built conditionally, so one is an edit away at any time.
+    #[test]
+    fn no_menu_is_a_title_with_nothing_under_it() {
+        for language in Language::ALL {
+            for section in model(language, &PanelLayout::default(), MenuState::default()) {
+                assert!(
+                    section
+                        .rows
+                        .iter()
+                        .any(|row| !matches!(row, MenuRow::Separator)),
+                    "the {} menu holds nothing but rules in {language:?}",
+                    section.name
+                );
+            }
+        }
+    }
+
+    /// A rule leads no menu and never doubles.
+    ///
+    /// The rows are grouped conditionally, so a group that comes out empty leaves its rule with
+    /// nothing on one side — a menu that opens with a line across the top, or two together.
+    #[test]
+    fn no_menu_shows_a_stray_rule() {
+        for language in Language::ALL {
+            for section in model(language, &PanelLayout::default(), MenuState::default()) {
+                let separators: Vec<usize> = section
+                    .rows
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, row)| matches!(row, MenuRow::Separator))
+                    .map(|(index, _)| index)
+                    .collect();
+                assert!(
+                    !separators.contains(&0),
+                    "the {} menu opens with a rule",
+                    section.name
+                );
+                assert!(
+                    !separators.contains(&(section.rows.len() - 1)),
+                    "the {} menu ends with a rule",
+                    section.name
+                );
+                assert!(
+                    separators.windows(2).all(|pair| pair[1] - pair[0] > 1),
+                    "the {} menu has two rules together",
+                    section.name
+                );
+            }
+        }
+    }
+}
