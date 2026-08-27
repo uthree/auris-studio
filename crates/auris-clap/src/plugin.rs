@@ -333,52 +333,66 @@ impl ClapPlugin {
         let title = crate::gui::suggested_title(&self.info.name);
         let mut handle = self.instance.plugin_handle();
         gui.create(&mut handle, plan).map_err(failed)?;
-        // Set the moment `create` succeeds and before anything that can fail after it: everything
-        // below has to be undone by `destroy`, and a window nobody records is a window nobody
-        // destroys.
-        self.gui_open = true;
-
-        if plan.is_floating {
-            if let Some(parent) = parent.and_then(Window::from_window_handle) {
-                // SAFETY: the handle came from a live window — see this function's own note on
-                // what keeps it live. A plugin that will not take a transient parent still gets a
-                // window, one that can fall behind the application.
-                if let Err(error) = unsafe { gui.set_transient(&mut handle, parent) } {
-                    log::debug!("`{id}` refused a parent window: {error}");
+        // From here every exit owes the plugin a `destroy`. Failures pay it below rather than
+        // recording `gui_open` early: an early flag over no window would satisfy the opening
+        // early-return, and every later `open_gui` would answer `Ok` while doing nothing —
+        // with `close_gui`, and the create/destroy balance, waiting on a window that never
+        // existed.
+        let outcome = (|| {
+            if plan.is_floating {
+                if let Some(parent) = parent.and_then(Window::from_window_handle) {
+                    // SAFETY: the handle came from a live window — see this function's own note
+                    // on what keeps it live. A plugin that will not take a transient parent
+                    // still gets a window, one that can fall behind the application.
+                    if let Err(error) = unsafe { gui.set_transient(&mut handle, parent) } {
+                        log::debug!("`{id}` refused a parent window: {error}");
+                    }
                 }
+                gui.suggest_title(&mut handle, &title);
+                gui.show(&mut handle).map_err(failed)?;
+                return Ok(None);
             }
-            gui.suggest_title(&mut handle, &title);
-            return gui.show(&mut handle).map_err(failed);
-        }
 
-        // Embedded, so the window is this crate's to make. The order is CLAP's and every step of
-        // it depends on the one before: the window has to exist before its scale can be read,
-        // because the scale belongs to the display it landed on, and the scale has to be set
-        // before the size is asked for, or the plugin answers for a display it was never told
-        // about.
-        let container = HostWindow::open(&plain_title, crate::window::PROVISIONAL, parent)
-            .ok_or_else(|| no_gui("this platform would not lend the plugin a window"))?;
-        if container.scale() != 1.0 {
-            let _ = gui.set_scale(&mut handle, container.scale());
-        }
-        if let Some(size) = gui.get_size(&mut handle) {
-            container.resize(size);
-        }
-        let Some(window) = Window::from_window_handle(container.handle()) else {
-            return Err(no_gui(
-                "this platform's window is not one CLAP can be given",
-            ));
-        };
+            // Embedded, so the window is this crate's to make. The order is CLAP's and every
+            // step of it depends on the one before: the window has to exist before its scale
+            // can be read, because the scale belongs to the display it landed on, and the scale
+            // has to be set before the size is asked for, or the plugin answers for a display
+            // it was never told about.
+            let container = HostWindow::open(&plain_title, crate::window::PROVISIONAL, parent)
+                .ok_or_else(|| no_gui("this platform would not lend the plugin a window"))?;
+            if container.scale() != 1.0 {
+                let _ = gui.set_scale(&mut handle, container.scale());
+            }
+            if let Some(size) = gui.get_size(&mut handle) {
+                container.resize(size);
+            }
+            let Some(window) = Window::from_window_handle(container.handle()) else {
+                return Err(no_gui(
+                    "this platform's window is not one CLAP can be given",
+                ));
+            };
 
-        // SAFETY: the window was made four lines up and is owned by this value, which destroys the
-        // plugin's GUI before letting go of it.
-        unsafe { gui.set_parent(&mut handle, window) }.map_err(failed)?;
-        gui.show(&mut handle).map_err(failed)?;
-        // Last: an empty window that fills a moment later reads as a flicker, and this way the
-        // plugin has already drawn into it by the time anybody sees it.
-        container.show();
-        self.container = Some(container);
-        Ok(())
+            // SAFETY: the window was made a few lines up and is owned by this value, which
+            // destroys the plugin's GUI before letting go of it.
+            unsafe { gui.set_parent(&mut handle, window) }.map_err(failed)?;
+            gui.show(&mut handle).map_err(failed)?;
+            // Last: an empty window that fills a moment later reads as a flicker, and this way
+            // the plugin has already drawn into it by the time anybody sees it.
+            container.show();
+            Ok(Some(container))
+        })();
+
+        match outcome {
+            Ok(container) => {
+                self.gui_open = true;
+                self.container = container;
+                Ok(())
+            }
+            Err(error) => {
+                gui.destroy(&mut handle);
+                Err(error)
+            }
+        }
     }
 
     /// Closes the plugin's window and frees what it was drawn with.
@@ -527,6 +541,13 @@ impl ClapPlugin {
             .plugin_shared_handle()
             .get_extension::<PluginNotePorts>()?;
         let mut handle = self.instance.plugin_handle();
+        // Count before get, the rule `ports` and `read_params` already keep: the index means
+        // "into the array count() declared", and a plugin with note *outputs* only — count of
+        // zero inputs — handed an index 0 anyway is the exact off-the-end read that `ports`'s
+        // module doc watched take an application down.
+        if ports.count(&mut handle, true) == 0 {
+            return None;
+        }
         let mut buffer = NotePortInfoBuffer::new();
         let info = ports.get(&mut handle, 0, true, &mut buffer)?;
         language_for(info.supported_dialects)
