@@ -16,6 +16,10 @@ mod app;
 mod appearance;
 mod dock;
 mod gestures;
+// The window itself, driven from `cargo test`. Test-only: it exists to be compiled with
+// gpui's test platform, which is a dev-dependency and so is not in the shipped binary.
+#[cfg(test)]
+mod harness;
 mod i18n;
 mod keymap;
 mod logbook;

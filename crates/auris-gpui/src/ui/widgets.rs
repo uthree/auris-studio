@@ -154,8 +154,16 @@ where
     };
     let hover = theme.hovered(background, 0.14);
 
+    // The id again, this time as a name a test can find the button by. `debug_selector` compiles
+    // to nothing unless gpui is built with `test-support`, which only `cargo test` does — so the
+    // shipped binary carries an `Arc` bump and no string. Every icon button in the application
+    // gets a handle out of this one line, which is why it is here rather than at each call site.
+    let id: ElementId = id.into();
+    let handle = id.clone();
+
     div()
-        .id(id.into())
+        .id(id)
+        .debug_selector(move || handle.to_string())
         .flex()
         .items_center()
         .justify_center()

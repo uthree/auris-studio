@@ -1092,6 +1092,26 @@ impl Focusable for AurisApp {
     }
 }
 
+/// How the window opens its session, out of what the settings remember.
+///
+/// `cfg!` rather than `#[cfg]` so both arms compile everywhere, and a free function so the test
+/// window opens the same session the real one does. What a test cannot have is the hardware:
+/// `cargo test` runs several windows at once in one process, and each of them claiming the
+/// machine's output device — or reading two hundred megabytes of shipped SoundFont, or writing an
+/// autosave over somebody's project — is three ways for a suite to be about the machine it ran on
+/// rather than about the interface.
+fn session_options(settings: &Settings) -> SessionOptions {
+    let live = !cfg!(test);
+    SessionOptions {
+        audio_preferences: settings.audio.clone(),
+        autosave: settings.autosave && live,
+        audio: live,
+        gpu: live,
+        shipped_fonts: live,
+        ..SessionOptions::default()
+    }
+}
+
 impl AurisApp {
     /// Builds the application, starting audio and opening an empty document.
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -1101,12 +1121,8 @@ impl AurisApp {
         let keymap = input.keys.clone();
         keymap.apply(cx);
 
-        let mut session = Session::new(SessionOptions {
-            audio_preferences: settings.audio.clone(),
-            autosave: settings.autosave,
-            ..SessionOptions::default()
-        })
-        .expect("a session opens even without audio");
+        let mut session =
+            Session::new(session_options(&settings)).expect("a session opens even without audio");
         // The same empty document File → New gives, rather than a separate idea of what a fresh
         // start looks like. Launching used to leave a two-bar arpeggio and a bass line lying
         // around, which was useful while there was nothing else to hear and is now just
