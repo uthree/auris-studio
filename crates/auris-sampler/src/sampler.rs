@@ -27,15 +27,26 @@ const CHANNEL: i32 = 0;
 ///
 /// Channel expression is the only per-note gain rustysynth exposes, and it applies to every
 /// voice on its channel — so a note that is to be faded on its own has to have a channel to
-/// itself, and the number of channels is the polyphony. Fifteen notes is thin next to the 128
+/// itself, and the number of channels is the polyphony. Fourteen notes is thin next to the 128
 /// voices the library will hold, which is the price of shaping and the reason an untouched
 /// envelope does not pay it.
 ///
 /// Channel 9 is missing on purpose: rustysynth treats it as the percussion channel and adds 128
 /// to whatever bank is selected there, so a slot on it would play a different sound from the
-/// other fourteen. [`CHANNEL`] is the first of these, so the two paths agree about where an
-/// unshaped note goes.
-const SLOTS: [i32; 15] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15];
+/// other channels. [`CHANNEL`] is missing for a subtler reason: an unshaped note plays there
+/// without ever appearing in the slot table, so a slot on the same channel would look free to
+/// [`claim`] while a note is sounding on it — and the first shaped note after an off→on flip of
+/// the envelope would write its own fade over that held note's loudness.
+const SLOTS: [i32; 14] = [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15];
+
+/// Every channel the sampler speaks on: the unshaped one, then the shaped slots.
+///
+/// The iterator a channel-wide message loops over — bank and patch selection, pitch bend, a
+/// forwarded controller. Looping over [`SLOTS`] alone would leave the unshaped channel behind
+/// on all three, now that it is no longer one of them.
+fn all_channels() -> impl Iterator<Item = i32> {
+    std::iter::once(CHANNEL).chain(SLOTS)
+}
 
 /// Expression the library's own channel reset leaves behind, and so the number that means "as
 /// loud as this sampler is with no envelope over it".
@@ -448,7 +459,7 @@ impl Sampler {
         let Some(synth) = self.synth.as_mut() else {
             return;
         };
-        for channel in SLOTS {
+        for channel in all_channels() {
             synth.process_midi_message(channel, CONTROL_CHANGE, CC_BANK_SELECT, preset.bank);
             synth.process_midi_message(channel, PROGRAM_CHANGE, preset.patch, 0);
             // Registered parameter 0 is the bend range; it takes both halves of the selection.
@@ -557,7 +568,7 @@ impl Sampler {
                 let travel = (semitones / BEND_RANGE as f32).clamp(-1.0, 1.0);
                 let raw = (8192.0 + travel * 8191.0).round().clamp(0.0, 16383.0) as i32;
                 if let Some(synth) = self.synth.as_mut() {
-                    for channel in SLOTS {
+                    for channel in all_channels() {
                         synth.process_midi_message(
                             channel,
                             PITCH_BEND,
@@ -574,7 +585,7 @@ impl Sampler {
                 // it to a filter, and what it was authored to do is what it should do.
                 let raw = (value.clamp(0.0, 1.0) * 127.0).round() as i32;
                 if let Some(synth) = self.synth.as_mut() {
-                    for channel in SLOTS {
+                    for channel in all_channels() {
                         synth.process_midi_message(channel, CONTROL_CHANGE, i32::from(number), raw);
                     }
                 }
@@ -1647,6 +1658,50 @@ mod tests {
         assert!(
             rms(out.channel(0)) > fading * 10.0,
             "the sampler stayed under the fade it was told to stop applying"
+        );
+    }
+
+    #[test]
+    fn a_held_unshaped_note_is_not_faded_by_a_later_shaped_one() {
+        // An unshaped note plays on `CHANNEL` without ever entering the slot table. Flip the
+        // envelope on while it is held and strike another note: the new note's fade has to land
+        // on a slot channel of its own. Slot 0 used to share channel 0, look free to `claim`,
+        // and write the new note's envelope — and eventually its note-off — over the held
+        // note's loudness.
+        let bank = stocked();
+        let ctx = ProcessContext::realtime(RATE, 512, 0, 120.0, true);
+        let held_beside_a_shaped_note = |with_shaped: bool| {
+            let mut sampler = playing(bank.clone(), 0, 512);
+            let mut out = AudioBuffer::stereo(512, RATE);
+            sampler.process(&[note_on(0)], &mut out, &ctx);
+
+            sampler.set_param_by_key(ENVELOPE_KEY, 1.0);
+            let strike: Vec<NoteEvent> = with_shaped.then(|| note_on(0)).into_iter().collect();
+            sampler.process(&strike, &mut out, &ctx);
+            let off: Vec<NoteEvent> = with_shaped
+                .then_some(NoteEvent::NoteOff {
+                    frame: 0,
+                    pitch: crate::test_support::ROOT_KEY,
+                })
+                .into_iter()
+                .collect();
+            sampler.process(&off, &mut out, &ctx);
+
+            // Past the shaped note's release, so only the held note is left to measure. The
+            // block count is the same on both arms — the tone is compared at the same age.
+            for _ in 0..24 {
+                sampler.process(&[], &mut out, &ctx);
+            }
+            rms(out.channel(0))
+        };
+
+        let alone = held_beside_a_shaped_note(false);
+        let beside = held_beside_a_shaped_note(true);
+        assert!(alone > 0.005, "the held note fell silent on its own");
+        let ratio = beside / alone;
+        assert!(
+            (ratio - 1.0).abs() < 0.25,
+            "the shaped note dragged the held one to {ratio} of its level"
         );
     }
 
