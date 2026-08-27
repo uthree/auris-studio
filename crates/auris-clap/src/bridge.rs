@@ -308,13 +308,36 @@ impl Bridge {
         *steady_time = steady_time.wrapping_add(frames as u64);
 
         match main_output.and_then(|index| output.get(index)) {
-            Some(port) if rendered.is_ok() => {
-                for (index, channel) in port.iter().enumerate().take(buffer.channel_count()) {
-                    buffer.channel_mut(index)[..frames].copy_from_slice(&channel[..frames]);
-                }
-            }
+            Some(port) if rendered.is_ok() => deliver_port(port, buffer, frames, overwrite),
             _ if overwrite => silence(buffer, frames),
             _ => {}
+        }
+    }
+}
+
+/// Copies the plugin's main output into the track's buffer, finishing what the port misses.
+///
+/// A port narrower than the buffer has no samples for the channels past it, and an instrument's
+/// contract is to overwrite them *all* — the renderer skips its clear on the strength of that
+/// contract, so a channel left alone here is the previous block leaking through. Those channels
+/// repeat the port instead, so a mono synth on a stereo track is heard in both speakers rather
+/// than hard left over a ghost. An effect (`overwrite == false`) leaves them holding the input,
+/// which is a mono insert passing the channels it cannot reach straight through. The input-side
+/// mirror of all this is [`fill_port`].
+fn deliver_port(port: &[Vec<f32>], buffer: &mut AudioBuffer, frames: usize, overwrite: bool) {
+    for (index, channel) in port.iter().enumerate().take(buffer.channel_count()) {
+        buffer.channel_mut(index)[..frames].copy_from_slice(&channel[..frames]);
+    }
+    if !overwrite {
+        return;
+    }
+    match port.is_empty() {
+        true => silence(buffer, frames),
+        false => {
+            for index in port.len()..buffer.channel_count() {
+                let source = &port[index % port.len()];
+                buffer.channel_mut(index)[..frames].copy_from_slice(&source[..frames]);
+            }
         }
     }
 }
@@ -388,5 +411,55 @@ impl std::fmt::Debug for Bridge {
             .field("notes", &self.language)
             .field("latency", &self.latency)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stereo buffer whose every sample is `residue` — what the previous block left behind.
+    fn stale(residue: f32, frames: usize) -> AudioBuffer {
+        let mut buffer = AudioBuffer::stereo(frames, 48_000.0);
+        for channel in 0..buffer.channel_count() {
+            buffer.channel_mut(channel)[..frames].fill(residue);
+        }
+        buffer
+    }
+
+    #[test]
+    fn a_mono_port_reaches_every_channel_of_an_overwriting_buffer() {
+        // The instrument contract: `out` is overwritten, all of it. The renderer skips its
+        // clear on that promise, so a channel the port does not reach used to keep the
+        // previous block's samples — a ghost of whatever played there before.
+        let port = vec![vec![0.25f32; 8]];
+        let mut buffer = stale(0.9, 8);
+        deliver_port(&port, &mut buffer, 8, true);
+        assert_eq!(buffer.channel(0), &[0.25; 8]);
+        assert_eq!(
+            buffer.channel(1),
+            &[0.25; 8],
+            "the second channel repeats the port, not the past"
+        );
+    }
+
+    #[test]
+    fn a_mono_effect_passes_the_channels_it_cannot_reach_through() {
+        // The effect side of the same seam: no overwrite promise, so a mono insert leaves the
+        // other channel holding the input it was given.
+        let port = vec![vec![0.25f32; 8]];
+        let mut buffer = stale(0.9, 8);
+        deliver_port(&port, &mut buffer, 8, false);
+        assert_eq!(buffer.channel(0), &[0.25; 8]);
+        assert_eq!(buffer.channel(1), &[0.9; 8], "the input passes through");
+    }
+
+    #[test]
+    fn a_port_with_no_channels_owes_an_overwriting_buffer_silence() {
+        let port: Vec<Vec<f32>> = Vec::new();
+        let mut buffer = stale(0.9, 8);
+        deliver_port(&port, &mut buffer, 8, true);
+        assert_eq!(buffer.channel(0), &[0.0; 8]);
+        assert_eq!(buffer.channel(1), &[0.0; 8]);
     }
 }
