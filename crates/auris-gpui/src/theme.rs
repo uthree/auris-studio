@@ -129,6 +129,70 @@ pub const SCHEMES: &[Scheme] = &[
             a: 1.0,
         },
     },
+    // Atom's One Dark, as the four numbers its palette comes down to: the blue-grey of #282c34,
+    // and the #61afef it draws a selection in. The background is a shade deeper than the editor's
+    // own 0.18, because the signals sit at one lightness for the whole ramp and a failure in the
+    // status bar came out at 2.95:1 against the toolbar behind it there.
+    Scheme {
+        id: "one-dark",
+        name: "One Dark",
+        hue: 0.611,
+        chroma: 0.13,
+        base: 0.155,
+        accent: Hsla {
+            h: 0.575,
+            s: 0.82,
+            l: 0.66,
+            a: 1.0,
+        },
+    },
+    // Its counterpart the other way up: near-white, greys that keep a trace of blue, and #4078f2
+    // — a brighter accent than the light schemes above carry, which is most of what makes this
+    // one recognisable as itself.
+    Scheme {
+        id: "one-light",
+        name: "One Light",
+        hue: 0.633,
+        chroma: 0.06,
+        base: 0.978,
+        accent: Hsla {
+            h: 0.611,
+            s: 0.87,
+            l: 0.60,
+            a: 1.0,
+        },
+    },
+    // GitHub's dark canvas, #0d1117: the deepest background here and the bluest greys, under the
+    // link blue #58a6ff at full saturation.
+    Scheme {
+        id: "github-dark",
+        name: "GitHub Dark",
+        hue: 0.597,
+        chroma: 0.28,
+        base: 0.071,
+        accent: Hsla {
+            h: 0.589,
+            s: 1.0,
+            l: 0.67,
+            a: 1.0,
+        },
+    },
+    // GitHub's light canvas is white, and this is a hair under it. The sunken surface is a step
+    // *away* from the background, so at 1.0 there is nowhere for it to go: the timeline would be
+    // cut into the window at exactly the window's colour.
+    Scheme {
+        id: "github-light",
+        name: "GitHub Light",
+        hue: 0.583,
+        chroma: 0.10,
+        base: 0.975,
+        accent: Hsla {
+            h: 0.590,
+            s: 0.92,
+            l: 0.445,
+            a: 1.0,
+        },
+    },
 ];
 
 /// The scheme used when nothing has been chosen, and when a stored choice names one this build
@@ -180,7 +244,7 @@ impl Scheme {
 ///
 /// Walked outwards a hundredth at a time rather than solved: the relationship between a step
 /// along the ramp and a contrast ratio depends on the scheme's hue and chroma, so there is no
-/// closed form worth writing. Four schemes times a few hundred steps, once at start-up.
+/// closed form worth writing. Eight schemes times a few hundred steps, once at start-up.
 fn readable_shade(scheme: &Scheme, step: f32, ratio: f32) -> Hsla {
     // Measured against the *nearest* surface in the stack rather than the background, because
     // text is drawn on all of them and the one closest to it is the one that decides. A colour

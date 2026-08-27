@@ -9,6 +9,18 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### Four more colour schemes
+
+* **One Dark, One Light, GitHub Dark and GitHub Light** join the four the application shipped
+  with, so a project can be worked on in the palette the rest of the desk is already in. Each is
+  the editor theme's own numbers — its background's hue and lightness, and the blue it marks a
+  selection with — and the other thirty colours are derived from those, as every scheme's are.
+* They are held to the same rules as the rest: the surfaces stack the same way round, body text
+  clears 7:1 on the hardest of them, and a group's mark can be seen at every hue. Two of the four
+  had to give a little to pass — One Dark's window is a shade deeper than the editor's, or a
+  failure in the status bar would not have been readable, and GitHub Light's is a hair under white
+  so the timeline still sits below the window it is cut into.
+
 ### The whole band can hear itself
 
 * **Monitoring is a switch per track**, like the arm, and up to eight play at once — each through
