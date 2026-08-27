@@ -155,6 +155,11 @@ role = "crash"
 "#;
 
 /// A four-piece with keys on top, on the progression half of J-pop is built from.
+///
+/// The verse walks 純情進行 — the canon over a stepwise descending bass — and the chorus lifts
+/// into 王道進行, which is the shape of the songs this preset is named for: an Aメロ that steps
+/// quietly downhill so the サビ has somewhere to arrive from. One progression for the whole form
+/// was the arrangement changing at every join over harmony that never did.
 const POP_BAND: &str = r#"
 title  = "Pop Band"
 key    = "F major"
@@ -166,10 +171,16 @@ fill   = 0.7
 seed   = 2
 form   = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
 
+[harmony]
+a-melo = "@junjo"
+
 [section.intro]
 bars      = 4
 intensity = 0.45
 parts     = "keys bass kick hat"
+
+[section.verse]
+chords = "a-melo"
 
 [section.chorus]
 intensity = 0.95
@@ -286,6 +297,11 @@ program = "Room Kit"
 "#;
 
 /// Guitars, an organ pad and a kit that is allowed to be loud.
+///
+/// The verse and the chorus play the same four chords the other way round: `@axis-minor` broods
+/// from the minor tonic, and the chorus rotates the loop to open on the relative major — the
+/// cheapest lift in rock and the one this form is built on, bought without a single chord the
+/// verse did not already own.
 const ROCK: &str = r#"
 title    = "Rock"
 key      = "E minor"
@@ -298,12 +314,16 @@ fill     = 0.8
 seed     = 4
 form     = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
 
+[harmony]
+lift = "@axis"
+
 [section.intro]
 bars      = 4
 intensity = 0.6
 
 [section.chorus]
 intensity = 1.0
+chords    = "lift"
 
 [[part]]
 name    = "lead"
@@ -772,6 +792,30 @@ mod tests {
                 "{} names no General MIDI sound",
                 preset.name
             );
+        }
+    }
+
+    #[test]
+    fn the_band_presets_give_the_verse_and_the_chorus_different_progressions() {
+        // A verse and a chorus on one loop is a form whose arrangement changes at every join
+        // over harmony that never does. The loop-built genres — city pop on 丸サ, synthwave on
+        // its own four bars — keep one progression *on purpose*, so this is asserted only where
+        // the genre wants the contrast.
+        for name in ["pop-band", "rock"] {
+            let spec = preset(name).expect("listed").spec();
+            let chart_of = |section: &str| {
+                spec.chart_for(
+                    spec.sections
+                        .get(section)
+                        .unwrap_or_else(|| panic!("{name} has no {section}")),
+                )
+            };
+            let (verse, chorus) = (chart_of("verse"), chart_of("chorus"));
+            assert_ne!(verse.bars, chorus.bars, "{name} plays one loop throughout");
+            // Both are quoted, so the mood colours neither: the contrast is the preset's own
+            // choice, not something tension can rewrite.
+            assert_eq!(verse.origin, auris_core::theory::chart::ChartOrigin::Given);
+            assert_eq!(chorus.origin, auris_core::theory::chart::ChartOrigin::Given);
         }
     }
 

@@ -158,6 +158,27 @@ pub fn plan(spec: &SongSpec) -> Frame {
             colour(&mut events, spec.mood, spec.seed, name, instance);
         }
 
+        // The turnaround: the composer's own chart leans into an arrival. Only its own — a
+        // quoted chart is played as written, which is the same trade `colour` makes — and only
+        // where the form actually arrives somewhere, which is the same question the cymbal asks:
+        // the harmony, the fill and the crash should all read one join the same way.
+        if chart.origin == ChartOrigin::Generated
+            && let Some(next) = played.get(place + 1)
+            && spec.key.transposed(next.transpose) == key
+            && next.intensity >= section.intensity
+        {
+            let opening = spec
+                .chart_for(next)
+                .spelled_in(key)
+                .bars
+                .first()
+                .and_then(|bar| bar.first())
+                .map(|numeral| numeral.chord_in(key).root);
+            if opening == Some(key.tonic) {
+                turn_around(&mut events, key);
+            }
+        }
+
         // Before the skeleton, because the melody hangs on these chords: a line written against
         // the chord that was there and then played over the dominant that replaced it would be
         // the one part in the band not in on the modulation.
@@ -313,6 +334,45 @@ fn lead_into(events: &mut [HarmonicEvent], from: Key, to: Key) {
     }
     .with_quality(Quality::Dominant7)
     .respelled_in(to, from);
+    last.chord = dominant;
+}
+
+/// Turns the last chord of a section into the key's own dominant, so the join is a cadence.
+///
+/// The turnaround, and the reachable half of what a cadence-aware composer means: a piece built
+/// on a four-bar loop ran that loop straight across every section join, so nothing in the
+/// harmony ever said "here" — the fill rose, the cymbal crashed, and the chords went round as if
+/// no join existed. A dominant in the last bar makes the next section's tonic an arrival instead
+/// of another lap.
+///
+/// The caller gates it three ways, and each is a promise. Only a [`ChartOrigin::Generated`]
+/// chart — a progression the user quoted is played as written, the same trade [`colour`] makes,
+/// and the reason 丸サ進行 never gains a bar it does not have. Only into a section at least as
+/// strong — coming down out of a chorus is the one join a band lets pass unmarked, and
+/// [`crate::parts`]' cymbal reads the same rule, so the harmony and the kit agree about which
+/// joins are arrivals. And only where the next section opens on the tonic, asked of the resolved
+/// chord rather than assumed: the composer's own chart quoted into a minor key opens on the
+/// *relative* major, and a dominant prepared for a tonic that never comes is a question with the
+/// wrong answer.
+///
+/// A final bar already on the tonic or the dominant is left alone — the first has its own kind
+/// of close and the second needs no help.
+fn turn_around(events: &mut [HarmonicEvent], key: Key) {
+    let Some(last) = events.last_mut() else {
+        return;
+    };
+    // The same construction `lead_into` uses, for the same reason: what a dominant is does not
+    // vary with the mode of the key it belongs to.
+    let dominant = Chord::new(key.tonic.transposed(7), Quality::Dominant7);
+    if last.chord.root == dominant.root || last.chord.root == key.tonic {
+        return;
+    }
+    let (degree, accidental) = degree_of(key, dominant.root);
+    last.numeral = Numeral {
+        accidental,
+        ..Numeral::new(degree, false)
+    }
+    .with_quality(Quality::Dominant7);
     last.chord = dominant;
 }
 
@@ -557,15 +617,71 @@ mod tests {
     }
 
     #[test]
-    fn a_section_that_does_not_modulate_keeps_its_last_chord() {
-        // The lead-in rewrites a bar, which nothing else here does, so it must fire only where a
-        // key change was actually asked for.
-        let frame = plan(&spec(r#"form = "verse chorus""#));
+    fn a_quoted_chart_is_never_turned_around() {
+        // The turnaround rewrites a bar of the composer's own chart, and only its own: a quoted
+        // progression is played as written even into an arrival, which is the same trade the
+        // colouring makes and the reason for naming one.
+        let frame = plan(&spec(
+            r#"
+            chords = "@axis"
+            form = "verse chorus"
+            "#,
+        ));
         let last = frame.sections[0].events.last().expect("chords").chord;
-        let unchanged = plan(&spec(r#"form = "verse""#));
+        let unchanged = plan(&spec(
+            r#"
+            chords = "@axis"
+            form = "verse"
+            "#,
+        ));
         assert_eq!(
             last,
             unchanged.sections[0].events.last().expect("chords").chord
+        );
+    }
+
+    #[test]
+    fn the_composers_own_chart_turns_around_into_an_arrival() {
+        // No progression chosen is how the composer gets to invent, and what it invented used to
+        // run its loop straight across every join: the fill rose, the cymbal crashed, and the
+        // harmony went round as if no join existed. Into an arrival the last bar is the key's own
+        // dominant, so the next section's tonic arrives instead of coming round again.
+        let frame = plan(&spec(r#"form = "verse chorus""#));
+        let verse = &frame.sections[0];
+        let last = verse.events.last().expect("the verse has chords");
+        assert_eq!(
+            last.chord,
+            Chord::new(PitchClass::parse("G").unwrap(), Quality::Dominant7)
+        );
+        // The lane and the parts still agree, by construction.
+        assert_eq!(last.chord, last.numeral.chord_in(last.key));
+        // The melody hangs on the dominant rather than on the chord it replaced — the same
+        // ordering promise the lead-in makes, for the same reason.
+        let pitch = *verse.skeleton.last().expect("one pitch per chord");
+        assert!(
+            last.chord.contains_midi(pitch),
+            "the tune ends on {pitch}, which is not in {}",
+            last.chord
+        );
+        // A section with nothing after it is an ending, not a join, and plays its loop out.
+        let alone = plan(&spec(r#"form = "verse""#));
+        assert_ne!(
+            alone.sections[0].events.last().expect("chords").chord,
+            last.chord,
+            "the last section of a piece was turned around into nothing"
+        );
+    }
+
+    #[test]
+    fn coming_down_out_of_a_chorus_is_not_turned_around() {
+        // The one join a band lets pass unmarked, and the same rule the cymbal reads: marking a
+        // drop with a dominant says the opposite of what the arrangement is doing.
+        let frame = plan(&spec(r#"form = "chorus verse""#));
+        let last = frame.sections[0].events.last().expect("chords");
+        assert_ne!(
+            last.chord.quality,
+            Quality::Dominant7,
+            "a chorus falling into a verse gained a turnaround"
         );
     }
 
