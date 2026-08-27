@@ -29,9 +29,22 @@ pub fn kana_phonemes(text: &str) -> Option<Vec<String>> {
 /// of it is not kana.
 ///
 /// きょ stays one mora and っ is a mora of its own, which is exactly how a person lays a word
-/// across notes; a prolonged-sound mark ー is the mora of whatever vowel it stretches.
+/// across notes; a prolonged-sound mark ー is the mora of whatever vowel it stretches. A caller
+/// distributing moras to *sung* notes wants [`split_kana_lyric`] instead, which keeps each
+/// mora's phonemes with it.
 pub fn split_kana_moras(text: &str) -> Option<Vec<String>> {
     walk(text).map(|moras| moras.into_iter().map(|(mora, _)| mora).collect())
+}
+
+/// A kana phrase split into moras, each carrying its own phonemes, or `None` where any of it
+/// is not kana.
+///
+/// The pairing is the point: ー's phoneme is the vowel of the mora *before* it, a fact only the
+/// whole phrase knows. Splitting first and asking [`kana_phonemes`] of each mora alone gets
+/// `None` for every ー — and a lyric written 「こーひー」 would fall through to the open-vowel
+/// placeholder and be sung こあひあ.
+pub fn split_kana_lyric(text: &str) -> Option<Vec<(String, Vec<String>)>> {
+    walk(text)
 }
 
 /// Small kana that glue onto the mora before them.
@@ -270,6 +283,18 @@ mod tests {
         assert_eq!(split_kana_moras("きょうと").unwrap(), ["きょ", "う", "と"]);
         assert_eq!(split_kana_moras("ずっと").unwrap(), ["ず", "っ", "と"]);
         assert_eq!(split_kana_moras("ノート").unwrap(), ["の", "ー", "と"]);
+    }
+
+    #[test]
+    fn a_prolonged_mark_keeps_its_vowel_when_split_for_notes() {
+        // ー alone answers nothing — its vowel lives in the mora before it — so the split has
+        // to carry the phonemes along. こーひー stretches o then i, and a pipeline that asked
+        // each mora separately would sing both as the placeholder a.
+        let pairs = split_kana_lyric("こーひー").unwrap();
+        let moras: Vec<&str> = pairs.iter().map(|(mora, _)| mora.as_str()).collect();
+        assert_eq!(moras, ["こ", "ー", "ひ", "ー"]);
+        assert_eq!(pairs[1].1, ["o"]);
+        assert_eq!(pairs[3].1, ["i"]);
     }
 
     #[test]

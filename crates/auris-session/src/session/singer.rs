@@ -11,8 +11,8 @@ use std::path::Path;
 
 use auris_core::{ClipId, TrackId};
 use auris_vocal::{
-    JapaneseDictionary, SingerFrames, kana_phonemes, lyric_phonemes, phoneme_moras, render_frames,
-    split_kana_moras,
+    JapaneseDictionary, SingerFrames, lyric_phonemes, phoneme_moras, render_frames,
+    split_kana_lyric,
 };
 
 use crate::error::SessionError;
@@ -137,15 +137,11 @@ impl Session {
         order.sort_by_key(|index| (target.notes[*index].start, *index));
         order.dedup();
 
-        // Each note's new words, worked out in full before anything is recorded.
-        let portions: Vec<(String, Vec<String>)> = match split_kana_moras(text.trim()) {
-            Some(moras) => moras
-                .into_iter()
-                .map(|mora| {
-                    let phonemes = kana_phonemes(&mora).unwrap_or_default();
-                    (mora, phonemes)
-                })
-                .collect(),
+        // Each note's new words, worked out in full before anything is recorded. The moras come
+        // with their phonemes attached — asking `kana_phonemes` of each mora on its own would
+        // lose ー its vowel, which only the mora before it knows.
+        let portions: Vec<(String, Vec<String>)> = match split_kana_lyric(text.trim()) {
+            Some(moras) => moras,
             None => {
                 let phonemes = lyric_phonemes(text, self.japanese.as_ref())?;
                 phoneme_moras(&phonemes)
@@ -294,6 +290,24 @@ mod tests {
         session.undo();
         let note = &session.midi_clip(clip).unwrap().notes[0];
         assert!(note.lyric.is_empty() && note.phonemes.is_empty());
+    }
+
+    #[test]
+    fn a_prolonged_sound_is_sung_as_the_vowel_it_stretches() {
+        // こーひー across four notes: the ー notes must carry the vowel of the mora before
+        // them. They used to arrive with no phonemes at all — ー asked alone answers nothing —
+        // and fall through to the open-vowel placeholder, singing こあひあ.
+        let (mut session, _, clip) = sung(4);
+        let filled = session
+            .write_lyrics(clip, &[0, 1, 2, 3], "こーひー")
+            .unwrap();
+        assert_eq!(filled, 4);
+
+        let notes = &session.midi_clip(clip).unwrap().notes;
+        assert_eq!(notes[1].lyric, "ー");
+        assert_eq!(notes[1].phonemes, ["o"], "こー stretches o");
+        assert_eq!(notes[3].lyric, "ー");
+        assert_eq!(notes[3].phonemes, ["i"], "ひー stretches i");
     }
 
     #[test]

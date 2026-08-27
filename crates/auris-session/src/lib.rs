@@ -162,7 +162,7 @@ pub mod prelude {
     };
     /// What a singer track stores and what its voice model is fed — see [`auris_vocal`] and
     /// the singer commands on [`Session`].
-    pub use auris_vocal::{SILENCE, SingerFrames, VocalError, split_kana_moras};
+    pub use auris_vocal::{SILENCE, SingerFrames, VocalError, split_kana_lyric, split_kana_moras};
     // The curves a clip carries, and how far each may go. A frontend drawing one has to know the
     // range it is drawing against, and may not reach past this crate to find out.
     pub use auris_core::plugin::{CC_MODULATION, CONTROLLER_MAX};
