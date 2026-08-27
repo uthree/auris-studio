@@ -1216,7 +1216,14 @@ mod tests {
     /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
     /// a bug or a decision, and this is what makes anyone look.
     ///
-    /// It last moved when the piece learned to end: every fixture gains an `ending` section —
+    /// It last moved when the figure's variations grew from three to six — retrograde, the
+    /// ornament on the longest note, the late entry — so every closing bar's variation draw sees
+    /// six weights where it saw three and lands differently. Not one chord moved, and the counts
+    /// drifted by a note or two where an ornament splits one note into a pair or a late entry
+    /// takes one away: the scope of a change that touches nothing but which variation a bar
+    /// draws.
+    ///
+    /// Before that it moved when the piece learned to end: every fixture gains an `ending` section —
     /// one bar of the final key's tonic, held, spelled through one numeral so the lane agrees —
     /// and the two whose charts are the composer's own also turn their last bar around into it,
     /// which is why `F → G7` and `Dm7 → E7` appear in their chord lines and the quoted fixtures'
@@ -1297,7 +1304,7 @@ mod tests {
             ),
             "verse·1 C major | Cmaj7 Gm7 Am Fmaj7 Cmaj7 G7 Am9 G7 |\n\
              ending·1 C major | C |\n\
-             175 notes, digest 37f66f409e681fb1\n"
+             177 notes, digest 7391e71acdce6915\n"
         );
 
         // The same in a minor key, and the fixture that moved furthest when colouring stopped
@@ -1339,7 +1346,7 @@ mod tests {
             ),
             "verse·1 A minor | Am7 E9 Fmaj7 Dm Am7 Em7 Gbm7 E7 |\n\
              ending·1 A minor | Am |\n\
-             244 notes, digest 8e829045b664ebe9\n"
+             246 notes, digest a4db5cd68b249a99\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats — and the one fixture
@@ -1353,7 +1360,7 @@ mod tests {
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
              ending·1 C major | C |\n\
-             634 notes, digest d9d76cd4b11c82d3\n"
+             634 notes, digest f4141228c830446d\n"
         );
 
         // A transposed section, which is a key change on the timeline — and the one fixture here
@@ -1381,7 +1388,7 @@ mod tests {
             "verse·1 C major | Fmaj7 E7 Am7 Bb7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
              ending·1 Eb major | Eb |\n\
-             213 notes, digest 7b569cfa4bb9bdab\n"
+             215 notes, digest 9f387da0373ad46a\n"
         );
     }
 

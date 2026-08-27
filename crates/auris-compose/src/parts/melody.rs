@@ -246,12 +246,20 @@ fn motif(
 ///
 /// Enough to stop four bars of the same bar, not so much that it stops being the same figure —
 /// which is the difference between a variation and a different tune.
+///
+/// Six operations where there were three, because three was every answer the composer had: over
+/// a whole song the fourth bar of every phrase drew from the same short list, and a listener
+/// hears a list. The three that joined are the other things a player actually does to a figure —
+/// say it backwards, ornament its longest note, come in late. What did *not* join is the
+/// sequence, deliberately: restating the figure a step higher is a uniform shift of every
+/// degree, and a uniform shift is exactly the freedom [`join_offset`] already owns — the join
+/// would simply choose it away again.
 fn vary_motif(figure: &Motif, rng: &mut Rng) -> Motif {
     let mut cells = figure.cells.clone();
     if cells.len() < 2 {
         return Motif { cells };
     }
-    match rng.below(3) {
+    match rng.below(6) {
         // Move the last note somewhere else, which is what turns a statement into a question.
         0 => {
             let last = cells.len() - 1;
@@ -261,6 +269,42 @@ fn vary_motif(figure: &Motif, rng: &mut Rng) -> Motif {
         1 if cells.len() > 2 => {
             let doomed = 1 + rng.below(cells.len() - 1);
             cells.remove(doomed);
+        }
+        // Say it backwards: the rhythm stays where it was and the contour runs the other way.
+        // The retrograde, and the one variation here that survives the join untouched — a
+        // reversed contour is not a shifted one.
+        3 => {
+            let degrees: Vec<i32> = cells.iter().rev().map(|cell| cell.degree).collect();
+            for (cell, degree) in cells.iter_mut().zip(degrees) {
+                cell.degree = degree;
+            }
+        }
+        // Ornament the longest note: struck again halfway through itself, which is the
+        // repetition figure singers put on a held syllable.
+        4 if cells.iter().any(|cell| cell.length >= 2) => {
+            let position = cells
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, cell)| cell.length)
+                .map(|(position, _)| position)
+                .unwrap_or(0);
+            let cell = cells[position];
+            let head = cell.length / 2;
+            cells[position].length = head;
+            cells.insert(
+                position + 1,
+                Cell {
+                    step: cell.step + head,
+                    accent: Accent::Normal,
+                    length: cell.length - head,
+                    degree: cell.degree,
+                },
+            );
+        }
+        // Come in late: the first note becomes a rest, and the bar starts on the offbeat the
+        // figure left behind.
+        5 if cells.len() > 2 => {
+            cells.remove(0);
         }
         // Turn the figure over from its second note on.
         _ => {
@@ -636,6 +680,84 @@ mod tests {
             "the longest rest in eight bars is {} ticks, under one beat of {}",
             longest_rest.raw(),
             beat.raw()
+        );
+    }
+
+    #[test]
+    fn a_variation_is_still_the_figure_and_every_kind_of_it_is_reachable() {
+        // Three operations were every answer the composer had, and a listener hears a list. The
+        // three that joined — retrograde, the ornament, the late entry — each have a shape only
+        // they produce, which is what this looks for; and whatever is drawn, the result is still
+        // a playable figure inside the original's own span.
+        let figure = Motif {
+            cells: vec![
+                Cell {
+                    step: 0,
+                    accent: Accent::Strong,
+                    length: 2,
+                    degree: 0,
+                },
+                Cell {
+                    step: 2,
+                    accent: Accent::Normal,
+                    length: 2,
+                    degree: 1,
+                },
+                Cell {
+                    step: 4,
+                    accent: Accent::Normal,
+                    length: 4,
+                    degree: 2,
+                },
+                Cell {
+                    step: 8,
+                    accent: Accent::Normal,
+                    length: 4,
+                    degree: 1,
+                },
+            ],
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        let (mut backwards, mut ornamented, mut late) = (false, false, false);
+        for seed in 0..64u64 {
+            let mut rng = Rng::stream(seed, &[RngKey::Word("vary")]);
+            let varied = vary_motif(&figure, &mut rng);
+            assert!(
+                varied.cells.len() >= 2,
+                "seed {seed} left too little figure"
+            );
+            for cell in &varied.cells {
+                assert!(cell.length >= 1, "seed {seed} wrote a zero-length cell");
+                assert!(
+                    cell.step + cell.length <= 12,
+                    "seed {seed} ran past the figure's own span"
+                );
+            }
+            let degrees: Vec<i32> = varied.cells.iter().map(|cell| cell.degree).collect();
+            if degrees == [1, 2, 1, 0] {
+                backwards = true;
+            }
+            if varied.cells.len() > figure.cells.len() {
+                ornamented = true;
+            }
+            if varied.cells.len() == 3 && varied.cells[0].step == 2 {
+                late = true;
+            }
+            seen.insert(
+                varied
+                    .cells
+                    .iter()
+                    .map(|cell| (cell.step, cell.length, cell.degree))
+                    .collect::<Vec<_>>(),
+            );
+        }
+        assert!(backwards, "the retrograde is unreachable");
+        assert!(ornamented, "the ornament is unreachable");
+        assert!(late, "the late entry is unreachable");
+        assert!(
+            seen.len() >= 5,
+            "only {} distinct variations in sixty-four draws",
+            seen.len()
         );
     }
 
