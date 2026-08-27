@@ -141,12 +141,37 @@
 //! the crossings came in at 2.34 against 2.27. `a_chord_change_inside_a_bar_is_joined_like_a_bar_line`
 //! in `parts::melody` holds the chart that showed it.
 //!
+//! # The fourth pass: the germ
+//!
+//! The passes above straightened the line inside a section; this one is about the piece. Every
+//! section drew its own contour from its own stream, so one song had as many tunes as it had
+//! section names — the architecture said "state, restate, answer" and then the chorus answered a
+//! question the verse never asked. Now one contour per part — the **germ** — is drawn at a
+//! piece-level stream, and every section's figure wears it, re-sampled onto the section's own
+//! rhythm: a busy chorus fills the line in with passing steps, a sparse verse says it in fewer,
+//! wider words. Plain rounding of the resampled line put a stammer where every gentle slope
+//! crossed a half — repeats hit 19.3% — so a landing that rounds onto its predecessor while the
+//! line is moving steps with the line instead; where the germ wrote a genuine repeat the line is
+//! flat and the repeat is kept.
+//!
+//! Measured over the presets, three seeds each, contour correlation resampled to 32 points:
+//!
+//! | pair                             | before | after |
+//! |----------------------------------|--------|-------|
+//! | different sections of one song   | 0.40   | 0.46  |
+//! | sections of different songs      | 0.15   | 0.04  |
+//!
+//! And the interval grammar improved as a side effect, because the fill-in notes are steps by
+//! construction where a freshly drawn contour was free to leap: steps 55.4% → 60.5%, mean
+//! interval 2.53 → 2.29 semitones, repeats 9.9% → 12.1% against the corpus' 11.
+//! `a_verse_and_a_chorus_are_two_statements_of_one_tune` in `parts::melody` holds the shape, and
+//! `dressed` is the resampling with the anti-stammer rule.
+//!
 //! # What is still wrong
 //!
-//! Steps are 53.3% where a corpus says 68, and the difference now sits in thirds and leaps
-//! together — 36% of the line against the corpus' 21 for everything wider than a second. One
-//! thing is known and not fixed: resolving a dissonance onto a chord tone sometimes lands on the
-//! note beside it, which is refused where it would stutter but not otherwise.
+//! Steps sit at 60.5% where a corpus says 68. One thing is known and not fixed: resolving a
+//! dissonance onto a chord tone sometimes lands on the note beside it, which is refused where it
+//! would stutter but not otherwise.
 //!
 //! # What is not a code problem
 //!

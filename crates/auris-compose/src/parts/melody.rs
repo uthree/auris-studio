@@ -18,7 +18,8 @@ use crate::theory::chord_scale::ChordScale;
 use crate::theory::pitch::{OCTAVE, PitchClass, fold_into};
 
 use super::writer::{
-    bar_onsets, bar_stream, closes_phrase, density, dynamic, part_grid, phrase_shape, velocity,
+    bar_onsets, bar_stream, closes_phrase, density, density_at, dynamic, part_grid, phrase_shape,
+    velocity,
 };
 use super::{Draft, ScoreSettings};
 
@@ -316,6 +317,74 @@ fn vary_motif(figure: &Motif, rng: &mut Rng) -> Motif {
     Motif { cells }
 }
 
+/// The section's rhythm wearing the piece's contour.
+///
+/// `rhythm` supplies every cell — its steps, accents and lengths are kept whole — and `contour`
+/// supplies the melodic shape, resampled onto those cells: each cell takes the germ degree at
+/// its proportional position, interpolating between neighbours where the section is busier than
+/// the germ and skipping degrees where it is sparser. A busy chorus therefore *fills in* the
+/// tune's line with passing steps, and a sparse verse says the same line in fewer, wider words —
+/// which is what a band does with a tune, and the opposite of what drawing every section its own
+/// contour did, which was to give one song as many tunes as it had section names.
+///
+/// A contour too short to have a shape (fewer than two cells) dresses nothing, and the section
+/// keeps the figure it drew — a one-note germ has no line for anyone to restate.
+fn dressed(rhythm: &Motif, contour: &Motif) -> Motif {
+    if rhythm.cells.is_empty() || contour.cells.len() < 2 {
+        return rhythm.clone();
+    }
+    let last = contour.cells.len() - 1;
+    let count = rhythm.cells.len();
+    // The germ's line at each cell's proportional position, as a continuous value: rounding is
+    // done afterwards, because rounding alone turns every gentle slope into a staircase of
+    // repeated notes — landings at 0.0, 0.33, 0.67 and 1.0 came out 0, 0, 1, 1, and the figure
+    // stood still twice where the line never stopped moving.
+    let line: Vec<f32> = (0..count)
+        .map(|position| {
+            let t = if count == 1 {
+                0.0
+            } else {
+                position as f32 * last as f32 / (count - 1) as f32
+            };
+            let before = (t.floor() as usize).min(last);
+            let after = (before + 1).min(last);
+            let fraction = t - before as f32;
+            let a = contour.cells[before].degree as f32;
+            let b = contour.cells[after].degree as f32;
+            a + (b - a) * fraction
+        })
+        .collect();
+    let mut degrees: Vec<i32> = Vec::with_capacity(count);
+    for (position, target) in line.iter().enumerate() {
+        let mut degree = target.round() as i32;
+        if let Some(&previous) = degrees.last() {
+            let moved = target - line[position - 1];
+            // The line is moving but the rounding is not: step with it. Where the germ wrote a
+            // genuine repeat the line is flat, and the repeat is kept — a repeat the tune asked
+            // for is vocabulary, a repeat the arithmetic left behind is a stammer.
+            if degree == previous && moved.abs() > f32::EPSILON {
+                degree = previous + moved.signum() as i32;
+            }
+        }
+        degrees.push(degree);
+    }
+    let cells = rhythm
+        .cells
+        .iter()
+        .zip(degrees)
+        .map(|(cell, degree)| Cell { degree, ..*cell })
+        .collect();
+    Motif { cells }
+}
+
+/// The intensity the piece-level germ is drawn at.
+///
+/// Between a verse's 0.55 and a chorus's 0.9, because the germ belongs to the piece and not to
+/// either of them: drawn at any one section's intensity it would be that section's figure, and
+/// the others would be wearing a stranger's contour. What the number decides is only how many
+/// notes long the germ's shape is — every section restates that shape through its own rhythm.
+const GERM_INTENSITY: f32 = 0.7;
+
 /// The tune.
 pub(super) fn melody(
     settings: &ScoreSettings,
@@ -328,8 +397,31 @@ pub(super) fn melody(
     let (low, high) = part.range();
     let density = density(settings, part, section);
 
+    // The germ: one contour per part and *piece*, which is what makes a verse and a chorus two
+    // statements of one tune rather than two tunes in a row. Keyed by no section at all, so
+    // every section of every playing reaches for the same shape. Only its degrees survive —
+    // the rhythm it is drawn with is scaffolding for the walk and is discarded below.
+    let mut germinate = Rng::stream(
+        frame.seed,
+        &[
+            RngKey::Word("part"),
+            RngKey::Word(&part.name),
+            RngKey::Word("motif"),
+        ],
+    );
+    let germ = motif(
+        grid,
+        part.rhythm.as_ref(),
+        density_at(settings, part, GERM_INTENSITY),
+        settings.mood.syncopation,
+        &mut germinate,
+    );
+
     // One figure per part and section, restated bar after bar. Keyed by neither the bar nor the
-    // instance, so every bar of every playing reaches for the same one.
+    // instance, so every bar of every playing reaches for the same one. Its rhythm is the
+    // section's own — a chorus is busier than its verse because the section's intensity is in
+    // `density` — and its contour is then re-dressed in the germ's, so what changes between
+    // sections is how the tune is said, not which tune it is.
     let mut invent = Rng::stream(
         frame.seed,
         &[
@@ -346,6 +438,7 @@ pub(super) fn melody(
         settings.mood.syncopation,
         &mut invent,
     );
+    let figure = dressed(&figure, &germ);
 
     let mut notes = Vec::new();
     // The pitch the last bar finished on, which the next one is joined to. `None` until the
@@ -681,6 +774,116 @@ mod tests {
             longest_rest.raw(),
             beat.raw()
         );
+    }
+
+    /// A figure from `(step, degree)` pairs, one step long each, for tests about contour.
+    fn figure_of(cells: &[(usize, i32)]) -> Motif {
+        Motif {
+            cells: cells
+                .iter()
+                .map(|(step, degree)| Cell {
+                    step: *step,
+                    accent: Accent::Normal,
+                    length: 1,
+                    degree: *degree,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_dressed_figure_is_the_sections_rhythm_saying_the_pieces_line() {
+        let germ = figure_of(&[(0, 0), (2, 2), (4, 4), (6, 2)]);
+
+        // The same number of notes wears the contour exactly.
+        let even = dressed(&figure_of(&[(0, 9), (1, 9), (3, 9), (7, 9)]), &germ);
+        assert_eq!(
+            even.cells
+                .iter()
+                .map(|cell| cell.degree)
+                .collect::<Vec<_>>(),
+            [0, 2, 4, 2]
+        );
+        // And keeps every rhythmic fact its own.
+        assert_eq!(
+            even.cells.iter().map(|cell| cell.step).collect::<Vec<_>>(),
+            [0, 1, 3, 7]
+        );
+
+        // A busier section fills the line in: the contour's corners survive at the ends and the
+        // extra notes interpolate, so the walk between them is by smaller intervals, not new ones.
+        let busy = dressed(
+            &figure_of(&[(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (6, 0)]),
+            &germ,
+        );
+        let degrees: Vec<i32> = busy.cells.iter().map(|cell| cell.degree).collect();
+        assert_eq!(degrees.first(), Some(&0));
+        assert_eq!(degrees.last(), Some(&2));
+        assert_eq!(*degrees.iter().max().unwrap(), 4, "the peak survives");
+        for pair in degrees.windows(2) {
+            assert!(
+                (pair[1] - pair[0]).abs() <= 2,
+                "{degrees:?} leaps where the germ stepped"
+            );
+        }
+
+        // A sparser one says it in fewer words, ends included.
+        let sparse = dressed(&figure_of(&[(0, 0), (4, 0)]), &germ);
+        let degrees: Vec<i32> = sparse.cells.iter().map(|cell| cell.degree).collect();
+        assert_eq!(degrees, [0, 2]);
+
+        // A germ with no line in it dresses nothing.
+        let own = figure_of(&[(0, 3), (2, 5)]);
+        assert_eq!(
+            dressed(&own, &figure_of(&[(0, 7)])).cells[0].degree,
+            3,
+            "a one-note germ leaves the section its own figure"
+        );
+    }
+
+    #[test]
+    fn a_verse_and_a_chorus_are_two_statements_of_one_tune() {
+        // The germ: every section's figure wears one piece-level contour. Two sections with the
+        // same written rhythm and the same intensity therefore state the same figure, and the
+        // shape survives to the notes — the *pitches* may sit at different heights, because each
+        // section hangs the figure on its own skeleton, but the intervals inside the opening bar
+        // are the same intervals. Before the germ, each section drew its own contour from its
+        // own stream, and one song had as many tunes as it had section names.
+        let (_, frame, parts) = draft(
+            r#"
+                form = ["verse", "chorus"]
+                chords = "@axis"
+                humanize = 0
+                variation = 0
+                ending = "none"
+
+                [section.verse]
+                bars = 4
+                intensity = 0.7
+
+                [section.chorus]
+                bars = 4
+                intensity = 0.7
+
+                [[part]]
+                name = "lead"
+                rhythm = "x.x.x.x.x......."
+                "#,
+        );
+        let lead = part(&parts, "lead");
+        let shape_of = |section: usize| -> Vec<i64> {
+            let notes = crate::parts::fixture::section_notes(&frame, lead, section);
+            let bar = frame.grid.bar_ticks().raw();
+            let opening: Vec<i64> = notes
+                .iter()
+                .filter(|(start, ..)| *start < bar)
+                .map(|(_, pitch, ..)| i64::from(*pitch))
+                .collect();
+            opening.windows(2).map(|pair| pair[1] - pair[0]).collect()
+        };
+        let verse = shape_of(0);
+        assert!(!verse.is_empty(), "the verse played nothing");
+        assert_eq!(verse, shape_of(1), "two sections, two different tunes");
     }
 
     #[test]

@@ -1216,7 +1216,18 @@ mod tests {
     /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
     /// a bug or a decision, and this is what makes anyone look.
     ///
-    /// It last moved when the comp learned to push: a section may strike each chord change half
+    /// It last moved when the melody grew a germ: one piece-level contour per part, which every
+    /// section's figure wears re-sampled onto its own rhythm, so a verse and a chorus became two
+    /// statements of one tune instead of two tunes. Every count stayed and every chord stayed —
+    /// the germ changes which degrees a figure asks for and nothing about when anything sounds —
+    /// so all four digests moved and nothing else did. Measured over the presets: contour
+    /// correlation between different sections of one song rose from 0.40 to 0.46 while
+    /// correlation between different songs *fell* from 0.15 to 0.04, and the line's own grammar
+    /// improved in the bargain — steps 55.4% → 60.5% (the corpus says 68), mean interval 2.53 →
+    /// 2.29 semitones — because a busy section now fills the germ's line in with passing steps
+    /// where it used to draw fresh leaps.
+    ///
+    /// Before that it moved when the comp learned to push: a section may strike each chord change half
     /// a beat early and hold it over the line, drawn per section at a rate the syncopation dial
     /// sets. Only the third fixture moved — the one whose mood leaves syncopation at the default
     /// and whose seed drew a pushing section — and its count *fell* by the line-strikes and
@@ -1311,7 +1322,7 @@ mod tests {
             ),
             "verse·1 C major | Cmaj7 Gm7 Am Fmaj7 Cmaj7 G7 Am9 G7 |\n\
              ending·1 C major | C |\n\
-             177 notes, digest 7391e71acdce6915\n"
+             177 notes, digest e89a373166345a61\n"
         );
 
         // The same in a minor key, and the fixture that moved furthest when colouring stopped
@@ -1353,7 +1364,7 @@ mod tests {
             ),
             "verse·1 A minor | Am7 E9 Fmaj7 Dm Am7 Em7 Gbm7 E7 |\n\
              ending·1 A minor | Am |\n\
-             246 notes, digest a4db5cd68b249a99\n"
+             246 notes, digest d9bc1fff74f23696\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats — and the one fixture
@@ -1367,7 +1378,7 @@ mod tests {
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
              ending·1 C major | C |\n\
-             620 notes, digest cbf4f2f78c2f4bf7\n"
+             620 notes, digest 7495f7fc60ed0181\n"
         );
 
         // A transposed section, which is a key change on the timeline — and the one fixture here
@@ -1395,7 +1406,7 @@ mod tests {
             "verse·1 C major | Fmaj7 E7 Am7 Bb7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
              ending·1 Eb major | Eb |\n\
-             215 notes, digest 9f387da0373ad46a\n"
+             215 notes, digest e77f0df8fa71a3fc\n"
         );
     }
 

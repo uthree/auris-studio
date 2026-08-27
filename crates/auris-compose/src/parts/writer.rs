@@ -37,6 +37,14 @@ pub(super) fn part_grid(frame: &Frame, part: &PartSpec) -> Grid {
 
 /// How busy a part is, as a fraction of the available steps.
 pub(super) fn density(settings: &ScoreSettings, part: &PartSpec, section: &SectionPlan) -> f32 {
+    density_at(settings, part, section.intensity)
+}
+
+/// [`density`] at a stated intensity, for a caller with no section in hand.
+///
+/// The melody's piece-level germ is drawn through here: a figure that belongs to the whole song
+/// cannot be drawn at any one section's intensity without becoming that section's figure.
+pub(super) fn density_at(settings: &ScoreSettings, part: &PartSpec, intensity: f32) -> f32 {
     let base = part.density.unwrap_or_else(|| settings.mood.density());
     let role = match part.role {
         Role::Melody => 1.0,
@@ -49,7 +57,7 @@ pub(super) fn density(settings: &ScoreSettings, part: &PartSpec, section: &Secti
         Role::Bass => 0.9,
         _ => 1.0,
     };
-    (base * role * (0.55 + 0.45 * section.intensity)).clamp(0.05, 1.0)
+    (base * role * (0.55 + 0.45 * intensity)).clamp(0.05, 1.0)
 }
 
 /// The grid weight the spread opens around.
