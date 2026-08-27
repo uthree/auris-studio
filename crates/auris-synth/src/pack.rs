@@ -5,6 +5,7 @@ use auris_core::{PluginPack, PluginRegistry};
 use crate::chiptune::Chiptune;
 use crate::fm2::Fm2;
 use crate::noisedrum::NoiseDrum;
+use crate::vocal::Vocal;
 
 /// Installs the built-in instruments into a registry.
 ///
@@ -23,6 +24,7 @@ impl PluginPack for SynthPack {
         registry.register_instrument(|| Box::new(Chiptune::new()));
         registry.register_instrument(|| Box::new(Fm2::new()));
         registry.register_instrument(|| Box::new(NoiseDrum::new()));
+        registry.register_instrument(|| Box::new(Vocal::new()));
     }
 }
 
@@ -89,7 +91,7 @@ mod tests {
     }
 
     #[test]
-    fn the_pack_registers_all_three_instruments() {
+    fn the_pack_registers_every_instrument() {
         let mut registry = PluginRegistry::new();
         registry.install::<SynthPack>();
 
@@ -99,10 +101,11 @@ mod tests {
             vec![
                 "auris.synth.chiptune",
                 "auris.synth.fm2",
-                "auris.synth.noisedrum"
+                "auris.synth.noisedrum",
+                "auris.synth.vocal"
             ]
         );
-        assert_eq!(registry.len(), 3);
+        assert_eq!(registry.len(), 4);
         assert_eq!(registry.effects().count(), 0);
     }
 

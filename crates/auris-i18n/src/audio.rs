@@ -119,6 +119,7 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Chiptune", "チップチューン"),
     ("FM 2-Op", "FM 2 オペレーター"),
     ("Noise Drum", "ノイズドラム"),
+    ("Vocal", "ボーカル"),
     ("Compressor", "コンプレッサー"),
     ("Delay", "ディレイ"),
     ("Distortion", "ディストーション"),
@@ -142,6 +143,10 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
     (
         "Pitch-swept band-passed LFSR noise: kicks, snares and hats without a sampler",
         "ピッチスイープとバンドパスを掛けた LFSR ノイズ。サンプラー無しでキック・スネア・ハット",
+    ),
+    (
+        "A formant-filtered preview voice for singer tracks",
+        "シンガートラック試聴用のフォルマントフィルター音声",
     ),
     (
         "Soft-knee compressor, stereo-linked and keyable from another track",
@@ -181,6 +186,7 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
 const PARAMETERS: &[(&str, &str)] = &[
     ("Attack", "アタック"),
     ("Bit Depth", "ビット深度"),
+    ("Breath", "ブレス"),
     ("Ceiling", "上限"),
     ("Damping", "ダンピング"),
     ("Decay", "ディケイ"),

@@ -1,6 +1,6 @@
 //! Built-in software instruments for Auris Studio.
 //!
-//! Three instruments ship in this crate, all of them assembled from the same three primitives:
+//! Four instruments ship in this crate, all of them assembled from the same few primitives:
 //!
 //! * [`Oscillator`] — band-limited sine, pulse, saw and triangle plus an NES-style noise
 //!   register.
@@ -10,9 +10,11 @@
 //! * [`VoiceAllocator`] — a fixed voice pool with a steal-the-quietest policy.
 //!
 //! On top of those sit [`Chiptune`] (the general-purpose synth), [`Fm2`] (two-operator phase
-//! modulation) and [`NoiseDrum`] (a one-shot percussion voice). The split is the point: adding
-//! a fourth instrument means writing a `process`, not another voice manager. [`SynthPack`]
-//! registers all three with a [`PluginRegistry`](auris_core::PluginRegistry).
+//! modulation), [`NoiseDrum`] (a one-shot percussion voice) and [`Vocal`] (the formant-filtered
+//! preview voice a singer track plays through, with [`Biquad`](auris_dsp::Biquad) sections from
+//! `auris-dsp` for its formants). The split is the point: adding an instrument means writing a
+//! `process`, not another voice manager. [`SynthPack`] registers all four with a
+//! [`PluginRegistry`](auris_core::PluginRegistry).
 //!
 //! # Realtime behaviour
 //!
@@ -47,6 +49,7 @@ pub mod oscillator;
 pub mod pack;
 pub mod params;
 pub mod render;
+pub mod vocal;
 pub mod voice;
 
 #[cfg(test)]
@@ -59,4 +62,5 @@ pub use oscillator::{Oscillator, Waveform};
 pub use pack::SynthPack;
 pub use params::ParamBank;
 pub use render::{SegmentRenderer, render_segments, spread_to_all_channels};
+pub use vocal::Vocal;
 pub use voice::{MAX_VOICES, VoiceAllocator, VoiceAssignment, VoiceMask, VoiceSlot, VoiceState};
