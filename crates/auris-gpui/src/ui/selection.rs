@@ -157,15 +157,16 @@ impl AurisApp {
             let Some(track) = self.project().track(track) else {
                 continue;
             };
-            match &track.kind {
-                TrackKind::Instrument(inner) => selected.extend(
-                    inner
-                        .clips
+            if let Some(clips) = track.kind.note_clips() {
+                selected.extend(
+                    clips
                         .iter()
                         .filter(|clip| spans_overlap(clip.start, clip.length, span))
                         .map(|clip| clip.id),
-                ),
-                TrackKind::Audio(inner) => selected.extend(
+                );
+            }
+            if let Some(inner) = track.kind.as_audio() {
+                selected.extend(
                     inner
                         .clips
                         .iter()
@@ -173,8 +174,7 @@ impl AurisApp {
                             spans_overlap(clip.start, self.audio_clip_length_ticks(clip), span)
                         })
                         .map(|clip| clip.id),
-                ),
-                TrackKind::Bus => {}
+                );
             }
         }
         selected

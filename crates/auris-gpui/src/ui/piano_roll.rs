@@ -721,7 +721,7 @@ impl AurisApp {
                 let note = self
                     .project()
                     .midi_clip(clip_id)
-                    .and_then(|(_, c)| c.notes.get(index).copied());
+                    .and_then(|(_, c)| c.notes.get(index).cloned());
                 let Some(note) = note else { return };
                 let start_x = self.timeline.tick_to_x(clip_start + note.start);
                 let end_x = self.timeline.tick_to_x(clip_start + note.end());

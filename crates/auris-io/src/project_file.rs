@@ -335,14 +335,11 @@ mod tests {
             for slot in &track.mixer.effects {
                 used.push(slot.id.0);
             }
-            match &track.kind {
-                auris_core::TrackKind::Instrument(inner) => {
-                    used.extend(inner.clips.iter().map(|clip| clip.id.0))
-                }
-                auris_core::TrackKind::Audio(inner) => {
-                    used.extend(inner.clips.iter().map(|clip| clip.id.0))
-                }
-                auris_core::TrackKind::Bus => {}
+            if let Some(clips) = track.kind.note_clips() {
+                used.extend(clips.iter().map(|clip| clip.id.0));
+            }
+            if let Some(inner) = track.kind.as_audio() {
+                used.extend(inner.clips.iter().map(|clip| clip.id.0));
             }
             used.extend(track.sends.iter().map(|send| send.id.0));
         }

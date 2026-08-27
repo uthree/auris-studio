@@ -26,7 +26,13 @@ use super::{ClipId, Project, SourceId, TrackId};
 /// A single note inside a [`MidiClip`].
 ///
 /// `start` is relative to the clip's start, so moving a clip does not touch its notes.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+///
+/// On a singer track a note also carries what is sung: `lyric` is the text a person typed and
+/// `phonemes` is what the voice model is given. Both live on the note rather than in a lane
+/// beside it because they belong to the note the way its pitch does — a note dragged elsewhere
+/// takes its word along, and notes have no ids for a lane to name them by. On any other track
+/// both are empty and neither is written into the file.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Note {
     /// MIDI note number, 0..=127.
     pub pitch: u8,
@@ -36,16 +42,30 @@ pub struct Note {
     pub start: Ticks,
     /// How long the note is held.
     pub length: Ticks,
+    /// The text sung on this note, as the person wrote it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub lyric: String,
+    /// The IPA phonemes the note is sung as, in order.
+    ///
+    /// Stored rather than derived at the moment of use, because deriving needs a
+    /// grapheme-to-phoneme step that may consult a dictionary the machine opening the document
+    /// does not have — and because a person corrects these by hand, which only a stored list can
+    /// remember. The command that sets a lyric writes both fields; one that edits phonemes writes
+    /// this one alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub phonemes: Vec<String>,
 }
 
 impl Note {
-    /// A note with a default velocity.
+    /// A note with a default velocity and nothing sung on it.
     pub fn new(pitch: u8, start: Ticks, length: Ticks) -> Self {
         Self {
             pitch,
             velocity: 0.8,
             start,
             length,
+            lyric: String::new(),
+            phonemes: Vec::new(),
         }
     }
 
@@ -213,7 +233,7 @@ impl MidiClip {
             .filter(move |note| note.start >= Ticks::ZERO && note.start < self.length)
             .map(move |note| Note {
                 length: note.end().min(self.length) - note.start,
-                ..*note
+                ..note.clone()
             })
     }
 
@@ -865,12 +885,13 @@ impl Project {
         let new_id = ClipId(self.allocate_id());
         for track in &mut self.tracks {
             match &mut track.kind {
-                TrackKind::Instrument(inner) => {
-                    if let Some(source) = inner.clips.iter().find(|clip| clip.id == id) {
+                TrackKind::Instrument(_) | TrackKind::Singer(_) => {
+                    let clips = track.kind.note_clips_mut().expect("the arm holds notes");
+                    if let Some(source) = clips.iter().find(|clip| clip.id == id) {
                         let mut copy = source.clone();
                         copy.id = new_id;
                         copy.start = source.sounding_end();
-                        inner.clips.push(copy);
+                        clips.push(copy);
                         return Some(new_id);
                     }
                 }
@@ -931,11 +952,7 @@ impl Project {
             left.notes = split_notes_left(&clip.notes, offset);
             left.length = offset;
             left.loop_end = Ticks::ZERO;
-            self.track_mut(track_id)?
-                .kind
-                .as_instrument_mut()?
-                .clips
-                .push(right);
+            self.track_mut(track_id)?.kind.note_clips_mut()?.push(right);
             return Some(new_id);
         }
 
@@ -1008,7 +1025,7 @@ impl Project {
         sounding_length(self.audio_clip_length_ticks(clip), clip.loop_end)
     }
 
-    /// Adds a MIDI clip to an instrument track.
+    /// Adds a MIDI clip to a track that holds notes — an instrument track or a singer track.
     pub fn add_midi_clip(
         &mut self,
         track_id: TrackId,
@@ -1019,10 +1036,8 @@ impl Project {
         let id = ClipId(self.allocate_id());
         let name = name.into();
         let track = self.track_mut(track_id)?;
-        let instrument = track.kind.as_instrument_mut()?;
-        instrument
-            .clips
-            .push(MidiClip::new(id, name, start, length));
+        let clips = track.kind.note_clips_mut()?;
+        clips.push(MidiClip::new(id, name, start, length));
         Some(id)
     }
 
@@ -1078,8 +1093,7 @@ impl Project {
         self.tracks.iter().find_map(|track| {
             track
                 .kind
-                .as_instrument()?
-                .clips
+                .note_clips()?
                 .iter()
                 .find(|clip| clip.id == clip_id)
                 .map(|clip| (track.id, clip))
@@ -1091,8 +1105,7 @@ impl Project {
         self.tracks.iter_mut().find_map(|track| {
             track
                 .kind
-                .as_instrument_mut()?
-                .clips
+                .note_clips_mut()?
                 .iter_mut()
                 .find(|clip| clip.id == clip_id)
         })
@@ -1125,22 +1138,19 @@ impl Project {
     /// Removes a clip of either kind, returning `true` when it existed.
     pub fn remove_clip(&mut self, clip_id: ClipId) -> bool {
         for track in &mut self.tracks {
-            match &mut track.kind {
-                TrackKind::Instrument(inner) => {
-                    let before = inner.clips.len();
-                    inner.clips.retain(|clip| clip.id != clip_id);
-                    if inner.clips.len() != before {
-                        return true;
-                    }
+            if let Some(clips) = track.kind.note_clips_mut() {
+                let before = clips.len();
+                clips.retain(|clip| clip.id != clip_id);
+                if clips.len() != before {
+                    return true;
                 }
-                TrackKind::Audio(inner) => {
-                    let before = inner.clips.len();
-                    inner.clips.retain(|clip| clip.id != clip_id);
-                    if inner.clips.len() != before {
-                        return true;
-                    }
+            }
+            if let Some(inner) = track.kind.as_audio_mut() {
+                let before = inner.clips.len();
+                inner.clips.retain(|clip| clip.id != clip_id);
+                if inner.clips.len() != before {
+                    return true;
                 }
-                TrackKind::Bus => {}
             }
         }
         false
@@ -1150,10 +1160,16 @@ impl Project {
     pub fn track_of_clip(&self, clip_id: ClipId) -> Option<TrackId> {
         self.tracks
             .iter()
-            .find(|track| match &track.kind {
-                TrackKind::Instrument(inner) => inner.clips.iter().any(|clip| clip.id == clip_id),
-                TrackKind::Audio(inner) => inner.clips.iter().any(|clip| clip.id == clip_id),
-                TrackKind::Bus => false,
+            .find(|track| {
+                let in_notes = track
+                    .kind
+                    .note_clips()
+                    .is_some_and(|clips| clips.iter().any(|clip| clip.id == clip_id));
+                let in_audio = track
+                    .kind
+                    .as_audio()
+                    .is_some_and(|inner| inner.clips.iter().any(|clip| clip.id == clip_id));
+                in_notes || in_audio
             })
             .map(|track| track.id)
     }
@@ -1190,22 +1206,25 @@ impl Project {
         }
 
         // Taken out only once the destination is known to accept it, so a refused move leaves the
-        // document exactly as it was rather than losing the clip.
+        // document exactly as it was rather than losing the clip. "Holds notes" rather than "is
+        // an instrument track" on both sides, so a melody moves freely between an instrument
+        // track and a singer track: the notes are the same material, and any lyrics on them
+        // simply travel along.
         match (
-            self.tracks[origin].kind.is_instrument(),
-            self.tracks[destination].kind.is_instrument(),
+            self.tracks[origin].kind.holds_notes(),
+            self.tracks[destination].kind.holds_notes(),
         ) {
             (true, true) => {
-                let Some(inner) = self.tracks[origin].kind.as_instrument_mut() else {
+                let Some(clips) = self.tracks[origin].kind.note_clips_mut() else {
                     return false;
                 };
-                let Some(at) = inner.clips.iter().position(|clip| clip.id == clip_id) else {
+                let Some(at) = clips.iter().position(|clip| clip.id == clip_id) else {
                     return false;
                 };
-                let clip = inner.clips.remove(at);
-                if let Some(inner) = self.tracks[destination].kind.as_instrument_mut() {
-                    inner.clips.push(clip);
-                    inner.clips.sort_by_key(|clip| clip.start);
+                let clip = clips.remove(at);
+                if let Some(clips) = self.tracks[destination].kind.note_clips_mut() {
+                    clips.push(clip);
+                    clips.sort_by_key(|clip| clip.start);
                 }
                 true
             }
@@ -1261,7 +1280,7 @@ fn split_notes_left(notes: &[Note], offset: Ticks) -> Vec<Note> {
         .filter(|note| note.start < offset)
         .map(|note| Note {
             length: (offset - note.start).min(note.length),
-            ..*note
+            ..note.clone()
         })
         .collect()
 }
@@ -1286,7 +1305,7 @@ fn split_notes_right(notes: &[Note], offset: Ticks) -> Vec<Note> {
             Note {
                 start: start - offset,
                 length: note.end() - start,
-                ..*note
+                ..note.clone()
             }
         })
         .collect()

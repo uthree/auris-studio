@@ -97,7 +97,7 @@ impl Session {
             .iter()
             .map(|note| Note {
                 start: start + note.start,
-                ..*note
+                ..note.clone()
             })
             .collect();
 

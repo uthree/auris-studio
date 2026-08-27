@@ -1001,12 +1001,12 @@ impl Session {
     pub fn next_clip_start(&self, clip: ClipId) -> Option<Ticks> {
         let track = self.project.track_of_clip(clip)?;
         let here = self.clip_start(clip)?;
-        let starts: Box<dyn Iterator<Item = Ticks> + '_> = match &self.project.track(track)?.kind {
-            auris_core::TrackKind::Instrument(inner) => {
-                Box::new(inner.clips.iter().map(|clip| clip.start))
-            }
-            auris_core::TrackKind::Audio(inner) => Box::new(inner.clips.iter().map(|c| c.start)),
-            auris_core::TrackKind::Bus => return None,
+        let kind = &self.project.track(track)?.kind;
+        let starts: Box<dyn Iterator<Item = Ticks> + '_> = if let Some(clips) = kind.note_clips() {
+            Box::new(clips.iter().map(|clip| clip.start))
+        } else {
+            let inner = kind.as_audio()?;
+            Box::new(inner.clips.iter().map(|c| c.start))
         };
         starts.filter(|start| *start > here).min()
     }

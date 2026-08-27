@@ -50,7 +50,9 @@ pub use curve::{
 };
 pub use recipe::{ClipPreset, ClipRecipe, Subdivision};
 pub use routing::{AuxSend, EffectSlot, MixerStrip, Output};
-pub use track::{AudioTrack, Color, InstrumentTrack, Track, TrackKind};
+pub use track::{
+    AudioTrack, Color, InstrumentTrack, SingerTrack, Track, TrackKind, default_frame_hop,
+};
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -380,7 +382,14 @@ impl Project {
     /// straight ramps crossing and dips about three decibels in the middle of each join. Nothing
     /// looks wrong, nothing is reported, and the save afterwards writes the shapes away — leaving
     /// a piece whose joins all have a hole in them and no record that they ever did not.
-    pub const FORMAT_VERSION: u32 = 16;
+    ///
+    /// 17 since [`TrackKind`] gained [`Singer`](TrackKind::Singer) and a note gained its
+    /// [`lyric`](Note::lyric) and [`phonemes`](Note::phonemes). Version 6's case for the variant:
+    /// a stored enum arm an older build has never heard of fails the whole document, and the
+    /// version turns that into a sentence at the door. The note fields alone would not have moved
+    /// it — a version 16 build reading them as nothing and writing them away only costs words on
+    /// notes that could not be sung anyway, on a track that build cannot open.
+    pub const FORMAT_VERSION: u32 = 17;
 
     /// An empty project.
     ///
@@ -520,18 +529,13 @@ impl Project {
             for send in &track.sends {
                 highest = highest.max(send.id.0);
             }
-            match &track.kind {
-                TrackKind::Instrument(inner) => {
-                    for clip in &inner.clips {
-                        highest = highest.max(clip.id.0);
-                    }
+            for clip in track.kind.note_clips().into_iter().flatten() {
+                highest = highest.max(clip.id.0);
+            }
+            if let Some(inner) = track.kind.as_audio() {
+                for clip in &inner.clips {
+                    highest = highest.max(clip.id.0);
                 }
-                TrackKind::Audio(inner) => {
-                    for clip in &inner.clips {
-                        highest = highest.max(clip.id.0);
-                    }
-                }
-                TrackKind::Bus => {}
             }
         }
         for slot in &self.master.effects {

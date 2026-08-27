@@ -73,6 +73,7 @@ strings! {
     Volume { en: "Vol", ja: "音量" }
     Pan { en: "Pan", ja: "パン" }
     TrackKindInstrument { en: "Instrument", ja: "ソフト音源" }
+    TrackKindSinger { en: "Singer", ja: "シンガー" }
     TrackKindAudio { en: "Audio", ja: "オーディオ" }
     TrackKindBus { en: "Bus", ja: "バス" }
     // A strip is 128 px wide and every label on it is an abbreviation for that reason.
@@ -1086,6 +1087,7 @@ new のオプション
     CliFieldDuration { en: "duration", ja: "長さ" }
     CliFieldTracks { en: "tracks", ja: "トラック数" }
     CliKindInstrument { en: "instrument", ja: "音源" }
+    CliKindSinger { en: "singer", ja: "シンガー" }
     CliKindAudio { en: "audio", ja: "オーディオ" }
     CliKindBus { en: "bus", ja: "バス" }
     CliFieldRouting { en: "routing", ja: "ルーティング" }

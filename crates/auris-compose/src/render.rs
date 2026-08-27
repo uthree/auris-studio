@@ -287,10 +287,8 @@ fn clips_of(
                 let ends = (offset + note.length).min(section.length);
                 let length = (ends - start).max(Ticks(1));
                 Some(Note {
-                    pitch: note.pitch.min(127),
                     velocity: note.velocity.clamp(0.0, 1.0),
-                    start,
-                    length,
+                    ..Note::new(note.pitch.min(127), start, length)
                 })
             })
             .collect();

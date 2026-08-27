@@ -283,19 +283,34 @@ impl RenderGraph {
             // mute toggle is a command rather than a rebuild.
             let audible = solo.get(index).copied().unwrap_or(true);
             let strip = RenderStrip::from_mixer(&track.mixer, audible, registry, placed, &prepare);
+            // A singer track plays through an instrument exactly as an instrument track does —
+            // until a voice model exists, its `instrument_id` names the preview voice — so the
+            // two kinds meet the same arm below, differing only in where the id, the state and
+            // the clips are kept.
+            let instrument_parts = match &track.kind {
+                TrackKind::Instrument(inner) => {
+                    Some((&inner.instrument_id, &inner.instrument_state, &inner.clips))
+                }
+                TrackKind::Singer(inner) => {
+                    Some((&inner.instrument_id, &inner.instrument_state, &inner.clips))
+                }
+                _ => None,
+            };
             let source = match &track.kind {
-                TrackKind::Instrument(instrument_track) => {
+                TrackKind::Instrument(_) | TrackKind::Singer(_) => {
+                    let (instrument_id, instrument_state, clips) =
+                        instrument_parts.expect("the arm holds an instrument");
                     // The caller's own instrument first, and it is *taken*: what is left in the
                     // map afterwards names tracks the project no longer plays that way.
                     let built = match instruments.remove(&track.id) {
                         Some(instrument) => Ok(instrument),
-                        None => registry.create_instrument(&instrument_track.instrument_id),
+                        None => registry.create_instrument(instrument_id),
                     };
                     match built {
                         Ok(mut instrument) => {
-                            instrument.load_state(&instrument_track.instrument_state);
+                            instrument.load_state(instrument_state);
                             let mut events = Vec::new();
-                            for clip in &instrument_track.clips {
+                            for clip in clips {
                                 schedule_clip(clip, &project.tempo_map, sample_rate, &mut events);
                             }
                             sort_events(&mut events);

@@ -149,7 +149,7 @@ impl Session {
                     .iter()
                     .map(|note| Note {
                         start: note.start - first,
-                        ..*note
+                        ..note.clone()
                     })
                     .collect();
                 // Rebased the same way the notes are, and cut to the clip: a curve written before

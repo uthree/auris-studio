@@ -310,11 +310,13 @@ pub fn write_phrase(
         .flat_map(|draft| draft.notes)
         .filter(|draft| draft.start >= Ticks::ZERO && draft.start < length)
         .map(|draft| Note {
-            pitch: draft.pitch.min(127),
             velocity: draft.velocity.clamp(0.0, 1.0),
-            start: draft.start,
             // Truncate rather than overhang: the scheduler drops a note that runs past its clip.
-            length: draft.length.min(length - draft.start).max(Ticks(1)),
+            ..Note::new(
+                draft.pitch.min(127),
+                draft.start,
+                draft.length.min(length - draft.start).max(Ticks(1)),
+            )
         })
         .collect();
     notes.sort_by_key(|note| (note.start.raw(), note.pitch));

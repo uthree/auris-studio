@@ -89,12 +89,48 @@ pub struct AudioTrack {
     pub clips: Vec<AudioClip>,
 }
 
+/// A singer track: notes carrying lyrics, sung by a voice synthesiser.
+///
+/// The clips are ordinary [`MidiClip`]s — a sung phrase is still notes on a timeline, and every
+/// gesture the piano roll knows applies to it unchanged — but each [`Note`](super::Note) on one
+/// may carry a lyric and the phonemes it is sung as. What separates the kind from
+/// [`InstrumentTrack`] is what the notes are *for*: a voice model renders frame-level phonemes,
+/// pitch and energy from them, and until one is wired in, `instrument_id` names the built-in
+/// instrument that previews the melody.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SingerTrack {
+    /// Registry id of the instrument previewing the melody.
+    pub instrument_id: String,
+    /// Saved preview-instrument parameters.
+    #[serde(default, skip_serializing_if = "PluginState::is_empty")]
+    pub instrument_state: PluginState,
+    /// Note clips on the timeline.
+    pub clips: Vec<MidiClip>,
+    /// Seconds per feature frame handed to the voice model.
+    ///
+    /// Stored on the track rather than asked at export time because it is a property of the
+    /// model the track is written for: exporting the same document twice must produce the same
+    /// frames.
+    #[serde(default = "default_frame_hop")]
+    pub frame_hop: f64,
+}
+
+/// The frame hop a new singer track starts with, in seconds.
+///
+/// Ten milliseconds is the hop most acoustic-feature pipelines default to; a track written for a
+/// model that wants another one stores its own.
+pub fn default_frame_hop() -> f64 {
+    0.010
+}
+
 /// What kind of material a track holds.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TrackKind {
     /// Notes played by a software instrument.
     Instrument(InstrumentTrack),
+    /// Notes carrying lyrics, sung by a voice synthesiser.
+    Singer(SingerTrack),
     /// Recorded or imported audio.
     Audio(AudioTrack),
     /// A mixing point: whatever is routed here, summed, and put through one strip.
@@ -111,17 +147,35 @@ impl TrackKind {
     pub fn label(&self) -> &'static str {
         match self {
             TrackKind::Instrument(_) => "Instrument",
+            TrackKind::Singer(_) => "Singer",
             TrackKind::Audio(_) => "Audio",
             TrackKind::Bus => "Bus",
         }
     }
 
-    /// `true` when this track holds notes rather than audio.
+    /// `true` when this track's instrument can be chosen — swapped from the registry or a
+    /// plugin file.
     ///
-    /// The two kinds are the one thing that decides whether a clip may move to a track, so the
-    /// question is asked directly rather than through a pattern match at each call site.
+    /// A singer track also *has* an instrument, but only as a preview: what the track is for is
+    /// chosen by its kind, not by a picker. Code that is about notes rather than about the
+    /// instrument wants [`Self::holds_notes`] instead.
     pub fn is_instrument(&self) -> bool {
         matches!(self, TrackKind::Instrument(_))
+    }
+
+    /// `true` when this track holds note clips — an instrument track or a singer track.
+    ///
+    /// This is the question that decides whether a note clip may sit on a track, and it is asked
+    /// directly rather than through a pattern match at each call site so that a clip can move
+    /// between the two kinds that answer yes: a melody sketched on an instrument track keeps its
+    /// notes when it is dragged onto a singer track to be given words.
+    pub fn holds_notes(&self) -> bool {
+        matches!(self, TrackKind::Instrument(_) | TrackKind::Singer(_))
+    }
+
+    /// `true` when this track is a singer track.
+    pub fn is_singer(&self) -> bool {
+        matches!(self, TrackKind::Singer(_))
     }
 
     /// `true` when this track is a mixing point rather than a source of material.
@@ -141,6 +195,44 @@ impl TrackKind {
     pub fn as_instrument_mut(&mut self) -> Option<&mut InstrumentTrack> {
         match self {
             TrackKind::Instrument(track) => Some(track),
+            _ => None,
+        }
+    }
+
+    /// The singer track data, when this is one.
+    pub fn as_singer(&self) -> Option<&SingerTrack> {
+        match self {
+            TrackKind::Singer(track) => Some(track),
+            _ => None,
+        }
+    }
+
+    /// The singer track data mutably, when this is one.
+    pub fn as_singer_mut(&mut self) -> Option<&mut SingerTrack> {
+        match self {
+            TrackKind::Singer(track) => Some(track),
+            _ => None,
+        }
+    }
+
+    /// The note clips this track holds, when it holds notes at all.
+    ///
+    /// One accessor for both kinds that do, because almost everything done to a note clip —
+    /// finding it, moving it, splitting it, playing it — is the same done on either, and a match
+    /// at each of those sites would be a place for the singer arm to be forgotten.
+    pub fn note_clips(&self) -> Option<&Vec<MidiClip>> {
+        match self {
+            TrackKind::Instrument(track) => Some(&track.clips),
+            TrackKind::Singer(track) => Some(&track.clips),
+            _ => None,
+        }
+    }
+
+    /// The note clips mutably, when this track holds notes at all.
+    pub fn note_clips_mut(&mut self) -> Option<&mut Vec<MidiClip>> {
+        match self {
+            TrackKind::Instrument(track) => Some(&mut track.clips),
+            TrackKind::Singer(track) => Some(&mut track.clips),
             _ => None,
         }
     }
@@ -199,9 +291,11 @@ impl Track {
             // The *sounding* end of each clip, repeats included. A track whose last clip is
             // looped goes on playing past the clip's own end, and an export measured from that
             // end would cut the repeats off the file.
-            TrackKind::Instrument(track) => track
-                .clips
-                .iter()
+            TrackKind::Instrument(_) | TrackKind::Singer(_) => self
+                .kind
+                .note_clips()
+                .into_iter()
+                .flatten()
                 .map(MidiClip::sounding_end)
                 .max()
                 .unwrap_or(Ticks::ZERO),
@@ -297,6 +391,23 @@ impl Project {
         true
     }
 
+    /// Appends a singer track previewed through `instrument_id`.
+    pub fn add_singer_track(
+        &mut self,
+        name: impl Into<String>,
+        instrument_id: impl Into<String>,
+    ) -> TrackId {
+        self.push_track(
+            name,
+            TrackKind::Singer(SingerTrack {
+                instrument_id: instrument_id.into(),
+                instrument_state: PluginState::empty(),
+                clips: Vec::new(),
+                frame_hop: default_frame_hop(),
+            }),
+        )
+    }
+
     /// Appends an empty audio track.
     pub fn add_audio_track(&mut self, name: impl Into<String>) -> TrackId {
         self.push_track(name, TrackKind::Audio(AudioTrack::default()))
@@ -326,8 +437,11 @@ impl Project {
             send.id = SendId(self.allocate_id());
         }
         match &mut copy.kind {
-            TrackKind::Instrument(inner) => {
-                for clip in &mut inner.clips {
+            TrackKind::Instrument(_) | TrackKind::Singer(_) => {
+                // Reserved one by one rather than inside the loop below: the clip list borrows
+                // `copy`, not `self`, so the allocator is free — but the accessor is matched here
+                // so a future kind that holds clips cannot fall through to "no ids to reissue".
+                for clip in copy.kind.note_clips_mut().into_iter().flatten() {
                     clip.id = ClipId(self.allocate_id());
                 }
             }
@@ -412,6 +526,7 @@ impl Project {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::project::Note;
     use crate::project::fixtures::{bussed_project, demo_project};
 
     #[test]
@@ -504,6 +619,77 @@ mod tests {
                 "id {id} is shared with the original, so edits would hit the wrong object"
             );
         }
+    }
+
+    #[test]
+    fn a_singer_track_holds_notes_without_being_an_instrument_track() {
+        let mut project = Project::new("Song", 48_000.0);
+        let track = project.add_singer_track("Melody", "auris.synth.voice");
+        let kind = &project.track(track).unwrap().kind;
+
+        // The distinction every call site leans on: the registry and the plugin editor ask
+        // `is_instrument` and must not offer to swap a singer's preview voice; the clip
+        // machinery asks `holds_notes` and must treat the two alike.
+        assert!(kind.holds_notes() && kind.is_singer());
+        assert!(!kind.is_instrument());
+        assert_eq!(kind.label(), "Singer");
+
+        let clip = project
+            .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks::from_beats(4.0))
+            .expect("a singer track accepts a note clip");
+        project
+            .midi_clip_mut(clip)
+            .unwrap()
+            .notes
+            .push(Note::new(60, Ticks::ZERO, Ticks::QUARTER));
+        assert_eq!(project.track_of_clip(clip), Some(track));
+        assert!(project.remove_clip(clip));
+    }
+
+    #[test]
+    fn a_melody_moves_between_an_instrument_track_and_a_singer_track() {
+        // The reason `move_clip_to_track` asks `holds_notes` of both sides rather than
+        // `is_instrument`: a sketched melody is dragged onto a singer track to be given words,
+        // and its notes — words and all — are the same material either way.
+        let mut project = Project::new("Song", 48_000.0);
+        let sketch = project.add_instrument_track("Sketch", "auris.synth.chiptune");
+        let singer = project.add_singer_track("Melody", "auris.synth.voice");
+        let clip = project
+            .add_midi_clip(sketch, "Line", Ticks::ZERO, Ticks::from_beats(2.0))
+            .unwrap();
+        {
+            let midi = project.midi_clip_mut(clip).unwrap();
+            let mut note = Note::new(67, Ticks::ZERO, Ticks::QUARTER);
+            note.lyric = "ら".into();
+            note.phonemes = vec!["ɾ".into(), "a".into()];
+            midi.notes.push(note);
+        }
+
+        assert!(project.move_clip_to_track(clip, singer));
+        assert_eq!(project.track_of_clip(clip), Some(singer));
+        let note = &project.midi_clip(clip).unwrap().1.notes[0];
+        assert_eq!(note.lyric, "ら");
+        assert_eq!(note.phonemes, ["ɾ", "a"]);
+        assert!(project.move_clip_to_track(clip, sketch), "and back again");
+
+        // An audio track still refuses the move, exactly as before.
+        let audio = project.add_audio_track("Take");
+        assert!(!project.move_clip_to_track(clip, audio));
+    }
+
+    #[test]
+    fn a_duplicated_singer_track_reissues_its_clip_ids() {
+        let mut project = Project::new("Song", 48_000.0);
+        let track = project.add_singer_track("Melody", "auris.synth.voice");
+        let clip = project
+            .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks::from_beats(1.0))
+            .unwrap();
+        let copy = project.duplicate_track(track).unwrap();
+        let copied_clip = project.track(copy).unwrap().kind.note_clips().unwrap()[0].id;
+        assert_ne!(
+            copied_clip, clip,
+            "two clips answering to one id would send edits to the wrong track"
+        );
     }
 
     #[test]

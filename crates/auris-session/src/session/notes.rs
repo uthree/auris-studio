@@ -57,7 +57,7 @@ impl Quantize {
 /// Nothing here bounds the note against the clip. A note quantised past the end is
 /// [`MidiClip::playable_notes`]' business, and it answers the same way it does for a note somebody
 /// dragged there: the clip is a window, and dragging its edge back out brings the note back.
-pub fn quantized(note: Note, grid: Ticks, what: Quantize) -> Note {
+pub fn quantized(note: &Note, grid: Ticks, what: Quantize) -> Note {
     let grid = Ticks(grid.raw().max(1));
     let start = match what.moves_starts() {
         true => note.start.max_zero().snap_nearest(grid),
@@ -70,7 +70,7 @@ pub fn quantized(note: Note, grid: Ticks, what: Quantize) -> Note {
     Note {
         start,
         length,
-        ..note
+        ..note.clone()
     }
 }
 
@@ -89,6 +89,7 @@ impl Session {
                 velocity: Self::finite_unit(note.velocity),
                 start: note.start.max_zero(),
                 length: Ticks(note.length.raw().max(1)),
+                ..note
             });
             target.fit_length_to_notes(grid);
             index = target.notes.len() - 1;
@@ -148,7 +149,7 @@ impl Session {
         };
         let chosen: Vec<Note> = indices
             .iter()
-            .filter_map(|index| target.notes.get(*index).copied())
+            .filter_map(|index| target.notes.get(*index).cloned())
             .collect();
         if chosen.is_empty() {
             return Ok(Vec::new());
@@ -366,7 +367,7 @@ impl Session {
                 target
                     .notes
                     .get(*index)
-                    .is_some_and(|note| quantized(*note, grid, what) != *note)
+                    .is_some_and(|note| quantized(note, grid, what) != *note)
             })
             .collect();
         if moving.is_empty() {
@@ -380,7 +381,7 @@ impl Session {
         };
         for index in &moving {
             if let Some(note) = target.notes.get_mut(*index) {
-                *note = quantized(*note, grid, what);
+                *note = quantized(note, grid, what);
             }
         }
         target.fit_length_to_notes(project_grid);
@@ -506,12 +507,11 @@ mod tests {
                 Note {
                     pitch: 200,
                     velocity: 5.0,
-                    start: Ticks(-500),
-                    length: Ticks(0),
+                    ..Note::new(200, Ticks(-500), Ticks(0))
                 },
             )
             .unwrap();
-        let note = session.midi_clip(clip).unwrap().notes[index];
+        let note = session.midi_clip(clip).unwrap().notes[index].clone();
         assert_eq!(note.pitch, 127);
         assert_eq!(note.velocity, 1.0);
         assert_eq!(note.start, Ticks::ZERO);
@@ -619,7 +619,7 @@ mod tests {
         session
             .quantize_notes(clip, &[index], Ticks::QUARTER, Quantize::Lengths)
             .unwrap();
-        let note = session.midi_clip(clip).unwrap().notes[index];
+        let note = session.midi_clip(clip).unwrap().notes[index].clone();
         assert_eq!(note.start, Ticks(910), "the playing was moved");
         assert_eq!(note.length, Ticks(960));
 
@@ -627,7 +627,7 @@ mod tests {
         session
             .quantize_notes(clip, &[index], Ticks::QUARTER, Quantize::Starts)
             .unwrap();
-        let note = session.midi_clip(clip).unwrap().notes[index];
+        let note = session.midi_clip(clip).unwrap().notes[index].clone();
         assert_eq!(note.start, Ticks(960));
         assert_eq!(note.length, Ticks(960));
 

@@ -184,6 +184,7 @@ pub fn edit_key(edit: Edit) -> Key {
 pub fn track_kind_key(kind: &TrackKind) -> Key {
     match kind {
         TrackKind::Instrument(_) => Key::TrackKindInstrument,
+        TrackKind::Singer(_) => Key::TrackKindSinger,
         TrackKind::Audio(_) => Key::TrackKindAudio,
         TrackKind::Bus => Key::TrackKindBus,
     }

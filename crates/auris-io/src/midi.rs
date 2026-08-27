@@ -614,12 +614,10 @@ fn note(started: (u64, u8), ended: u64, pitch: u8, per_quarter: u32) -> Note {
     // contain, and a zero-length note is one nothing would ever play or let you grab hold of.
     let length = Ticks((scale(ended, per_quarter) - start).raw().max(1));
     Note {
-        pitch,
         // MIDI velocity is 1..=127 and ours is 0.0..=1.0. Divided by 127 rather than 128 so a
         // full-strength note comes out at exactly 1.0 rather than a hair under it.
         velocity: f32::from(started.1) / 127.0,
-        start,
-        length,
+        ..Note::new(pitch, start, length)
     }
 }
 

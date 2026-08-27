@@ -110,7 +110,7 @@ impl Session {
         };
         let mut chosen: Vec<Note> = indices
             .iter()
-            .filter_map(|index| midi.notes.get(*index).copied())
+            .filter_map(|index| midi.notes.get(*index).cloned())
             .collect();
         let Some(first) = chosen.iter().map(|note| note.start).min() else {
             return 0;
@@ -180,22 +180,23 @@ impl Session {
     pub fn copy_clips(&mut self, clips: &[ClipId]) -> usize {
         let mut found: Vec<(usize, Ticks, CopiedContent)> = Vec::new();
         for (row, track) in self.project.tracks.iter().enumerate() {
-            match &track.kind {
-                TrackKind::Instrument(inner) => {
-                    for midi in inner.clips.iter().filter(|clip| clips.contains(&clip.id)) {
-                        found.push((row, midi.start, CopiedContent::Midi(Box::new(midi.clone()))));
-                    }
+            for midi in track
+                .kind
+                .note_clips()
+                .into_iter()
+                .flatten()
+                .filter(|clip| clips.contains(&clip.id))
+            {
+                found.push((row, midi.start, CopiedContent::Midi(Box::new(midi.clone()))));
+            }
+            if let Some(inner) = track.kind.as_audio() {
+                for audio in inner.clips.iter().filter(|clip| clips.contains(&clip.id)) {
+                    found.push((
+                        row,
+                        audio.start,
+                        CopiedContent::Audio(Box::new(audio.clone())),
+                    ));
                 }
-                TrackKind::Audio(inner) => {
-                    for audio in inner.clips.iter().filter(|clip| clips.contains(&clip.id)) {
-                        found.push((
-                            row,
-                            audio.start,
-                            CopiedContent::Audio(Box::new(audio.clone())),
-                        ));
-                    }
-                }
-                TrackKind::Bus => {}
             }
         }
         let (Some(first), Some(top)) = (

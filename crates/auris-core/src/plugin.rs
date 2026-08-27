@@ -356,6 +356,14 @@ impl PluginState {
         Self::default()
     }
 
+    /// `true` when nothing has been saved: no parameters and no extra blob.
+    ///
+    /// This is what `skip_serializing_if` asks so that a track holding only defaults does not
+    /// write an empty object into every saved document.
+    pub fn is_empty(&self) -> bool {
+        self.params.is_empty() && self.extra.is_null()
+    }
+
     /// Stores a hosted plugin's opaque state.
     ///
     /// This is what [`Self::extra`] was for. A CLAP plugin's state is a byte stream it defines
