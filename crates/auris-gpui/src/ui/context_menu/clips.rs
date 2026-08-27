@@ -292,8 +292,33 @@ impl AurisApp {
                 .to_string(),
         };
         let has_selection = selected > 0;
+        // The lyric rows, only where there are words to edit: on an instrument track they would
+        // be three rows about a feature the track does not have.
+        let singing = self.editing_a_singer_clip();
 
         ContextMenu::new(anchor, title)
+            .item_if(
+                singing && under_pointer.is_some(),
+                self.t(Key::MenuEditLyric),
+                MenuCommand::EditLyric {
+                    clip,
+                    index: under_pointer.unwrap_or(0),
+                },
+            )
+            .item_if(
+                singing && under_pointer.is_some(),
+                self.t(Key::MenuEditPhonemes),
+                MenuCommand::EditPhonemes {
+                    clip,
+                    index: under_pointer.unwrap_or(0),
+                },
+            )
+            .item_if(
+                singing && has_selection,
+                self.t(Key::MenuWriteLyrics),
+                MenuCommand::WriteLyrics { clip },
+            )
+            .separator()
             .item_if(has_selection, self.t(Key::MenuCut), MenuCommand::CutNotes)
             .item_if(has_selection, self.t(Key::MenuCopy), MenuCommand::CopyNotes)
             // Offered whenever there is something to paste, selection or no selection: a paste

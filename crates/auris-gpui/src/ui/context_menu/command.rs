@@ -45,8 +45,29 @@ pub enum MenuCommand {
     ShowAutomation(TrackId, ParamTarget),
     /// Take a parameter's lane away, giving it back its stored value.
     ClearAutomation(ParamTarget),
+    /// Open the sheet that edits one note's lyric.
+    EditLyric {
+        /// The clip the note is in.
+        clip: ClipId,
+        /// The note's index.
+        index: usize,
+    },
+    /// Open the sheet that corrects one note's phonemes.
+    EditPhonemes {
+        /// The clip the note is in.
+        clip: ClipId,
+        /// The note's index.
+        index: usize,
+    },
+    /// Open the sheet that lays a phrase across the selected notes.
+    WriteLyrics {
+        /// The clip whose selection takes the phrase.
+        clip: ClipId,
+    },
     /// Append an instrument track.
     NewInstrumentTrack,
+    /// Append a singer track.
+    NewSingerTrack,
     /// Append an audio track.
     NewAudioTrack,
     /// Append a bus.
@@ -574,7 +595,11 @@ impl AurisApp {
             MenuCommand::ClearAutomation(target) => {
                 self.session.clear_automation(target);
             }
+            MenuCommand::EditLyric { clip, index } => self.open_lyric_prompt(clip, index),
+            MenuCommand::EditPhonemes { clip, index } => self.open_phonemes_prompt(clip, index),
+            MenuCommand::WriteLyrics { clip } => self.open_write_lyrics_prompt(clip),
             MenuCommand::NewInstrumentTrack => self.add_instrument_track(),
+            MenuCommand::NewSingerTrack => self.add_singer_track(),
             MenuCommand::NewAudioTrack => self.add_audio_track(),
             MenuCommand::NewBusTrack => self.add_bus_track(),
             MenuCommand::SongMeter(numerator, denominator) => {

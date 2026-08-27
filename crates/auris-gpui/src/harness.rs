@@ -102,6 +102,23 @@ pub(crate) fn with_a_clip(
     (app, cx, track, clip)
 }
 
+/// [`with_a_clip`], but the clip sits on a singer track: the fixture the lyric gestures need.
+pub(crate) fn with_a_singer_clip(
+    cx: &mut TestAppContext,
+) -> (Entity<AurisApp>, &mut VisualTestContext, TrackId, ClipId) {
+    let (app, cx) = open(cx);
+    let (track, clip) = app.update(cx, |this, _| {
+        let track = this.session.add_singer_track("Voice");
+        let clip = this
+            .session
+            .add_midi_clip(track, "Verse", Ticks::ZERO, CLIP_LENGTH)
+            .expect("a singer track takes a note clip");
+        (track, clip)
+    });
+    paint(&app, cx);
+    (app, cx, track, clip)
+}
+
 /// Draws the window again, so that a click has the current layout to land on.
 ///
 /// Hit testing and [`VisualTestContext::debug_bounds`] both read the last frame, so anything that
@@ -172,6 +189,28 @@ pub(crate) fn release(cx: &mut VisualTestContext, at: Point<Pixels>) {
 /// Presses the right button at `at`, which is how every surface opens its menu.
 pub(crate) fn right_press(cx: &mut VisualTestContext, at: Point<Pixels>) {
     cx.simulate_mouse_down(at, MouseButton::Right, Modifiers::none());
+}
+
+/// Clicks twice at `at` — the double click, made as the platform reports it.
+///
+/// Spelt out with `simulate_event` because the harness's ordinary helpers hard-code
+/// `click_count: 1`: a second press through them is two single clicks, which is exactly the
+/// distinction [`PointerGesture::DoubleClick`](crate::gestures::PointerGesture) exists to draw.
+pub(crate) fn double_click(cx: &mut VisualTestContext, at: Point<Pixels>) {
+    cx.simulate_click(at, Modifiers::none());
+    cx.simulate_event(gpui::MouseDownEvent {
+        position: at,
+        modifiers: Modifiers::none(),
+        button: MouseButton::Left,
+        click_count: 2,
+        first_mouse: false,
+    });
+    cx.simulate_event(gpui::MouseUpEvent {
+        position: at,
+        modifiers: Modifiers::none(),
+        button: MouseButton::Left,
+        click_count: 2,
+    });
 }
 
 /// Clicks the row of the open context menu that carries `command`.

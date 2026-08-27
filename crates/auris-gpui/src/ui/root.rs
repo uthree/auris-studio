@@ -147,6 +147,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_import_soundfont))
             .on_action(cx.listener(Self::on_import_midi))
             .on_action(cx.listener(Self::on_export_midi))
+            .on_action(cx.listener(Self::on_export_singer_frames))
             .on_action(cx.listener(Self::on_collect_assets))
             .on_action(cx.listener(Self::on_export_audio))
             .on_action(cx.listener(Self::on_export_cycle))
@@ -154,6 +155,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_open_recent))
             .on_action(cx.listener(Self::on_show_about))
             .on_action(cx.listener(Self::on_add_instrument_track))
+            .on_action(cx.listener(Self::on_add_singer_track))
             .on_action(cx.listener(Self::on_add_audio_track))
             .on_action(cx.listener(Self::on_add_bus_track))
             .on_action(cx.listener(Self::on_duplicate_track))
@@ -1540,6 +1542,15 @@ impl AurisApp {
         self.export_midi(window, cx);
     }
 
+    fn on_export_singer_frames(
+        &mut self,
+        _: &actions::ExportSingerFrames,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.export_singer_frames(window, cx);
+    }
+
     fn on_collect_assets(
         &mut self,
         _: &actions::CollectAssets,
@@ -1607,6 +1618,16 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.add_instrument_track();
+        cx.notify();
+    }
+
+    fn on_add_singer_track(
+        &mut self,
+        _: &actions::AddSingerTrack,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.add_singer_track();
         cx.notify();
     }
 
@@ -1941,9 +1962,9 @@ impl AurisApp {
             .flat_map(|track| {
                 let midi = track
                     .kind
-                    .as_instrument()
+                    .note_clips()
                     .into_iter()
-                    .flat_map(|instrument| instrument.clips.iter().map(|clip| clip.id));
+                    .flat_map(|clips| clips.iter().map(|clip| clip.id));
                 let audio = track
                     .kind
                     .as_audio()

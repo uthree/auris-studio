@@ -146,6 +146,7 @@ impl AurisApp {
                 self.t(Key::MenuNewInstrumentTrack),
                 MenuCommand::NewInstrumentTrack,
             )
+            .item(self.t(Key::MenuNewSingerTrack), MenuCommand::NewSingerTrack)
             .item(self.t(Key::MenuNewAudioTrack), MenuCommand::NewAudioTrack)
             .item(self.t(Key::MenuNewBusTrack), MenuCommand::NewBusTrack)
     }
@@ -160,10 +161,13 @@ impl AurisApp {
         let Some(entry) = self.project().track(track) else {
             return self.arrangement_menu(anchor);
         };
+        // A new clip goes wherever notes can sit; the composer only writes for instruments,
+        // because a generated part arrives with no words to sing.
+        let holds_notes = entry.kind.holds_notes();
         let is_instrument = entry.kind.as_instrument().is_some();
         ContextMenu::new(anchor, entry.name.clone())
             .item_if(
-                is_instrument,
+                holds_notes,
                 self.t(Key::MenuNewClipHere),
                 MenuCommand::NewClip { track, start },
             )
@@ -199,6 +203,7 @@ impl AurisApp {
                 self.t(Key::MenuNewInstrumentTrack),
                 MenuCommand::NewInstrumentTrack,
             )
+            .item(self.t(Key::MenuNewSingerTrack), MenuCommand::NewSingerTrack)
             .item(self.t(Key::MenuNewAudioTrack), MenuCommand::NewAudioTrack)
             .item(self.t(Key::MenuNewBusTrack), MenuCommand::NewBusTrack)
     }
@@ -210,6 +215,7 @@ impl AurisApp {
                 self.t(Key::MenuNewInstrumentTrack),
                 MenuCommand::NewInstrumentTrack,
             )
+            .item(self.t(Key::MenuNewSingerTrack), MenuCommand::NewSingerTrack)
             .item(self.t(Key::MenuNewAudioTrack), MenuCommand::NewAudioTrack)
             .item(self.t(Key::MenuNewBusTrack), MenuCommand::NewBusTrack)
     }

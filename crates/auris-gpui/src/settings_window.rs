@@ -67,6 +67,8 @@ pub struct SettingsWindow {
     language: Language,
     /// Whether the document is written back over itself as it changes.
     autosave: bool,
+    /// The dictionary folder kanji lyrics are read through. `None` on most machines.
+    japanese_dictionary: Option<std::path::PathBuf>,
     /// What a click creates and what deletes.
     /// How a bounce is written.
     export: ExportPreferences,
@@ -119,6 +121,7 @@ impl SettingsWindow {
         language_preference: Option<Language>,
         pointer: PointerGestures,
         autosave: bool,
+        japanese_dictionary: Option<std::path::PathBuf>,
         export: ExportPreferences,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -133,6 +136,7 @@ impl SettingsWindow {
             language_preference,
             language: Language::resolve(language_preference),
             autosave,
+            japanese_dictionary,
             export,
             pointer,
             capturing: None,
@@ -432,6 +436,53 @@ impl SettingsWindow {
                 }),
             )))
             .child(note(self.t(Key::AutosaveNote), &theme))
+            .child(divider(&theme))
+            .child(section_title(
+                self.t(Key::JapaneseDictionaryHeading),
+                &theme,
+            ))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_sm()
+                            .text_color(match self.japanese_dictionary {
+                                Some(_) => theme.text,
+                                None => theme.text_muted,
+                            })
+                            .truncate()
+                            .child(match &self.japanese_dictionary {
+                                Some(folder) => folder.display().to_string(),
+                                None => self.t(Key::ValueNotSet).to_string(),
+                            }),
+                    )
+                    .child(button(
+                        "dictionary-choose",
+                        self.t(Key::MenuChoose),
+                        ButtonStyle::Normal,
+                        false,
+                        theme.accent,
+                        &theme,
+                        cx.listener(|this, _, _, cx| this.choose_japanese_dictionary(cx)),
+                    ))
+                    .child(button(
+                        "dictionary-clear",
+                        self.t(Key::MenuClear),
+                        ButtonStyle::Ghost,
+                        false,
+                        theme.accent,
+                        &theme,
+                        cx.listener(|this, _, _, cx| {
+                            this.apply_japanese_dictionary(None, cx);
+                        }),
+                    )),
+            )
+            .child(note(self.t(Key::JapaneseDictionaryNote), &theme))
             .into_any_element()
     }
 
@@ -439,6 +490,46 @@ impl SettingsWindow {
     fn apply_autosave(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.autosave = enabled;
         let _ = self.app.update(cx, |app, _| app.apply_autosave(enabled));
+        cx.notify();
+    }
+
+    /// Asks for the dictionary folder, then hands it to the application.
+    fn choose_japanese_dictionary(&mut self, cx: &mut Context<Self>) {
+        let language = self.language;
+        cx.spawn(async move |this, cx| {
+            let handle = rfd::AsyncFileDialog::new()
+                .set_title(Key::DialogDictionaryFolder.get(language))
+                .pick_folder()
+                .await;
+            let Some(handle) = handle else { return };
+            let folder = handle.path().to_path_buf();
+            let _ = this.update(cx, |this, cx| {
+                this.apply_japanese_dictionary(Some(folder), cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Hands a dictionary choice to the application, which loads, installs and saves it.
+    ///
+    /// A folder that fails to load leaves the setting as it was and puts the loader's words in
+    /// this window's own status line, which is the screen the person is looking at.
+    fn apply_japanese_dictionary(
+        &mut self,
+        folder: Option<std::path::PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
+        let applied = self
+            .app
+            .update(cx, |app, _| app.apply_japanese_dictionary(folder.clone()));
+        match applied {
+            Ok(Ok(())) => {
+                self.japanese_dictionary = folder;
+                self.status.clear();
+            }
+            Ok(Err(message)) => self.status = message,
+            Err(_) => {}
+        }
         cx.notify();
     }
 

@@ -41,6 +41,8 @@ actions!(
         ExportCycle,
         /// Render one WAV file per track into a folder.
         ExportStems,
+        /// Write the selected singer track's frame features to a JSON file.
+        ExportSingerFrames,
         /// Show the list of projects opened lately, to open one again.
         OpenRecent,
         /// Show what this build is.
@@ -69,6 +71,8 @@ actions!(
         TogglePunch,
         /// Add an instrument track.
         AddInstrumentTrack,
+        /// Add a singer track.
+        AddSingerTrack,
         /// Add an audio track.
         AddAudioTrack,
         /// Delete the selected track.
@@ -411,6 +415,8 @@ bindable! {
         "file.export",          GroupFile,      CmdExportWav,          "secondary-e" => ExportAudio;
         "file.export_cycle",    GroupFile,      CmdExportCycle,        "secondary-shift-e" => ExportCycle;
         "file.export_stems",    GroupFile,      CmdExportStems,        "secondary-alt-e" => ExportStems;
+        // No keystroke: an export somebody runs a handful of times per song, from the menu.
+        "file.export_frames",   GroupFile,      CmdExportSingerFrames, ""            => ExportSingerFrames;
         // No keystroke: the list it opens is the point, and every letter worth spending is
         // already spent. It is on the File menu, which is where anybody looks for it.
         "file.recent",          GroupFile,      CmdOpenRecent,         "" => OpenRecent;
@@ -447,6 +453,7 @@ bindable! {
         "edit.grid",            GroupEdit,      CmdCycleGrid,          "secondary-shift-g" => CycleGrid;
 
         "track.add_instrument", GroupTrack,     CmdAddInstrumentTrack, "secondary-t" => AddInstrumentTrack;
+        "track.add_singer",     GroupTrack,     CmdAddSingerTrack,     "secondary-alt-v" => AddSingerTrack;
         "track.add_audio",      GroupTrack,     CmdAddAudioTrack,      "secondary-shift-t" => AddAudioTrack;
         // B for bus, and it is the one plain letter of the three that was still free.
         "track.add_bus",        GroupTrack,     CmdAddBusTrack,        "secondary-b" => AddBusTrack;

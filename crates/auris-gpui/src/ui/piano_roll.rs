@@ -172,6 +172,7 @@ impl AurisApp {
         let clip_start = clip.start;
         let clip_length = clip.length;
         let notes = clip.notes.clone();
+        let singing = self.editing_a_singer_clip();
         let ghosts = self.neighbouring_notes();
         let note_ends = self.note_end_zones(clip_start, &notes);
         let selected: Vec<usize> = self.selected_notes.iter().copied().collect();
@@ -396,6 +397,7 @@ impl AurisApp {
                                                 &view,
                                                 &pitch_view,
                                                 &theme,
+                                                singing,
                                             );
                                             paint::playhead(
                                                 window,
@@ -675,6 +677,18 @@ impl AurisApp {
 
         let under_pointer = self.note_at(clip_id, local_tick, pitch);
 
+        // The word on a note is edited where the note is: on a singer track, a double click
+        // opens the lyric sheet. Ahead of every drag, because the second press of a double
+        // click would otherwise begin a move that goes nowhere and swallows the gesture.
+        if let Some(index) = under_pointer
+            && crate::gestures::PointerGesture::DoubleClick.matches(event)
+            && self.editing_a_singer_clip()
+        {
+            self.open_lyric_prompt(clip_id, index);
+            cx.notify();
+            return;
+        }
+
         // The velocity tool claims a press on a note outright, ahead of the create and delete
         // gestures: a tool that sometimes removed the note instead is not a tool anyone can trust
         // to be in hand. Empty grid still sweeps a selection, as it does under every tool, so the
@@ -921,8 +935,7 @@ impl AurisApp {
         let Some(clips) = self
             .project()
             .track(track)
-            .and_then(|track| track.kind.as_instrument())
-            .map(|track| &track.clips)
+            .and_then(|track| track.kind.note_clips())
         else {
             return Vec::new();
         };
@@ -949,6 +962,81 @@ impl AurisApp {
             .filter(|clip| drawn.contains(&clip.id))
             .map(|clip| (clip.start, clip.notes.clone()))
             .collect()
+    }
+
+    /// Whether the clip in the roll sits on a singer track.
+    ///
+    /// The one question that turns the lyric affordances on: the fields exist on every note,
+    /// but words drawn over an instrument part would be noise about a feature it does not have.
+    pub(crate) fn editing_a_singer_clip(&self) -> bool {
+        self.selected_clip
+            .and_then(|clip| self.project().track_of_clip(clip))
+            .and_then(|track| self.project().track(track))
+            .is_some_and(|track| track.kind.is_singer())
+    }
+
+    /// Opens the sheet that edits one note's lyric.
+    pub(crate) fn open_lyric_prompt(&mut self, clip: ClipId, index: usize) {
+        let Some(note) = self
+            .session
+            .midi_clip(clip)
+            .and_then(|target| target.notes.get(index))
+        else {
+            return;
+        };
+        self.selected_notes.clear();
+        self.selected_notes.insert(index);
+        let title = self.t(Key::PromptLyric);
+        self.open_prompt(crate::ui::prompt::Prompt::new(
+            title,
+            crate::ui::prompt::PromptTarget::Lyric { clip, index },
+            note.lyric.clone(),
+        ));
+    }
+
+    /// Opens the sheet that corrects one note's phonemes.
+    pub(crate) fn open_phonemes_prompt(&mut self, clip: ClipId, index: usize) {
+        let Some(note) = self
+            .session
+            .midi_clip(clip)
+            .and_then(|target| target.notes.get(index))
+        else {
+            return;
+        };
+        self.selected_notes.clear();
+        self.selected_notes.insert(index);
+        let title = self.t(Key::PromptPhonemes);
+        self.open_prompt(crate::ui::prompt::Prompt::new(
+            title,
+            crate::ui::prompt::PromptTarget::Phonemes { clip, index },
+            note.phonemes.join(" "),
+        ));
+    }
+
+    /// Opens the sheet that lays a phrase across the selected notes.
+    pub(crate) fn open_write_lyrics_prompt(&mut self, clip: ClipId) {
+        let title = self.t(Key::PromptLyrics);
+        self.open_prompt(crate::ui::prompt::Prompt::new(
+            title,
+            crate::ui::prompt::PromptTarget::Lyrics { clip },
+            String::new(),
+        ));
+    }
+
+    /// The note sung after `index`, in the order the words go by: start, then pitch.
+    ///
+    /// What Return advances along, so a verse can be typed word after word without touching
+    /// the mouse. Indices break ties so two notes struck together are each visited once.
+    pub(crate) fn next_sung_note(&self, clip: ClipId, index: usize) -> Option<usize> {
+        let notes = &self.session.midi_clip(clip)?.notes;
+        let current = notes.get(index)?;
+        let key = (current.start, current.pitch, index);
+        notes
+            .iter()
+            .enumerate()
+            .filter(|(at, note)| (note.start, note.pitch, *at) > key)
+            .min_by_key(|(at, note)| (note.start, note.pitch, *at))
+            .map(|(at, _)| at)
     }
 
     /// Index of the note at a clip-relative position.
@@ -1222,6 +1310,60 @@ fn paint_velocity_tag(
     );
 }
 
+/// Shortest a row may be for a note to carry its lyric, in pixels.
+///
+/// Below this the word is a smear over the grid; the roll still shows the melody, and zooming
+/// in is how the words come back.
+const LYRIC_MIN_ROW: f32 = 11.0;
+
+/// Shortest a row may be for the phonemes to be written above the note.
+///
+/// Taller than [`LYRIC_MIN_ROW`], because the phonemes borrow the row above: at a zoom where
+/// rows are thin, a symbol between two notes reads as a note.
+const LYRIC_PHONEME_MIN_ROW: f32 = 15.0;
+
+/// Draws what a note sings: the lyric on the note, the phonemes in the row above it.
+///
+/// The lyric gets the contrast the velocity bar would have had — the two want the same spot,
+/// and on a singer track the word is the thing being edited. The phonemes are the model's
+/// truth, dimmer and smaller, so a hand-corrected reading is visible without being shouted.
+fn paint_lyric(
+    window: &mut Window,
+    cx: &mut App,
+    note_bounds: Bounds<Pixels>,
+    note: &Note,
+    theme: &Theme,
+) {
+    let row = f32::from(note_bounds.size.height);
+    if row >= LYRIC_MIN_ROW && !note.lyric.is_empty() {
+        let size = px((row - 4.0).clamp(8.0, 11.0));
+        paint::label(
+            window,
+            cx,
+            point(
+                note_bounds.origin.x + px(3.0),
+                note_bounds.origin.y + (note_bounds.size.height - size * paint::LINE_HEIGHT) / 2.0,
+            ),
+            note.lyric.clone(),
+            size,
+            theme.text_on(theme.velocity_color(note.velocity)),
+        );
+    }
+    if row + 2.0 >= LYRIC_PHONEME_MIN_ROW && !note.phonemes.is_empty() {
+        paint::label(
+            window,
+            cx,
+            point(
+                note_bounds.origin.x + px(3.0),
+                note_bounds.origin.y - px(11.0),
+            ),
+            note.phonemes.join(" "),
+            px(8.5),
+            theme.text_muted,
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn paint_notes(
     window: &mut Window,
@@ -1234,6 +1376,7 @@ fn paint_notes(
     view: &TimelineView,
     pitch_view: &PitchView,
     theme: &Theme,
+    lyrics: bool,
 ) {
     // Where the tag goes, decided in the loop and drawn after it, so a note painted later cannot
     // land on top of the one thing on the canvas that is only there to be read.
@@ -1262,7 +1405,17 @@ fn paint_notes(
             Metrics::RADIUS_XS,
             theme.velocity_color(note.velocity),
         );
-        paint_velocity_bar(window, note_bounds, note.velocity, theme);
+        // The word and the bar want the same pixels; on a singer track the word wins, and the
+        // fill still says how hard the note is struck.
+        if lyrics {
+            paint_lyric(window, cx, note_bounds, note, theme);
+        }
+        if !(lyrics
+            && !note.lyric.is_empty()
+            && f32::from(note_bounds.size.height) >= LYRIC_MIN_ROW)
+        {
+            paint_velocity_bar(window, note_bounds, note.velocity, theme);
+        }
         if tag.is_some_and(|(grabbed, _)| grabbed == index) {
             tag_at = Some(note_bounds);
         }
@@ -2052,8 +2205,8 @@ mod window_tests {
     use auris_session::prelude::*;
 
     use crate::harness::{
-        click_at, creating, deleting, drag, drag_with, paint, press, release, roll_point,
-        show_pitch, with_a_clip,
+        click_at, creating, deleting, double_click, drag, drag_with, paint, press, release,
+        roll_point, show_pitch, with_a_clip, with_a_singer_clip,
     };
 
     /// Middle C, which is far enough from either end of the keyboard that a pitch either side of
@@ -2214,5 +2367,113 @@ mod window_tests {
         click_at(cx, below, creating());
 
         assert!(notes(&app, cx).is_empty());
+    }
+
+    /// The singer fixture with two notes in the roll, ready to be given words.
+    fn with_two_sung_notes(
+        cx: &mut TestAppContext,
+    ) -> (
+        gpui::Entity<crate::app::AurisApp>,
+        &mut gpui::VisualTestContext,
+        ClipId,
+    ) {
+        let (app, cx, _, clip) = with_a_singer_clip(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .add_note(clip, Note::new(MIDDLE_C, Ticks::ZERO, BEAT))
+                .expect("the clip takes a note");
+            this.session
+                .add_note(clip, Note::new(MIDDLE_C + 2, BEAT, BEAT))
+                .expect("and a second");
+            this.open_clip_in_editor(clip);
+        });
+        paint(&app, cx);
+        show_pitch(&app, cx, MIDDLE_C);
+        (app, cx, clip)
+    }
+
+    /// The whole lyric flow, made as a hand makes it: double-click a note, type the word,
+    /// press Return — and the sheet walks to the next note so the verse can be typed through.
+    #[gpui::test]
+    fn a_double_click_types_a_lyric_and_return_walks_to_the_next_note(cx: &mut TestAppContext) {
+        let (app, cx, _clip) = with_two_sung_notes(cx);
+
+        let at = roll_point(&app, cx, HALF_BEAT, MIDDLE_C);
+        double_click(cx, at);
+        paint(&app, cx);
+        assert!(
+            app.read_with(cx, |this, _| this.prompt.is_some()),
+            "the double click opened the lyric sheet"
+        );
+
+        cx.simulate_input("さ");
+        cx.simulate_keystrokes("enter");
+        paint(&app, cx);
+
+        let sung = notes(&app, cx);
+        assert_eq!(sung[0].lyric, "さ");
+        assert_eq!(sung[0].phonemes, ["s", "a"], "the phonemes landed with it");
+        assert!(
+            app.read_with(cx, |this, _| this.prompt.is_some()),
+            "Return walked on to the second note"
+        );
+
+        cx.simulate_input("く");
+        cx.simulate_keystrokes("enter");
+        paint(&app, cx);
+
+        let sung = notes(&app, cx);
+        assert_eq!(sung[1].lyric, "く");
+        assert_eq!(sung[1].phonemes, ["k", "ɯ"]);
+        assert!(
+            app.read_with(cx, |this, _| this.prompt.is_none()),
+            "the walk ends where the words do"
+        );
+
+        // The two words were two edits: each Return was one commitment.
+        cx.dispatch_action(crate::actions::Undo);
+        assert!(notes(&app, cx)[1].lyric.is_empty());
+        assert_eq!(notes(&app, cx)[0].lyric, "さ");
+    }
+
+    /// On an instrument track the same gesture means what it always meant — nothing extra —
+    /// because words drawn over a synth part would be an affordance about a feature it lacks.
+    #[gpui::test]
+    fn a_double_click_on_an_instrument_note_opens_no_sheet(cx: &mut TestAppContext) {
+        let (app, cx, clip) = with_the_roll_open(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .add_note(clip, Note::new(MIDDLE_C, Ticks::ZERO, BEAT))
+                .expect("the clip takes a note");
+        });
+        paint(&app, cx);
+
+        let at = roll_point(&app, cx, HALF_BEAT, MIDDLE_C);
+        double_click(cx, at);
+
+        assert!(app.read_with(cx, |this, _| this.prompt.is_none()));
+    }
+
+    /// The batch sheet lays a phrase across the selection one mora to a note, in the order the
+    /// notes are sung rather than the order they were selected.
+    #[gpui::test]
+    fn the_write_lyrics_sheet_fills_the_selection_in_sung_order(cx: &mut TestAppContext) {
+        let (app, cx, clip) = with_two_sung_notes(cx);
+        app.update(cx, |this, cx| {
+            this.selected_notes.clear();
+            this.selected_notes.insert(1);
+            this.selected_notes.insert(0);
+            this.open_write_lyrics_prompt(clip);
+            cx.notify();
+        });
+        paint(&app, cx);
+
+        cx.simulate_input("さく");
+        cx.simulate_keystrokes("enter");
+        paint(&app, cx);
+
+        let sung = notes(&app, cx);
+        assert_eq!(sung[0].lyric, "さ");
+        assert_eq!(sung[1].lyric, "く");
     }
 }

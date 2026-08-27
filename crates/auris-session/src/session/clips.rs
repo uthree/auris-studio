@@ -197,10 +197,16 @@ impl Session {
         let Some(source) = self.project.track_of_clip(clip) else {
             return false;
         };
-        let kind_of = |id: TrackId| {
-            self.project
-                .track(id)
-                .map(|track| track.kind.is_instrument())
+        // "Holds notes" against "holds audio", with a bus answering neither: asking
+        // `is_instrument` here counted an audio track and a bus as the same kind, and a singer
+        // track as neither of the kinds its own clips are.
+        let kind_of = |id: TrackId| -> Option<bool> {
+            let track = self.project.track(id)?;
+            match (track.kind.holds_notes(), track.kind.as_audio().is_some()) {
+                (true, _) => Some(true),
+                (_, true) => Some(false),
+                _ => None,
+            }
         };
         match (kind_of(source), kind_of(track)) {
             (Some(from), Some(to)) => from == to,

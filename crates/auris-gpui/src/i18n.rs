@@ -218,6 +218,9 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::Vocal(VocalError::NeedsDictionary { .. }) => {
             Key::ErrorNeedsDictionary.get(language).to_string()
         }
+        SessionError::Vocal(inner @ VocalError::Dictionary { .. }) => {
+            with(Key::ErrorDictionary, inner.to_string())
+        }
         SessionError::Vocal(inner) => with(Key::ErrorLyric, inner.to_string()),
         SessionError::UnknownSend { .. } => Key::ErrorUnknownSend.get(language).to_string(),
         SessionError::NotABus(_) => Key::ErrorNotABus.get(language).to_string(),

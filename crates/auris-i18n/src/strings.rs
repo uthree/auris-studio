@@ -49,6 +49,12 @@ strings! {
     Tempo { en: "Tempo", ja: "テンポ" }
     Signature { en: "Signature", ja: "拍子" }
     PianoRoll { en: "Piano Roll", ja: "ピアノロール" }
+    PromptLyric { en: "Lyric", ja: "歌詞" }
+    PromptPhonemes { en: "Phonemes (space-separated IPA)", ja: "音素(スペース区切りの IPA)" }
+    PromptLyrics { en: "Write Lyrics Across Selection", ja: "選択ノートに歌詞を流し込む" }
+    MenuEditLyric { en: "Edit Lyric…", ja: "歌詞を編集…" }
+    MenuEditPhonemes { en: "Edit Phonemes…", ja: "音素を編集…" }
+    MenuWriteLyrics { en: "Write Lyrics…", ja: "歌詞をまとめて入力…" }
     Mixer { en: "Mixer", ja: "ミキサー" }
     Inspector { en: "Inspector", ja: "インスペクタ" }
     Master { en: "Master", ja: "マスター" }
@@ -342,6 +348,15 @@ strings! {
         en: "Saves a project that already has a folder, about every 30 seconds, once it has changed. Closing without saving stops being a way to undo an afternoon.",
         ja: "保存先が決まっているプロジェクトを、変更があれば30秒ごとに上書き保存します。「保存せずに閉じて元に戻す」はできなくなります。"
     }
+    JapaneseDictionaryHeading { en: "Japanese Dictionary", ja: "日本語辞書" }
+    JapaneseDictionaryNote {
+        en: "Reads kanji lyrics on singer tracks: point this at a prebuilt naist-jdic folder from the jpreprocess releases. Kana lyrics need nothing.",
+        ja: "シンガートラックの漢字歌詞を読むための設定です。jpreprocess のリリースにあるビルド済み naist-jdic フォルダを指定してください。かなの歌詞には不要です。"
+    }
+    DialogDictionaryFolder { en: "Choose the dictionary folder", ja: "辞書フォルダを選択" }
+    ValueNotSet { en: "Not set", ja: "未設定" }
+    MenuChoose { en: "Choose…", ja: "選択…" }
+    MenuClear { en: "Clear", ja: "解除" }
     CmdPanic { en: "Panic", ja: "パニック" }
     CmdNewProject { en: "New Project", ja: "新規プロジェクト" }
     CmdOpenProject { en: "Open Project", ja: "プロジェクトを開く" }
@@ -360,12 +375,14 @@ strings! {
     CmdExportWav { en: "Export WAV", ja: "WAV を書き出す" }
     CmdExportCycle { en: "Export Cycle as WAV", ja: "サイクル範囲を WAV に書き出す" }
     CmdExportStems { en: "Export Stems", ja: "ステムを書き出す" }
+    CmdExportSingerFrames { en: "Export Singer Frames…", ja: "シンガーフレームを書き出す…" }
     CmdQuit { en: "Quit", ja: "終了" }
     CmdUndo { en: "Undo", ja: "取り消す" }
     CmdRedo { en: "Redo", ja: "やり直す" }
     CmdDeleteSelection { en: "Delete Selection", ja: "選択範囲を削除" }
     CmdAddInstrumentTrack { en: "Add Instrument Track", ja: "ソフト音源トラックを追加" }
     CmdAddAudioTrack { en: "Add Audio Track", ja: "オーディオトラックを追加" }
+    CmdAddSingerTrack { en: "Add Singer Track", ja: "シンガートラックを追加" }
     CmdAddBusTrack { en: "Add Bus", ja: "バスを追加" }
     CmdSetTrackOutput { en: "Route Track", ja: "出力先を変更" }
     CmdAddSend { en: "Add Send", ja: "センドを追加" }
@@ -460,6 +477,7 @@ strings! {
     MenuRenameClip { en: "Rename Clip…", ja: "クリップ名を変更…" }
     MenuAddEffect { en: "Add Effect…", ja: "エフェクトを追加…" }
     MenuNewInstrumentTrack { en: "New Instrument Track", ja: "新規ソフト音源トラック" }
+    MenuNewSingerTrack { en: "New Singer Track", ja: "新規シンガートラック" }
     MenuNewAudioTrack { en: "New Audio Track", ja: "新規オーディオトラック" }
     MenuNewBusTrack { en: "New Bus", ja: "新規バス" }
     MenuRouteTo { en: "Output", ja: "出力先" }
@@ -743,12 +761,18 @@ strings! {
     DialogImportSoundFont { en: "Import SoundFont", ja: "サウンドフォントを読み込む" }
     DialogImportMidi { en: "Import a MIDI file", ja: "MIDI ファイルを読み込む" }
     DialogExportMidi { en: "Export a MIDI file", ja: "MIDI ファイルを書き出す" }
+    DialogExportFrames { en: "Export singer frames", ja: "シンガーフレームを書き出す" }
     DialogExportWav { en: "Export WAV", ja: "WAV を書き出す" }
     FilterProject { en: "Auris project", ja: "Auris プロジェクト" }
     FilterSpec { en: "Song specification", ja: "楽曲仕様書" }
     FilterAudio { en: "Audio", ja: "オーディオ" }
     FilterSoundFont { en: "SoundFont", ja: "サウンドフォント" }
     FilterMidi { en: "MIDI file", ja: "MIDI ファイル" }
+    FilterJson { en: "JSON file", ja: "JSON ファイル" }
+    ErrorNoSingerTrack {
+        en: "select a singer track first — frames are one track's features",
+        ja: "先にシンガートラックを選択してください。フレームは 1 トラック分の特徴量です"
+    }
     FilterWav { en: "WAV audio", ja: "WAV オーディオ" }
     SpecRejectedTitle { en: "The specification was not accepted", ja: "仕様書を読み取れませんでした" }
 
@@ -952,6 +976,10 @@ strings! {
     ErrorLyric {
         en: "the lyric could not be read",
         ja: "歌詞を読み取れませんでした"
+    }
+    ErrorDictionary {
+        en: "the dictionary did not load",
+        ja: "辞書を読み込めませんでした"
     }
     ErrorNoPath {
         en: "the project has no path yet; save it somewhere first",

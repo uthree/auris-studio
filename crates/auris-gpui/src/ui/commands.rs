@@ -136,8 +136,8 @@ impl AurisApp {
         let first = self
             .project()
             .track(track)
-            .and_then(|t| t.kind.as_instrument())
-            .and_then(|inner| inner.clips.first())
+            .and_then(|t| t.kind.note_clips())
+            .and_then(|clips| clips.first())
             .map(|clip| clip.id);
         self.select_clip(first);
         if self.selected_clip.is_some() {
@@ -221,6 +221,17 @@ impl AurisApp {
             }
             Err(error) => self.set_failed_status(self.failure(Key::CmdAddInstrumentTrack, &error)),
         }
+    }
+
+    /// Appends a singer track, previewing through the built-in vocal instrument.
+    pub(crate) fn add_singer_track(&mut self) {
+        let count = self.project().tracks.len() + 1;
+        let name = messages::new_singer_track_name(self.language(), count);
+        let id = self.session.add_singer_track(name);
+        self.selected_track = Some(id);
+        self.select_clip(None);
+        self.selected_notes.clear();
+        self.reveal_track(id);
     }
 
     /// Appends an empty audio track.
@@ -812,6 +823,71 @@ impl AurisApp {
     }
 
     /// Prompts for a destination and writes the document out as a MIDI file.
+    /// Writes the singer track's frame features — phonemes, pitch, energy — to a JSON file.
+    ///
+    /// The selected track when it is a singer; otherwise the project's only singer track, so
+    /// the ordinary one-singer song never asks which. Two singers with neither selected is a
+    /// genuine question, and the status line answers it with what to do.
+    pub(crate) fn export_singer_frames(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selected = self
+            .selected_track
+            .filter(|track| {
+                self.project()
+                    .track(*track)
+                    .is_some_and(|track| track.kind.is_singer())
+            })
+            .or_else(|| {
+                let mut singers = self
+                    .project()
+                    .tracks
+                    .iter()
+                    .filter(|track| track.kind.is_singer());
+                let only = singers.next().map(|track| track.id);
+                singers.next().is_none().then_some(only).flatten()
+            });
+        let Some(track) = selected else {
+            self.set_failed_status(self.t(Key::ErrorNoSingerTrack).to_string());
+            return;
+        };
+        let name = self
+            .project()
+            .track(track)
+            .map(|track| track.name.clone())
+            .unwrap_or_else(|| self.project().name.clone());
+        let language = self.language();
+        let view = cx.entity().downgrade();
+        window
+            .spawn(cx, async move |cx| {
+                let handle = rfd::AsyncFileDialog::new()
+                    .set_title(Key::DialogExportFrames.get(language))
+                    .set_file_name(format!("{name}.frames.json"))
+                    .add_filter(Key::FilterJson.get(language), &["json"])
+                    .save_file()
+                    .await;
+                let Some(handle) = handle else { return };
+                let path = handle.path().to_path_buf();
+                let _ = view.update(cx, |this, cx| {
+                    match this.session.export_singer_frames(track, &path) {
+                        Ok(frames) => {
+                            let language = this.language();
+                            this.set_status(messages::frames_exported(
+                                language,
+                                &path.display().to_string(),
+                                frames,
+                            ));
+                        }
+                        Err(error) => {
+                            this.set_failed_status(
+                                this.failure(Key::CmdExportSingerFrames, &error),
+                            );
+                        }
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+    }
+
     pub(crate) fn export_midi(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.project().name.clone();
         let language = self.language();

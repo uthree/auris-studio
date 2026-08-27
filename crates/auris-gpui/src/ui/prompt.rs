@@ -39,6 +39,32 @@ pub enum PromptTarget {
     Chord(Ticks),
     /// The name of the song section in force at a position on the timeline.
     Section(Ticks),
+    /// The lyric sung on one note.
+    ///
+    /// Return commits the word and walks on to the next note in sung order, so a verse can be
+    /// typed word after word without touching the mouse — the flow every vocal editor has
+    /// taught. An empty field takes the word off the note rather than being refused.
+    Lyric {
+        /// The clip the note is in.
+        clip: ClipId,
+        /// The note's index.
+        index: usize,
+    },
+    /// One note's phonemes, written as space-separated IPA tokens.
+    ///
+    /// The by-hand correction the stored-phonemes design exists for; the lyric stays as it was
+    /// written. Empty clears them, and the next lyric typed derives them afresh.
+    Phonemes {
+        /// The clip the note is in.
+        clip: ClipId,
+        /// The note's index.
+        index: usize,
+    },
+    /// A phrase laid across the selected notes, one mora to each.
+    Lyrics {
+        /// The clip whose selection takes the phrase.
+        clip: ClipId,
+    },
     /// The seed a generated clip is written from.
     ///
     /// Typed for a different reason than the other three: "another take" is the *next* seed, so
@@ -153,6 +179,11 @@ impl PromptTarget {
             | PromptTarget::SongTitle
             | PromptTarget::SongPartName(_)
             | PromptTarget::KeepProgression(_)
+            // A lyric is written in whatever language is being sung, and phonemes in IPA:
+            // neither is a notation this field can state rules for or complete against.
+            | PromptTarget::Lyric { .. }
+            | PromptTarget::Phonemes { .. }
+            | PromptTarget::Lyrics { .. }
             // No shared notation: every parameter is written in its own units, and the range
             // and the unit are in the prompt's title instead, where they can name this one.
             | PromptTarget::Param(_) => return None,
@@ -585,15 +616,66 @@ impl AurisApp {
             PromptBody::Notice(_) => return,
         };
         let text = field.content().trim().to_string();
-        if text.is_empty() {
-            // An empty name would leave an unlabelled row the user cannot tell apart from its
-            // neighbours, and an empty key or chord is not a key or a chord.
+        // Emptiness means something on the singing fields — take the word or the correction off
+        // the note — where everywhere else it would leave an unlabelled row the user cannot
+        // tell apart from its neighbours, and an empty key or chord is not a key or a chord.
+        let empty_clears = matches!(
+            target,
+            PromptTarget::Lyric { .. }
+                | PromptTarget::Phonemes { .. }
+                | PromptTarget::Lyrics { .. }
+        );
+        if text.is_empty() && !empty_clears {
             self.set_status(self.t(Key::NameCannotBeEmpty));
             return;
         }
         let outcome = match target {
             PromptTarget::Track(track) => self.session.rename_track(track, text),
             PromptTarget::Clip(clip) => self.session.rename_clip(clip, text),
+            PromptTarget::Lyric { clip, index } => {
+                match self.session.set_note_lyric(clip, index, &text) {
+                    Ok(()) => {
+                        // Walk on to the next note in sung order, carrying the sheet along, so
+                        // Return after Return lays a whole line in. The walk ends where the
+                        // words do: on the last note the sheet simply closes.
+                        if let Some(next) = self.next_sung_note(clip, index) {
+                            self.open_lyric_prompt(clip, next);
+                        }
+                        return;
+                    }
+                    Err(error) => {
+                        // Under the field's own name, not under "Rename" — the error worth
+                        // reading here names the dictionary setting, and it needs the right
+                        // heading to be believed.
+                        self.set_failed_status(self.failure(Key::PromptLyric, &error));
+                        return;
+                    }
+                }
+            }
+            PromptTarget::Phonemes { clip, index } => {
+                let phonemes: Vec<String> =
+                    text.split_whitespace().map(|token| token.into()).collect();
+                match self.session.set_note_phonemes(clip, index, phonemes) {
+                    Ok(()) => return,
+                    Err(error) => {
+                        self.set_failed_status(self.failure(Key::PromptPhonemes, &error));
+                        return;
+                    }
+                }
+            }
+            PromptTarget::Lyrics { clip } => {
+                let indices: Vec<usize> = self.selected_notes.iter().copied().collect();
+                match self.session.write_lyrics(clip, &indices, &text) {
+                    Ok(filled) => {
+                        self.set_status(messages::lyrics_written(self.language(), filled));
+                        return;
+                    }
+                    Err(error) => {
+                        self.set_failed_status(self.failure(Key::PromptLyrics, &error));
+                        return;
+                    }
+                }
+            }
             // These two parse rather than rename, and a rejection has to say what was rejected:
             // `Bbb minor` and `H7` look plausible enough that "invalid input" would not help.
             PromptTarget::Key(at) => match MusicalKey::parse(&text) {

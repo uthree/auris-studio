@@ -92,6 +92,12 @@ messages! {
         ja: "ノート {count} 個"
     }
 
+    /// How many notes a phrase was laid across.
+    fn lyrics_written(count: usize) {
+        en: "lyrics written on {count} notes",
+        ja: "{count} 個のノートに歌詞を書き込みました"
+    }
+
     /// How many notes a quantise pass actually moved.
     ///
     /// The count rather than "done": a pass that moved four notes out of a selection of twenty is
@@ -130,6 +136,12 @@ messages! {
     fn new_audio_track_name(number: usize) {
         en: "Audio {number}",
         ja: "オーディオ {number}"
+    }
+
+    /// Name given to a singer track the user just created.
+    fn new_singer_track_name(number: usize) {
+        en: "Singer {number}",
+        ja: "シンガー {number}"
     }
 
     /// Name given to a bus the user just created.
@@ -229,6 +241,12 @@ messages! {
     fn midi_imported(tracks: usize, notes: usize) {
         en: "Imported {tracks} track(s), {notes} note(s)",
         ja: "{tracks} トラック・{notes} ノートを読み込みました"
+    }
+
+    /// Confirmation that a singer track's features left as a file.
+    fn frames_exported(path: &str, frames: usize) {
+        en: "wrote {frames} frames to {path}",
+        ja: "{path} に {frames} フレームを書き出しました"
     }
 
     /// Confirmation that a piece left as a MIDI file.

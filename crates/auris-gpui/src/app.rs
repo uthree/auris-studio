@@ -1129,6 +1129,15 @@ impl AurisApp {
         // somebody else's music to delete before starting.
         session.new_project();
 
+        // The dictionary the settings name, loaded once for the session's lifetime. A folder
+        // that fails to load is logged and left in the settings — deleting the setting over a
+        // network share that was asleep would make a transient failure permanent.
+        if let Some(folder) = &settings.japanese_dictionary
+            && let Err(error) = session.set_japanese_dictionary(Some(folder))
+        {
+            log::warn!("the Japanese dictionary did not load: {error}");
+        }
+
         let status = audio_line(&session.audio_status(), language);
         log::info!("{status}");
 
@@ -1173,8 +1182,8 @@ impl AurisApp {
         let selected_clip = session.project().tracks.first().and_then(|track| {
             track
                 .kind
-                .as_instrument()
-                .and_then(|inner| inner.clips.first())
+                .note_clips()
+                .and_then(|clips| clips.first())
                 .map(|clip| clip.id)
         });
 
@@ -1817,6 +1826,25 @@ impl AurisApp {
         }
     }
 
+    /// Points the session's Japanese text frontend at a dictionary folder, and remembers it.
+    ///
+    /// The error comes back in the user's language for the settings window to show beside the
+    /// control — a wrong path should fail at the screen that names it, not under a lyric typed
+    /// an hour later — and nothing changes when it does.
+    pub(crate) fn apply_japanese_dictionary(
+        &mut self,
+        folder: Option<std::path::PathBuf>,
+    ) -> Result<(), String> {
+        self.session
+            .set_japanese_dictionary(folder.as_deref())
+            .map_err(|error| crate::i18n::error_text(&error, self.language()))?;
+        self.settings.japanese_dictionary = folder;
+        if let Err(error) = self.settings.save() {
+            log::warn!("could not save settings: {error}");
+        }
+        Ok(())
+    }
+
     /// Takes note of where the window is, without writing anything.
     ///
     /// Every frame, because there is no event for "the window has settled": a drag of the title
@@ -1902,6 +1930,7 @@ impl AurisApp {
         let language = self.settings.language;
         let pointer = self.pointer;
         let autosave = self.session.autosave_enabled();
+        let dictionary = self.settings.japanese_dictionary.clone();
         let export = self.settings.export;
 
         let bounds = Bounds::centered(None, size(px(560.), px(620.)), cx);
@@ -1919,7 +1948,7 @@ impl AurisApp {
                 cx.new(|cx| {
                     SettingsWindow::new(
                         app, theme, devices, audio, live, keymap, language, pointer, autosave,
-                        export, cx,
+                        dictionary, export, cx,
                     )
                 })
             },

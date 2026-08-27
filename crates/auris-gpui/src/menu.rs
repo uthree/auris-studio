@@ -206,6 +206,11 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
             actions::ExportStems,
             "file.export_stems",
         ),
+        command(
+            t(Key::CmdExportSingerFrames),
+            actions::ExportSingerFrames,
+            "file.export_frames",
+        ),
     ];
     // Under Open rather than at the bottom, which is where every application on both platforms
     // puts it. A row rather than a submenu: gpui's menu rows carry an action and nothing else,
@@ -364,6 +369,11 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                 t(Key::CmdAddInstrumentTrack),
                 actions::AddInstrumentTrack,
                 "track.add_instrument",
+            ),
+            command(
+                t(Key::CmdAddSingerTrack),
+                actions::AddSingerTrack,
+                "track.add_singer",
             ),
             command(
                 t(Key::CmdAddAudioTrack),
