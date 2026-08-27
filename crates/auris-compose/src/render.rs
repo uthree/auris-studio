@@ -1216,7 +1216,14 @@ mod tests {
     /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
     /// a bug or a decision, and this is what makes anyone look.
     ///
-    /// It last moved when the figure's variations grew from three to six — retrograde, the
+    /// It last moved when the comp learned to push: a section may strike each chord change half
+    /// a beat early and hold it over the line, drawn per section at a rate the syncopation dial
+    /// sets. Only the third fixture moved — the one whose mood leaves syncopation at the default
+    /// and whose seed drew a pushing section — and its count *fell* by the line-strikes and
+    /// borrowed half-beats a push replaces. The chords are untouched everywhere, because a push
+    /// moves when a chord is struck and never which.
+    ///
+    /// Before that it moved when the figure's variations grew from three to six — retrograde, the
     /// ornament on the longest note, the late entry — so every closing bar's variation draw sees
     /// six weights where it saw three and lands differently. Not one chord moved, and the counts
     /// drifted by a note or two where an ornament splits one note into a pair or a late entry
@@ -1360,7 +1367,7 @@ mod tests {
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
              ending·1 C major | C |\n\
-             634 notes, digest f4141228c830446d\n"
+             620 notes, digest cbf4f2f78c2f4bf7\n"
         );
 
         // A transposed section, which is a key change on the timeline — and the one fixture here

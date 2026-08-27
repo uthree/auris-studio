@@ -157,6 +157,14 @@ pub(super) fn comp(
         settings.mood.syncopation,
         &mut invent,
     );
+    // Whether this section's comp pushes: each chord change struck half a beat early and held
+    // over the line, the anticipation every keyboard player owns. A property of the section and
+    // not of the chord — a player who pushes, pushes, and a per-change roll would also break the
+    // promise that the figure holds through a phrase, since the push lands its strike in the bar
+    // *before* the change. Drawn whether or not it can apply, like everything on this stream.
+    let pushing = invent.chance((settings.mood.syncopation * 0.6).clamp(0.0, 0.6));
+    // Half a felt beat, the distance every push is early by.
+    let push_early = grid.step_ticks() * (grid.steps_per_beat() / 2).max(1) as i64;
 
     for event in &section.events {
         // Voiced upward from a floor, so a ninth sounds an octave and a tone above the root
@@ -237,7 +245,11 @@ pub(super) fn comp(
             }
         };
 
-        let onsets: Vec<usize> = if figure == CompFigure::Held {
+        // Whether this change is pushed: the section's style, wherever there is half a beat
+        // before the chord to borrow. The first chord of a section has none — its half-beat
+        // belongs to the section before, which has already been written.
+        let push = pushing && !pad && !written && event.start >= push_early;
+        let mut onsets: Vec<usize> = if figure == CompFigure::Held {
             vec![0]
         } else {
             let beat = grid.steps_per_beat().max(1);
@@ -271,9 +283,49 @@ pub(super) fn comp(
             }
             chosen
         };
+        // The pushed strike replaces the one on the chord's own start rather than doubling it:
+        // an anticipation restruck on the line is not an anticipation, it is a stutter.
+        if push {
+            onsets.retain(|offset| *offset != 0);
+        }
         let held = pad || figure == CompFigure::Held;
         let last = onsets.len().saturating_sub(1);
         let mut still_sounding: Vec<(i32, usize)> = Vec::new();
+
+        // The push: the chord struck half a beat before its own start and held over the line,
+        // which is the anticipation every keyboard player owns and the one thing a comp does
+        // that the chart does not say. Whatever was still sounding is let go at the strike —
+        // two voicings overlapping is not an anticipation, it is a smear.
+        if push {
+            let boundary = section.start + event.start - push_early;
+            // The old chord's own strikes inside the borrowed half-beat go entirely — an
+            // offbeat figure lands one exactly where the push lands, and the two voicings
+            // struck together are the smear this block exists to prevent. Safe to drop by
+            // index because only a pad holds indices into `notes`, and a pad never pushes.
+            notes.retain(|note| note.start < boundary);
+            for note in notes.iter_mut() {
+                if note.start + note.length > boundary {
+                    note.length = boundary - note.start;
+                }
+            }
+            let sounds_to = onsets
+                .first()
+                .map(|onset| event.start + grid.tick_of(*onset))
+                .unwrap_or_else(|| event.end());
+            let weight = grid.weight(grid.step_of(event.start));
+            for pitch in &voicing {
+                notes.push(Draft {
+                    section: index,
+                    pitch: (*pitch).clamp(0, 127) as u8,
+                    velocity: (velocity(weight, section.intensity, settings.dynamics)
+                        * 0.9
+                        * phrase_shape(grid, section, event.start - push_early, settings.dynamics))
+                    .clamp(0.05, 1.0),
+                    start: boundary,
+                    length: (sounds_to - (event.start - push_early)).max(Ticks(1)),
+                });
+            }
+        }
 
         for (position, onset) in onsets.iter().enumerate() {
             let at = event.start + grid.tick_of(*onset);
@@ -381,6 +433,9 @@ mod tests {
         // four different players, and left the section with nothing an ear could hold on to —
         // the same mistake the melody used to make, and the same fix. Only the fourth bar of a
         // phrase may depart, because that is where a phrase turns over.
+        // Syncopation is pinned to zero because the push is a licensed departure of its own: a
+        // pushing section borrows every bar's last half-beat for the next bar's chord, which is
+        // the *style* holding, not the figure drifting — and it is asserted where it lives.
         let mut steady = 0;
         for seed in 1..=8u64 {
             let (_, frame, parts) = draft(&format!(
@@ -389,6 +444,7 @@ mod tests {
                     chords = "@axis"
                     humanize = 0
                     variation = 0
+                    syncopation = 0
                     seed = {seed}
                     [section.verse]
                     bars = 8
@@ -424,10 +480,106 @@ mod tests {
     }
 
     #[test]
+    fn a_syncopated_comp_pushes_the_change_and_a_straight_one_never_does() {
+        let take = |syncopation: f32, seed: u64| {
+            draft(&format!(
+                r#"
+                    form = "verse"
+                    chords = "@axis"
+                    humanize = 0
+                    swing = 50
+                    syncopation = {syncopation}
+                    ending = "none"
+                    seed = {seed}
+                    [section.verse]
+                    bars = 8
+                    [[part]]
+                    name = "chords"
+                    "#
+            ))
+        };
+
+        // At the top of the dial, some section pushes: a strike half a beat before a chord
+        // change whose pitch the outgoing chord does not own and the arriving one does. It rings
+        // over the line, nothing of the old chord sounds under or beside it, and the line itself
+        // is not struck again — an anticipation restruck on the line is a stutter.
+        let mut pushed_anywhere = false;
+        for seed in 1..=8u64 {
+            let (_, frame, parts) = take(1.0, seed);
+            let chords = part(&parts, "chords");
+            let section = &frame.sections[0];
+            let half = frame.grid.step_ticks() * 2;
+            for event in section.events.iter().skip(1) {
+                let line = section.start + event.start;
+                let early: Vec<&crate::parts::Draft> = chords
+                    .notes
+                    .iter()
+                    .filter(|note| {
+                        note.start == line - half
+                            && event.chord.contains_midi(i32::from(note.pitch))
+                            && !section
+                                .chord_at(note.start - section.start)
+                                .is_some_and(|old| old.chord.contains_midi(i32::from(note.pitch)))
+                    })
+                    .collect();
+                if early.is_empty() {
+                    continue;
+                }
+                pushed_anywhere = true;
+                for note in &early {
+                    assert!(
+                        note.start + note.length > line,
+                        "seed {seed}: a push that does not cross the line is just an offbeat"
+                    );
+                }
+                for note in &chords.notes {
+                    if note.start < line - half {
+                        assert!(
+                            note.start + note.length <= line - half,
+                            "seed {seed}: the old chord smears under the push at {}",
+                            line.raw()
+                        );
+                    }
+                }
+                assert!(
+                    !chords.notes.iter().any(|note| note.start == line),
+                    "seed {seed}: the pushed change was struck again on the line"
+                );
+            }
+        }
+        assert!(
+            pushed_anywhere,
+            "no seed in eight pushed at full syncopation"
+        );
+
+        // And square playing never anticipates: every strike belongs to the chord sounding
+        // where it starts.
+        for seed in 1..=8u64 {
+            let (_, frame, parts) = take(0.0, seed);
+            let chords = part(&parts, "chords");
+            let section = &frame.sections[0];
+            for note in &chords.notes {
+                let event = section
+                    .chord_at(note.start - section.start)
+                    .expect("a chord under every strike");
+                assert!(
+                    event.chord.contains_midi(i32::from(note.pitch)),
+                    "seed {seed}: a square comp struck {} outside {} at {}",
+                    note.pitch,
+                    event.chord,
+                    note.start.raw()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_comp_may_turn_over_in_the_sections_own_last_bar() {
         // Six bars: the fourth bar of the phrase and the section's last are different bars, and
         // only those two may depart from the figure. Bar four sits between them and never moves —
         // a change there would be the part losing its place, not a player finishing a thought.
+        // Syncopation pinned for the same reason as the figure-constancy test above: a pushing
+        // section moves strikes across bar lines, and this test reads bars back step for step.
         let mut departed = 0;
         for seed in 1..=8u64 {
             let (_, frame, parts) = draft(&format!(
@@ -436,6 +588,7 @@ mod tests {
                     chords = "@axis"
                     humanize = 0
                     variation = 0
+                    syncopation = 0
                     seed = {seed}
                     [section.verse]
                     bars = 6

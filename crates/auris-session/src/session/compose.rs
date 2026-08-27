@@ -1060,8 +1060,12 @@ mod tests {
             )
             .unwrap();
         let ceiling = auris_core::param::db_to_gain(MASTER_CEILING_DB);
+        // With a hair of tolerance, because equality is the *constructed* outcome: the fader is
+        // raised until the measured peak sits exactly on the ceiling, and the render reaches
+        // that peak through a different order of float operations than the measurement did — so
+        // the last bit is rounding, not overshoot. A real overshoot is decibels, not this.
         assert!(
-            rendered.peak() <= ceiling,
+            rendered.peak() <= ceiling * (1.0 + 1e-5),
             "the composed piece peaks at {} through a ceiling of {ceiling}",
             rendered.peak()
         );

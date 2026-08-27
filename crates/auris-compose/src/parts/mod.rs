@@ -759,8 +759,13 @@ mod tests {
                 let in_chord = section
                     .chord_at(note.start - section.start)
                     .is_some_and(|event| event.chord.contains(class));
+                // A pushed chord is struck before its own start and judged by the chord it
+                // anticipates, which is the one sounding where the note *ends*.
+                let anticipates = section
+                    .chord_at(note.start + note.length - section.start - Ticks(1))
+                    .is_some_and(|event| event.chord.contains(class));
                 assert!(
-                    in_scale || in_chord,
+                    in_scale || in_chord || anticipates,
                     "`{}` played {class} which is in neither the scale nor the chord",
                     draft.name
                 );
@@ -896,6 +901,15 @@ mod tests {
                     if event.chord.contains(class) {
                         continue;
                     }
+                    // A pushed chord belongs to the change it anticipates, not to the chord it
+                    // is struck over — judging it against the outgoing chord would flag the very
+                    // note the anticipation exists to place.
+                    if section
+                        .chord_at(note.start + note.length - section.start - Ticks(1))
+                        .is_some_and(|arriving| arriving.chord.contains(class))
+                    {
+                        continue;
+                    }
                     for tone in event.chord.classes() {
                         // Only a chord tone the key does not have: a semitone between two notes
                         // the key itself offers is ordinary tension and stays.
@@ -945,8 +959,14 @@ mod tests {
                     let class = PitchClass::new(i32::from(note.pitch));
                     let chord = section.chord_at(note.start - section.start);
                     let in_chord = chord.is_some_and(|event| event.chord.contains(class));
+                    // A pushed chord anticipates the one sounding where the note ends.
+                    let anticipates = section
+                        .chord_at(note.start + note.length - section.start - Ticks(1))
+                        .is_some_and(|event| event.chord.contains(class));
                     assert!(
-                        section.key.scale.contains(section.key.tonic, class) || in_chord,
+                        section.key.scale.contains(section.key.tonic, class)
+                            || in_chord
+                            || anticipates,
                         "`{}` played {class} over {} in `{chart}`",
                         part_draft.name,
                         chord.map(|e| e.chord.to_string()).unwrap_or_default()
