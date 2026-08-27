@@ -388,6 +388,10 @@ impl AurisApp {
                     let enabled = item.enabled;
                     div()
                         .id(("menu-item", index))
+                        // By position rather than by label: a row is named in whatever language
+                        // the interface is in, and a test that found a row by its words would be
+                        // a test of the translations. See `crate::harness::choose`.
+                        .debug_selector(move || format!("menu-item-{index}"))
                         .flex()
                         .flex_shrink_0()
                         .items_center()

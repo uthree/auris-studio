@@ -41,6 +41,18 @@ const DYNAMICS: [(&str, u8); 6] = [
     ("ff", 120),
 ];
 
+/// Whether a clip running from `start` to `end` can be cut at `playhead`.
+///
+/// Strictly inside, both ends: a cut on either edge makes an empty clip and leaves the other
+/// exactly as it was, which is a command that appears to do nothing.
+///
+/// Free-standing because the window cannot check it. A headless session's playhead is an atomic
+/// the *audio thread* writes and there is no audio thread, so a seek is invisible to a test that
+/// drives the window — see [`crate::harness`]. The rule is worth more than the line it takes.
+pub fn splittable(playhead: Ticks, start: Ticks, end: Ticks) -> bool {
+    playhead > start && playhead < end
+}
+
 impl AurisApp {
     /// The menu for a clip in the arrangement.
     pub(crate) fn clip_menu(&self, anchor: Point<Pixels>, clip: ClipId) -> ContextMenu {
@@ -56,7 +68,7 @@ impl AurisApp {
         let playhead = self.playhead_ticks();
         let splittable = self
             .clip_extent(clip)
-            .is_some_and(|(start, end)| playhead > start && playhead < end);
+            .is_some_and(|(start, end)| splittable(playhead, start, end));
         let is_midi = self.session.midi_clip(clip).is_some();
 
         let menu = ContextMenu::new(anchor, name)
@@ -409,5 +421,208 @@ impl AurisApp {
                 .iter()
                 .find(|candidate| candidate.id == clip)
         })
+    }
+}
+
+/// What a right-press over the clip lanes opens, and what choosing a row then does.
+///
+/// The menu is built from the document, so which rows exist is a question about the clip under
+/// the pointer — and a row that quietly stops being offered is invisible until somebody goes
+/// What a right-press over the clip lanes opens, and what choosing a row then does.
+///
+/// The menu is built from the document, so which rows it *offers* — as against which it shows
+/// greyed — is a question about the clip under the pointer. A row that quietly stops being
+/// offered, or starts being, is invisible until somebody goes looking for it.
+#[cfg(test)]
+mod window_tests {
+    use gpui::TestAppContext;
+
+    use auris_session::prelude::*;
+
+    use crate::harness::{CLIP_LENGTH, choose, lane_point, paint, right_press, with_a_clip};
+    use crate::ui::context_menu::{MenuCommand, MenuEntry};
+
+    /// Halfway along the fixture's clip.
+    const HALF_CLIP: Ticks = Ticks(CLIP_LENGTH.0 / 2);
+
+    /// Every row of the open menu, with whether it can be chosen.
+    ///
+    /// Both halves, because `ContextMenu::item_if` greys a row rather than leaving it out: a
+    /// command's *presence* says nothing about whether the menu is offering it.
+    fn rows(
+        app: &gpui::Entity<crate::app::AurisApp>,
+        cx: &gpui::TestAppContext,
+    ) -> Vec<(MenuCommand, bool)> {
+        app.read_with(cx, |this, _| {
+            this.menu
+                .as_ref()
+                .expect("a menu is open")
+                .entries
+                .iter()
+                .filter_map(|entry| match entry {
+                    MenuEntry::Item(item) => Some((item.command.clone(), item.enabled)),
+                    MenuEntry::Separator => None,
+                })
+                .collect()
+        })
+    }
+
+    /// Whether the open menu is offering `command` — present *and* choosable.
+    fn offers(
+        app: &gpui::Entity<crate::app::AurisApp>,
+        cx: &gpui::TestAppContext,
+        command: &MenuCommand,
+    ) -> bool {
+        rows(app, cx)
+            .into_iter()
+            .any(|(row, enabled)| &row == command && enabled)
+    }
+
+    #[gpui::test]
+    fn a_right_press_on_a_clip_opens_that_clips_menu(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        let at = lane_point(&app, cx, track, HALF_CLIP);
+
+        right_press(cx, at);
+
+        assert!(offers(&app, cx, &MenuCommand::DeleteClip(clip)));
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.selected_clip,
+                Some(clip),
+                "the menu is titled after a clip it has also selected"
+            );
+        });
+    }
+
+    /// Empty lane is a different menu, and getting this wrong offers commands about a clip that
+    /// is not there.
+    #[gpui::test]
+    fn a_right_press_on_empty_lane_offers_nothing_about_a_clip(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        let at = lane_point(&app, cx, track, CLIP_LENGTH * 3);
+
+        right_press(cx, at);
+
+        let rows = rows(&app, cx);
+        assert!(
+            !rows
+                .iter()
+                .any(|(row, _)| *row == MenuCommand::DeleteClip(clip)),
+            "the lane's menu does not act on a clip elsewhere on it: {rows:?}"
+        );
+    }
+
+    /// A MIDI clip has no gain, no fades and no source tempo, and its menu must not offer them.
+    ///
+    /// Seven rows, which is the case for checking it at all: each one is a separate `is_midi`
+    /// somebody could get the sense of backwards, and the only sign of that would be a row that
+    /// refuses when it is chosen.
+    #[gpui::test]
+    fn a_midi_clips_menu_offers_nothing_that_belongs_to_audio(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        let at = lane_point(&app, cx, track, HALF_CLIP);
+
+        right_press(cx, at);
+
+        for command in [
+            MenuCommand::ClipGain(clip),
+            MenuCommand::Crossfade(clip),
+            MenuCommand::ClearFades(clip),
+            MenuCommand::ClipSourceTempo(clip),
+        ] {
+            assert!(
+                !offers(&app, cx, &command),
+                "{command:?} is not something a MIDI clip can do"
+            );
+        }
+        // And the one that only a MIDI clip can do is offered.
+        assert!(offers(&app, cx, &MenuCommand::EditClip(clip)));
+    }
+
+    /// A cut on the clip's own edge would make an empty clip and leave the other exactly as it
+    /// was, so the row is shown but cannot be chosen.
+    ///
+    /// Only this direction: the playhead a headless session reads is an atomic the audio thread
+    /// writes, so a seek is invisible here and there is no way to put it *inside* the clip. The
+    /// other direction is [`super::splittable`]'s own test.
+    #[gpui::test]
+    fn split_cannot_be_chosen_with_the_playhead_on_the_clips_edge(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        let at = lane_point(&app, cx, track, HALF_CLIP);
+
+        right_press(cx, at);
+
+        assert!(
+            !offers(&app, cx, &MenuCommand::SplitClipAtPlayhead(clip)),
+            "the playhead is at zero, which is the clip's own start"
+        );
+    }
+
+    /// Choosing a row does what the row says, through the click rather than around it.
+    #[gpui::test]
+    fn choosing_delete_removes_the_clip(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        let at = lane_point(&app, cx, track, HALF_CLIP);
+        right_press(cx, at);
+        paint(&app, cx);
+
+        choose(&app, cx, &MenuCommand::DeleteClip(clip));
+
+        app.read_with(cx, |this, _| {
+            assert!(this.session.midi_clip(clip).is_none(), "the clip is gone");
+            assert!(this.menu.is_none(), "and the menu closed behind it");
+        });
+    }
+
+    /// A toggle row reports the state it would change, so the tick beside it is not a guess.
+    #[gpui::test]
+    fn choosing_mute_mutes_the_clip_and_the_row_says_so_next_time(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        let at = lane_point(&app, cx, track, HALF_CLIP);
+        right_press(cx, at);
+        paint(&app, cx);
+
+        choose(&app, cx, &MenuCommand::ToggleClipMute(clip));
+        paint(&app, cx);
+
+        right_press(cx, at);
+        let ticked = app.read_with(cx, |this, _| {
+            this.menu
+                .as_ref()
+                .expect("a menu is open")
+                .entries
+                .iter()
+                .any(|entry| match entry {
+                    MenuEntry::Item(item) => {
+                        item.command == MenuCommand::ToggleClipMute(clip) && item.checked
+                    }
+                    MenuEntry::Separator => false,
+                })
+        });
+        assert!(ticked, "the row it was chosen from now reads as on");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_clip_is_splittable_only_strictly_inside_itself() {
+        let (start, end) = (Ticks(960), Ticks(3840));
+        assert!(splittable(Ticks(1920), start, end), "in the middle");
+        // Both edges. A cut here makes an empty clip and leaves the other one whole, which is a
+        // menu row that appears to do nothing.
+        assert!(!splittable(start, start, end));
+        assert!(!splittable(end, start, end));
+        assert!(!splittable(Ticks(0), start, end), "before it");
+        assert!(!splittable(Ticks(9_000), start, end), "after it");
+    }
+
+    #[test]
+    fn a_clip_with_no_length_can_never_be_split() {
+        let at = Ticks(960);
+        assert!(!splittable(at, at, at));
     }
 }

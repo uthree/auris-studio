@@ -169,6 +169,49 @@ pub(crate) fn release(cx: &mut VisualTestContext, at: Point<Pixels>) {
     cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::none());
 }
 
+/// Presses the right button at `at`, which is how every surface opens its menu.
+pub(crate) fn right_press(cx: &mut VisualTestContext, at: Point<Pixels>) {
+    cx.simulate_mouse_down(at, MouseButton::Right, Modifiers::none());
+}
+
+/// Clicks the row of the open context menu that carries `command`.
+///
+/// Found by command rather than by its words: a row is labelled in whatever language the
+/// interface is in, and a test that matched on the label would be a test of the translations.
+/// Panics when no row carries it, and says which rows were there instead — a command that has
+/// quietly stopped being offered is the thing most worth being told about.
+pub(crate) fn choose(
+    app: &Entity<AurisApp>,
+    cx: &mut VisualTestContext,
+    command: &crate::ui::context_menu::MenuCommand,
+) {
+    let index = app.read_with(cx, |this, _| {
+        let menu = this.menu.as_ref().expect("a menu is open");
+        menu.entries
+            .iter()
+            .enumerate()
+            .find_map(|(index, entry)| match entry {
+                crate::ui::context_menu::MenuEntry::Item(item) if &item.command == command => {
+                    Some(index)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "no row for {command:?} in a menu holding {:?}",
+                    menu.entries
+                )
+            })
+    });
+    // Leaked because `debug_bounds` keys on a `&'static str` and a row's name is only known once
+    // the menu has been read. A handful of bytes per menu row a test clicks, in a test binary.
+    let selector: &'static str = Box::leak(format!("menu-item-{index}").into_boxed_str());
+    let bounds = cx
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("row {index} of the open menu was not drawn"));
+    cx.simulate_click(bounds.center(), Modifiers::none());
+}
+
 /// The window point that lands on `track`'s clip lane at `tick`.
 ///
 /// Read out of the view rather than worked out here: the arrangement scrolls in both directions
