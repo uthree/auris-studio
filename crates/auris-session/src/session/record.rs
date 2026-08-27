@@ -853,6 +853,20 @@ impl Session {
         count_in: u64,
         project_rate: f64,
     ) -> Result<TakeReport, SessionError> {
+        // The track can be deleted while the take is still rolling: the arm went with it, but an
+        // arm only guards the *next* take, and this one had already started. That is this file's
+        // problem and nobody else's — an error here would revert the whole transaction and take
+        // every other track's clip down with it. The file stays, as it does in every other
+        // nothing-kept case: it is what was played.
+        if self.project.track(file.track).is_none() {
+            return Ok(TakeReport {
+                track: file.track,
+                clip: None,
+                path: Some(file.path.clone()),
+                seconds: 0.0,
+                outside_punch: false,
+            });
+        }
         // Read back through the importer rather than kept from the pool: the engine renders every
         // source at the project's rate, and a device that could not give us that rate has just
         // written a file at its own.
@@ -1406,6 +1420,50 @@ mod tests {
         session.remove_track(kick).unwrap();
         assert_eq!(session.armed_tracks().len(), 1);
         assert_eq!(session.armed_tracks()[0].track, snare);
+    }
+
+    #[test]
+    fn a_track_deleted_mid_take_does_not_take_the_others_down() {
+        // The arm goes with a deleted track, but an arm only guards the next take: one already
+        // rolling keeps recording for it, and its file reaches `land_take` naming a track that no
+        // longer exists. Erring there reverted the whole transaction — the surviving tracks'
+        // clips included. The files are written by hand because a headless session has no input
+        // device to roll a real take through.
+        use crate::session::fixtures::{Scratch, write_tone};
+
+        let scratch = Scratch::new("mid-take-delete");
+        let mut session = session();
+        session.save_as(&scratch.join("Takes.auris")).unwrap();
+        let kick = session.add_audio_track("Kick");
+        let snare = session.add_audio_track("Snare");
+
+        let audio = scratch.join("Takes").join(auris_io::AUDIO_DIR);
+        std::fs::create_dir_all(&audio).unwrap();
+        let files = [("Kick 1.wav", kick), ("Snare 1.wav", snare)].map(|(name, track)| TakeFile {
+            path: write_tone(&audio.join(name), 480),
+            inside: std::path::Path::new(auris_io::AUDIO_DIR).join(name),
+            track,
+        });
+
+        session.remove_track(kick).unwrap();
+
+        session.begin_transaction(Edit::RecordTake);
+        let landed = files
+            .iter()
+            .map(|file| session.land_take(file, 0, 0, 48_000.0).unwrap())
+            .collect::<Vec<_>>();
+        session.end_transaction();
+
+        assert_eq!(landed[0].clip, None, "no track for the kick to land on");
+        assert!(
+            files[0].path.exists(),
+            "the kick's file stays: it is what was played"
+        );
+        let clip = landed[1].clip.expect("the snare still lands its clip");
+        assert!(
+            session.project().audio_clip(clip).is_some(),
+            "and the clip is really in the document"
+        );
     }
 
     #[test]
