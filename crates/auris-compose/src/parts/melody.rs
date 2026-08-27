@@ -17,7 +17,9 @@ use crate::spec::PartSpec;
 use crate::theory::chord_scale::ChordScale;
 use crate::theory::pitch::{OCTAVE, PitchClass, fold_into};
 
-use super::writer::{bar_onsets, bar_stream, density, dynamic, part_grid, phrase_shape, velocity};
+use super::writer::{
+    bar_onsets, bar_stream, closes_phrase, density, dynamic, part_grid, phrase_shape, velocity,
+};
 use super::{Draft, ScoreSettings};
 
 /// Fewest notes a generated figure is allowed to have.
@@ -308,8 +310,9 @@ pub(super) fn melody(
     for bar in 0..section.bars {
         let mut rng = bar_stream(settings, frame, part, section, "melody", bar);
         // Four bars is the phrase almost everything is built in: state the figure, restate it,
-        // and then answer it. The fourth bar is where a tune stops repeating and goes somewhere.
-        let closing = bar % 4 == 3;
+        // and then answer it. The fourth bar is where a tune stops repeating and goes somewhere
+        // — and so is the section's own last bar, whatever number it carries.
+        let closing = closes_phrase(bar, section.bars);
         let cells = if closing || rng.chance(0.15) {
             vary_motif(&figure, &mut rng)
         } else {
@@ -598,6 +601,55 @@ mod tests {
             "the longest rest in eight bars is {} ticks, under one beat of {}",
             longest_rest.raw(),
             beat.raw()
+        );
+    }
+
+    #[test]
+    fn a_section_of_any_length_ends_its_phrase() {
+        // `closes_phrase`: the section's own last bar closes, whatever number it carries. A
+        // six-bar verse used to run its figure straight over its own edge — no cadence and no
+        // breath, because only `bar % 4 == 3` closed — so the melody's last note could be a
+        // passing tone hanging over the bar line into the next section.
+        let mut breathed = 0;
+        for seed in 1..=8u64 {
+            let (_, frame, parts) = draft(&format!(
+                r#"
+                    form = "verse"
+                    chords = "@axis"
+                    humanize = 0
+                    seed = {seed}
+                    [section.verse]
+                    bars = 6
+                    [[part]]
+                    name = "lead"
+                    "#
+            ));
+            let lead = part(&parts, "lead");
+            let section = &frame.sections[0];
+            let last = lead
+                .notes
+                .iter()
+                .max_by_key(|note| note.start.raw())
+                .expect("the lead played");
+            let event = section
+                .chord_at(last.start - section.start)
+                .expect("a chord under the last note");
+            assert!(
+                event.chord.contains_midi(i32::from(last.pitch)),
+                "seed {seed}: the phrase ended on {} which is not in {}",
+                last.pitch,
+                event.chord
+            );
+            let beat = frame.grid.signature.ticks_per_beat();
+            if last.start + last.length + beat <= section.length {
+                breathed += 1;
+            }
+        }
+        // The breath is `breath`'s business and a note that starts inside the last beat has no
+        // room for one, so it is most seeds rather than all of them.
+        assert!(
+            breathed >= 4,
+            "only {breathed} of 8 seeds let the section's last phrase go"
         );
     }
 

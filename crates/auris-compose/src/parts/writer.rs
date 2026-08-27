@@ -125,6 +125,23 @@ pub(super) fn phrase_shape(grid: Grid, section: &SectionPlan, at: Ticks, dynamic
     dynamic(0.88 + 0.10 * within + 0.08 * through, dynamics)
 }
 
+/// Whether this bar is one a phrase turns over in.
+///
+/// The fourth bar of every four is where a tune stops repeating and goes somewhere — state the
+/// figure, restate it, answer it — and the section's own last bar is the other place, whatever
+/// number it happens to carry. Four-bar and eight-bar sections already had the two coincide, so
+/// the second half of the rule only shows in a section whose bars are not a multiple of four:
+/// a six-bar verse used to run its figure straight over its own edge, so the phrase never ended,
+/// it was interrupted — no breath, no cadence, and the melody's last note could be a passing
+/// tone hanging over the bar line into the next section.
+///
+/// A free function of the two numbers rather than a check written twice, because the melody's
+/// cadence and the comp's turnaround must agree about where a phrase ends or the band answers
+/// two different questions at once.
+pub(super) fn closes_phrase(bar: usize, bars: usize) -> bool {
+    bar % 4 == 3 || bar + 1 == bars
+}
+
 /// The stream one bar of one pass draws its material from.
 ///
 /// Keyed by the section's *name* and not by which playing of it this is, so the second chorus
@@ -213,6 +230,25 @@ pub(super) fn bar_onsets(
 mod tests {
     use crate::parts::PartDraft;
     use crate::parts::fixture::{draft, part, roster, section_notes};
+
+    #[test]
+    fn a_phrase_closes_on_the_fourth_bar_and_on_the_sections_own_last() {
+        // The two places a phrase turns over. They coincide in the four- and eight-bar sections
+        // almost everything is, which is why the second half of the rule went unnoticed: a
+        // six-bar section used to run its figure straight over its own edge.
+        assert!(super::closes_phrase(3, 8));
+        assert!(super::closes_phrase(7, 8));
+        assert!(!super::closes_phrase(4, 8));
+        assert!(
+            super::closes_phrase(5, 6),
+            "a six-bar section closes at its own edge"
+        );
+        assert!(!super::closes_phrase(4, 6));
+        assert!(
+            super::closes_phrase(0, 1),
+            "a one-bar section is its own phrase"
+        );
+    }
 
     #[test]
     fn a_section_leans_as_it_goes() {

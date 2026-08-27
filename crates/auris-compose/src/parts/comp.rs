@@ -13,7 +13,9 @@ use crate::rng::{Key as RngKey, Rng};
 use crate::spec::{PartSpec, Role};
 use crate::theory::pitch::{OCTAVE, fold_into};
 
-use super::writer::{bar_onsets, bar_stream, density, part_grid, phrase_shape, velocity};
+use super::writer::{
+    bar_onsets, bar_stream, closes_phrase, density, part_grid, phrase_shape, velocity,
+};
 use super::{Draft, ScoreSettings};
 
 /// How a chord is struck through a bar.
@@ -220,10 +222,11 @@ pub(super) fn comp(
         // that could not do anything.
         let bar = grid.step_of(event.start) / grid.steps_per_bar().max(1);
         // Four bars is the phrase almost everything is built in, and the fourth is where one
-        // turns over. It is the only bar allowed to depart, and only sometimes: anywhere else a
-        // change reads as the part losing its place rather than as a player finishing a thought.
+        // turns over — the section's own last bar too, whatever number it carries. Those are the
+        // only bars allowed to depart, and only sometimes: anywhere else a change reads as the
+        // part losing its place rather than as a player finishing a thought.
         // `variation` reaches this through `bar_stream`, so a repeat can turn around differently.
-        let figure = if pad || written || bar % 4 != 3 {
+        let figure = if pad || written || !closes_phrase(bar, section.bars) {
             chosen_figure
         } else {
             let mut rng = bar_stream(settings, frame, part, section, "comp", bar);
@@ -417,6 +420,46 @@ mod tests {
         assert!(
             steady > 0,
             "every closing bar in sixteen phrases departed from its figure"
+        );
+    }
+
+    #[test]
+    fn a_comp_may_turn_over_in_the_sections_own_last_bar() {
+        // Six bars: the fourth bar of the phrase and the section's last are different bars, and
+        // only those two may depart from the figure. Bar four sits between them and never moves —
+        // a change there would be the part losing its place, not a player finishing a thought.
+        let mut departed = 0;
+        for seed in 1..=8u64 {
+            let (_, frame, parts) = draft(&format!(
+                r#"
+                    form = "verse"
+                    chords = "@axis"
+                    humanize = 0
+                    variation = 0
+                    seed = {seed}
+                    [section.verse]
+                    bars = 6
+                    [[part]]
+                    name = "chords"
+                    density = 0.8
+                    "#
+            ));
+            let chords = part(&parts, "chords");
+            let first = bar_steps(&frame, chords, 0);
+            for bar in [1, 2, 4] {
+                assert_eq!(
+                    bar_steps(&frame, chords, bar),
+                    first,
+                    "seed {seed} changed figure at bar {bar}, which closes nothing"
+                );
+            }
+            if bar_steps(&frame, chords, 5) != first {
+                departed += 1;
+            }
+        }
+        assert!(
+            departed > 0,
+            "no seed in eight turned over in the section's own last bar"
         );
     }
 
