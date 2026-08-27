@@ -344,8 +344,11 @@ fn next_seed(project: &Project) -> u64 {
     project
         .tracks
         .iter()
-        .filter_map(|track| track.kind.as_instrument())
-        .flat_map(|track| &track.clips)
+        // Every note clip, not only the instrument tracks': a generated clip dragged onto a
+        // singer track keeps its recipe — clips move freely between the two kinds — and a seed
+        // that walked out of the survey came back as somebody else's "new" phrase.
+        .filter_map(|track| track.kind.note_clips())
+        .flatten()
         .filter_map(|clip| clip.recipe.as_ref())
         .map(|recipe| recipe.seed)
         .max()
@@ -439,6 +442,13 @@ mod tests {
             .unwrap();
         assert!(project.midi_clip(played).unwrap().1.recipe.is_none());
         assert_eq!(next_seed(&project), 42);
+
+        // A generated clip dragged onto a singer track keeps its recipe, and its seed stays
+        // in the survey: counted only on instrument tracks, seed 41 would be handed out again
+        // and the "new" phrase would be the moved one, note for note.
+        let singer = project.add_singer_track("Voice", "auris.synth.vocal");
+        assert!(project.move_clip_to_track(clip, singer));
+        assert_eq!(next_seed(&project), 42, "the moved seed still counts");
     }
 
     #[test]
