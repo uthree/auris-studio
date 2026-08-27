@@ -133,12 +133,57 @@ pub(super) fn drums(
     notes
 }
 
+/// The shape a fill runs in.
+///
+/// One shape — every free sixteenth, rising — was every fill in every piece, so the one moment a
+/// listener is certain to notice sounded the same at every join of everything the composer wrote.
+/// These are the shapes a drummer actually reaches for, all on the snare's own note so a custom
+/// kit is never sent pitches it did not map; which one plays is drawn from the section's stream,
+/// so a repeat of a section fills the way it filled before and the `variation` dial can differ.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum FillShape {
+    /// Every free step, rising: the classic run up to the downbeat.
+    Run,
+    /// Three against the window's four, the way `CompFigure::Cross` puts them: a fill that
+    /// breathes instead of rattling.
+    Tresillo,
+    /// Every half-beat: a heavier, slower fill, the run's big brother.
+    Eighths,
+    /// Nothing, then everything: the window's first half stays with the groove and its second
+    /// is struck solid.
+    Burst,
+}
+
+/// The steps a fill strikes, before the groove's own hits are taken back out.
+///
+/// A free function of the window so each shape is a fact that can be checked: `from..steps` is
+/// the window the dial bought, `per_beat` the bar's own beat. Every shape scales with the
+/// window, which is what keeps a longer dial a longer fill whichever shape was drawn.
+fn fill_steps(shape: FillShape, from: usize, steps: usize, per_beat: usize) -> Vec<usize> {
+    let window = steps.saturating_sub(from);
+    match shape {
+        FillShape::Run => (from..steps).collect(),
+        FillShape::Tresillo => {
+            let hits = (window * 3).div_ceil(8).max(2).min(window);
+            let pattern = crate::rhythm::euclid(hits, window, 0);
+            (from..steps)
+                .filter(|step| pattern.at(step - from).is_some())
+                .collect()
+        }
+        FillShape::Eighths => (from..steps)
+            .filter(|step| (step - from).is_multiple_of((per_beat / 2).max(1)))
+            .collect(),
+        FillShape::Burst => (from + window / 2..steps).collect(),
+    }
+}
+
 /// Runs the snare into whatever follows the section.
 ///
 /// A section that simply stops and is replaced sounds like an edit rather than like an arrival:
 /// the join is the one moment a listener is certain to notice, and nothing marked it. Only the
 /// last bar of a section gets one, and only the snare plays it — the other voices keep the groove
-/// underneath so the fill has something to be a departure from.
+/// underneath so the fill has something to be a departure from. Which [`FillShape`] it runs in
+/// is the section's own draw.
 ///
 /// A part with a written rhythm is left alone, on the same principle as thinning: an instruction
 /// is not a suggestion.
@@ -175,7 +220,18 @@ fn fill(
     let from = steps.saturating_sub(beats * per_beat).max(1);
     let bar_start = grid.bar_ticks() * bar as i64;
 
-    for step in from..steps {
+    // Drawn from the section's own stream, like every other choice a bar makes: a repeat of the
+    // section fills the way it filled the first time, and `variation` can buy a departure back.
+    const SHAPES: [FillShape; 4] = [
+        FillShape::Run,
+        FillShape::Tresillo,
+        FillShape::Eighths,
+        FillShape::Burst,
+    ];
+    let mut choose = bar_stream(settings, frame, part, section, "fill", bar);
+    let shape = SHAPES[choose.weighted(&[1.4, 1.0, 0.9, 0.8]).min(SHAPES.len() - 1)];
+
+    for step in fill_steps(shape, from, steps, per_beat) {
         if played.get(step).copied().unwrap_or(false) {
             continue;
         }
@@ -199,7 +255,90 @@ fn fill(
 
 #[cfg(test)]
 mod tests {
+    use super::{FillShape, fill_steps};
     use crate::parts::fixture::{BASE, draft, part, section_notes};
+
+    #[test]
+    fn every_fill_shape_scales_with_its_window_and_stays_inside_it() {
+        // A two-beat window of a sixteen-step bar, which is what the dial at 1.0 buys.
+        assert_eq!(
+            fill_steps(FillShape::Run, 8, 16, 4),
+            vec![8, 9, 10, 11, 12, 13, 14, 15]
+        );
+        assert_eq!(
+            fill_steps(FillShape::Eighths, 8, 16, 4),
+            vec![8, 10, 12, 14]
+        );
+        assert_eq!(
+            fill_steps(FillShape::Burst, 8, 16, 4),
+            vec![12, 13, 14, 15],
+            "nothing, then everything"
+        );
+        assert_eq!(
+            fill_steps(FillShape::Tresillo, 8, 16, 4),
+            vec![8, 11, 14],
+            "three against the window's four"
+        );
+
+        // Every shape scales with the window — a longer dial is a longer fill whichever shape
+        // was drawn, which is what `a_drum_clip_ends_on_a_fill_and_the_dial_says_how_long`
+        // holds for the finished kit — and never reaches outside it.
+        for shape in [
+            FillShape::Run,
+            FillShape::Tresillo,
+            FillShape::Eighths,
+            FillShape::Burst,
+        ] {
+            let long = fill_steps(shape, 8, 16, 4);
+            let short = fill_steps(shape, 12, 16, 4);
+            assert!(short.len() < long.len(), "{shape:?} did not scale");
+            assert!(!short.is_empty(), "{shape:?} vanished at one beat");
+            assert!(
+                short.iter().all(|step| (12..16).contains(step)),
+                "{shape:?} reached outside its window"
+            );
+        }
+    }
+
+    #[test]
+    fn two_songs_do_not_always_fill_the_same_way() {
+        // The draw has to reach the music: one shape was every fill in every piece, so the one
+        // moment a listener is certain to notice sounded the same at every join the composer
+        // ever wrote. The fill window's struck steps now differ from seed to seed.
+        let mut windows = std::collections::BTreeSet::new();
+        for seed in 1..=8u64 {
+            let (_, frame, parts) = draft(&format!(
+                r#"
+                    form = "verse verse"
+                    chords = "@axis"
+                    humanize = 0
+                    variation = 0
+                    fill = 1.0
+                    seed = {seed}
+                    [section.verse]
+                    bars = 4
+                    intensity = 0.8
+                    "#
+            ));
+            let snare = part(&parts, "snare");
+            let plan = &frame.sections[0];
+            let bar = frame.grid.bar_ticks();
+            let last_bar = plan.start + plan.length - bar;
+            let mut struck: Vec<usize> = snare
+                .notes
+                .iter()
+                .filter(|note| note.section == 0 && note.start >= last_bar)
+                .map(|note| frame.grid.step_of(note.start - last_bar))
+                .filter(|step| *step >= 8)
+                .collect();
+            struck.sort_unstable();
+            windows.insert(struck);
+        }
+        assert!(
+            windows.len() > 1,
+            "eight seeds filled the same way: {windows:?}"
+        );
+    }
 
     #[test]
     fn drums_play_their_general_midi_pitches() {

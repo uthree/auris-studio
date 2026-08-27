@@ -1207,7 +1207,13 @@ mod tests {
     /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
     /// a bug or a decision, and this is what makes anyone look.
     ///
-    /// It last moved when the bass learned to walk: `BassFigure::Walk` joined the figure table,
+    /// It last moved when the fill grew a vocabulary: `parts::drums::FillShape` draws one of
+    /// four shapes per join where every fill used to be the rising run. The two multi-section
+    /// fixtures moved — their counts by the few snare hits a sparser shape leaves out — and the
+    /// two single-section ones did not, because a piece's last section runs no fill: which is
+    /// the scope of a change that touches nothing but the bar before a join.
+    ///
+    /// Before that it moved when the bass learned to walk: `BassFigure::Walk` joined the figure table,
     /// so every bar's figure draw sees five weights where it saw four and some bars land on a
     /// different line. The chords did not move — the walk plays the harmony, it does not choose
     /// it — and the counts drifted by a handful of notes where a bar that followed the kick now
@@ -1329,7 +1335,7 @@ mod tests {
             "intro·1 C major | C G Am F |\n\
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
-             629 notes, digest 323100e41deb7f5f\n"
+             625 notes, digest 7426d039ee286591\n"
         );
 
         // A transposed section, which is a key change on the timeline — and the one fixture here
@@ -1356,7 +1362,7 @@ mod tests {
             ),
             "verse·1 C major | Fmaj7 E7 Am7 Bb7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
-             208 notes, digest 1c71eb07335416b4\n"
+             206 notes, digest d4ff0416a6a7b4fb\n"
         );
     }
 
