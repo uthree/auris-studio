@@ -1207,7 +1207,15 @@ mod tests {
     /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
     /// a bug or a decision, and this is what makes anyone look.
     ///
-    /// It last moved when the melody stopped repeating notes nobody drew — the second pass of
+    /// It last moved when the bass learned to walk: `BassFigure::Walk` joined the figure table,
+    /// so every bar's figure draw sees five weights where it saw four and some bars land on a
+    /// different line. The chords did not move — the walk plays the harmony, it does not choose
+    /// it — and the counts drifted by a handful of notes where a bar that followed the kick now
+    /// walks quarter notes, or the other way round. The third fixture's count held at 629 while
+    /// its digest moved, which is the drift at its smallest: the same number of notes on
+    /// different pitches.
+    ///
+    /// Before that it moved when the melody stopped repeating notes nobody drew — the second pass of
     /// [`crate::melodic`]: the join is chosen against the chord-snapped landing and ranks a
     /// repeat below anything within a fourth, and `unstick` undoes the repeat the range clamp
     /// made by folding two degrees onto one pitch. All four digests moved and not one chord or
@@ -1267,7 +1275,7 @@ mod tests {
                     "#
             ),
             "verse·1 C major | Cmaj7 Gm7 Am Fmaj7 Cmaj7 G7 Am9 F |\n\
-             164 notes, digest d82acca6f5ed6861\n"
+             162 notes, digest c2961e69ccdfd5b2\n"
         );
 
         // The same in a minor key, and the fixture that moved furthest when colouring stopped
@@ -1308,7 +1316,7 @@ mod tests {
                     "#
             ),
             "verse·1 A minor | Am7 E9 Fmaj7 Dm Am7 Em7 Gbm7 Dm7 |\n\
-             239 notes, digest 5c91af9672f854d2\n"
+             236 notes, digest 2bc93c6746af7d16\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats — and the one fixture
@@ -1321,7 +1329,7 @@ mod tests {
             "intro·1 C major | C G Am F |\n\
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
-             629 notes, digest e3923998253d0335\n"
+             629 notes, digest 323100e41deb7f5f\n"
         );
 
         // A transposed section, which is a key change on the timeline — and the one fixture here
@@ -1348,7 +1356,7 @@ mod tests {
             ),
             "verse·1 C major | Fmaj7 E7 Am7 Bb7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
-             204 notes, digest e97389a2007533d2\n"
+             208 notes, digest 1c71eb07335416b4\n"
         );
     }
 

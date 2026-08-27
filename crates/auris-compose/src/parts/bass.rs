@@ -11,6 +11,7 @@ use auris_core::time::Ticks;
 use crate::frame::{Frame, SectionPlan};
 use crate::rhythm::DrumVoice;
 use crate::spec::PartSpec;
+use crate::theory::chord::Chord;
 use crate::theory::chord_scale::ChordScale;
 use crate::theory::pitch::{OCTAVE, PitchClass, fold_into};
 
@@ -54,6 +55,110 @@ enum BassFigure {
     Octave,
     /// Root and fifth, stepping into the next chord on the last hit before it.
     Approach,
+    /// A quarter-note line that reads the chord upward and steps into the next one: the walking
+    /// bass. The one figure that does not follow the kick — the walk *is* the timekeeping, which
+    /// is the whole reason a trio can play without one.
+    Walk,
+}
+
+/// The pitches of a walking line: `count` beats over one chord, from its root toward the next.
+///
+/// A walking bass is a line rather than a series of answers, so it is built whole: beat one
+/// states the root, the middle beats read the chord — third then fifth heading up to a chord
+/// above, fifth then third heading down to one below, round again where there are beats left —
+/// each placed in the octave nearest the note before it, and the last beat steps to one scale
+/// note beside the next chord's root. What comes out is the root–third–fifth–approach of every
+/// method book one way, and G–F–D–B into C the other, which is the same idea upside down.
+///
+/// With nowhere to go — the last chord of a piece — the last beat reads the chord like the
+/// middle ones, because an approach into nothing is a question nobody answers.
+fn walk_line(
+    chord: &Chord,
+    scale: &ChordScale,
+    root: i32,
+    target: Option<i32>,
+    count: usize,
+    low: i32,
+    high: i32,
+) -> Vec<i32> {
+    let classes = chord.classes();
+    let direction = target.map_or(1, |next| if next >= root { 1 } else { -1 });
+    let mut line = Vec::with_capacity(count);
+    let mut previous = root;
+    for position in 0..count {
+        let pitch = if position == 0 {
+            root
+        } else if position + 1 == count
+            && let Some(next) = target
+        {
+            approach(scale, previous, next, low, high)
+        } else {
+            let others = classes.len().saturating_sub(1).max(1);
+            let step = (position - 1) % others;
+            // Read toward where the line is going: third then fifth on the way up is fifth
+            // then third on the way down.
+            let index = if direction >= 0 {
+                1 + step
+            } else {
+                classes.len().saturating_sub(1 + step)
+            };
+            let class = classes.get(index).copied().unwrap_or(chord.root);
+            climbing(class, previous, direction, low, high)
+        };
+        previous = pitch;
+        line.push(pitch);
+    }
+    line
+}
+
+/// The octave of `class` nearest `previous`, inside the range. Ties break toward `direction`,
+/// which is the way the walking line is heading.
+fn climbing(class: PitchClass, previous: i32, direction: i32, low: i32, high: i32) -> i32 {
+    let mut best = fold_into(class.midi(2), low, high);
+    let mut nearest = i32::MAX;
+    for octave in 0..9 {
+        let pitch = class.midi(octave);
+        if pitch < low || pitch > high {
+            continue;
+        }
+        // Twice the distance, plus one against the line's direction: -d loses the tie to +d
+        // heading up, and wins it heading down, and nothing else changes.
+        let distance =
+            (pitch - previous).abs() * 2 + i32::from((pitch - previous).signum() != direction);
+        if distance < nearest {
+            nearest = distance;
+            best = pitch;
+        }
+    }
+    best
+}
+
+/// One scale note beside `target`, for the last beat of a walking line.
+///
+/// A walking line does not land on the next chord's root — the next chord does that — it stops
+/// one step beside it so that the change answers the line. The semitone wins where the scale
+/// offers one, which is what puts a leading note under an arriving tonic; at the same distance
+/// the side the line comes from wins; and the note the line is already standing on is taken only
+/// when nothing else fits, because an approach that does not move is not approaching.
+fn approach(scale: &ChordScale, previous: i32, target: i32, low: i32, high: i32) -> i32 {
+    let side = if previous > target { 1 } else { -1 };
+    let mut candidates = Vec::with_capacity(4);
+    for distance in 1..=2 {
+        for step in [side, -side] {
+            candidates.push(target + step * distance);
+        }
+    }
+    let mut fitting: Vec<i32> = candidates
+        .into_iter()
+        .filter(|pitch| (low..=high).contains(pitch) && scale.contains(PitchClass::new(*pitch)))
+        .collect();
+    if fitting.len() > 1 {
+        fitting.retain(|pitch| *pitch != previous);
+    }
+    fitting
+        .into_iter()
+        .min_by_key(|pitch| (pitch - target).abs())
+        .unwrap_or_else(|| fold_into(target, low, high))
 }
 
 /// The bass line.
@@ -110,16 +215,23 @@ pub(super) fn bass(
         let bar = grid.step_of(event.start) / grid.steps_per_bar().max(1);
         let busy = density(settings, part, section);
         let mut choose = bar_stream(settings, frame, part, section, "figure", bar);
-        const FIGURES: [BassFigure; 4] = [
+        const FIGURES: [BassFigure; 5] = [
             BassFigure::Root,
             BassFigure::Fifth,
             BassFigure::Approach,
             BassFigure::Octave,
+            BassFigure::Walk,
         ];
         // The same weighting the chords use: sparse reaches for the root alone, busy for the
-        // octave line that fills every beat.
+        // octave line that fills every beat and for the walk.
         let figure = FIGURES[choose
-            .weighted(&[0.2 + (1.0 - busy) * 2.0, 1.0, 0.2 + busy, 0.2 + busy * 1.6])
+            .weighted(&[
+                0.2 + (1.0 - busy) * 2.0,
+                1.0,
+                0.2 + busy,
+                0.2 + busy * 1.6,
+                0.1 + busy * 1.3,
+            ])
             .min(FIGURES.len() - 1)];
 
         // The figure decides how busy the line is as well as what it plays. Two lines that hit
@@ -146,6 +258,14 @@ pub(super) fn bass(
                                 .is_multiple_of(grid.steps_per_beat().max(1))
                     })
                     .collect(),
+                // Every beat and nothing else. The walk does not follow the kick because the
+                // walk is the timekeeping: quarter notes whatever the groove is doing, which is
+                // what the figure *is*.
+                BassFigure::Walk => (0..steps)
+                    .filter(|offset| {
+                        ((first + offset) % per_bar).is_multiple_of(grid.steps_per_beat().max(1))
+                    })
+                    .collect(),
             },
         };
         // Always sound the chord's start, so a change of chord is heard whatever the figure —
@@ -159,6 +279,14 @@ pub(super) fn bass(
             .events
             .get(position_in_section + 1)
             .map(|next| fold_into(next.chord.bass_class().midi(part.octave), low, high));
+
+        // The whole walk at once, because a walking bass is a line rather than a series of
+        // answers: each beat is chosen by where the last one was and where the next chord is,
+        // and neither is a question one onset can answer for itself.
+        let walk = (figure == BassFigure::Walk).then(|| {
+            let scale = ChordScale::new(event.key, event.chord);
+            walk_line(&event.chord, &scale, root, target, onsets.len(), low, high)
+        });
 
         let last = onsets.len().saturating_sub(1);
         for (position, offset) in onsets.iter().enumerate() {
@@ -210,6 +338,11 @@ pub(super) fn bass(
                         fifth
                     }
                 }
+                BassFigure::Walk => walk
+                    .as_ref()
+                    .and_then(|line| line.get(position))
+                    .copied()
+                    .unwrap_or(root),
             };
             notes.push(Draft {
                 section: index,
@@ -280,6 +413,95 @@ mod tests {
 
         // A window with no octave in it has no leap, and says so rather than pretending.
         assert_eq!(octave_leap(40, 36, 44), 40);
+    }
+
+    #[test]
+    fn the_walking_line_reads_the_chord_and_steps_into_the_next() {
+        use crate::theory::chord::Quality;
+        use crate::theory::key::Key;
+
+        let key = Key::parse("C major").unwrap();
+        let (low, high) = crate::spec::Role::Bass.range();
+
+        // Heading up: C to F is the method-book line — root, third, fifth, and the step below
+        // the arriving root. E twice is not a repeat: the notes are two beats apart.
+        let c = Chord::new(PitchClass::parse("C").unwrap(), Quality::Major);
+        let up = walk_line(&c, &ChordScale::new(key, c), 36, Some(41), 4, low, high);
+        assert_eq!(up, vec![36, 40, 43, 40]);
+
+        // Heading down: G7 to C reads the chord the other way — G, F, D — and arrives on the
+        // leading note, so the tonic lands a semitone above the line that prepared it.
+        let g7 = Chord::new(PitchClass::parse("G").unwrap(), Quality::Dominant7);
+        let down = walk_line(&g7, &ChordScale::new(key, g7), 43, Some(36), 4, low, high);
+        assert_eq!(down, vec![43, 41, 38, 35]);
+
+        // Every note of both belongs to the chord or the key, which is the crate's own rule.
+        for line in [&up, &down] {
+            for pitch in line {
+                let class = PitchClass::new(*pitch);
+                assert!(
+                    key.scale.contains(key.tonic, class) || c.contains(class) || g7.contains(class),
+                    "{pitch} is outside the harmony"
+                );
+            }
+        }
+
+        // Three beats is the same idea one note shorter, and the last chord of a piece has
+        // nothing to approach, so it reads the chord to the end instead.
+        assert_eq!(
+            walk_line(&c, &ChordScale::new(key, c), 36, Some(41), 3, low, high),
+            vec![36, 40, 43],
+            "root, third, and an approach that will not stand on the note it just played"
+        );
+        let nowhere = walk_line(&c, &ChordScale::new(key, c), 36, None, 4, low, high);
+        assert_eq!(
+            nowhere,
+            vec![36, 40, 43, 40],
+            "third again, not an approach"
+        );
+    }
+
+    #[test]
+    fn a_busy_bass_can_walk() {
+        // The figure has to be reachable: some bar of some seed walks quarter notes through
+        // the chord's third, which no other figure plays — the rest are root, fifth and octave.
+        let mut walked = false;
+        for seed in 1..=16u64 {
+            let (_, frame, parts) = draft(&format!(
+                r#"
+                    form = "verse"
+                    chords = "@axis"
+                    humanize = 0
+                    seed = {seed}
+                    [section.verse]
+                    bars = 4
+                    [[part]]
+                    name = "bass"
+                    density = 1.0
+                    "#
+            ));
+            let bass = part(&parts, "bass");
+            let section = &frame.sections[0];
+            for event in &section.events {
+                let third = event.chord.classes().get(1).copied();
+                let in_event: Vec<&Draft> = bass
+                    .notes
+                    .iter()
+                    .filter(|note| {
+                        note.start >= section.start + event.start
+                            && note.start < section.start + event.end()
+                    })
+                    .collect();
+                if third.is_some_and(|third| {
+                    in_event
+                        .iter()
+                        .any(|note| PitchClass::new(i32::from(note.pitch)) == third)
+                }) {
+                    walked = true;
+                }
+            }
+        }
+        assert!(walked, "no bar in sixteen seeds walked through a third");
     }
 
     #[test]
