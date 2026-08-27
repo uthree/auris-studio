@@ -13,7 +13,7 @@ use crate::app::{AurisApp, Drag, ExportOutcome, Pane};
 use crate::dock::{Dock, Panel, PanelLayout};
 use crate::gestures::past_drag_threshold;
 use crate::menu::MenuRow;
-use crate::theme::{Metrics, Theme};
+use crate::theme::Theme;
 use crate::ui::context_menu::MenuCommand;
 use crate::ui::drop::{drop_action, lanes_offset};
 use crate::ui::menu_bar;
