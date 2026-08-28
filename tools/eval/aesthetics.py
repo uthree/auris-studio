@@ -69,7 +69,10 @@ def run_cli(*args: str) -> str:
         ["cargo", "run", "-q", "-p", "auris-cli", "--", *args],
         cwd=REPO,
         capture_output=True,
-        text=True,
+        # The CLI speaks UTF-8 — preset descriptions carry Japanese — and Windows would
+        # otherwise decode its output with a legacy code page and fall over.
+        encoding="utf-8",
+        errors="replace",
     )
     if done.returncode != 0:
         sys.exit(f"auris {' '.join(args)} failed:\n{done.stderr}")

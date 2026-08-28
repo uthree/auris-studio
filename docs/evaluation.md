@@ -46,6 +46,24 @@ The intended workflow is the baseline diff shown above: score before, change one
 score after, and treat any movement — up or down — as a reason to listen to the renders it
 came from.
 
+## The black-box tuner
+
+```
+uv run tools/eval/tune.py --preset all --trials 18 --out tune-results.json
+```
+
+Optuna's TPE searches a preset's *continuous* dials — humanize, dynamics, fill, variation,
+the four mood numbers, tempo within ±6 %, and swing only where the preset already swings —
+against Content Enjoyment averaged over two fixed seeds. Key, groove, progression, form and
+roster never move: the search refines a genre, it does not escape one. The preset's own
+dials are always trial zero, and the number to trust is the **held-out validation** printed
+at the end: best-found versus current, on two seeds the search never saw. A candidate that
+wins in search and loses there has learned the seeds, not the music.
+
+The tool is a lead generator, not a judge. It does not edit `preset.rs`; adopting a winner
+means listening to the renders it leaves in its workdir first, then changing the preset by
+hand with the reason written down.
+
 ## What the numbers are for
 
 They are a regression detector and a coarse sieve, not a target. Two findings from the
