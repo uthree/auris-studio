@@ -155,8 +155,12 @@ impl AurisApp {
         let theme = self.theme.clone();
         // The selected clip's recipe, when it has one, above the track that plays it. That order
         // is the order of the sentence it makes: this part, on this instrument, through these
-        // effects. It is also what was just clicked, and so what the eye is already on.
+        // effects. It is also what was just clicked, and so what the eye is already on. The
+        // performance dials follow the part's for the same sentence — played like this — and
+        // appear for every MIDI clip, because a phrase played by hand takes a swing exactly as
+        // a written one does.
         let mut sections: Vec<AnyElement> = self.part_rows(cx);
+        sections.extend(self.perform_rows(cx));
 
         let Some(track_id) = self.selected_track else {
             sections.push(

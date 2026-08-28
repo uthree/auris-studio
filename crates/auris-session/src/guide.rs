@@ -1341,6 +1341,27 @@ pub mod harmony {
     //! stored note is text that the instruments and effects perform. The left side is saved
     //! verbatim and outlives every update, and the right side is allowed to get better.
     //!
+    //! # Performed, not rewritten
+    //!
+    //! The contract's performer has a note-domain half. A clip — played or written, recipe or
+    //! none — may carry [`NoteTransform`](auris_core::NoteTransform)s: humanise, swing,
+    //! transpose, gate, applied in order as
+    //! [`sounding_notes`](auris_core::MidiClip::sounding_notes) answers. The renderer and the
+    //! MIDI writer both ask that one question, so what exports is what plays; the piano roll
+    //! reads the notes themselves, so what is shown is the text. Every wander draws from a seed
+    //! the transform stores, through the same named streams the composer draws from
+    //! ([`auris_core::rng`]), and it draws per loop pass — a repeated bar is loose differently
+    //! each time around, which is the one thing baking the wobble into the notes could never do.
+    //!
+    //! [`set_clip_transforms`](crate::Session::set_clip_transforms) replaces the stack whole,
+    //! and [`freeze_clip_transforms`](crate::Session::freeze_clip_transforms) is the recipe's
+    //! trade again: the performance is written into the text and stops being derived from
+    //! anything — including the pass, so a frozen loop rehearses its first pass forever. The
+    //! transform arithmetic lives in `auris-core` beside the document, calibrated to the
+    //! composer's own constants, and carries the same duty every effect carries: changing how it
+    //! sounds changes saved pieces, so its numbers are pinned by tests and re-measured when they
+    //! move.
+    //!
     //! # Hearing it before anything plays it
     //!
     //! Writing the chords first is the workflow the lane exists for, and until this the result was

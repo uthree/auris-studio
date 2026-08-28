@@ -934,6 +934,15 @@ impl AurisApp {
                 let delta = f32::from(event.position.x - start_x);
                 self.drag_dial(clip, dial, start_fraction, delta);
             }
+            Drag::PerformDial {
+                clip,
+                dial,
+                start_fraction,
+                start_x,
+            } => {
+                let delta = f32::from(event.position.x - start_x);
+                self.drag_perform_dial(clip, dial, start_fraction, delta);
+            }
             Drag::SongDial {
                 target,
                 start_fraction,

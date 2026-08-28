@@ -498,6 +498,21 @@ pub enum Drag {
         /// Pointer x when the drag began.
         start_x: Pixels,
     },
+    /// Turning one of a clip's performance dials.
+    ///
+    /// Separate from [`Drag::PartDial`] because the two write different things: a part dial
+    /// rewrites a generated clip's notes, and this one edits the transform stack the notes are
+    /// performed through — on any MIDI clip, played or written.
+    PerformDial {
+        /// Clip whose stack is being edited.
+        clip: ClipId,
+        /// Which dial.
+        dial: crate::ui::performance::PerformDial,
+        /// Where the bar was when the drag began, from 0 to 1.
+        start_fraction: f32,
+        /// Pointer x when the drag began.
+        start_x: Pixels,
+    },
     /// Dragging the time-zoom slider.
     TimeZoom {
         /// Slider position when the drag began, from 0 to 1.
@@ -602,6 +617,8 @@ impl Drag {
             // "Write It Again" uses — moving a dial is writing the part again with one thing
             // changed, and a stack full of "Adjusted parameter" would say nothing about which.
             Drag::PartDial { .. } => Some(Edit::GenerateClip),
+            // One step for the sweep, named for the clip whose performance it shapes.
+            Drag::PerformDial { clip, .. } => Some(Edit::SetClipTransforms(*clip)),
             // A dial on the song sheet turns nothing in the document: the sheet is a question
             // about a song that has not been written yet, and nothing it does belongs on the
             // undo stack until Write is pressed.

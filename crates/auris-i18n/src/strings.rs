@@ -583,6 +583,10 @@ strings! {
     PartGroove { en: "Groove", ja: "グルーヴ" }
     PartSeed { en: "Seed", ja: "シード" }
     PartStraight { en: "straight", ja: "イーブン" }
+    // The dials on any clip's performance: the transform stack, which changes what is heard
+    // without moving a note the piano roll shows.
+    PerformHeading { en: "Performance", ja: "演奏" }
+    PerformFreeze { en: "Keep the Performance", ja: "演奏を確定" }
     // Note values. Written as the fraction in both languages, because that is what is printed on
     // every other DAW's grid menu and the words for them are longer than the row is wide.
     SubdivisionEighth { en: "1/8", ja: "1/8" }

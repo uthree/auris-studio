@@ -516,6 +516,13 @@ pub enum MenuCommand {
         /// How finely the beat should divide.
         subdivision: Subdivision,
     },
+    /// Point a clip's swing transform at a different grid.
+    SetPerformSwingGrid {
+        /// Clip whose performance is being shaped.
+        clip: ClipId,
+        /// The grid whose offbeats the swing delays.
+        subdivision: Subdivision,
+    },
     /// Move a generated clip's register.
     SetClipOctave {
         /// Clip to rewrite.
@@ -1131,6 +1138,9 @@ impl AurisApp {
             MenuCommand::SetClipGroove { clip, groove } => self.set_clip_groove(clip, groove),
             MenuCommand::SetClipSubdivision { clip, subdivision } => {
                 self.set_clip_subdivision(clip, subdivision)
+            }
+            MenuCommand::SetPerformSwingGrid { clip, subdivision } => {
+                self.set_perform_swing_grid(clip, subdivision)
             }
             MenuCommand::SetClipOctave { clip, octave } => self.set_clip_octave(clip, octave),
             MenuCommand::SetParamChoice { target, value } => self.session.set_param(target, value),

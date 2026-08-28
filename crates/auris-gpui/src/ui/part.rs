@@ -440,7 +440,7 @@ impl AurisApp {
     /// shape for the same idea would only be a second thing to learn. Drawn by
     /// [`crate::ui::widgets::picker_row`]; what is decided here is the panel's proportions and
     /// the language.
-    fn picker_row<F>(
+    pub(crate) fn picker_row<F>(
         &self,
         id: &'static str,
         label: Key,

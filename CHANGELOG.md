@@ -9,6 +9,23 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### Performance: the score does not change, the playing does
+
+* Any note clip can now carry a **performance**: humanize, swing and gate dials in the
+  inspector that change what is *heard* — playback and MIDI export both — while the piano roll
+  keeps showing the notes exactly as written. Setting a dial back to its resting position
+  removes it entirely; **Keep the Performance** writes what is heard into the notes, the same
+  trade as freezing a generated clip's recipe. The format version moves to 18 for the new
+  field.
+* The humanize wander is drawn from a seed stored in the file, so a project sounds the same on
+  every open — and it is drawn afresh for **every pass of a loop**, so a repeated bar is loose
+  differently each time around instead of rehearsing the same accidents. Its feel is
+  calibrated to the composer's own: the same milliseconds of wander, the same velocity spread,
+  at every tempo.
+* A transpose transform exists alongside the three dials (session API only for now), and the
+  stack is ordered — the panel keeps swing in front of humanize, so the swing still finds its
+  offbeats before the wander moves them off the grid.
+
 ### Singer tracks: notes that carry words
 
 * A new track kind for a singing-voice synthesiser. Its clips are ordinary note clips — the

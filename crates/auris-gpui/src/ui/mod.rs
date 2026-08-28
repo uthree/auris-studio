@@ -21,6 +21,7 @@ pub mod mixer;
 pub mod paint;
 pub mod palette;
 pub mod part;
+pub mod performance;
 pub mod piano_roll;
 pub mod plugin_editor;
 pub mod plugin_window;
