@@ -10,7 +10,7 @@ use auris_core::plugin::{
 
 use crate::MILLISECONDS_PER_SECOND;
 use crate::bank::ParamBank;
-use crate::smooth::one_pole_coefficient;
+use crate::smooth::{SmoothedValue, one_pole_coefficient};
 
 const P_THRESHOLD_DB: u32 = 0;
 const P_RATIO: u32 = 1;
@@ -18,6 +18,10 @@ const P_ATTACK_MS: u32 = 2;
 const P_RELEASE_MS: u32 = 3;
 const P_KNEE_DB: u32 = 4;
 const P_MAKEUP_DB: u32 = 5;
+const P_MIX: u32 = 6;
+
+/// Ramp time for the dry/wet balance.
+const MIX_SMOOTHING_SECONDS: f32 = 0.020;
 
 /// A feed-forward compressor with a quadratic soft knee.
 ///
@@ -28,6 +32,10 @@ const P_MAKEUP_DB: u32 = 5;
 /// passing through is turned down by what the *key* is doing. A bass keyed from the kick drum is
 /// the ordinary use, and the reason the two signals have to be kept apart — the bass never gets
 /// quieter for being loud, only for the kick being loud.
+///
+/// The mix knob blends the compressed signal against the dry one — parallel compression without
+/// a second bus. Makeup gain sits on the wet side of the blend, so at half mix the untouched
+/// transients ride over a floor that has been squeezed *and* brought up.
 pub struct Compressor {
     params: ParamBank,
     sample_rate: f32,
@@ -35,6 +43,7 @@ pub struct Compressor {
     release_coefficient: f32,
     /// Current gain in dB, always at or below zero.
     gain_db: f32,
+    mix: SmoothedValue,
 }
 
 impl Default for Compressor {
@@ -67,13 +76,18 @@ impl Compressor {
                 .with_curve(ParamValueCurve::Logarithmic),
             ParamDescriptor::decibels(P_KNEE_DB, "knee_db", "Knee", 0.0, 24.0, 6.0),
             ParamDescriptor::decibels(P_MAKEUP_DB, "makeup_db", "Makeup", -12.0, 24.0, 0.0),
+            // Fully wet by default: a compressor is expected to compress, and every project
+            // saved before the knob existed loads to exactly the sound it had.
+            ParamDescriptor::percent(P_MIX, "mix", "Mix", 1.0),
         ];
+        let sample_rate = 48_000.0;
         let mut plugin = Self {
             params: ParamBank::new(descriptors),
-            sample_rate: 48_000.0,
+            sample_rate,
             attack_coefficient: 0.0,
             release_coefficient: 0.0,
             gain_db: 0.0,
+            mix: SmoothedValue::new(1.0, MIX_SMOOTHING_SECONDS, sample_rate),
         };
         plugin.recompute_coefficients();
         plugin
@@ -148,11 +162,13 @@ impl Effect for Compressor {
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.sample_rate = ctx.sample_rate as f32;
         self.recompute_coefficients();
+        self.mix.set_time(MIX_SMOOTHING_SECONDS, self.sample_rate);
         self.reset();
     }
 
     fn reset(&mut self) {
         self.gain_db = 0.0;
+        self.mix.snap_to(self.params.at(P_MIX));
     }
 
     fn process(&mut self, buffer: &mut AudioBuffer, _ctx: &ProcessContext) {
@@ -193,6 +209,7 @@ impl Compressor {
         let makeup_db = self.params.at(P_MAKEUP_DB);
         // Negative: how much of the excess above threshold is removed.
         let slope = 1.0 / ratio - 1.0;
+        self.mix.set_target(self.params.at(P_MIX));
 
         for frame in 0..frames {
             // The immutable borrow ends on this line, which is what lets the unkeyed case read
@@ -222,8 +239,11 @@ impl Compressor {
             self.gain_db = crate::settled(target_db + (self.gain_db - target_db) * coefficient);
 
             let gain = db_to_gain(self.gain_db + makeup_db);
+            // One scalar per frame: `dry * (1 - mix) + dry * gain * mix`, factored so the dry
+            // path multiplies by exactly 1.0 when the mix sits at zero.
+            let blend = 1.0 + self.mix.next_value() * (gain - 1.0);
             for channel in buffer.channels_mut() {
-                channel[frame] *= gain;
+                channel[frame] *= blend;
             }
         }
     }
@@ -406,6 +426,51 @@ mod tests {
             (out_db + 11.0).abs() < 0.05,
             "output settled at {out_db} dB"
         );
+    }
+
+    #[test]
+    fn half_mix_blends_the_two_paths_in_linear_gain() {
+        let mut plugin = keyed();
+        plugin.set_param_by_key("mix", 0.5);
+
+        // Fully wet this input settles 9 dB down (the 4:1 arithmetic above). Half mix averages
+        // the linear gains: (1 + 10^(-9/20)) / 2 = 0.6774, which is -3.38 dB — quieter than
+        // dry, far from halfway down in decibels, because parallel blending is linear.
+        let frames = 24_000;
+        let mut buffer = constant(frames, db_to_gain(-8.0));
+        plugin.process(&mut buffer, &context(frames));
+        let out_db = gain_to_db(buffer.slice(frames - 1_000, 1_000).peak());
+        assert!(
+            (out_db - (-8.0 - 3.384)).abs() < 0.05,
+            "output settled at {out_db} dB"
+        );
+        // The meter still reads the wet path's reduction; the blend is after it.
+        assert!(
+            (plugin.gain_reduction_db() + 9.0).abs() < 0.05,
+            "meter read {} dB",
+            plugin.gain_reduction_db()
+        );
+    }
+
+    #[test]
+    fn mix_zero_is_bit_transparent() {
+        let mut plugin = keyed();
+        plugin.set_param_by_key("mix", 0.0);
+        plugin.set_param_by_key("makeup_db", 12.0);
+        // The knob was turned before the transport rolled; without this the first 20 ms are
+        // the ramp from the default, which is the glide a *live* turn is supposed to get.
+        plugin.reset();
+
+        let frames = 4_096;
+        let signal: Vec<f32> = (0..frames)
+            .map(|i| (i as f32 * 0.031).sin() * db_to_gain(-3.0))
+            .collect();
+        let input = AudioBuffer::from_planar(vec![signal.clone(), signal], SR).unwrap();
+        let mut buffer = input.clone();
+        plugin.process(&mut buffer, &context(frames));
+        for channel in 0..2 {
+            assert_eq!(buffer.channel(channel), input.channel(channel));
+        }
     }
 
     #[test]
