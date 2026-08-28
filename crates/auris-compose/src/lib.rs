@@ -31,7 +31,7 @@ pub use phrase::{
     SEED_RANGE, clip_seed, default_instrument, preset_of, recipe_for, roles_of, write_phrase,
 };
 pub use preset::{PRESETS, SongPreset, preset};
-pub use render::{ClipDraft, Composition, TrackDraft, compose};
+pub use render::{ClipDraft, Composition, EffectDraft, TrackDraft, compose};
 pub use spec::{Ending, Mood, PartSpec, Role, SectionSpec, SongSpec, SpecError};
 
 /// File extension of a song specification, for a file-picker filter.

@@ -23,6 +23,9 @@ const ROOM_BUS: &str = "Room";
 /// The reverb the room bus carries.
 const REVERB_ID: &str = "auris.fx.reverb";
 
+/// The chorus an electric comp part carries — see [`inserts_for`].
+const CHORUS_ID: &str = "auris.fx.chorus";
+
 /// One clip: a run of notes with a place on the timeline.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClipDraft {
@@ -97,6 +100,13 @@ pub struct TrackDraft {
     pub output: Option<usize>,
     /// Copies of this track fed to buses alongside its own output.
     pub sends: Vec<SendDraft>,
+    /// Insert effects on the track's own strip, in chain order.
+    ///
+    /// Almost always empty, for the same reason [`Self::state`] almost always is: a part picks a
+    /// sound and is then left sounding how it sounds. What earns an insert is a *pairing* — a
+    /// role and a sound that idiomatically arrive through a pedal — and [`inserts_for`] is where
+    /// each pairing is argued.
+    pub effects: Vec<EffectDraft>,
     /// The clips, in time order.
     pub clips: Vec<ClipDraft>,
 }
@@ -120,12 +130,13 @@ pub struct BusDraft {
     /// Level trim in decibels.
     pub gain_db: f32,
     /// Effects it carries, in chain order.
-    pub effects: Vec<BusEffectDraft>,
+    pub effects: Vec<EffectDraft>,
 }
 
-/// One effect on a bus, and the parameters it should not be left at its defaults for.
+/// One effect in a chain — a bus's or a track's — and the parameters it should not be left at
+/// its defaults for.
 #[derive(Clone, Debug, PartialEq)]
-pub struct BusEffectDraft {
+pub struct EffectDraft {
     /// Registry id.
     ///
     /// Named rather than instantiated for the same reason a track's instrument is: this crate
@@ -361,6 +372,7 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
         let state = role.map_or_else(PluginState::empty, |role| {
             voicing_for(role, &draft.instrument)
         });
+        let effects = role.map_or_else(Vec::new, |role| inserts_for(role, draft.sound));
         tracks.push(TrackDraft {
             name: draft.name,
             instrument: draft.instrument,
@@ -380,6 +392,7 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
             pan: draft.pan,
             output,
             sends,
+            effects,
             clips,
         });
     }
@@ -429,7 +442,7 @@ fn buses_for(roles: &[Role]) -> Vec<BusDraft> {
             color: Color(0x8792a2),
             // The sends set how much goes in; this sets how loud what comes back is.
             gain_db: -3.0,
-            effects: vec![BusEffectDraft {
+            effects: vec![EffectDraft {
                 id: REVERB_ID.to_string(),
                 state,
             }],
@@ -495,6 +508,48 @@ fn voicing_for(role: Role, instrument: &str) -> PluginState {
         state.params.insert("level".to_string(), -19.5);
     }
     state
+}
+
+/// The insert effects a part earns from the sound it landed on.
+///
+/// Keyed by role *and* General MIDI patch, on the same reasoning as [`voicing_for`]: an insert
+/// is right where the pairing is idiomatic, not where either half is alone. Today there is one
+/// pairing. A **chords part on an electric piano or an undistorted electric guitar** gets a
+/// chorus, because that pairing barely exists without one: the Rhodes-and-chorus comp is the
+/// centre of the city-pop sound the preset names, and a clean guitar chording through a chorus
+/// pedal is how that instrument has been recorded since the pedal was invented.
+///
+/// Nobody else. A melody on the same Rhodes is a voice, not a bed, and widening it moves the
+/// singer to the back of the stage; an acoustic piano through a chorus is a piano out of tune;
+/// distorted guitars keep their edge dry. A part that stayed on a built-in synth has no patch to
+/// argue from and gets nothing.
+///
+/// The mix is a third rather than the plugin's half because an insert wets the *whole* part:
+/// at 0.5 the comp audibly smears, and a bed that used to sit still starts to wobble. Measured
+/// on the city-pop comp's stem, 0.35 takes the left–right correlation from 0.79 to 0.62 — a
+/// widening a meter can see — while the Audiobox axes on the two presets the rule touches move
+/// by at most 0.03, at the noise floor: the learned ear neither rewards the stereo (it barely
+/// looks there) nor finds anything to object to.
+///
+/// The blend also costs level — dry and wet are incoherent, so at 0.35 they sum by power,
+/// about 3 dB of RMS down — and *nothing here compensates*. Composing ends by rendering every
+/// part alone and setting the faders from what was measured (`Session::balance_levels`), so the
+/// insert's cost is heard and paid there, with the part's target loudness unmoved.
+fn inserts_for(role: Role, sound: Option<crate::gm::Sound>) -> Vec<EffectDraft> {
+    let Some(sound) = sound else {
+        return Vec::new();
+    };
+    // Electric Piano 1 and 2, Electric Guitar (jazz) and (clean) — pinned by name in a test.
+    let electric_comp = sound.bank != crate::gm::DRUM_BANK && [4, 5, 26, 27].contains(&sound.patch);
+    if role == Role::Chords && electric_comp {
+        let mut state = PluginState::empty();
+        state.params.insert("mix".to_string(), 0.35);
+        return vec![EffectDraft {
+            id: CHORUS_ID.to_string(),
+            state,
+        }];
+    }
+    Vec::new()
 }
 
 /// `true` when a role belongs under the drum fader.
@@ -814,6 +869,43 @@ mod tests {
         let reverb = &room.effects[0];
         assert_eq!(reverb.id, "auris.fx.reverb");
         assert_eq!(reverb.state.params.get("mix"), Some(&1.0));
+    }
+
+    #[test]
+    fn only_the_electric_comp_arrives_through_a_chorus() {
+        // The pairing earns the insert, not either half of it alone.
+        let sound = |patch| Some(crate::gm::Sound { bank: 0, patch });
+        let chorused = |role, sound| !inserts_for(role, sound).is_empty();
+        assert!(chorused(Role::Chords, sound(4)), "a Rhodes comp");
+        assert!(chorused(Role::Chords, sound(27)), "a clean guitar comp");
+        assert!(!chorused(Role::Melody, sound(4)), "a voice, not a bed");
+        assert!(
+            !chorused(Role::Chords, sound(0)),
+            "an acoustic piano through a chorus is a piano out of tune"
+        );
+        assert!(
+            !chorused(Role::Chords, sound(30)),
+            "a distorted guitar keeps its edge dry"
+        );
+        assert!(
+            !chorused(Role::Chords, None),
+            "a built-in synth has no patch to argue from"
+        );
+
+        let inserts = inserts_for(Role::Chords, sound(4));
+        assert_eq!(inserts[0].id, "auris.fx.chorus");
+        assert_eq!(inserts[0].state.params.get("mix"), Some(&0.35));
+
+        // The patches the rule names, pinned to the names they were chosen for — a renumbering
+        // of the General MIDI table would otherwise move the pedal to four other instruments.
+        for (patch, name) in [
+            (4, "Electric Piano 1"),
+            (5, "Electric Piano 2"),
+            (26, "Electric Guitar (jazz)"),
+            (27, "Electric Guitar (clean)"),
+        ] {
+            assert_eq!(crate::gm::Program(patch).name(), name);
+        }
     }
 
     #[test]

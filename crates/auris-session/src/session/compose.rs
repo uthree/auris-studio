@@ -288,6 +288,22 @@ impl Session {
                     });
                 }
             }
+            // The part's own inserts — the chorus an electric comp earns — placed exactly as a
+            // bus's are, missing plugins reported the same way.
+            for effect in &track.effects {
+                if !self.registry.has_effect(&effect.id) {
+                    report.substituted.push(effect.id.clone());
+                    continue;
+                }
+                let Some(slot) = project.add_effect(Some(track_id), &effect.id) else {
+                    continue;
+                };
+                if let Some(entry) = project.track_mut(track_id)
+                    && let Some(added) = entry.mixer.effects.iter_mut().find(|s| s.id == slot)
+                {
+                    added.state = effect.state.clone();
+                }
+            }
             report.tracks += 1;
 
             for clip in &track.clips {
@@ -986,6 +1002,33 @@ mod tests {
                 assert!(!project.routing_would_cycle(track.id, target));
             }
         }
+    }
+
+    #[test]
+    fn an_electric_comp_track_carries_its_chorus() {
+        // The composer decided the insert (`inserts_for` in auris-compose is where it is
+        // argued); this checks the decision survives the trip into a document.
+        let mut session = session();
+        let spec = auris_compose::SongSpec::parse(
+            r#"
+                form = "verse"
+                chords = "@marusa"
+                [section.verse]
+                bars = 2
+                [[part]]
+                name    = "keys"
+                role    = "comp"
+                program = "Electric Piano 1"
+                "#,
+        )
+        .unwrap();
+        session.compose(&auris_compose::compose(&spec)).unwrap();
+
+        let project = session.project();
+        let keys = project.tracks.iter().find(|t| t.name == "keys").unwrap();
+        let chorus = &keys.mixer.effects[0];
+        assert_eq!(chorus.effect_id, "auris.fx.chorus");
+        assert_eq!(chorus.state.params.get("mix"), Some(&0.35));
     }
 
     #[test]
