@@ -169,4 +169,10 @@ cargo run -p auris-cli -- help              # the command line frontend
 cargo test --workspace                      # all tests
 cargo clippy --workspace --all-targets      # lints
 cargo doc --workspace --no-deps --open      # the API documentation
+cargo run -p auris-compose --example measure   # symbolic design metrics per preset
+uv run tools/eval/aesthetics.py --preset all   # learned aesthetic scores (see docs/evaluation.md)
 ```
+
+Before and after touching a writer or an audio constant, run the two measuring instruments —
+`docs/evaluation.md` is the account of what they read and how to use the baseline diff. They
+are dev tooling only; no release build carries them.
