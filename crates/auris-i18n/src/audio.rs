@@ -158,8 +158,8 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
         "ソフトニー、ステレオリンクのコンプレッサー。他トラックでキー入力できる",
     ),
     (
-        "Feedback delay with damping and a ping-pong mode",
-        "ダンピングとピンポンモードを備えたフィードバックディレイ",
+        "Feedback delay with damping, tempo sync and a ping-pong mode",
+        "ダンピング、テンポ同期、ピンポンモードを備えたフィードバックディレイ",
     ),
     (
         "Saturation, hard clipping, wave folding and bitcrushing",
@@ -223,6 +223,7 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Room Size", "ルームサイズ"),
     ("Steps", "ステップ数"),
     ("Sustain", "サステイン"),
+    ("Sync", "同期"),
     ("Tone", "トーン"),
     ("Unison", "ユニゾン"),
     ("Vibrato", "ビブラート"),
@@ -461,6 +462,18 @@ const CHOICES: &[(&str, &str)] = &[
     ("Hard clip", "ハードクリップ"),
     ("Fold", "フォールド"),
     ("Bitcrush", "ビットクラッシュ"),
+    ("Free", "フリー"),
+    // The delay's note values read the same in any language; the entries exist so the
+    // completeness test can tell a considered label from a forgotten one.
+    ("1/1", "1/1"),
+    ("1/2.", "1/2."),
+    ("1/2", "1/2"),
+    ("1/4.", "1/4."),
+    ("1/4", "1/4"),
+    ("1/8.", "1/8."),
+    ("1/8", "1/8"),
+    ("1/8T", "1/8T"),
+    ("1/16", "1/16"),
 ];
 
 #[cfg(test)]

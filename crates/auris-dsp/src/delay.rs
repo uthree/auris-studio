@@ -1,4 +1,6 @@
-//! `auris.fx.delay` — a feedback delay with damping and a ping-pong mode.
+//! `auris.fx.delay` — a feedback delay with damping, tempo sync and a ping-pong mode.
+
+use std::borrow::Cow;
 
 use auris_core::AudioBuffer;
 use auris_core::param::{ParamDescriptor, ParamId, ParamUnit, ParamValueCurve};
@@ -16,6 +18,40 @@ const P_FEEDBACK: u32 = 1;
 const P_DAMPING_HZ: u32 = 2;
 const P_MIX: u32 = 3;
 const P_PING_PONG: u32 = 4;
+const P_SYNC: u32 = 5;
+
+/// Labels for the sync parameter, in value order. A dot is a dotted note, `T` a triplet.
+static SYNC_CHOICES: [Cow<'static, str>; 10] = [
+    Cow::Borrowed("Free"),
+    Cow::Borrowed("1/1"),
+    Cow::Borrowed("1/2."),
+    Cow::Borrowed("1/2"),
+    Cow::Borrowed("1/4."),
+    Cow::Borrowed("1/4"),
+    Cow::Borrowed("1/8."),
+    Cow::Borrowed("1/8"),
+    Cow::Borrowed("1/8T"),
+    Cow::Borrowed("1/16"),
+];
+
+/// The length of one repeat under each entry of [`SYNC_CHOICES`], in beats.
+///
+/// `None` is the `Free` position: the time knob speaks and the tempo does not. The mapping is
+/// a free function so what a menu entry *means* can be asserted without building a plugin.
+fn sync_beats(choice: usize) -> Option<f32> {
+    match choice {
+        1 => Some(4.0),
+        2 => Some(3.0),
+        3 => Some(2.0),
+        4 => Some(1.5),
+        5 => Some(1.0),
+        6 => Some(0.75),
+        7 => Some(0.5),
+        8 => Some(1.0 / 3.0),
+        9 => Some(0.25),
+        _ => None,
+    }
+}
 
 /// Longest delay the plugin offers, and therefore the length of every delay line.
 const MAX_TIME_MS: f32 = 2_000.0;
@@ -45,6 +81,13 @@ pub struct Delay {
     damping_state: Vec<f32>,
     time: SmoothedValue,
     mix: SmoothedValue,
+    /// Tempo of the last processed block, so a synced delay can answer [`Effect::tail_frames`]
+    /// between blocks. Held at the default until the first block says otherwise.
+    bpm: f64,
+    /// Whether any block has told us the tempo yet. The first one to do so *snaps* the delay
+    /// length rather than gliding to it: no audio has passed, so there is nothing to slide,
+    /// and a render at any tempo but the default would otherwise open with a pitch swoop.
+    tempo_heard: bool,
 }
 
 impl Default for Delay {
@@ -81,6 +124,7 @@ impl Delay {
             ),
             ParamDescriptor::percent(P_MIX, "mix", "Mix", 0.3),
             ParamDescriptor::toggle(P_PING_PONG, "ping_pong", "Ping-Pong", false),
+            ParamDescriptor::new(P_SYNC, "sync", "Sync", 0.0, 0.0, 0.0).with_choices(&SYNC_CHOICES),
         ];
         let mut plugin = Self {
             params: ParamBank::new(descriptors),
@@ -89,13 +133,25 @@ impl Delay {
             damping_state: Vec::new(),
             time: SmoothedValue::new(0.0, TIME_SMOOTHING_SECONDS, sample_rate),
             mix: SmoothedValue::new(0.0, MIX_SMOOTHING_SECONDS, sample_rate),
+            bpm: 120.0,
+            tempo_heard: false,
         };
         plugin.snap_to_params();
         plugin
     }
 
+    /// The current delay length, whichever authority is speaking.
+    ///
+    /// Synced positions convert beats through the last block's tempo and are clamped to the
+    /// range the time knob offers — the delay lines are sized for [`MAX_TIME_MS`] and a whole
+    /// note at a crawl does not get to read past them.
     fn delay_in_samples(&self) -> f32 {
-        self.params.at(P_TIME_MS) * self.sample_rate / MILLISECONDS_PER_SECOND
+        let milliseconds = match sync_beats(self.params.at(P_SYNC).round() as usize) {
+            Some(beats) => (beats * 60.0 * MILLISECONDS_PER_SECOND / self.bpm as f32)
+                .clamp(MIN_TIME_MS, MAX_TIME_MS),
+            None => self.params.at(P_TIME_MS),
+        };
+        milliseconds * self.sample_rate / MILLISECONDS_PER_SECOND
     }
 
     fn snap_to_params(&mut self) {
@@ -136,7 +192,7 @@ impl Effect for Delay {
         PluginDescriptor::effect(
             "auris.fx.delay",
             "Delay",
-            "Feedback delay with damping and a ping-pong mode",
+            "Feedback delay with damping, tempo sync and a ping-pong mode",
             PluginCategory::Delay,
         )
     }
@@ -155,6 +211,7 @@ impl Effect for Delay {
 
         self.time.set_time(TIME_SMOOTHING_SECONDS, self.sample_rate);
         self.mix.set_time(MIX_SMOOTHING_SECONDS, self.sample_rate);
+        self.tempo_heard = false;
         self.snap_to_params();
     }
 
@@ -166,11 +223,22 @@ impl Effect for Delay {
         self.snap_to_params();
     }
 
-    fn process(&mut self, buffer: &mut AudioBuffer, _ctx: &ProcessContext) {
+    fn process(&mut self, buffer: &mut AudioBuffer, ctx: &ProcessContext) {
         let frames = buffer.frame_count();
         let channels = buffer.channel_count().min(self.lines.len());
         if frames == 0 || channels == 0 {
             return;
+        }
+
+        // Remembered rather than merely used: `tail_frames` has no context to ask, and a synced
+        // delay's tail is as long as the tempo says. A tempo that is not a tempo changes nothing.
+        if ctx.bpm.is_finite() && ctx.bpm > 0.0 {
+            let first = !self.tempo_heard;
+            self.tempo_heard = true;
+            self.bpm = ctx.bpm;
+            if first {
+                self.time.snap_to(self.delay_in_samples());
+            }
         }
 
         let feedback = self.params.at(P_FEEDBACK);
@@ -384,6 +452,95 @@ mod tests {
                 buffer.channel(channel)[480]
             );
         }
+    }
+
+    #[test]
+    fn the_sync_menu_spells_the_common_notes() {
+        // Position by position: free, then whole to sixteenth with the dots and the triplet.
+        let expected = [
+            None,
+            Some(4.0),
+            Some(3.0),
+            Some(2.0),
+            Some(1.5),
+            Some(1.0),
+            Some(0.75),
+            Some(0.5),
+            Some(1.0 / 3.0),
+            Some(0.25),
+        ];
+        assert_eq!(expected.len(), SYNC_CHOICES.len());
+        for (choice, beats) in expected.iter().enumerate() {
+            assert_eq!(sync_beats(choice), *beats, "choice {choice}");
+        }
+        // Off the end of the menu is the free knob, not a panic and not a whole note.
+        assert_eq!(sync_beats(SYNC_CHOICES.len()), None);
+    }
+
+    #[test]
+    fn a_synced_delay_takes_its_time_from_the_tempo() {
+        let eighth = SYNC_CHOICES.iter().position(|c| c == "1/8").unwrap() as f32;
+        for (bpm, expected) in [(120.0, 12_000usize), (100.0, 14_400)] {
+            // An eighth is half a beat: 250 ms at 120 bpm, 300 ms at 100.
+            let mut plugin = dry_tap(350.0);
+            plugin.set_param_by_key("sync", eighth);
+            plugin.prepare(&PrepareContext::new(SR, 20_000, 2));
+
+            let mut buffer = impulse(20_000);
+            plugin.process(
+                &mut buffer,
+                &ProcessContext::realtime(SR, 20_000, 0, bpm, true),
+            );
+            let channel = buffer.channel(0);
+            assert!(
+                (channel[expected] - 1.0).abs() < 1e-6,
+                "{bpm} bpm: sample {expected} was {}",
+                channel[expected]
+            );
+            // The time knob said 350 ms; synced, nobody listened to it.
+            assert_eq!(channel[16_800], 0.0);
+        }
+    }
+
+    #[test]
+    fn a_tempo_too_slow_for_the_line_is_clamped_to_it() {
+        // A whole note at 10 bpm is 24 s; the delay lines hold two. The repeat arrives at the
+        // line's end rather than reading past it or wrapping round.
+        let whole = SYNC_CHOICES.iter().position(|c| c == "1/1").unwrap() as f32;
+        let mut plugin = dry_tap(350.0);
+        plugin.set_param_by_key("sync", whole);
+        plugin.prepare(&PrepareContext::new(SR, 8_192, 2));
+
+        let frames = 98_304;
+        let mut buffer = impulse(frames);
+        plugin.process(
+            &mut buffer,
+            &ProcessContext::realtime(SR, frames, 0, 10.0, true),
+        );
+        let expected = (2.0 * SR) as usize;
+        assert!(
+            (buffer.channel(0)[expected] - 1.0).abs() < 1e-6,
+            "sample {expected} was {}",
+            buffer.channel(0)[expected]
+        );
+    }
+
+    #[test]
+    fn a_synced_tail_follows_the_tempo_it_last_heard() {
+        let quarter = SYNC_CHOICES.iter().position(|c| c == "1/4").unwrap() as f32;
+        let mut plugin = Delay::new();
+        plugin.set_param_by_key("sync", quarter);
+        plugin.set_param_by_key("feedback", 0.0);
+        plugin.prepare(&PrepareContext::new(SR, 512, 2));
+        // Nothing processed yet: the default 120 bpm answers, one beat being 500 ms.
+        assert_eq!(plugin.tail_frames(), 24_000);
+
+        let mut buffer = AudioBuffer::stereo(512, SR);
+        plugin.process(
+            &mut buffer,
+            &ProcessContext::realtime(SR, 512, 0, 60.0, true),
+        );
+        assert_eq!(plugin.tail_frames(), 48_000);
     }
 
     #[test]
