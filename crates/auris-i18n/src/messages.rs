@@ -183,6 +183,22 @@ messages! {
         ja: "{path} を開きました"
     }
 
+    /// A project opened whose file was saved by a different build, which named itself.
+    ///
+    /// The note the score-and-performer contract asks for at the door: the document sounds as
+    /// saved, and *regenerating* any of it writes in the current composer's style rather than
+    /// the one the file remembers.
+    fn opened_from_build(path: &str, version: &str) {
+        en: "Opened {path} — saved by Auris Studio {version}; regenerating writes in this build's style",
+        ja: "{path} を開きました — Auris Studio {version} で保存されたプロジェクトです。再生成は現在のスタイルで書き直します"
+    }
+
+    /// A project opened whose file predates the record of who saved it.
+    fn opened_from_older_build(path: &str) {
+        en: "Opened {path} — saved by an older build; regenerating writes in this build's style",
+        ja: "{path} を開きました — 以前のバージョンで保存されたプロジェクトです。再生成は現在のスタイルで書き直します"
+    }
+
     /// A project opened, but one of its audio files was not where it said.
     fn opened_missing_one(path: &str, missing: &str) {
         en: "Opened {path} — missing audio file {missing}",
@@ -771,6 +787,18 @@ messages! {
     fn warning_missing_audio(path: &str) {
         en: "warning: missing audio file {path}",
         ja: "警告: オーディオファイル {path} が見つかりません"
+    }
+
+    /// The command line's version of the door-side note, for a build that named itself.
+    fn warning_saved_by_build(version: &str) {
+        en: "warning: saved by Auris Studio {version}; regenerating writes in this build's style",
+        ja: "警告: Auris Studio {version} で保存されたプロジェクトです。再生成は現在のスタイルで書き直します"
+    }
+
+    /// The same note for a file that predates the record of who saved it.
+    fn warning_saved_by_older_build() {
+        en: "warning: saved by an older build; regenerating writes in this build's style",
+        ja: "警告: 以前のバージョンで保存されたプロジェクトです。再生成は現在のスタイルで書き直します"
     }
 
     /// Confirmation that a piece was composed and written.

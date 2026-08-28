@@ -207,6 +207,19 @@ impl Session {
         self.path.as_deref().and_then(auris_io::project_folder)
     }
 
+    /// The build that saved the open document, when it was not this one.
+    ///
+    /// `None` for a document this build saved, and for one never saved at all. `Some("")` is a
+    /// file from before the record existed — an older build by definition, just one that left no
+    /// name. This is the cue for the door-side note the guide's contract asks for: the text of
+    /// this document is exactly as saved, but regenerating any of it is a redraw in the current
+    /// composer's style, so a take worth keeping wants freezing before the button.
+    pub fn saved_by_another_build(&self) -> Option<&str> {
+        self.path.as_ref()?;
+        let stored = self.project.saved_by.as_str();
+        (stored != env!("CARGO_PKG_VERSION")).then_some(stored)
+    }
+
     /// Opens a project file.
     ///
     /// Returns the references that could not be found — audio files and SoundFonts alike. The
@@ -1131,5 +1144,41 @@ mod tests {
         assert!(!session.can_undo());
         assert!(session.path().is_none());
         assert_eq!(session.project().tracks.len(), 1);
+    }
+
+    #[test]
+    fn the_door_knows_whose_save_it_is_reading() {
+        let scratch = Scratch::new("saved-by");
+        let mut session = session();
+        // Never saved: there is no save to have come from anywhere.
+        assert_eq!(session.saved_by_another_build(), None);
+
+        let path = scratch.join("mine.auris");
+        session.save(&path).unwrap();
+        let mut reopened = crate::session::fixtures::session();
+        reopened.open(&path).unwrap();
+        // This build saved it, so the door has nothing to say.
+        assert_eq!(reopened.saved_by_another_build(), None);
+
+        // The same file with another build's name on it gets the note, and the note carries
+        // the name.
+        let text = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace(env!("CARGO_PKG_VERSION"), "0.1.0");
+        std::fs::write(&path, text).unwrap();
+        reopened.open(&path).unwrap();
+        assert_eq!(reopened.saved_by_another_build(), Some("0.1.0"));
+
+        // A file from before the record existed is an older build by definition — one that
+        // left no name, which is what the empty answer says.
+        let unsigned: String = std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .filter(|line| !line.contains("saved_by"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&path, unsigned).unwrap();
+        reopened.open(&path).unwrap();
+        assert_eq!(reopened.saved_by_another_build(), Some(""));
     }
 }

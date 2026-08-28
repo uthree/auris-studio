@@ -142,6 +142,18 @@ fn warned_partial(text: impl std::fmt::Display) {
     let _ = write!(std::io::stderr(), "{text}");
 }
 
+/// The door-side note, when the project just opened was saved by a different build.
+///
+/// On stderr like the missing-audio warning, and for the same reason: it is advice about the
+/// document, not the output the command was asked for.
+fn warn_foreign_build(session: &Session) {
+    match session.saved_by_another_build() {
+        Some("") => warned(messages::warning_saved_by_older_build(LANGUAGE)),
+        Some(version) => warned(messages::warning_saved_by_build(LANGUAGE, version)),
+        None => {}
+    }
+}
+
 /// Writes a project that did not exist a moment ago, the way the desktop application does.
 ///
 /// [`Session::save`] writes at exactly the path it is handed, which its own doc points out is the
@@ -492,6 +504,7 @@ fn collect(path: &Path) -> Result<(), String> {
             &missing.display().to_string(),
         ));
     }
+    warn_foreign_build(&session);
     let collected = session
         .collect_assets()
         .map_err(|error| error.to_string())?;
@@ -507,6 +520,7 @@ fn collect(path: &Path) -> Result<(), String> {
 fn info(path: &Path) -> Result<(), String> {
     let mut session = headless()?;
     let missing = session.open(path).map_err(|error| error.to_string())?;
+    warn_foreign_build(&session);
     let project = session.project();
     let field = |key: Key| Key::get(key, LANGUAGE);
 
@@ -708,6 +722,7 @@ fn render(args: &[String]) -> Result<(), String> {
             &path.display().to_string(),
         ));
     }
+    warn_foreign_build(&session);
 
     let mut job = session.render_job();
     if loop_only {

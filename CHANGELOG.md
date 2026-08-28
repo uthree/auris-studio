@@ -25,6 +25,10 @@ format rather than a convention: `## <version> — <date>`.
 * A transpose transform exists alongside the three dials (session API only for now), and the
   stack is ordered — the panel keeps swing in front of humanize, so the swing still finds its
   offbeats before the wander moves them off the grid.
+* A saved file now records **which build saved it**. Opening a project another build saved puts
+  a note on the status line (and on the command line's stderr): the piece sounds exactly as
+  saved, but regenerating any clip writes in the current composer's style — so a take worth
+  keeping wants freezing first. Informational only; nothing is blocked.
 
 ### Singer tracks: notes that carry words
 

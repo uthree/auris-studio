@@ -712,14 +712,24 @@ impl AurisApp {
                         this.reset_view();
                         let language = this.language();
                         let shown = path.display().to_string();
-                        this.set_status(match missing.len() {
-                            0 => messages::opened(language, &shown),
-                            1 => messages::opened_missing_one(
+                        // A file another build saved gets its note only when nothing is missing:
+                        // an absent audio file is a silent track right now, and the version note
+                        // matters the day a regenerate button is pressed, not before.
+                        let foreign = this.session.saved_by_another_build().map(str::to_string);
+                        this.set_status(match (missing.len(), foreign) {
+                            (0, Some(version)) if version.is_empty() => {
+                                messages::opened_from_older_build(language, &shown)
+                            }
+                            (0, Some(version)) => {
+                                messages::opened_from_build(language, &shown, &version)
+                            }
+                            (0, None) => messages::opened(language, &shown),
+                            (1, _) => messages::opened_missing_one(
                                 language,
                                 &shown,
                                 &missing[0].display().to_string(),
                             ),
-                            n => messages::opened_missing_many(language, &shown, n),
+                            (n, _) => messages::opened_missing_many(language, &shown, n),
                         });
                         // Which files, not how many. The clips that lost their audio are
                         // indistinguishable from silence, and a count in a status line that the

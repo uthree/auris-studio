@@ -155,6 +155,10 @@ pub(crate) fn in_progress_path(path: &Path) -> PathBuf {
 /// undo history lives in the application rather than on disk.
 pub fn save_project(path: &Path, project: &mut Project) -> Result<()> {
     project.format_version = Project::FORMAT_VERSION;
+    // Beside the format version, and different in kind: that number decides whether a file can
+    // be read, this one lets the door say who wrote it. The workspace shares one version, so
+    // this crate's own is the application's.
+    project.saved_by = env!("CARGO_PKG_VERSION").to_string();
     let json = serde_json::to_string_pretty(project)?;
 
     let in_progress = in_progress_path(path);

@@ -153,6 +153,15 @@ pub struct Project {
     /// Format version, bumped when the schema changes incompatibly.
     #[serde(default = "current_format_version")]
     pub format_version: u32,
+    /// The build that last saved this file, as its version string.
+    ///
+    /// Informational, never gating: the format version above decides whether a file can be
+    /// *read*, and this is what lets the door note that the *performer* has changed — a document
+    /// saved under another build regenerates in the current composer's style, not the one it was
+    /// written in. Stamped by the save path beside the format version; empty for a file saved
+    /// before the field existed, and for a document never saved at all.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub saved_by: String,
     /// Document name.
     pub name: String,
     /// Rate everything renders at.
@@ -412,6 +421,7 @@ impl Project {
         };
         Self {
             format_version: Self::FORMAT_VERSION,
+            saved_by: String::new(),
             name: name.into(),
             sample_rate,
             tempo_map: TempoMap::constant(120.0),
