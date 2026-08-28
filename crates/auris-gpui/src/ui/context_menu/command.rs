@@ -77,6 +77,8 @@ pub enum MenuCommand {
     /// These eight turn the *sheet* rather than the document: nothing they set has been written
     /// until Write is pressed, so none of them records an undo step.
     SongMeter(u32, u32),
+    /// Type a meter the song sheet's list does not offer.
+    SongTypeMeter,
     /// Set the song sheet's mood from a named feeling.
     SongMood(&'static str),
     /// Set what one section of the song sheet plays, by chart name or catalogue name.
@@ -611,6 +613,7 @@ impl AurisApp {
                     dials.meter = TimeSignature::new(numerator, denominator);
                 }
             }
+            MenuCommand::SongTypeMeter => self.prompt_for_song_meter(),
             MenuCommand::SongMood(name) => {
                 if let (Some(dials), Some(mood)) = (self.song_sheet.as_mut(), Mood::named(name)) {
                     dials.mood = mood;

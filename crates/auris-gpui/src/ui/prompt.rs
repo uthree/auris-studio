@@ -112,6 +112,11 @@ pub enum PromptTarget {
     SongTitle,
     /// The key the song sheet is set to.
     SongKey,
+    /// The meter the song sheet is set to, as `11/8`.
+    ///
+    /// The menu on the row covers the meters nearly everybody wants; this field is the way to
+    /// the rest, exactly as the transport's signature field has one.
+    SongMeter,
     /// The seed the song sheet is set to.
     SongSeed,
     /// The name of the part at this position in the song sheet's roster.
@@ -175,7 +180,9 @@ impl PromptTarget {
             PromptTarget::SongMotif => Notation::Motif,
             PromptTarget::SongSectionChart(_) => Notation::Progression,
             PromptTarget::Section(_) => Notation::Section,
-            PromptTarget::Signature(_) | PromptTarget::SignatureFrom(_) => Notation::Signature,
+            PromptTarget::Signature(_)
+            | PromptTarget::SignatureFrom(_)
+            | PromptTarget::SongMeter => Notation::Signature,
             PromptTarget::Seed(_) | PromptTarget::SongSeed => Notation::Seed,
             PromptTarget::Tempo(_)
             | PromptTarget::TempoFrom(_)
@@ -750,6 +757,20 @@ impl AurisApp {
                 }
                 Err(_) => {
                     self.set_failed_status(messages::not_a_seed(self.language(), &text));
+                    return;
+                }
+            },
+            // Refused rather than clamped, the same answer the timeline's meter fields give:
+            // there is no nearest signature to land on.
+            PromptTarget::SongMeter => match text.parse::<TimeSignature>() {
+                Ok(meter) => {
+                    if let Some(dials) = self.song_sheet.as_mut() {
+                        dials.meter = meter;
+                    }
+                    Ok(())
+                }
+                Err(_) => {
+                    self.set_failed_status(messages::not_a_signature(self.language(), &text));
                     return;
                 }
             },
@@ -1671,6 +1692,7 @@ mod tests {
             PromptTarget::Position,
             PromptTarget::SongTitle,
             PromptTarget::SongKey,
+            PromptTarget::SongMeter,
             PromptTarget::SongSeed,
             PromptTarget::SongPartName(0),
             PromptTarget::SongMotif,
@@ -1728,10 +1750,14 @@ mod tests {
             );
         }
         assert!(!completions(PromptTarget::SongKey, "").is_empty());
-        // And the same for the seed, which is the other question the sheet asks twice.
+        // And the same for the seed and the meter, the other questions the sheet asks twice.
         assert_eq!(
             PromptTarget::SongSeed.notation(),
             PromptTarget::Seed(ClipId(1)).notation()
+        );
+        assert_eq!(
+            PromptTarget::SongMeter.notation(),
+            PromptTarget::Signature(AT).notation()
         );
     }
 

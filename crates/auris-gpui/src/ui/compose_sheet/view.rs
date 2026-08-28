@@ -270,7 +270,7 @@ impl AurisApp {
             self.sheet_picker(
                 "song-meter",
                 Key::SongMeter,
-                format!("{}/{}", dials.meter.numerator, dials.meter.denominator),
+                dials.meter.to_string(),
                 Self::opens_menu(cx, |this, at| this.song_meter_menu(at)),
             )
             .into_any_element(),
@@ -794,6 +794,19 @@ impl AurisApp {
         target.set(dials, crate::ui::widgets::dragged(start_fraction, delta));
     }
 
+    /// Opens the sheet that takes the song's meter as `11/8`.
+    ///
+    /// The menu on the row covers what nearly everybody wants; this is the way to the rest,
+    /// exactly as the transport's signature field has one.
+    pub(crate) fn prompt_for_song_meter(&mut self) {
+        let title = self.t(Key::SongMeter);
+        let current = self
+            .song_sheet
+            .as_ref()
+            .map_or_else(String::new, |dials| dials.meter.to_string());
+        self.open_prompt(Prompt::new(title, PromptTarget::SongMeter, current));
+    }
+
     /// Writes the piece the sheet describes, replacing the document.
     pub(crate) fn write_song_from_sheet(&mut self) {
         let Some(dials) = self.song_sheet.as_ref() else {
@@ -846,4 +859,83 @@ impl AurisApp {
 /// The interface's word for a mood, as a `String` the picker can hold.
 fn this_word(app: &AurisApp, name: &str) -> String {
     app.t(mood_key(name)).to_string()
+}
+
+#[cfg(test)]
+mod window_tests {
+    use gpui::TestAppContext;
+
+    use auris_session::prelude::*;
+
+    use crate::harness::{open, paint};
+
+    /// The meter row's menu lists eight; this is the path to the other three hundred and
+    /// ninety-two, made as a hand makes it: the field comes up, the meter is typed, Return.
+    #[gpui::test]
+    fn any_meter_can_be_typed_onto_the_sheet(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            this.prompt_for_song_meter();
+        });
+        paint(&app, cx);
+        app.update(cx, |this, _| {
+            // The field opens holding the meter in force; typing over it is what a person
+            // does with the selection the click left.
+            this.prompt
+                .as_mut()
+                .and_then(super::Prompt::field_mut)
+                .expect("the meter sheet is up")
+                .select_all();
+        });
+
+        cx.simulate_input("11/8");
+        cx.simulate_keystrokes("enter");
+
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.song_sheet.as_ref().expect("the sheet is open").meter,
+                TimeSignature::new(11, 8),
+                "the typed meter landed on the dial"
+            );
+            assert!(this.prompt.is_none(), "and the field closed behind it");
+        });
+    }
+
+    /// `5/3` is not a meter, and the field says so instead of quietly landing on 4/4 —
+    /// `TimeSignature::new` would have changed the subject, which is exactly why the prompt
+    /// parses rather than constructs.
+    #[gpui::test]
+    fn a_meter_that_is_not_one_is_refused_not_rounded(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            if let Some(dials) = this.song_sheet.as_mut() {
+                dials.meter = TimeSignature::new(7, 8);
+            }
+            this.prompt_for_song_meter();
+        });
+        paint(&app, cx);
+        app.update(cx, |this, _| {
+            this.prompt
+                .as_mut()
+                .and_then(super::Prompt::field_mut)
+                .expect("the meter sheet is up")
+                .select_all();
+        });
+
+        cx.simulate_input("5/3");
+        cx.simulate_keystrokes("enter");
+
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.song_sheet.as_ref().expect("the sheet is open").meter,
+                TimeSignature::new(7, 8),
+                "the dial did not move"
+            );
+            // Every refused prompt answers the same way: the sheet closes and the status line
+            // says why, in the colour of a failure.
+            assert!(this.status_failed, "the refusal reached the status line");
+        });
+    }
 }

@@ -15,16 +15,21 @@ use crate::ui::context_menu::{ContextMenu, MenuCommand};
 use super::dials::*;
 
 impl AurisApp {
-    /// The meters the sheet offers.
+    /// The meters the sheet offers: the common list with a tick beside the one in force, then a
+    /// way to type any meter the list does not hold — the same two halves as the transport's
+    /// signature field, because they are the same question asked in two places.
     pub(super) fn song_meter_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
+        let current = self.song_sheet.as_ref().map(|dials| dials.meter);
         let mut menu = ContextMenu::new(anchor, self.t(Key::SongMeter));
-        for (numerator, denominator) in [(4, 4), (3, 4), (6, 8), (5, 4), (7, 8), (12, 8)] {
-            menu = menu.item(
-                format!("{numerator}/{denominator}"),
-                MenuCommand::SongMeter(numerator, denominator),
+        for signature in TimeSignature::COMMON {
+            menu = menu.toggle(
+                signature.to_string(),
+                MenuCommand::SongMeter(signature.numerator, signature.denominator),
+                Some(signature) == current,
             );
         }
-        menu
+        menu.separator()
+            .item(self.t(Key::MenuOtherSignature), MenuCommand::SongTypeMeter)
     }
 
     /// The named feelings, each of which means four numbers.
