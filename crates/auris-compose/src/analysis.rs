@@ -152,7 +152,10 @@ pub fn detect_key(notes: &[Note]) -> Key {
 /// Length rather than count, because a whole note is a stronger statement about the key than four
 /// semiquavers of passing tone, and struck harder counts for more than brushed — both of which are
 /// true of the phrase a person actually hears.
-fn pitch_weights(notes: &[Note]) -> [f64; 12] {
+///
+/// `pub(crate)` for the metrics module, whose entropy weighs the classes by exactly this rule:
+/// two answers to "how much does this part dwell on that class" would drift apart.
+pub(crate) fn pitch_weights(notes: &[Note]) -> [f64; 12] {
     let mut weights = [0.0f64; 12];
     for note in notes {
         let length = note.length.raw().max(0) as f64;

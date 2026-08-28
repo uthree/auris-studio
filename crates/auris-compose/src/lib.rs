@@ -6,6 +6,7 @@ pub mod analysis;
 pub mod frame;
 pub mod gm;
 pub mod melodic;
+pub mod metrics;
 pub mod parts;
 pub mod phrase;
 pub mod preset;
@@ -25,6 +26,7 @@ pub mod spec;
 pub use auris_core::theory;
 
 pub use analysis::{Reading, detect_key, harmonise, motif_of, read_melody};
+pub use metrics::{pitch_class_entropy, syncopation};
 pub use phrase::{
     SEED_RANGE, clip_seed, default_instrument, preset_of, recipe_for, roles_of, write_phrase,
 };
