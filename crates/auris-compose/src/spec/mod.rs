@@ -392,23 +392,19 @@ pub struct SongSpec {
     pub seed: u64,
     /// How much the offbeats are delayed, as a percentage where 50 is straight.
     pub swing: u8,
-    /// How far timing and velocity wander, from 0 for a machine to 1 for a sloppy band.
+    /// How loosely the piece is played, from 0 for a machine to 1 for a sloppy band.
     ///
-    /// The timing half is a *time* and not a number of ticks: at 1 a pitched note lands within a
-    /// standard deviation of six milliseconds of where it was written, and at the default of
-    /// 0.35 within about two, at whatever tempo the piece is played. That is what makes one
-    /// setting mean one thing — the same dial used to read as a slight looseness at 148 BPM and as
-    /// nobody being together at 64, because the wander was a fraction of a beat and a beat is not
-    /// a fixed length of time.
+    /// The one dial that never reaches the notes. It decides the performance stack every clip
+    /// of the piece arrives carrying — a timing-and-velocity wander per pitched part, and each
+    /// role's constant lean, per [`auris_compose::perform`](crate::perform) — so the written
+    /// text sits on the grid at any setting and the looseness is turned, per clip, without a
+    /// rewrite. The wander is a *time*: at 1 a pitched note sounds within a standard deviation
+    /// of six milliseconds of where it is written, at whatever tempo the piece plays.
     ///
-    /// It scales the whole way down, so a small setting is a small wander rather than the first
-    /// step of a staircase.
-    ///
-    /// The kit is exempt from the wander and only from the wander. A drummer holding the time is
-    /// what the rest of the band is loose *against*, so the kick, the snare and the hat land
-    /// exactly where they were written; what they keep is their constant lean — the hat a little
-    /// early, the snare a little late, by the same amount in every bar — and how much this dial
-    /// varies the strength of the stroke.
+    /// The kit is exempt from the wander and only from the wander. A drummer holding the time
+    /// is what the rest of the band is loose *against*, so the kick, the snare and the hat
+    /// sound exactly where they are written; what they keep is their constant lean — the hat a
+    /// little early, the snare a little late, by the same amount in every bar.
     pub humanize: f32,
     /// How far apart the hardest and softest notes are struck, from 0 to 1.
     ///

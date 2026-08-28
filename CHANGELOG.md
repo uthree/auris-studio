@@ -25,6 +25,15 @@ format rather than a convention: `## <version> — <date>`.
 * A transpose transform exists alongside the three dials (session API only for now), and the
   stack is ordered — the panel keeps swing in front of humanize, so the swing still finds its
   offbeats before the wander moves them off the grid.
+* **The composer performs through the same stack now.** A generated clip's text lands on the
+  grid — only the groove's swing is still written — and its feel arrives as transforms on the
+  clip: the wander per pitched part, plus a new deterministic **lean** (the hat a touch early,
+  the snare laying back, exactly as the composer always played them). One Humanize dial edits
+  it, in the Performance section; the recipe's own humanize dial is gone, and regenerating or
+  re-rolling a clip touches the text alone — the feel you set stays set, though another take
+  re-seeds the wander so one number still names both. The kit keeps time as before and, being
+  wander-exempt, no longer varies its stroke with the dial. The format version moves to 19 for
+  the new transform kind.
 * A saved file now records **which build saved it**. Opening a project another build saved puts
   a note on the status line (and on the command line's stderr): the piece sounds exactly as
   saved, but regenerating any clip writes in the current composer's style — so a take worth

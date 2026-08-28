@@ -212,9 +212,6 @@ pub struct ClipRecipe {
     /// How far the offbeats are delayed, as a percentage where 50 is straight.
     #[serde(default = "default_swing")]
     pub swing: u8,
-    /// How far timing and velocity wander, from 0 for a machine to 1 for a sloppy band.
-    #[serde(default)]
-    pub humanize: f32,
     /// How finely the beat is divided, which is the grid the part's figures land on.
     ///
     /// A drum kit ignores it: a groove is written in sixteenths, and reading one on a triplet
@@ -296,7 +293,6 @@ impl ClipRecipe {
             intensity: 0.7,
             groove: default_groove(),
             swing: 50,
-            humanize: 0.25,
             subdivision: Subdivision::default(),
             gate: default_gate(),
             dynamics: default_dynamics(),
@@ -308,7 +304,6 @@ impl ClipRecipe {
             recipe.density = 0.95;
             recipe.intensity = 0.85;
             recipe.gate = 0.3;
-            recipe.humanize = 0.1;
             // Flatter than most parts, on purpose. A stab is a rhythm played by a chord, and a
             // metric hierarchy at full strength turns the sixteenths between the beats into
             // ghost notes — which is a groove, and not this one.

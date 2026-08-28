@@ -8,11 +8,13 @@
 //!
 //! Here: what a part is — [`Draft`], [`PartDraft`] and [`ScoreSettings`] — the roster loop in
 //! [`write_parts`], and the three passes that pick the notes up again once a writer has put them
-//! down. `shorten` and `humanise` are post-passes rather than each writer's business so that one
+//! down. `shorten` and `swing` are post-passes rather than each writer's business so that one
 //! setting means the same thing in every part, and for the same reason the tests that hold for
 //! the whole band are here rather than in any one writer's file. `untangle` is a post-pass because
 //! it has to run *after* the other two: it clears up what moving a start without moving a length
-//! leaves behind, so no writer could do it for itself.
+//! leaves behind, so no writer could do it for itself. The feel that is *not* written — the
+//! wander and the per-role lean — is installed on the finished clips instead; [`crate::perform`]
+//! is that table.
 //!
 //! One file per role — `melody`, `comp`, `arp`, `bass` and `drums` — because not one of them
 //! calls another. They are spokes, and somebody reading how a bass line is built should not have
@@ -32,11 +34,10 @@ mod writer;
 #[cfg(test)]
 mod fixture;
 
-use auris_core::time::{TICKS_PER_QUARTER, Ticks};
+use auris_core::time::Ticks;
 
 use crate::frame::Frame;
 use crate::rhythm::{SwingFeel, swing_offset};
-use crate::rng::{Key as RngKey, Rng};
 use crate::spec::{Mood, PartSpec, Role, SongSpec};
 
 use arp::arp;
@@ -82,7 +83,7 @@ pub struct PartDraft {
 
 /// How a part is played, as opposed to what it plays.
 ///
-/// The five dials the writers read that are neither the harmony, the form, nor the part itself.
+/// The dials the writers read that are neither the harmony, the form, nor the part itself.
 /// They arrive separately from a [`SongSpec`] so that a caller who has no specification — one
 /// regenerating a single clip against the harmony already in a document — can still ask for a
 /// part without inventing a whole song around it.
@@ -91,14 +92,12 @@ pub struct ScoreSettings {
     /// How the music should feel, which sets density and syncopation.
     pub mood: Mood,
     /// How far the offbeats are delayed, as a percentage where 50 is straight.
-    pub swing: u8,
-    /// How far timing and velocity wander, from 0 for a machine to 1 for a sloppy band.
     ///
-    /// Straight through to nothing at 0, and the timing half of it is a duration rather than a
-    /// count of ticks, so a low setting is a slight looseness and the same setting means the same
-    /// thing at every tempo. The kit does not wander at all; see `humanise` for why it still
-    /// leans.
-    pub humanize: f32,
+    /// The one piece of feel still written into the notes. The wander and the lean moved to the
+    /// performance stack ([`crate::perform`]) where a person can turn them without a rewrite;
+    /// the swing stays here because the *groove* decides which pairs it delays, and a groove is
+    /// something only the writers know.
+    pub swing: u8,
     /// How far apart the hardest and softest notes are struck, from 0 to 1.
     ///
     /// Distinct from how hard the part is played, which is the section's intensity: this is how
@@ -123,7 +122,6 @@ impl From<&SongSpec> for ScoreSettings {
         Self {
             mood: spec.mood,
             swing: spec.swing,
-            humanize: spec.humanize,
             dynamics: spec.dynamics,
             fill: spec.fill,
             variation: spec.variation,
@@ -188,7 +186,7 @@ pub fn write_parts(settings: &ScoreSettings, roster: &[PartSpec], frame: &Frame)
                 draft.notes.extend(notes);
             }
             shorten(&played, &mut draft.notes);
-            humanise(settings, frame, &played, &mut draft.notes);
+            swing(settings, frame, &played, &mut draft.notes);
             draft
                 .notes
                 .sort_by_key(|note| (note.start.raw(), note.pitch));
@@ -236,74 +234,24 @@ fn shorten(played: &[PartSpec], notes: &mut [Draft]) {
     }
 }
 
-/// How far a pitched part's timing wanders at `humanize` 1, as a standard deviation in
-/// milliseconds.
+/// Swings the timing, so the part plays the groove's feel rather than the grid.
 ///
-/// Six because the default humanisation is 0.35 and 6 × 0.35 is 2.1 ms, which is about where a
-/// band that is playing well sits: far enough apart that two parts written on one tick no longer
-/// land on one tick, near enough that nobody is waiting for anybody. The other end follows from it
-/// rather than being chosen — 6 ms with the three-sigma bound the jitter already has means the
-/// wander never reaches 18 ms, which is as far as "sloppy" can go before it stops being one band.
+/// This used to be the humanisation too — a wander over the timing and the velocity, and a
+/// constant per-role lean. Both moved off the notes and onto the clip's performance stack
+/// ([`crate::perform`] is the table of what each part starts with), because they are how the
+/// text is *played*, and a feel written into the text could neither be turned without a rewrite
+/// nor differ from one loop pass to the next. The swing stays, and stays written: which pairs it
+/// delays is the groove's own answer — a kit running sixteenths swings them, a kit in eighths
+/// swings those — and the groove is something only the writers know.
 ///
-/// Fifteen was the first answer and it was too much. It was chosen against the default alone, and
-/// the presets ask for more than the default: measured across the eight of them it moved a jazz
-/// piano by up to 27 ms and an ambient bell by 25, and a note that far from its neighbours is not
-/// a player relaxing, it is a player missing.
-///
-/// A round number and not a fitted one. The target was "about 2 ms at the default", and a constant
-/// carried to two decimal places would be claiming a precision that the ear, which cannot hear the
-/// difference between 2 and 2.1 ms of spread, does not have.
-const WANDER_MS: f32 = 6.0;
-
-/// Swings, nudges and softens the timing so the part does not sound quantised.
-///
-/// `humanize: 0` is exactly the identity apart from swing, which is what lets every timing test
-/// assert on an exact tick rather than on a tolerance. So is any humanisation at all for a drum,
-/// which is a stronger promise and the reason for the guard below.
-fn humanise(settings: &ScoreSettings, frame: &Frame, played: &[PartSpec], notes: &mut [Draft]) {
+/// `swing: 50` is exactly the identity, which is what lets every timing test assert on an exact
+/// tick rather than on a tolerance.
+fn swing(settings: &ScoreSettings, frame: &Frame, played: &[PartSpec], notes: &mut [Draft]) {
     let Some(part) = played.first() else {
         return;
     };
-    // Where a player sits against the beat: a hat pushes, a bass drags. Off the roster's own copy
-    // and not a section's, because the role is not something a section patches — a part is what it
-    // is for the whole song, and only *how* it plays can change.
-    let push = match part.role {
-        Role::Hat => -8.0,
-        Role::Melody | Role::Arp => -4.0,
-        Role::Bass => 6.0,
-        Role::Snare => 10.0,
-        _ => 0.0,
-    } * settings.humanize;
-
-    // How far the wander reaches at this tempo, as a standard deviation in ticks.
-    //
-    // The dial is read straight, with no floor under it, because a floor makes the first step off
-    // zero a jump rather than a step: the old wander was `6 + 19 × humanize` ticks, so it was
-    // already six ticks wide — 3.75 ms at 120 BPM, 4.9 at 76 — the instant the dial left zero. At
-    // the default of 0.35 that floor was still 47 per cent of the whole wander, and at 0.1 it was
-    // 76, so most of the dial's travel was a number nobody had chosen.
-    //
-    // A quarter note is `TICKS_PER_QUARTER` ticks and lasts `60000 / tempo` milliseconds, so this
-    // is how many ticks go by in one of them. Doing the conversion is the whole point: a fixed
-    // number of ticks is a fixed *fraction of a beat*, and the same fraction is nearly twice as
-    // long a wait at 64 BPM as at 120 — which is how one dial came to read "a bit loose" for the
-    // rock preset and "nobody is together" for the ambient one.
-    //
-    // Per section, because the tempo is: a piece that lifts into its chorus would otherwise have
-    // the wander of the section it left, and the whole promise here is that one dial is one feel
-    // at whatever speed the music happens to be going. A section the note does not belong to
-    // cannot happen — a draft is written *by* section — and answers no wander rather than a
-    // guessed tempo, since there is nothing true to convert against.
-    let sigma = |section: usize| {
-        frame.sections.get(section).map_or(0.0, |plan| {
-            let ticks_per_ms = TICKS_PER_QUARTER as f64 * plan.tempo.max(0.0) / 60_000.0;
-            WANDER_MS * settings.humanize * ticks_per_ms as f32
-        })
-    };
-
-    // Which pairs the swing dial delays, which is the groove's own answer: a kit running
-    // sixteenths swings them, and one in eighths swings those. The whole band reads the one
-    // answer — a comp swinging pairs the kit does not would be two feels at once.
+    // The whole band reads the groove's one answer — a comp swinging pairs the kit does not
+    // would be two feels at once.
     let feel = crate::rhythm::groove(&settings.groove)
         .map_or(SwingFeel::Eighth, crate::rhythm::Groove::swing_feel);
 
@@ -314,53 +262,20 @@ fn humanise(settings: &ScoreSettings, frame: &Frame, played: &[PartSpec], notes:
         let grid = part_grid(frame, played.get(note.section).unwrap_or(part));
         let bar_position = note.start.raw().rem_euclid(grid.bar_ticks().raw().max(1));
         let step = grid.step_of(Ticks(bar_position));
-        let mut start = note.start + swing_offset(grid, step, settings.swing, feel);
-        if settings.humanize > 0.0 {
-            // Named by *where the note is* rather than by how many notes came before it, so
-            // adding a note to bar one does not re-time the whole song.
-            let mut rng = Rng::stream(
-                frame.seed,
-                &[
-                    RngKey::Word("part"),
-                    RngKey::Word(&part.name),
-                    RngKey::Word("humanize"),
-                    RngKey::Index(note.start.raw().max(0) as u64),
-                    RngKey::Index(u64::from(note.pitch)),
-                ],
-            );
-            // Drawn whether this note can use it or not, which is the roll-anyway rule: the
-            // velocity below is the next number out of the same stream, and silencing the kit's
-            // timing should not also have restruck it.
-            let wander = rng.jitter(sigma(note.section));
-            // A drum does not wander. Everything else in the band is loose *against* somebody
-            // keeping the time, and if the kit moves too there is nothing to be loose against.
-            //
-            // `push` is not part of that and survives the guard: it is a constant lean rather
-            // than a wobble — the hat a little early, the snare a little late, by the same amount
-            // in every bar of the piece — which is a thing a drummer does on purpose and reads as
-            // a feel. What reads as sloppy is the note-to-note scatter, and that is the only
-            // thing being taken away here.
-            let offset = if part.role.is_drum() {
-                push
-            } else {
-                wander + push
-            };
-            start += Ticks(offset.round() as i64);
-            let scale = 1.0 + rng.jitter(0.06 * settings.humanize);
-            note.velocity = (note.velocity * scale).clamp(0.05, 1.0);
-        }
-        note.start = start.max_zero();
+        note.start = (note.start + swing_offset(grid, step, settings.swing, feel)).max_zero();
     }
 }
 
 /// Cuts every note back to where the next note of the same pitch begins.
 ///
 /// A writer sets a note's length from where the *next* note starts, so nothing it writes overlaps
-/// itself. Then `humanise` moves the starts and leaves the lengths alone — the swing delays an
-/// offbeat note past the end of its own bar-mate, the wander nudges a repeated note a few ticks
-/// early — and a note now ends after the next note of its own pitch has already begun. Measured
-/// over the eight presets at four seeds each, 41,184 notes: 13 per cent of them at the default
-/// humanisation, and 0.8 per cent from the swing alone with the wander switched off entirely.
+/// itself. Then `swing` moves the starts and leaves the lengths alone — an offbeat note is
+/// delayed past the end of its own bar-mate — and a note now ends after the next note of its own
+/// pitch has already begun. Measured over the eight presets at four seeds each, 41,184 notes:
+/// 0.8 per cent of them, back when this pass also carried the wander it was 13. The wander now
+/// happens at performance time, where an overlap it opens meets the same release-first rule
+/// below rather than a cut — the text cannot be trimmed against an accident that redraws itself
+/// every pass.
 ///
 /// What that costs depends on the instrument, which is exactly why the composer must not write
 /// one. A note-off names a pitch and not a note, so an instrument meeting two of them has to
@@ -401,126 +316,6 @@ mod tests {
     use super::*;
     use crate::theory::pitch::PitchClass;
 
-    /// How many seeds a timing measurement is taken over.
-    ///
-    /// Seeds of one fixture and not the eight presets. They each write a seed of their own now,
-    /// so they would be eight independent draws rather than one draw eight times — but they also
-    /// each choose a tempo, a meter, a groove and a roster, and every number below is a
-    /// displacement in *milliseconds* measured against the same piece written at `humanize` 0.
-    /// Twenty-four seeds of one specification put tens of thousands of paired notes behind each
-    /// of them with nothing moved but the dial.
-    const SEEDS: u64 = 24;
-
-    /// A piece written to be measured: enough bars to draw from, and no swing to confuse the
-    /// comparison with a displacement the dial did not cause.
-    fn timing_spec(seed: u64, tempo: f64, humanize: f32) -> String {
-        format!(
-            r#"
-            form = "verse chorus"
-            chords = "@axis"
-            seed = {seed}
-            tempo = {tempo:.1}
-            humanize = {humanize:.4}
-            swing = 50
-            [section.verse]
-            bars = 8
-            [section.chorus]
-            bars = 8
-            "#
-        )
-    }
-
-    /// One part's notes ordered so that two performances of it line up note for note.
-    ///
-    /// By pitch first and then by time, rather than the other way round: humanisation moves a note
-    /// but cannot change its pitch, so this order is one the displacement cannot disturb, while
-    /// the order the drafts arrive in — by time, then by pitch — is exactly the one two notes
-    /// struck together can be swapped in.
-    fn by_pitch(draft: &PartDraft) -> Vec<Draft> {
-        let mut notes = draft.notes.clone();
-        notes.sort_by_key(|note| (note.pitch, note.start.raw()));
-        notes
-    }
-
-    /// How far every note of `name` moved from where a machine would have put it, in
-    /// milliseconds, pooled over [`SEEDS`] pieces.
-    ///
-    /// Measured against the same specification written at `humanize` 0, which is the identity
-    /// apart from swing: which notes are played is drawn from streams this dial does not reach, so
-    /// the two performances hold the same notes and the pairing above pairs each note with itself.
-    fn displacements(tempo: f64, humanize: f32, name: &str) -> Vec<f32> {
-        let ms_per_tick = 62.5 / tempo as f32;
-        let mut out = Vec::new();
-        for seed in 0..SEEDS {
-            let (_, _, loose) = draft(&timing_spec(seed, tempo, humanize));
-            let (_, _, machine) = draft(&timing_spec(seed, tempo, 0.0));
-            let played = by_pitch(part(&loose, name));
-            let written = by_pitch(part(&machine, name));
-            assert_eq!(
-                played.len(),
-                written.len(),
-                "seed {seed}: humanising `{name}` changed how many notes it plays"
-            );
-            for (played, written) in played.iter().zip(&written) {
-                assert_eq!(
-                    played.pitch, written.pitch,
-                    "seed {seed}: `{name}` mispaired"
-                );
-                out.push((played.start - written.start).raw() as f32 * ms_per_tick);
-            }
-        }
-        out
-    }
-
-    /// The standard deviation of a set of displacements, about their own mean.
-    ///
-    /// About the mean rather than about zero, because a part's constant lean is not wander: it is
-    /// the same number of ticks in every bar of the piece, and what a listener hears as loose is
-    /// the scatter around it rather than where the middle of it sits.
-    fn spread(values: &[f32]) -> f32 {
-        assert!(!values.is_empty(), "nothing was measured");
-        let mean = values.iter().sum::<f32>() / values.len() as f32;
-        let variance =
-            values.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / values.len() as f32;
-        variance.sqrt()
-    }
-
-    #[test]
-    fn the_kit_does_not_wander_however_loose_the_dial_is() {
-        // At the top of the dial, where the old formula scattered the kit by twenty-five ticks.
-        // Exactly, and not nearly: a drummer who is *almost* on the beat is the complaint.
-        for seed in 0..SEEDS {
-            let (_, _, loose) = draft(&timing_spec(seed, 120.0, 1.0));
-            let (_, _, machine) = draft(&timing_spec(seed, 120.0, 0.0));
-            for (name, role) in [
-                ("kick", Role::Kick),
-                ("snare", Role::Snare),
-                ("hat", Role::Hat),
-            ] {
-                let played = by_pitch(part(&loose, name));
-                let written = by_pitch(part(&machine, name));
-                assert!(!played.is_empty(), "`{name}` played nothing to measure");
-                assert_eq!(played.len(), written.len(), "seed {seed}: `{name}`");
-                // The lean the guard keeps on purpose: `humanise`'s own table, at a dial of 1.
-                let lean = Ticks(match role {
-                    Role::Hat => -8,
-                    Role::Snare => 10,
-                    _ => 0,
-                });
-                for (played, written) in played.iter().zip(&written) {
-                    assert_eq!(
-                        played.start,
-                        // A note leaning back off the front of the piece is held at zero, which
-                        // is the one place a lean does not survive intact.
-                        (written.start + lean).max_zero(),
-                        "seed {seed}: `{name}` moved off {} by more than its lean",
-                        written.start.raw()
-                    );
-                }
-            }
-        }
-    }
-
     #[test]
     fn a_sixteen_beat_groove_swings_its_sixteenth_pairs() {
         // The swing dial under a groove that runs sixteenths. Felt at the eighth it moved the
@@ -532,7 +327,6 @@ mod tests {
         let (_, _, parts) = draft(
             r#"
             form = "verse"
-            humanize = 0
             swing = 66
             groove = "sixteen-beat"
             ending = "none"
@@ -558,7 +352,6 @@ mod tests {
         let (_, _, parts) = draft(
             r#"
             form = "verse"
-            humanize = 0
             swing = 66
             groove = "eight-beat"
             ending = "none"
@@ -580,111 +373,12 @@ mod tests {
         assert_eq!(starts, expected);
     }
 
-    #[test]
-    fn the_dial_scales_the_wander_all_the_way_down_to_nothing() {
-        // The old wander was `6 + 19 × humanize` ticks, so it began at six ticks the instant the
-        // dial left zero: 3.75 ms at 120 BPM whatever was asked for. There was nothing between a
-        // machine and a player already that far out, and these are the settings that had no
-        // meaning. Each is now within a fifth of `WANDER_MS × humanize`, and the smallest of them
-        // is a quarter of what the floor alone used to be.
-        for humanize in [0.05, 0.1, 0.2, 0.4] {
-            let measured = spread(&displacements(120.0, humanize, "lead"));
-            let wanted = WANDER_MS * humanize;
-            assert!(
-                (measured - wanted).abs() < wanted * 0.2,
-                "humanize {humanize}: {measured:.2} ms against the {wanted:.2} ms asked for"
-            );
-        }
-        // Named separately so that the number the old floor would have failed on is written down
-        // rather than left to be recomputed from the loop above.
-        let floor = spread(&displacements(120.0, 0.05, "lead"));
-        assert!(
-            floor < 1.5,
-            "the smallest audible setting still wanders by {floor:.2} ms"
-        );
-    }
-
-    #[test]
-    fn the_same_dial_is_the_same_feel_at_any_tempo() {
-        // Three times apart, which covers everything the presets ask for and then some.
-        let slow = spread(&displacements(60.0, 0.5, "lead"));
-        let fast = spread(&displacements(180.0, 0.5, "lead"));
-
-        // Five per cent, and the reasoning for it: the two pieces hold the same notes and draw the
-        // same numbers, so all that is left between them is rounding a displacement onto a whole
-        // tick. A tick is 1.04 ms at 60 BPM against 0.35 at 180, and rounding onto a grid of width
-        // w adds w²/12 to the variance — 0.09 ms² against a variance of 56, under a fifth of one
-        // per cent. Five leaves room for the one note per piece that leans off the front and is
-        // held at zero.
-        assert!(
-            (slow - fast).abs() < 0.05 * slow.max(fast),
-            "the same dial gave {slow:.2} ms at 60 BPM and {fast:.2} ms at 180"
-        );
-        // And both of them are the wander that was asked for, rather than merely equal to each
-        // other: 15 ms × 0.5.
-        for (tempo, measured) in [(60.0, slow), (180.0, fast)] {
-            let wanted = WANDER_MS * 0.5;
-            assert!(
-                (measured - wanted).abs() < wanted * 0.15,
-                "{tempo} BPM: {measured:.2} ms against the {wanted:.2} ms asked for"
-            );
-        }
-    }
-
-    #[test]
-    fn a_section_that_lifts_the_tempo_lifts_the_wander_with_it() {
-        // The dial asks for a wander in milliseconds and the conversion into ticks needs a tempo.
-        // Once a section can name its own, taking the song's would scatter a chorus by the number
-        // of ticks its *verse* wanted — at 60 against 180 that is three times the time asked for,
-        // which is the whole failure the millisecond conversion was written to stop.
-        //
-        // Measured in ticks and not in milliseconds on purpose: in milliseconds a right answer
-        // and a wrong one both come out as one number twice over, and only the ratio of the ticks
-        // says which conversion was used.
-        let text = |seed: u64, humanize: f32| {
-            format!(
-                r#"
-                form     = "verse chorus"
-                chords   = "@axis"
-                seed     = {seed}
-                tempo    = 60
-                humanize = {humanize:.4}
-                swing    = 50
-                [section.verse]
-                bars = 8
-                [section.chorus]
-                bars  = 8
-                tempo = 180
-                "#
-            )
-        };
-        let mut moved: [Vec<f32>; 2] = [Vec::new(), Vec::new()];
-        for seed in 0..SEEDS {
-            let (_, _, loose) = draft(&text(seed, 0.5));
-            let (_, _, machine) = draft(&text(seed, 0.0));
-            let played = by_pitch(part(&loose, "lead"));
-            let written = by_pitch(part(&machine, "lead"));
-            assert_eq!(played.len(), written.len(), "seed {seed} changed the notes");
-            for (played, written) in played.iter().zip(&written) {
-                moved[played.section.min(1)].push((played.start - written.start).raw() as f32);
-            }
-        }
-        let (verse, chorus) = (spread(&moved[0]), spread(&moved[1]));
-        let ratio = chorus / verse;
-        assert!(
-            (ratio - 3.0).abs() < 0.3,
-            "the chorus runs three times the verse's tempo and wandered {chorus:.1} ticks against \
-             {verse:.1}, a ratio of {ratio:.2}"
-        );
-    }
-
     /// The default roster over a two-section form, with `lead` patched in the chorus.
     fn tweaked(lines: &str) -> (Frame, Vec<PartDraft>) {
         let (_, frame, parts) = draft(&format!(
             r#"
             form     = "verse chorus"
             chords   = "@axis"
-            humanize = 0
             seed     = 5
 
             [section.verse]
@@ -750,18 +444,15 @@ mod tests {
 
     #[test]
     fn a_subdivision_a_section_patches_is_swung_on_its_own_grid() {
-        // The other half of the same trap, and the subtler one: `humanise` looks a note's step up
+        // The other half of the same trap, and the subtler one: `swing` looks a note's step up
         // on a grid to decide whether it is an offbeat worth delaying. Read off the roster, a
         // section put onto triplets would have its swing measured against sixteenths and the
         // wrong steps of the bar would move.
-        // `humanize = 0` is the identity apart from swing, which is what lets this assert on an
-        // exact tick instead of on a tolerance the wander would have to fit inside.
         let (_, _, parts) = draft(
             r#"
             form     = "verse chorus"
             chords   = "@axis"
             swing    = 66
-            humanize = 0
             seed     = 5
 
             [section.verse]
@@ -865,7 +556,9 @@ mod tests {
     }
 
     #[test]
-    fn without_humanising_every_note_lands_exactly_on_the_grid() {
+    fn unswung_every_note_lands_exactly_on_the_grid() {
+        // The text is the score: nothing the writers place sits off the grid unless the swing
+        // put it there. The wander that used to blur this lives on the performance stack now.
         let (_, frame, parts) = draft(BASE);
         let step = frame.grid.step_ticks().raw();
         for draft in &parts {
@@ -878,25 +571,6 @@ mod tests {
                     note.start.raw()
                 );
             }
-        }
-    }
-
-    #[test]
-    fn humanising_moves_notes_and_the_seed_decides_where() {
-        let straight = draft(BASE).2;
-        let loose = draft(&BASE.replace("humanize = 0", "humanize = 0.8")).2;
-        let moved = straight
-            .iter()
-            .zip(&loose)
-            .flat_map(|(a, b)| a.notes.iter().zip(&b.notes))
-            .filter(|(a, b)| a.start != b.start)
-            .count();
-        assert!(moved > 0, "humanising did nothing");
-
-        // And it is reproducible.
-        let again = draft(&BASE.replace("humanize = 0", "humanize = 0.8")).2;
-        for (a, b) in loose.iter().zip(&again) {
-            assert_eq!(a.notes, b.notes, "`{}` was not reproducible", a.name);
         }
     }
 
@@ -945,11 +619,9 @@ mod tests {
                 chords = "{chart}"
                 form   = "verse chorus"
                 seed   = 3
-                # Straight and unhumanised, so a note struck on a chord change is not nudged a
-                # few ticks back into the chord that is leaving. This is about which note a
-                # part chooses, not about when it arrives.
-                humanize = 0
-                swing    = 50
+                # Straight, so a note struck on a chord change is heard where it was chosen.
+                # This is about which note a part picks, not about when it arrives.
+                swing = 50
 
                 [section.verse]
                 bars = 8
@@ -1015,7 +687,6 @@ mod tests {
                     key = "C major"
                     form = "verse"
                     chords = "{chart}"
-                    humanize = 0
                     [section.verse]
                     bars = 4
                     "#
@@ -1054,7 +725,6 @@ mod tests {
         let base = r#"
             form = "verse"
             chords = "@axis"
-            humanize = 0
             [section.verse]
             bars = 4
             [[part]]
@@ -1083,12 +753,9 @@ mod tests {
 
     #[test]
     fn editing_one_section_leaves_the_others_alone() {
-        // The humanise stream used to be one sequential draw per part, so a note added anywhere
-        // re-timed every note after it.
         let base = r#"
             form     = "verse chorus"
             chords   = "@axis"
-            humanize = 0.6
             seed     = 3
 
             [section.verse]
@@ -1116,7 +783,6 @@ mod tests {
         let (_, _, parts) = draft(
             r#"
             form = "intro chorus"
-            humanize = 0
 
             [section.intro]
             parts = "bass"
@@ -1139,7 +805,6 @@ mod tests {
             r#"
                 form = "verse verse"
                 chords = "@axis"
-                humanize = 0
                 variation = 0
                 [section.verse]
                 bars = 4
@@ -1167,7 +832,6 @@ mod tests {
                 r#"
                 form     = "verse"
                 chords   = "@axis"
-                humanize = 0
                 swing    = 50
 
                 [section.verse]

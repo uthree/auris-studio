@@ -406,7 +406,14 @@ impl Project {
     /// piece swings, quantised where it was loosened — and the save afterwards would write the
     /// stack away entirely. Version 5's shape again: nothing looks wrong, and the piece is not
     /// the one that was saved.
-    pub const FORMAT_VERSION: u32 = 18;
+    ///
+    /// 19 since [`NoteTransform`] gained [`Lean`](NoteTransform::Lean), which is how the
+    /// composer's feel now arrives — installed on the clip instead of baked into its notes.
+    /// Version 6's case once more: a stored enum arm an older build has never heard of fails
+    /// the whole document, and the version turns that into a sentence at the door. The recipe
+    /// losing its `humanize` dial in the same change moved nothing — an unknown field is
+    /// skipped on the way in and a missing one defaults on the way out.
+    pub const FORMAT_VERSION: u32 = 19;
 
     /// An empty project.
     ///

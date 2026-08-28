@@ -8,6 +8,7 @@ pub mod gm;
 pub mod melodic;
 pub mod metrics;
 pub mod parts;
+pub mod perform;
 pub mod phrase;
 pub mod preset;
 pub mod progression;
@@ -36,6 +37,7 @@ pub use auris_core::rng;
 
 pub use analysis::{Reading, detect_key, harmonise, motif_of, read_melody};
 pub use metrics::{pitch_class_entropy, syncopation};
+pub use perform::{clip_performance, part_performance};
 pub use phrase::{
     SEED_RANGE, clip_seed, default_instrument, preset_of, recipe_for, roles_of, write_phrase,
 };

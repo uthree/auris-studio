@@ -10,7 +10,8 @@
 //! order — the session and a file both honour that — but the panel offers one of each, kept in
 //! the order that reads musically: swing before humanise, so the swing still finds its offbeats
 //! on the grid before the wander moves them off it. A transpose set some other way survives
-//! everything this panel does; it has no dial here yet.
+//! everything this panel does, and so does the lean the composer installs on a generated part;
+//! neither has a dial here yet.
 
 use auris_i18n::Key;
 use auris_session::prelude::*;
@@ -66,9 +67,12 @@ impl PerformDial {
 fn rank(transform: &NoteTransform) -> usize {
     match transform {
         NoteTransform::Swing { .. } => 0,
-        NoteTransform::Humanize { .. } => 1,
-        NoteTransform::Transpose { .. } => 2,
-        NoteTransform::Gate { .. } => 3,
+        // The lean sits between: deterministic feel before random feel, and after the swing for
+        // the same reason the humanise is — a leaned note is off the grid the swing reads.
+        NoteTransform::Lean { .. } => 1,
+        NoteTransform::Humanize { .. } => 2,
+        NoteTransform::Transpose { .. } => 3,
+        NoteTransform::Gate { .. } => 4,
     }
 }
 

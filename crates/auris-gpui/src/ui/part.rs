@@ -40,7 +40,9 @@ pub const GATE_MIN: f32 = 0.05;
 /// One continuous dial on a [`ClipRecipe`].
 ///
 /// The seed, the preset, the groove and the subdivision are all choices from a set and are picked
-/// from a menu; these five are the ones with a range, and so the ones that get a bar to drag.
+/// from a menu; these are the ones with a range, and so the ones that get a bar to drag. How
+/// *loose* the clip is played stopped being one of them: the humanise is a performance
+/// transform now — see `crate::ui::performance` — and turning it no longer rewrites the text.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Dial {
     /// How busy the part is.
@@ -57,8 +59,6 @@ pub enum Dial {
     Fill,
     /// How late the offbeats are.
     Swing,
-    /// How far timing and velocity wander.
-    Humanize,
 }
 
 impl Dial {
@@ -72,7 +72,6 @@ impl Dial {
             Dial::Dynamics => Key::PartDynamics,
             Dial::Fill => Key::PartFill,
             Dial::Swing => Key::PartSwing,
-            Dial::Humanize => Key::PartHumanize,
         }
     }
 
@@ -84,7 +83,6 @@ impl Dial {
             Dial::Intensity => recipe.intensity,
             Dial::Dynamics => recipe.dynamics,
             Dial::Fill => recipe.fill,
-            Dial::Humanize => recipe.humanize,
             Dial::Gate => (recipe.gate - GATE_MIN) / (1.0 - GATE_MIN),
             Dial::Swing => {
                 let span = f32::from(SWING_MAX - SWING_MIN);
@@ -111,7 +109,6 @@ impl Dial {
             Dial::Intensity => recipe.intensity = whole_percent(fraction),
             Dial::Dynamics => recipe.dynamics = whole_percent(fraction),
             Dial::Fill => recipe.fill = whole_percent(fraction),
-            Dial::Humanize => recipe.humanize = whole_percent(fraction),
             Dial::Gate => recipe.gate = GATE_MIN + whole_percent(fraction) * (1.0 - GATE_MIN),
             Dial::Swing => {
                 let span = f32::from(SWING_MAX - SWING_MIN);
@@ -143,7 +140,6 @@ pub fn dials_for(recipe: &ClipRecipe) -> &'static [Dial] {
             Dial::Intensity,
             Dial::Dynamics,
             Dial::Swing,
-            Dial::Humanize,
         ];
     }
     // A pad has no figure for the syncopation to pull off the beat: it sounds each chord once,
@@ -156,7 +152,6 @@ pub fn dials_for(recipe: &ClipRecipe) -> &'static [Dial] {
             Dial::Intensity,
             Dial::Dynamics,
             Dial::Swing,
-            Dial::Humanize,
         ];
     }
     // Swing exists to push a straight offbeat toward the third triplet. A part already dividing
@@ -168,7 +163,6 @@ pub fn dials_for(recipe: &ClipRecipe) -> &'static [Dial] {
             Dial::Gate,
             Dial::Intensity,
             Dial::Dynamics,
-            Dial::Humanize,
         ];
     }
     &[
@@ -178,7 +172,6 @@ pub fn dials_for(recipe: &ClipRecipe) -> &'static [Dial] {
         Dial::Intensity,
         Dial::Dynamics,
         Dial::Swing,
-        Dial::Humanize,
     ]
 }
 
@@ -245,7 +238,6 @@ pub fn with_preset(recipe: &ClipRecipe, preset: ClipPreset) -> ClipRecipe {
         intensity: untouched(recipe.intensity, was.intensity, becomes.intensity),
         dynamics: untouched(recipe.dynamics, was.dynamics, becomes.dynamics),
         syncopation: untouched(recipe.syncopation, was.syncopation, becomes.syncopation),
-        humanize: untouched(recipe.humanize, was.humanize, becomes.humanize),
         // The seed and the octave are nobody's default: one is which take this is and the other
         // is a register somebody asked for, and neither is an opinion a preset holds.
         ..recipe.clone()
@@ -271,7 +263,6 @@ fn dial_element_key(dial: Dial) -> usize {
         Dial::Density => 0,
         Dial::Intensity => 1,
         Dial::Swing => 2,
-        Dial::Humanize => 3,
         Dial::Gate => 4,
         Dial::Dynamics => 5,
         Dial::Syncopation => 6,
@@ -503,7 +494,7 @@ mod tests {
     fn a_dial_reads_back_what_it_was_set_to() {
         // The bar is drawn from `fraction` and dragged into `set`, so a value that did not survive
         // the round trip would make the bar jump away from the pointer while it was being dragged.
-        for dial in [Dial::Density, Dial::Gate, Dial::Intensity, Dial::Humanize] {
+        for dial in [Dial::Density, Dial::Gate, Dial::Intensity, Dial::Dynamics] {
             for target in [0.0, 0.25, 0.5, 0.75, 1.0] {
                 let mut recipe = recipe(ClipPreset::Lead);
                 dial.set(&mut recipe, target);
@@ -605,12 +596,12 @@ mod tests {
         assert!(!takes_a_subdivision(ClipPreset::Drums));
         assert!(!takes_an_octave(ClipPreset::Drums));
 
-        // Everything reads how hard and how loose and how evenly it is played, kit included.
+        // Everything reads how hard and how evenly it is played, kit included. (How *loose* is
+        // the performance panel's business now, not the recipe's.)
         for preset in ClipPreset::ALL {
             let dials = dials_for(&recipe(preset));
             assert!(dials.contains(&Dial::Intensity), "{}", preset.name());
             assert!(dials.contains(&Dial::Dynamics), "{}", preset.name());
-            assert!(dials.contains(&Dial::Humanize), "{}", preset.name());
             assert!(dials.contains(&Dial::Swing), "{}", preset.name());
         }
 
@@ -697,13 +688,7 @@ mod tests {
         // a whole percent of a 25-point range, so it moves in fortieths, and everything else is a
         // hundredth. Three thousandths is inside all of them and a twentieth is outside all of
         // them, which is what makes one set of numbers do for the whole list.
-        for dial in [
-            Dial::Density,
-            Dial::Gate,
-            Dial::Intensity,
-            Dial::Humanize,
-            Dial::Swing,
-        ] {
+        for dial in [Dial::Density, Dial::Gate, Dial::Intensity, Dial::Swing] {
             let mut recipe = recipe(ClipPreset::Lead);
             dial.set(&mut recipe, 0.5);
             let settled = recipe.clone();
@@ -757,13 +742,7 @@ mod tests {
     #[test]
     fn every_dial_gets_its_own_element_key() {
         let mut seen = std::collections::BTreeSet::new();
-        for dial in [
-            Dial::Density,
-            Dial::Gate,
-            Dial::Intensity,
-            Dial::Swing,
-            Dial::Humanize,
-        ] {
+        for dial in [Dial::Density, Dial::Gate, Dial::Intensity, Dial::Swing] {
             assert!(seen.insert(dial_element_key(dial)), "{dial:?} collided");
         }
     }

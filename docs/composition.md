@@ -253,7 +253,6 @@ inspector:
 | **Dynamics** | How far apart the hardest and softest notes are struck |
 | **Fill** | How much of the last bar the snare runs into what follows — drums only |
 | **Swing** | How late the offbeats are |
-| **Humanize** | How far timing and velocity wander |
 
 Intensity and dynamics are the level and the spread, and they are separate because they are two
 questions: a part can be played hard and flat, or softly with everything in it moving. At 0 the
@@ -262,13 +261,18 @@ the level stays where the intensity put it rather than sagging with the spread. 
 source of variation at once: the metric hierarchy, the accents, the lean across a phrase and the
 crescendo of a drum fill.
 
-Both of the dials that vary the playing are narrow at the top on purpose. At the top of the
-dynamics a part's strokes sit within about a tenth of their own level, and at the top of humanize a
-pitched note lands within six milliseconds of where it was written — two at the default, at
-whatever tempo the piece is playing. That is a band phrasing; wider than that and the same idea
-reads as a band that has not rehearsed, which is what both of these were until they were measured
-across the presets and pulled in. The kit is exempt from the timing half entirely and keeps only
-its constant lean, because a drummer holding the time is what everybody else is loose against.
+The dynamics dial is narrow at the top on purpose: a part's strokes sit within about a tenth of
+their own level there. That is a band phrasing; wider and the same idea reads as a band that has
+not rehearsed, which is what it was until it was measured across the presets and pulled in.
+
+How *loosely* a clip is played is not a recipe dial at all. The humanise — a timing and velocity
+wander — lives in the clip's **Performance** section along with a swing and a gate of its own,
+because it is how the text is played rather than what it says: the piano roll keeps showing notes
+on the grid, the wander is turned without rewriting the clip, and a looped clip is loose
+differently on every pass. A generated clip arrives with its part's feel already installed — at
+the top of the dial a pitched note sounds within six milliseconds of where it is written, at
+whatever tempo the piece is playing, and the kit keeps only its constant lean, because a drummer
+holding the time is what everybody else is loose against.
 
 A kit reads the density around the middle, and the middle **plays the groove**: a beat is never
 thinned there, a weak sixteenth sometimes is, and a quiet section thins further. Below the middle

@@ -5,12 +5,14 @@ use auris_core::plugin::PluginState;
 use auris_core::project::Color;
 use auris_core::structure::{SectionMap, SectionPoint};
 use auris_core::time::{TempoMap, TempoPoint, Ticks, TimeSignature};
-use auris_core::{ClipRecipe, Note};
+use auris_core::{ClipRecipe, Note, NoteTransform};
 
 use crate::frame::{Frame, plan};
 use crate::parts::{PartDraft, ScoreSettings, write_parts};
+use crate::perform::part_performance;
 #[cfg(test)]
 use crate::phrase::SEED_RANGE;
+use crate::phrase::clip_seed;
 use crate::phrase::recipe_for;
 use crate::spec::{PartSpec, Role, SongSpec};
 
@@ -49,6 +51,13 @@ pub struct ClipDraft {
     /// form rather than from a recipe. See [`recipe_for`], which is also where the limits of what
     /// this promises are set out.
     pub recipe: Option<ClipRecipe>,
+    /// How the clip's text is played: the transform stack it arrives carrying.
+    ///
+    /// The notes are the score and this is the feel — the specification's `humanize` dial,
+    /// delivered as the per-part lean and wander [`crate::perform`] tables rather than baked
+    /// into the notes. It is the clip's from the moment it lands: turning it is the performance
+    /// panel's business, and writing the clip's text again leaves it alone.
+    pub performance: Vec<NoteTransform>,
 }
 
 /// One track: an instrument and the clips it plays.
@@ -267,8 +276,14 @@ pub fn compose(spec: &SongSpec) -> Composition {
 /// `part` is the roster entry the draft came from, which each section may patch before playing;
 /// the recipe every clip carries is derived from the patched one, so a chorus that asked for the
 /// bass an octave up arrives as a clip that says so.
+///
+/// `looseness` is the specification's `humanize` dial, and decides the performance stack each
+/// clip arrives carrying — per role and per clip seed, see [`part_performance`]. It reaches the
+/// ending and the crash too: a recipe is a promise about writing the text again, but a feel is
+/// how the text is played, and the landing chord is played by the same band.
 fn clips_of(
     settings: &ScoreSettings,
+    looseness: f32,
     part: Option<&PartSpec>,
     draft: &PartDraft,
     frame: &Frame,
@@ -280,9 +295,9 @@ fn clips_of(
             .iter()
             .filter(|note| note.section == index)
             .filter_map(|note| {
-                // Rebase onto the clip. A note humanisation nudged a few ticks over a
-                // section boundary is clamped back rather than deleted — dropping it took
-                // the downbeat out of every section at the default humanisation.
+                // Rebase onto the clip. A note the swing delayed over a section boundary is
+                // clamped back rather than deleted — dropping one took the downbeat out of
+                // sections back when the baked wander could nudge a note either way.
                 let offset = note.start - section.start;
                 if offset >= section.length {
                     return None;
@@ -325,6 +340,15 @@ fn clips_of(
                 .flatten()
                 .map(|part| section.played(part))
                 .and_then(|played| recipe_for(settings, &played, section, frame.seed)),
+            // The same seed the recipe carries, computed rather than read off it so that the
+            // ending — which carries no recipe on purpose — is still played loose.
+            performance: part.map_or_else(Vec::new, |part| {
+                part_performance(
+                    part.role,
+                    looseness,
+                    clip_seed(frame.seed, &part.name, &section.name, section.instance),
+                )
+            }),
         });
     }
     clips
@@ -350,7 +374,13 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
     let played: Vec<(PartDraft, Vec<ClipDraft>)> = drafts
         .into_iter()
         .map(|draft| {
-            let clips = clips_of(&settings, part_of(&draft.name), &draft, frame);
+            let clips = clips_of(
+                &settings,
+                spec.humanize,
+                part_of(&draft.name),
+                &draft,
+                frame,
+            );
             (draft, clips)
         })
         .filter(|(_, clips)| !clips.is_empty())
@@ -1308,7 +1338,15 @@ mod tests {
     /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
     /// a bug or a decision, and this is what makes anyone look.
     ///
-    /// It last moved when the kit stopped missing: the survival roll used to thin everything
+    /// It last moved when the feel left the text: the humanise wander, its velocity scatter and
+    /// the per-role lean stopped being baked into the notes and became the transform stack each
+    /// clip arrives carrying (`crate::perform`). The fixtures that pin a nonzero `humanize` —
+    /// or none, and so the default — moved back onto the grid: not one chord and not one note
+    /// count changed, because the dial never decided what to play, only how loosely, and the
+    /// looseness now happens at performance time where these digests cannot see it. That
+    /// blindness is correct — the digest pins the *score*.
+    ///
+    /// Before that it moved when the kit stopped missing: the survival roll used to thin everything
     /// below the downbeat by how quiet the section was, so at the default settings one backbeat
     /// in nine and one four-on-the-floor kick in nine simply vanished, a different bar of holes
     /// every bar — heard as mistakes, never as dynamics. A hit the groove spells now always
@@ -1423,7 +1461,7 @@ mod tests {
             ),
             "verse·1 C major | Cmaj7 Gm7 Am Fmaj7 Cmaj7 G7 Am9 G7 |\n\
              ending·1 C major | C |\n\
-             182 notes, digest 8f281717b87d3ab9\n"
+             182 notes, digest 9761272ff4f3833e\n"
         );
 
         // The same in a minor key, and the fixture that moved furthest when colouring stopped
@@ -1465,7 +1503,7 @@ mod tests {
             ),
             "verse·1 A minor | Am7 E9 Fmaj7 Dm Am7 Em7 Gbm7 E7 |\n\
              ending·1 A minor | Am |\n\
-             252 notes, digest 3304892e76ea3f47\n"
+             252 notes, digest fe792a40951da0c3\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats — and the one fixture
@@ -1507,7 +1545,7 @@ mod tests {
             "verse·1 C major | Fmaj7 E7 Am7 Bb7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
              ending·1 Eb major | Eb |\n\
-             221 notes, digest 72797912f996c1e6\n"
+             221 notes, digest 358d5fd52944492d\n"
         );
     }
 
@@ -1641,22 +1679,82 @@ mod tests {
     }
 
     #[test]
-    fn humanising_never_loses_a_sections_downbeat() {
-        // Deleting a note nudged a few ticks before its section took the downbeat out of every
-        // section but the first; it is clamped back into the clip instead.
+    fn the_humanize_dial_reaches_the_stack_and_never_the_text() {
+        // The dial used to bake a wander into the notes; it now decides the transform stack a
+        // clip arrives carrying, so two settings of it write byte-for-byte the same text.
         let straight = compose_text(BASE);
         let loose = compose_text(&BASE.replace("humanize = 0", "humanize = 1.0"));
         for (a, b) in straight.tracks.iter().zip(&loose.tracks) {
             for (before, after) in a.clips.iter().zip(&b.clips) {
-                assert_eq!(
-                    before.notes.len(),
-                    after.notes.len(),
-                    "`{}` lost {} notes to humanisation",
-                    after.name,
-                    before.notes.len() as i64 - after.notes.len() as i64
+                assert_eq!(before.notes, after.notes, "`{}`'s text moved", after.name);
+                assert!(
+                    before.performance.is_empty(),
+                    "`{}` is performed at humanize 0",
+                    before.name
                 );
             }
         }
+    }
+
+    #[test]
+    fn every_clip_arrives_with_its_parts_own_feel() {
+        // The table `perform` keeps, read off a whole composed piece: the pitched parts lean
+        // and wander, the snare and hat lean without wandering, the kick starts square.
+        let piece = compose_text(&BASE.replace("humanize = 0", "humanize = 1.0"));
+        let stack_of = |name: &str| {
+            let track = piece
+                .tracks
+                .iter()
+                .find(|track| track.name == name)
+                .unwrap_or_else(|| panic!("no `{name}` track"));
+            track.clips[0].performance.clone()
+        };
+        assert!(matches!(
+            stack_of("lead").as_slice(),
+            [
+                NoteTransform::Lean { ticks: -4 },
+                NoteTransform::Humanize { amount, .. }
+            ] if *amount == 1.0
+        ));
+        assert_eq!(
+            stack_of("hat"),
+            vec![NoteTransform::Lean { ticks: -8 }],
+            "a drum leans and never wanders"
+        );
+        assert!(stack_of("kick").is_empty(), "the kick keeps the time");
+
+        // The wander's seed is the clip's own — the same number its recipe carries — so a take
+        // and its feel are named together, and two clips of one part wobble apart.
+        for track in &piece.tracks {
+            for clip in &track.clips {
+                let (Some(recipe), Some(NoteTransform::Humanize { seed, .. })) = (
+                    clip.recipe.as_ref(),
+                    clip.performance
+                        .iter()
+                        .find(|t| matches!(t, NoteTransform::Humanize { .. })),
+                ) else {
+                    continue;
+                };
+                assert_eq!(
+                    *seed, recipe.seed,
+                    "`{}` wanders off another take",
+                    clip.name
+                );
+            }
+        }
+
+        // The ending carries no recipe — nothing can promise to write it again — but it is
+        // played by the same band, so it is played loose all the same.
+        let landing = piece
+            .tracks
+            .iter()
+            .find(|track| track.name == "lead")
+            .and_then(|track| track.clips.iter().find(|clip| clip.recipe.is_none()))
+            .expect("the lead lands somewhere");
+        assert!(
+            !landing.performance.is_empty(),
+            "the landing chord is played by a machine"
+        );
     }
 
     #[test]
@@ -1739,9 +1837,10 @@ mod tests {
     }
 
     #[test]
-    fn humanising_never_pushes_a_note_out_of_its_clip() {
-        // The one place humanisation could corrupt the document rather than just move a note.
-        let piece = compose_text(&BASE.replace("humanize = 0", "humanize = 1.0"));
+    fn the_swing_never_pushes_a_note_out_of_its_clip() {
+        // The one text-side feel left, and the one place it could corrupt the document rather
+        // than delay a note: an offbeat swung over the section line is clamped and truncated.
+        let piece = compose_text(&BASE.replace("form =", "swing = 75\nform ="));
         for track in &piece.tracks {
             for clip in &track.clips {
                 for note in &clip.notes {

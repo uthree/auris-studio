@@ -8,10 +8,12 @@
 //! is applied *after* looping is expanded, keyed by the pass, so a two-bar loop does not repeat
 //! its own accidents every two bars the way a baked wobble would.
 //!
-//! The constants here are the composer's, on purpose: an attack of looseness means the same thing
-//! whether a phrase was written by the composer or played by hand and loosened afterwards. When
-//! `auris-compose` changes its feel, this file is where the same change is made — the two are
-//! measured together (`docs/evaluation.md`).
+//! The constants here are not mirrored from the composer any more; they are the only copy. The
+//! composer stopped baking its feel into the notes it writes and instead installs transforms on
+//! the clips it delivers, so an amount of looseness means the same thing whether a phrase was
+//! written or played by hand — because it is the same code either way. What the composer decides
+//! is *which* transforms a part starts with; `auris_compose`'s `perform` module is that table,
+//! and the two are measured together (`docs/evaluation.md`).
 
 use serde::{Deserialize, Serialize};
 
@@ -24,12 +26,15 @@ use super::recipe::Subdivision;
 /// How far a note's timing wanders at full humanisation, as a standard deviation in
 /// milliseconds.
 ///
-/// The composer's number (`auris-compose`, `WANDER_MS`), for the reason the module doc gives:
-/// one dial position is one amount of looseness, whoever wrote the phrase.
+/// Calibrated when it was still the composer's own constant: six, because the presets' default
+/// of 0.35 lands at about 2 ms — where a band that is playing well sits — and the jitter's own
+/// three-sigma bound keeps the top of the dial under 18, which is as far as "sloppy" goes
+/// before it stops being one band. The measurement behind it is in the repository's history;
+/// re-measure (`docs/evaluation.md`) before moving it.
 const WANDER_MS: f32 = 6.0;
 
 /// How far a note's velocity wanders at full humanisation, as a standard deviation on the
-/// 0-to-1 scale. Also the composer's number.
+/// 0-to-1 scale. Calibrated alongside [`WANDER_MS`].
 const VELOCITY_WANDER: f32 = 0.06;
 
 /// One non-destructive change to how a clip's notes are performed.
@@ -51,6 +56,19 @@ pub enum NoteTransform {
         amount: f32,
         /// The number every draw comes from. A different one is a different take.
         seed: u64,
+    },
+    /// Moves every note by the same amount, the way a player sits against the beat.
+    ///
+    /// A lean is not a wobble: the hat a little early, the snare a little late, by the same
+    /// number of ticks in every bar, which is a thing a drummer does on purpose and reads as a
+    /// feel. It is deliberate where [`Humanize`](Self::Humanize) is loose, so it is its own
+    /// transform — a stack can lean without wandering, and freezing writes exactly the lean in.
+    /// The composer installs one per part from its own table of who pushes and who drags.
+    Lean {
+        /// Ticks late (positive) or early (negative), read clamped to a quarter note either
+        /// way. In ticks rather than milliseconds deliberately: a lean is part of how the part
+        /// sits in the bar, so it scales with the music's own grid rather than with the clock.
+        ticks: i64,
     },
     /// Delays the offbeats, turning a straight grid into a groove.
     ///
@@ -91,6 +109,7 @@ pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f
     for transform in transforms {
         note = match transform {
             NoteTransform::Humanize { amount, seed } => humanized(note, *amount, *seed, pass, bpm),
+            NoteTransform::Lean { ticks } => leaned(note, *ticks),
             NoteTransform::Swing {
                 percent,
                 subdivision,
@@ -128,6 +147,13 @@ fn humanized(mut note: Note, amount: f32, seed: u64, pass: u64, bpm: f64) -> Not
     note.start = (note.start + Ticks(wander.round() as i64)).max_zero();
     let scale = 1.0 + rng.jitter(VELOCITY_WANDER * amount);
     note.velocity = (note.velocity * scale).clamp(0.05, 1.0);
+    note
+}
+
+/// The lean, clamped to a quarter note either way and held at the clip's own start.
+fn leaned(mut note: Note, ticks: i64) -> Note {
+    let ticks = ticks.clamp(-TICKS_PER_QUARTER, TICKS_PER_QUARTER);
+    note.start = (note.start + Ticks(ticks)).max_zero();
     note
 }
 
@@ -233,6 +259,31 @@ mod tests {
         assert!(
             distinct.len() > 1,
             "every pass wobbled identically: {passes:?}"
+        );
+    }
+
+    #[test]
+    fn a_lean_moves_every_note_alike_and_is_held_at_the_edges() {
+        let drag = [NoteTransform::Lean { ticks: 10 }];
+        assert_eq!(
+            performed(note(60, 480, 240), &drag, 0, 120.0).start,
+            Ticks(490)
+        );
+        assert_eq!(
+            performed(note(60, 0, 240), &drag, 3, 120.0).start,
+            Ticks(10)
+        );
+        // Early off the front of the clip is held at zero, like the humanise wander.
+        let push = [NoteTransform::Lean { ticks: -8 }];
+        assert_eq!(
+            performed(note(60, 4, 240), &push, 0, 120.0).start,
+            Ticks::ZERO
+        );
+        // A file carrying a wild number is read clamped, not honoured.
+        let wild = [NoteTransform::Lean { ticks: 100_000 }];
+        assert_eq!(
+            performed(note(60, 0, 240), &wild, 0, 120.0).start,
+            Ticks(TICKS_PER_QUARTER)
         );
     }
 

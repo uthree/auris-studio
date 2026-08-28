@@ -1344,7 +1344,7 @@ pub mod harmony {
     //! # Performed, not rewritten
     //!
     //! The contract's performer has a note-domain half. A clip — played or written, recipe or
-    //! none — may carry [`NoteTransform`](auris_core::NoteTransform)s: humanise, swing,
+    //! none — may carry [`NoteTransform`](auris_core::NoteTransform)s: humanise, lean, swing,
     //! transpose, gate, applied in order as
     //! [`sounding_notes`](auris_core::MidiClip::sounding_notes) answers. The renderer and the
     //! MIDI writer both ask that one question, so what exports is what plays; the piano roll
@@ -1353,14 +1353,23 @@ pub mod harmony {
     //! ([`auris_core::rng`]), and it draws per loop pass — a repeated bar is loose differently
     //! each time around, which is the one thing baking the wobble into the notes could never do.
     //!
+    //! The composer performs through the same stack. It writes its text on the grid — swing
+    //! excepted, which the groove decides and the writers keep — and installs the feel as
+    //! transforms on the clips it delivers: the wander per pitched part, the lean its role
+    //! table says (the hat pushes, the snare lays back), nothing at all on a kick that keeps
+    //! the time. `auris_compose::perform` is that table. A recipe therefore carries no
+    //! `humanize` dial any more: how loosely a clip is played is its stack's business, one
+    //! panel edits it, and writing the text again — regenerate, another take, a dial on the
+    //! recipe — leaves the stack alone save for the wander's seed, which follows the take so
+    //! one number keeps naming both.
+    //!
     //! [`set_clip_transforms`](crate::Session::set_clip_transforms) replaces the stack whole,
     //! and [`freeze_clip_transforms`](crate::Session::freeze_clip_transforms) is the recipe's
     //! trade again: the performance is written into the text and stops being derived from
     //! anything — including the pass, so a frozen loop rehearses its first pass forever. The
-    //! transform arithmetic lives in `auris-core` beside the document, calibrated to the
-    //! composer's own constants, and carries the same duty every effect carries: changing how it
-    //! sounds changes saved pieces, so its numbers are pinned by tests and re-measured when they
-    //! move.
+    //! transform arithmetic lives in `auris-core` beside the document, and carries the same
+    //! duty every effect carries: changing how it sounds changes saved pieces, so its numbers
+    //! are pinned by tests and re-measured when they move.
     //!
     //! # Hearing it before anything plays it
     //!

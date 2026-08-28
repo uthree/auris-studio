@@ -323,6 +323,10 @@ impl Session {
                     // the recipe panel, keep this one — reads exactly this field, so nothing
                     // downstream had to learn about composed songs to work on them.
                     target.recipe = clip.recipe.clone();
+                    // And how the text is played: the feel the composer used to bake into the
+                    // notes arrives as the clip's own performance stack, where the panel can
+                    // turn it and a looped clip is loose differently on every pass.
+                    target.transforms = clip.performance.clone();
                     // The length is the section's and was decided by the form, not grown to fit
                     // what happened to be written into it. Without this the first note edit on a
                     // composed clip would let `fit_length_to_notes` stretch it past the section it

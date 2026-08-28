@@ -59,6 +59,10 @@ impl Session {
             .ok_or(SessionError::UnknownTrack(track.0))?;
         if let Some(clip) = self.project.midi_clip_mut(id) {
             clip.notes = notes;
+            // The feel the preset starts with — the lean and the wander a recipe used to bake
+            // into the notes arrive as the performance stack instead, where the panel edits
+            // them and writing the text again leaves them alone.
+            clip.transforms = auris_compose::clip_performance(recipe.preset, recipe.seed);
             clip.recipe = Some(recipe);
         }
         self.invalidate_graph();
@@ -160,6 +164,15 @@ impl Session {
         self.record(Edit::GenerateClip);
         if let Some(midi) = self.project.midi_clip_mut(clip) {
             midi.notes = notes;
+            // The stack is the user's and survives a rewrite — all but the wander's seed, which
+            // follows the recipe's so that one number keeps naming both the take and its feel:
+            // another take re-draws the wobble the way it re-draws the figures, while a dial
+            // somebody turned stays exactly where they put it.
+            for transform in &mut midi.transforms {
+                if let auris_core::NoteTransform::Humanize { seed, .. } = transform {
+                    *seed = recipe.seed;
+                }
+            }
             midi.recipe = Some(recipe);
         }
         self.invalidate_graph();
@@ -179,18 +192,9 @@ impl Session {
             // The meter the clip begins in. `write_phrase` builds every figure on one grid, so a
             // clip is written in one meter however many the timeline holds.
             self.project.signatures.signature_at(start),
-            // And the tempo it begins at, read off the map for the same reason the meter is: the
-            // humanisation dial asks for a wander in milliseconds, so a clip written at the
-            // project's nominal tempo instead of the one under it would come out loose by some
-            // other amount than the one asked for. The map, not `bpm()`: a piece that drops to
-            // 64 for its middle section is a piece where the nominal is the wrong number for
-            // every clip in that section.
-            //
-            // Read when the clip is written and not afterwards, so moving the tempo later leaves
-            // the notes where they are until somebody regenerates. That is the same promise every
-            // other input here makes — nothing rewrites a clip because something near it moved —
-            // and it is what makes a generated clip safe to edit by hand.
-            self.project.tempo_map.bpm_at(start),
+            // No tempo goes along any more: the humanisation that needed one to turn its
+            // milliseconds into ticks lives on the clip's transform stack now, where the
+            // renderer hands it the tempo actually in force at playback.
             recipe,
             self.project.sections.section_at(start),
         )
@@ -201,52 +205,47 @@ impl Session {
 mod tests {
     use super::*;
     use crate::session::fixtures::{BAR, Scratch, session, with_a_progression};
-    use auris_core::ClipPreset;
+    use auris_core::{ClipPreset, NoteTransform};
 
     #[test]
-    fn a_generated_clip_is_written_at_the_tempo_underneath_it() {
-        // The composer's humanisation asks for a wander of so many *milliseconds*, so writing a
-        // clip needs a tempo — and the honest one is the tempo where the clip sits. A piece that
-        // drops to half speed for its middle section has clips there that a listener counts in
-        // at 60, and writing them at the project's opening 120 would shake them by twice the
-        // time the dial asked for. Nothing else about a clip reads the tempo, so what this
-        // measures is the wander and only the wander.
-        let notes_at = |changes: &[(Ticks, f64)]| {
+    fn a_generated_clip_carries_its_feel_instead_of_baking_it() {
+        // The humanisation asks for a wander of so many *milliseconds*, so it used to make
+        // writing a clip need a tempo — the notes came out shaken by an amount only true at one
+        // speed. It rides the clip's transform stack now, where the renderer hands it the tempo
+        // actually in force at playback. Two things follow, and both are the assertion: the
+        // text no longer depends on the tempo at all, and the clip arrives already carrying
+        // the preset's own feel for the stack to apply.
+        let generated = |bpm: f64, preset: ClipPreset| {
             let mut session = session();
-            for (at, bpm) in changes {
-                match *at == Ticks::ZERO {
-                    true => session.set_bpm(*bpm),
-                    false => session.set_tempo_point(*at, *bpm),
-                }
-            }
+            session.set_bpm(bpm);
             let track = session.add_default_instrument_track("Lead").expect("track");
             session
                 .stamp_named_progression("axis", Ticks::ZERO, 8)
                 .expect("the catalogue knows axis");
             let clip = session
-                .generate_clip(
-                    track,
-                    BAR * 4,
-                    BAR * 4,
-                    ClipRecipe::new(ClipPreset::Lead, 7),
-                )
+                .generate_clip(track, BAR * 4, BAR * 4, ClipRecipe::new(preset, 7))
                 .expect("generated");
-            let notes = session.midi_clip(clip).expect("clip").notes.clone();
-            assert!(!notes.is_empty(), "nothing was written to compare");
-            notes
+            session.midi_clip(clip).expect("clip").clone()
         };
 
-        let after_the_change = notes_at(&[(BAR * 4, 60.0)]);
+        let slow = generated(60.0, ClipPreset::Lead);
+        assert!(!slow.notes.is_empty(), "nothing was written to compare");
         assert_eq!(
-            after_the_change,
-            notes_at(&[(Ticks::ZERO, 60.0)]),
-            "a clip in a stretch at 60 must be written exactly as one in a piece that runs at 60"
+            slow.notes,
+            generated(120.0, ClipPreset::Lead).notes,
+            "the text is the score, and a score does not change with the metronome"
         );
-        assert_ne!(
-            after_the_change,
-            notes_at(&[]),
-            "the clip was written at the project's opening tempo rather than its own"
+        // The feel the recipe used to bake: a lead leans and wanders, and the wander is seeded
+        // by the take so the two are named by one number.
+        assert!(
+            slow.transforms
+                .iter()
+                .any(|transform| matches!(transform, NoteTransform::Humanize { seed: 7, .. })),
+            "a lead arrived unperformed: {:?}",
+            slow.transforms
         );
+        // And the kit keeps the time: a kick starts with nothing on its stack at all.
+        assert!(generated(120.0, ClipPreset::Kick).transforms.is_empty());
     }
 
     #[test]
@@ -307,6 +306,12 @@ mod tests {
         // The desktop application gives the first clip in a project seed 1, so the first press of
         // "another take" is always 1 to 2. If that one pair happened to write the same notes the
         // button would look broken however well every other seed behaved.
+        //
+        // The kick is the honest exception. Its text at the default dials is the groove spelled
+        // out, with nothing left to the seed — the difference two takes of it used to show was
+        // the baked wobble, which was noise wearing a take's name and lives on the performance
+        // stack now. What its take still changes is the wander's seed, asserted below for the
+        // presets that carry one.
         for preset in ClipPreset::ALL {
             let (mut session, track) = with_a_progression();
             let clip = session
@@ -316,13 +321,28 @@ mod tests {
             assert!(!first.is_empty(), "{} wrote nothing", preset.name());
 
             session.reroll_clip(clip).unwrap();
-            let second = session.project().midi_clip(clip).unwrap().1.notes.clone();
+            let after = session.project().midi_clip(clip).unwrap().1.clone();
+            if preset == ClipPreset::Kick {
+                assert_eq!(first, after.notes, "the kick's groove is not the seed's");
+                continue;
+            }
             assert_ne!(
                 first,
-                second,
+                after.notes,
                 "{} wrote the same notes for seed 1 and seed 2",
                 preset.name()
             );
+            // The wobble follows the take: one number names both.
+            for transform in &after.transforms {
+                if let NoteTransform::Humanize { seed, .. } = transform {
+                    assert_eq!(
+                        *seed,
+                        2,
+                        "{}'s wander kept the old take's seed",
+                        preset.name()
+                    );
+                }
+            }
         }
     }
 
