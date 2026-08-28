@@ -184,8 +184,10 @@ impl Subdivision {
 /// regeneration.
 ///
 /// The notes are stored alongside it rather than recomputed on load, so a project plays and
-/// exports without the composer ever running, and so a file opened by a build whose composer has
-/// changed still sounds like the piece that was saved.
+/// exports without the composer ever running. What that preserves across builds is the take *as
+/// saved*: asking a newer composer to write the recipe again is a redraw in the current style,
+/// not a reproduction of the old take. A seed names a take within a build, not an archival
+/// format — the way to keep a take is to freeze it, not to remember its number.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ClipRecipe {
     /// What the clip is trying to be.

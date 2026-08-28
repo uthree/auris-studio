@@ -1308,16 +1308,38 @@ pub mod harmony {
     //! exhaustive matches across six crates and had most of them answer exactly what an
     //! instrument track answers.
     //!
-    //! Two consequences worth stating.
+    //! # The score does not change; the performer does
     //!
-    //! The notes are stored, not recomputed on load. A project therefore plays and exports
-    //! without the composer running at all, and a file opened years later sounds like the piece
-    //! that was saved rather than like whatever the composer has since learned to write.
+    //! What the recipe promises — and what it deliberately does not — is one contract in three
+    //! clauses, and it is the contract for every derived layer in Auris, not just this one.
     //!
-    //! Regenerating is always an explicit command. Nothing rewrites a clip because something
-    //! nearby changed, which is what makes it safe to edit a generated clip by hand — and why
-    //! contrast between a verse and a chorus is two clips with two sets of dials rather than a
-    //! notion of song form that the document would otherwise have to carry.
+    //! **Within one build, everything is deterministic.** The notes are stored, not recomputed
+    //! on load, so a project plays and exports without the composer running at all; and every
+    //! random choice is drawn from a seed the file carries, so the same file is the same piece
+    //! on every open. This clause is absolute — it is also what makes the measurements in
+    //! `docs/evaluation.md` mean anything.
+    //!
+    //! **Across builds, the text is immutable and the performance may drift.** What a saved file
+    //! guarantees forever is what was written down: the notes somebody typed, edited or froze.
+    //! Everything that *performs* that text — the instruments, the effects, and the composer when
+    //! it is asked to write again — is code, and code improves. A seed therefore names a take
+    //! within a build, not an archival format: regenerating under a newer composer is a redraw
+    //! in the current style, not a reproduction of the old take, and the old take cannot be
+    //! re-derived once replaced. Old composers are never kept around to run old recipes — that
+    //! would be a museum of every writer ever shipped, bugs preserved — because the protection
+    //! for a keeper is [`freeze_clip`](crate::Session::freeze_clip), which already exists and
+    //! costs nothing.
+    //!
+    //! **Nothing rewrites a clip implicitly.** Regeneration is a command aimed at the clip: the
+    //! button, or the resize that must write the phrase again because stretching a recipe means
+    //! writing it again. Nothing rewrites a clip because something *nearby* changed, which is
+    //! what makes it safe to edit a generated clip by hand — and why contrast between a verse
+    //! and a chorus is two clips with two sets of dials rather than a notion of song form that
+    //! the document would otherwise have to carry.
+    //!
+    //! The contract repeats at every layer. A song spec is text that the composer performs; a
+    //! stored note is text that the instruments and effects perform. The left side is saved
+    //! verbatim and outlives every update, and the right side is allowed to get better.
     //!
     //! # Hearing it before anything plays it
     //!

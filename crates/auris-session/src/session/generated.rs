@@ -67,9 +67,11 @@ impl Session {
 
     /// Writes a generated clip's notes again from its own recipe, and returns how many there are.
     ///
-    /// With the harmony unchanged this writes the same notes back, which is what makes it safe to
-    /// press. What it is for is the other case: the chords underneath moved, and the part should
-    /// follow them.
+    /// Within one build, unchanged harmony writes the same notes back, which is what makes it
+    /// safe to press; what it is for is the other case, where the chords underneath moved and the
+    /// part should follow them. Across a composer update it is instead a redraw in the current
+    /// style — the old take was only ever the stored notes, and cannot be re-derived once they
+    /// are replaced. "Keep this one" is [`Session::freeze_clip`], not a seed written down.
     pub fn regenerate_clip(&mut self, clip: ClipId) -> Result<usize, SessionError> {
         let recipe = self.recipe_of(clip)?;
         self.rewrite(clip, recipe)

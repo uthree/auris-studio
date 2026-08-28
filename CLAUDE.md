@@ -131,6 +131,16 @@ of a stored enum does not, and is a bump. What the number is today, and why each
 the constant's own doc comment — read it there rather than copying it here, where it would be wrong
 by the next one.
 
+## The score does not change; the performer does
+
+What a saved file guarantees across builds is the **text**: notes typed, edited or frozen, with
+every random choice pinned by a seed the file carries. Everything that *performs* the text —
+instruments, effects, the composer when asked to write again — is code, and code improves; a seed
+names a take within a build, not an archival format, and freezing is how a take is kept. Two
+corollaries hold: never keep an old algorithm around to reproduce an old result, and never rewrite
+a clip implicitly — regeneration is always a command aimed at the clip. The full three-clause
+contract is in `auris_session::guide` under "Clips that write themselves".
+
 ## Conventions
 
 * Comments, documentation and the README are written in English.
