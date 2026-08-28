@@ -92,8 +92,10 @@ pub(super) fn schedule_clip(
     }
     // Which notes a clip actually plays is `MidiClip`'s own rule, asked rather than repeated: the
     // MIDI writer asks the same question, and an export that answered it differently from the
-    // renderer would write a file that is not the piece you can hear.
-    for note in clip.sounding_notes() {
+    // renderer would write a file that is not the piece you can hear. The tempo is the one in
+    // force at the clip — the transforms' humanisation is milliseconds, and this is where
+    // milliseconds meet ticks.
+    for note in clip.sounding_notes(tempo_map.bpm_at(clip.start)) {
         let start_tick = clip.start + note.start;
         let end_tick = clip.start + note.end();
         let start = tempo_map.ticks_to_samples(start_tick, sample_rate).raw();

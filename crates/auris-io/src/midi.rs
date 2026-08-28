@@ -387,8 +387,10 @@ fn build_tracks(project: &Project) -> (Vec<Vec<TrackEvent<'static>>>, usize) {
             }
             // The *sounding* notes, repeats and all. A MIDI file has no notion of a region that
             // repeats, so a loop is written out as the notes it plays — which is also the only
-            // reading that matches what the renderer does with the same clip.
-            for note in clip.sounding_notes() {
+            // reading that matches what the renderer does with the same clip. The tempo handed
+            // over is the one the renderer reads for the same clip, so a humanised wobble lands
+            // on the same ticks in the file as in the mix.
+            for note in clip.sounding_notes(project.tempo_map.bpm_at(clip.start)) {
                 count += 1;
                 let start = clip.start + note.start;
                 events.push((start, message(channel, note.pitch, velocity(note.velocity))));

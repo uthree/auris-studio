@@ -188,6 +188,14 @@ pub struct MidiClip {
     /// should ever divide it up.
     #[serde(default)]
     pub loop_end: Ticks,
+    /// How the notes are performed, without the notes themselves changing.
+    ///
+    /// Applied in order by [`Self::sounding_notes`], so playback and export hear the stack while
+    /// the piano roll keeps showing the text as written — see
+    /// [`NoteTransform`](super::NoteTransform) for what each one does. An empty stack is the
+    /// identity, and is what every clip carried before this field existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transforms: Vec<super::NoteTransform>,
 }
 
 impl MidiClip {
@@ -207,6 +215,7 @@ impl MidiClip {
             // grow it. Dragging its edge is what makes it a decision.
             length_is_explicit: false,
             loop_end: Ticks::ZERO,
+            transforms: Vec::new(),
         }
     }
 
@@ -259,23 +268,33 @@ impl MidiClip {
 
     /// Every note the clip plays, repeats included, each measured from the clip's own start.
     ///
-    /// [`Self::playable_notes`] laid down once per pass, which is the whole of what looping means
-    /// for a block of notes. The renderer and the MIDI writer both ask this rather than repeating
-    /// the arithmetic, for the reason they both ask `playable_notes`: two readings of "what does
-    /// this clip play" is a file that exports something other than what you can hear.
+    /// [`Self::playable_notes`] performed through [`Self::transforms`] and laid down once per
+    /// pass, which is the whole of what looping means for a block of notes. The renderer and the
+    /// MIDI writer both ask this rather than repeating the arithmetic, for the reason they both
+    /// ask `playable_notes`: two readings of "what does this clip play" is a file that exports
+    /// something other than what you can hear.
+    ///
+    /// `bpm` is the tempo in force at the clip, because a humanisation dial is a number of
+    /// milliseconds and nothing can turn milliseconds into ticks without it — the same reading
+    /// the composer takes, one value for the clip rather than one per note. Transforms run on
+    /// the pass's own copy of the notes, so a looped clip's humanisation is drawn afresh for
+    /// every repeat instead of repeating its own accidents.
     ///
     /// A pass the loop cuts through keeps the notes that have begun by then and cuts them at the
     /// end, exactly as the clip's own length cuts the pass before it.
-    pub fn sounding_notes(&self) -> impl Iterator<Item = Note> + '_ {
-        loop_passes(self.length, self.loop_end).flat_map(move |(offset, span)| {
-            self.playable_notes()
-                .filter(move |note| note.start < span)
-                .map(move |note| Note {
-                    start: note.start + offset,
-                    length: note.length.min(span - note.start),
-                    ..note
-                })
-        })
+    pub fn sounding_notes(&self, bpm: f64) -> impl Iterator<Item = Note> + '_ {
+        loop_passes(self.length, self.loop_end)
+            .enumerate()
+            .flat_map(move |(pass, (offset, span))| {
+                self.playable_notes()
+                    .map(move |note| super::performed(note, &self.transforms, pass as u64, bpm))
+                    .filter(move |note| note.start < span)
+                    .map(move |note| Note {
+                        start: note.start + offset,
+                        length: note.length.min(span - note.start),
+                        ..note
+                    })
+            })
     }
 
     /// One of the clip's curves. A controller nothing was written on reads as no points at all.
@@ -1620,7 +1639,7 @@ mod tests {
             Ticks::from_beats(8.0) + Ticks::QUARTER * 5
         );
         let sounding: Vec<(u8, Ticks)> = clip
-            .sounding_notes()
+            .sounding_notes(120.0)
             .map(|note| (note.pitch, note.start))
             .collect();
         assert_eq!(
@@ -1644,7 +1663,7 @@ mod tests {
         // And with looping off it is exactly `playable_notes` again.
         clip.loop_end = Ticks::ZERO;
         assert_eq!(
-            clip.sounding_notes().collect::<Vec<_>>(),
+            clip.sounding_notes(120.0).collect::<Vec<_>>(),
             clip.playable_notes().collect::<Vec<_>>()
         );
     }
@@ -1658,8 +1677,45 @@ mod tests {
             .push(Note::new(60, Ticks::ZERO, Ticks::QUARTER * 4));
         clip.loop_end = Ticks::QUARTER * 6;
 
-        let lengths: Vec<Ticks> = clip.sounding_notes().map(|note| note.length).collect();
+        let lengths: Vec<Ticks> = clip.sounding_notes(120.0).map(|note| note.length).collect();
         assert_eq!(lengths, vec![Ticks::QUARTER * 4, Ticks::QUARTER * 2]);
+    }
+
+    #[test]
+    fn a_transform_is_heard_but_never_written() {
+        // The whole point of the stack: playback and export move, the text does not.
+        let mut clip = MidiClip::new(ClipId(1), "swung", Ticks::ZERO, Ticks::QUARTER * 4);
+        clip.notes.push(Note::new(60, Ticks(480), Ticks(240)));
+        clip.transforms.push(crate::NoteTransform::Swing {
+            percent: 67,
+            subdivision: crate::Subdivision::Eighth,
+        });
+        let heard: Vec<Ticks> = clip.sounding_notes(120.0).map(|note| note.start).collect();
+        assert_eq!(heard, vec![Ticks(643)]);
+        assert_eq!(clip.notes[0].start, Ticks(480), "the text moved");
+    }
+
+    #[test]
+    fn a_looped_clip_wobbles_differently_on_every_pass() {
+        // What baking a humanisation can never do: the same bar, repeated, is loose in a new
+        // way each time around because the pass is part of the stream's name.
+        let bar = Ticks::from_beats(4.0);
+        let mut clip = MidiClip::new(ClipId(1), "loose", Ticks::ZERO, bar);
+        clip.notes.push(Note::new(60, Ticks(480), Ticks(240)));
+        clip.loop_end = bar * 4;
+        clip.transforms.push(crate::NoteTransform::Humanize {
+            amount: 1.0,
+            seed: 5,
+        });
+        let mut in_pass: Vec<Ticks> = clip
+            .sounding_notes(120.0)
+            .enumerate()
+            .map(|(pass, note)| note.start - bar * pass as i64)
+            .collect();
+        assert_eq!(in_pass.len(), 4);
+        in_pass.sort();
+        in_pass.dedup();
+        assert!(in_pass.len() > 1, "every pass repeated the same accident");
     }
 
     #[test]

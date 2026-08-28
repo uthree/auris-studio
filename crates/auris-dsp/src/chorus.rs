@@ -24,7 +24,7 @@ const BASE_DELAY_MS: f32 = 15.0;
 
 /// Furthest the tap may swing from the centre, in milliseconds.
 ///
-/// Kept below [`BASE_DELAY_MS`] so the tap can never reach the write head, whatever the
+/// Kept below `BASE_DELAY_MS` so the tap can never reach the write head, whatever the
 /// parameters say.
 const MAX_DEPTH_MS: f32 = 8.0;
 
@@ -43,7 +43,7 @@ const CHANNEL_PHASE_OFFSET: f32 = std::f32::consts::FRAC_PI_2;
 
 /// A single modulated tap per channel, swept by one shared sine.
 ///
-/// The wet voice is the input read [`BASE_DELAY_MS`] ago, with the read position swung by up
+/// The wet voice is the input read `BASE_DELAY_MS` ago, with the read position swung by up
 /// to `depth` milliseconds either side at `rate`. Moving the read head is a slow resampling,
 /// so the wet voice is detuned by a few cents that rise and fall with the sweep — beat against
 /// the dry copy, that detune is the chorus. Every channel shares the one oscillator and takes

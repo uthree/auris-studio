@@ -23,7 +23,7 @@ const ROOM_BUS: &str = "Room";
 /// The reverb the room bus carries.
 const REVERB_ID: &str = "auris.fx.reverb";
 
-/// The chorus an electric comp part carries — see [`inserts_for`].
+/// The chorus an electric comp part carries — see `inserts_for`.
 const CHORUS_ID: &str = "auris.fx.chorus";
 
 /// One clip: a run of notes with a place on the timeline.
@@ -104,7 +104,7 @@ pub struct TrackDraft {
     ///
     /// Almost always empty, for the same reason [`Self::state`] almost always is: a part picks a
     /// sound and is then left sounding how it sounds. What earns an insert is a *pairing* — a
-    /// role and a sound that idiomatically arrive through a pedal — and [`inserts_for`] is where
+    /// role and a sound that idiomatically arrive through a pedal — and `inserts_for` is where
     /// each pairing is argued.
     pub effects: Vec<EffectDraft>,
     /// The clips, in time order.

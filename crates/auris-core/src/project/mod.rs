@@ -36,6 +36,7 @@ mod curve;
 mod recipe;
 mod routing;
 mod track;
+mod transform;
 
 #[cfg(test)]
 mod fixtures;
@@ -53,6 +54,7 @@ pub use routing::{AuxSend, EffectSlot, MixerStrip, Output};
 pub use track::{
     AudioTrack, Color, InstrumentTrack, SingerTrack, Track, TrackKind, default_frame_hop,
 };
+pub use transform::{NoteTransform, performed};
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -389,7 +391,13 @@ impl Project {
     /// version turns that into a sentence at the door. The note fields alone would not have moved
     /// it — a version 16 build reading them as nothing and writing them away only costs words on
     /// notes that could not be sung anyway, on a track that build cannot open.
-    pub const FORMAT_VERSION: u32 = 17;
+    ///
+    /// 18 since a clip gained its [`transforms`](MidiClip::transforms). A version 17 build would
+    /// read the field as nothing and play the text of every clip unperformed — straight where the
+    /// piece swings, quantised where it was loosened — and the save afterwards would write the
+    /// stack away entirely. Version 5's shape again: nothing looks wrong, and the piece is not
+    /// the one that was saved.
+    pub const FORMAT_VERSION: u32 = 18;
 
     /// An empty project.
     ///
