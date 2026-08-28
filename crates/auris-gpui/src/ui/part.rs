@@ -379,6 +379,21 @@ impl AurisApp {
             )
             .into_any_element(),
         );
+        // A standing note, not a dialog: it appears when the clip's notes drift from what the
+        // recipe last wrote and stays for as long as they differ, which is the same rule the
+        // costly-feature warnings follow. The buttons below still work exactly as they say.
+        if self.session.clip_hand_edited(clip) {
+            rows.push(
+                div()
+                    .flex()
+                    .items_center()
+                    .min_h(Metrics::CONTROL_HEIGHT)
+                    .text_xs()
+                    .text_color(theme.warning)
+                    .child(self.t(Key::PartEditedByHand))
+                    .into_any_element(),
+            );
+        }
         rows.push(
             div()
                 .flex()

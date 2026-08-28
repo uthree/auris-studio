@@ -252,6 +252,24 @@ pub struct ClipRecipe {
     /// rather than an arrival, and the join is the one moment a listener is certain to notice.
     #[serde(default = "default_fill")]
     pub fill: f32,
+    /// The digest of the notes as the composer last wrote them —
+    /// [`notes_digest`](super::notes_digest) over the clip's text at the moment of writing.
+    ///
+    /// What makes a hand edit visible. A recipe promises that writing the clip again replaces
+    /// its notes, and a clip whose notes no longer answer with this number has been edited
+    /// since — an edit a regenerate would silently discard, which is worth saying on screen
+    /// before it happens. Informational, never gating: every rewrite still proceeds.
+    ///
+    /// Zero means "nobody digested this text" — a file from before the field, or a recipe built
+    /// by hand — and such a clip is never flagged, because a warning that cannot be trusted
+    /// teaches people to ignore the one that can.
+    #[serde(default, skip_serializing_if = "digest_is_unknown")]
+    pub text_digest: u64,
+}
+
+/// Whether a digest is the "nobody measured" zero, for keeping it out of saved files.
+fn digest_is_unknown(digest: &u64) -> bool {
+    *digest == 0
 }
 
 fn default_swing() -> u8 {
@@ -299,6 +317,7 @@ impl ClipRecipe {
             syncopation: default_syncopation(),
             octave: 0,
             fill: default_fill(),
+            text_digest: 0,
         };
         if preset == ClipPreset::Stab {
             recipe.density = 0.95;

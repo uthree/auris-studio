@@ -43,8 +43,8 @@ mod fixtures;
 
 pub use clip::{
     AudioClip, AudioSource, AudioSourceBank, FadeCurve, MAX_STRETCH, MIN_STRETCH, MidiClip, Note,
-    UNSTRETCHED, default_loop_end, loop_passes, notes_trimmed_from_front, quantised_stretch,
-    sounding_length, stretch_key,
+    UNSTRETCHED, default_loop_end, loop_passes, notes_digest, notes_trimmed_from_front,
+    quantised_stretch, sounding_length, stretch_key,
 };
 pub use curve::{
     BEND_LIMIT, CONTROLLER_LIMIT, CURVE_STEP, ClipCurve, CurvePoint, curve_at, curve_events,

@@ -1314,6 +1314,46 @@ pub fn notes_trimmed_from_front(notes: &[Note], by: Ticks) -> Vec<Note> {
     split_notes_right(notes, by)
 }
 
+/// One number naming exactly these notes, for telling a text apart from an edit of it.
+///
+/// What a [`ClipRecipe`](super::ClipRecipe) stores as its
+/// [`text_digest`](super::ClipRecipe::text_digest): the composer digests what it wrote, and a
+/// clip whose notes no longer answer with the same number has been edited by hand since — which
+/// is worth a warning before a regenerate replaces the edits. FNV-1a over every field of every
+/// note, order-sensitive, exact: velocities go in as their bit patterns, because an edit undone
+/// restores exactly the bits it moved and must read as no edit at all.
+///
+/// Never zero. Zero is the value a file from before this field reads as, and it means "nobody
+/// digested this text", not "this text digests to nothing".
+pub fn notes_digest(notes: &[Note]) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut digest = OFFSET;
+    let mut mix = |value: u64| {
+        digest ^= value;
+        digest = digest.wrapping_mul(PRIME);
+    };
+    for note in notes {
+        mix(u64::from(note.pitch));
+        mix(u64::from(note.velocity.to_bits()));
+        mix(note.start.raw() as u64);
+        mix(note.length.raw() as u64);
+        // Length-prefixed, so a lyric ending where the next begins cannot alias a shifted pair.
+        mix(note.lyric.len() as u64);
+        for byte in note.lyric.bytes() {
+            mix(u64::from(byte));
+        }
+        mix(note.phonemes.len() as u64);
+        for phoneme in &note.phonemes {
+            mix(phoneme.len() as u64);
+            for byte in phoneme.bytes() {
+                mix(u64::from(byte));
+            }
+        }
+    }
+    digest.max(1)
+}
+
 /// The notes right of a split at `offset`, rebased so they are relative to the new clip.
 fn split_notes_right(notes: &[Note], offset: Ticks) -> Vec<Note> {
     notes

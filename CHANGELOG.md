@@ -34,6 +34,12 @@ format rather than a convention: `## <version> — <date>`.
   re-seeds the wander so one number still names both. The kit keeps time as before and, being
   wander-exempt, no longer varies its stroke with the dial. The format version moves to 19 for
   the new transform kind.
+* **A generated clip knows when it has been edited by hand.** Every write stamps a digest of
+  the notes into the recipe, and a clip whose notes have drifted from it shows a standing note
+  in the inspector — "edited by hand; writing it again replaces the edits" — for as long as
+  they differ. Undoing the edit clears it, a resize or a split does not raise it, and nothing
+  is blocked: regenerate still does exactly what it says. Files from before this field simply
+  never warn.
 * A saved file now records **which build saved it**. Opening a project another build saved puts
   a note on the status line (and on the command line's stderr): the piece sounds exactly as
   saved, but regenerating any clip writes in the current composer's style — so a take worth

@@ -271,6 +271,20 @@ impl Session {
         if self.transaction.is_none() {
             self.history.push(Edit::SplitClip, &before);
         }
+        // The halves of a generated clip keep its recipe, and their notes are the machine's own
+        // arithmetic over text the recipe vouched for — so the digest follows, as it does for a
+        // resize. Without this both halves would read as edited by hand the moment the knife
+        // lifted.
+        for half in [clip, right] {
+            if let Some(midi) = self.project.midi_clip_mut(half)
+                && midi.recipe.is_some()
+            {
+                let digest = auris_core::notes_digest(&midi.notes);
+                if let Some(recipe) = &mut midi.recipe {
+                    recipe.text_digest = digest;
+                }
+            }
+        }
         // What `record` does for every other command, and this is the one that pushes its own
         // step instead of going through it: a split has to break a run of coalescing repeats, or a
         // tempo nudge either side of it folds into one step and undoing that step silently takes
@@ -443,6 +457,11 @@ impl Session {
                 midi.length_is_explicit = true;
                 if let Some(notes) = notes {
                     midi.notes = notes;
+                    // The composer wrote this text, so the recipe's digest follows it — a
+                    // resize must not read as a hand edit.
+                    if let Some(recipe) = &mut midi.recipe {
+                        recipe.text_digest = auris_core::notes_digest(&midi.notes);
+                    }
                 }
             }
             self.invalidate_graph();
@@ -548,6 +567,11 @@ impl Session {
                 midi.length = length;
                 midi.length_is_explicit = true;
                 midi.notes = notes;
+                // The same digest rule as the other edge: text the composer wrote is text the
+                // recipe vouches for, so trimming a generated clip is not a hand edit.
+                if let Some(recipe) = &mut midi.recipe {
+                    recipe.text_digest = auris_core::notes_digest(&midi.notes);
+                }
             }
             self.invalidate_graph();
             return Ok(());

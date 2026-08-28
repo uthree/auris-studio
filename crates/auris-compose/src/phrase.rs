@@ -154,6 +154,9 @@ pub fn recipe_for(
         // octaves off its role would otherwise come back as a recipe nobody could edit back.
         octave: (part.octave - part.role.default_octave()).clamp(-2, 2),
         fill: settings.fill,
+        // The composer describes what it asked for, not what came out: the digest of the notes
+        // as written is the session's to stamp, at the moment the clip lands in a document.
+        text_digest: 0,
     })
 }
 

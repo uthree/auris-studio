@@ -323,6 +323,12 @@ impl Session {
                     // the recipe panel, keep this one — reads exactly this field, so nothing
                     // downstream had to learn about composed songs to work on them.
                     target.recipe = clip.recipe.clone();
+                    // Digested here rather than by the composer, which deliberately knows
+                    // nothing about hand edits: the session is the layer that watches a text
+                    // drift from its recipe, so the session stamps what was written.
+                    if let Some(recipe) = &mut target.recipe {
+                        recipe.text_digest = auris_core::notes_digest(&target.notes);
+                    }
                     // And how the text is played: the feel the composer used to bake into the
                     // notes arrives as the clip's own performance stack, where the panel can
                     // turn it and a looped clip is loose differently on every pass.

@@ -50,7 +50,9 @@ impl Session {
         }
         let start = self.snap(start);
         let length = Ticks(length.raw().max(1));
+        let mut recipe = recipe;
         let notes = self.phrase(start, length, &recipe);
+        recipe.text_digest = auris_core::notes_digest(&notes);
 
         self.record(Edit::GenerateClip);
         let id = self
@@ -142,6 +144,28 @@ impl Session {
         self.project.midi_clip(clip)?.1.recipe.as_ref()
     }
 
+    /// Whether a generated clip's notes have been edited by hand since the composer wrote them.
+    ///
+    /// Read against the digest every write stamps into the recipe
+    /// ([`ClipRecipe::text_digest`]), so a note moved, struck softer, repitched or deleted all
+    /// answer `true` — and an edit undone answers `false` again, because the digest is exact.
+    /// The interface shows this beside the recipe's own controls: writing the clip again is
+    /// still every bit as allowed, but it replaces the edits, and that is worth a sentence on
+    /// screen *before* the button rather than a surprise after it.
+    ///
+    /// `false` for a clip with no recipe (nothing can rewrite it), and for a recipe carrying no
+    /// digest — a file from before the field — because a warning that cannot be trusted teaches
+    /// people to ignore the one that can.
+    pub fn clip_hand_edited(&self, clip: ClipId) -> bool {
+        let Some((_, midi)) = self.project.midi_clip(clip) else {
+            return false;
+        };
+        let Some(recipe) = &midi.recipe else {
+            return false;
+        };
+        recipe.text_digest != 0 && auris_core::notes_digest(&midi.notes) != recipe.text_digest
+    }
+
     /// The recipe of a clip that has one, or the reason it has not.
     fn recipe_of(&self, clip: ClipId) -> Result<ClipRecipe, SessionError> {
         let Some((_, midi)) = self.project.midi_clip(clip) else {
@@ -153,12 +177,13 @@ impl Session {
     }
 
     /// Writes `recipe` onto `clip` and replaces its notes with what that recipe says.
-    fn rewrite(&mut self, clip: ClipId, recipe: ClipRecipe) -> Result<usize, SessionError> {
+    fn rewrite(&mut self, clip: ClipId, mut recipe: ClipRecipe) -> Result<usize, SessionError> {
         let Some((_, midi)) = self.project.midi_clip(clip) else {
             return Err(SessionError::UnknownClip(clip.0));
         };
         let (start, length) = (midi.start, midi.length);
         let notes = self.phrase(start, length, &recipe);
+        recipe.text_digest = auris_core::notes_digest(&notes);
         let written = notes.len();
 
         self.record(Edit::GenerateClip);
@@ -299,6 +324,78 @@ mod tests {
             first,
             "the chords changed and the part did not"
         );
+    }
+
+    #[test]
+    fn the_recipe_knows_when_its_text_was_edited_by_hand() {
+        let (mut session, track) = with_a_progression();
+        let clip = session
+            .generate_clip(
+                track,
+                Ticks::ZERO,
+                BAR * 4,
+                ClipRecipe::new(ClipPreset::Lead, 1),
+            )
+            .unwrap();
+        assert!(
+            !session.clip_hand_edited(clip),
+            "fresh from the composer and already accused"
+        );
+
+        // The machine's own arithmetic over the text is not a hand edit: a resize writes the
+        // phrase again and the digest follows it.
+        session.resize_clip(clip, BAR * 2).unwrap();
+        assert!(!session.clip_hand_edited(clip), "a resize is not an edit");
+
+        // A note nudged by hand is exactly what the flag is for — and undoing the nudge clears
+        // it, because the digest is exact rather than approximate.
+        let origin = session.midi_clip(clip).unwrap().notes[0].clone();
+        session
+            .move_notes(clip, &[(0, origin.start, origin.pitch)], Ticks(30), 0)
+            .unwrap();
+        assert!(session.clip_hand_edited(clip), "the nudge went unnoticed");
+        session.undo();
+        assert!(
+            !session.clip_hand_edited(clip),
+            "the undo did not acquit it"
+        );
+
+        // Writing the part again replaces the edits, and with them the accusation.
+        session
+            .move_notes(clip, &[(0, origin.start, origin.pitch)], Ticks(30), 0)
+            .unwrap();
+        session.regenerate_clip(clip).unwrap();
+        assert!(!session.clip_hand_edited(clip));
+
+        // A recipe carrying no digest — a file from before the field — never accuses anybody.
+        if let Some(midi) = session.project.midi_clip_mut(clip)
+            && let Some(recipe) = &mut midi.recipe
+        {
+            recipe.text_digest = 0;
+        }
+        session
+            .move_notes(clip, &[(0, origin.start, origin.pitch)], Ticks(30), 0)
+            .unwrap();
+        assert!(
+            !session.clip_hand_edited(clip),
+            "an unknown text was treated as a known one"
+        );
+    }
+
+    #[test]
+    fn splitting_a_generated_clip_accuses_neither_half() {
+        let (mut session, track) = with_a_progression();
+        let clip = session
+            .generate_clip(
+                track,
+                Ticks::ZERO,
+                BAR * 4,
+                ClipRecipe::new(ClipPreset::Lead, 1),
+            )
+            .unwrap();
+        let right = session.split_clip(clip, BAR * 2).unwrap();
+        assert!(!session.clip_hand_edited(clip), "the left half");
+        assert!(!session.clip_hand_edited(right), "the right half");
     }
 
     #[test]

@@ -583,6 +583,10 @@ strings! {
     PartGroove { en: "Groove", ja: "グルーヴ" }
     PartSeed { en: "Seed", ja: "シード" }
     PartStraight { en: "straight", ja: "イーブン" }
+    // Shown while a generated clip's notes differ from what its recipe last wrote, for as long
+    // as they differ: writing the part again would replace the edits, and that is worth a
+    // sentence on screen before the button rather than a surprise after it.
+    PartEditedByHand { en: "Edited by hand — writing it again replaces the edits", ja: "手動編集あり — 再生成すると上書きされます" }
     // The dials on any clip's performance: the transform stack, which changes what is heard
     // without moving a note the piano roll shows.
     PerformHeading { en: "Performance", ja: "演奏" }

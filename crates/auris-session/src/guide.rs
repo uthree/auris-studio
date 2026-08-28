@@ -1335,7 +1335,11 @@ pub mod harmony {
     //! writing it again. Nothing rewrites a clip because something *nearby* changed, which is
     //! what makes it safe to edit a generated clip by hand — and why contrast between a verse
     //! and a chorus is two clips with two sets of dials rather than a notion of song form that
-    //! the document would otherwise have to carry.
+    //! the document would otherwise have to carry. Safe, and *seen*: every write stamps a
+    //! digest of the text into the recipe ([`ClipRecipe::text_digest`](auris_core::ClipRecipe)),
+    //! so a clip whose notes have drifted from it —
+    //! [`clip_hand_edited`](crate::Session::clip_hand_edited) — says so on its own panel, before
+    //! the button that would replace the edits rather than after. A warning, never a gate.
     //!
     //! The contract repeats at every layer. A song spec is text that the composer performs; a
     //! stored note is text that the instruments and effects perform. The left side is saved
