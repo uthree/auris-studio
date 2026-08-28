@@ -46,7 +46,6 @@ pub(super) fn drums(
     // would thin a quiet section twice as fast as its own number says — and would put the
     // neutral position somewhere nobody could find.
     let dialled = part.density.unwrap_or(0.5).clamp(0.0, 1.0);
-    let leaning = 0.5 + dialled;
     // Above the middle, the steps the groove left empty start taking ghost notes. That is how a
     // drummer gets busier without playing something else — and it is why they are ghosts and why
     // they land on the weak steps only. A filled-in step arriving at full weight would not be a
@@ -80,22 +79,11 @@ pub(super) fn drums(
                 )
             } {
                 Some(accent) => {
-                    // A quiet section thins the pattern out rather than playing it softly, which
-                    // is what a drummer does. The downbeat is never thinned, or the bar loses its
-                    // footing.
-                    //
-                    // What thins a hit is how weak its step is, and how quietly the section is
-                    // being played. A *beat* survives outright at the middle of the dial: the
-                    // arithmetic here used to drop one in three of them at the default settings,
-                    // which is not a drummer playing quietly, it is a drummer missing — and it
-                    // is why the kit came out too sparse to hold a song up.
-                    let strength = match weight {
-                        0 => 0.72,
-                        1 => 0.90,
-                        _ => 1.0,
-                    };
-                    let survives = strength * (0.70 + 0.30 * section.intensity) * leaning;
-                    if !written && weight < 4 && !rng.chance(survives.clamp(0.0, 1.0)) {
+                    // Rolled for every hit whether the chance can fail or not, so which numbers
+                    // the ghosts and every later bar see does not move with the dials — the same
+                    // roll-anyway rule the humanisation follows.
+                    if !written && !rng.chance(survival(accent, weight, section.intensity, dialled))
+                    {
                         continue;
                     }
                     accent
@@ -131,6 +119,45 @@ pub(super) fn drums(
         }
     }
     notes
+}
+
+/// The chance a groove hit is played, before the seed says which ones are.
+///
+/// The pattern as spelled is the part. A `Normal` or `Strong` hit plays at every intensity,
+/// because a drummer playing quietly plays the same beat more softly rather than losing pieces
+/// of it — the lost pieces were exactly what the old arithmetic wrote: it thinned everything
+/// below the downbeat by how quiet the section was, so at the default settings one backbeat in
+/// nine and one four-on-the-floor kick in nine simply vanished, a different bar of holes every
+/// bar. A listener hears a dropped backbeat as a mistake, never as dynamics — and a syncopation
+/// the groove spells out, the sixteen-beat's kick or the bossa's clave, *is* the groove, so
+/// losing one of those was losing the pattern's identity, not its volume.
+///
+/// What breathes with the section is the **ghosts**: the ornaments a drummer adds as the music
+/// heats up and leaves out when it cools, the finest steps first. At the default intensities
+/// that is roughly half of them in a verse and nearly all of them in a chorus, which is also
+/// what makes a chorus feel busier without a single skeleton hit moving.
+///
+/// The density dial keeps its contract on top: the middle plays the groove as written, below it
+/// the drummer plays less of everything but the downbeat — that is an instruction, not a
+/// temperature — and above it `drums` fills empty weak steps in with ghosts of its own.
+fn survival(accent: Accent, weight: u8, intensity: f32, dialled: f32) -> f32 {
+    // The downbeat is never thinned, or the bar loses its footing.
+    if weight >= 4 {
+        return 1.0;
+    }
+    let base = match accent {
+        Accent::Ghost => {
+            let strength = match weight {
+                0 => 0.72,
+                1 => 0.90,
+                _ => 1.0,
+            };
+            strength * (0.15 + 0.85 * intensity.clamp(0.0, 1.0))
+        }
+        Accent::Normal | Accent::Strong => 1.0,
+    };
+    let leaning = 0.5 + dialled.clamp(0.0, 1.0);
+    (base * leaning).clamp(0.0, 1.0)
 }
 
 /// The shape a fill runs in.
@@ -255,8 +282,74 @@ fn fill(
 
 #[cfg(test)]
 mod tests {
-    use super::{FillShape, fill_steps};
-    use crate::parts::fixture::{BASE, draft, part, section_notes};
+    use super::{FillShape, fill_steps, survival};
+    use crate::parts::fixture::{BASE, bar_steps, draft, part, section_notes};
+    use crate::rhythm::Accent;
+
+    #[test]
+    fn survival_is_certain_for_the_pattern_and_a_temperature_for_the_ghosts() {
+        // The spelled pattern is certain at the dial's middle, at every intensity and weight:
+        // quiet is the velocity's business, and a dropped backbeat reads as a mistake.
+        for weight in 0..=4 {
+            for intensity in [0.0, 0.5, 1.0] {
+                for accent in [Accent::Normal, Accent::Strong] {
+                    assert_eq!(survival(accent, weight, intensity, 0.5), 1.0);
+                }
+            }
+        }
+        // Ghosts breathe with the section, finest steps first, and never outlive the pattern.
+        let ghost = |weight, intensity| survival(Accent::Ghost, weight, intensity, 0.5);
+        assert!(ghost(0, 0.2) < ghost(0, 0.9), "hotter is busier");
+        assert!(ghost(0, 0.5) < ghost(1, 0.5), "the finest go first");
+        assert!(ghost(1, 1.0) <= 1.0);
+        assert!(ghost(0, 0.0) > 0.0, "a cold section still breathes");
+        // Below the middle the dial thins even the pattern — that is an instruction to play
+        // less, not a temperature — but never the downbeat.
+        assert!(survival(Accent::Normal, 2, 1.0, 0.0) < 1.0);
+        assert_eq!(survival(Accent::Ghost, 4, 0.0, 0.0), 1.0, "the downbeat");
+    }
+
+    #[test]
+    fn a_quiet_section_keeps_the_pattern_and_loses_the_ghosts() {
+        let (_, frame, parts) = draft(
+            r#"
+            form = "verse"
+            chords = "@axis"
+            humanize = 0
+            ending = "none"
+            [section.verse]
+            bars = 4
+            intensity = 0.05
+            "#,
+        );
+        // basic-rock's kick and snare spell no ghosts, so even this quiet they play whole,
+        // bar for bar. The old thinning read the intensity over the whole kit: at the default
+        // settings it lost one backbeat in nine, and at this one it lost a third of the part.
+        for (name, steps) in [("kick", vec![0, 6, 10]), ("snare", vec![4, 12])] {
+            let drum = part(&parts, name);
+            for bar in 0..4 {
+                assert_eq!(bar_steps(&frame, drum, bar), steps, "{name}, bar {bar}");
+            }
+        }
+        // The hat's offbeat ghosts are the ornaments, and this cold they are nearly all gone —
+        // while its own spelled hits, the beats, still land in every bar.
+        let hat = part(&parts, "hat");
+        let mut ghosts = 0;
+        for bar in 0..4 {
+            let steps = bar_steps(&frame, hat, bar);
+            for beat in [0, 4, 8, 12] {
+                assert!(
+                    steps.contains(&beat),
+                    "the hat lost beat {beat} of bar {bar}"
+                );
+            }
+            ghosts += steps.iter().filter(|step| !step.is_multiple_of(4)).count();
+        }
+        assert!(
+            ghosts <= 6,
+            "{ghosts} of 16 ghosts survived a nearly silent verse"
+        );
+    }
 
     #[test]
     fn every_fill_shape_scales_with_its_window_and_stays_inside_it() {

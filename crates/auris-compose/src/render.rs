@@ -1216,7 +1216,16 @@ mod tests {
     /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
     /// a bug or a decision, and this is what makes anyone look.
     ///
-    /// It last moved when the melody grew a germ: one piece-level contour per part, which every
+    /// It last moved when the kit stopped missing: the survival roll used to thin everything
+    /// below the downbeat by how quiet the section was, so at the default settings one backbeat
+    /// in nine and one four-on-the-floor kick in nine simply vanished, a different bar of holes
+    /// every bar — heard as mistakes, never as dynamics. A hit the groove spells now always
+    /// plays, and what breathes with the intensity is the ghosts alone, the finest steps first
+    /// — see `parts::drums::survival`. All four moved: every count rose by the spelled hits
+    /// thinning used to take, less the ghosts a verse no longer plays, and not one chord went
+    /// anywhere, because which bar carries which chord was never the kit's to decide.
+    ///
+    /// Before that it moved when the melody grew a germ: one piece-level contour per part, which every
     /// section's figure wears re-sampled onto its own rhythm, so a verse and a chorus became two
     /// statements of one tune instead of two tunes. Every count stayed and every chord stayed —
     /// the germ changes which degrees a figure asks for and nothing about when anything sounds —
@@ -1322,7 +1331,7 @@ mod tests {
             ),
             "verse·1 C major | Cmaj7 Gm7 Am Fmaj7 Cmaj7 G7 Am9 G7 |\n\
              ending·1 C major | C |\n\
-             177 notes, digest e89a373166345a61\n"
+             182 notes, digest 8f281717b87d3ab9\n"
         );
 
         // The same in a minor key, and the fixture that moved furthest when colouring stopped
@@ -1364,7 +1373,7 @@ mod tests {
             ),
             "verse·1 A minor | Am7 E9 Fmaj7 Dm Am7 Em7 Gbm7 E7 |\n\
              ending·1 A minor | Am |\n\
-             246 notes, digest d9bc1fff74f23696\n"
+             252 notes, digest 3304892e76ea3f47\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats — and the one fixture
@@ -1378,7 +1387,7 @@ mod tests {
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
              ending·1 C major | C |\n\
-             620 notes, digest 7495f7fc60ed0181\n"
+             627 notes, digest ded762cc6bf7af13\n"
         );
 
         // A transposed section, which is a key change on the timeline — and the one fixture here
@@ -1406,7 +1415,7 @@ mod tests {
             "verse·1 C major | Fmaj7 E7 Am7 Bb7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
              ending·1 Eb major | Eb |\n\
-             215 notes, digest e77f0df8fa71a3fc\n"
+             221 notes, digest 72797912f996c1e6\n"
         );
     }
 
