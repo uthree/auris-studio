@@ -44,6 +44,7 @@ mod levels;
 mod mixer;
 mod monitor;
 mod notes;
+mod perform;
 mod punch;
 mod record;
 mod singer;

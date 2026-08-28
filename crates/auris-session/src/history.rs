@@ -221,6 +221,13 @@ pub enum Edit {
     GenerateClip,
     /// A generated clip stopped being generated.
     FreezeClip,
+    /// How a clip's notes are performed changed, without the notes changing.
+    ///
+    /// Carries the clip, for the reason [`Edit::ChangeTempo`] carries its position: a dial on
+    /// one clip's stack coalesces while it turns, and two clips must not fold into one step.
+    SetClipTransforms(ClipId),
+    /// A clip's performance was written into its notes, and the stack cleared.
+    FreezeClipTransforms,
     /// The document was replaced by a composed piece.
     Compose,
     /// Every fader was set from a measurement of what the mix actually sounds like.

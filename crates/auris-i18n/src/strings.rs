@@ -932,6 +932,8 @@ strings! {
     EditStampProgression { en: "writing a progression", ja: "コード進行の書き込み" }
     EditGenerateClip { en: "writing a clip", ja: "クリップの自動生成" }
     EditFreezeClip { en: "keeping a clip", ja: "クリップの確定" }
+    EditSetClipTransforms { en: "shaping a performance", ja: "演奏の調整" }
+    EditFreezeClipTransforms { en: "keeping a performance", ja: "演奏の確定" }
     EditCompose { en: "composing a piece", ja: "自動作曲" }
     EditBalanceLevels { en: "balancing the mix", ja: "ミックスの自動調整" }
 

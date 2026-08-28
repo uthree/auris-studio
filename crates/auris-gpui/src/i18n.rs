@@ -180,6 +180,8 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::StampProgression => Key::EditStampProgression,
         Edit::GenerateClip => Key::EditGenerateClip,
         Edit::FreezeClip => Key::EditFreezeClip,
+        Edit::SetClipTransforms(_) => Key::EditSetClipTransforms,
+        Edit::FreezeClipTransforms => Key::EditFreezeClipTransforms,
         Edit::Compose => Key::EditCompose,
         Edit::BalanceLevels => Key::EditBalanceLevels,
     }
