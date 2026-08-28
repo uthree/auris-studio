@@ -2,6 +2,7 @@
 
 use auris_core::registry::{PluginPack, PluginRegistry};
 
+use crate::chorus::Chorus;
 use crate::compressor::Compressor;
 use crate::delay::Delay;
 use crate::distortion::Distortion;
@@ -28,6 +29,7 @@ impl PluginPack for DspPack {
         registry.register_effect(|| Box::new(Equalizer::new()));
         registry.register_effect(|| Box::new(Compressor::new()));
         registry.register_effect(|| Box::new(Delay::new()));
+        registry.register_effect(|| Box::new(Chorus::new()));
         registry.register_effect(|| Box::new(Reverb::new()));
         registry.register_effect(|| Box::new(Distortion::new()));
         registry.register_effect(|| Box::new(Limiter::new()));
@@ -43,7 +45,8 @@ mod tests {
     const SR: f64 = 48_000.0;
     const FRAMES: usize = 2_048;
 
-    const EXPECTED_IDS: [&str; 7] = [
+    const EXPECTED_IDS: [&str; 8] = [
+        "auris.fx.chorus",
         "auris.fx.compressor",
         "auris.fx.delay",
         "auris.fx.distortion",
@@ -72,9 +75,9 @@ mod tests {
     }
 
     #[test]
-    fn the_pack_registers_all_seven_effects() {
+    fn the_pack_registers_all_eight_effects() {
         let registry = registry();
-        assert_eq!(registry.len(), 7);
+        assert_eq!(registry.len(), 8);
         let ids: Vec<&str> = registry.effects().map(|d| d.id.as_ref()).collect();
         assert_eq!(ids, EXPECTED_IDS);
         for descriptor in registry.effects() {
@@ -315,5 +318,10 @@ mod tests {
             assert!(effect.tail_frames() > 4_800, "{id} reported no tail");
             assert_eq!(effect.latency_frames(), 0, "{id}");
         }
+        // The chorus reads at most a few tens of milliseconds back: a tail, but a short one.
+        let mut chorus = registry.create_effect("auris.fx.chorus").unwrap();
+        chorus.prepare(&PrepareContext::new(SR, FRAMES, 2));
+        assert!((1..4_800).contains(&chorus.tail_frames()));
+        assert_eq!(chorus.latency_frames(), 0);
     }
 }

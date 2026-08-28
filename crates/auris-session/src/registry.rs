@@ -55,6 +55,7 @@ mod tests {
             "auris.fx.eq",
             "auris.fx.compressor",
             "auris.fx.delay",
+            "auris.fx.chorus",
             "auris.fx.reverb",
             "auris.fx.distortion",
             "auris.fx.limiter",

@@ -120,6 +120,7 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("FM 2-Op", "FM 2 オペレーター"),
     ("Noise Drum", "ノイズドラム"),
     ("Vocal", "ボーカル"),
+    ("Chorus", "コーラス"),
     ("Compressor", "コンプレッサー"),
     ("Delay", "ディレイ"),
     ("Distortion", "ディストーション"),
@@ -147,6 +148,10 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
     (
         "A formant-filtered preview voice for singer tracks",
         "シンガートラック試聴用のフォルマントフィルター音声",
+    ),
+    (
+        "Modulated delay that doubles and widens a voice",
+        "音を二重にして広げるモジュレーションディレイ",
     ),
     (
         "Soft-knee compressor, stereo-linked and keyable from another track",
@@ -190,6 +195,7 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Ceiling", "上限"),
     ("Damping", "ダンピング"),
     ("Decay", "ディケイ"),
+    ("Depth", "深さ"),
     ("Detune", "デチューン"),
     ("Drive", "ドライブ"),
     ("Envelope", "エンベロープ"),
@@ -211,6 +217,7 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Ping-Pong", "ピンポン"),
     ("Pitch Sweep", "ピッチスイープ"),
     ("Pulse Width", "パルス幅"),
+    ("Rate", "レート"),
     ("Ratio", "レシオ"),
     ("Release", "リリース"),
     ("Room Size", "ルームサイズ"),

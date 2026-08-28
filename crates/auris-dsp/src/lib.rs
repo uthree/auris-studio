@@ -52,6 +52,7 @@ pub(crate) fn settled(value: f32) -> f32 {
 
 pub mod adsr;
 pub mod biquad;
+pub mod chorus;
 pub mod compressor;
 pub mod delay;
 pub mod delay_line;
@@ -69,6 +70,7 @@ pub mod stretch;
 
 pub use adsr::{Adsr, EnvelopeStage};
 pub use biquad::{Biquad, BiquadCoefficients};
+pub use chorus::Chorus;
 pub use compressor::Compressor;
 pub use delay::Delay;
 pub use delay_line::DelayLine;
