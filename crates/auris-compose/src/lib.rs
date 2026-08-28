@@ -13,7 +13,6 @@ pub mod preset;
 pub mod progression;
 pub mod render;
 pub mod rhythm;
-pub mod rng;
 pub mod spec;
 
 /// Music theory, re-exported from where the document model can also reach it.
@@ -24,6 +23,16 @@ pub mod spec;
 /// re-export at the crate root is nameable through `crate::`.
 #[doc(no_inline)]
 pub use auris_core::theory;
+
+/// Deterministic randomness, re-exported from where the document model can also reach it.
+///
+/// It moved down to [`auris_core`] for the reason [`theory`] did: a clip's note transforms draw
+/// their wander from the same named streams the composer draws from, and nothing at that level
+/// may depend on this crate. The paths the composer writes — `crate::rng::Rng` and
+/// `crate::rng::Key` — are unchanged, because a re-export at the crate root is nameable
+/// through `crate::`.
+#[doc(no_inline)]
+pub use auris_core::rng;
 
 pub use analysis::{Reading, detect_key, harmonise, motif_of, read_melody};
 pub use metrics::{pitch_class_entropy, syncopation};

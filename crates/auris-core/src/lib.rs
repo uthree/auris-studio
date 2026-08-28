@@ -32,6 +32,7 @@ pub mod param;
 pub mod plugin;
 pub mod project;
 pub mod registry;
+pub mod rng;
 pub mod structure;
 pub mod theory;
 pub mod time;

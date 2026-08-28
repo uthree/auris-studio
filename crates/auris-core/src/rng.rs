@@ -5,6 +5,10 @@
 //! Here every decision names its own stream — `["part", "lead", "surface", "chorus", 2]` — and a
 //! stream's numbers depend only on the seed and that name. Adding a part, or a pass, or a roll
 //! inside one pass, leaves every other stream untouched.
+//!
+//! It lives in this crate rather than in the composer because the document draws from it too: a
+//! clip's note transforms wander by numbers from these streams, and a seed stored in a file has
+//! to mean the same numbers wherever it is read.
 
 /// One component of a stream name.
 ///
