@@ -35,7 +35,7 @@ mod fixture;
 use auris_core::time::{TICKS_PER_QUARTER, Ticks};
 
 use crate::frame::Frame;
-use crate::rhythm::swing_offset;
+use crate::rhythm::{SwingFeel, swing_offset};
 use crate::rng::{Key as RngKey, Rng};
 use crate::spec::{Mood, PartSpec, Role, SongSpec};
 
@@ -301,6 +301,12 @@ fn humanise(settings: &ScoreSettings, frame: &Frame, played: &[PartSpec], notes:
         })
     };
 
+    // Which pairs the swing dial delays, which is the groove's own answer: a kit running
+    // sixteenths swings them, and one in eighths swings those. The whole band reads the one
+    // answer — a comp swinging pairs the kit does not would be two feels at once.
+    let feel = crate::rhythm::groove(&settings.groove)
+        .map_or(SwingFeel::Eighth, crate::rhythm::Groove::swing_feel);
+
     for note in notes.iter_mut() {
         // The grid this note was written on, which is the section's and not the roster's: a part
         // put onto triplets for one section would otherwise have its swing looked up on a
@@ -308,7 +314,7 @@ fn humanise(settings: &ScoreSettings, frame: &Frame, played: &[PartSpec], notes:
         let grid = part_grid(frame, played.get(note.section).unwrap_or(part));
         let bar_position = note.start.raw().rem_euclid(grid.bar_ticks().raw().max(1));
         let step = grid.step_of(Ticks(bar_position));
-        let mut start = note.start + swing_offset(grid, step, settings.swing);
+        let mut start = note.start + swing_offset(grid, step, settings.swing, feel);
         if settings.humanize > 0.0 {
             // Named by *where the note is* rather than by how many notes came before it, so
             // adding a note to bar one does not re-time the whole song.
@@ -513,6 +519,65 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_sixteen_beat_groove_swings_its_sixteenth_pairs() {
+        // The swing dial under a groove that runs sixteenths. Felt at the eighth it moved the
+        // third and fourth sixteenth of every beat together, so the gap into the next beat gave
+        // up the whole shift — measured at the city-pop preset's own dial, hat gaps of
+        // 142/176/142/107 ms where a sixteen-beat drummer plays long-short pairs. The groove now
+        // answers which pairs swing, and every odd sixteenth is late by the same 77 ticks:
+        // long-short, the gap into each beat the short one.
+        let (_, _, parts) = draft(
+            r#"
+            form = "verse"
+            humanize = 0
+            swing = 66
+            groove = "sixteen-beat"
+            ending = "none"
+            [section.verse]
+            bars = 1
+            [[part]]
+            name = "kick"
+            rhythm = "x x x x x x x x x x x x x x x x"
+            "#,
+        );
+        let starts: Vec<i64> = part(&parts, "kick")
+            .notes
+            .iter()
+            .map(|note| note.start.raw())
+            .collect();
+        let expected: Vec<i64> = (0..16)
+            .map(|step| step * 240 + if step % 2 == 1 { 77 } else { 0 })
+            .collect();
+        assert_eq!(starts, expected);
+
+        // And the same dial over a groove in eighths still swings the eighth, sixteenths riding
+        // with it — which is what swing has always meant there.
+        let (_, _, parts) = draft(
+            r#"
+            form = "verse"
+            humanize = 0
+            swing = 66
+            groove = "eight-beat"
+            ending = "none"
+            [section.verse]
+            bars = 1
+            [[part]]
+            name = "kick"
+            rhythm = "x x x x x x x x x x x x x x x x"
+            "#,
+        );
+        let starts: Vec<i64> = part(&parts, "kick")
+            .notes
+            .iter()
+            .map(|note| note.start.raw())
+            .collect();
+        let expected: Vec<i64> = (0..16)
+            .map(|step| step * 240 + if step % 4 >= 2 { 154 } else { 0 })
+            .collect();
+        assert_eq!(starts, expected);
     }
 
     #[test]

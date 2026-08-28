@@ -396,6 +396,38 @@ impl Groove {
         };
         Pattern::parse(text).unwrap_or_else(|| Pattern::rests(16))
     }
+
+    /// The subdivision this groove's swing is felt at.
+    ///
+    /// Asked of the patterns rather than declared beside them, because the pairs a dial can
+    /// swing are the pairs the kit actually plays: a groove that strikes odd sixteenths — the
+    /// sixteen-beat's running hat, the breakbeat's ghosts — is playing sixteenth pairs, and one
+    /// that never leaves the eighths keeps the eighth feel that swing has always meant there.
+    ///
+    /// The distinction is not pedantry. Delaying the *eighth* under a running-sixteenth hat
+    /// moves the third and fourth sixteenth of every beat together, so the gap into the next
+    /// beat gives up the whole shift: at the city-pop preset's own dial the hat's gaps came out
+    /// 142/176/142/107 ms, the last sixteenth of every beat arriving a quarter early — heard as
+    /// the kit rushing, where a sixteen-beat drummer plays long-short pairs.
+    ///
+    /// A compound groove counts eighths of a dotted beat and has no sixteenth pair to name;
+    /// it answers [`SwingFeel::Eighth`], and nothing reads it — swing is silent in compound
+    /// time, as [`swing_offset`] says.
+    pub fn swing_feel(&self) -> SwingFeel {
+        let runs_sixteenths = [DrumVoice::Kick, DrumVoice::Snare, DrumVoice::ClosedHat]
+            .into_iter()
+            .any(|voice| {
+                self.pattern(voice)
+                    .onsets()
+                    .into_iter()
+                    .any(|step| !step.is_multiple_of(2))
+            });
+        if self.steps_per_beat == 4 && runs_sixteenths {
+            SwingFeel::Sixteenth
+        } else {
+            SwingFeel::Eighth
+        }
+    }
 }
 
 /// How many steps a pattern of unknown provenance is assumed to count to its beat.
@@ -521,12 +553,26 @@ pub fn groove(name: &str) -> Option<&'static Groove> {
     GROOVES.iter().find(|groove| groove.name == name)
 }
 
+/// The subdivision a swing dial is felt at.
+///
+/// One number cannot say both where the delayed note lands and which notes are delayed, and the
+/// second half is what this names. It is a property of the groove — see [`Groove::swing_feel`] —
+/// because the pairs a dial can swing are the pairs the kit actually plays.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SwingFeel {
+    /// The second eighth of each beat is late, and the sixteenths inside it ride with it.
+    Eighth,
+    /// The second sixteenth of each pair is late: long-short, four pairs to the bar's beat.
+    Sixteenth,
+}
+
 /// How far a note on `step` is delayed by swinging at `percent`.
 ///
-/// Swing is felt at the eighth, not the sixteenth: the *second eighth of each beat* is late, and
-/// the sixteenths inside it move with it. `percent` says where that eighth lands inside its
-/// beat — 50 is straight, 66.7 puts it on the third triplet.
-pub fn swing_offset(grid: Grid, step: usize, percent: u8) -> Ticks {
+/// `feel` says which pairs swing. At [`SwingFeel::Eighth`] the *second eighth of each beat* is
+/// late and the sixteenths inside it move with it; at [`SwingFeel::Sixteenth`] each pair of
+/// sixteenths swings on its own. Either way `percent` says where the delayed note lands inside
+/// its pair — 50 is straight, 66.7 puts it on the last of a triplet.
+pub fn swing_offset(grid: Grid, step: usize, percent: u8, feel: SwingFeel) -> Ticks {
     // A triplet grid is already sitting where swing is trying to push a straight one, so there is
     // nothing left to delay. It also has no half-beat to measure the delay in: the unit below
     // would round to a single step and every other triplet would be shoved off the beat, which is
@@ -541,8 +587,19 @@ pub fn swing_offset(grid: Grid, step: usize, percent: u8) -> Ticks {
     if grid.signature.is_compound() {
         return Ticks::ZERO;
     }
-    // Half a beat, in steps: the unit that gets swung.
-    let unit = (grid.steps_per_beat() / 2).max(1);
+    // The unit that gets swung: half a beat, or a quarter of one.
+    let unit = match feel {
+        SwingFeel::Eighth => (grid.steps_per_beat() / 2).max(1),
+        SwingFeel::Sixteenth => {
+            // A grid too coarse to say "sixteenth" holds only positions a sixteenth swing
+            // leaves alone — every eighth is the straight first of its pair — so a part on
+            // such a grid sits still rather than having its eighths swung by mistake.
+            match grid.steps_per_beat() / 4 {
+                0 => return Ticks::ZERO,
+                unit => unit,
+            }
+        }
+    };
     if (step / unit).is_multiple_of(2) {
         return Ticks::ZERO;
     }
@@ -761,8 +818,14 @@ mod tests {
         assert!(Grid::new(TimeSignature::new(6, 8), 3).is_triplet());
 
         // Swing is silent in compound time — the bar is already the shuffle it aims at.
-        assert_eq!(swing_offset(six_eight, 3, 67), Ticks::ZERO);
-        assert_ne!(swing_offset(four_four, 2, 67), Ticks::ZERO);
+        assert_eq!(
+            swing_offset(six_eight, 3, 67, SwingFeel::Eighth),
+            Ticks::ZERO
+        );
+        assert_ne!(
+            swing_offset(four_four, 2, 67, SwingFeel::Eighth),
+            Ticks::ZERO
+        );
     }
 
     #[test]
@@ -943,33 +1006,58 @@ mod tests {
     #[test]
     fn swing_delays_the_offbeat_eighth_and_leaves_the_beat_alone() {
         let grid = four_four();
-        assert_eq!(swing_offset(grid, 0, 66), Ticks::ZERO, "the downbeat");
+        let eighth = |step, percent| swing_offset(grid, step, percent, SwingFeel::Eighth);
+        assert_eq!(eighth(0, 66), Ticks::ZERO, "the downbeat");
+        assert_eq!(eighth(1, 66), Ticks::ZERO, "still the first eighth");
+        assert_eq!(eighth(4, 66), Ticks::ZERO, "beat two");
+        assert_eq!(eighth(2, 50), Ticks::ZERO, "straight is no swing");
+
+        // The offbeat eighth is what gets delayed. An eighth is 480 ticks, so at 66 % the shift
+        // is 480 * (0.66 - 0.5) * 2 = 154, which lands it just shy of the third triplet.
+        assert_eq!(eighth(2, 66), Ticks(154));
+        assert!(eighth(2, 66) > Ticks::ZERO, "swing delays, never rushes");
+        // The sixteenth inside a swung eighth moves with it.
+        assert_eq!(eighth(3, 66), Ticks(154));
+        assert_eq!(eighth(6, 66), Ticks(154), "every offbeat eighth");
+    }
+
+    #[test]
+    fn sixteenth_swing_delays_the_second_of_each_pair() {
+        // The other feel: four pairs to the beat, each swinging on its own. A sixteenth is 240
+        // ticks, so at 66 % the shift is 240 * (0.66 - 0.5) * 2 = 77 — and the *third* sixteenth
+        // is the straight first of its own pair, which is the whole difference from the eighth
+        // feel, where it rides the swung eighth and crushes the gap into the next beat.
+        let grid = four_four();
+        let sixteenth = |step| swing_offset(grid, step, 66, SwingFeel::Sixteenth);
+        assert_eq!(sixteenth(0), Ticks::ZERO, "the downbeat");
+        assert_eq!(sixteenth(1), Ticks(77));
+        assert_eq!(sixteenth(2), Ticks::ZERO, "first of its own pair");
+        assert_eq!(sixteenth(3), Ticks(77));
+        assert_eq!(sixteenth(4), Ticks::ZERO, "beat two");
         assert_eq!(
-            swing_offset(grid, 1, 66),
-            Ticks::ZERO,
-            "still the first eighth"
-        );
-        assert_eq!(swing_offset(grid, 4, 66), Ticks::ZERO, "beat two");
-        assert_eq!(
-            swing_offset(grid, 2, 50),
+            swing_offset(grid, 3, 50, SwingFeel::Sixteenth),
             Ticks::ZERO,
             "straight is no swing"
         );
 
-        // The offbeat eighth is what gets delayed. An eighth is 480 ticks, so at 66 % the shift
-        // is 480 * (0.66 - 0.5) * 2 = 154, which lands it just shy of the third triplet.
-        assert_eq!(swing_offset(grid, 2, 66), Ticks(154));
-        assert!(
-            swing_offset(grid, 2, 66) > Ticks::ZERO,
-            "swing delays, never rushes"
-        );
-        // The sixteenth inside a swung eighth moves with it.
-        assert_eq!(swing_offset(grid, 3, 66), Ticks(154));
-        assert_eq!(
-            swing_offset(grid, 6, 66),
-            Ticks(154),
-            "every offbeat eighth"
-        );
+        // A thirty-second grid keeps the same pairs: its odd sixteenths still swing, and the
+        // thirty-second inside a swung sixteenth rides with it.
+        let fine = Grid::new(TimeSignature::new(4, 4), 8);
+        assert_eq!(swing_offset(fine, 2, 66, SwingFeel::Sixteenth), Ticks(77));
+        assert_eq!(swing_offset(fine, 3, 66, SwingFeel::Sixteenth), Ticks(77));
+        assert_eq!(swing_offset(fine, 4, 66, SwingFeel::Sixteenth), Ticks::ZERO);
+
+        // An eighth grid has no sixteenth positions: everything it can say is the straight
+        // first of a pair, so nothing may move — swinging its eighths instead would be the
+        // eighth feel wearing the wrong name.
+        let coarse = Grid::new(TimeSignature::new(4, 4), 2);
+        for step in 0..coarse.steps_per_bar() {
+            assert_eq!(
+                swing_offset(coarse, step, 66, SwingFeel::Sixteenth),
+                Ticks::ZERO,
+                "step {step} of an eighth grid"
+            );
+        }
     }
 
     #[test]
@@ -980,12 +1068,38 @@ mod tests {
         for steps_per_beat in [3, 6] {
             let grid = Grid::new(TimeSignature::new(4, 4), steps_per_beat);
             for step in 0..grid.steps_per_bar() {
-                assert_eq!(
-                    swing_offset(grid, step, 66),
-                    Ticks::ZERO,
-                    "step {step} of a grid in {steps_per_beat}s"
-                );
+                for feel in [SwingFeel::Eighth, SwingFeel::Sixteenth] {
+                    assert_eq!(
+                        swing_offset(grid, step, 66, feel),
+                        Ticks::ZERO,
+                        "step {step} of a grid in {steps_per_beat}s, {feel:?}"
+                    );
+                }
             }
+        }
+    }
+
+    #[test]
+    fn a_groove_that_strikes_odd_sixteenths_swings_them() {
+        // The pairs a dial can swing are the pairs the kit plays. The sixteen-beat runs its hat
+        // on every step, the breakbeat and the bossa strike ghosts and clave notes between the
+        // eighths; everything that stays on the eighths keeps the feel swing has always meant.
+        for (name, feel) in [
+            ("basic-rock", SwingFeel::Eighth),
+            ("eight-beat", SwingFeel::Eighth),
+            ("sixteen-beat", SwingFeel::Sixteenth),
+            ("four-on-the-floor", SwingFeel::Eighth),
+            ("shuffle", SwingFeel::Eighth),
+            ("breakbeat", SwingFeel::Sixteenth),
+            ("bossa-nova", SwingFeel::Sixteenth),
+            ("half-time", SwingFeel::Eighth),
+            ("sparse", SwingFeel::Eighth),
+            // Compound grooves count eighths of a dotted beat and have no sixteenth pair to
+            // name; the answer is nominal, because swing is silent in compound time anyway.
+            ("six-eight", SwingFeel::Eighth),
+            ("slow-blues", SwingFeel::Eighth),
+        ] {
+            assert_eq!(groove(name).expect("listed").swing_feel(), feel, "{name}");
         }
     }
 
