@@ -51,6 +51,10 @@ pub const INSTRUCTIONS: &str = "Auris Studio is a digital audio workstation; the
     improve a piece, iterate: `analyze` listens for you — loudness and peaks for the mix, per \
     section and (on request) per track — then either edit the spec and `compose` again with \
     force, or aim `another_take` / `write_again` at one clip the way `describe` numbers them. \
+    The mix itself has its own smaller loop: `mixer` reads every fader, send and effect \
+    parameter, `set_level` / `set_send` / `set_effect` move one, and `section_gain` holds one \
+    section's gain at a level — often the better instrument than rewriting notes when `analyze` \
+    says a section is too loud, a part is buried, or the master limiter is pinned. \
     Give every path as an absolute path — the working directory is wherever the host process \
     happened to be launched.";
 
@@ -488,6 +492,619 @@ pub mod analyze {
     }
 }
 
+/// The mixer, read out loud.
+pub mod mixer {
+    use super::*;
+
+    /// The tool's name at every door.
+    pub const NAME: &str = "mixer";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Reads the mixer as it stands: every track's fader, pan, \
+        mute and solo, its sends, and each effect's parameters with key, value and range — the \
+        vocabulary `set_level`, `set_send` and `set_effect` move. A control marked `[automated]` \
+        is driven by its lane, not its stored value.";
+
+    /// Arguments to `mixer`.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// The project to read — an absolute path to a `.auris` file.
+        pub project: String,
+    }
+
+    /// One strip's worth of structure, copied out so the parameter pass can borrow the
+    /// session mutably.
+    struct Row {
+        track: Option<TrackId>,
+        name: String,
+        gain_db: f32,
+        pan: f32,
+        mute: bool,
+        solo: bool,
+        sends: Vec<(String, f32, bool)>,
+        effects: Vec<(EffectSlotId, String)>,
+    }
+
+    /// Faders, pans, sends and every effect parameter, as one table.
+    pub fn run(args: &Args) -> Result<String, String> {
+        let mut session = opened(&args.project)?;
+
+        let rows: Vec<Row> = {
+            let project = session.project();
+            let name_of = |id: TrackId| {
+                project
+                    .track(id)
+                    .map_or_else(|| format!("#{}", id.0), |track| track.name.clone())
+            };
+            let mut rows: Vec<Row> = project
+                .tracks
+                .iter()
+                .map(|track| Row {
+                    track: Some(track.id),
+                    name: track.name.clone(),
+                    gain_db: track.mixer.gain_db,
+                    pan: track.mixer.pan,
+                    mute: track.mixer.mute,
+                    solo: track.mixer.solo,
+                    sends: track
+                        .sends
+                        .iter()
+                        .map(|send| (name_of(send.target), send.level_db, send.pre_fader))
+                        .collect(),
+                    effects: track
+                        .mixer
+                        .effects
+                        .iter()
+                        .map(|slot| (slot.id, slot.effect_id.clone()))
+                        .collect(),
+                })
+                .collect();
+            rows.push(Row {
+                track: None,
+                name: "master".to_string(),
+                gain_db: project.master.gain_db,
+                pan: project.master.pan,
+                mute: false,
+                solo: false,
+                sends: Vec::new(),
+                effects: project
+                    .master
+                    .effects
+                    .iter()
+                    .map(|slot| (slot.id, slot.effect_id.clone()))
+                    .collect(),
+            });
+            rows
+        };
+
+        let mut text = String::new();
+        for row in rows {
+            let (gain_target, pan_target) = match row.track {
+                Some(id) => (ParamTarget::TrackGain(id), ParamTarget::TrackPan(id)),
+                None => (ParamTarget::MasterGain, ParamTarget::MasterPan),
+            };
+            let mut flags = Vec::new();
+            if row.mute {
+                flags.push("muted");
+            }
+            if row.solo {
+                flags.push("solo");
+            }
+            if session.is_automated(gain_target) {
+                flags.push("[gain automated]");
+            }
+            if session.is_automated(pan_target) {
+                flags.push("[pan automated]");
+            }
+            let flags = match flags.is_empty() {
+                true => String::new(),
+                false => format!("  {}", flags.join(", ")),
+            };
+            text.push_str(&format!(
+                "{:<16} {:+.1} dB, pan {:+.2}{flags}\n",
+                row.name, row.gain_db, row.pan
+            ));
+            for (target, level, pre) in &row.sends {
+                let tap = if *pre { " (pre-fader)" } else { "" };
+                text.push_str(&format!("  => {target} {level:+.1} dB{tap}\n"));
+            }
+            for (position, (slot, effect_id)) in row.effects.iter().enumerate() {
+                text.push_str(&format!("  fx [{}] {effect_id}:\n", position + 1));
+                let mut index = 0u32;
+                loop {
+                    let target = ParamTarget::Effect {
+                        track: row.track,
+                        slot: *slot,
+                        param: ParamId(index),
+                    };
+                    let Some(descriptor) = session.descriptor_for(target) else {
+                        break;
+                    };
+                    let value = session.param_value(target, &descriptor);
+                    let automated = match session.is_automated(target) {
+                        true => "  [automated]",
+                        false => "",
+                    };
+                    text.push_str(&format!(
+                        "    {:<14} {}  ({} to {}{}){automated}\n",
+                        descriptor.key,
+                        number(value, descriptor.unit),
+                        trimmed(descriptor.min),
+                        trimmed(descriptor.max),
+                        unit_suffix(descriptor.unit),
+                    ));
+                    if !descriptor.choices.is_empty() {
+                        let listed: Vec<String> = descriptor
+                            .choices
+                            .iter()
+                            .enumerate()
+                            .map(|(index, label)| format!("{index}={label}"))
+                            .collect();
+                        text.push_str(&format!("    {:<14} {}\n", "", listed.join(" ")));
+                    }
+                    index += 1;
+                }
+            }
+        }
+        Ok(text.trim_end().to_string())
+    }
+}
+
+/// A fader or a pan, moved.
+pub mod set_level {
+    use super::*;
+
+    /// The tool's name at every door.
+    pub const NAME: &str = "set_level";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Sets a track's fader and/or pan; `track` may be \"master\". \
+        Gain runs -60 to +12 dB, pan -1 (left) to +1 (right). The change is saved — `analyze` \
+        again to hear what it did to the numbers. A fader that `mixer` marks `[automated]` is \
+        ruled by its lane, not this value; `section_gain` with clear: true removes the lane.";
+
+    /// Arguments to `set_level`.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// The project to change — an absolute path to a `.auris` file.
+        pub project: String,
+        /// The track whose strip to move, by name — or "master" for the master bus.
+        pub track: String,
+        /// Where to put the fader, in decibels (-60 to +12). Left out, the fader stays.
+        pub gain_db: Option<f32>,
+        /// Where to put the pan, -1 to +1. Left out, the pan stays.
+        pub pan: Option<f32>,
+    }
+
+    /// Moves the fader and/or the pan, and saves.
+    pub fn run(args: &Args) -> Result<String, String> {
+        if args.gain_db.is_none() && args.pan.is_none() {
+            return Err("pass gain_db, pan, or both — there is nothing else here to set".into());
+        }
+        let mut session = opened(&args.project)?;
+        let strip = strip_by_name(session.project(), &args.track)?;
+        let (gain_target, pan_target) = match strip {
+            Some(id) => (ParamTarget::TrackGain(id), ParamTarget::TrackPan(id)),
+            None => (ParamTarget::MasterGain, ParamTarget::MasterPan),
+        };
+
+        let mut notes = String::new();
+        if let Some(gain) = args.gain_db {
+            if !(-60.0..=12.0).contains(&gain) {
+                return Err(format!(
+                    "gain_db runs -60 to +12 dB; {gain} is outside that"
+                ));
+            }
+            if session.is_automated(gain_target) {
+                notes.push_str(
+                    "\nNote: a lane is driving this fader, so the stored position is not what \
+                     plays — `section_gain` with clear: true removes the lane.",
+                );
+            }
+            if strip.is_none() && gain > 0.0 {
+                notes.push_str(
+                    "\nNote: the master fader sits after the master chain, so a boost here is \
+                     not limited — watch the peak in `analyze`.",
+                );
+            }
+            session.set_param(gain_target, gain);
+        }
+        if let Some(pan) = args.pan {
+            if !(-1.0..=1.0).contains(&pan) {
+                return Err(format!("pan runs -1 to +1; {pan} is outside that"));
+            }
+            session.set_param(pan_target, pan);
+        }
+        session.save_in_place().map_err(|error| error.to_string())?;
+
+        let (gain, pan) = match strip {
+            Some(id) => {
+                let track = session
+                    .project()
+                    .track(id)
+                    .expect("the track was just moved");
+                (track.mixer.gain_db, track.mixer.pan)
+            }
+            None => (
+                session.project().master.gain_db,
+                session.project().master.pan,
+            ),
+        };
+        Ok(format!(
+            "{} — fader {gain:+.1} dB, pan {pan:+.2}. Saved.{notes}",
+            args.track
+        ))
+    }
+}
+
+/// A send level, moved.
+pub mod set_send {
+    use super::*;
+
+    /// The tool's name at every door.
+    pub const NAME: &str = "set_send";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Sets how much of a track one of its sends carries, \
+        addressed by the bus it feeds — the routing `mixer` and `describe` show. Send levels \
+        run -60 to 0 dB; there is no headroom above unity on a send. The change is saved.";
+
+    /// Arguments to `set_send`.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// The project to change — an absolute path to a `.auris` file.
+        pub project: String,
+        /// The track the send is taken from, by name.
+        pub track: String,
+        /// The bus the send feeds, by name — `mixer` lists each track's sends.
+        pub to: String,
+        /// How much to send, in decibels (-60 to 0).
+        pub level_db: f32,
+    }
+
+    /// Finds the send by the bus it feeds and moves it.
+    pub fn run(args: &Args) -> Result<String, String> {
+        if !(-60.0..=0.0).contains(&args.level_db) {
+            return Err(format!(
+                "send levels run -60 to 0 dB; {} is outside that",
+                args.level_db
+            ));
+        }
+        let mut session = opened(&args.project)?;
+        let (track_id, send_id) = {
+            let project = session.project();
+            let track = track_by_name(project, &args.track)?;
+            let named: Vec<(SendId, String)> = track
+                .sends
+                .iter()
+                .map(|send| {
+                    let name = project
+                        .track(send.target)
+                        .map_or_else(|| format!("#{}", send.target.0), |bus| bus.name.clone());
+                    (send.id, name)
+                })
+                .collect();
+            let found = named
+                .iter()
+                .find(|(_, name)| name.eq_ignore_ascii_case(&args.to))
+                .map(|(id, _)| *id)
+                .ok_or_else(|| match named.is_empty() {
+                    true => format!("'{}' has no sends", track.name),
+                    false => format!(
+                        "'{}' sends to: {} — not '{}'",
+                        track.name,
+                        named
+                            .iter()
+                            .map(|(_, name)| name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        args.to
+                    ),
+                })?;
+            (track.id, found)
+        };
+        session
+            .set_send_level(track_id, send_id, args.level_db)
+            .map_err(|error| error.to_string())?;
+        session.save_in_place().map_err(|error| error.to_string())?;
+        Ok(format!(
+            "{} => {} at {:+.1} dB. Saved.",
+            args.track, args.to, args.level_db
+        ))
+    }
+}
+
+/// One effect parameter, moved.
+pub mod set_effect {
+    use super::*;
+
+    /// The tool's name at every door.
+    pub const NAME: &str = "set_effect";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Sets one parameter of one effect, addressed the way \
+        `mixer` lists them: `track` (or \"master\"), the effect by its id — or by `slot`, its \
+        1-based position, when a chain holds the same effect twice — and the parameter by key \
+        or name, in the parameter's own units. Values outside the range `mixer` shows are \
+        refused. The change is saved. The master limiter's `input_db` is the dial to back off \
+        when `analyze` says the loud sections are pinned against the ceiling.";
+
+    /// Arguments to `set_effect`.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// The project to change — an absolute path to a `.auris` file.
+        pub project: String,
+        /// The strip the effect sits on: a track by name, or "master".
+        pub track: String,
+        /// The effect's id as `mixer` lists it — the full `auris.fx.limiter` or just
+        /// `limiter`. Leave out when addressing by `slot`.
+        pub effect: Option<String>,
+        /// The effect's 1-based position in the chain, as `mixer` numbers it — for when a
+        /// chain holds the same effect twice.
+        pub slot: Option<usize>,
+        /// The parameter, by the key or the name `mixer` lists.
+        pub param: String,
+        /// The value, in the parameter's own units — decibels for a gain, milliseconds for a
+        /// release.
+        pub value: f32,
+    }
+
+    /// Finds the slot, finds the parameter, refuses nonsense, writes the rest.
+    pub fn run(args: &Args) -> Result<String, String> {
+        let mut session = opened(&args.project)?;
+        let strip = strip_by_name(session.project(), &args.track)?;
+        let (slot, effect_id) = {
+            let project = session.project();
+            let chain = match strip {
+                Some(id) => &project.track(id).expect("the strip was just found").mixer,
+                None => &project.master,
+            };
+            let slots: Vec<(EffectSlotId, String)> = chain
+                .effects
+                .iter()
+                .map(|slot| (slot.id, slot.effect_id.clone()))
+                .collect();
+            if slots.is_empty() {
+                return Err(format!("'{}' has no effects", args.track));
+            }
+            let listed = || {
+                slots
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (_, id))| format!("[{}] {id}", index + 1))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            match (args.slot, &args.effect) {
+                (Some(number), _) => slots
+                    .get(number.wrapping_sub(1))
+                    .cloned()
+                    .ok_or_else(|| format!("'{}' has {}: no [{number}]", args.track, listed()))?,
+                (None, Some(name)) => {
+                    let matches: Vec<&(EffectSlotId, String)> = slots
+                        .iter()
+                        .filter(|(_, id)| {
+                            id.eq_ignore_ascii_case(name)
+                                || id
+                                    .rsplit('.')
+                                    .next()
+                                    .is_some_and(|last| last.eq_ignore_ascii_case(name))
+                        })
+                        .collect();
+                    match matches.as_slice() {
+                        [one] => (*one).clone(),
+                        [] => {
+                            return Err(format!(
+                                "no effect on '{}' answers to '{name}' — the chain is: {}",
+                                args.track,
+                                listed()
+                            ));
+                        }
+                        _ => {
+                            return Err(format!(
+                                "'{name}' sits on '{}' more than once — address it as slot: N \
+                                 the way `mixer` numbers the chain: {}",
+                                args.track,
+                                listed()
+                            ));
+                        }
+                    }
+                }
+                (None, None) => {
+                    return Err("pass `effect` (its id) or `slot` (its position)".into());
+                }
+            }
+        };
+
+        // The parameter, by key or by name, with the refusal listing what is really there.
+        let mut keys = Vec::new();
+        let mut found = None;
+        let mut index = 0u32;
+        loop {
+            let target = ParamTarget::Effect {
+                track: strip,
+                slot,
+                param: ParamId(index),
+            };
+            let Some(descriptor) = session.descriptor_for(target) else {
+                break;
+            };
+            keys.push(descriptor.key.to_string());
+            if descriptor.key.eq_ignore_ascii_case(&args.param)
+                || descriptor.name.eq_ignore_ascii_case(&args.param)
+            {
+                found = Some((target, descriptor));
+                break;
+            }
+            index += 1;
+        }
+        let Some((target, descriptor)) = found else {
+            return Err(format!(
+                "{effect_id} has no parameter '{}' — it has: {}",
+                args.param,
+                keys.join(", ")
+            ));
+        };
+        if !(descriptor.min..=descriptor.max).contains(&args.value) {
+            return Err(format!(
+                "{} runs {} to {}{}; {} is outside that",
+                descriptor.key,
+                trimmed(descriptor.min),
+                trimmed(descriptor.max),
+                unit_suffix(descriptor.unit),
+                args.value
+            ));
+        }
+
+        let before = session.param_value(target, &descriptor);
+        let automated = session.is_automated(target);
+        session.set_param(target, args.value);
+        session.save_in_place().map_err(|error| error.to_string())?;
+
+        let mut text = format!(
+            "{effect_id} {}: {} -> {}. Saved.",
+            descriptor.key,
+            number(before, descriptor.unit),
+            number(args.value, descriptor.unit),
+        );
+        if automated {
+            text.push_str(
+                "\nNote: a lane is driving this parameter, so the stored value is not what \
+                 plays until the lane is cleared.",
+            );
+        }
+        Ok(text)
+    }
+}
+
+/// One section, held at a level.
+pub mod section_gain {
+    use super::*;
+
+    /// The tool's name at every door.
+    pub const NAME: &str = "section_gain";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Holds a track's gain at a level across one named section — \
+        dynamics without rewriting a note. `track` may be \"master\"; the section is addressed \
+        by the label `analyze` shows, every occurrence unless `instance` picks one. Writes gain \
+        automation with short ramps at the edges: the fader keeps ruling outside the stretch, \
+        and holds on different sections compose. `clear: true` removes the track's whole gain \
+        lane instead, giving the fader back everywhere. The change is saved. The master fader \
+        sits after the master chain, so a boost there is not limited and can clip — widen \
+        contrast by holding the louder sections down instead.";
+
+    /// Arguments to `section_gain`.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// The project to change — an absolute path to a `.auris` file.
+        pub project: String,
+        /// The track whose gain to hold, by name — or "master".
+        pub track: String,
+        /// The section to hold, by label as `analyze` shows it.
+        pub section: Option<String>,
+        /// Which occurrence of the label, counting from 1 — every one when left out.
+        pub instance: Option<usize>,
+        /// The level to hold through the section, in decibels (-60 to +12).
+        pub gain_db: Option<f32>,
+        /// Remove the track's gain lane instead, giving the fader back everywhere.
+        #[serde(default)]
+        pub clear: bool,
+    }
+
+    /// Holds the span — or takes the whole lane back.
+    pub fn run(args: &Args) -> Result<String, String> {
+        let mut session = opened(&args.project)?;
+        let strip = strip_by_name(session.project(), &args.track)?;
+        let target = match strip {
+            Some(id) => ParamTarget::TrackGain(id),
+            None => ParamTarget::MasterGain,
+        };
+
+        if args.clear {
+            if !session.clear_automation(target) {
+                return Err(format!("nothing is automated on '{}'", args.track));
+            }
+            session.save_in_place().map_err(|error| error.to_string())?;
+            return Ok(format!(
+                "The gain lane on '{}' is gone; the fader rules everywhere again. Saved.",
+                args.track
+            ));
+        }
+        let Some(label) = &args.section else {
+            return Err("pass `section` and `gain_db`, or clear: true".into());
+        };
+        let Some(gain) = args.gain_db else {
+            return Err("pass `gain_db` — the level to hold through the section".into());
+        };
+        if !(-60.0..=12.0).contains(&gain) {
+            return Err(format!(
+                "gain_db runs -60 to +12 dB; {gain} is outside that"
+            ));
+        }
+
+        let spans: Vec<(Ticks, Ticks, String, usize, u32, u32)> = {
+            let project = session.project();
+            let end = project.end_tick();
+            let all = project.sections.spans_in(Ticks::ZERO, end);
+            if all.is_empty() {
+                return Err("this project has no named sections to hold".into());
+            }
+            let chosen: Vec<_> = all
+                .iter()
+                .filter(|span| span.label.eq_ignore_ascii_case(label))
+                .filter(|span| args.instance.is_none_or(|wanted| span.instance == wanted))
+                .map(|span| {
+                    (
+                        span.start,
+                        span.end,
+                        span.label.clone(),
+                        span.instance,
+                        project.signatures.bar_of(span.start),
+                        project.signatures.bar_of((span.end - Ticks(1)).max_zero()),
+                    )
+                })
+                .collect();
+            if chosen.is_empty() {
+                let known: Vec<String> = all
+                    .iter()
+                    .map(|span| match span.instance {
+                        1 => span.label.clone(),
+                        instance => format!("{} ({instance})", span.label),
+                    })
+                    .collect();
+                return Err(format!(
+                    "no section answers to '{label}' — this song has: {}",
+                    known.join(", ")
+                ));
+            }
+            chosen
+        };
+
+        let mut text = String::new();
+        for (start, end, label, instance, first_bar, last_bar) in &spans {
+            session.hold_automation(target, *start, *end, gain);
+            let which = match instance {
+                1 => label.clone(),
+                instance => format!("{label} ({instance})"),
+            };
+            text.push_str(&format!(
+                "{which} bars {first_bar}-{last_bar}: '{}' held at {gain:+.1} dB.\n",
+                args.track
+            ));
+        }
+        session.save_in_place().map_err(|error| error.to_string())?;
+        text.push_str(
+            "The fader keeps ruling outside the stretch. Saved — `analyze` will show the arc.",
+        );
+        // The trap the first model to use this tool walked straight into: the master fader
+        // sits after the limiter, so a boost there is a boost nothing catches.
+        if strip.is_none() && gain > 0.0 {
+            text.push_str(
+                "\nNote: the master fader sits after the master chain, so this boost is not \
+                 limited — if `analyze` now shows peaks above 0 dBFS, hold the louder sections \
+                 down instead.",
+            );
+        }
+        Ok(text)
+    }
+}
+
 /// A different take of a generated clip.
 pub mod another_take {
     /// The tool's name at every door.
@@ -677,6 +1294,70 @@ fn headless() -> Result<Session, String> {
         .map_err(|error| error.to_string())
 }
 
+/// A headless session with `path`'s project already open.
+///
+/// For the tools that read and adjust rather than render: they have no use for the list of
+/// missing audio files, because nothing here plays.
+fn opened(path: &str) -> Result<Session, String> {
+    let mut session = headless()?;
+    session
+        .open(Path::new(path))
+        .map_err(|error| error.to_string())?;
+    Ok(session)
+}
+
+/// The track called `name`, or a refusal that lists the real ones.
+fn track_by_name<'p>(project: &'p Project, name: &str) -> Result<&'p Track, String> {
+    project
+        .tracks
+        .iter()
+        .find(|track| track.name.eq_ignore_ascii_case(name))
+        .ok_or_else(|| {
+            let names: Vec<&str> = project
+                .tracks
+                .iter()
+                .map(|track| track.name.as_str())
+                .collect();
+            format!(
+                "no track is named '{name}' — this project has: {}",
+                names.join(", ")
+            )
+        })
+}
+
+/// A mixer strip address: a track by name, or `None` for the master bus as "master".
+fn strip_by_name(project: &Project, name: &str) -> Result<Option<TrackId>, String> {
+    match name.eq_ignore_ascii_case("master") {
+        true => Ok(None),
+        false => track_by_name(project, name).map(|track| Some(track.id)),
+    }
+}
+
+/// A number without the trailing zeros a fixed format would carry.
+fn trimmed(value: f32) -> String {
+    let text = format!("{value:.2}");
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+/// The suffix a unit reads with, or nothing for the ones whose range says it all.
+fn unit_suffix(unit: ParamUnit) -> &'static str {
+    match unit {
+        ParamUnit::Decibels => " dB",
+        ParamUnit::Hertz => " Hz",
+        ParamUnit::Seconds => " s",
+        ParamUnit::Milliseconds => " ms",
+        ParamUnit::Semitones => " st",
+        ParamUnit::Ratio => ":1",
+        ParamUnit::Bpm => " BPM",
+        _ => "",
+    }
+}
+
+/// One parameter value, spelt with its unit.
+fn number(value: f32, unit: ParamUnit) -> String {
+    format!("{}{}", trimmed(value), unit_suffix(unit))
+}
+
 /// Reads [`SpecArgs`] into the one [`SongSpec`] both spec tools mean by it.
 fn resolve_spec(args: &SpecArgs) -> Result<SongSpec, String> {
     let text = match (&args.spec, &args.preset) {
@@ -737,6 +1418,14 @@ fn analysis_text(report: &auris_session::MixAnalysis) -> String {
         report.peak_db,
         report.true_peak_db,
     );
+    // Said out loud rather than left as a sign flip a reader must catch: past this point the
+    // numbers are not louder, they are broken.
+    if report.peak_db > 0.0 || report.true_peak_db > 0.0 {
+        text.push_str(
+            "Note: peaks above 0 dBFS CLIP in a rendered file — bring the level down until \
+             the peak is negative before trusting anything else here.\n",
+        );
+    }
     if !report.sections.is_empty() {
         text.push_str("By section:\n");
         for section in &report.sections {
@@ -785,24 +1474,7 @@ fn regenerate(args: &RegenerateArgs, take: Take) -> Result<String, String> {
         .open(Path::new(&args.project))
         .map_err(|error| error.to_string())?;
 
-    let track = session
-        .project()
-        .tracks
-        .iter()
-        .find(|track| track.name.eq_ignore_ascii_case(&args.track))
-        .ok_or_else(|| {
-            let names: Vec<&str> = session
-                .project()
-                .tracks
-                .iter()
-                .map(|track| track.name.as_str())
-                .collect();
-            format!(
-                "no track is named '{}' — this project has: {}",
-                args.track,
-                names.join(", ")
-            )
-        })?;
+    let track = track_by_name(session.project(), &args.track)?;
     let clips: Vec<(usize, ClipId, String, bool)> = track
         .kind
         .note_clips()
@@ -953,6 +1625,160 @@ mod tests {
         })
         .unwrap_err();
         assert!(sideways.contains("major"), "{sideways}");
+    }
+
+    /// The mixer loop, against one composed piece: read the board, move a fader, a send and
+    /// an effect dial, hold one section, and watch every refusal name what is really there.
+    #[test]
+    fn the_mixer_tools_read_move_and_hold() {
+        let root = std::env::temp_dir().join(format!("auris-toolbox-mixer-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let spec = r#"
+            title = "Strip"
+            form = "verse chorus"
+            chords = "@axis"
+            ending = "none"
+            [section.verse]
+            bars = 2
+            [section.chorus]
+            bars = 2
+        "#;
+        compose::run(&compose::Args {
+            spec: spec_args(Some(spec), None),
+            output: root.join("Strip.auris").display().to_string(),
+            force: false,
+        })
+        .unwrap();
+        let path = root.join("Strip").join("Strip.auris").display().to_string();
+
+        // A probe strip whose chain and send this test owns, whatever the composer built.
+        {
+            let mut session = opened(&path).unwrap();
+            let probe = session.add_default_instrument_track("Probe").unwrap();
+            session.add_effect(Some(probe), "auris.fx.limiter").unwrap();
+            let bus = session.add_bus_track("Wash");
+            session.add_send(probe, bus).unwrap();
+            session.save_in_place().unwrap();
+        }
+        let read = || {
+            mixer::run(&mixer::Args {
+                project: path.clone(),
+            })
+        };
+
+        // The board names the strips, the chains, the parameters and the routing.
+        let board = read().unwrap();
+        assert!(board.contains("master"), "{board}");
+        assert!(board.contains("auris.fx.limiter"), "{board}");
+        assert!(board.contains("ceiling_db"), "{board}");
+        assert!(board.contains("=> Wash"), "{board}");
+
+        // The fader moves, and nonsense is refused with the range in hand.
+        let level = |track: &str, gain_db, pan| {
+            set_level::run(&set_level::Args {
+                project: path.clone(),
+                track: track.to_string(),
+                gain_db,
+                pan,
+            })
+        };
+        let moved = level("Probe", Some(-6.0), Some(0.25)).unwrap();
+        assert!(moved.contains("-6.0"), "{moved}");
+        let refused = level("Probe", Some(40.0), None).unwrap_err();
+        assert!(refused.contains("-60"), "{refused}");
+        let missing = level("Nobody", Some(-1.0), None).unwrap_err();
+        assert!(
+            missing.contains("Probe"),
+            "the refusal lists the real tracks: {missing}"
+        );
+
+        // The send is addressed by the bus it feeds.
+        let send = |to: &str, level_db| {
+            set_send::run(&set_send::Args {
+                project: path.clone(),
+                track: "Probe".to_string(),
+                to: to.to_string(),
+                level_db,
+            })
+        };
+        let sent = send("Wash", -12.0).unwrap();
+        assert!(sent.contains("-12.0"), "{sent}");
+        let nowhere = send("Elsewhere", -12.0).unwrap_err();
+        assert!(
+            nowhere.contains("Wash"),
+            "the refusal lists the real sends: {nowhere}"
+        );
+
+        // The dial turns, and both wrong names and wrong values answer with the truth.
+        let dial = |param: &str, value| {
+            set_effect::run(&set_effect::Args {
+                project: path.clone(),
+                track: "Probe".to_string(),
+                effect: Some("limiter".to_string()),
+                slot: None,
+                param: param.to_string(),
+                value,
+            })
+        };
+        let dialed = dial("ceiling_db", -3.0).unwrap();
+        assert!(dialed.contains("ceiling_db"), "{dialed}");
+        assert!(dialed.contains("-3"), "{dialed}");
+        let wrong = dial("colour", 1.0).unwrap_err();
+        assert!(
+            wrong.contains("ceiling_db"),
+            "the refusal lists the real parameters: {wrong}"
+        );
+        let too_far = dial("ceiling_db", 20.0).unwrap_err();
+        assert!(too_far.contains("-24"), "{too_far}");
+
+        // One section held; the board says a lane took the fader; clear gives it back.
+        let hold = |section: Option<&str>, gain_db, clear| {
+            section_gain::run(&section_gain::Args {
+                project: path.clone(),
+                track: "Probe".to_string(),
+                section: section.map(String::from),
+                instance: None,
+                gain_db,
+                clear,
+            })
+        };
+        let held = hold(Some("chorus"), Some(-9.0), false).unwrap();
+        assert!(held.contains("chorus"), "{held}");
+        assert!(held.contains("-9.0"), "{held}");
+        assert!(read().unwrap().contains("[gain automated]"));
+        let unknown = hold(Some("coda"), Some(-9.0), false).unwrap_err();
+        assert!(
+            unknown.contains("chorus"),
+            "the refusal lists the sections: {unknown}"
+        );
+        let cleared = hold(None, None, true).unwrap();
+        assert!(cleared.contains("fader"), "{cleared}");
+        assert!(!read().unwrap().contains("[gain automated]"));
+
+        // A boost on the master carries the warning the first model to use this tool needed:
+        // that fader sits after the limiter, so nothing catches what it adds.
+        let risky = section_gain::run(&section_gain::Args {
+            project: path.clone(),
+            track: "master".to_string(),
+            section: Some("verse".to_string()),
+            instance: None,
+            gain_db: Some(3.0),
+            clear: false,
+        })
+        .unwrap();
+        assert!(risky.contains("not limited"), "{risky}");
+        let safe = section_gain::run(&section_gain::Args {
+            project: path.clone(),
+            track: "master".to_string(),
+            section: Some("verse".to_string()),
+            instance: None,
+            gain_db: Some(-3.0),
+            clear: false,
+        })
+        .unwrap();
+        assert!(!safe.contains("not limited"), "{safe}");
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     /// The whole loop a model would run, against one four-bar piece: compose it, read the

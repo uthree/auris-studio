@@ -1106,6 +1106,14 @@ next seed) or `write_again` (same seed, follows the harmony as it stands) at one
 the numbering `describe` prints. `teach_progression` keeps a chord progression by name on
 this machine, and `forget_progression` takes it back out.
 
+The mix has a smaller loop of its own, one tool per hand on the desk: `mixer` reads the whole
+board — every fader, pan, send and effect parameter with its range — `set_level`, `set_send`
+and `set_effect` move one each, and `section_gain` holds a track's (or the master's) gain at a
+level across one named section, written as gain automation with short ramps so the fader keeps
+ruling outside the stretch and holds on different sections compose. Where `analyze` says a
+section is too loud, a part is buried or the master limiter is pinned, these move whole
+decibels in one call instead of clawing tenths back through reseeding.
+
 Registering the server with a client is one line:
 
 ```bash

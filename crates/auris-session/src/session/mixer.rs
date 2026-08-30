@@ -488,6 +488,79 @@ impl Session {
         true
     }
 
+    /// Holds `target` at `value` across `from..to`, leaving the rest of its lane alone.
+    ///
+    /// The section-sized gesture: "this stretch, two decibels quieter". Four points say it —
+    /// the held value at `from` and again just before `to`, and the surrounding value just
+    /// before `from` and at `to` — with a short ramp at each edge (a thirty-second note),
+    /// because a fader that steps within one sample is a click. Points already inside the
+    /// stretch are removed: they were the previous answer to the same question.
+    ///
+    /// What "surrounding" means is read before anything is written: the lane where one exists,
+    /// the stored static value where none does — so the first hold on an unautomated fader
+    /// pins the fader's own position everywhere outside the stretch, and a second hold on a
+    /// different stretch composes with the first instead of erasing it.
+    ///
+    /// One undo step. Returns whether anything changed, which is `false` for a target the
+    /// document does not have, an empty stretch, and a hold identical to what was already
+    /// there.
+    pub fn hold_automation(
+        &mut self,
+        target: ParamTarget,
+        from: Ticks,
+        to: Ticks,
+        value: f32,
+    ) -> bool {
+        let Some(descriptor) = self.automatable(target) else {
+            return false;
+        };
+        let (from, to) = if from <= to { (from, to) } else { (to, from) };
+        let (from, to) = (from.max_zero(), to.max_zero());
+        if from == to {
+            return false;
+        }
+        let value = descriptor.clamp(value);
+
+        // The edges, sized down for a stretch too short to fit two of them.
+        let ramp = Ticks((Ticks::QUARTER.0 / 8).min((to - from).0 / 4).max(1));
+        let lead = (from - ramp).max_zero();
+        let tail = to - ramp;
+
+        // Read before any write moves the answer.
+        let outside = |at: Ticks| {
+            self.automated_value(target, at)
+                .unwrap_or_else(|| self.param_value(target, &descriptor))
+        };
+        let before = outside(lead);
+        let after = outside(to);
+        let stale: Vec<Ticks> = self
+            .project
+            .automation
+            .lane(target)
+            .map(|lane| {
+                lane.points()
+                    .iter()
+                    .map(|point| point.tick)
+                    .filter(|tick| *tick > lead && *tick < to)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        self.begin_transaction(Edit::WriteAutomation(target));
+        for tick in stale {
+            self.remove_automation_point(target, tick);
+        }
+        if lead < from {
+            self.set_automation_point(target, lead, before);
+        }
+        self.set_automation_point(target, from, value);
+        if tail > from {
+            self.set_automation_point(target, tail, value);
+        }
+        self.set_automation_point(target, to, after);
+        self.end_transaction()
+    }
+
     /// Moves a point along its lane, taking a new value with it.
     ///
     /// Returns where it landed, which is not always where it was asked to go: dropped onto
@@ -700,6 +773,68 @@ mod tests {
 
     /// The compressor's registry id, which is the one built-in that listens to a key.
     const COMPRESSOR: &str = "auris.fx.compressor";
+
+    #[test]
+    fn a_hold_covers_its_stretch_and_nothing_else() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Keys").unwrap();
+        let target = ParamTarget::TrackGain(track);
+        session.set_param(target, -6.0);
+
+        let quarter = |n: i64| Ticks(Ticks::QUARTER.0 * n);
+        assert!(session.hold_automation(target, quarter(8), quarter(16), -9.0));
+
+        // Inside, the held value; outside, the fader position the track already had — the
+        // first hold on an unautomated fader pins the fader everywhere it does not reach.
+        assert_eq!(session.automated_value(target, Ticks::ZERO), Some(-6.0));
+        assert_eq!(session.automated_value(target, quarter(8)), Some(-9.0));
+        assert_eq!(session.automated_value(target, quarter(12)), Some(-9.0));
+        assert_eq!(session.automated_value(target, quarter(16)), Some(-6.0));
+        assert_eq!(session.automated_value(target, quarter(32)), Some(-6.0));
+
+        // Saying the same thing again is not an edit, and one undo takes the whole hold back
+        // rather than one of its points.
+        assert!(!session.hold_automation(target, quarter(8), quarter(16), -9.0));
+        session.undo();
+        assert!(!session.is_automated(target));
+    }
+
+    #[test]
+    fn two_holds_compose_rather_than_erase_each_other() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Keys").unwrap();
+        let target = ParamTarget::TrackGain(track);
+        let quarter = |n: i64| Ticks(Ticks::QUARTER.0 * n);
+
+        assert!(session.hold_automation(target, quarter(8), quarter(16), -3.0));
+        assert!(session.hold_automation(target, quarter(24), quarter(32), -6.0));
+        assert_eq!(session.automated_value(target, quarter(12)), Some(-3.0));
+        assert_eq!(session.automated_value(target, quarter(20)), Some(0.0));
+        assert_eq!(session.automated_value(target, quarter(28)), Some(-6.0));
+        assert_eq!(session.automated_value(target, quarter(40)), Some(0.0));
+
+        // A hold placed over an earlier one is the new answer to that stretch: the old
+        // points under it go, rather than fighting the new edges.
+        assert!(session.hold_automation(target, quarter(8), quarter(16), -12.0));
+        assert_eq!(session.automated_value(target, quarter(12)), Some(-12.0));
+        assert_eq!(session.automated_value(target, quarter(28)), Some(-6.0));
+    }
+
+    #[test]
+    fn a_hold_on_nothing_holds_nothing() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Keys").unwrap();
+        let target = ParamTarget::TrackGain(track);
+        // A track the document does not have, and a stretch with no width.
+        assert!(!session.hold_automation(
+            ParamTarget::TrackGain(TrackId(9_999)),
+            Ticks::ZERO,
+            Ticks::QUARTER,
+            -3.0
+        ));
+        assert!(!session.hold_automation(target, Ticks::QUARTER, Ticks::QUARTER, -3.0));
+        assert!(!session.is_automated(target));
+    }
 
     #[test]
     fn only_an_effect_that_listens_is_offered_a_source() {

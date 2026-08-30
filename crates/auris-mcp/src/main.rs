@@ -104,6 +104,71 @@ impl AurisMcp {
         blocking(move || toolbox::analyze::run(&args)).await
     }
 
+    /// Reads the mixer as it stands: every track's fader, pan, mute and solo, its sends, and
+    /// each effect's parameters with key, value and range — the vocabulary `set_level`,
+    /// `set_send` and `set_effect` move. A control marked `[automated]` is driven by its lane,
+    /// not its stored value.
+    #[tool]
+    async fn mixer(
+        &self,
+        Parameters(args): Parameters<toolbox::mixer::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::mixer::run(&args)).await
+    }
+
+    /// Sets a track's fader and/or pan; `track` may be "master". Gain runs -60 to +12 dB, pan
+    /// -1 (left) to +1 (right). The change is saved — `analyze` again to hear what it did to
+    /// the numbers. A fader that `mixer` marks `[automated]` is ruled by its lane, not this
+    /// value; `section_gain` with clear: true removes the lane.
+    #[tool]
+    async fn set_level(
+        &self,
+        Parameters(args): Parameters<toolbox::set_level::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::set_level::run(&args)).await
+    }
+
+    /// Sets how much of a track one of its sends carries, addressed by the bus it feeds — the
+    /// routing `mixer` and `describe` show. Send levels run -60 to 0 dB; there is no headroom
+    /// above unity on a send. The change is saved.
+    #[tool]
+    async fn set_send(
+        &self,
+        Parameters(args): Parameters<toolbox::set_send::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::set_send::run(&args)).await
+    }
+
+    /// Sets one parameter of one effect, addressed the way `mixer` lists them: `track` (or
+    /// "master"), the effect by its id — or by `slot`, its 1-based position, when a chain
+    /// holds the same effect twice — and the parameter by key or name, in the parameter's own
+    /// units. Values outside the range `mixer` shows are refused. The change is saved. The
+    /// master limiter's `input_db` is the dial to back off when `analyze` says the loud
+    /// sections are pinned against the ceiling.
+    #[tool]
+    async fn set_effect(
+        &self,
+        Parameters(args): Parameters<toolbox::set_effect::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::set_effect::run(&args)).await
+    }
+
+    /// Holds a track's gain at a level across one named section — dynamics without rewriting
+    /// a note. `track` may be "master"; the section is addressed by the label `analyze`
+    /// shows, every occurrence unless `instance` picks one. Writes gain automation with short
+    /// ramps at the edges: the fader keeps ruling outside the stretch, and holds on different
+    /// sections compose. `clear: true` removes the track's whole gain lane instead, giving
+    /// the fader back everywhere. The change is saved. The master fader sits after the master
+    /// chain, so a boost there is not limited and can clip — widen contrast by holding the
+    /// louder sections down instead.
+    #[tool]
+    async fn section_gain(
+        &self,
+        Parameters(args): Parameters<toolbox::section_gain::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::section_gain::run(&args)).await
+    }
+
     /// Writes another take of a generated clip: the same ask, the next seed, different notes.
     /// The change is saved into the project — render again to hear it. Aim it with `track`
     /// and the clip number `describe` shows; without a number, every generated clip on the
@@ -243,7 +308,8 @@ mod tests {
     fn every_wire_description_is_the_toolbox_text_word_for_word() {
         use toolbox::{
             analyze, another_take, check_spec, compose, describe, forget_progression, list_presets,
-            list_progressions, render, spec_reference, teach_progression, write_again,
+            list_progressions, mixer, render, section_gain, set_effect, set_level, set_send,
+            spec_reference, teach_progression, write_again,
         };
         let expected: std::collections::BTreeMap<&str, &str> = [
             (spec_reference::NAME, spec_reference::DESCRIPTION),
@@ -252,6 +318,11 @@ mod tests {
             (render::NAME, render::DESCRIPTION),
             (describe::NAME, describe::DESCRIPTION),
             (analyze::NAME, analyze::DESCRIPTION),
+            (mixer::NAME, mixer::DESCRIPTION),
+            (set_level::NAME, set_level::DESCRIPTION),
+            (set_send::NAME, set_send::DESCRIPTION),
+            (set_effect::NAME, set_effect::DESCRIPTION),
+            (section_gain::NAME, section_gain::DESCRIPTION),
             (another_take::NAME, another_take::DESCRIPTION),
             (write_again::NAME, write_again::DESCRIPTION),
             (teach_progression::NAME, teach_progression::DESCRIPTION),
@@ -263,7 +334,7 @@ mod tests {
         .collect();
 
         let served = AurisMcp::tool_router().list_all();
-        assert_eq!(served.len(), expected.len(), "twelve tools at this door");
+        assert_eq!(served.len(), expected.len(), "seventeen tools at this door");
         for tool in served {
             let description = tool.description.as_deref().unwrap_or_default();
             let toolbox_text = expected

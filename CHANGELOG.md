@@ -9,6 +9,20 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### The model gets its hands on the mixer
+
+* Five tools at both model doors, asked for by the first model to drive the improve loop —
+  it had spent an afternoon moving tenths of an LU by reseeding parts, against problems that
+  were mixer-level all along. **`mixer`** reads the whole board: every fader, pan, send and
+  effect parameter with its key, value and range. **`set_level`**, **`set_send`** and
+  **`set_effect`** move one each — the master limiter's `input_db` is now a dial a model can
+  back off when `analyze` says the climax is pinned. **`section_gain`** holds a track's (or
+  the master's) gain at a level across one named section: dynamics without rewriting a note.
+* Behind that last one is a new session command, **`Session::hold_automation`** — hold a
+  parameter at a value across a stretch, short ramps at the edges, the surrounding lane (or
+  the fader's own position) preserved, holds on different sections composing, one undo step.
+  Every frontend gets it; the desktop's automation lanes draw what it writes.
+
 ### A fourth frontend, where Auris dials the model
 
 * **`auris-agent`** is the mirror of `auris-mcp`: instead of waiting for a model's harness to

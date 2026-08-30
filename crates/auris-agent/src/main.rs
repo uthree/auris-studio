@@ -304,6 +304,11 @@ session_tool!(Compose, compose);
 session_tool!(Render, render);
 session_tool!(Describe, describe);
 session_tool!(Analyze, analyze);
+session_tool!(Mixer, mixer);
+session_tool!(SetLevel, set_level);
+session_tool!(SetSend, set_send);
+session_tool!(SetEffect, set_effect);
+session_tool!(SectionGain, section_gain);
 session_tool!(AnotherTake, another_take);
 session_tool!(WriteAgain, write_again);
 session_tool!(TeachProgression, teach_progression);
@@ -321,6 +326,11 @@ fn armed(builder: AgentBuilder) -> Agent {
         .tool(Render)
         .tool(Describe)
         .tool(Analyze)
+        .tool(Mixer)
+        .tool(SetLevel)
+        .tool(SetSend)
+        .tool(SetEffect)
+        .tool(SectionGain)
         .tool(AnotherTake)
         .tool(WriteAgain)
         .tool(TeachProgression)
@@ -721,6 +731,11 @@ mod tests {
             Render::NAME,
             Describe::NAME,
             Analyze::NAME,
+            Mixer::NAME,
+            SetLevel::NAME,
+            SetSend::NAME,
+            SetEffect::NAME,
+            SectionGain::NAME,
             AnotherTake::NAME,
             WriteAgain::NAME,
             CheckSpec::NAME,
@@ -731,7 +746,7 @@ mod tests {
             ListPresets::NAME,
         ];
         let unique: std::collections::BTreeSet<&str> = names.into_iter().collect();
-        assert_eq!(unique.len(), 12, "twelve tools, no name worn twice");
+        assert_eq!(unique.len(), 17, "seventeen tools, no name worn twice");
 
         // The schema is the toolbox derive, fields and all — the same one the MCP door hands
         // its clients.
