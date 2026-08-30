@@ -1,0 +1,19 @@
+# The tools a language model drives the session with, as a library: one module per tool, each
+# with a name, a description, an argument type and the work itself. Shared by the two frontends
+# a model comes through — `auris-mcp`, where a model dials in, and `auris-agent`, where Auris
+# dials out — so the two doors can never describe the same tool two different ways.
+[package]
+name = "auris-toolbox"
+description = "Session commands presented as tools for a language model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+auris-session.workspace = true
+# The `JsonSchema` derive on every argument type: both frontends hand the same schema to their
+# protocol, so a field documented here is documented identically at both doors.
+schemars = "1"
+serde.workspace = true

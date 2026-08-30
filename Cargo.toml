@@ -31,6 +31,7 @@ auris-io = { path = "crates/auris-io", version = "0.3.0" }
 auris-vocal = { path = "crates/auris-vocal", version = "0.3.0" }
 auris-engine = { path = "crates/auris-engine", version = "0.3.0" }
 auris-session = { path = "crates/auris-session", version = "0.3.0" }
+auris-toolbox = { path = "crates/auris-toolbox", version = "0.3.0" }
 
 anyhow = "1.0"
 arc-swap = "1.7"

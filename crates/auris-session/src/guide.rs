@@ -55,11 +55,13 @@ pub mod architecture {
     //!   auris-vocal     lyrics to phonemes, notes to voice-model frames → auris-core only
     //!   auris-i18n      interface text in every language
     //!   auris-session   the document, the engine and every command a frontend needs
+    //!   auris-toolbox   the commands presented as tools for a language model → auris-session
     //!
     //! FRONTEND
     //!   auris-gpui      the desktop application  (binary: auris-studio)
     //!   auris-cli       the command line tool    (binary: auris)
     //!   auris-mcp       the Model Context Protocol server (binary: auris-mcp)
+    //!   auris-agent     the model client — Ollama or OpenAI-compatible (binary: auris-agent)
     //! ```
     //!
     //! Three rules carry most of the weight.
@@ -86,12 +88,17 @@ pub mod architecture {
     //! quietly stop being sufficient for anyone else's. The binary is what installs those packs
     //! into the registry — see [`crate::default_registry`].
     //!
-    //! **A frontend depends on [`crate::Session`], on `auris-i18n`, and on its own toolkit — and
-    //! on nothing else in the workspace.** The second of those is interface text, which is
-    //! presentation and belongs where the interface is; it depends on nothing itself, so it
-    //! widens no reach. If `auris-gpui` ever needs `auris-engine`, `auris-core` or `auris-io`
-    //! directly, something that belongs in the session layer has leaked into the UI. Move it down
-    //! rather than adding the dependency.
+    //! **A frontend depends on [`crate::Session`], on its own toolkit, and on the presentation
+    //! crate for its reader — and on nothing else in the workspace.** There are two presentation
+    //! crates because there are two kinds of reader: `auris-i18n` is every word said to a
+    //! *person*, in their language; `auris-toolbox` is every word said to a *model* — tool
+    //! names, descriptions, argument schemas and the work behind them, in English, because
+    //! every model reads it and neither protocol has a language field. The window and the CLI
+    //! take the first; `auris-mcp` and `auris-agent` take the second, and taking it from one
+    //! shared crate is what keeps the tool called `compose` identical at both doors. If
+    //! `auris-gpui` ever needs `auris-engine`, `auris-core` or `auris-io` directly, something
+    //! that belongs in the session layer has leaked into the UI. Move it down rather than
+    //! adding the dependency.
     //!
     //! # Why a session layer exists
     //!
@@ -105,7 +112,9 @@ pub mod architecture {
     //! the identical session with no window and no audio device, so anything that leaks into the
     //! UI stops compiling there. `auris-mcp` is the same wager made a third time — the identical
     //! session behind the Model Context Protocol, over stdio, so a language model's harness can
-    //! compose, render and inspect projects as tools.
+    //! compose, render and inspect projects as tools. `auris-agent` makes it a fourth, from the
+    //! other direction: Auris itself dials a model — a local Ollama server or any
+    //! OpenAI-compatible API — hands it the same `auris-toolbox` tools, and runs the loop.
     //!
     //! **New work that is a *command* — anything a user could ask for — goes in `auris-session` so
     //! every frontend gets it. New work that is *presentation* stays in the frontend.**

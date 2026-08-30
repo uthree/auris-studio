@@ -18,11 +18,13 @@ BACKEND — no UI dependency of any kind
   crates/auris-compose  score-based automatic composition: a text spec in, notes out
   crates/auris-i18n     interface text in every language, and nothing else
   crates/auris-session  the document, the engine and every command a frontend needs
+  crates/auris-toolbox  the commands as tools for a language model, shared by both model doors
 
 FRONTEND
   crates/auris-gpui     the desktop application  (binary: auris-studio)
   crates/auris-cli      the command line tool    (binary: auris)
   crates/auris-mcp      the Model Context Protocol server (binary: auris-mcp)
+  crates/auris-agent    the model client: Ollama / OpenAI-compatible (binary: auris-agent)
 ```
 
 Dependencies run strictly downhill, and the boundary is enforced by what each crate is *allowed

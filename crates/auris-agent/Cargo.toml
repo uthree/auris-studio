@@ -1,0 +1,27 @@
+# The agent frontend: Auris dials a language model directly — Ollama or any OpenAI-compatible
+# API — hands it the same tools the MCP server offers, and runs the loop itself. `rig` is the
+# LLM client library; it brings `tokio` and an HTTP stack with it, and all of it stays inside
+# this crate.
+[package]
+name = "auris-agent"
+description = "LLM agent frontend for Auris Studio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "auris-agent"
+path = "src/main.rs"
+
+[dependencies]
+auris-session.workspace = true
+auris-toolbox.workspace = true
+env_logger.workspace = true
+log.workspace = true
+rig = "0.42"
+schemars = "1"
+serde.workspace = true
+serde_json.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

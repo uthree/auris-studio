@@ -38,7 +38,7 @@ jobs:
       - name: Build both architectures
         run: |
           for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo build --release --locked --target "$target" -p auris-gpui -p auris-cli -p auris-mcp
+            cargo build --release --locked --target "$target" -p auris-gpui -p auris-cli -p auris-mcp -p auris-agent
           done
 
       # After the build, because the script asks the command line tool what to fetch — the
@@ -46,8 +46,8 @@ jobs:
       - name: Fetch the shipped SoundFonts
         run: tools/fetch-soundfonts.sh
 
-      # `Auris Studio.app` around the desktop binary, with the command line tool and the MCP
-      # server beside it.
+      # `Auris Studio.app` around the desktop binary, with the command line tool, the MCP
+      # server and the LLM agent beside it.
       # Nothing is signed: this is a workflow with no certificate, and the release says what
       # Gatekeeper will make of that.
       - name: Assemble the archive
@@ -62,7 +62,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "$plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $version" "$plist"
 
-          for binary in auris-studio auris auris-mcp; do
+          for binary in auris-studio auris auris-mcp auris-agent; do
             lipo -create -output "$stage/$binary" \
               "target/aarch64-apple-darwin/release/$binary" \
               "target/x86_64-apple-darwin/release/$binary"
@@ -102,7 +102,7 @@ jobs:
         run: rustup toolchain install stable --profile minimal
 
       - name: Build
-        run: cargo build --release --locked -p auris-gpui -p auris-cli -p auris-mcp
+        run: cargo build --release --locked -p auris-gpui -p auris-cli -p auris-mcp -p auris-agent
 
       - name: Fetch the shipped SoundFonts
         shell: bash
@@ -113,7 +113,7 @@ jobs:
         run: |
           stage="auris-studio-${GITHUB_REF_NAME}-windows-x86_64"
           mkdir -p "$stage"
-          cp target/release/auris-studio.exe target/release/auris.exe target/release/auris-mcp.exe "$stage/"
+          cp target/release/auris-studio.exe target/release/auris.exe target/release/auris-mcp.exe target/release/auris-agent.exe "$stage/"
           # Beside the binaries, which is the first place `auris_session::library` looks.
           cp -R SoundFonts "$stage/SoundFonts"
           cp README.md CHANGELOG.md LICENSE "$stage/"

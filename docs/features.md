@@ -1112,3 +1112,24 @@ Registering the server with a client is one line:
 claude mcp add auris -- ./target/release/auris-mcp
 ```
 
+`auris-agent` is the fourth frontend, and the mirror of the third: instead of waiting for a
+model's harness to dial in, Auris dials the model — a local [Ollama](https://ollama.com)
+server, or anything speaking the OpenAI chat-completions dialect (OpenAI itself, LM Studio,
+vLLM, OpenRouter) — hands it the identical tools, and runs the loop itself. Both doors serve
+the tools from one shared crate, [`auris-toolbox`](../crates/auris-toolbox), so a model that
+has learnt one has learnt the other.
+
+```bash
+auris-agent --model qwen3:8b "write me a quiet piece in D dorian"
+auris-agent --provider openai --model gpt-5.2 "..."          # takes OPENAI_API_KEY
+auris-agent --provider openai --url http://localhost:1234/v1 --model local "..."
+auris-agent --model qwen3:8b                                 # no prompt: a conversation
+```
+
+The model's answer goes to stdout and the narration of the tool loop — each call, each
+result's first line — to stderr, so `auris-agent "..." > notes.md` keeps the answer and shows
+the work. An API key is only ever named by environment variable (`--api-key-env`), never typed
+into a command line. Without a prompt the program holds a conversation, carrying the whole
+transcript forward each turn, which is the improve loop with a person in it: ask for a piece,
+hear it, and say what to change.
+

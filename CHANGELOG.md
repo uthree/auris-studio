@@ -9,6 +9,26 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### A fourth frontend, where Auris dials the model
+
+* **`auris-agent`** is the mirror of `auris-mcp`: instead of waiting for a model's harness to
+  connect, Auris connects to the model — a local [Ollama](https://ollama.com) server
+  (`--model qwen3:8b`), or anything speaking the OpenAI chat-completions dialect behind
+  `--provider openai` and `--url` (OpenAI, LM Studio, vLLM, OpenRouter) — hands it the same
+  twelve tools, and runs the loop itself via [rig](https://crates.io/crates/rig). With a
+  prompt it asks once and prints the answer on stdout, narrating each tool call on stderr so
+  a pipe keeps the answer and a person sees the work; without one it holds a conversation,
+  carrying the transcript forward — the improve loop with a person in it. An API key is only
+  ever named by environment variable, never typed into a command line.
+* The tools themselves moved into **`auris-toolbox`**, a presentation crate for the reader
+  that is a model, the way `auris-i18n` is for the reader that is a person: one module per
+  tool — name, description, argument schema, work — shared by both doors, so `compose` at the
+  MCP door and `compose` at the agent door are the same text, the same schema and the same
+  code by construction. (The MCP macro reads descriptions only from literals, so that door
+  carries a copy — held word-for-word equal to the toolbox text by a test.) The agent's whole
+  loop is itself under test against a scripted OpenAI-compatible server: the fake model calls
+  a tool, the real toolbox answers, and the answer rides back over the wire.
+
 ### A third frontend, for readers that act on the answer
 
 * **`auris-mcp`** puts the same headless session behind the
