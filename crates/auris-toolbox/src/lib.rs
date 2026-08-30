@@ -189,6 +189,9 @@ pub mod compose {
             }
             Err(error) => return Err(error.to_string()),
         };
+        // Absolute in the answer even when the ask was relative: this line is what every
+        // later tool call gets copied from, wherever the host process happens to sit.
+        let written = std::path::absolute(&written).unwrap_or(written);
 
         let mut text = format!(
             "Wrote {} — {} tracks, {} notes, {}, seed {}.",
@@ -239,7 +242,8 @@ pub mod render {
 
     /// One mix, or one file per track.
     pub fn run(args: &Args) -> Result<String, String> {
-        let source = Path::new(&args.project);
+        let source = resolve_project(&args.project)?;
+        let source = source.as_path();
         let settings = WavExportSettings {
             bit_depth: match args.bit_depth {
                 None | Some(24) => WavBitDepth::Int24,
@@ -266,6 +270,7 @@ pub mod render {
         let mut job = session.render_job();
         if let Some(folder) = &args.stems {
             let folder = PathBuf::from(folder);
+            let folder = std::path::absolute(&folder).unwrap_or(folder);
             std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
             let written = job
                 .render_stems(&folder, &settings, &options, &mut RenderProgress::default())
@@ -279,6 +284,9 @@ pub mod render {
                 .as_ref()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| source.with_extension("wav"));
+            // Absolute in the answer for the same reason `compose` answers absolute: the
+            // caller reads this line to find the file.
+            let output = std::path::absolute(&output).unwrap_or(output);
             let summary = job
                 .render_to_wav(&output, &settings, &options, &mut RenderProgress::default())
                 .map_err(|error| error.to_string())?;
@@ -307,9 +315,9 @@ pub mod describe {
 
     /// What `auris info` prints, answering in one string.
     pub fn run(args: &Args) -> Result<String, String> {
-        let path = Path::new(&args.project);
+        let path = resolve_project(&args.project)?;
         let mut session = headless()?;
-        let missing = session.open(path).map_err(|error| error.to_string())?;
+        let missing = session.open(&path).map_err(|error| error.to_string())?;
         let project = session.project();
 
         let mut text = format!("{}\n", project.name);
@@ -474,7 +482,7 @@ pub mod analyze {
     pub fn run(args: &Args) -> Result<String, String> {
         let mut session = headless()?;
         let missing = session
-            .open(Path::new(&args.project))
+            .open(&resolve_project(&args.project)?)
             .map_err(|error| error.to_string())?;
         let report = session
             .analyze(args.per_track)
@@ -1294,6 +1302,33 @@ fn headless() -> Result<Session, String> {
         .map_err(|error| error.to_string())
 }
 
+/// The project file a path means: absolute, and reaching inside the folder a project becomes.
+///
+/// Models hand back the path they asked `compose` for — `GemmaTake.auris` — where the file
+/// really went to `GemmaTake/GemmaTake.auris`, because saving nests a project in a folder of
+/// its own. The convention is one-to-one, so rather than teach it as an error, every tool
+/// that opens a project walks it: absolutise (a relative path is resolved against wherever
+/// the host process happens to be), and when the file is not there, look one folder down
+/// under its own name. A path found neither way is refused with the absolute form, so the
+/// caller learns what its relative path actually meant.
+fn resolve_project(path: &str) -> Result<PathBuf, String> {
+    let absolute = std::path::absolute(Path::new(path)).map_err(|error| error.to_string())?;
+    if absolute.exists() {
+        return Ok(absolute);
+    }
+    if let (Some(parent), Some(stem), Some(name)) = (
+        absolute.parent(),
+        absolute.file_stem(),
+        absolute.file_name(),
+    ) {
+        let nested = parent.join(stem).join(name);
+        if nested.exists() {
+            return Ok(nested);
+        }
+    }
+    Err(format!("file not found: {}", absolute.display()))
+}
+
 /// A headless session with `path`'s project already open.
 ///
 /// For the tools that read and adjust rather than render: they have no use for the list of
@@ -1301,7 +1336,7 @@ fn headless() -> Result<Session, String> {
 fn opened(path: &str) -> Result<Session, String> {
     let mut session = headless()?;
     session
-        .open(Path::new(path))
+        .open(&resolve_project(path)?)
         .map_err(|error| error.to_string())?;
     Ok(session)
 }
@@ -1469,10 +1504,7 @@ enum Take {
 
 /// The work behind `another_take` and `write_again`.
 fn regenerate(args: &RegenerateArgs, take: Take) -> Result<String, String> {
-    let mut session = headless()?;
-    session
-        .open(Path::new(&args.project))
-        .map_err(|error| error.to_string())?;
+    let mut session = opened(&args.project)?;
 
     let track = track_by_name(session.project(), &args.track)?;
     let clips: Vec<(usize, ClipId, String, bool)> = track
@@ -1805,8 +1837,22 @@ mod tests {
         assert!(report.contains("Wrote"), "{report}");
         assert!(report.contains("seed"), "{report}");
 
-        // `save_as` nests the document in a folder of its own.
+        // `save_as` nests the document in a folder of its own — and the answer says where,
+        // absolutely, because that line is what a model copies its next call from.
         let document = root.join("Loop").join("Loop.auris");
+        assert!(
+            report.contains(&document.display().to_string()),
+            "the compose answer names the nested, absolute path: {report}"
+        );
+
+        // A caller holding the path it *asked* with — the unnested `Loop.auris` — is met at
+        // the place the file really went, rather than taught the convention as an error.
+        let shorthand = describe::run(&describe::Args {
+            project: root.join("Loop.auris").display().to_string(),
+        })
+        .unwrap();
+        assert!(shorthand.contains("tempo"), "{shorthand}");
+
         let described = describe::run(&describe::Args {
             project: document.display().to_string(),
         })

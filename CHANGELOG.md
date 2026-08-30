@@ -23,6 +23,16 @@ format rather than a convention: `## <version> — <date>`.
   the fader's own position) preserved, holds on different sections composing, one undo step.
   Every frontend gets it; the desktop's automation lanes draw what it writes.
 
+### The doors meet a model where it stands
+
+* Every tool that opens a project now resolves its path the way `compose` saves: absolute
+  (relative asks are read against the host's working directory), and reaching one folder down
+  when `Name.auris` really went to `Name/Name.auris` — the nesting is one-to-one, so it is
+  walked rather than taught as an error. `compose` and `render` answer with absolute paths,
+  because that line is what a model copies its next call from. Found live: a gemma-class
+  8B model handed back exactly the relative shorthand it had asked `compose` for, stalled on
+  file-not-found before the change, and completed the same loop after it.
+
 ### A fourth frontend, where Auris dials the model
 
 * **`auris-agent`** is the mirror of `auris-mcp`: instead of waiting for a model's harness to
