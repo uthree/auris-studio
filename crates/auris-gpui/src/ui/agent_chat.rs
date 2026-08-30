@@ -594,7 +594,7 @@ fn spawn_model_listing(prefs: &AgentPreferences) -> Receiver<Result<Vec<ModelOpt
     std::thread::spawn(move || {
         let answer = command
             .output()
-            .map_err(|error| format!("could not run auris-agent: {error}"))
+            .map_err(|error| format!("could not run {}: {error}", agent_binary().display()))
             .and_then(|output| {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 parse_model_list(stdout.lines().next().unwrap_or_default())

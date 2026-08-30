@@ -102,6 +102,11 @@ cargo fmt --all                           # formatting
 cargo doc --workspace --no-deps --open    # the API documentation
 ```
 
+The desktop application's agent panel runs `auris-agent` as a child process and looks for it
+beside its own executable, which is where the release archive puts it. `cargo run` builds only
+the desktop app (`default-members`), so after a fresh checkout the panel reports the binary as
+missing until a `cargo build -p auris-agent` in the same profile puts it there.
+
 Every crate carries `#![warn(missing_docs)]` and CI builds the documentation with warnings denied,
 so a public item without a doc comment and a link that does not resolve are both build failures.
 That is also what keeps `auris_session::guide` honest: its examples are doctests, so the account
