@@ -539,6 +539,77 @@ mod tests {
         });
     }
 
+    /// Another writer at the open file, seen from the window: a clean window follows the
+    /// disk silently, a dirty one gets a standing offer and autosave holds its fire, and a
+    /// save of its own takes the file back and the offer down.
+    #[gpui::test]
+    fn an_external_write_reloads_a_clean_window_and_offers_a_dirty_one(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let root = std::env::temp_dir().join(format!("auris-harness-watch-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        app.update(cx, |this, _| {
+            this.session.save_as(&root.join("Watched.auris")).unwrap();
+        });
+        // The other writer, played by a bumped modification time — set forward explicitly,
+        // because a fast filesystem gives two writes in one timestamp.
+        let bump = |app: &gpui::Entity<AurisApp>, cx: &mut gpui::VisualTestContext, s: u64| {
+            app.update(cx, |this, _| {
+                let path = this.session.path().unwrap().to_path_buf();
+                let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+                file.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(s))
+                    .unwrap();
+            });
+        };
+
+        // Clean: followed without a word, and no offer goes up.
+        bump(&app, cx, 2);
+        app.update(cx, |this, cx| {
+            assert!(this.session.externally_modified());
+            this.watch_disk(cx);
+            assert!(
+                this.external_change.is_none(),
+                "no offer for a clean window"
+            );
+        });
+        cx.run_until_parked();
+        app.read_with(cx, |this, _| {
+            assert!(
+                !this.session.externally_modified(),
+                "the reload took the disk's version"
+            );
+        });
+
+        // Dirty: the choice goes on screen, and the autosave policy sees the other writer.
+        app.update(cx, |this, _| {
+            this.session.add_default_instrument_track("Mine").unwrap();
+            this.last_disk_watch = None;
+        });
+        bump(&app, cx, 4);
+        app.update(cx, |this, cx| {
+            this.watch_disk(cx);
+            assert!(this.external_change.is_some(), "the offer stands");
+            assert!(this.status_failed, "said in a warning's colour");
+            assert!(
+                this.session.autosave_state().overwritten,
+                "autosave knows not to write over it"
+            );
+        });
+        paint(&app, cx);
+        assert!(
+            cx.debug_bounds("external-reload").is_some(),
+            "the Reload button is drawn in the status bar"
+        );
+
+        // A save of our own is the deliberate act that takes the file back.
+        app.update(cx, |this, cx| {
+            this.session.save_in_place().unwrap();
+            this.last_disk_watch = None;
+            this.watch_disk(cx);
+            assert!(this.external_change.is_none(), "the offer comes down");
+        });
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     /// A pointer at a position, hit-testing against a real frame — the path a keystroke never
     /// takes, and the one that breaks when a control moves out from under its own click handler.
     #[gpui::test]

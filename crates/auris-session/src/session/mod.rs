@@ -272,6 +272,9 @@ pub struct Session {
     autosave: bool,
     /// When the document was last written, by any means. The autosave clock runs from here.
     last_save: Instant,
+    /// The file's modification time as of this session's last read or write of it — what
+    /// [`Session::externally_modified`] compares against to notice another writer.
+    disk_stamp: Option<std::time::SystemTime>,
 
     /// Where a spectrum display reads its samples.
     ///
@@ -482,6 +485,7 @@ impl Session {
             dirty: false,
             autosave: options.autosave,
             last_save: Instant::now(),
+            disk_stamp: None,
             scope: Arc::new(auris_engine::Scope::new()),
             analyzer: auris_dsp::SpectrumAnalyzer::new(auris_engine::SCOPE_WINDOW),
             param_cache: HashMap::new(),

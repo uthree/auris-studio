@@ -49,6 +49,9 @@ pub struct AutosaveState {
     pub dirty: bool,
     /// Whether a drag or another multi-step gesture is part way through.
     pub gesture_open: bool,
+    /// Whether the file on disk has been changed by another writer since this session last
+    /// read or wrote it.
+    pub overwritten: bool,
     /// How long since the document was last written, by any means.
     pub since_last_save: Duration,
 }
@@ -59,6 +62,10 @@ pub fn should_autosave(state: AutosaveState) -> bool {
         && state.has_path
         && state.dirty
         && !state.gesture_open
+        // Another writer's version is on disk. Automatically writing over it would silently
+        // destroy work this window never saw; a save while that stands has to be a person's
+        // own hand on ⌘S, deciding.
+        && !state.overwritten
         && state.since_last_save >= AUTOSAVE_INTERVAL
 }
 
@@ -83,6 +90,7 @@ impl Session {
             has_path: self.path.is_some(),
             dirty: self.dirty,
             gesture_open: self.transaction.is_some(),
+            overwritten: self.externally_modified(),
             since_last_save: self.last_save.elapsed(),
         }
     }
@@ -106,9 +114,35 @@ impl Session {
         Some(self.save_in_place())
     }
 
-    /// Restarts the autosave clock. Called by every path that writes the document.
+    /// Restarts the autosave clock. Called by every path that writes the document — and by
+    /// `open`, which is the other way this session and the file come to agree.
+    ///
+    /// The disk stamp is taken here because this is that agreement's one funnel: whatever the
+    /// file's modification time is at this moment is *ours*, and a different one later means
+    /// another writer — see [`Session::externally_modified`].
     pub(super) fn mark_saved(&mut self) {
         self.last_save = Instant::now();
+        self.disk_stamp = self
+            .path
+            .as_deref()
+            .and_then(|path| std::fs::metadata(path).ok())
+            .and_then(|meta| meta.modified().ok());
+    }
+
+    /// Whether the file on disk is no longer the one this session last read or wrote.
+    ///
+    /// `true` means another writer has been at it — the MCP door, a sync service, anything —
+    /// and what this session would save is based on a version that is no longer there.
+    /// A file that cannot be examined (deleted, unreadable) answers `false`: that is a
+    /// different problem, and the next save will say so in its own words.
+    pub fn externally_modified(&self) -> bool {
+        let (Some(path), Some(stamp)) = (self.path.as_deref(), self.disk_stamp) else {
+            return false;
+        };
+        match std::fs::metadata(path).and_then(|meta| meta.modified()) {
+            Ok(now) => now != stamp,
+            Err(_) => false,
+        }
     }
 }
 
@@ -123,8 +157,19 @@ mod tests {
             has_path: true,
             dirty: true,
             gesture_open: false,
+            overwritten: false,
             since_last_save: AUTOSAVE_INTERVAL,
         }
+    }
+
+    #[test]
+    fn another_writers_version_is_never_silently_overwritten() {
+        // The MCP door, a sync service — whoever wrote it, autosave must not destroy it.
+        // Saving over it is a decision, and ⌘S is where decisions are made.
+        assert!(!should_autosave(AutosaveState {
+            overwritten: true,
+            ..ready()
+        }));
     }
 
     #[test]
@@ -178,5 +223,43 @@ mod tests {
             enabled: false,
             ..ready()
         }));
+    }
+
+    /// The stamp agrees after every read and write of the file, and disagrees — visibly —
+    /// the moment another writer touches it.
+    #[test]
+    fn another_writer_is_noticed_and_a_save_of_our_own_is_not() {
+        let root = std::env::temp_dir().join(format!("auris-session-stamp-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut session =
+            crate::Session::new(crate::SessionOptions::headless()).expect("a headless session");
+        session.save_as(&root.join("Watched.auris")).unwrap();
+        assert!(
+            !session.externally_modified(),
+            "the file just written is our own"
+        );
+
+        // Another writer, played by a bumped modification time — how it looks from here,
+        // however the bytes changed. Set explicitly rather than written and slept for,
+        // because a fast filesystem gives two writes in one timestamp.
+        let document = session.path().unwrap().to_path_buf();
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&document)
+            .unwrap();
+        file.set_modified(std::time::SystemTime::now() + Duration::from_secs(2))
+            .unwrap();
+        drop(file);
+        assert!(session.externally_modified(), "the other writer shows");
+        assert!(
+            session.autosave_state().overwritten,
+            "and the autosave policy sees it"
+        );
+
+        // Saving by hand is the deliberate act that takes the file back.
+        session.save_in_place().unwrap();
+        assert!(!session.externally_modified(), "ours again");
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

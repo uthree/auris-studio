@@ -1138,6 +1138,13 @@ Registering the server with a client is one line:
 claude mcp add auris -- ./target/release/auris-mcp
 ```
 
+A project open in the desktop application follows edits made through this door (or by
+anything else that writes the file): the window watches the file's modification time and
+reloads when it changes — silently while the window holds nothing unsaved, by a Reload button
+in the status bar when it does. While that choice stands, autosave holds its fire rather than
+write over the other writer's version; saving by hand is how this window's version is chosen
+deliberately.
+
 `auris-agent` is the fourth frontend, and the mirror of the third: instead of waiting for a
 model's harness to dial in, Auris dials the model — a local [Ollama](https://ollama.com)
 server, or anything speaking the OpenAI chat-completions dialect (OpenAI itself, LM Studio,

@@ -46,6 +46,14 @@ format rather than a convention: `## <version> — <date>`.
   `write_again` apply), `set_instrument`, `rename_track`, `remove_track`, and
   `list_instruments` for the vocabulary. Twenty-three tools in all. Behind them,
   `Session::set_track_general_midi` is new: font adoption and preset choice as one undo step.
+* **The window notices another writer.** Edit an open project from outside — the MCP door
+  driven by Claude Code, a sync service, anything with the file — and the window follows: it
+  reloads silently while it holds nothing unsaved, and puts a Reload button in the status bar
+  when it does, saying what stands to be lost either way. While that choice stands, autosave
+  holds its fire — writing over another writer's version is a decision, and ⌘S is where
+  decisions are made. Watching is a half-second stat of one file; the whole policy is two
+  tested functions (`should_autosave` grew an `overwritten` clause, and
+  `external_change_action` is the window's side).
 * **The model can place notes, and derive a band from them.** Four more tools at both doors,
   for the melody-first way around: `add_clip` opens an empty clip, `edit_notes` places and
   removes notes by name and bar in one call ("F#4", bar 2, beat 3.5), `notes` reads a clip

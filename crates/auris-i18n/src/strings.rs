@@ -962,6 +962,10 @@ strings! {
         en: "that SoundFont is not part of this project",
         ja: "そのサウンドフォントはこのプロジェクトにありません"
     }
+    ExternalChangeConflict {
+        en: "the project changed on disk while this window holds unsaved work — Reload takes the disk's version, saving keeps this one",
+        ja: "未保存の変更がある間にプロジェクトがディスク上で変更されました。「再読み込み」でディスク側を、保存でこちら側を残します"
+    }
     ErrorLibraryMissing {
         en: "the shipped sound library is not installed, so General MIDI sounds are unavailable",
         ja: "同梱の音色ライブラリが未インストールのため、General MIDI音源は使えません"

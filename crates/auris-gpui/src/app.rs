@@ -104,6 +104,36 @@ fn fallen_peak(held: f32, peak: f32, elapsed: Duration) -> f32 {
     peak.max(held * 10f32.powf(-db / 20.0))
 }
 
+/// What the window should do about the open project's file on disk, asked on a slow tick.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ExternalChange {
+    /// The file is as this window left it, and no offer stands.
+    Nothing,
+    /// Another writer's version is on disk and nothing here would be lost: take it.
+    Reload,
+    /// Another writer's version is on disk and this window holds unsaved work: put the
+    /// choice on screen and change nothing.
+    Offer,
+    /// The file is ours again — a manual save took it back — while an offer still stands.
+    Withdraw,
+}
+
+/// The whole external-change policy, as a function a test can hold.
+///
+/// The window obeys the answer in [`AurisApp::watch_disk`]; `offered` is whether the status
+/// bar's Reload button is already up. The one asymmetry worth stating: a *clean* window
+/// follows the disk silently, because nothing of the person's is at stake — the same call
+/// the agent panel's reload policy makes.
+pub(crate) fn external_change_action(modified: bool, dirty: bool, offered: bool) -> ExternalChange {
+    match (modified, dirty, offered) {
+        (false, _, true) => ExternalChange::Withdraw,
+        (false, _, false) => ExternalChange::Nothing,
+        (true, false, _) => ExternalChange::Reload,
+        (true, true, false) => ExternalChange::Offer,
+        (true, true, true) => ExternalChange::Nothing,
+    }
+}
+
 /// How hard an auditioned note is struck.
 const NOTE_VELOCITY: f32 = 0.8;
 
@@ -680,6 +710,24 @@ mod tests {
     }
 
     #[test]
+    fn the_disk_is_followed_while_clean_and_offered_while_dirty() {
+        use ExternalChange::*;
+        // Nothing happened, nothing happens.
+        assert_eq!(external_change_action(false, false, false), Nothing);
+        assert_eq!(external_change_action(false, true, false), Nothing);
+        // A clean window follows the disk silently — nothing of the person's is at stake.
+        assert_eq!(external_change_action(true, false, false), Reload);
+        // Unsaved work makes it a choice, put up once and then left standing.
+        assert_eq!(external_change_action(true, true, false), Offer);
+        assert_eq!(external_change_action(true, true, true), Nothing);
+        // A manual save takes the file back, and the stale offer comes down with it.
+        assert_eq!(external_change_action(false, false, true), Withdraw);
+        assert_eq!(external_change_action(false, true, true), Withdraw);
+        // The offer stood, the person undid their way back to clean: the disk still wins.
+        assert_eq!(external_change_action(true, false, true), Reload);
+    }
+
+    #[test]
     fn the_input_meter_rises_at_once_and_falls_at_the_rate_the_others_do() {
         // A louder peak is taken whole: a meter that eased up to a transient would show it at
         // the wrong height, which for the one number somebody is setting a level by is the whole
@@ -1062,6 +1110,12 @@ pub struct AurisApp {
     pub(crate) agent_chat: crate::ui::agent_chat::AgentChat,
     /// Whether [`Self::status`] is reporting a failure, so it can be shown as one.
     pub(crate) status_failed: bool,
+    /// The open project's path, when it has changed on disk under a window holding unsaved
+    /// work — the standing offer behind the status bar's Reload button.
+    pub(crate) external_change: Option<PathBuf>,
+    /// When the file on disk was last compared against the session, for throttling the
+    /// check to well below the repaint rate. `None` before the first look.
+    pub(crate) last_disk_watch: Option<std::time::Instant>,
     /// What the input meter is currently reading, as a linear peak.
     ///
     /// Held here rather than asked for while drawing, because `Session::input_peak` forgets what
@@ -1187,6 +1241,10 @@ impl AurisApp {
                             let line = this.failure(Key::CmdSave, &error);
                             this.set_failed_status(line);
                         }
+                        // Beside the autosave on purpose: the two are halves of one story —
+                        // this notices another writer at the file, and the autosave policy
+                        // refuses to write over that writer while it stands unresolved.
+                        this.watch_disk(cx);
                         // Also here rather than in a command, because a monitor breaking up
                         // happens *between* commands: without this the only evidence is a noise
                         // the person playing is left to interpret.
@@ -1254,6 +1312,8 @@ impl AurisApp {
             titled: String::new(),
             choosing_export: false,
             status_failed: false,
+            external_change: None,
+            last_disk_watch: None,
             input_level: 0.0,
             input_clipped: false,
             input_levels: Vec::new(),
@@ -1761,6 +1821,47 @@ impl AurisApp {
     pub(crate) fn set_status(&mut self, status: impl Into<String>) {
         self.status = status.into();
         self.status_failed = false;
+    }
+
+    /// Notices another writer at the open project — the MCP door, a sync service, anything
+    /// with the file — and obeys [`external_change_action`]: reload where nothing would be
+    /// lost, offer a button where something would, withdraw the offer once the file is ours
+    /// again (a manual save takes it back).
+    pub(crate) fn watch_disk(&mut self, cx: &mut gpui::Context<Self>) {
+        const DISK_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+        if self
+            .last_disk_watch
+            .is_some_and(|at| at.elapsed() < DISK_WATCH_INTERVAL)
+        {
+            return;
+        }
+        self.last_disk_watch = Some(std::time::Instant::now());
+        match external_change_action(
+            self.session.externally_modified(),
+            self.session.is_dirty(),
+            self.external_change.is_some(),
+        ) {
+            ExternalChange::Nothing => {}
+            ExternalChange::Withdraw => {
+                self.external_change = None;
+                self.set_status(String::new());
+                cx.notify();
+            }
+            ExternalChange::Reload => {
+                self.external_change = None;
+                if let Some(path) = self.session.path().map(std::path::Path::to_path_buf) {
+                    self.open_project_at(path, cx);
+                }
+            }
+            ExternalChange::Offer => {
+                if let Some(path) = self.session.path().map(std::path::Path::to_path_buf) {
+                    self.external_change = Some(path);
+                    let line = self.t(Key::ExternalChangeConflict).to_string();
+                    self.set_failed_status(line);
+                    cx.notify();
+                }
+            }
+        }
     }
 
     /// Reports a failure on the status line, in the colour of one.

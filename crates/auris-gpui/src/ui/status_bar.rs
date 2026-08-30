@@ -18,6 +18,7 @@ use crate::dock::{Dock, Panel};
 use crate::theme::{Metrics, Theme};
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
 use crate::ui::icons::icon;
+use crate::ui::widgets::{ButtonStyle, button};
 
 /// Side of one switch, including the padding around its icon.
 const SWITCH_SIZE: Pixels = px(18.0);
@@ -55,6 +56,25 @@ impl AurisApp {
                     .when(self.status_failed, |this| this.text_color(theme.danger))
                     .child(self.status.clone()),
             )
+            // The standing offer when another writer changed the file under unsaved work:
+            // the one button in the window that takes the disk's version deliberately.
+            .when(self.external_change.is_some(), |this| {
+                this.child(button(
+                    "external-reload",
+                    self.t(Key::AgentReload),
+                    ButtonStyle::Normal,
+                    true,
+                    theme.warning,
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        if let Some(path) = this.external_change.take() {
+                            this.set_status(String::new());
+                            this.open_project_at(path, cx);
+                        }
+                        cx.notify();
+                    }),
+                ))
+            })
             .children(self.typing_readout(&theme))
             .child(self.window_title())
             .child(engine)
