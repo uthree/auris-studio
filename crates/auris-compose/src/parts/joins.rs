@@ -6,10 +6,11 @@
 //! got at by adding a voice to a groove — a groove is a bar-long loop, and there is nothing in a
 //! bar-long loop that knows a chorus has just started.
 //!
-//! The riser, the impact and the reverse cymbal are the same question asked at the same joins, so
-//! they belong here when they arrive rather than in a file each.
+//! The riser is here now, and it is the same question asked one section early: where the crash
+//! marks that the form has arrived, the riser says it is about to, swelling through the end of
+//! the bar *before* the join. The impact, when it arrives, belongs here too.
 
-use auris_core::time::Ticks;
+use auris_core::time::{TICKS_PER_QUARTER, Ticks};
 
 use crate::frame::{Frame, SectionPlan};
 use crate::rhythm::DrumVoice;
@@ -34,6 +35,32 @@ const OPENING_INTENSITY: f32 = 0.7;
 /// a cymbal looks like in a piano roll — long enough to be seen among the sixteenths of a groove,
 /// short enough not to cover the bar it starts.
 const CYMBAL_TICKS: i64 = 480;
+
+/// The pitch a riser is written at.
+///
+/// General MIDI keeps the reverse cymbal as a program, so the note decides the playback rate
+/// rather than which drum is struck: below this the swell stretches and darkens, above it the
+/// swell shortens and thins. Middle C is the recorded speed in the shipped font, and the lead
+/// below was measured at exactly this note — the two constants are one calibration.
+const RISER_PITCH: u8 = 60;
+
+/// How long before the join the swell begins, in seconds.
+///
+/// A reverse cymbal is a crescendo whose peak is its own last sample, so the note has to start
+/// its full length early for the peak to land on the downbeat it announces — placed *on* the
+/// preceding bar line the way general practice places it, the swell would peak mid-bar and be
+/// followed by silence. Seconds rather than ticks because it is the sample's length and the
+/// sample does not care about the tempo; the writer converts at the tempo of the section the
+/// swell sits in.
+///
+/// Measured, not chosen: the shipped font's program 119 at note 60, rendered alone, peaks
+/// 0.995 s after its note-on and falls to nothing within a millisecond after — a reversed decay
+/// ends where the strike was. At one second of lead the peak therefore lands five milliseconds
+/// ahead of the downbeat, which is where a player would put it: the swell hands over, and the
+/// crash owns the beat itself. A different font swells for a different time and lands early or
+/// late by the difference — the cost of General MIDI naming sounds rather than recordings,
+/// bounded by how long cymbals take to bloom.
+const RISER_LEAD_SECONDS: f64 = 1.0;
 
 /// Whether arriving at a section is worth striking a cymbal for.
 ///
@@ -116,6 +143,46 @@ pub(super) fn joins(
         velocity: velocity(grid.weight(0), section.intensity, settings.dynamics).clamp(0.08, 1.0),
         start: section.start,
         length: Ticks(CYMBAL_TICKS),
+    }]
+}
+
+/// One swell, written into the end of the section before an arrival.
+///
+/// The same question [`joins`] asks, one section early: the riser announces the join the crash
+/// then opens, so it asks whether the *next* section arrives and writes into its own. That is
+/// also why the note belongs to this section rather than the one it announces — the clips are
+/// cut per section, and a swell filed under the chorus would be clamped to the chorus's first
+/// tick and stop being a swell.
+pub(super) fn riser(
+    settings: &ScoreSettings,
+    frame: &Frame,
+    section: &SectionPlan,
+    index: usize,
+    part: &PartSpec,
+) -> Vec<Draft> {
+    let Some(next) = frame.sections.get(index + 1) else {
+        return Vec::new();
+    };
+    if !marks_an_arrival(next, Some(section)) {
+        return Vec::new();
+    }
+    let grid = part_grid(frame, part);
+    // The swell's length in this section's own time. The lead is a property of the recording,
+    // so a faster section simply spends more ticks on the same second and a half of cymbal.
+    let ticks_per_second = f64::from(TICKS_PER_QUARTER as u32) * section.tempo.max(1.0) / 60.0;
+    let lead = Ticks((RISER_LEAD_SECONDS * ticks_per_second).round().max(1.0) as i64);
+    let end = section.start + section.length;
+    let start = (end - lead).max(section.start);
+    vec![Draft {
+        section: index,
+        pitch: RISER_PITCH,
+        // The weight of the downbeat being announced, at the intensity of the section that owns
+        // it: the swell belongs to what is coming, not to what is ending.
+        velocity: velocity(grid.weight(0), next.intensity, settings.dynamics).clamp(0.08, 1.0),
+        start,
+        // Held to the join exactly. The peak is the last thing in the sample, and a note-off
+        // before it would cut the swell at the moment it exists for.
+        length: end - start,
     }]
 }
 
@@ -208,6 +275,121 @@ mod tests {
              other join"
         );
         assert!(crash.notes.iter().all(|note| note.pitch == 49));
+    }
+
+    #[test]
+    fn the_riser_swells_through_the_bar_before_the_join_and_hands_over_on_it() {
+        let (_, frame, parts) = draft(
+            r#"
+            form = "intro chorus"
+            chords = "@axis"
+            ending = "none"
+            [section.intro]
+            bars = 4
+            intensity = 0.3
+            [section.chorus]
+            bars = 4
+            intensity = 0.9
+            [[part]]
+            name = "riser"
+            role = "riser"
+            "#,
+        );
+        let riser = part(&parts, "riser");
+        // One join in the piece — into the chorus. Nothing announces the opening (there is no
+        // bar before it to swell in), and with the ending off nothing announces a stop.
+        assert_eq!(riser.notes.len(), 1, "{:?}", riser.notes);
+        let note = &riser.notes[0];
+        let join = frame.sections[1].start;
+        // One second at the default 120 BPM is two beats: 1920 ticks, ending exactly on the
+        // join so the sample's own peak lands five milliseconds ahead of the downbeat.
+        assert_eq!(note.start, join - Ticks(1920));
+        assert_eq!(note.length, Ticks(1920));
+        assert_eq!(note.pitch, RISER_PITCH);
+        assert_eq!(
+            note.section, 0,
+            "the swell is filed under the bar it sounds in"
+        );
+    }
+
+    #[test]
+    fn the_riser_lead_is_a_second_at_any_tempo() {
+        // The lead is the recording's length, and a recording does not care about the tempo: at
+        // 60 BPM the same second is one beat of lead where 120 spent two.
+        let (_, frame, parts) = draft(
+            r#"
+            form = "intro chorus"
+            chords = "@axis"
+            tempo = 60
+            ending = "none"
+            [section.intro]
+            bars = 4
+            intensity = 0.3
+            [section.chorus]
+            bars = 4
+            intensity = 0.9
+            [[part]]
+            name = "riser"
+            role = "riser"
+            "#,
+        );
+        let note = &part(&parts, "riser").notes[0];
+        assert_eq!(note.start, frame.sections[1].start - Ticks(960));
+        assert_eq!(note.length, Ticks(960));
+    }
+
+    #[test]
+    fn nothing_rises_into_a_drop() {
+        // Chorus into verse is the join a drummer neither crashes nor announces: the energy is
+        // falling, and a swell into a drop promises the opposite of what arrives.
+        let (_, _, parts) = draft(
+            r#"
+            form = "chorus verse"
+            chords = "@axis"
+            ending = "none"
+            [section.chorus]
+            bars = 4
+            intensity = 0.9
+            [section.verse]
+            bars = 4
+            intensity = 0.55
+            [[part]]
+            name = "riser"
+            role = "riser"
+            "#,
+        );
+        assert!(part(&parts, "riser").notes.is_empty());
+    }
+
+    #[test]
+    fn a_section_shorter_than_the_swell_holds_what_it_has() {
+        // One bar at 240 BPM is a second of music exactly matching the lead? No — a bar of 4/4
+        // at 240 is one second, and the lead is one second, so this sits right at the edge; the
+        // clamp is what keeps a *shorter* stretch from writing a note before its own section.
+        let (_, frame, parts) = draft(
+            r#"
+            form = "intro chorus"
+            chords = "@axis"
+            meter = "2/4"
+            tempo = 240
+            ending = "none"
+            [section.intro]
+            bars = 1
+            intensity = 0.3
+            [section.chorus]
+            bars = 4
+            intensity = 0.9
+            [[part]]
+            name = "riser"
+            role = "riser"
+            "#,
+        );
+        let note = &part(&parts, "riser").notes[0];
+        // Half a second of section against a second of lead: the swell starts where the piece
+        // does and is short — the sample's peak arrives late, which a one-bar intro at 240 has
+        // simply not left room to avoid.
+        assert_eq!(note.start, frame.sections[0].start);
+        assert_eq!(note.length, frame.sections[0].length);
     }
 
     #[test]

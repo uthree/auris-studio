@@ -643,6 +643,7 @@ pub fn role_key(role: Role) -> Key {
         Role::Snare => Key::RoleSnare,
         Role::Hat => Key::RoleHat,
         Role::Crash => Key::RoleCrash,
+        Role::Riser => Key::RoleRiser,
     }
 }
 

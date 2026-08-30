@@ -9,6 +9,15 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### Arrangement: the joins learn a second word
+
+* A new part role, the **riser**: General MIDI's reverse cymbal (program 119), written by the
+  same writer that places the crash and answering the same question one section early — it
+  swells through the last second before every arrival the crash then opens, the sample's own
+  peak landing five milliseconds ahead of the downbeat (measured on the shipped font; the lead
+  converts per section tempo, so the swell is the same second of cymbal at any speed). Declare
+  it with `role = "riser"`; the pop-band, city-pop and synthwave presets now do.
+
 ### Performance: the score does not change, the playing does
 
 * Any note clip can now carry a **performance**: humanize, swing and gate dials in the

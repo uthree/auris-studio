@@ -45,7 +45,7 @@ use bass::bass;
 use coda::coda;
 use comp::comp;
 use drums::drums;
-use joins::joins;
+use joins::{joins, riser};
 use melody::melody;
 use writer::part_grid;
 
@@ -164,7 +164,7 @@ pub fn write_parts(settings: &ScoreSettings, roster: &[PartSpec], frame: &Frame)
                 // figures and grooves, it is the piece landing. The crash still goes through
                 // `joins`, because the ending is an arrival and that writer's whole question is
                 // whether one has happened.
-                if section.coda && part.role != Role::Crash {
+                if section.coda && !matches!(part.role, Role::Crash | Role::Riser) {
                     draft.notes.extend(coda(settings, section, index, part));
                     continue;
                 }
@@ -175,10 +175,12 @@ pub fn write_parts(settings: &ScoreSettings, roster: &[PartSpec], frame: &Frame)
                     }
                     Role::Arp => arp(settings, frame, section, index, part),
                     Role::Bass => bass(settings, frame, section, index, part),
-                    // Written against the joins of the form rather than against a groove: it is
-                    // handed a section and asks whether arriving there is worth striking
-                    // something for, which is a question no bar-long pattern can answer.
+                    // Written against the joins of the form rather than against a groove: each is
+                    // handed a section and asks whether an arrival is worth marking, which is a
+                    // question no bar-long pattern can answer. The crash marks the arrival
+                    // itself; the riser announces the one coming, from the bar before it.
                     Role::Crash => joins(settings, frame, section, index, part),
+                    Role::Riser => riser(settings, frame, section, index, part),
                     Role::Kick | Role::Snare | Role::Hat => {
                         drums(settings, frame, section, index, part)
                     }
@@ -250,6 +252,12 @@ fn swing(settings: &ScoreSettings, frame: &Frame, played: &[PartSpec], notes: &m
     let Some(part) = played.first() else {
         return;
     };
+    // A swell does not swing. The riser's start is measured back from the join in seconds, and
+    // wherever that lands is where the sample has to begin for its peak to arrive on time — a
+    // start that happened to fall on an offbeat step would otherwise be delayed like one.
+    if part.role == Role::Riser {
+        return;
+    }
     // The whole band reads the groove's one answer — a comp swinging pairs the kit does not
     // would be two feels at once.
     let feel = crate::rhythm::groove(&settings.groove)

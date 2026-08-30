@@ -63,7 +63,9 @@ pub fn preset_of(role: Role) -> Option<ClipPreset> {
         Role::Kick => ClipPreset::Kick,
         Role::Snare => ClipPreset::Snare,
         Role::Hat => ClipPreset::Hat,
-        Role::Crash => return None,
+        // Both written against the joins of the form — a question about a whole piece that a
+        // clip preset, handed one range, could only answer with silence most of the time.
+        Role::Crash | Role::Riser => return None,
     })
 }
 

@@ -228,6 +228,11 @@ program = "Standard Kit"
 name    = "crash"
 role    = "crash"
 program = "Standard Kit"
+
+[[part]]
+name    = "riser"
+role    = "riser"
+program = "Reverse Cymbal"
 "#;
 
 /// The 1980s Tokyo sound: a Rhodes, a slapped bass and a sixteen-beat under 丸サ進行.
@@ -303,6 +308,11 @@ program = "Room Kit"
 name    = "crash"
 role    = "crash"
 program = "Room Kit"
+
+[[part]]
+name    = "riser"
+role    = "riser"
+program = "Reverse Cymbal"
 "#;
 
 /// Guitars, an organ pad and a kit that is allowed to be loud.
@@ -568,6 +578,11 @@ program = "TR-808 Kit"
 name    = "crash"
 role    = "crash"
 program = "TR-808 Kit"
+
+[[part]]
+name    = "riser"
+role    = "riser"
+program = "Reverse Cymbal"
 "#;
 
 /// No kit, no lead: three sustained voices and a bell that is nearly a melody.

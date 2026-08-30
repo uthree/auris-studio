@@ -30,11 +30,18 @@ pub enum Role {
     Hat,
     /// The crash cymbal, struck where one section arrives at the next.
     Crash,
+    /// The reverse cymbal, swelling through the last bar before an arrival.
+    ///
+    /// The first of the joins vocabulary beyond the crash: where the crash marks that the form
+    /// *has* arrived somewhere, the riser says it is about to. Pitched rather than a drum,
+    /// because General MIDI keeps the sound as a program — 119, Reverse Cymbal — and a font
+    /// answers it with a cymbal recorded backwards, which is a crescendo by construction.
+    Riser,
 }
 
 impl Role {
     /// Every role, in the order a default roster uses them.
-    pub const ALL: [Role; 10] = [
+    pub const ALL: [Role; 11] = [
         Role::Melody,
         Role::Chords,
         Role::Pad,
@@ -45,6 +52,7 @@ impl Role {
         Role::Snare,
         Role::Hat,
         Role::Crash,
+        Role::Riser,
     ];
 
     /// The name the text format writes.
@@ -60,6 +68,7 @@ impl Role {
             Role::Snare => "snare",
             Role::Hat => "hat",
             Role::Crash => "crash",
+            Role::Riser => "riser",
         }
     }
 
@@ -76,6 +85,7 @@ impl Role {
             "snare" | "sd" => Role::Snare,
             "hat" | "hihat" | "hh" => Role::Hat,
             "crash" | "cymbal" | "cym" => Role::Crash,
+            "riser" | "sweep" | "reverse" => Role::Riser,
             _ => return None,
         })
     }
@@ -155,6 +165,10 @@ impl Role {
             // of: both are bright, both are mostly noise, and a crash landing in the hat's place
             // reads as the hat having got louder rather than as a cymbal.
             Role::Crash => -0.2,
+            // Dead centre, with the things a listener localises by: the riser aims the whole
+            // band at one downbeat, and an announcement made off to one side reads as a part
+            // rather than as the room holding its breath.
+            Role::Riser => 0.0,
         }
     }
 
@@ -183,6 +197,10 @@ impl Role {
             // backbeat swallows it. Loud enough that the join is unmistakable; a crash nobody
             // notices is a crash nobody wrote.
             Role::Crash => -9.0,
+            // Under the crash it swells into: the riser is the shadow the crash casts backwards,
+            // and a shadow louder than the thing casting it is a different arrangement. Loud
+            // enough to be felt rising under a full band, which is the only place it plays.
+            Role::Riser => -12.0,
         }
     }
 
@@ -218,6 +236,11 @@ impl Role {
             Role::Snare => -27.4,
             Role::Hat => -43.6,
             Role::Crash => -29.6,
+            // Provisional, not yet a measurement: the role is new, so there is no preset history
+            // to read a number off. Set three decibels under the crash's measured figure — the
+            // same distance their faders keep — until a piece with a riser has been through
+            // `balance_levels` and this number can be replaced by what it reads.
+            Role::Riser => -32.6,
         }
     }
 
@@ -244,6 +267,9 @@ impl Role {
             // The lightest of the family, next to the hat: the two cymbals read as a pair, which
             // is what they are, and the weights still run heaviest to brightest down the kit.
             Role::Crash => 0xf2c9b4,
+            // Beside the crash at the bright end of the kit family: the same cymbal run
+            // backwards, a sandier shade of the pair.
+            Role::Riser => 0xeed3b0,
         })
     }
 
@@ -265,6 +291,10 @@ impl Role {
             // bass can be kept at the bottom.
             Role::Pad => (48, 72),
             Role::Bass => (28, 52),
+            // One pitch, honestly: the note is the playback rate of a recording, the writer
+            // places the recorded speed, and a range would be promising a register the part
+            // does not have.
+            Role::Riser => (60, 60),
             _ => (0, 127),
         }
     }

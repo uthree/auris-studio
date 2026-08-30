@@ -612,6 +612,9 @@ fn room_send_db(role: Role) -> Option<f32> {
         // into the bar it opened. More than the snare gets, because it is further back in the kit
         // and because the tail is the point of the sound rather than a side effect of it.
         Role::Crash => -10.0,
+        // The riser sits with the crash: it is the same cymbal run the other way, announcing the
+        // bar the crash then opens, and the pair should sound like they share a room.
+        Role::Riser => -10.0,
         Role::Bass | Role::Kick => return None,
     })
 }
