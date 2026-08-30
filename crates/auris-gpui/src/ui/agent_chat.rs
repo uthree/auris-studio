@@ -729,6 +729,12 @@ impl AurisApp {
 
     /// Throws the model list away and asks the provider again, with the form as it stands.
     pub(crate) fn agent_refresh_models(&mut self) {
+        // One question at a time: a second press while one is out would park another
+        // thread-and-subprocess pair behind the same server, and a server that is not
+        // answering would collect one per click.
+        if self.agent_chat.fetching_models {
+            return;
+        }
         self.agent_chat.models.clear();
         self.agent_chat.models_error = None;
         self.agent_chat.fetching_models = true;

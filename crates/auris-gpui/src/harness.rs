@@ -579,6 +579,28 @@ mod tests {
             );
         });
 
+        // A sheet opened over the old document does not survive the swap: its target ids were
+        // minted by a document that is gone, and the next one numbers from one as well —
+        // committed after the reload, the sheet would rename whatever holds that number now.
+        app.update(cx, |this, _| {
+            let track = match this.project().tracks.first() {
+                Some(track) => track.id,
+                None => this.session.add_default_instrument_track("Named").unwrap(),
+            };
+            this.session.save_in_place().unwrap();
+            this.prompt_to_rename_track(track);
+            this.last_disk_watch = None;
+        });
+        bump(&app, cx, 3);
+        app.update(cx, |this, cx| this.watch_disk(cx));
+        cx.run_until_parked();
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.prompt.is_none(),
+                "the rename sheet came down with the document it named"
+            );
+        });
+
         // Dirty: the choice goes on screen, and the autosave policy sees the other writer.
         app.update(cx, |this, _| {
             this.session.add_default_instrument_track("Mine").unwrap();

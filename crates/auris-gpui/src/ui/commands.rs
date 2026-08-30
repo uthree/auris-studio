@@ -178,6 +178,11 @@ impl AurisApp {
         self.select_clips(surviving, primary);
         self.selected_notes.clear();
         self.drag = None;
+        // A sheet or menu opened over the old document holds ids minted by it, and every
+        // document numbers from one: committed after the swap, a rename sheet would land on
+        // whatever the new document keeps under the same number. Down they come.
+        self.prompt = None;
+        self.menu = None;
     }
 
     /// Drops the note selection when `clip`'s notes have just been rewritten.

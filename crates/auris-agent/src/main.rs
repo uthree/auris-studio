@@ -476,6 +476,13 @@ fn build_agent(options: &Options) -> Result<Agent, String> {
     }
 }
 
+/// How long `models` waits for the provider before calling it unreachable.
+///
+/// Listing is a couple of small requests to a local or nearby server; twenty seconds is
+/// generous for a slow one and short enough that a picker's spinner resolves into an answer
+/// rather than spinning forever.
+const MODEL_LIST_PATIENCE: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// The work behind `auris-agent models`: ask the provider what it serves, answer as one
 /// JSON line — `{"models": [{"name", "context_length"}, …]}`.
 ///
@@ -710,6 +717,14 @@ fn audio_media_type(path: &std::path::Path) -> Result<rig::message::AudioMediaTy
     }
 }
 
+/// The largest audio file worth base64-ing into one request, in bytes.
+///
+/// Twenty-five megabytes — the ceiling the big providers publish for audio uploads, so the
+/// refusal here reads the same as the one the server would have sent, minus the upload. It
+/// also keeps a mistyped path to something enormous from being read whole into memory and
+/// grown a third again by the encoding before anything could object.
+const ATTACHMENT_CEILING: u64 = 25 * 1024 * 1024;
+
 /// One user turn as the wire carries it: each audio file base64-encoded and typed by its
 /// extension, then the words about them.
 ///
@@ -720,6 +735,18 @@ fn framed_message(text: &str, audio: &[String]) -> Result<Message, String> {
     for path in audio {
         let path = std::path::Path::new(path);
         let media_type = audio_media_type(path)?;
+        let size = std::fs::metadata(path)
+            .map_err(|error| format!("could not read {}: {error}", path.display()))?
+            .len();
+        if size > ATTACHMENT_CEILING {
+            return Err(format!(
+                "{} is {} MB; audio over {} MB is refused before it is read — trim or \
+                 convert it first",
+                path.display(),
+                size / (1024 * 1024),
+                ATTACHMENT_CEILING / (1024 * 1024),
+            ));
+        }
         let bytes = std::fs::read(path)
             .map_err(|error| format!("could not read {}: {error}", path.display()))?;
         use base64::Engine;
@@ -829,6 +856,12 @@ async fn conversation(agent: &Agent, max_turns: usize) -> Result<(), String> {
         match stdin.lock().read_line(&mut line) {
             Ok(0) => return Ok(()),
             Ok(_) => {}
+            // A line that is not UTF-8 is a bad line, not a broken pipe: the bytes are
+            // already consumed, and the next line may well be fine.
+            Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
+                eprintln!("that line was not UTF-8; try again");
+                continue;
+            }
             Err(error) => return Err(error.to_string()),
         }
         let line = line.trim();
@@ -867,6 +900,16 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
         match stdin.lock().read_line(&mut line) {
             Ok(0) => return Ok(()),
             Ok(_) => {}
+            // A line that is not UTF-8 is a bad line, not a dead wire: the bytes are already
+            // consumed, so this keeps the promise above — an `error` event, and the host's
+            // next message may well work. Any other read error really is the wire.
+            Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
+                emit(serde_json::json!({
+                    "event": "error",
+                    "message": "that line was not UTF-8; it was dropped",
+                }));
+                continue;
+            }
             Err(error) => return Err(error.to_string()),
         }
         let line = line.trim();
@@ -927,7 +970,21 @@ fn main() -> ExitCode {
             // panel shows the error where it would have shown the list.
             let answer = tokio::runtime::Runtime::new()
                 .map_err(|error| error.to_string())
-                .and_then(|runtime| runtime.block_on(list_models(&options)));
+                .and_then(|runtime| {
+                    // Bounded, because the caller is a panel with a spinner: a host that
+                    // black-holes the connection would otherwise hang this process — and the
+                    // thread the panel parked on it — forever.
+                    runtime.block_on(async {
+                        match tokio::time::timeout(MODEL_LIST_PATIENCE, list_models(&options)).await
+                        {
+                            Ok(answer) => answer,
+                            Err(_) => Err(format!(
+                                "the server did not answer within {} seconds",
+                                MODEL_LIST_PATIENCE.as_secs()
+                            )),
+                        }
+                    })
+                });
             match answer {
                 Ok(line) => {
                     println!("{line}");
@@ -1396,6 +1453,21 @@ mod tests {
             "and so did the words: {}",
             requests[0]
         );
+    }
+
+    /// An attachment over the ceiling is refused by its size on disk, before a byte of it is
+    /// read — the file here *is* over the ceiling but holds no data, which is the point.
+    #[test]
+    fn an_enormous_attachment_is_refused_before_it_is_read() {
+        let clip =
+            std::env::temp_dir().join(format!("auris-agent-vast-{}.wav", std::process::id()));
+        let file = std::fs::File::create(&clip).unwrap();
+        file.set_len(ATTACHMENT_CEILING + 1).unwrap();
+        drop(file);
+        let refused =
+            framed_message("How is this mix?", &[clip.display().to_string()]).unwrap_err();
+        std::fs::remove_file(&clip).unwrap();
+        assert!(refused.contains("25 MB"), "{refused}");
     }
 
     #[test]

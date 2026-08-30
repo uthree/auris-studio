@@ -317,7 +317,7 @@ impl AurisMcp {
 
     /// Adds and removes notes in one clip, in one call: `remove` takes the numbers `notes`
     /// lists, `add` takes notes as pitch (a name like "F#4" or a MIDI number), 1-based bar and
-    /// beat in the song, length in beats, and velocity 0-1 (0.8 when left out). Removals
+    /// beat in the song, length in beats, and velocity 0-1 (0.75 when left out). Removals
     /// happen first. The change is saved. On a generated clip the edit sticks until
     /// `another_take` or `write_again` rewrites the clip whole.
     #[tool]

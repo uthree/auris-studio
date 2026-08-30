@@ -1535,7 +1535,8 @@ pub mod add_part {
                 last - start_bar + 1
             }
         };
-        let length = session.project().signatures.bar_start(start_bar + bars) - start;
+        let after = bar_after(start_bar, bars)?;
+        let length = session.project().signatures.bar_start(after) - start;
         let seed = args.seed.unwrap_or(0);
 
         let clip = session
@@ -1560,7 +1561,7 @@ pub mod add_part {
              {seed}. Saved.",
             preset.name(),
             args.track,
-            start_bar + bars - 1,
+            after - 1,
         );
         if notes == 0 {
             text.push_str(
@@ -1733,12 +1734,9 @@ pub mod add_clip {
         let mut session = opened(&args.project)?;
         let track = track_by_name(session.project(), &args.track)?.id;
         let start_bar = args.start_bar.unwrap_or(1).max(1);
+        let after = bar_after(start_bar, args.bars)?;
         let start = session.project().signatures.bar_start(start_bar);
-        let length = session
-            .project()
-            .signatures
-            .bar_start(start_bar + args.bars)
-            - start;
+        let length = session.project().signatures.bar_start(after) - start;
         let name = args.name.as_deref().unwrap_or("melody");
         let clip = session
             .add_midi_clip(track, name, start, length)
@@ -1749,7 +1747,7 @@ pub mod add_clip {
             "Opened clip [{number}] '{name}' on {} — bars {start_bar}-{}, empty. Saved. \
              `edit_notes` writes into it.",
             args.track,
-            start_bar + args.bars - 1,
+            after - 1,
         ))
     }
 }
@@ -1825,7 +1823,7 @@ pub mod edit_notes {
     pub const DESCRIPTION: &str = "Adds and removes notes in one clip, in one call: `remove` \
         takes the numbers `notes` lists, `add` takes notes as pitch (a name like \"F#4\" or a \
         MIDI number), 1-based bar and beat in the song, length in beats, and velocity 0-1 \
-        (0.8 when left out). Removals happen first. The change is saved. On a generated clip \
+        (0.75 when left out). Removals happen first. The change is saved. On a generated clip \
         the edit sticks until `another_take` or `write_again` rewrites the clip whole.";
 
     /// One note to place.
@@ -1841,7 +1839,7 @@ pub mod edit_notes {
         pub beat: f64,
         /// How long the note is held, in beats.
         pub beats: f64,
-        /// Attack strength 0-1. 0.8 when left out.
+        /// Attack strength 0-1. 0.75 when left out.
         pub velocity: Option<f32>,
     }
 
@@ -1904,6 +1902,14 @@ pub mod edit_notes {
             }
             if spec.beats <= 0.0 {
                 return Err("`beats` is how long the note is held; give more than 0".into());
+            }
+            // Refused rather than clamped, like every other bounded number at this door: the
+            // session would quietly pull it into range, and a success that placed a different
+            // velocity than the one asked for is a lie of omission.
+            if let Some(velocity) = spec.velocity
+                && !(0.0..=1.0).contains(&velocity)
+            {
+                return Err(format!("velocity runs 0-1; {velocity} is outside that"));
             }
             let per_beat = session
                 .project()
@@ -2161,11 +2167,25 @@ fn pitch_named(text: &str) -> Result<u8, String> {
     let octave: i32 = text[split..]
         .parse()
         .map_err(|_| format!("'{text}' is not a pitch — a name like \"F#4\", or 0-127"))?;
+    // `midi` is plain i32 arithmetic, and an octave in the hundreds of millions would overflow
+    // it before the 0-127 check below could answer. MIDI lives in octaves -1 to 9; a couple
+    // either side still falls through to the friendlier answer that names the number.
+    if !(-4..=12).contains(&octave) {
+        return Err(format!("{text} is far outside the MIDI range 0-127"));
+    }
     let midi = class.midi(octave);
     u8::try_from(midi)
         .ok()
         .filter(|midi| *midi <= 127)
         .ok_or_else(|| format!("{text} is MIDI {midi}, outside 0-127"))
+}
+
+/// The bar one past the last of a run `bars` long starting at 1-based `start_bar` — refused,
+/// rather than overflowed, when the numbers are absurd.
+fn bar_after(start_bar: u32, bars: u32) -> Result<u32, String> {
+    start_bar.checked_add(bars).ok_or_else(|| {
+        format!("bar {start_bar} plus {bars} bars is past any timeline this can count")
+    })
 }
 
 /// Where 1-based `bar` and `beat` land on the timeline.
@@ -2811,6 +2831,27 @@ mod tests {
         assert!(pitch_named("H4").unwrap_err().contains("F#4"));
         assert!(pitch_named("300").unwrap_err().contains("0-127"));
         assert!(pitch_named("C99").unwrap_err().contains("0-127"));
+        assert!(
+            pitch_named("C200000000").unwrap_err().contains("0-127"),
+            "an absurd octave is refused, not overflowed"
+        );
+    }
+
+    #[test]
+    fn the_documented_default_velocity_is_the_real_one() {
+        // The description is the model's contract, and it names the default in prose; this
+        // pins that prose to the constant so the two cannot drift apart again.
+        let told = auris_session::DEFAULT_VELOCITY.to_string();
+        assert!(
+            edit_notes::DESCRIPTION.contains(&told),
+            "the description says a default the code does not use"
+        );
+    }
+
+    #[test]
+    fn absurd_bar_arithmetic_is_refused_rather_than_overflowed() {
+        assert_eq!(bar_after(1, 8).unwrap(), 9);
+        assert!(bar_after(u32::MAX, 1).unwrap_err().contains("timeline"));
     }
 
     /// The melody-first workflow, whole: an empty project, a track, an empty clip, a tune
@@ -2903,6 +2944,15 @@ mod tests {
         assert!(missing.contains("[1]-[4]"), "{missing}");
         let outside = place(vec![note("C4", 7, 1.0)], None).unwrap_err();
         assert!(outside.contains("bars 1-2"), "{outside}");
+        let loud = place(
+            vec![edit_notes::NoteSpec {
+                velocity: Some(5.0),
+                ..note("C4", 1, 1.0)
+            }],
+            None,
+        )
+        .unwrap_err();
+        assert!(loud.contains("0-1"), "refused, not clamped: {loud}");
 
         // The band, derived from the tune. The melody itself is untouched.
         let band = accompany::run(&accompany::Args {

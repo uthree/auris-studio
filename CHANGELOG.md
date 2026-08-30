@@ -66,6 +66,16 @@ format rather than a convention: `## <version> — <date>`.
   wire takes `{"say": …, "audio": ["mix.wav"]}` per message. OpenAI-compatible servers only —
   Ollama's API has no audio field, and the agent says so up front rather than after the
   request is built. wav, mp3, flac, ogg, aac, aiff and m4a are typed by extension.
+* A review of the two model doors and the panel, and the mends it asked for: a silent reload
+  no longer leaves a rename sheet open over a document that is gone (the sheet comes down
+  with the document that raised it); an audio attachment over 25 MB is refused by its size
+  on disk before a byte is read; the `models` listing gives up after twenty seconds instead
+  of parking a thread behind a server that never answers, and a second press of refresh no
+  longer stacks another question behind the first; a non-UTF-8 line on the `--json` wire is
+  an `error` event, as promised, rather than the end of the process; `edit_notes` refuses a
+  velocity outside 0-1 the way its siblings refuse their ranges — and its description now
+  names the real default, 0.75, with a test pinning the prose to the constant; absurd
+  octaves and bar counts are refused rather than overflowed.
 
 ### The model gets its hands on the mixer
 
