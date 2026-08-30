@@ -28,6 +28,18 @@ pub enum RenderSource {
         /// Clips in timeline order.
         clips: Vec<RenderAudioClip>,
     },
+    /// A singer track's rendered take, with its preview instrument standing by for auditions.
+    ///
+    /// The take is the performance — one clip covering the timeline from frame zero — and the
+    /// instrument is fed nothing but the audition queue, so a note clicked in the piano roll
+    /// still sounds while the voice model's audio carries the song. Scheduling the track's
+    /// notes as events too would sing every phrase twice.
+    Sung {
+        /// The preview instrument, driven only by auditioned notes.
+        instrument: Box<dyn Instrument>,
+        /// The rendered take, in timeline order.
+        clips: Vec<RenderAudioClip>,
+    },
     /// Whatever the rest of the graph has routed here.
     ///
     /// A bus plays nothing of its own; its material is the sum sitting in the graph's bus input
@@ -190,7 +202,9 @@ impl RenderTrack {
 
     /// Writes a parameter on the track's instrument.
     pub fn set_instrument_param(&mut self, param: ParamId, value: f32) {
-        if let RenderSource::Instrument { instrument, .. } = &mut self.source {
+        if let RenderSource::Instrument { instrument, .. } | RenderSource::Sung { instrument, .. } =
+            &mut self.source
+        {
             instrument.set_param(param, value);
         }
     }
@@ -201,7 +215,9 @@ impl RenderTrack {
     /// wants, where the point is that everything shuts up until the next note begins.
     pub fn silence_voices(&mut self) {
         self.audition.clear();
-        if let RenderSource::Instrument { instrument, .. } = &mut self.source {
+        if let RenderSource::Instrument { instrument, .. } | RenderSource::Sung { instrument, .. } =
+            &mut self.source
+        {
             instrument.reset();
         }
     }

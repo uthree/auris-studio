@@ -380,6 +380,20 @@ fn render_source(
                 }
             }
         }
+        RenderSource::Sung { instrument, clips } => {
+            // The instrument hears only the audition queue — the song itself is the take. It
+            // renders first, filling the scratch, and the take is mixed on top.
+            block_events.clear();
+            for event in audition.drain(..) {
+                block_events.push(event);
+            }
+            instrument.process(block_events, scratch, ctx);
+            if transport.rolling() {
+                for clip in clips.iter() {
+                    mix_clip(clip, scratch, transport.position_frames, ctx.block_frames);
+                }
+            }
+        }
         // Whatever the tracks feeding this bus have already put there. They come first in the
         // routing order, so by now the sum is complete.
         RenderSource::Bus { input } => match bus_inputs.get(*input) {
@@ -1191,6 +1205,77 @@ mod tests {
             Transport::new(),
             AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE),
         )
+    }
+
+    /// A singer track wearing a rendered take — a tenth of a second of constant 0.25 — with the
+    /// stand-in tone as its audition preview.
+    fn sung_track() -> (RenderGraph, Transport, AudioBuffer) {
+        let mut project = Project::new("Sung", SAMPLE_RATE);
+        let track = project.add_singer_track("Melody", testkit::TONE_ID);
+        let source = project.add_audio_source(
+            "Take",
+            auris_core::AssetPath::external("take.wav"),
+            4_800,
+            SAMPLE_RATE,
+            1,
+        );
+        if let Some(singer) = project
+            .track_mut(track)
+            .and_then(|track| track.kind.as_singer_mut())
+        {
+            singer.take = Some(auris_core::SingerTake {
+                source,
+                fingerprint: 1,
+                seed: 0,
+            });
+        }
+        let mut buffer = AudioBuffer::new(1, 4_800, SAMPLE_RATE);
+        buffer.channel_mut(0).fill(0.25);
+        let mut bank = AudioSourceBank::new();
+        bank.insert(source, Arc::new(buffer));
+        let graph = RenderGraph::build(&project, &bank, &testkit::registry(), 512);
+        (
+            graph,
+            Transport::new(),
+            AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE),
+        )
+    }
+
+    #[test]
+    fn a_sung_take_is_what_playback_plays() {
+        let (mut graph, mut transport, mut out) = sung_track();
+        assert!(matches!(
+            graph.tracks()[0].source,
+            RenderSource::Sung { .. }
+        ));
+
+        transport.playing = true;
+        render_block(&mut graph, &mut transport, &mut out, false);
+        assert!(
+            (out.peak() - 0.25).abs() < 1e-5,
+            "the take's own samples are the playback, peak was {}",
+            out.peak()
+        );
+
+        // Past the take's end there is nothing left to play.
+        transport.position_frames = 9_600;
+        render_block(&mut graph, &mut transport, &mut out, false);
+        assert_eq!(out.peak(), 0.0);
+    }
+
+    #[test]
+    fn a_clicked_note_still_sounds_over_a_sung_take() {
+        // The take replaced the preview instrument for *playback*; the piano roll's audition
+        // path must survive it, or editing words on a rendered track goes silent.
+        let (mut graph, mut transport, mut out) = sung_track();
+        graph.note_on(0, 60, 1.0);
+        render_block(&mut graph, &mut transport, &mut out, false);
+        assert!(
+            (out.peak() - TONE_AMPLITUDE).abs() < 1e-5,
+            "the audition tone should sound with the transport parked, peak was {}",
+            out.peak()
+        );
+        graph.note_off(0, 60);
     }
 
     #[test]

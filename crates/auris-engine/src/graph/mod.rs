@@ -296,7 +296,55 @@ impl RenderGraph {
                 }
                 _ => None,
             };
+            // A singer track that has a rendered take plays the take — the audio source its
+            // document entry names, laid from the beginning of the timeline — and keeps its
+            // preview instrument only for auditioned notes. No take, and it plays through the
+            // instrument arm below like any other note track.
+            let sung_take = match &track.kind {
+                TrackKind::Singer(inner) => inner
+                    .take
+                    .as_ref()
+                    .and_then(|take| project.audio_sources.get(&take.source)),
+                _ => None,
+            };
             let source = match &track.kind {
+                TrackKind::Singer(inner) if sung_take.is_some() => {
+                    let entry = sung_take.expect("the guard checked");
+                    let mut clips = Vec::with_capacity(1);
+                    let take_clip = auris_core::AudioClip::new(
+                        auris_core::ClipId(0),
+                        entry.name.clone(),
+                        auris_core::Ticks::ZERO,
+                        entry,
+                    );
+                    resolve_audio_clip(
+                        &take_clip,
+                        bank,
+                        &project.tempo_map,
+                        sample_rate,
+                        entry.sample_rate,
+                        &mut clips,
+                    );
+                    let built = match instruments.remove(&track.id) {
+                        Some(instrument) => Ok(instrument),
+                        None => registry.create_instrument(&inner.instrument_id),
+                    };
+                    match built {
+                        Ok(mut instrument) => {
+                            instrument.load_state(&inner.instrument_state);
+                            instrument.prepare(
+                                &prepare
+                                    .with_max_block_events(block_event_capacity(&[], max_block)),
+                            );
+                            RenderSource::Sung { instrument, clips }
+                        }
+                        Err(error) => {
+                            // The take still plays; only the audition preview is lost.
+                            log::warn!("track `{}` has no audition preview: {error}", track.name);
+                            RenderSource::Audio { clips }
+                        }
+                    }
+                }
                 TrackKind::Instrument(_) | TrackKind::Singer(_) => {
                     let (instrument_id, instrument_state, clips) =
                         instrument_parts.expect("the arm holds an instrument");
@@ -748,7 +796,7 @@ impl RenderGraph {
                 RenderSource::Instrument { events, .. } => {
                     events.last().map_or(0, |event| event.frame)
                 }
-                RenderSource::Audio { clips } => clips
+                RenderSource::Audio { clips } | RenderSource::Sung { clips, .. } => clips
                     .iter()
                     .map(|clip| clip.start_frame + clip.length)
                     .max()
