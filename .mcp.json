@@ -1,7 +1,0 @@
-{
-  "mcpServers": {
-    "auris": {
-      "command": "C:\\Users\\uthree\\Develop\\auris-studio\\target\\release\\auris-mcp.exe"
-    }
-  }
-}
