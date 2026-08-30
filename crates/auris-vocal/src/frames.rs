@@ -305,6 +305,8 @@ mod tests {
             instrument_state: PluginState::empty(),
             clips: vec![clip],
             frame_hop: default_frame_hop(),
+            voice: None,
+            take: None,
         }
     }
 

@@ -95,8 +95,9 @@ pub struct AudioTrack {
 /// gesture the piano roll knows applies to it unchanged — but each [`Note`](super::Note) on one
 /// may carry a lyric and the phonemes it is sung as. What separates the kind from
 /// [`InstrumentTrack`] is what the notes are *for*: a voice model renders frame-level phonemes,
-/// pitch and energy from them, and until one is wired in, `instrument_id` names the built-in
-/// instrument that previews the melody.
+/// pitch and energy from them, offline — and what is heard is either the [`SingerTake`] that
+/// render produced, or, while there is none, the built-in preview instrument `instrument_id`
+/// names.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SingerTrack {
     /// Registry id of the instrument previewing the melody.
@@ -113,6 +114,33 @@ pub struct SingerTrack {
     /// frames.
     #[serde(default = "default_frame_hop")]
     pub frame_hop: f64,
+    /// The voice model file this track is sung by, when one has been chosen.
+    ///
+    /// Always [`AssetPath::External`] under ordinary use, for the reason a SoundFont is: a
+    /// voice is a library shared by every project on the machine, not one song's asset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<AssetPath>,
+    /// The last rendered take, when one exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub take: Option<SingerTake>,
+}
+
+/// One rendered performance of a singer track, kept as audio.
+///
+/// The take is what playback uses whenever it exists — even after the notes move on, because a
+/// voice someone chose should not fall back to a formant preview the moment a word is edited.
+/// The `fingerprint` is how a frontend *knows* the notes moved on: it hashes everything the
+/// render read (the frames, the voice, the seed), so comparing it against a fresh hash says
+/// "behind the score" without keeping the frames themselves.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SingerTake {
+    /// The audio source holding the rendered waveform, starting at the beginning of the
+    /// timeline.
+    pub source: super::SourceId,
+    /// Hash of the frames, the voice and the seed the take was rendered from.
+    pub fingerprint: u64,
+    /// The seed the take's random choices were pinned by.
+    pub seed: u64,
 }
 
 /// The frame hop a new singer track starts with, in seconds.
@@ -404,6 +432,8 @@ impl Project {
                 instrument_state: PluginState::empty(),
                 clips: Vec::new(),
                 frame_hop: default_frame_hop(),
+                voice: None,
+                take: None,
             }),
         )
     }
@@ -528,6 +558,23 @@ mod tests {
     use super::*;
     use crate::project::Note;
     use crate::project::fixtures::{bussed_project, demo_project};
+
+    #[test]
+    fn a_singer_track_written_before_voices_existed_still_opens() {
+        // The two new fields ride on defaults, so no format bump was spent on them; this is
+        // the receipt. A document from that era names only the preview instrument.
+        let old = r#"{
+            "instrument_id": "auris.synth.vocal",
+            "clips": [],
+            "frame_hop": 0.01
+        }"#;
+        let track: SingerTrack = serde_json::from_str(old).unwrap();
+        assert!(track.voice.is_none() && track.take.is_none());
+
+        // And a track that has neither writes neither, so old files stay byte-stable.
+        let written = serde_json::to_string(&track).unwrap();
+        assert!(!written.contains("voice") && !written.contains("take"));
+    }
 
     #[test]
     fn a_hosted_instrument_keeps_the_part_and_drops_the_old_settings() {
