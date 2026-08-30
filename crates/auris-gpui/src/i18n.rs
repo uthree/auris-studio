@@ -150,6 +150,8 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::WriteLyrics => Key::EditWriteLyrics,
         Edit::SetPhonemes => Key::EditSetPhonemes,
         Edit::SetFrameHop => Key::EditSetFrameHop,
+        Edit::SetSingerVoice => Key::EditSetSingerVoice,
+        Edit::Sing => Key::EditSing,
         Edit::AddEffect => Key::EditAddEffect,
         Edit::RemoveEffect => Key::EditRemoveEffect,
         Edit::BypassEffect => Key::EditBypassEffect,
@@ -224,6 +226,10 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
             with(Key::ErrorDictionary, inner.to_string())
         }
         SessionError::Vocal(inner) => with(Key::ErrorLyric, inner.to_string()),
+        SessionError::Sing(inner) => with(Key::ErrorSing, inner.to_string()),
+        SessionError::NoVoice(_) => Key::ErrorNoVoice.get(language).to_string(),
+        SessionError::SingingNeedsFolder => Key::ErrorSingingNeedsFolder.get(language).to_string(),
+        SessionError::NothingToSing(_) => Key::ErrorNothingToSing.get(language).to_string(),
         SessionError::UnknownSend { .. } => Key::ErrorUnknownSend.get(language).to_string(),
         SessionError::NotABus(_) => Key::ErrorNotABus.get(language).to_string(),
         SessionError::RoutingLoop { .. } => Key::ErrorRoutingLoop.get(language).to_string(),

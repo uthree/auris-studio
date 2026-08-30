@@ -52,7 +52,7 @@ pub use curve::{
 pub use recipe::{ClipPreset, ClipRecipe, Subdivision};
 pub use routing::{AuxSend, EffectSlot, MixerStrip, Output};
 pub use track::{
-    AudioTrack, Color, InstrumentTrack, SingerTake, SingerTrack, Track, TrackKind,
+    AudioTrack, Color, InstrumentTrack, SingerTake, SingerTrack, SingerVoice, Track, TrackKind,
     default_frame_hop,
 };
 pub use transform::{NoteTransform, performed};

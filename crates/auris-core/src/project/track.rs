@@ -114,15 +114,27 @@ pub struct SingerTrack {
     /// frames.
     #[serde(default = "default_frame_hop")]
     pub frame_hop: f64,
-    /// The voice model file this track is sung by, when one has been chosen.
-    ///
-    /// Always [`AssetPath::External`] under ordinary use, for the reason a SoundFont is: a
-    /// voice is a library shared by every project on the machine, not one song's asset.
+    /// The voice model this track is sung by, when one has been chosen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub voice: Option<AssetPath>,
+    pub voice: Option<SingerVoice>,
     /// The last rendered take, when one exists.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub take: Option<SingerTake>,
+}
+
+/// The voice a singer track is sung by.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SingerVoice {
+    /// Where the model file is.
+    ///
+    /// Normally [`AssetPath::External`], for the reason a SoundFont's path is: a voice is a
+    /// library shared by every project on the machine, not one song's asset.
+    pub path: AssetPath,
+    /// Display name, from the model's own voice card where it carries one.
+    ///
+    /// Stored in the document the way a SoundFont's name is, so a track header can say 波音リツ
+    /// without opening two hundred megabytes first.
+    pub name: String,
 }
 
 /// One rendered performance of a singer track, kept as audio.

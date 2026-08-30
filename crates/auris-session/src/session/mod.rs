@@ -69,7 +69,7 @@ pub use levels::{
 };
 pub use monitor::MonitorStatus;
 pub use notes::{Quantize, quantized};
-pub use singer::LYRIC_CONTINUATION;
+pub use singer::{LYRIC_CONTINUATION, SingPlan, SingerTakeState, take_fingerprint};
 
 pub use record::{
     Arm, InputChannels, RecordingReport, RecordingStatus, TakeReport, input_level_of,
@@ -82,7 +82,7 @@ pub use typing::{
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use auris_core::param::ParamDescriptor;
@@ -340,6 +340,14 @@ pub struct Session {
     /// built-in table. Owned here rather than loaded per lyric because opening the folder
     /// parses a compiled dictionary — work worth doing once. See [`singer`].
     japanese: Option<auris_vocal::JapaneseDictionary>,
+    /// The voice models behind singer tracks, by the file each was read from.
+    ///
+    /// Keyed by path rather than by track or document id, like [`Self::shipped`] and for the
+    /// same reason: the same file is the same voice whichever project is open, and a model is a
+    /// couple of hundred megabytes that takes a third of a second to load — worth doing once a
+    /// session, not once a song. Behind `Arc<Mutex<_>>` because a frontend renders takes on a
+    /// worker thread while the session keeps answering commands; see [`singer`].
+    voices: HashMap<PathBuf, Arc<Mutex<auris_singer::VoiceModel>>>,
     /// The track the live input is being played through, if anybody asked for that. See
     /// [`monitor`].
     monitored: Vec<TrackId>,
@@ -500,6 +508,7 @@ impl Session {
             typing: MusicalTyping::default(),
             take: None,
             japanese: None,
+            voices: HashMap::new(),
             hosted: hosted::HostedPlugins::default(),
         };
         session.install_shipped_fonts();

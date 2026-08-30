@@ -7,9 +7,11 @@
 //! own here is the dictionary: loaded once when the settings name a folder, owned by the
 //! session, and consulted only for text the built-in kana table cannot read.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
-use auris_core::{ClipId, TrackId};
+use auris_core::{AssetPath, ClipId, SingerTake, SingerVoice, TrackId};
+use auris_singer::VoiceModel;
 use auris_vocal::{
     JapaneseDictionary, SingerFrames, lyric_phonemes, phoneme_moras, render_frames,
     split_kana_lyric,
@@ -223,6 +225,238 @@ impl Session {
         Ok(frames.len())
     }
 
+    /// Points a singer track at a voice model, or takes its voice away.
+    ///
+    /// The file is opened *before* anything is recorded, so a path that is not a voice fails at
+    /// the picker that chose it and costs no undo step. Choosing a voice also sets the track's
+    /// frame hop to the model's own — the two disagreeing is an error every render would repeat
+    /// — and writes the model's display name into the document, so a track header can say
+    /// 波音リツ without opening two hundred megabytes first. Taking the voice away leaves any
+    /// rendered take in place: the take is kept audio, not a setting.
+    pub fn set_singer_voice(
+        &mut self,
+        track: TrackId,
+        path: Option<&Path>,
+    ) -> Result<(), SessionError> {
+        self.require_singer(track)?;
+        let chosen = match path {
+            Some(file) => {
+                let model = self.voice_model_at(file)?;
+                let (name, hop) = {
+                    let model = model.lock().expect("no thread panics holding a voice");
+                    let card = model.info().display_name().to_string();
+                    let name = match card.is_empty() {
+                        true => file
+                            .file_stem()
+                            .map(|stem| stem.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "Voice".to_string()),
+                        false => card,
+                    };
+                    (name, model.info().hop_seconds())
+                };
+                let reference = match self
+                    .project_folder()
+                    .and_then(|folder| file.strip_prefix(folder).ok())
+                {
+                    Some(relative) => AssetPath::inside(relative),
+                    None => AssetPath::external(file),
+                };
+                Some((reference, name, hop))
+            }
+            None => None,
+        };
+        self.record(Edit::SetSingerVoice);
+        if let Some(singer) = self
+            .project
+            .track_mut(track)
+            .and_then(|track| track.kind.as_singer_mut())
+        {
+            match chosen {
+                Some((path, name, hop)) => {
+                    singer.voice = Some(SingerVoice { path, name });
+                    singer.frame_hop = hop;
+                }
+                None => singer.voice = None,
+            }
+        }
+        Ok(())
+    }
+
+    /// The voice a singer track is sung by, when one has been chosen.
+    pub fn singer_voice(&self, track: TrackId) -> Result<Option<&SingerVoice>, SessionError> {
+        Ok(self.require_singer(track)?.voice.as_ref())
+    }
+
+    /// Renders a singer track through its voice model and keeps the result as its take.
+    ///
+    /// The whole pipeline in one synchronous call — frames, inference, the file, the document —
+    /// which is what a CLI or a test wants; a window that must keep painting takes
+    /// [`Session::sing_plan`], renders on its own thread, and lands the result through
+    /// [`Session::land_singer_take`]. `seed` pins the render's random choices; `None` keeps the
+    /// current take's seed (or 0 for a first take), so singing again after an edit is the same
+    /// performance of the new text. Answers with the seconds of audio the take now holds.
+    pub fn sing(&mut self, track: TrackId, seed: Option<u64>) -> Result<f64, SessionError> {
+        let plan = self.sing_plan(track, seed)?;
+        let model = self.voice_model_at(&plan.voice)?;
+        let samples = {
+            let mut model = model.lock().expect("no thread panics holding a voice");
+            model.sing(&plan.frames, plan.seed)?
+        };
+        self.land_singer_take(&plan, &samples)
+    }
+
+    /// Everything a background render needs, gathered and checked before any work is spent.
+    ///
+    /// Refusals come in the order a person can act on them: no voice chosen, nothing to sing,
+    /// nowhere to keep the result — and only then is the model file itself opened. The plan owns
+    /// its frames, so the thread that renders it borrows nothing from the session.
+    pub fn sing_plan(
+        &mut self,
+        track: TrackId,
+        seed: Option<u64>,
+    ) -> Result<SingPlan, SessionError> {
+        let singer = self.require_singer(track)?;
+        let voice = singer.voice.clone().ok_or(SessionError::NoVoice(track.0))?;
+        let seed = seed
+            .or(singer.take.as_ref().map(|take| take.seed))
+            .unwrap_or(0);
+        let frames = render_frames(singer, &self.project.tempo_map);
+        if frames.is_empty() {
+            return Err(SessionError::NothingToSing(track.0));
+        }
+        let folder = self
+            .project_folder()
+            .ok_or(SessionError::SingingNeedsFolder)?;
+        let resolved = voice
+            .path
+            .resolve(Some(folder))
+            .ok_or(SessionError::NoVoice(track.0))?;
+        let fingerprint = take_fingerprint(&frames, &voice.path, seed);
+        let model = self.voice_model_at(&resolved)?;
+        let sample_rate = {
+            let model = model.lock().expect("no thread panics holding a voice");
+            model.info().sample_rate
+        };
+        Ok(SingPlan {
+            track,
+            frames,
+            voice: resolved,
+            seed,
+            fingerprint,
+            sample_rate,
+        })
+    }
+
+    /// The loaded model behind a plan's voice, for rendering on a caller's thread.
+    pub fn voice_model_at(&mut self, file: &Path) -> Result<Arc<Mutex<VoiceModel>>, SessionError> {
+        if let Some(loaded) = self.voices.get(file) {
+            return Ok(Arc::clone(loaded));
+        }
+        let model = Arc::new(Mutex::new(VoiceModel::load(file)?));
+        self.voices.insert(file.to_path_buf(), Arc::clone(&model));
+        Ok(model)
+    }
+
+    /// Writes a rendered take to disk and into the document, replacing any previous take.
+    ///
+    /// Everything that can fail — the file, the read-back through the importer — happens before
+    /// anything is recorded, so a full disk costs no undo step. The waveform lands in `Audio/`
+    /// under the track's name exactly as a recorded take would, is registered as an ordinary
+    /// audio source (so reopening the project reloads it with everything else), and the previous
+    /// take's source entry goes with the take that owned it; its file stays, as every replaced
+    /// take's file does. One edit, one undo step. Answers with the seconds the take holds.
+    pub fn land_singer_take(
+        &mut self,
+        plan: &SingPlan,
+        samples: &[f32],
+    ) -> Result<f64, SessionError> {
+        self.require_singer(plan.track)?;
+        let folder = self
+            .project_folder()
+            .ok_or(SessionError::SingingNeedsFolder)?
+            .to_path_buf();
+        let name = self
+            .project
+            .track(plan.track)
+            .map(|track| track.name.clone())
+            .unwrap_or_else(|| "Singer".to_string());
+
+        let audio_dir = folder.join(auris_io::AUDIO_DIR);
+        std::fs::create_dir_all(&audio_dir)
+            .map_err(|error| auris_io::IoError::from_fs(&audio_dir, error))?;
+        let file_name = super::record::take_file_name(&folder, &name);
+        let inside = PathBuf::from(auris_io::AUDIO_DIR).join(&file_name);
+        let path = folder.join(&inside);
+        let mut recorder = auris_io::WavRecorder::create(&path, f64::from(plan.sample_rate), 1)?;
+        recorder.write(samples)?;
+        recorder.finish()?;
+
+        // Read back through the importer rather than kept from memory, exactly as a recorded
+        // take is: the engine renders every source at the project's rate, and the model sings
+        // at its own.
+        let buffer = auris_io::import_audio_file(&path, self.project.sample_rate)?;
+        let seconds = buffer.frame_count() as f64 / buffer.sample_rate();
+
+        self.record(Edit::Sing);
+        let previous = self
+            .project
+            .track_mut(plan.track)
+            .and_then(|track| track.kind.as_singer_mut())
+            .and_then(|singer| singer.take.take());
+        if let Some(previous) = previous {
+            self.project.audio_sources.remove(&previous.source);
+        }
+        let stem = Path::new(&file_name)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_string())
+            .unwrap_or(file_name.clone());
+        let source = self.project.add_audio_source(
+            stem,
+            AssetPath::inside(&inside),
+            buffer.frame_count() as u64,
+            buffer.sample_rate(),
+            buffer.channel_count(),
+        );
+        self.record_source_size(source, &path);
+        if let Some(singer) = self
+            .project
+            .track_mut(plan.track)
+            .and_then(|track| track.kind.as_singer_mut())
+        {
+            singer.take = Some(SingerTake {
+                source,
+                fingerprint: plan.fingerprint,
+                seed: plan.seed,
+            });
+        }
+        self.install_source(source, std::sync::Arc::new(buffer));
+        self.invalidate_graph();
+        Ok(seconds)
+    }
+
+    /// Whether a singer track's take still matches its notes.
+    ///
+    /// Playback uses the take regardless — a voice someone chose should not fall back to the
+    /// formant preview the moment a word is edited — so this is how a frontend knows to say
+    /// "behind the score" and offer to sing again. Cheap enough to ask on an edit, not meant
+    /// for every paint: it renders the track's frames to compare fingerprints.
+    pub fn singer_take_state(&self, track: TrackId) -> Result<SingerTakeState, SessionError> {
+        let singer = self.require_singer(track)?;
+        let Some(take) = &singer.take else {
+            return Ok(SingerTakeState::Absent);
+        };
+        let Some(voice) = &singer.voice else {
+            // The voice was taken away after the take was rendered; whatever the notes say now,
+            // nothing could render them again unchanged.
+            return Ok(SingerTakeState::Behind);
+        };
+        let frames = render_frames(singer, &self.project.tempo_map);
+        match take_fingerprint(&frames, &voice.path, take.seed) == take.fingerprint {
+            true => Ok(SingerTakeState::Current),
+            false => Ok(SingerTakeState::Behind),
+        }
+    }
+
     /// The note, or the error naming what was missing — asked before an edit is recorded.
     fn require_note(&self, clip: ClipId, index: usize) -> Result<(), SessionError> {
         let Some((_, target)) = self.project.midi_clip(clip) else {
@@ -254,6 +488,76 @@ impl Session {
     }
 }
 
+/// Everything a render needs, checked and gathered by [`Session::sing_plan`].
+///
+/// Owns its frames so a worker thread can hold it without borrowing the session: the window
+/// keeps answering commands while the voice sings.
+#[derive(Clone, Debug)]
+pub struct SingPlan {
+    /// The track the take will land on.
+    pub track: TrackId,
+    /// The frames the model will be fed, at the track's hop.
+    pub frames: SingerFrames,
+    /// The resolved path of the model file.
+    pub voice: PathBuf,
+    /// The seed pinning the render's random choices.
+    pub seed: u64,
+    /// What [`take_fingerprint`] said of exactly these inputs, stored into the landed take.
+    pub fingerprint: u64,
+    /// The rate the model sings at — the rate the take's file is written at.
+    pub sample_rate: u32,
+}
+
+/// How a singer track's take stands against its notes.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SingerTakeState {
+    /// No take has been rendered.
+    Absent,
+    /// The take was rendered from exactly what the track says now.
+    Current,
+    /// The notes, the voice or the seed have moved on since the take was rendered.
+    Behind,
+}
+
+/// One number naming everything a render reads: the frames, the voice, the seed.
+///
+/// FNV-1a, written out the way [`auris_core::rng`] writes it and for the same reason: the value
+/// is stored in project files, so it has to mean the same thing next year, and std's hashers
+/// promise no such thing. Each variable-length part is preceded by its length so two adjacent
+/// parts cannot trade bytes and hash the same.
+pub fn take_fingerprint(frames: &SingerFrames, voice: &AssetPath, seed: u64) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = OFFSET;
+    let mut eat = |bytes: &[u8]| {
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(PRIME);
+        }
+    };
+    eat(&seed.to_le_bytes());
+    let stored = voice.as_stored().to_string_lossy();
+    eat(&(stored.len() as u64).to_le_bytes());
+    eat(stored.as_bytes());
+    eat(&frames.hop_seconds.to_le_bytes());
+    eat(&(frames.inventory.len() as u64).to_le_bytes());
+    for token in &frames.inventory {
+        eat(&(token.len() as u64).to_le_bytes());
+        eat(token.as_bytes());
+    }
+    eat(&(frames.phonemes.len() as u64).to_le_bytes());
+    for id in &frames.phonemes {
+        eat(&id.to_le_bytes());
+    }
+    for f0 in &frames.f0_hz {
+        eat(&f0.to_le_bytes());
+    }
+    for energy in &frames.energy {
+        eat(&energy.to_le_bytes());
+    }
+    hash
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,6 +581,190 @@ mod tests {
                 .unwrap();
         }
         (session, track, clip)
+    }
+
+    /// Puts a voice on the track without opening a model file — the doors can be tested
+    /// without two hundred megabytes on the machine.
+    fn put_voice(session: &mut crate::Session, track: TrackId) {
+        if let Some(singer) = session
+            .project
+            .track_mut(track)
+            .and_then(|track| track.kind.as_singer_mut())
+        {
+            singer.voice = Some(SingerVoice {
+                path: AssetPath::external("/voices/test.onnx"),
+                name: "Test Voice".into(),
+            });
+        }
+    }
+
+    #[test]
+    fn a_voice_that_cannot_be_opened_is_refused_before_anything_is_recorded() {
+        let (mut session, track, _) = sung(1);
+        let error = session
+            .set_singer_voice(track, Some(std::path::Path::new("nowhere/voice.onnx")))
+            .unwrap_err();
+        assert!(matches!(error, SessionError::Sing(_)), "{error}");
+        assert_eq!(
+            session.undo(),
+            Some(crate::history::Edit::AddNote),
+            "the refusal must cost no undo step"
+        );
+    }
+
+    #[test]
+    fn singing_refuses_in_the_order_a_person_can_act_on() {
+        let (mut session, track, clip) = sung(0);
+        assert!(matches!(
+            session.sing(track, None),
+            Err(SessionError::NoVoice(_))
+        ));
+        put_voice(&mut session, track);
+        assert!(matches!(
+            session.sing(track, None),
+            Err(SessionError::NothingToSing(_))
+        ));
+        session
+            .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        assert!(matches!(
+            session.sing(track, None),
+            Err(SessionError::SingingNeedsFolder)
+        ));
+    }
+
+    #[test]
+    fn the_fingerprint_pins_frames_voice_and_seed() {
+        let (mut session, track, clip) = sung(1);
+        let voice = AssetPath::external("/voices/test.onnx");
+        let frames = session.singer_frames(track).unwrap();
+        assert_eq!(
+            take_fingerprint(&frames, &voice, 3),
+            take_fingerprint(&frames, &voice, 3),
+            "the same inputs are the same number, today and next year"
+        );
+        assert_ne!(
+            take_fingerprint(&frames, &voice, 3),
+            take_fingerprint(&frames, &voice, 4),
+            "another seed is another take"
+        );
+        assert_ne!(
+            take_fingerprint(&frames, &voice, 3),
+            take_fingerprint(&frames, &AssetPath::external("/voices/other.onnx"), 3),
+            "another voice is another take"
+        );
+        session
+            .add_note(clip, Note::new(64, Ticks::QUARTER, Ticks::QUARTER))
+            .unwrap();
+        let edited = session.singer_frames(track).unwrap();
+        assert_ne!(
+            take_fingerprint(&frames, &voice, 3),
+            take_fingerprint(&edited, &voice, 3),
+            "an edited score is another take"
+        );
+    }
+
+    #[test]
+    fn take_state_reads_absent_current_and_behind() {
+        let (mut session, track, clip) = sung(1);
+        assert_eq!(
+            session.singer_take_state(track).unwrap(),
+            SingerTakeState::Absent
+        );
+
+        put_voice(&mut session, track);
+        let frames = session.singer_frames(track).unwrap();
+        let voice = AssetPath::external("/voices/test.onnx");
+        let fingerprint = take_fingerprint(&frames, &voice, 0);
+        if let Some(singer) = session
+            .project
+            .track_mut(track)
+            .and_then(|track| track.kind.as_singer_mut())
+        {
+            singer.take = Some(SingerTake {
+                source: auris_core::SourceId(999),
+                fingerprint,
+                seed: 0,
+            });
+        }
+        assert_eq!(
+            session.singer_take_state(track).unwrap(),
+            SingerTakeState::Current
+        );
+
+        session
+            .add_note(clip, Note::new(72, Ticks::QUARTER, Ticks::QUARTER))
+            .unwrap();
+        assert_eq!(
+            session.singer_take_state(track).unwrap(),
+            SingerTakeState::Behind,
+            "the edit moved the score past the take"
+        );
+    }
+
+    #[test]
+    fn the_real_voice_sings_a_take_into_the_project() {
+        let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") else {
+            eprintln!("AURIS_SINGER_TEST_MODEL not set; skipping the real-voice session test");
+            return;
+        };
+        let scratch = crate::session::fixtures::Scratch::new("sing-take");
+        let folder = scratch.join("Song");
+        std::fs::create_dir_all(&folder).unwrap();
+
+        let (mut session, track, clip) = sung(2);
+        session.write_lyrics(clip, &[0, 1], "らら").unwrap();
+        session.save(&folder.join("Song.auris")).unwrap();
+        session
+            .set_singer_voice(track, Some(std::path::Path::new(&model)))
+            .unwrap();
+        assert!(
+            !session
+                .singer_voice(track)
+                .unwrap()
+                .unwrap()
+                .name
+                .is_empty(),
+            "the card's name rides into the document"
+        );
+
+        let seconds = session.sing(track, None).unwrap();
+        assert!(
+            seconds > 0.5,
+            "two quarter notes are audible, got {seconds}"
+        );
+        assert_eq!(
+            session.singer_take_state(track).unwrap(),
+            SingerTakeState::Current
+        );
+        let take = session
+            .project()
+            .track(track)
+            .and_then(|track| track.kind.as_singer())
+            .and_then(|singer| singer.take.clone())
+            .expect("the take is in the document");
+        let source = &session.project().audio_sources[&take.source];
+        let file = source.path.resolve(session.project_folder()).unwrap();
+        assert!(file.is_file(), "the waveform is in Audio/");
+
+        // An edit leaves the take standing, but behind the score; singing again replaces it,
+        // and the replaced take's source entry goes with it.
+        session
+            .add_note(clip, Note::new(72, Ticks::from_beats(2.0), Ticks::QUARTER))
+            .unwrap();
+        assert_eq!(
+            session.singer_take_state(track).unwrap(),
+            SingerTakeState::Behind
+        );
+        session.sing(track, None).unwrap();
+        assert_eq!(
+            session.singer_take_state(track).unwrap(),
+            SingerTakeState::Current
+        );
+        assert!(
+            !session.project().audio_sources.contains_key(&take.source),
+            "the replaced take's source entry is gone"
+        );
     }
 
     #[test]

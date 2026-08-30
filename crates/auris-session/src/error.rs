@@ -130,6 +130,25 @@ pub enum SessionError {
     #[error(transparent)]
     Vocal(#[from] auris_vocal::VocalError),
 
+    /// A voice model could not be loaded, or refused to sing.
+    #[error(transparent)]
+    Sing(#[from] auris_singer::SingError),
+
+    /// A singer command needs a voice model and the track names none.
+    #[error("track {0} names no voice model; choose one first")]
+    NoVoice(u64),
+
+    /// Singing was asked for on a project that has no folder to keep the take in.
+    ///
+    /// The same shape as [`Self::RecordingNeedsFolder`], for the same reason: the remedy is a
+    /// save *before* the thing the user wanted, not instead of it.
+    #[error("a sung take needs a project folder to live in; save the project first")]
+    SingingNeedsFolder,
+
+    /// A singer track with no notes was asked to sing.
+    #[error("track {0} has no notes to sing")]
+    NothingToSing(u64),
+
     /// The operation only applies to one kind of track.
     #[error("track {id} is {actual}, but this needs {expected}")]
     WrongTrackKind {
@@ -239,6 +258,7 @@ impl SessionError {
         matches!(
             self,
             SessionError::Engine(auris_engine::EngineError::RenderCancelled)
+                | SessionError::Sing(auris_singer::SingError::Cancelled)
         )
     }
 }

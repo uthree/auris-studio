@@ -1218,7 +1218,7 @@ fn finish_all(streams: Vec<TakeStream>) -> Result<u64, IoError> {
 /// through the folder in a year is trying to find, and a timestamp is what a machine would have
 /// chosen. Numbered from the first one free, so deleting take 2 and recording again fills the gap
 /// rather than counting past it.
-fn take_file_name(folder: &std::path::Path, track_name: &str) -> String {
+pub(crate) fn take_file_name(folder: &std::path::Path, track_name: &str) -> String {
     let stem = sanitised(track_name);
     let audio = folder.join(auris_io::AUDIO_DIR);
     for attempt in 1..=9_999 {

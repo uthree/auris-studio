@@ -1021,6 +1021,7 @@ dependencies = [
  "auris-i18n",
  "auris-io",
  "auris-sampler",
+ "auris-singer",
  "auris-synth",
  "auris-vocal",
  "log",

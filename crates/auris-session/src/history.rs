@@ -155,6 +155,10 @@ pub enum Edit {
     SetPhonemes,
     /// A singer track's frame hop was changed.
     SetFrameHop,
+    /// A singer track was pointed at a voice model, or its voice was taken away.
+    SetSingerVoice,
+    /// A singer track's take was rendered by its voice model.
+    Sing,
     /// An effect was added to a chain.
     AddEffect,
     /// An effect was removed from a chain.

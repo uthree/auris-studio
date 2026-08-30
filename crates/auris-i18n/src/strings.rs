@@ -893,6 +893,8 @@ strings! {
     EditWriteLyrics { en: "writing lyrics", ja: "歌詞の流し込み" }
     EditSetPhonemes { en: "editing phonemes", ja: "音素の編集" }
     EditSetFrameHop { en: "changing the frame hop", ja: "フレーム間隔の変更" }
+    EditSetSingerVoice { en: "choosing a voice", ja: "声の選択" }
+    EditSing { en: "the sung take", ja: "歌唱テイク" }
     EditAddEffect { en: "adding an effect", ja: "エフェクトの追加" }
     EditRemoveEffect { en: "removing an effect", ja: "エフェクトの削除" }
     EditBypassEffect { en: "bypassing an effect", ja: "エフェクトのバイパス" }
@@ -1030,6 +1032,22 @@ strings! {
     }
     ErrorRecordingInProgress { en: "stop the recording before changing the audio device", ja: "オーディオデバイスを変更する前に録音を停止してください" }
     ErrorNotRecording { en: "no recording is running", ja: "録音していません" }
+    ErrorNoVoice {
+        en: "choose a voice model for this track first",
+        ja: "先にこのトラックの声のモデルを選んでください"
+    }
+    ErrorSingingNeedsFolder {
+        en: "a sung take needs a project folder to live in; save the project first",
+        ja: "歌唱テイクの保存先が必要です。先にプロジェクトを保存してください"
+    }
+    ErrorNothingToSing {
+        en: "there are no notes to sing",
+        ja: "歌うノートがありません"
+    }
+    ErrorSing {
+        en: "the voice model failed",
+        ja: "声のモデルでエラーが発生しました"
+    }
     ErrorFile { en: "file error", ja: "ファイルエラー" }
     ErrorEngine { en: "audio engine error", ja: "オーディオエンジンのエラー" }
     ErrorPlugin { en: "plugin error", ja: "プラグインのエラー" }
