@@ -614,12 +614,22 @@ impl AurisApp {
         if text.is_empty() || self.agent_chat.busy {
             return;
         }
+        if self.agent_chat.configuring {
+            // The settings section is open, and Enter means "go with the form as it stands":
+            // a model picked but never applied still counts. The second live run picked one,
+            // pressed Enter, and watched this branch's predecessor wipe the pick by loading
+            // the saved (empty) preferences back over the form.
+            let formed = self.agent_chat.preferences();
+            if formed.is_configured() && formed != self.settings.agent {
+                self.agent_apply_settings();
+            }
+        }
         if !self.settings.agent.is_configured() {
             // Said out loud, not merely implied by the settings opening: the first live run
             // pressed Enter here, and a message that silently goes nowhere reads as a broken
-            // send rather than as a missing model. The typed text stays put for after.
+            // send rather than as a missing model. The typed text stays put for after, and so
+            // does the form — resetting it here is what ate the picked model.
             self.agent_chat.configuring = true;
-            self.agent_chat.load_preferences(&self.settings.agent);
             if !matches!(
                 self.agent_chat.entries.last(),
                 Some(ChatEntry::Note(Key::AgentNotConfigured))

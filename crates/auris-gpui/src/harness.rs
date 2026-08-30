@@ -464,6 +464,43 @@ mod tests {
         );
     }
 
+    /// The regression from the second live run: a model picked from the dropdown but never
+    /// applied was wiped by Enter, which loaded the saved (empty) preferences back over the
+    /// form and then refused to send. Enter now applies a configured form on its way out.
+    #[gpui::test]
+    fn a_picked_model_survives_enter_and_is_applied(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        cx.dispatch_action(actions::ToggleAgent);
+        paint(&app, cx);
+        app.update(cx, |this, _| {
+            this.settings.agent = Default::default();
+            this.agent_chat.configuring = true;
+            let prefs = this.settings.agent.clone();
+            this.agent_chat.load_preferences(&prefs);
+            // What the dropdown's pick handler does, minus the mouse.
+            this.agent_chat.chosen_model = "gpt-oss:20b".to_string();
+            this.agent_chat.context_window = Some(131_072);
+            this.focus_agent_field(crate::ui::agent_chat::AgentField::Chat);
+            this.agent_chat.input.insert("make it louder");
+            this.agent_send();
+            assert_eq!(
+                this.settings.agent.model, "gpt-oss:20b",
+                "Enter applies the form it finds configured"
+            );
+            assert_eq!(
+                this.agent_chat.chosen_model, "gpt-oss:20b",
+                "the pick outlives the send"
+            );
+            assert!(
+                !matches!(
+                    this.agent_chat.entries.last(),
+                    Some(crate::ui::agent_chat::ChatEntry::Note(_))
+                ),
+                "a complete form is not refused"
+            );
+        });
+    }
+
     /// A pointer at a position, hit-testing against a real frame — the path a keystroke never
     /// takes, and the one that breaks when a control moves out from under its own click handler.
     #[gpui::test]
