@@ -22,6 +22,7 @@ BACKEND — no UI dependency of any kind
 FRONTEND
   crates/auris-gpui     the desktop application  (binary: auris-studio)
   crates/auris-cli      the command line tool    (binary: auris)
+  crates/auris-mcp      the Model Context Protocol server (binary: auris-mcp)
 ```
 
 Dependencies run strictly downhill, and the boundary is enforced by what each crate is *allowed

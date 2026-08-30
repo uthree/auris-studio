@@ -9,6 +9,19 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### A third frontend, for readers that act on the answer
+
+* **`auris-mcp`** puts the same headless session behind the
+  [Model Context Protocol](https://modelcontextprotocol.io), over stdio, so a language model's
+  harness can drive Auris as tools — `claude mcp add auris -- ./target/release/auris-mcp` is
+  the whole installation. Seven tools cover the loop of writing a song and hearing it:
+  `spec_reference` teaches the `.asong` format by example, `check_spec` validates a draft and
+  answers with every default filled in, `compose` writes and saves the piece, `render` makes
+  WAV files (the mix, or stems), `describe` reads a project back, and `list_presets` /
+  `list_progressions` are the quotable vocabulary. Errors are tool answers rather than
+  failures — a rejected spec names its lines and fields, which is exactly the loop a model
+  iterates in.
+
 ### Arrangement: the joins learn a second word
 
 * A new part role, the **riser**: General MIDI's reverse cymbal (program 119), written by the

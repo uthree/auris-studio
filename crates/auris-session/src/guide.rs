@@ -59,6 +59,7 @@ pub mod architecture {
     //! FRONTEND
     //!   auris-gpui      the desktop application  (binary: auris-studio)
     //!   auris-cli       the command line tool    (binary: auris)
+    //!   auris-mcp       the Model Context Protocol server (binary: auris-mcp)
     //! ```
     //!
     //! Three rules carry most of the weight.
@@ -102,7 +103,9 @@ pub mod architecture {
     //!
     //! The command line tool exists as much to keep the split honest as to be useful: it drives
     //! the identical session with no window and no audio device, so anything that leaks into the
-    //! UI stops compiling there.
+    //! UI stops compiling there. `auris-mcp` is the same wager made a third time — the identical
+    //! session behind the Model Context Protocol, over stdio, so a language model's harness can
+    //! compose, render and inspect projects as tools.
     //!
     //! **New work that is a *command* — anything a user could ask for — goes in `auris-session` so
     //! every frontend gets it. New work that is *presentation* stays in the frontend.**

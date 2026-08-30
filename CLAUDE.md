@@ -73,6 +73,7 @@ crates/auris-i18n        interface text in every language; no local dependencies
 crates/auris-session     headless session: the document, the engine, every command
 crates/auris-gpui        desktop frontend (binary `auris-studio`)
 crates/auris-cli         command line frontend (binary `auris`)
+crates/auris-mcp         Model Context Protocol frontend (binary `auris-mcp`)
 ```
 
 Dependency direction is strictly downhill and the frontend boundary matters:
@@ -96,11 +97,13 @@ Dependency direction is strictly downhill and the frontend boundary matters:
 * Sample data cannot travel through a `PluginState`, which is a map of `f32`. `auris-sampler`
   therefore keeps a `SoundFontBank` that the session owns and the registry's factory closure
   captures; a track names a sound by font id, bank and patch, never by position.
-* `auris-gpui` and `auris-cli` depend on `auris-session`, `auris-i18n` and their own toolkit —
-  nothing else in the workspace. `auris-i18n` is there because interface text is presentation and
-  both frontends need it; it depends on nothing itself, so it adds no reach. A frontend naming
-  `auris-engine`, `auris-core` or `auris-io` means logic that belongs in the session layer has
-  leaked upward — move it down instead of adding the dependency.
+* A frontend depends on `auris-session`, its own transport or toolkit, and — where a person
+  reads the text — `auris-i18n`; nothing else in the workspace. `auris-i18n` is presentation
+  shared by the window and the CLI; it depends on nothing itself, so it adds no reach.
+  `auris-mcp` skips it on purpose (its reader is a model, and tool descriptions have no
+  language field), and keeps `rmcp` and `tokio` to itself. A frontend naming `auris-engine`,
+  `auris-core` or `auris-io` means logic that belongs in the session layer has leaked upward —
+  move it down instead of adding the dependency.
 
 New work that is a *command* (anything a user could ask for) goes in `auris-session` so every
 frontend gets it. New work that is *presentation* stays in the frontend.

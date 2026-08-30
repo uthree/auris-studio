@@ -1,0 +1,26 @@
+# The MCP frontend: the same `Session` the desktop application and the command line drive,
+# behind the Model Context Protocol so a language model can compose, render and inspect
+# projects as tools. `rmcp` is the protocol's official Rust SDK; it brings `tokio` with it,
+# and both stay inside this crate — nothing below the frontend boundary learns about either.
+[package]
+name = "auris-mcp"
+description = "Model Context Protocol frontend for Auris Studio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "auris-mcp"
+path = "src/main.rs"
+
+[dependencies]
+auris-session.workspace = true
+env_logger.workspace = true
+log.workspace = true
+rmcp = { version = "3.1", features = ["server", "macros", "transport-io"] }
+# The same major `rmcp` resolves, so the `JsonSchema` the derive writes is the one the SDK reads.
+schemars = "1"
+serde.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
