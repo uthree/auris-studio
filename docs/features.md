@@ -1144,9 +1144,12 @@ hear it, and say what to change.
 The same conversation lives in the desktop application as the **Agent panel** — View → Agent,
 on the right beside the inspector, the way an editor's chat sidebar sits. It spawns
 `auris-agent --json` beside its own binary and talks to it over stdin/stdout, so the window
-never learns what an LLM client is; provider, model, URL and key variable are set in the
-panel's own settings section and saved to the shared settings file, where the command line
-reads them as its defaults too. The window saves the project before each message so the model
+never learns what an LLM client is; provider and model are picked from dropdowns — the panel
+asks the provider what it serves via `auris-agent models` — and the URL and key variable are
+set beside them, all saved to the shared settings file, where the command line reads them as
+its defaults too. A context gauge over the input shows the last turn's prompt tokens against
+the chosen model's window, and each tool call's row opens on a click to the full answer the
+model saw. The window saves the project before each message so the model
 reads it as it stands, and when a tool call writes the project back the window reloads it —
 automatically while nothing is unsaved, by an offered button when something is. Each tool call
 shows in the transcript as it runs, with its answer's first line when it lands.

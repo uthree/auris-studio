@@ -43,6 +43,8 @@ pub(crate) enum ChatEntry {
         ok: bool,
         /// The first line of its answer.
         line: String,
+        /// The whole answer, shown when the row is clicked open.
+        detail: String,
     },
     /// Something went wrong — the process, the provider, the wire.
     Error(String),
@@ -71,6 +73,8 @@ pub(crate) enum AgentEvent {
         ok: bool,
         /// The first line of what it said.
         line: String,
+        /// Everything it said, for the row's opened form.
+        detail: String,
     },
     /// A project file on disk is no longer what the window last read.
     Changed {
@@ -81,6 +85,10 @@ pub(crate) enum AgentEvent {
     Answer {
         /// The reply text.
         text: String,
+        /// Prompt tokens the turn's final request carried — the context gauge's needle.
+        input_tokens: u64,
+        /// Tokens the model wrote across the turn.
+        output_tokens: u64,
     },
     /// The turn failed; the process is still alive.
     Error {
@@ -109,18 +117,34 @@ pub(crate) fn parse_event(line: &str) -> Option<AgentEvent> {
             model: text("model"),
         },
         "call" => AgentEvent::Call { tool: text("tool") },
-        "result" => AgentEvent::Result {
-            tool: text("tool"),
-            ok: parsed
-                .get("ok")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(false),
-            line: text("text").lines().next().unwrap_or_default().to_string(),
-        },
+        "result" => {
+            let detail = text("text");
+            AgentEvent::Result {
+                tool: text("tool"),
+                ok: parsed
+                    .get("ok")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false),
+                line: detail.lines().next().unwrap_or_default().to_string(),
+                detail,
+            }
+        }
         "changed" => AgentEvent::Changed {
             project: PathBuf::from(text("project")),
         },
-        "answer" => AgentEvent::Answer { text: text("text") },
+        "answer" => {
+            let count = |key: &str| {
+                parsed
+                    .get(key)
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0)
+            };
+            AgentEvent::Answer {
+                text: text("text"),
+                input_tokens: count("input_tokens"),
+                output_tokens: count("output_tokens"),
+            }
+        }
         "error" => AgentEvent::Error {
             message: text("message"),
         },
@@ -155,6 +179,18 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// The context gauge's colour by pressure — picocode's thresholds: red from 85%, yellow
+/// from 60%, the accent below.
+pub(crate) fn gauge_colour(ratio: f32, theme: &Theme) -> gpui::Hsla {
+    if ratio >= 0.85 {
+        theme.danger
+    } else if ratio >= 0.6 {
+        theme.warning
+    } else {
+        theme.accent
+    }
+}
+
 /// What the window should do after one event has been absorbed.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Absorbed {
@@ -166,16 +202,51 @@ pub(crate) enum Absorbed {
 }
 
 /// Which of the panel's text fields is being typed into.
+///
+/// The model is deliberately not among them: a model is something the provider *has*, so it
+/// is picked from the list the provider answers with rather than spelt by hand.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum AgentField {
     /// The message being written.
     Chat,
-    /// The model name, in the settings section.
-    Model,
     /// The base URL, in the settings section.
     Url,
     /// The API key's environment variable, in the settings section.
     KeyEnv,
+}
+
+/// One model a provider reported serving.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ModelOption {
+    /// The name the provider answers to.
+    pub(crate) name: String,
+    /// Its context window, when the provider says.
+    pub(crate) context_length: Option<u64>,
+}
+
+/// Reads the one line `auris-agent models` prints into the picker's options.
+///
+/// A free function because it is a decision — what counts as a model, what counts as the
+/// provider having failed — and the thread that runs the subprocess should carry none.
+pub(crate) fn parse_model_list(line: &str) -> Result<Vec<ModelOption>, String> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(line).map_err(|error| format!("not JSON: {error}"))?;
+    if let Some(error) = parsed.get("error").and_then(|value| value.as_str()) {
+        return Err(error.to_string());
+    }
+    let models = parsed
+        .get("models")
+        .and_then(|value| value.as_array())
+        .ok_or("no models in the answer")?;
+    Ok(models
+        .iter()
+        .filter_map(|model| {
+            Some(ModelOption {
+                name: model.get("name")?.as_str()?.to_string(),
+                context_length: model.get("context_length").and_then(|value| value.as_u64()),
+            })
+        })
+        .collect())
 }
 
 /// The running child process and both ends of its wire.
@@ -200,14 +271,34 @@ pub(crate) struct AgentChat {
     pub(crate) entries: Vec<ChatEntry>,
     /// The message being written.
     pub(crate) input: TextField,
-    /// The model name being edited, while the settings section is open.
-    pub(crate) model_field: TextField,
+    /// The model picked from the provider's list, while the settings section is open.
+    pub(crate) chosen_model: String,
     /// The base URL being edited.
     pub(crate) url_field: TextField,
     /// The API key variable being edited.
     pub(crate) key_env_field: TextField,
     /// Whether the provider under edit is the OpenAI-compatible one.
     pub(crate) provider_openai: bool,
+    /// What the provider last answered the model question with.
+    pub(crate) models: Vec<ModelOption>,
+    /// Whether that question is in flight.
+    pub(crate) fetching_models: bool,
+    /// What went wrong the last time it was asked, shown where the list would be.
+    pub(crate) models_error: Option<String>,
+    /// Whether the provider picker is dropped open.
+    pub(crate) provider_menu: bool,
+    /// Whether the model picker is dropped open.
+    pub(crate) model_menu: bool,
+    /// Prompt tokens the last turn carried — the context gauge's needle.
+    pub(crate) tokens_in: u64,
+    /// Tokens the model has written across the conversation.
+    pub(crate) tokens_out: u64,
+    /// The chosen model's context window, when its listing said.
+    pub(crate) context_window: Option<u64>,
+    /// The transcript rows clicked open to their full text.
+    pub(crate) expanded: std::collections::BTreeSet<usize>,
+    /// The wire a model listing comes back on.
+    models_rx: Option<Receiver<Result<Vec<ModelOption>, String>>>,
     /// Which field holds the keyboard, if any.
     pub(crate) focused: Option<AgentField>,
     /// Whether the settings section is showing.
@@ -228,10 +319,20 @@ impl Default for AgentChat {
         Self {
             entries: Vec::new(),
             input: TextField::new(String::new()),
-            model_field: TextField::new(String::new()),
+            chosen_model: String::new(),
             url_field: TextField::new(String::new()),
             key_env_field: TextField::new(String::new()),
             provider_openai: false,
+            models: Vec::new(),
+            fetching_models: false,
+            models_error: None,
+            provider_menu: false,
+            model_menu: false,
+            tokens_in: 0,
+            tokens_out: 0,
+            context_window: None,
+            expanded: std::collections::BTreeSet::new(),
+            models_rx: None,
             focused: None,
             configuring: false,
             busy: false,
@@ -253,7 +354,6 @@ impl AgentChat {
     pub(crate) fn field_mut(&mut self) -> Option<&mut TextField> {
         Some(match self.focused? {
             AgentField::Chat => &mut self.input,
-            AgentField::Model => &mut self.model_field,
             AgentField::Url => &mut self.url_field,
             AgentField::KeyEnv => &mut self.key_env_field,
         })
@@ -263,7 +363,6 @@ impl AgentChat {
     pub(crate) fn field(&self) -> Option<&TextField> {
         Some(match self.focused? {
             AgentField::Chat => &self.input,
-            AgentField::Model => &self.model_field,
             AgentField::Url => &self.url_field,
             AgentField::KeyEnv => &self.key_env_field,
         })
@@ -272,7 +371,7 @@ impl AgentChat {
     /// Copies the saved preferences into the settings section's fields.
     pub(crate) fn load_preferences(&mut self, prefs: &AgentPreferences) {
         self.provider_openai = prefs.provider.trim() == "openai";
-        self.model_field = TextField::new(prefs.model.clone());
+        self.chosen_model = prefs.model.trim().to_string();
         self.url_field = TextField::new(prefs.url.clone());
         self.key_env_field = TextField::new(prefs.api_key_env.clone());
     }
@@ -284,10 +383,16 @@ impl AgentChat {
                 true => "openai".to_string(),
                 false => "ollama".to_string(),
             },
-            model: self.model_field.content().trim().to_string(),
+            model: self.chosen_model.trim().to_string(),
             url: self.url_field.content().trim().to_string(),
             api_key_env: self.key_env_field.content().trim().to_string(),
         }
+    }
+
+    /// The share of the chosen model's context window the last turn filled, when known.
+    pub(crate) fn context_ratio(&self) -> Option<f32> {
+        let window = self.context_window?;
+        (window > 0).then(|| (self.tokens_in as f32 / window as f32).min(1.0))
     }
 
     /// Takes one event into the transcript, and says what the window should do about it.
@@ -309,9 +414,15 @@ impl AgentChat {
                     name: tool,
                     ok: true,
                     line: String::new(),
+                    detail: String::new(),
                 });
             }
-            AgentEvent::Result { tool, ok, line } => {
+            AgentEvent::Result {
+                tool,
+                ok,
+                line,
+                detail,
+            } => {
                 // The call pushed a running row; this fills it in. A result with no matching
                 // call — a build mismatch, a dropped line — becomes its own row rather than
                 // being lost.
@@ -323,6 +434,7 @@ impl AgentChat {
                     Some(ChatEntry::Tool {
                         ok: row_ok,
                         line: row_line,
+                        detail: row_detail,
                         ..
                     }) => {
                         *row_ok = ok;
@@ -331,11 +443,13 @@ impl AgentChat {
                         } else {
                             line
                         };
+                        *row_detail = detail;
                     }
                     _ => self.entries.push(ChatEntry::Tool {
                         name: tool,
                         ok,
                         line,
+                        detail,
                     }),
                 }
             }
@@ -352,8 +466,18 @@ impl AgentChat {
                     }
                 }
             }
-            AgentEvent::Answer { text } => {
+            AgentEvent::Answer {
+                text,
+                input_tokens,
+                output_tokens,
+            } => {
                 self.busy = false;
+                // The input count is a level, the output a tally: the next turn's prompt
+                // carries everything again, so the last report is the gauge's whole truth.
+                if input_tokens > 0 {
+                    self.tokens_in = input_tokens;
+                }
+                self.tokens_out += output_tokens;
                 self.entries.push(ChatEntry::Agent(text));
             }
             AgentEvent::Error { message } => {
@@ -437,6 +561,49 @@ fn spawn_link(folder: Option<&Path>) -> Result<AgentLink, String> {
     })
 }
 
+/// Asks `auris-agent models` what `prefs`' provider serves, off the window's thread.
+///
+/// One shot per question: the subprocess prints one JSON line and exits, the thread parses it
+/// and puts the verdict on the channel, and the repaint tick picks it up — the same wire shape
+/// as the conversation itself.
+fn spawn_model_listing(prefs: &AgentPreferences) -> Receiver<Result<Vec<ModelOption>, String>> {
+    let mut command = Command::new(agent_binary());
+    command
+        .arg("models")
+        .arg("--provider")
+        .arg(match prefs.provider.trim() {
+            "openai" => "openai",
+            _ => "ollama",
+        })
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    if !prefs.url.trim().is_empty() {
+        command.arg("--url").arg(prefs.url.trim());
+    }
+    if !prefs.api_key_env.trim().is_empty() {
+        command.arg("--api-key-env").arg(prefs.api_key_env.trim());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let answer = command
+            .output()
+            .map_err(|error| format!("could not run auris-agent: {error}"))
+            .and_then(|output| {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                parse_model_list(stdout.lines().next().unwrap_or_default())
+            });
+        let _ = sender.send(answer);
+    });
+    receiver
+}
+
 impl AurisApp {
     /// Sends what is in the input field, starting the agent if it is not running.
     ///
@@ -448,8 +615,19 @@ impl AurisApp {
             return;
         }
         if !self.settings.agent.is_configured() {
+            // Said out loud, not merely implied by the settings opening: the first live run
+            // pressed Enter here, and a message that silently goes nowhere reads as a broken
+            // send rather than as a missing model. The typed text stays put for after.
             self.agent_chat.configuring = true;
             self.agent_chat.load_preferences(&self.settings.agent);
+            if !matches!(
+                self.agent_chat.entries.last(),
+                Some(ChatEntry::Note(Key::AgentNotConfigured))
+            ) {
+                self.agent_chat
+                    .entries
+                    .push(ChatEntry::Note(Key::AgentNotConfigured));
+            }
             return;
         }
         if self.session.is_dirty()
@@ -498,6 +676,29 @@ impl AurisApp {
     /// Called from the repaint tick, beside `Session::poll` — the same shape as everything
     /// else another thread writes and this one reads.
     pub(crate) fn drain_agent(&mut self, cx: &mut gpui::Context<Self>) {
+        // The model listing first: one answer, then the channel is spent.
+        if let Some(receiver) = self.agent_chat.models_rx.as_ref()
+            && let Ok(answer) = receiver.try_recv()
+        {
+            self.agent_chat.models_rx = None;
+            self.agent_chat.fetching_models = false;
+            match answer {
+                Ok(models) => {
+                    // The chosen model's window rides in on its listing — the gauge has no
+                    // other way to learn it.
+                    if let Some(chosen) = models
+                        .iter()
+                        .find(|option| option.name == self.agent_chat.chosen_model)
+                    {
+                        self.agent_chat.context_window = chosen.context_length;
+                    }
+                    self.agent_chat.models = models;
+                    self.agent_chat.models_error = None;
+                }
+                Err(error) => self.agent_chat.models_error = Some(error),
+            }
+            cx.notify();
+        }
         loop {
             let Some(link) = self.agent_chat.link.as_ref() else {
                 return;
@@ -514,6 +715,15 @@ impl AurisApp {
                 }
             }
         }
+    }
+
+    /// Throws the model list away and asks the provider again, with the form as it stands.
+    pub(crate) fn agent_refresh_models(&mut self) {
+        self.agent_chat.models.clear();
+        self.agent_chat.models_error = None;
+        self.agent_chat.fetching_models = true;
+        self.agent_chat.model_menu = false;
+        self.agent_chat.models_rx = Some(spawn_model_listing(&self.agent_chat.preferences()));
     }
 
     /// Reloads the project the agent rewrote, once the person says so.
@@ -564,8 +774,11 @@ impl AurisApp {
                     self.agent_send();
                     return true;
                 }
+                // A finished URL or key name changes what the provider would answer, so the
+                // model list is asked again rather than left describing the old endpoint.
                 ("enter", _) => {
-                    self.agent_apply_settings();
+                    self.agent_chat.focused = None;
+                    self.agent_refresh_models();
                     return true;
                 }
                 _ => {}
@@ -595,19 +808,30 @@ impl AurisApp {
         let theme = self.theme.clone();
         let configured = self.settings.agent.is_configured();
         let configuring = self.agent_chat.configuring || !configured;
-        if configuring && self.agent_chat.model_field.content().is_empty() && !configured {
+        if configuring && !configured && self.agent_chat.chosen_model.is_empty() {
             // First opening on an unconfigured machine: start the form from what is saved.
             self.agent_chat
                 .load_preferences(&self.settings.agent.clone());
         }
+        // The first time the settings section is on screen, ask the provider what it serves —
+        // once, and only until an answer or a refusal lands; the refresh button asks again.
+        if configuring
+            && self.agent_chat.models.is_empty()
+            && self.agent_chat.models_error.is_none()
+            && !self.agent_chat.fetching_models
+            && self.agent_chat.models_rx.is_none()
+        {
+            self.agent_refresh_models();
+        }
 
-        let rows: Vec<AnyElement> = self
+        let entries: Vec<AnyElement> = self
             .agent_chat
             .entries
             .iter()
             .enumerate()
-            .map(|(index, entry)| self.chat_row(index, entry, &theme))
+            .map(|(index, entry)| self.chat_row(index, entry, &theme, cx))
             .collect();
+        let rows = entries;
         let busy = self.agent_chat.busy;
         let pending_reload = self.agent_chat.pending_reload.is_some();
         let model_label = match self.agent_chat.model_label.is_empty() {
@@ -713,15 +937,71 @@ impl AurisApp {
                     cx,
                 ),
             )
+            .child(self.agent_gauge_row(&theme))
             .child(self.agent_input_row(cx))
     }
 
-    /// One transcript row.
-    fn chat_row(&self, index: usize, entry: &ChatEntry, theme: &Theme) -> AnyElement {
+    /// The context gauge and token counters, over the input the way picocode sets its status
+    /// bar: `↑ prompt ↓ written`, a bar filling the chosen model's window, and the percentage.
+    ///
+    /// Nothing is drawn before the first turn — a gauge reading zero over an empty transcript
+    /// is furniture — and the bar itself only appears when the model's listing said how big
+    /// the window is, because a bar with an invented ceiling would be a number wearing a lie.
+    fn agent_gauge_row(&self, theme: &Theme) -> AnyElement {
+        if self.agent_chat.tokens_in == 0 && self.agent_chat.tokens_out == 0 {
+            return div().into_any_element();
+        }
+        let ratio = self.agent_chat.context_ratio();
+        let mut row = div()
+            .flex()
+            .items_center()
+            .justify_end()
+            .gap_2()
+            .px_2()
+            .py_0p5()
+            .border_t_1()
+            .border_color(theme.border_subtle)
+            .text_xs()
+            .text_color(theme.text_faint)
+            .child(format!(
+                "↑ {} ↓ {}",
+                self.agent_chat.tokens_in, self.agent_chat.tokens_out
+            ));
+        if let Some(ratio) = ratio {
+            const GAUGE_WIDTH: f32 = 96.0;
+            row = row
+                .child(
+                    div()
+                        .w(px(GAUGE_WIDTH))
+                        .h(px(5.0))
+                        .rounded_full()
+                        .bg(theme.surface_raised)
+                        .child(
+                            div()
+                                .w(px(GAUGE_WIDTH * ratio))
+                                .h_full()
+                                .rounded_full()
+                                .bg(gauge_colour(ratio, theme)),
+                        ),
+                )
+                .child(format!("{:>3.0}%", ratio * 100.0));
+        }
+        row.into_any_element()
+    }
+
+    /// One transcript row. A tool row with an answer opens to the whole of it on a click —
+    /// the loop's log, kept where the loop is shown.
+    fn chat_row(
+        &self,
+        index: usize,
+        entry: &ChatEntry,
+        theme: &Theme,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
         let (colour, text): (gpui::Hsla, String) = match entry {
             ChatEntry::You(text) => (theme.accent, text.clone()),
             ChatEntry::Agent(text) => (theme.text, text.clone()),
-            ChatEntry::Tool { name, ok, line } => {
+            ChatEntry::Tool { name, ok, line, .. } => {
                 let mark = match (*ok, line.is_empty()) {
                     (_, true) => "…",
                     (true, false) => "✓",
@@ -733,6 +1013,12 @@ impl AurisApp {
             ChatEntry::Note(key) => (theme.warning, self.t(*key).to_string()),
         };
         let bordered = matches!(entry, ChatEntry::You(_));
+        let opened = self.agent_chat.expanded.contains(&index);
+        let openable = matches!(entry, ChatEntry::Tool { detail, .. } if !detail.is_empty());
+        let detail = match entry {
+            ChatEntry::Tool { detail, .. } if opened => Some(detail.clone()),
+            _ => None,
+        };
         div()
             .id(("agent-line", index))
             .px_1p5()
@@ -742,7 +1028,38 @@ impl AurisApp {
             .when(bordered, |this| {
                 this.border_l_2().border_color(theme.accent).ml_1()
             })
+            .when(openable, |this| {
+                this.cursor_pointer().on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                        if !this.agent_chat.expanded.remove(&index) {
+                            this.agent_chat.expanded.insert(index);
+                        }
+                        cx.notify();
+                    }),
+                )
+            })
             .child(text)
+            .when_some(detail, |this, detail| {
+                // Line by line rather than one string: a div's text collapses the newlines a
+                // tool's tables are drawn with.
+                this.child(
+                    div()
+                        .mt_0p5()
+                        .p_1()
+                        .rounded(Metrics::RADIUS_SM)
+                        .bg(theme.surface_raised)
+                        .text_color(theme.text_muted)
+                        .flex()
+                        .flex_col()
+                        .children(
+                            detail
+                                .lines()
+                                .map(|line| div().child(line.to_string()))
+                                .collect::<Vec<_>>(),
+                        ),
+                )
+            })
             .into_any_element()
     }
 
@@ -775,41 +1092,107 @@ impl AurisApp {
             .border_color(theme.border)
             .child(labelled(
                 self.t(Key::AgentProviderLabel).to_string(),
+                self.dropdown(
+                    "agent-provider",
+                    match openai {
+                        true => "openai".to_string(),
+                        false => "ollama".to_string(),
+                    },
+                    self.agent_chat.provider_menu,
+                    &theme,
+                    |this, _| {
+                        this.agent_chat.provider_menu = !this.agent_chat.provider_menu;
+                        this.agent_chat.model_menu = false;
+                    },
+                    cx,
+                ),
+                &theme,
+            ))
+            .when(self.agent_chat.provider_menu, |this| {
+                this.child(self.option_rows(
+                    "agent-provider-option",
+                    &["ollama".to_string(), "openai".to_string()],
+                    &theme,
+                    |this, chosen, _| {
+                        this.agent_chat.provider_openai = chosen == 1;
+                        this.agent_chat.provider_menu = false;
+                        // A different provider serves a different list, so it is asked afresh.
+                        this.agent_refresh_models();
+                    },
+                    cx,
+                ))
+            })
+            .child(labelled(
+                self.t(Key::AgentModelLabel).to_string(),
                 div()
                     .flex()
+                    .items_center()
                     .gap_1()
+                    .child(div().flex_1().min_w_0().child(self.dropdown(
+                        "agent-model",
+                        match self.agent_chat.chosen_model.is_empty() {
+                            true => self.t(Key::AgentChooseModel).to_string(),
+                            false => self.agent_chat.chosen_model.clone(),
+                        },
+                        self.agent_chat.model_menu,
+                        &theme,
+                        |this, _| {
+                            this.agent_chat.model_menu = !this.agent_chat.model_menu;
+                            this.agent_chat.provider_menu = false;
+                        },
+                        cx,
+                    )))
                     .child(button(
-                        "agent-provider-ollama",
-                        "ollama".to_string(),
+                        "agent-models-refresh",
+                        self.t(Key::AgentModelsFetch),
                         ButtonStyle::Normal,
-                        !openai,
+                        false,
                         theme.accent,
                         &theme,
                         cx.listener(|this, _, _, cx| {
-                            this.agent_chat.provider_openai = false;
-                            cx.notify();
-                        }),
-                    ))
-                    .child(button(
-                        "agent-provider-openai",
-                        "openai".to_string(),
-                        ButtonStyle::Normal,
-                        openai,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.agent_chat.provider_openai = true;
+                            this.agent_refresh_models();
                             cx.notify();
                         }),
                     ))
                     .into_any_element(),
                 &theme,
             ))
-            .child(labelled(
-                self.t(Key::AgentModelLabel).to_string(),
-                self.agent_text_field("agent-model", AgentField::Model, cx),
-                &theme,
-            ))
+            .when(self.agent_chat.fetching_models, |this| {
+                this.child(
+                    div()
+                        .px_1()
+                        .text_xs()
+                        .text_color(theme.text_faint)
+                        .child(self.t(Key::AgentModelsFetching)),
+                )
+            })
+            .when_some(self.agent_chat.models_error.clone(), |this, error| {
+                this.child(div().px_1().text_xs().text_color(theme.danger).child(error))
+            })
+            .when(self.agent_chat.model_menu, |this| {
+                let names: Vec<String> = self
+                    .agent_chat
+                    .models
+                    .iter()
+                    .map(|option| match option.context_length {
+                        Some(window) => format!("{}  ({}k)", option.name, window / 1024),
+                        None => option.name.clone(),
+                    })
+                    .collect();
+                this.child(self.option_rows(
+                    "agent-model-option",
+                    &names,
+                    &theme,
+                    |this, chosen, _| {
+                        if let Some(option) = this.agent_chat.models.get(chosen) {
+                            this.agent_chat.chosen_model = option.name.clone();
+                            this.agent_chat.context_window = option.context_length;
+                        }
+                        this.agent_chat.model_menu = false;
+                    },
+                    cx,
+                ))
+            })
             .child(labelled(
                 self.t(Key::AgentUrlLabel).to_string(),
                 self.agent_text_field("agent-url", AgentField::Url, cx),
@@ -833,6 +1216,103 @@ impl AurisApp {
                 }),
             )))
             .into_any_element()
+    }
+
+    /// A closed dropdown: the current choice and an arrow, opening on a click.
+    ///
+    /// Not a popup window — the options render as rows underneath, pushing the section down,
+    /// which is all a two-item provider list and a one-server model list need.
+    fn dropdown(
+        &self,
+        id: &'static str,
+        current: String,
+        open: bool,
+        theme: &Theme,
+        toggle: impl Fn(&mut Self, &mut gpui::Context<Self>) + 'static,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        div()
+            .id(id)
+            .debug_selector(move || id.to_string())
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_1()
+            .h(Metrics::CONTROL_HEIGHT)
+            .px_1p5()
+            .rounded(Metrics::RADIUS_SM)
+            .bg(theme.surface_raised)
+            .border_1()
+            .border_color(match open {
+                true => theme.accent,
+                false => theme.border_subtle,
+            })
+            .cursor_pointer()
+            .text_xs()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_color(theme.text)
+                    .child(current),
+            )
+            .child(
+                div()
+                    .text_color(theme.text_muted)
+                    .child(if open { "▴" } else { "▾" }),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                    toggle(this, cx);
+                    cx.notify();
+                }),
+            )
+            .into_any_element()
+    }
+
+    /// The rows an open dropdown shows, each picking by its position in the list.
+    fn option_rows(
+        &self,
+        id: &'static str,
+        names: &[String],
+        theme: &Theme,
+        pick: impl Fn(&mut Self, usize, &mut gpui::Context<Self>) + Clone + 'static,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let mut list = div()
+            .id((id, usize::MAX))
+            .flex()
+            .flex_col()
+            .max_h(px(160.0))
+            .overflow_y_scroll()
+            .ml(px(96.0 + 8.0))
+            .rounded(Metrics::RADIUS_SM)
+            .border_1()
+            .border_color(theme.border_subtle)
+            .bg(theme.surface_raised);
+        for (index, name) in names.iter().enumerate() {
+            let pick = pick.clone();
+            list = list.child(
+                div()
+                    .id((id, index))
+                    .px_1p5()
+                    .py_0p5()
+                    .text_xs()
+                    .text_color(theme.text)
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                            pick(this, index, cx);
+                            cx.notify();
+                        }),
+                    )
+                    .child(name.clone()),
+            );
+        }
+        list.into_any_element()
     }
 
     /// The message field and its border, at the bottom of the panel.
@@ -883,7 +1363,6 @@ impl AurisApp {
     ) -> AnyElement {
         let value = match field {
             AgentField::Chat => &self.agent_chat.input,
-            AgentField::Model => &self.agent_chat.model_field,
             AgentField::Url => &self.agent_chat.url_field,
             AgentField::KeyEnv => &self.agent_chat.key_env_field,
         };
@@ -967,7 +1446,17 @@ mod tests {
             Some(AgentEvent::Result {
                 tool: "analyze".to_string(),
                 ok: true,
-                line: "The mix — x".to_string()
+                line: "The mix — x".to_string(),
+                detail: "The mix — x\nmore".to_string()
+            })
+        );
+        // Token counts ride on the answer; an older agent's answer without them still reads.
+        assert_eq!(
+            parse_event(r#"{"event":"answer","text":"done","input_tokens":12,"output_tokens":3}"#),
+            Some(AgentEvent::Answer {
+                text: "done".to_string(),
+                input_tokens: 12,
+                output_tokens: 3
             })
         );
         // A line this build does not know, and a line that is not JSON: skipped, not fatal.
@@ -994,6 +1483,7 @@ mod tests {
                 tool: "compose".to_string(),
                 ok: true,
                 line: "Wrote X".to_string(),
+                detail: "Wrote X\nand the summary".to_string(),
             },
             None,
             false,
@@ -1001,7 +1491,8 @@ mod tests {
         assert_eq!(chat.entries.len(), 1, "the result fills the call's row");
         assert!(matches!(
             chat.entries.last(),
-            Some(ChatEntry::Tool { ok: true, line, .. }) if line == "Wrote X"
+            Some(ChatEntry::Tool { ok: true, line, detail, .. })
+                if line == "Wrote X" && detail.contains("summary")
         ));
     }
 
@@ -1038,6 +1529,37 @@ mod tests {
     }
 
     #[test]
+    fn a_model_listing_is_read_and_a_refusal_is_carried_whole() {
+        let listed = parse_model_list(
+            r#"{"models":[{"name":"gpt-oss:20b","context_length":131072},{"name":"gemma4:e2b"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].name, "gpt-oss:20b");
+        assert_eq!(listed[0].context_length, Some(131072));
+        assert_eq!(listed[1].context_length, None);
+        let refused = parse_model_list(r#"{"error":"nobody answered at :11434"}"#).unwrap_err();
+        assert!(refused.contains("11434"), "{refused}");
+        assert!(parse_model_list("garbage").is_err());
+    }
+
+    #[test]
+    fn the_gauge_reads_pressure_the_way_picocode_does() {
+        let mut chat = AgentChat {
+            tokens_in: 32_768,
+            ..Default::default()
+        };
+        assert_eq!(chat.context_ratio(), None, "no window, no bar");
+        chat.context_window = Some(131_072);
+        assert_eq!(chat.context_ratio(), Some(0.25));
+
+        let theme = Theme::default();
+        assert_eq!(gauge_colour(0.25, &theme), theme.accent);
+        assert_eq!(gauge_colour(0.6, &theme), theme.warning);
+        assert_eq!(gauge_colour(0.9, &theme), theme.danger);
+    }
+
+    #[test]
     fn the_frame_names_the_open_project_and_only_that() {
         let framed = framed_say("make it louder", Some(Path::new("C:/Songs/X/X.auris")));
         assert!(framed.starts_with('['), "{framed}");
@@ -1055,11 +1577,18 @@ mod tests {
         chat.absorb(
             AgentEvent::Answer {
                 text: "done".to_string(),
+                input_tokens: 1200,
+                output_tokens: 40,
             },
             None,
             false,
         );
         assert!(!chat.busy);
+        assert_eq!(
+            (chat.tokens_in, chat.tokens_out),
+            (1200, 40),
+            "the gauge reads the turn's usage"
+        );
         chat.busy = true;
         chat.absorb(
             AgentEvent::Error {

@@ -73,6 +73,8 @@ struct Options {
 enum Command {
     /// Run with these options.
     Run(Options),
+    /// Ask the provider what models it serves, and print them as one JSON line.
+    Models(Options),
     /// Print usage and leave.
     Help,
 }
@@ -80,6 +82,7 @@ enum Command {
 const USAGE: &str = "auris-agent — drive Auris Studio with a language model
 
 usage: auris-agent [options] [prompt]
+       auris-agent models [options]     list the provider's models as JSON
 
 With a prompt, asks once, prints the model's answer on stdout and leaves.
 Without one, opens a conversation; an empty line or end-of-file closes it.
@@ -214,6 +217,30 @@ fn parse_args(
         prompt,
         json,
     }))
+}
+
+/// [`parse_args`], with the `models` subcommand carved off first.
+///
+/// Listing needs no model — it is how a caller finds one — so the word is taken before the
+/// parse that would otherwise insist on `--model`. The stand-in name is never sent anywhere:
+/// listing builds a client, and a client does not name a model until it is asked to complete.
+fn parse_command(
+    args: &[String],
+    env: &dyn Fn(&str) -> Option<String>,
+    prefs: &auris_session::AgentPreferences,
+) -> Result<Command, String> {
+    match args.first().map(String::as_str) {
+        Some("models") => {
+            let mut rest: Vec<String> = args[1..].to_vec();
+            rest.push("--model".to_string());
+            rest.push("(listing)".to_string());
+            match parse_args(&rest, env, prefs)? {
+                Command::Run(options) => Ok(Command::Models(options)),
+                other => Ok(other),
+            }
+        }
+        _ => parse_args(args, env, prefs),
+    }
 }
 
 /// What the model is told once, before the conversation: the shared workflow, plus what only
@@ -409,6 +436,101 @@ fn build_agent(options: &Options) -> Result<Agent, String> {
     }
 }
 
+/// The work behind `auris-agent models`: ask the provider what it serves, answer as one
+/// JSON line — `{"models": [{"name", "context_length"}, …]}`.
+///
+/// A machine-readable list because its one caller so far is the desktop's agent panel, which
+/// fills its model picker from it; the context length rides along because the panel's context
+/// gauge has no other way to know how big the window it is filling is.
+async fn list_models(options: &Options) -> Result<String, String> {
+    let key = options.key.clone().unwrap_or_default();
+    let models: Vec<serde_json::Value> = match options.provider {
+        // Ollama is asked in its own words rather than through the SDK's lister, which keeps
+        // the names and drops the context lengths — and a gauge with no ceiling is no gauge.
+        Provider::Ollama => {
+            let base = options
+                .url
+                .clone()
+                .unwrap_or_else(|| "http://localhost:11434".to_string());
+            let base = base.trim_end_matches('/');
+            let http = reqwest::Client::new();
+            let ask = |request: reqwest::RequestBuilder| {
+                let key = key.clone();
+                async move {
+                    let request = match key.is_empty() {
+                        true => request,
+                        false => request.bearer_auth(key),
+                    };
+                    request
+                        .send()
+                        .await
+                        .map_err(|error| error.to_string())?
+                        .json::<serde_json::Value>()
+                        .await
+                        .map_err(|error| error.to_string())
+                }
+            };
+            let tags = ask(http.get(format!("{base}/api/tags"))).await?;
+            let listed = tags
+                .get("models")
+                .and_then(|models| models.as_array())
+                .ok_or("no models in Ollama's answer")?;
+            let mut models = Vec::new();
+            for entry in listed {
+                let Some(name) = entry.get("name").and_then(|name| name.as_str()) else {
+                    continue;
+                };
+                // Newer servers put the window in the tags themselves; for the rest it is in
+                // `/api/show`, under the architecture's own key — found by suffix, because the
+                // prefix is the architecture's name.
+                let mut window = entry
+                    .get("details")
+                    .and_then(|details| details.get("context_length"))
+                    .and_then(|window| window.as_u64());
+                if window.is_none()
+                    && let Ok(shown) = ask(http
+                        .post(format!("{base}/api/show"))
+                        .json(&serde_json::json!({ "model": name })))
+                    .await
+                {
+                    window = shown
+                        .get("model_info")
+                        .and_then(|info| info.as_object())
+                        .and_then(|info| {
+                            info.iter()
+                                .find(|(key, _)| key.ends_with(".context_length"))
+                                .and_then(|(_, value)| value.as_u64())
+                        });
+                }
+                models.push(serde_json::json!({ "name": name, "context_length": window }));
+            }
+            models
+        }
+        Provider::OpenAi => {
+            let mut builder = openai::CompletionsClient::builder().api_key(key);
+            if let Some(url) = &options.url {
+                builder = builder.base_url(url);
+            }
+            let list = builder
+                .build()
+                .map_err(|error| format!("could not build a client: {error}"))?
+                .list_models()
+                .await
+                .map_err(|error| error.to_string())?;
+            list.data
+                .iter()
+                .map(|model| {
+                    serde_json::json!({
+                        "name": model.id,
+                        "context_length": model.context_length,
+                    })
+                })
+                .collect()
+        }
+    };
+    Ok(serde_json::json!({ "models": models }).to_string())
+}
+
 /// Narrates the tool loop on stderr while the model works.
 ///
 /// The person at the terminal sees what the CLI would have shown them — which tool ran, on
@@ -554,7 +676,7 @@ async fn converse(
     history: Vec<Message>,
     max_turns: usize,
     json: bool,
-) -> Result<(String, Vec<Message>), String> {
+) -> Result<(String, Vec<Message>, rig::completion::Usage), String> {
     let asked = prompt.clone();
     let request = agent
         .prompt(prompt)
@@ -576,7 +698,7 @@ async fn converse(
         kept.push(Message::assistant(&response.output));
         kept
     });
-    Ok((response.output, history))
+    Ok((response.output, history, response.usage))
 }
 
 /// The conversation: read a line, run the loop, print the answer, remember everything.
@@ -596,7 +718,8 @@ async fn conversation(agent: &Agent, max_turns: usize) -> Result<(), String> {
         if line.is_empty() {
             return Ok(());
         }
-        let (answer, kept) = converse(agent, line.to_string(), history, max_turns, false).await?;
+        let (answer, kept, _) =
+            converse(agent, line.to_string(), history, max_turns, false).await?;
         history = kept;
         println!("{answer}\n");
     }
@@ -639,9 +762,14 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
             }
         };
         match converse(agent, said, history.clone(), options.max_turns, true).await {
-            Ok((answer, kept)) => {
+            Ok((answer, kept, usage)) => {
                 history = kept;
-                emit(serde_json::json!({ "event": "answer", "text": answer }));
+                emit(serde_json::json!({
+                    "event": "answer",
+                    "text": answer,
+                    "input_tokens": usage.input_tokens,
+                    "output_tokens": usage.output_tokens,
+                }));
             }
             Err(message) => {
                 emit(serde_json::json!({ "event": "error", "message": message }));
@@ -661,10 +789,27 @@ fn main() -> ExitCode {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let prefs = auris_session::Settings::load().agent;
-    let options = match parse_args(&args, &|name| std::env::var(name).ok(), &prefs) {
+    let options = match parse_command(&args, &|name| std::env::var(name).ok(), &prefs) {
         Ok(Command::Help) => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
+        }
+        Ok(Command::Models(options)) => {
+            // One JSON line either way, because the caller reading this is a program: the
+            // panel shows the error where it would have shown the list.
+            let answer = tokio::runtime::Runtime::new()
+                .map_err(|error| error.to_string())
+                .and_then(|runtime| runtime.block_on(list_models(&options)));
+            match answer {
+                Ok(line) => {
+                    println!("{line}");
+                    return ExitCode::SUCCESS;
+                }
+                Err(message) => {
+                    println!("{}", serde_json::json!({ "error": message }));
+                    return ExitCode::FAILURE;
+                }
+            }
         }
         Ok(Command::Run(options)) => options,
         Err(message) => {
@@ -683,7 +828,7 @@ fn main() -> ExitCode {
                 }
                 match &options.prompt {
                     Some(prompt) => {
-                        let (answer, _) =
+                        let (answer, ..) =
                             converse(&agent, prompt.clone(), Vec::new(), options.max_turns, false)
                                 .await?;
                         println!("{answer}");
@@ -807,6 +952,27 @@ mod tests {
         };
         let refused = parse_args(&words(""), &no_env, &broken).unwrap_err();
         assert!(refused.contains("saved"), "{refused}");
+    }
+
+    #[test]
+    fn the_models_subcommand_needs_no_model() {
+        // Listing is how a caller finds a model, so insisting on one would be circular.
+        let Command::Models(options) =
+            parse_command(&words("models"), &no_env, &no_prefs()).unwrap()
+        else {
+            panic!("`models` lists");
+        };
+        assert_eq!(options.provider, Provider::Ollama);
+        let Command::Models(options) = parse_command(
+            &words("models --provider openai --url http://x/v1"),
+            &no_env,
+            &no_prefs(),
+        )
+        .unwrap() else {
+            panic!("`models` takes the connection flags");
+        };
+        assert_eq!(options.provider, Provider::OpenAi);
+        assert_eq!(options.url.as_deref(), Some("http://x/v1"));
     }
 
     #[test]
@@ -966,7 +1132,7 @@ mod tests {
             json: false,
         })
         .unwrap();
-        let (answer, history) = converse(
+        let (answer, history, _) = converse(
             &agent,
             "What styles are there?".to_string(),
             Vec::new(),

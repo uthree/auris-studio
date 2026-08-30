@@ -450,8 +450,11 @@ mod tests {
                 "with no model named, sending opens the settings section"
             );
             assert!(
-                this.agent_chat.entries.is_empty(),
-                "nothing was sent anywhere"
+                matches!(
+                    this.agent_chat.entries.as_slice(),
+                    [crate::ui::agent_chat::ChatEntry::Note(_)]
+                ),
+                "nothing was sent anywhere, and the refusal is said rather than implied"
             );
         });
         paint(&app, cx);

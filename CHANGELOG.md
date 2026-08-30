@@ -26,6 +26,15 @@ format rather than a convention: `## <version> — <date>`.
 * `auris-agent --json`: newline-delimited JSON for a host program — `{"say": …}` in;
   `ready`, `call`, `result`, `changed`, `answer`, `error` out. A provider failure is an
   `error` event rather than an exit, because the host's window is still open.
+* From the first live sitting: **provider and model are both picked, not typed** — the panel
+  runs the new `auris-agent models` (Ollama asked in its own words, context windows included;
+  OpenAI-compatible via `/models`) and fills a dropdown, refetching when the provider or URL
+  changes. A **context gauge** in picocode's image sits over the input — `↑ prompt ↓ written`,
+  a bar filling the chosen model's window, yellow from 60% and red from 85% — fed by token
+  counts that now ride every `answer` event. **Tool rows open on a click** to the whole answer
+  the model saw, which makes the transcript the loop's log. And a send with no model
+  configured now says so in the transcript instead of silently doing nothing, which is what
+  the first Enter ever pressed in the panel ran into.
 
 ### The model gets its hands on the mixer
 

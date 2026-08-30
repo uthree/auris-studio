@@ -860,6 +860,7 @@ dependencies = [
  "auris-toolbox",
  "env_logger",
  "log",
+ "reqwest 0.13.4",
  "rig",
  "schemars 1.2.2",
  "serde",

@@ -21,6 +21,9 @@ auris-toolbox.workspace = true
 env_logger.workspace = true
 log.workspace = true
 rig = "0.42"
+# For asking Ollama's own API what it serves — rig's lister drops the context lengths the
+# panel's gauge needs. The same version rig resolves, so no second copy is compiled.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 schemars = "1"
 serde.workspace = true
 serde_json.workspace = true

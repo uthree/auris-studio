@@ -1143,6 +1143,9 @@ new のオプション
         ja: "エージェントがこのプロジェクトを変更しましたが、ウィンドウに未保存の編集があります。"
     }
     AgentReload { en: "Reload", ja: "再読み込み" }
+    AgentChooseModel { en: "Choose a model…", ja: "モデルを選択…" }
+    AgentModelsFetch { en: "Refresh", ja: "更新" }
+    AgentModelsFetching { en: "Asking the provider for its models…", ja: "モデル一覧を取得中…" }
     CliPresets { en: "SONG PRESETS", ja: "楽曲プリセット" }
     CliSoundFonts { en: "SHIPPED SOUNDFONTS", ja: "同梱サウンドフォント" }
     CliSoundFontMissing {
