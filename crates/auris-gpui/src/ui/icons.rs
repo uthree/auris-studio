@@ -59,6 +59,8 @@ pub enum Icon {
     Wave,
     /// A window of its own: a frame with a title bar, which is what a plugin opens.
     Window,
+    /// The agent: a speech bubble, which is what a conversation is drawn as everywhere.
+    Agent,
 }
 
 /// An element that draws `icon` at `size`, centred in whatever box it is given.
@@ -304,6 +306,15 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
             bar(window, 0.16, 0.40, 0.68, 0.48);
             bar(window, 0.16, 0.58, 0.80, 0.66);
             bar(window, 0.16, 0.76, 0.52, 0.84);
+        }
+        Icon::Agent => {
+            // A speech bubble: its body as two stacked bars — the same vocabulary as the log's
+            // lines of text, which is what a conversation is made of — and a tail anchoring it
+            // to a speaker below.
+            bar(window, 0.14, 0.20, 0.86, 0.30);
+            bar(window, 0.14, 0.40, 0.86, 0.50);
+            bar(window, 0.14, 0.60, 0.48, 0.70);
+            bar(window, 0.22, 0.70, 0.34, 0.84);
         }
         // The three kinds of thing the library holds. They sit on the leaf rows, where the tree
         // has run out of headings to say what something is — an instrument, an effect and a sound

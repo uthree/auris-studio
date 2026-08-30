@@ -74,6 +74,22 @@ pub struct SpecArgs {
     pub overrides: Option<BTreeMap<String, String>>,
 }
 
+/// The tools that write the project file they are aimed at, by wire name.
+///
+/// For a host watching the conversation from beside an open document — the desktop's agent
+/// panel — this is how it knows the file under it may have moved after a call succeeds.
+/// `render` is absent because it writes WAV files beside the project, and the progression
+/// tools because they write the machine's own book; neither touches a document.
+pub const WRITES_PROJECTS: &[&str] = &[
+    compose::NAME,
+    another_take::NAME,
+    write_again::NAME,
+    set_level::NAME,
+    set_send::NAME,
+    set_effect::NAME,
+    section_gain::NAME,
+];
+
 /// The address of one project change: which clip, and which take of it.
 ///
 /// Shared by `another_take` and `write_again`, which aim the same way and differ only in the
@@ -1311,7 +1327,7 @@ fn headless() -> Result<Session, String> {
 /// the host process happens to be), and when the file is not there, look one folder down
 /// under its own name. A path found neither way is refused with the absolute form, so the
 /// caller learns what its relative path actually meant.
-fn resolve_project(path: &str) -> Result<PathBuf, String> {
+pub fn resolve_project(path: &str) -> Result<PathBuf, String> {
     let absolute = std::path::absolute(Path::new(path)).map_err(|error| error.to_string())?;
     if absolute.exists() {
         return Ok(absolute);

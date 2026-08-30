@@ -141,6 +141,39 @@ impl ExportPreferences {
     }
 }
 
+/// How the built-in agent dials a language model.
+///
+/// A fact about the machine, like a plugin folder: which server answers, and as which model.
+/// `auris-agent` reads these as its flag defaults and the desktop's agent panel reads them as
+/// its whole configuration, so setting them once points both doors at the same place. Strings
+/// rather than richer types on purpose — the *agent* is where a provider name is validated,
+/// and a preference file should not go stale because that list grew.
+///
+/// The API key is *named*, never stored: `api_key_env` is which environment variable to read,
+/// and the value stays in the environment where it was put.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentPreferences {
+    /// The API dialect: "ollama", or "openai" for any OpenAI-compatible endpoint. Empty means
+    /// ollama.
+    pub provider: String,
+    /// The model to ask for, in the provider's own naming. Empty means not configured.
+    pub model: String,
+    /// Base URL override. Empty uses the provider's default.
+    pub url: String,
+    /// Environment variable holding the API key. Empty means no key.
+    pub api_key_env: String,
+}
+
+impl AgentPreferences {
+    /// Whether enough is set for the agent to place a call at all.
+    ///
+    /// The model is the one field with no sensible default — everything else falls back.
+    pub fn is_configured(&self) -> bool {
+        !self.model.trim().is_empty()
+    }
+}
+
 /// Everything the application remembers between runs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -187,6 +220,8 @@ pub struct Settings {
     /// the command that turns *new* kanji into phonemes asks for it, and it names this setting
     /// when it is missing.
     pub japanese_dictionary: Option<PathBuf>,
+    /// How the built-in agent dials a language model.
+    pub agent: AgentPreferences,
 }
 
 impl Default for Settings {
@@ -203,6 +238,7 @@ impl Default for Settings {
             recent: Vec::new(),
             plugin_paths: Vec::new(),
             japanese_dictionary: None,
+            agent: AgentPreferences::default(),
         }
     }
 }

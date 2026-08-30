@@ -11,7 +11,9 @@
 //!
 //! * **Two channels.** The model's words go to stdout, where a pipe can catch them; everything
 //!   this program says about the run — which tool was called, what it answered — goes to
-//!   stderr. `auris-agent "..." > answer.md` keeps the answer and shows the work.
+//!   stderr. `auris-agent "..." > answer.md` keeps the answer and shows the work. `--json`
+//!   collapses both into one machine-readable stream: JSON events on stdout, `{"say": ...}`
+//!   lines on stdin — the mode the desktop's agent panel drives this program in.
 //! * **English chrome, like the CLI.** The frame around the conversation is fixed English for
 //!   the same reason `auris` prints English: a terminal makes no promises about other scripts.
 //!   The conversation itself is the model's, and the preamble tells it to answer in the
@@ -61,6 +63,9 @@ struct Options {
     max_turns: usize,
     /// The one-shot prompt; a conversation is opened instead when there is none.
     prompt: Option<String>,
+    /// Speak JSON lines on stdin and stdout instead of prose — the mode another program
+    /// drives, the desktop's agent panel first among them.
+    json: bool,
 }
 
 /// What `main` was asked to do.
@@ -89,19 +94,43 @@ options:
   --api-key-env <VAR>   environment variable holding the API key; OPENAI_API_KEY
                         is used for openai when it is set and this is not given
   --max-turns <n>       model-call budget per prompt (default 40)
-  -h, --help            this text";
+  --json                speak JSON lines on stdin and stdout instead, for
+                        another program to drive — the desktop panel's mode
+  -h, --help            this text
 
-/// Reads the command line, with the environment handed in so a test can be its own machine.
+--provider, --model, --url and --api-key-env fall back to the shared settings
+file when not given; the desktop application's agent settings write it.";
+
+/// Reads a provider name — the one vocabulary shared by the flag and the preference.
+fn provider_named(name: &str) -> Result<Provider, String> {
+    match name {
+        "" | "ollama" => Ok(Provider::Ollama),
+        "openai" => Ok(Provider::OpenAi),
+        other => Err(format!(
+            "the provider is 'ollama' or 'openai' (any OpenAI-compatible API), not '{other}'"
+        )),
+    }
+}
+
+/// Reads the command line, with the environment and the saved preferences handed in so a test
+/// can be its own machine.
 ///
 /// A free function and not a chunk of `main`, because everything here is a decision: which
-/// provider a word names, where the key comes from, what is missing. `env` is consulted only
-/// for the key — the one value that must never be typed into a command line.
-fn parse_args(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<Command, String> {
-    let mut provider = Provider::Ollama;
+/// provider a word names, where the key comes from, what is missing. A flag beats the saved
+/// preference beats the built-in default — so `auris-agent "..."` with a model in the settings
+/// just works, and the settings are what the desktop's agent panel writes. `env` is consulted
+/// only for the key — the one value that must never be typed into a command line.
+fn parse_args(
+    args: &[String],
+    env: &dyn Fn(&str) -> Option<String>,
+    prefs: &auris_session::AgentPreferences,
+) -> Result<Command, String> {
+    let mut provider = None;
     let mut url = None;
     let mut model = None;
     let mut key_env = None;
     let mut max_turns = 40usize;
+    let mut json = false;
     let mut prompt_words: Vec<&str> = Vec::new();
 
     let mut words = args.iter();
@@ -114,18 +143,7 @@ fn parse_args(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<C
         };
         match word.as_str() {
             "-h" | "--help" | "help" => return Ok(Command::Help),
-            "--provider" => {
-                provider = match value_of("--provider")?.as_str() {
-                    "ollama" => Provider::Ollama,
-                    "openai" => Provider::OpenAi,
-                    other => {
-                        return Err(format!(
-                            "--provider is 'ollama' or 'openai' (any OpenAI-compatible API), \
-                             not '{other}'"
-                        ));
-                    }
-                };
-            }
+            "--provider" => provider = Some(provider_named(&value_of("--provider")?)?),
             "--url" => url = Some(value_of("--url")?),
             "--model" => model = Some(value_of("--model")?),
             "--api-key-env" => key_env = Some(value_of("--api-key-env")?),
@@ -135,6 +153,7 @@ fn parse_args(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<C
                     .parse()
                     .map_err(|_| format!("--max-turns needs a number, not '{value}'"))?;
             }
+            "--json" => json = true,
             flag if flag.starts_with('-') => {
                 return Err(format!("unknown option '{flag}' — try --help"));
             }
@@ -142,20 +161,36 @@ fn parse_args(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<C
         }
     }
 
-    let Some(model) = model else {
-        return Err(
-            "--model names the model to use; there is no sensible default, because \
-                    it is whatever the server at the other end actually serves"
-                .to_string(),
-        );
+    let provider = match provider {
+        Some(chosen) => chosen,
+        None => provider_named(prefs.provider.trim())
+            .map_err(|error| format!("the saved agent settings are off: {error}"))?,
     };
+    let model = model
+        .or_else(|| {
+            let saved = prefs.model.trim();
+            (!saved.is_empty()).then(|| saved.to_string())
+        })
+        .ok_or_else(|| {
+            "--model names the model to use; there is no sensible default, because it is \
+             whatever the server at the other end actually serves"
+                .to_string()
+        })?;
+    let url = url.or_else(|| {
+        let saved = prefs.url.trim();
+        (!saved.is_empty()).then(|| saved.to_string())
+    });
+    let key_env = key_env.or_else(|| {
+        let saved = prefs.api_key_env.trim();
+        (!saved.is_empty()).then(|| saved.to_string())
+    });
 
     // The key: an explicitly named variable must exist — a silently empty key would come back
     // from the server as a 401 with this program's name on it. The OpenAI convention is picked
     // up when present, because that is what every OpenAI-compatible tool trains people to set.
     let key = match key_env {
         Some(name) => Some(env(&name).ok_or_else(|| {
-            format!("--api-key-env names '{name}', but that variable is not set")
+            format!("the API key is named by '{name}', but that variable is not set")
         })?),
         None => match provider {
             Provider::OpenAi => env("OPENAI_API_KEY"),
@@ -167,6 +202,9 @@ fn parse_args(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<C
         true => None,
         false => Some(prompt_words.join(" ")),
     };
+    if json && prompt.is_some() {
+        return Err("--json is driven over stdin; drop the prompt".to_string());
+    }
     Ok(Command::Run(Options {
         provider,
         url,
@@ -174,6 +212,7 @@ fn parse_args(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<C
         key,
         max_turns,
         prompt,
+        json,
     }))
 }
 
@@ -418,6 +457,95 @@ impl AgentHook for Narrator {
     }
 }
 
+/// Writes one event line and flushes it — a pipe is block-buffered, and a host on the other
+/// end is waiting on exactly this line.
+fn emit(event: serde_json::Value) {
+    let mut stdout = std::io::stdout().lock();
+    let _ = writeln!(stdout, "{event}");
+    let _ = stdout.flush();
+}
+
+/// A tool answer's whole text, for a host that will render it itself.
+fn full_text(output: &ToolOutput) -> String {
+    output
+        .as_content()
+        .iter()
+        .filter_map(|content| match content {
+            ToolResultContent::Text(text) => Some(text.text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The project file a successful tool call has just rewritten, if it rewrote one.
+///
+/// [`auris_toolbox::WRITES_PROJECTS`] names the tools; the path is in the call's own
+/// arguments, resolved the way every door resolves one — so a host holding that project open
+/// can compare like with like. `None` for a tool that writes no project, arguments that
+/// carry no path, and a path that resolves to nothing on disk.
+fn changed_project(tool: &str, args: &str) -> Option<String> {
+    if !toolbox::WRITES_PROJECTS.contains(&tool) {
+        return None;
+    }
+    let parsed: serde_json::Value = serde_json::from_str(args).ok()?;
+    let path = parsed
+        .get("project")
+        .or_else(|| parsed.get("output"))?
+        .as_str()?;
+    Some(toolbox::resolve_project(path).ok()?.display().to_string())
+}
+
+/// One line of the host's side of the wire: `{"say": "..."}` and nothing else yet.
+fn parse_say(line: &str) -> Result<String, String> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(line).map_err(|error| format!("not JSON: {error}"))?;
+    parsed
+        .get("say")
+        .and_then(|say| say.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "expected {\"say\": \"...\"}".to_string())
+}
+
+/// Reports the tool loop as JSON events on stdout, for a host program to render.
+///
+/// The same moments the [`Narrator`] speaks at, in a shape a machine reads: `call` when a
+/// tool is asked, `result` when it answers, and `changed` when the answer means a project
+/// file on disk is no longer what the host last read.
+struct Reporter;
+
+impl AgentHook for Reporter {
+    async fn on_tool_call(&self, _ctx: &HookContext, event: ToolCall<'_>) -> ToolCallAction {
+        emit(serde_json::json!({
+            "event": "call", "tool": event.tool_name, "args": event.args,
+        }));
+        ToolCallAction::Run
+    }
+
+    async fn on_tool_result(
+        &self,
+        _ctx: &HookContext,
+        event: ToolResultEvent<'_>,
+    ) -> ToolResultAction {
+        match event.raw_result.error() {
+            None => {
+                emit(serde_json::json!({
+                    "event": "result", "tool": event.tool_name, "ok": true,
+                    "text": full_text(event.presentation),
+                }));
+                if let Some(project) = changed_project(event.tool_name, event.args) {
+                    emit(serde_json::json!({ "event": "changed", "project": project }));
+                }
+            }
+            Some(error) => emit(serde_json::json!({
+                "event": "result", "tool": event.tool_name, "ok": false,
+                "text": error.message(),
+            })),
+        }
+        ToolResultAction::Keep
+    }
+}
+
 /// One prompt through the loop: ask, narrate, answer — and hand back the transcript so a
 /// conversation can keep it.
 async fn converse(
@@ -425,13 +553,18 @@ async fn converse(
     prompt: String,
     history: Vec<Message>,
     max_turns: usize,
+    json: bool,
 ) -> Result<(String, Vec<Message>), String> {
     let asked = prompt.clone();
-    let response = agent
+    let request = agent
         .prompt(prompt)
         .history(history.clone())
-        .max_turns(max_turns)
-        .add_hook(Narrator)
+        .max_turns(max_turns);
+    let request = match json {
+        true => request.add_hook(Reporter),
+        false => request.add_hook(Narrator),
+    };
+    let response = request
         .extended_details()
         .await
         .map_err(|error| error.to_string())?;
@@ -463,9 +596,57 @@ async fn conversation(agent: &Agent, max_turns: usize) -> Result<(), String> {
         if line.is_empty() {
             return Ok(());
         }
-        let (answer, kept) = converse(agent, line.to_string(), history, max_turns).await?;
+        let (answer, kept) = converse(agent, line.to_string(), history, max_turns, false).await?;
         history = kept;
         println!("{answer}\n");
+    }
+}
+
+/// The conversation a program holds: JSON lines in, JSON events out.
+///
+/// `ready` opens the wire and names what answered the phone. Each `{"say": "..."}` runs one
+/// prompt through the loop — `call`, `result` and `changed` events as it works, then one
+/// `answer` — and a failure is an `error` event rather than an exit, because the host's
+/// window is still open and its next message may well work. End of stdin ends the
+/// conversation; a line that is not a `say` is answered with an `error` and skipped.
+async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), String> {
+    emit(serde_json::json!({
+        "event": "ready",
+        "provider": match options.provider {
+            Provider::Ollama => "ollama",
+            Provider::OpenAi => "openai",
+        },
+        "model": options.model,
+    }));
+    let mut history: Vec<Message> = Vec::new();
+    let stdin = std::io::stdin();
+    loop {
+        let mut line = String::new();
+        match stdin.lock().read_line(&mut line) {
+            Ok(0) => return Ok(()),
+            Ok(_) => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let said = match parse_say(line) {
+            Ok(said) => said,
+            Err(message) => {
+                emit(serde_json::json!({ "event": "error", "message": message }));
+                continue;
+            }
+        };
+        match converse(agent, said, history.clone(), options.max_turns, true).await {
+            Ok((answer, kept)) => {
+                history = kept;
+                emit(serde_json::json!({ "event": "answer", "text": answer }));
+            }
+            Err(message) => {
+                emit(serde_json::json!({ "event": "error", "message": message }));
+            }
+        }
     }
 }
 
@@ -479,7 +660,8 @@ fn main() -> ExitCode {
     auris_session::migrate_legacy_config();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let options = match parse_args(&args, &|name| std::env::var(name).ok()) {
+    let prefs = auris_session::Settings::load().agent;
+    let options = match parse_args(&args, &|name| std::env::var(name).ok(), &prefs) {
         Ok(Command::Help) => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -496,10 +678,14 @@ fn main() -> ExitCode {
         .and_then(|runtime| {
             runtime.block_on(async {
                 let agent = build_agent(&options)?;
+                if options.json {
+                    return json_conversation(&agent, &options).await;
+                }
                 match &options.prompt {
                     Some(prompt) => {
                         let (answer, _) =
-                            converse(&agent, prompt.clone(), Vec::new(), options.max_turns).await?;
+                            converse(&agent, prompt.clone(), Vec::new(), options.max_turns, false)
+                                .await?;
                         println!("{answer}");
                         Ok(())
                     }
@@ -529,13 +715,20 @@ mod tests {
         None
     }
 
+    fn no_prefs() -> auris_session::AgentPreferences {
+        auris_session::AgentPreferences::default()
+    }
+
+    fn parse(args: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<Command, String> {
+        parse_args(&words(args), env, &no_prefs())
+    }
+
     #[test]
     fn a_model_is_required_and_the_rest_defaults() {
-        let refused = parse_args(&words("write me a song"), &no_env).unwrap_err();
+        let refused = parse("write me a song", &no_env).unwrap_err();
         assert!(refused.contains("--model"), "{refused}");
 
-        let Command::Run(options) =
-            parse_args(&words("--model qwen3:8b write me a song"), &no_env).unwrap()
+        let Command::Run(options) = parse("--model qwen3:8b write me a song", &no_env).unwrap()
         else {
             panic!("a full command runs");
         };
@@ -548,7 +741,7 @@ mod tests {
 
     #[test]
     fn no_prompt_means_a_conversation() {
-        let Command::Run(options) = parse_args(&words("--model m"), &no_env).unwrap() else {
+        let Command::Run(options) = parse("--model m", &no_env).unwrap() else {
             panic!("a bare model still runs");
         };
         assert_eq!(options.prompt, None);
@@ -558,39 +751,124 @@ mod tests {
     fn the_key_comes_from_the_environment_and_its_absence_is_an_error() {
         let env = |name: &str| (name == "MY_KEY").then(|| "secret".to_string());
 
-        let Command::Run(options) =
-            parse_args(&words("--model m --api-key-env MY_KEY"), &env).unwrap()
-        else {
+        let Command::Run(options) = parse("--model m --api-key-env MY_KEY", &env).unwrap() else {
             panic!("a named key that exists runs");
         };
         assert_eq!(options.key.as_deref(), Some("secret"));
 
-        let missing = parse_args(&words("--model m --api-key-env NOT_SET"), &env).unwrap_err();
+        let missing = parse("--model m --api-key-env NOT_SET", &env).unwrap_err();
         assert!(missing.contains("NOT_SET"), "{missing}");
 
         // The OpenAI convention is picked up unasked, but only for the openai provider.
         let convention = |name: &str| (name == "OPENAI_API_KEY").then(|| "sk-x".to_string());
-        let Command::Run(options) =
-            parse_args(&words("--model m --provider openai"), &convention).unwrap()
+        let Command::Run(options) = parse("--model m --provider openai", &convention).unwrap()
         else {
             panic!("openai with the conventional key runs");
         };
         assert_eq!(options.key.as_deref(), Some("sk-x"));
-        let Command::Run(options) = parse_args(&words("--model m"), &convention).unwrap() else {
+        let Command::Run(options) = parse("--model m", &convention).unwrap() else {
             panic!("ollama ignores the OpenAI convention");
         };
         assert_eq!(options.key, None);
     }
 
     #[test]
+    fn the_saved_preferences_fill_in_what_the_flags_leave_out() {
+        let prefs = auris_session::AgentPreferences {
+            provider: "openai".to_string(),
+            model: "saved-model".to_string(),
+            url: "http://saved:1234/v1".to_string(),
+            api_key_env: "SAVED_KEY".to_string(),
+        };
+        let env = |name: &str| (name == "SAVED_KEY").then(|| "from-saved".to_string());
+
+        let Command::Run(options) = parse_args(&words(""), &env, &prefs).unwrap() else {
+            panic!("a fully saved configuration runs with no flags at all");
+        };
+        assert_eq!(options.provider, Provider::OpenAi);
+        assert_eq!(options.model, "saved-model");
+        assert_eq!(options.url.as_deref(), Some("http://saved:1234/v1"));
+        assert_eq!(options.key.as_deref(), Some("from-saved"));
+
+        // A flag beats the preference, field by field.
+        let Command::Run(options) =
+            parse_args(&words("--model spoken --provider ollama"), &env, &prefs).unwrap()
+        else {
+            panic!("flags over preferences run");
+        };
+        assert_eq!(options.model, "spoken");
+        assert_eq!(options.provider, Provider::Ollama);
+
+        // A preference file holding nonsense is named as the problem, not the flags.
+        let broken = auris_session::AgentPreferences {
+            provider: "gemini".to_string(),
+            model: "m".to_string(),
+            ..Default::default()
+        };
+        let refused = parse_args(&words(""), &no_env, &broken).unwrap_err();
+        assert!(refused.contains("saved"), "{refused}");
+    }
+
+    #[test]
+    fn json_mode_is_stdin_driven_and_refuses_a_prompt() {
+        let Command::Run(options) = parse("--model m --json", &no_env).unwrap() else {
+            panic!("json mode runs");
+        };
+        assert!(options.json);
+        let refused = parse("--model m --json do a thing", &no_env).unwrap_err();
+        assert!(refused.contains("stdin"), "{refused}");
+    }
+
+    #[test]
+    fn the_wire_reads_says_and_nothing_else() {
+        assert_eq!(parse_say(r#"{"say":"hello"}"#).unwrap(), "hello");
+        assert!(parse_say("not json").unwrap_err().contains("JSON"));
+        assert!(
+            parse_say(r#"{"shout":"hello"}"#)
+                .unwrap_err()
+                .contains("say")
+        );
+    }
+
+    #[test]
+    fn only_a_writing_tool_reports_a_changed_project_and_only_a_real_one() {
+        // A file that exists, addressed the unnested way a model would.
+        let root = std::env::temp_dir().join(format!("auris-agent-changed-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("Song")).unwrap();
+        let real = root.join("Song").join("Song.auris");
+        std::fs::write(&real, "{}").unwrap();
+        let shorthand = root.join("Song.auris").display().to_string();
+        let args = serde_json::json!({ "project": shorthand }).to_string();
+
+        let changed = changed_project("set_level", &args).expect("a writing tool with a file");
+        assert_eq!(
+            changed,
+            real.display().to_string(),
+            "resolved like every door"
+        );
+        assert_eq!(
+            changed_project("analyze", &args),
+            None,
+            "a reading tool moves nothing"
+        );
+        assert_eq!(
+            changed_project("set_level", r#"{"track":"lead"}"#),
+            None,
+            "no path, no report"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn bad_flags_are_named_back() {
-        let unknown = parse_args(&words("--model m --loud"), &no_env).unwrap_err();
+        let unknown = parse("--model m --loud", &no_env).unwrap_err();
         assert!(unknown.contains("--loud"), "{unknown}");
-        let provider = parse_args(&words("--model m --provider gemini"), &no_env).unwrap_err();
+        let provider = parse("--model m --provider gemini", &no_env).unwrap_err();
         assert!(provider.contains("gemini"), "{provider}");
-        let turns = parse_args(&words("--model m --max-turns many"), &no_env).unwrap_err();
+        let turns = parse("--model m --max-turns many", &no_env).unwrap_err();
         assert!(turns.contains("many"), "{turns}");
-        let dangling = parse_args(&words("--model"), &no_env).unwrap_err();
+        let dangling = parse("--model", &no_env).unwrap_err();
         assert!(dangling.contains("--model"), "{dangling}");
     }
 
@@ -685,12 +963,18 @@ mod tests {
             key: Some("test-key".to_string()),
             max_turns: 5,
             prompt: None,
+            json: false,
         })
         .unwrap();
-        let (answer, history) =
-            converse(&agent, "What styles are there?".to_string(), Vec::new(), 5)
-                .await
-                .unwrap();
+        let (answer, history) = converse(
+            &agent,
+            "What styles are there?".to_string(),
+            Vec::new(),
+            5,
+            true,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(answer, "The presets are listed above.");
         assert!(

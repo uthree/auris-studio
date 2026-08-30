@@ -69,8 +69,8 @@ pub use session::{
     input_level_of, master_gain_db, quantized, read_soundfont, shadows_musical_typing,
 };
 pub use settings::{
-    AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings, WindowPlacement, config_dir,
-    migrate_legacy_config,
+    AgentPreferences, AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings,
+    WindowPlacement, config_dir, migrate_legacy_config,
 };
 
 /// What a `.clap` file says is inside it, for a frontend listing one.

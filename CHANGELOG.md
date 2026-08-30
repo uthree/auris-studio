@@ -9,6 +9,24 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### The conversation moves into the window
+
+* **The Agent panel** — View → Agent, docked on the right beside the inspector the way an
+  editor's chat sidebar sits. Ask for a piece, watch each tool call land in the transcript,
+  read the answer; provider, model, URL and API-key variable are set in the panel and saved
+  to the shared settings, which `auris-agent` on the command line now reads as its flag
+  defaults. The window spawns `auris-agent --json` beside its own binary and speaks JSON
+  lines over its pipes, so the frontend boundary holds: the window never learns what an LLM
+  client is.
+* The two ends of one file, settled: the window **saves before every message**, so the model
+  always reads the document as it stands; when a tool call writes the project back, the agent
+  reports it (`changed` events, from the new `auris_toolbox::WRITES_PROJECTS` list) and the
+  window reloads — automatically while it holds nothing unsaved, by an offered button when it
+  does. The whole policy is a plain function with tests; the window only obeys it.
+* `auris-agent --json`: newline-delimited JSON for a host program — `{"say": …}` in;
+  `ready`, `call`, `result`, `changed`, `answer`, `error` out. A provider failure is an
+  `error` event rather than an exit, because the host's window is still open.
+
 ### The model gets its hands on the mixer
 
 * Five tools at both model doors, asked for by the first model to drive the improve loop —

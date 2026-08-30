@@ -169,6 +169,8 @@ actions!(
         ToggleMixer,
         /// Show or hide the log.
         ToggleLog,
+        /// Show or hide the agent conversation.
+        ToggleAgent,
         /// Show or hide the strip of section names above the arrangement.
         ToggleStructureLane,
         /// Show or hide the key and chord strip above the arrangement.
@@ -216,6 +218,8 @@ pub mod context {
     pub const INSPECTOR: &str = "AurisInspector";
     /// The log.
     pub const LOG: &str = "AurisLog";
+    /// The agent conversation.
+    pub const AGENT: &str = "AurisAgent";
     /// Added to the window's context while the computer keyboard is being played as an
     /// instrument. Nothing is bound *here*; what it does is take bindings away. See
     /// [`reachable_from`](super::reachable_from).
@@ -482,6 +486,10 @@ bindable! {
         // like its three sibling panels: the log is opened on the day something is wrong and left
         // alone every other day, and a plain letter is worth more to something reached mid-take.
         "view.log",             GroupView,      CmdShowLog,            "secondary-alt-l" => ToggleLog;
+        // Beside the log rather than on a bare letter, for the log's own reason — and because
+        // the conversation is typed into, a panel whose key is a letter would be a panel that
+        // reopens itself while somebody writes about it.
+        "view.agent",           GroupView,      CmdShowAgent,          "secondary-alt-a" => ToggleAgent;
         // The three strips over the arrangement. Out on `secondary-alt-` because they are
         // arrangement furniture rather than things reached mid-take, and because the plain and
         // shifted forms of these letters are all spoken for.

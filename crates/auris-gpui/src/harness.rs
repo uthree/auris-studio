@@ -420,6 +420,47 @@ mod tests {
         });
     }
 
+    /// The agent panel opens by its action, and an unconfigured send opens its settings
+    /// section instead of spawning anything — the whole panel driven with no child process
+    /// and no model behind it.
+    #[gpui::test]
+    fn the_agent_panel_opens_and_an_unconfigured_send_asks_for_a_model(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.read_with(cx, |this, _| {
+            assert!(!this.panels.is_open(crate::dock::Panel::Agent));
+        });
+        cx.dispatch_action(actions::ToggleAgent);
+        app.read_with(cx, |this, _| {
+            assert!(this.panels.is_open(crate::dock::Panel::Agent));
+        });
+        paint(&app, cx);
+
+        app.update(cx, |this, _| {
+            // Whatever this machine has saved, the case under test is the unconfigured one.
+            this.settings.agent = Default::default();
+            this.focus_agent_field(crate::ui::agent_chat::AgentField::Chat);
+            assert!(
+                this.taking_text_input(),
+                "the chat field claims the letters"
+            );
+            this.agent_chat.input.insert("make it louder");
+            this.agent_send();
+            assert!(
+                this.agent_chat.configuring,
+                "with no model named, sending opens the settings section"
+            );
+            assert!(
+                this.agent_chat.entries.is_empty(),
+                "nothing was sent anywhere"
+            );
+        });
+        paint(&app, cx);
+        assert!(
+            cx.debug_bounds("agent-model").is_some(),
+            "the model field is on screen to be filled in"
+        );
+    }
+
     /// A pointer at a position, hit-testing against a real frame — the path a keystroke never
     /// takes, and the one that breaks when a control moves out from under its own click handler.
     #[gpui::test]

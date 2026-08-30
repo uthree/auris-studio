@@ -144,17 +144,20 @@ pub enum Pane {
     Inspector,
     /// The log.
     Log,
+    /// The agent conversation.
+    Agent,
 }
 
 impl Pane {
     /// Every pane, in tab order.
-    pub const ALL: [Pane; 6] = [
+    pub const ALL: [Pane; 7] = [
         Pane::Library,
         Pane::Arrangement,
         Pane::PianoRoll,
         Pane::Mixer,
         Pane::Inspector,
         Pane::Log,
+        Pane::Agent,
     ];
 
     /// Where this pane sits in the tab order.
@@ -181,6 +184,7 @@ pub struct PaneFocus {
     mixer: FocusHandle,
     inspector: FocusHandle,
     log: FocusHandle,
+    agent: FocusHandle,
 }
 
 impl PaneFocus {
@@ -201,6 +205,7 @@ impl PaneFocus {
             mixer: stop(cx, Pane::Mixer),
             inspector: stop(cx, Pane::Inspector),
             log: stop(cx, Pane::Log),
+            agent: stop(cx, Pane::Agent),
         }
     }
 
@@ -213,6 +218,7 @@ impl PaneFocus {
             Pane::Mixer => &self.mixer,
             Pane::Inspector => &self.inspector,
             Pane::Log => &self.log,
+            Pane::Agent => &self.agent,
         }
     }
 }
@@ -1052,6 +1058,8 @@ pub struct AurisApp {
     pub(crate) library_search: crate::ui::text_field::TextField,
     /// Whether that field is taking the keyboard.
     pub(crate) library_search_focused: bool,
+    /// The agent panel: its transcript, its fields, and the child process behind them.
+    pub(crate) agent_chat: crate::ui::agent_chat::AgentChat,
     /// Whether [`Self::status`] is reporting a failure, so it can be shown as one.
     pub(crate) status_failed: bool,
     /// What the input meter is currently reading, as a linear peak.
@@ -1186,6 +1194,9 @@ impl AurisApp {
                         // The punch-out is a position the playhead crosses rather than a thing
                         // anybody does, so this is the only place that could notice it.
                         this.finish_punch();
+                        // The agent's wire is another thread writing and this one reading, so
+                        // it is drained where everything with that shape is.
+                        this.drain_agent(cx);
                         cx.notify();
                     })
                     .is_err()
@@ -1250,6 +1261,7 @@ impl AurisApp {
             input_peaks: Vec::new(),
             library_search: crate::ui::text_field::TextField::new(String::new()),
             library_search_focused: false,
+            agent_chat: crate::ui::agent_chat::AgentChat::default(),
             automation_lanes: BTreeMap::new(),
             lane_scroll: px(0.0),
             settings,
@@ -1317,7 +1329,10 @@ impl AurisApp {
     /// All three of these are on the *window's* handle, which is why one question serves them.
     /// See [`Self::reconcile_focus`].
     pub(crate) fn taking_text_input(&self) -> bool {
-        self.prompt.is_some() || self.palette.is_some() || self.library_search_focused
+        self.prompt.is_some()
+            || self.palette.is_some()
+            || self.library_search_focused
+            || self.agent_chat.typing()
     }
 
     /// The key context the window itself should name.
@@ -1370,6 +1385,7 @@ impl AurisApp {
             Pane::Mixer => actions::context::MIXER,
             Pane::Inspector => actions::context::INSPECTOR,
             Pane::Log => actions::context::LOG,
+            Pane::Agent => actions::context::AGENT,
         })
     }
 

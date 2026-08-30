@@ -1122,6 +1122,27 @@ new のオプション
     LogClear { en: "Clear", ja: "消去" }
     LogEmpty { en: "Nothing has been logged.", ja: "ログはまだありません。" }
     CmdShowLog { en: "Log", ja: "ログ" }
+    AgentPanel { en: "Agent", ja: "エージェント" }
+    CmdShowAgent { en: "Agent", ja: "エージェント" }
+    AgentPlaceholder { en: "Ask about this song…", ja: "この曲について話しかける…" }
+    AgentNotConfigured { en: "Name a model to talk to.", ja: "話しかけるモデルを設定してください。" }
+    AgentConfigure { en: "Settings", ja: "設定" }
+    AgentApply { en: "Apply", ja: "適用" }
+    AgentProviderLabel { en: "Provider", ja: "プロバイダ" }
+    AgentModelLabel { en: "Model", ja: "モデル" }
+    AgentUrlLabel { en: "Base URL", ja: "ベースURL" }
+    AgentKeyEnvLabel { en: "API key variable", ja: "APIキーの環境変数" }
+    AgentWorking { en: "Working…", ja: "作業中…" }
+    AgentEnded { en: "The agent process ended.", ja: "エージェントのプロセスが終了しました。" }
+    AgentReloaded {
+        en: "The agent changed this project; the window reloaded it.",
+        ja: "エージェントがこのプロジェクトを変更したため、読み込み直しました。"
+    }
+    AgentReloadOffer {
+        en: "The agent changed this project, but the window holds unsaved edits.",
+        ja: "エージェントがこのプロジェクトを変更しましたが、ウィンドウに未保存の編集があります。"
+    }
+    AgentReload { en: "Reload", ja: "再読み込み" }
     CliPresets { en: "SONG PRESETS", ja: "楽曲プリセット" }
     CliSoundFonts { en: "SHIPPED SOUNDFONTS", ja: "同梱サウンドフォント" }
     CliSoundFontMissing {

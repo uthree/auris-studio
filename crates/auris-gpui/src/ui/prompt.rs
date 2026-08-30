@@ -1478,8 +1478,12 @@ impl AurisApp {
         if let Some(field) = self.prompt.as_mut().and_then(Prompt::field_mut) {
             return Some(field);
         }
-        self.library_search_focused
-            .then_some(&mut self.library_search)
+        if self.library_search_focused {
+            return Some(&mut self.library_search);
+        }
+        // The agent panel's fields, last for the reason the library's is late: they sit in a
+        // panel, and anything modal opened over them takes the typing back.
+        self.agent_chat.field_mut()
     }
 }
 
@@ -1495,7 +1499,10 @@ impl crate::ui::text_field::HasTextField for AurisApp {
         if let Some(field) = self.prompt.as_ref().and_then(Prompt::field) {
             return Some(field);
         }
-        self.library_search_focused.then_some(&self.library_search)
+        if self.library_search_focused {
+            return Some(&self.library_search);
+        }
+        self.agent_chat.field()
     }
 
     /// Puts the palette's highlight back on the first row.

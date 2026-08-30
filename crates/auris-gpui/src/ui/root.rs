@@ -206,6 +206,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_toggle_piano_roll))
             .on_action(cx.listener(Self::on_toggle_mixer))
             .on_action(cx.listener(Self::on_toggle_log))
+            .on_action(cx.listener(Self::on_toggle_agent))
             .on_action(cx.listener(Self::on_toggle_structure_lane))
             .on_action(cx.listener(Self::on_toggle_harmony_lane))
             .on_action(cx.listener(Self::on_toggle_tempo_marks))
@@ -406,6 +407,7 @@ impl AurisApp {
             Panel::Mixer => self.render_mixer(window, cx).into_any_element(),
             Panel::Inspector => self.render_inspector(window, cx).into_any_element(),
             Panel::Log => self.render_log(window, cx).into_any_element(),
+            Panel::Agent => self.render_agent_chat(window, cx).into_any_element(),
         }
     }
 
@@ -1056,6 +1058,7 @@ impl AurisApp {
             // Last, because everything above it is in front of the browser on the screen and
             // has to answer for a key first.
             || self.library_search_key(event)
+            || self.agent_key(event)
         {
             cx.stop_propagation();
             cx.notify();
@@ -2259,6 +2262,16 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.toggle_panel(Panel::Log);
+        cx.notify();
+    }
+
+    fn on_toggle_agent(
+        &mut self,
+        _: &actions::ToggleAgent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_panel(Panel::Agent);
         cx.notify();
     }
 

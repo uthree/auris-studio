@@ -77,16 +77,19 @@ pub enum Panel {
     Inspector,
     /// What the application has logged.
     Log,
+    /// The conversation with a language model driving this project.
+    Agent,
 }
 
 impl Panel {
     /// Every panel, in the order a dock stacks their icons.
-    pub const ALL: [Panel; 5] = [
+    pub const ALL: [Panel; 6] = [
         Panel::Library,
         Panel::PianoRoll,
         Panel::Mixer,
         Panel::Inspector,
         Panel::Log,
+        Panel::Agent,
     ];
 
     /// Where the keyboard is while this panel holds it.
@@ -97,6 +100,7 @@ impl Panel {
             Panel::Mixer => Pane::Mixer,
             Panel::Inspector => Pane::Inspector,
             Panel::Log => Pane::Log,
+            Panel::Agent => Pane::Agent,
         }
     }
 
@@ -108,6 +112,7 @@ impl Panel {
             Panel::Mixer => Key::Mixer,
             Panel::Inspector => Key::Inspector,
             Panel::Log => Key::LogPanel,
+            Panel::Agent => Key::AgentPanel,
         }
     }
 
@@ -123,6 +128,7 @@ impl Panel {
             Panel::Mixer => "view.mixer",
             Panel::Inspector => "view.inspector",
             Panel::Log => "view.log",
+            Panel::Agent => "view.agent",
         }
     }
 
@@ -138,6 +144,7 @@ impl Panel {
             Panel::Mixer => Icon::Faders,
             Panel::Inspector => Icon::Sliders,
             Panel::Log => Icon::Log,
+            Panel::Agent => Icon::Agent,
         }
     }
 
@@ -213,11 +220,11 @@ impl TimelineLanes {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PanelLayout {
     /// Which dock each panel is in, in [`Panel::ALL`] order.
-    docks: [Dock; 5],
+    docks: [Dock; 6],
     /// Whether each panel is showing, in [`Panel::ALL`] order.
     ///
     /// At most one is true per dock; [`Self::show`] is what keeps that so.
-    open: [bool; 5],
+    open: [bool; 6],
     /// How large each dock is drawn, in [`Dock::ALL`] order: a width for the sides, a height for
     /// the bottom.
     sizes: [Pixels; 3],
@@ -292,6 +299,7 @@ impl Default for PanelLayout {
                 Dock::Bottom,
                 Dock::Right,
                 Dock::Bottom,
+                Dock::Right,
             ],
             // The mixer starts closed because the piano roll has the dock they share. The library
             // starts open, unlike Logic, which defaults its Library closed: there, a channel
@@ -300,7 +308,10 @@ impl Default for PanelLayout {
             // instrument at all.
             // The log starts closed and stays closed until somebody wants it: it is the panel
             // that is interesting on the day something goes wrong and noise on every other one.
-            open: [true, true, false, true, false],
+            // The agent shares the right dock with the inspector and starts closed, like the
+            // log: the panel is interesting on the day somebody wants a conversation, and a
+            // model nobody has configured yet has nothing to say.
+            open: [true, true, false, true, false, false],
             sizes: [
                 Metrics::LEFT_DOCK_WIDTH,
                 Metrics::BOTTOM_DOCK_HEIGHT,
@@ -656,6 +667,7 @@ mod tests {
                     Panel::Mixer => Key::CmdShowMixer,
                     Panel::Inspector => Key::CmdShowInspector,
                     Panel::Log => Key::CmdShowLog,
+                    Panel::Agent => Key::CmdShowAgent,
                 }),
                 "{panel:?} is wired to another panel's command"
             );

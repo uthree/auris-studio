@@ -459,6 +459,9 @@ impl AurisApp {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                    // One field in the window types at a time; the agent panel's is the other
+                    // one that lives in a panel rather than a sheet.
+                    this.agent_chat.focused = None;
                     this.library_search_focused = true;
                     cx.notify();
                 }),

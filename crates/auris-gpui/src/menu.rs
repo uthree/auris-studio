@@ -494,6 +494,12 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                 "view.log",
                 panels.is_open(Panel::Log),
             ),
+            toggle(
+                t(Key::CmdShowAgent),
+                actions::ToggleAgent,
+                "view.agent",
+                panels.is_open(Panel::Agent),
+            ),
             MenuRow::Separator,
             toggle(
                 t(Key::CmdShowStructureLane),
