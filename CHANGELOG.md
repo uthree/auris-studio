@@ -46,6 +46,13 @@ format rather than a convention: `## <version> — <date>`.
   `write_again` apply), `set_instrument`, `rename_track`, `remove_track`, and
   `list_instruments` for the vocabulary. Twenty-three tools in all. Behind them,
   `Session::set_track_general_midi` is new: font adoption and preset choice as one undo step.
+* **The model can place notes, and derive a band from them.** Four more tools at both doors,
+  for the melody-first way around: `add_clip` opens an empty clip, `edit_notes` places and
+  removes notes by name and bar in one call ("F#4", bar 2, beat 3.5), `notes` reads a clip
+  back numbered in time order — the numbers are the removal address — and `accompany` reads a
+  melody clip and writes the key, the chords and a backing band under it without touching a
+  note of the tune, `Session::accompany` finally reachable from outside the window.
+  Twenty-seven tools in all.
 * **The model can be handed audio.** `auris-agent --attach mix.wav "how is this?"` sends the
   file base64-encoded as an OpenAI `input_audio` content part beside the words, and the JSON
   wire takes `{"say": …, "audio": ["mix.wav"]}` per message. OpenAI-compatible servers only —

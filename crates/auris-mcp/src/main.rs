@@ -292,6 +292,54 @@ impl AurisMcp {
     ) -> Result<CallToolResult, ErrorData> {
         blocking(move || toolbox::remove_track::run(&args)).await
     }
+
+    /// Opens an empty clip on an instrument track, for `edit_notes` to write into — the way a
+    /// melody is placed note by note. Aim it with `start_bar` and `bars`; the answer numbers
+    /// the clip the way `describe` does.
+    #[tool]
+    async fn add_clip(
+        &self,
+        Parameters(args): Parameters<toolbox::add_clip::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::add_clip::run(&args)).await
+    }
+
+    /// Reads one clip's notes, numbered in time order — pitch, bar, beat, length in beats and
+    /// velocity. The numbers are the address `edit_notes` removes by; aim with `track` and the
+    /// clip number `describe` shows.
+    #[tool]
+    async fn notes(
+        &self,
+        Parameters(args): Parameters<toolbox::notes::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::notes::run(&args)).await
+    }
+
+    /// Adds and removes notes in one clip, in one call: `remove` takes the numbers `notes`
+    /// lists, `add` takes notes as pitch (a name like "F#4" or a MIDI number), 1-based bar and
+    /// beat in the song, length in beats, and velocity 0-1 (0.8 when left out). Removals
+    /// happen first. The change is saved. On a generated clip the edit sticks until
+    /// `another_take` or `write_again` rewrites the clip whole.
+    #[tool]
+    async fn edit_notes(
+        &self,
+        Parameters(args): Parameters<toolbox::edit_notes::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::edit_notes::run(&args)).await
+    }
+
+    /// Reads a melody clip and writes a key, a chord progression and backing tracks under it —
+    /// the melody-first way around: place the tune with `edit_notes`, then derive the band.
+    /// The melody itself is not touched. `parts` picks the band (bass, chords and drums when
+    /// left out); the harmony it writes is a first draft to argue with — `write_again`
+    /// re-derives any part after a correction. The change is saved.
+    #[tool]
+    async fn accompany(
+        &self,
+        Parameters(args): Parameters<toolbox::accompany::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::accompany::run(&args)).await
+    }
 }
 
 #[tool_handler]
@@ -372,10 +420,11 @@ mod tests {
     #[test]
     fn every_wire_description_is_the_toolbox_text_word_for_word() {
         use toolbox::{
-            add_part, add_track, analyze, another_take, check_spec, compose, describe,
-            forget_progression, list_instruments, list_presets, list_progressions, mixer,
-            remove_track, rename_track, render, section_gain, set_effect, set_instrument,
-            set_level, set_send, spec_reference, teach_progression, write_again,
+            accompany, add_clip, add_part, add_track, analyze, another_take, check_spec, compose,
+            describe, edit_notes, forget_progression, list_instruments, list_presets,
+            list_progressions, mixer, notes, remove_track, rename_track, render, section_gain,
+            set_effect, set_instrument, set_level, set_send, spec_reference, teach_progression,
+            write_again,
         };
         let expected: std::collections::BTreeMap<&str, &str> = [
             (spec_reference::NAME, spec_reference::DESCRIPTION),
@@ -401,6 +450,10 @@ mod tests {
             (set_instrument::NAME, set_instrument::DESCRIPTION),
             (rename_track::NAME, rename_track::DESCRIPTION),
             (remove_track::NAME, remove_track::DESCRIPTION),
+            (add_clip::NAME, add_clip::DESCRIPTION),
+            (notes::NAME, notes::DESCRIPTION),
+            (edit_notes::NAME, edit_notes::DESCRIPTION),
+            (accompany::NAME, accompany::DESCRIPTION),
         ]
         .into_iter()
         .collect();
@@ -409,7 +462,7 @@ mod tests {
         assert_eq!(
             served.len(),
             expected.len(),
-            "twenty-three tools at this door"
+            "twenty-seven tools at this door"
         );
         for tool in served {
             let description = tool.description.as_deref().unwrap_or_default();

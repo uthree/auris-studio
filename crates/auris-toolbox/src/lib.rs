@@ -59,7 +59,11 @@ pub const INSTRUCTIONS: &str = "Auris Studio is a digital audio workstation; the
     project (`list_instruments` names the built-in instruments, and any General MIDI sound can \
     be asked for by name), `add_part` writes a generated part onto a track from the harmony \
     underneath, `set_instrument` re-voices a track, and `rename_track` / `remove_track` do what \
-    they say — so one more part is an edit, not a recomposition. \
+    they say — so one more part is an edit, not a recomposition. Notes can be placed one by \
+    one: `add_clip` opens an empty clip, `edit_notes` adds and removes notes in it by name and \
+    bar, `notes` reads a clip back numbered — and `accompany` reads a melody clip and writes \
+    the key, the chords and a backing band under it, which is the melody-first way around: \
+    write the tune by hand, derive the accompaniment. \
     Give every path as an absolute path — the working directory is wherever the host process \
     happened to be launched.";
 
@@ -98,6 +102,9 @@ pub const WRITES_PROJECTS: &[&str] = &[
     set_instrument::NAME,
     rename_track::NAME,
     remove_track::NAME,
+    add_clip::NAME,
+    edit_notes::NAME,
+    accompany::NAME,
 ];
 
 /// The address of one project change: which clip, and which take of it.
@@ -1692,6 +1699,343 @@ pub mod remove_track {
     }
 }
 
+/// An empty clip, opened to be written into.
+pub mod add_clip {
+    use super::*;
+
+    /// The tool's wire name.
+    pub const NAME: &str = "add_clip";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Opens an empty clip on an instrument track, for `edit_notes` \
+        to write into — the way a melody is placed note by note. Aim it with `start_bar` and \
+        `bars`; the answer numbers the clip the way `describe` does.";
+
+    /// Arguments to `add_clip`.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// The project to change — an absolute path to a `.auris` file.
+        pub project: String,
+        /// The track to put the clip on, by name as `describe` lists it.
+        pub track: String,
+        /// What to call the clip. "melody" when left out.
+        pub name: Option<String>,
+        /// The 1-based bar the clip starts at. Bar 1 when left out.
+        pub start_bar: Option<u32>,
+        /// How many bars it covers.
+        pub bars: u32,
+    }
+
+    /// Opens the clip, and saves.
+    pub fn run(args: &Args) -> Result<String, String> {
+        if args.bars == 0 {
+            return Err("`bars` is how many bars the clip covers; give at least 1".into());
+        }
+        let mut session = opened(&args.project)?;
+        let track = track_by_name(session.project(), &args.track)?.id;
+        let start_bar = args.start_bar.unwrap_or(1).max(1);
+        let start = session.project().signatures.bar_start(start_bar);
+        let length = session
+            .project()
+            .signatures
+            .bar_start(start_bar + args.bars)
+            - start;
+        let name = args.name.as_deref().unwrap_or("melody");
+        let clip = session
+            .add_midi_clip(track, name, start, length)
+            .map_err(|error| error.to_string())?;
+        session.save_in_place().map_err(|error| error.to_string())?;
+        let number = clip_number(session.project(), track, clip).unwrap_or(0);
+        Ok(format!(
+            "Opened clip [{number}] '{name}' on {} — bars {start_bar}-{}, empty. Saved. \
+             `edit_notes` writes into it.",
+            args.track,
+            start_bar + args.bars - 1,
+        ))
+    }
+}
+
+/// A clip's notes, read back numbered.
+pub mod notes {
+    use super::*;
+
+    /// The tool's wire name.
+    pub const NAME: &str = "notes";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Reads one clip's notes, numbered in time order — pitch, bar, \
+        beat, length in beats and velocity. The numbers are the address `edit_notes` removes \
+        by; aim with `track` and the clip number `describe` shows.";
+
+    /// Arguments to `notes`.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// The project to read — an absolute path to a `.auris` file.
+        pub project: String,
+        /// The track the clip is on, by name as `describe` lists it.
+        pub track: String,
+        /// Which clip, by the 1-based number `describe` shows.
+        pub clip: usize,
+    }
+
+    /// Answers with the numbered listing.
+    pub fn run(args: &Args) -> Result<String, String> {
+        let session = opened(&args.project)?;
+        let project = session.project();
+        let track = track_by_name(project, &args.track)?.id;
+        let (id, clip) = clip_by_number(project, track, args.clip)?;
+        let origin = match &clip.recipe {
+            Some(recipe) => format!("generated ({}, seed {})", recipe.preset.name(), recipe.seed),
+            None => "written by hand".to_string(),
+        };
+        let mut text = format!(
+            "Clip [{}] '{}' on {} — {}, {} notes.\n",
+            args.clip,
+            clip.name,
+            args.track,
+            origin,
+            clip.notes.len()
+        );
+        for (number, (_, note)) in time_ordered(clip).into_iter().enumerate() {
+            let tick = clip.start + note.start;
+            let bar = project.signatures.bar_of(tick);
+            let within = tick - project.signatures.bar_start(bar);
+            let per_beat = project.signatures.signature_at(tick).ticks_per_beat();
+            let beat = within.raw() as f64 / per_beat.raw().max(1) as f64 + 1.0;
+            let beats = note.length.raw() as f64 / per_beat.raw().max(1) as f64;
+            text.push_str(&format!(
+                "  [{}] bar {bar} beat {} — {}, {} beats, vel {}\n",
+                number + 1,
+                trimmed(beat as f32),
+                auris_session::prelude::midi_name(i32::from(note.pitch)),
+                trimmed(beats as f32),
+                trimmed(note.velocity),
+            ));
+        }
+        let _ = id;
+        Ok(text.trim_end().to_string())
+    }
+}
+
+/// Notes, placed and removed by hand.
+pub mod edit_notes {
+    use super::*;
+
+    /// The tool's wire name.
+    pub const NAME: &str = "edit_notes";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Adds and removes notes in one clip, in one call: `remove` \
+        takes the numbers `notes` lists, `add` takes notes as pitch (a name like \"F#4\" or a \
+        MIDI number), 1-based bar and beat in the song, length in beats, and velocity 0-1 \
+        (0.8 when left out). Removals happen first. The change is saved. On a generated clip \
+        the edit sticks until `another_take` or `write_again` rewrites the clip whole.";
+
+    /// One note to place.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct NoteSpec {
+        /// The pitch: a name in scientific notation ("C4", "F#3", "Bb2") or a MIDI number
+        /// 0-127. C4 is middle C.
+        pub pitch: String,
+        /// The 1-based bar the note starts in.
+        pub bar: u32,
+        /// The 1-based beat within that bar; fractions land between beats (1.5 is the "and"
+        /// of one).
+        pub beat: f64,
+        /// How long the note is held, in beats.
+        pub beats: f64,
+        /// Attack strength 0-1. 0.8 when left out.
+        pub velocity: Option<f32>,
+    }
+
+    /// Arguments to `edit_notes`.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// The project to change — an absolute path to a `.auris` file.
+        pub project: String,
+        /// The track the clip is on, by name as `describe` lists it.
+        pub track: String,
+        /// Which clip, by the 1-based number `describe` shows.
+        pub clip: usize,
+        /// Note numbers to remove, as the `notes` listing counts them.
+        pub remove: Option<Vec<usize>>,
+        /// Notes to place.
+        pub add: Option<Vec<NoteSpec>>,
+    }
+
+    /// Removes, places, and saves.
+    pub fn run(args: &Args) -> Result<String, String> {
+        let removals = args.remove.as_deref().unwrap_or_default();
+        let additions = args.add.as_deref().unwrap_or_default();
+        if removals.is_empty() && additions.is_empty() {
+            return Err("pass `remove`, `add`, or both — there is nothing else here to do".into());
+        }
+        let mut session = opened(&args.project)?;
+        let track = track_by_name(session.project(), &args.track)?.id;
+        let (id, clip) = clip_by_number(session.project(), track, args.clip)?;
+        let generated = clip.recipe.is_some();
+        let clip_start = clip.start;
+        let clip_end = clip.start + clip.length;
+
+        // The listing's numbers, translated back to storage order before anything moves.
+        let ordered = time_ordered(clip);
+        let mut doomed = Vec::with_capacity(removals.len());
+        for number in removals {
+            let (index, _) = ordered.get(number.wrapping_sub(1)).ok_or_else(|| {
+                format!(
+                    "the clip has notes [1]-[{}]; there is no [{number}] — `notes` lists them",
+                    ordered.len()
+                )
+            })?;
+            doomed.push(*index);
+        }
+
+        let mut placed = Vec::with_capacity(additions.len());
+        for spec in additions {
+            let pitch = pitch_named(&spec.pitch)?;
+            let tick = placed_at(session.project(), spec.bar, spec.beat)?;
+            if tick < clip_start || tick >= clip_end {
+                let first = session.project().signatures.bar_of(clip_start);
+                let last = session
+                    .project()
+                    .signatures
+                    .bar_of((clip_end - Ticks(1)).max_zero());
+                return Err(format!(
+                    "bar {} beat {} is outside the clip, which covers bars {first}-{last}",
+                    spec.bar, spec.beat
+                ));
+            }
+            if spec.beats <= 0.0 {
+                return Err("`beats` is how long the note is held; give more than 0".into());
+            }
+            let per_beat = session
+                .project()
+                .signatures
+                .signature_at(tick)
+                .ticks_per_beat();
+            let length = Ticks((per_beat.raw() as f64 * spec.beats).round() as i64);
+            let mut note = Note::new(pitch, tick - clip_start, length);
+            note.velocity = spec.velocity.unwrap_or(auris_session::DEFAULT_VELOCITY);
+            placed.push(note);
+        }
+
+        session
+            .remove_notes(id, &doomed)
+            .map_err(|error| error.to_string())?;
+        for note in placed {
+            session
+                .add_note(id, note)
+                .map_err(|error| error.to_string())?;
+        }
+        session.save_in_place().map_err(|error| error.to_string())?;
+
+        let now = session
+            .project()
+            .midi_clip(id)
+            .map(|(_, clip)| clip.notes.len())
+            .unwrap_or(0);
+        let mut text = format!(
+            "Removed {}, placed {} — the clip holds {now} notes. Saved.",
+            doomed.len(),
+            additions.len()
+        );
+        if generated {
+            text.push_str(
+                "\nNote: this clip is generated; `another_take` or `write_again` would rewrite \
+                 it whole, these edits included.",
+            );
+        }
+        Ok(text)
+    }
+}
+
+/// A band, written under a melody.
+pub mod accompany {
+    use super::*;
+
+    /// The tool's wire name.
+    pub const NAME: &str = "accompany";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Reads a melody clip and writes a key, a chord progression \
+        and backing tracks under it — the melody-first way around: place the tune with \
+        `edit_notes`, then derive the band. The melody itself is not touched. `parts` picks \
+        the band (bass, chords and drums when left out); the harmony it writes is a first \
+        draft to argue with — `write_again` re-derives any part after a correction. The \
+        change is saved.";
+
+    /// Arguments to `accompany`.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// The project to change — an absolute path to a `.auris` file.
+        pub project: String,
+        /// The track the melody is on, by name as `describe` lists it.
+        pub track: String,
+        /// Which clip the melody is, by the 1-based number `describe` shows.
+        pub clip: usize,
+        /// The parts to write: lead, chords, pad, arp, bass, stab, drums, kick, snare or hat.
+        /// Bass, chords and drums when left out.
+        pub parts: Option<Vec<String>>,
+        /// The first part's seed; the rest count up from it. 0 when left out.
+        pub seed: Option<u64>,
+    }
+
+    /// Writes the band, and saves.
+    pub fn run(args: &Args) -> Result<String, String> {
+        let parts: Vec<ClipPreset> = match &args.parts {
+            None => auris_session::DEFAULT_PARTS.to_vec(),
+            Some(named) => named
+                .iter()
+                .map(|name| {
+                    ClipPreset::parse(name).ok_or_else(|| {
+                        let all: Vec<&str> =
+                            ClipPreset::ALL.iter().map(|preset| preset.name()).collect();
+                        format!(
+                            "no part is called '{name}' — the parts are: {}",
+                            all.join(", ")
+                        )
+                    })
+                })
+                .collect::<Result<_, _>>()?,
+        };
+        let mut session = opened(&args.project)?;
+        let track = track_by_name(session.project(), &args.track)?.id;
+        let (id, _) = clip_by_number(session.project(), track, args.clip)?;
+        let report = session
+            .accompany(id, &parts, args.seed.unwrap_or(0))
+            .map_err(|error| error.to_string())?;
+        session.save_in_place().map_err(|error| error.to_string())?;
+
+        let band: Vec<String> = report
+            .parts
+            .iter()
+            .filter_map(|part| {
+                session
+                    .project()
+                    .track(*part)
+                    .map(|track| track.name.clone())
+            })
+            .collect();
+        let mut text = format!(
+            "Read the melody in {} — {} bars — and wrote {} chords under it. Key: {}. \
+             Band: {} ({} notes between them). Saved.",
+            args.track,
+            report.bars,
+            report.chords,
+            report.key.to_text(),
+            band.join(", "),
+            report.notes,
+        );
+        if report.substituted {
+            text.push_str(
+                "\nNote: the General MIDI library is not installed, so the band plays the \
+                 built-in oscillators.",
+            );
+        }
+        text.push_str(
+            "\nThe key and chords are written into the song — a wrong guess is corrected by \
+             ear: `analyze`, then `write_again` on any part after fixing what it follows.",
+        );
+        Ok(text)
+    }
+}
+
 /// A session with no audio device and no GPU, with the shipped SoundFonts.
 ///
 /// The fonts for the same reason `auris compose` loads them: `compose` here and **Compose a
@@ -1758,6 +2102,80 @@ fn track_by_name<'p>(project: &'p Project, name: &str) -> Result<&'p Track, Stri
                 names.join(", ")
             )
         })
+}
+
+/// The clip a track's 1-based number means, in the numbering `describe` prints.
+fn clip_by_number(
+    project: &Project,
+    track: TrackId,
+    number: usize,
+) -> Result<(ClipId, &MidiClip), String> {
+    let clips = project
+        .track(track)
+        .and_then(|entry| entry.kind.note_clips())
+        .ok_or("that track holds no note clips")?;
+    clips
+        .get(number.wrapping_sub(1))
+        .map(|clip| (clip.id, clip))
+        .ok_or_else(|| {
+            format!(
+                "the track has clips [1]-[{}]; there is no [{number}] — `describe` numbers them",
+                clips.len()
+            )
+        })
+}
+
+/// The 1-based number `describe` would print for this clip.
+fn clip_number(project: &Project, track: TrackId, clip: ClipId) -> Option<usize> {
+    project
+        .track(track)?
+        .kind
+        .note_clips()?
+        .iter()
+        .position(|entry| entry.id == clip)
+        .map(|index| index + 1)
+}
+
+/// A clip's notes in time order, each with its storage index — the listing `notes` prints
+/// and the numbering `edit_notes` removes by, computed one way in one place.
+fn time_ordered(clip: &MidiClip) -> Vec<(usize, &Note)> {
+    let mut ordered: Vec<(usize, &Note)> = clip.notes.iter().enumerate().collect();
+    ordered.sort_by_key(|(index, note)| (note.start, note.pitch, *index));
+    ordered
+}
+
+/// A pitch, read as a MIDI number or a scientific name — "C4" is middle C.
+fn pitch_named(text: &str) -> Result<u8, String> {
+    let text = text.trim();
+    if let Ok(number) = text.parse::<i32>() {
+        if (0..=127).contains(&number) {
+            return Ok(number as u8);
+        }
+        return Err(format!("MIDI numbers run 0-127; {number} is outside that"));
+    }
+    let split = text
+        .find(|mark: char| mark.is_ascii_digit() || mark == '-')
+        .ok_or_else(|| format!("'{text}' is not a pitch — a name like \"F#4\", or 0-127"))?;
+    let class = auris_session::prelude::PitchClass::parse(&text[..split])
+        .ok_or_else(|| format!("'{text}' is not a pitch — a name like \"F#4\", or 0-127"))?;
+    let octave: i32 = text[split..]
+        .parse()
+        .map_err(|_| format!("'{text}' is not a pitch — a name like \"F#4\", or 0-127"))?;
+    let midi = class.midi(octave);
+    u8::try_from(midi)
+        .ok()
+        .filter(|midi| *midi <= 127)
+        .ok_or_else(|| format!("{text} is MIDI {midi}, outside 0-127"))
+}
+
+/// Where 1-based `bar` and `beat` land on the timeline.
+fn placed_at(project: &Project, bar: u32, beat: f64) -> Result<Ticks, String> {
+    if beat < 1.0 || !beat.is_finite() {
+        return Err(format!("beats count from 1; {beat} is before the bar"));
+    }
+    let start = project.signatures.bar_start(bar.max(1));
+    let per_beat = project.signatures.signature_at(start).ticks_per_beat();
+    Ok(start + Ticks((per_beat.raw() as f64 * (beat - 1.0)).round() as i64))
 }
 
 /// A mixer strip address: a track by name, or `None` for the master bus as "master".
@@ -2377,6 +2795,139 @@ mod tests {
         })
         .unwrap();
         assert!(!after.contains("Piano"), "{after}");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A pitch is read the way a person writes one, and refused with directions otherwise.
+    #[test]
+    fn pitches_are_read_by_name_and_by_number() {
+        assert_eq!(pitch_named("C4").unwrap(), 60, "middle C");
+        assert_eq!(pitch_named("c4").unwrap(), 60, "case does not matter");
+        assert_eq!(pitch_named("F#3").unwrap(), 54);
+        assert_eq!(pitch_named("Bb2").unwrap(), 46);
+        assert_eq!(pitch_named("A-1").unwrap(), 9, "the octave below the floor");
+        assert_eq!(pitch_named("69").unwrap(), 69, "a number is taken as MIDI");
+        assert!(pitch_named("H4").unwrap_err().contains("F#4"));
+        assert!(pitch_named("300").unwrap_err().contains("0-127"));
+        assert!(pitch_named("C99").unwrap_err().contains("0-127"));
+    }
+
+    /// The melody-first workflow, whole: an empty project, a track, an empty clip, a tune
+    /// placed note by note, read back numbered, corrected — and then a band derived from it.
+    #[test]
+    fn a_melody_is_placed_read_corrected_and_accompanied() {
+        let root =
+            std::env::temp_dir().join(format!("auris-toolbox-melody-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        {
+            let mut session = headless().unwrap();
+            session.save_as(&root.join("Tune.auris")).unwrap();
+        }
+        let path = root.join("Tune").join("Tune.auris").display().to_string();
+
+        add_track::run(&add_track::Args {
+            project: path.clone(),
+            name: "Lead".to_string(),
+            instrument: None,
+            sound: None,
+            drums: false,
+            kind: None,
+        })
+        .unwrap();
+        let opened_clip = add_clip::run(&add_clip::Args {
+            project: path.clone(),
+            track: "Lead".to_string(),
+            name: None,
+            start_bar: None,
+            bars: 2,
+        })
+        .unwrap();
+        assert!(opened_clip.contains("[1] 'melody'"), "{opened_clip}");
+        assert!(opened_clip.contains("bars 1-2"), "{opened_clip}");
+
+        // The tune, placed out of time order on purpose: the listing sorts.
+        let place = |notes: Vec<edit_notes::NoteSpec>, remove: Option<Vec<usize>>| {
+            edit_notes::run(&edit_notes::Args {
+                project: path.clone(),
+                track: "Lead".to_string(),
+                clip: 1,
+                remove,
+                add: Some(notes),
+            })
+        };
+        let note = |pitch: &str, bar: u32, beat: f64| edit_notes::NoteSpec {
+            pitch: pitch.to_string(),
+            bar,
+            beat,
+            beats: 1.0,
+            velocity: None,
+        };
+        let placed = place(
+            vec![
+                note("E4", 1, 3.0),
+                note("C4", 1, 1.0),
+                note("G4", 2, 1.0),
+                note("D4", 2, 3.0),
+            ],
+            None,
+        )
+        .unwrap();
+        assert!(placed.contains("placed 4"), "{placed}");
+
+        let listing = notes::run(&notes::Args {
+            project: path.clone(),
+            track: "Lead".to_string(),
+            clip: 1,
+        })
+        .unwrap();
+        assert!(listing.contains("written by hand"), "{listing}");
+        assert!(
+            listing.contains("[1] bar 1 beat 1 — C4"),
+            "time order, not placement order: {listing}"
+        );
+        assert!(listing.contains("[3] bar 2 beat 1 — G4"), "{listing}");
+
+        // The correction: the D was wrong, an E belongs there. Numbers are the listing's.
+        let corrected = place(vec![note("E4", 2, 3.0)], Some(vec![4])).unwrap();
+        assert!(corrected.contains("Removed 1, placed 1"), "{corrected}");
+        let after = notes::run(&notes::Args {
+            project: path.clone(),
+            track: "Lead".to_string(),
+            clip: 1,
+        })
+        .unwrap();
+        assert!(after.contains("[4] bar 2 beat 3 — E4"), "{after}");
+        assert!(!after.contains("D4"), "{after}");
+        let missing = place(vec![], Some(vec![9])).unwrap_err();
+        assert!(missing.contains("[1]-[4]"), "{missing}");
+        let outside = place(vec![note("C4", 7, 1.0)], None).unwrap_err();
+        assert!(outside.contains("bars 1-2"), "{outside}");
+
+        // The band, derived from the tune. The melody itself is untouched.
+        let band = accompany::run(&accompany::Args {
+            project: path.clone(),
+            track: "Lead".to_string(),
+            clip: 1,
+            parts: None,
+            seed: None,
+        })
+        .unwrap();
+        assert!(band.contains("Key:"), "{band}");
+        assert!(band.contains("Bass"), "{band}");
+        let unchanged = notes::run(&notes::Args {
+            project: path.clone(),
+            track: "Lead".to_string(),
+            clip: 1,
+        })
+        .unwrap();
+        assert!(unchanged.contains("[1] bar 1 beat 1 — C4"), "{unchanged}");
+        let described = describe::run(&describe::Args {
+            project: path.clone(),
+        })
+        .unwrap();
+        assert!(described.contains("Bass"), "{described}");
+        assert!(described.contains("Drums"), "{described}");
 
         std::fs::remove_dir_all(&root).unwrap();
     }

@@ -141,7 +141,7 @@ pub mod prelude {
     pub use auris_core::theory::chord::{Chord, Quality};
     pub use auris_core::theory::key::Key as MusicalKey;
     pub use auris_core::theory::numeral::Numeral;
-    pub use auris_core::theory::pitch::PitchClass;
+    pub use auris_core::theory::pitch::{PitchClass, midi_name};
     pub use auris_core::theory::scale::ScaleId;
     pub use auris_core::time::{
         Seconds, SignatureMap, SignaturePoint, SignatureSpan, TICKS_PER_QUARTER, TempoMap,
