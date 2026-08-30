@@ -426,9 +426,9 @@ mod tests {
     #[gpui::test]
     fn the_agent_panel_opens_and_an_unconfigured_send_asks_for_a_model(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
-        app.read_with(cx, |this, _| {
-            assert!(!this.panels.is_open(crate::dock::Panel::Agent));
-        });
+        // Closed by hand, not assumed: the tests share one config directory, and any test
+        // that toggles a panel writes the layout another test's window then opens with.
+        app.update(cx, |this, _| this.panels.hide(crate::dock::Panel::Agent));
         cx.dispatch_action(actions::ToggleAgent);
         app.read_with(cx, |this, _| {
             assert!(this.panels.is_open(crate::dock::Panel::Agent));
@@ -470,7 +470,8 @@ mod tests {
     #[gpui::test]
     fn a_picked_model_survives_enter_and_is_applied(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
-        cx.dispatch_action(actions::ToggleAgent);
+        // Shown, not toggled: a toggle depends on the shared layout file's mood.
+        app.update(cx, |this, _| this.panels.show(crate::dock::Panel::Agent));
         paint(&app, cx);
         app.update(cx, |this, _| {
             this.settings.agent = Default::default();
@@ -506,8 +507,9 @@ mod tests {
     #[gpui::test]
     fn picking_a_model_from_the_menu_applies_it_at_once(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
-        cx.dispatch_action(actions::ToggleAgent);
         app.update(cx, |this, _| {
+            // Shown, not toggled: a toggle depends on the shared layout file's mood.
+            this.panels.show(crate::dock::Panel::Agent);
             this.settings.agent = Default::default();
             this.agent_chat.configuring = true;
             // What the provider would have answered, so no subprocess is involved.
