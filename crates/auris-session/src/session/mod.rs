@@ -255,6 +255,12 @@ pub struct Session {
 
     history: History,
     transaction: Option<Transaction>,
+    /// Counts every change to the document: edits, undo, redo, another document entirely.
+    ///
+    /// For frontends that cache something derived from the document — a repaint loop that asked
+    /// an expensive question thirty times a second would otherwise have no cheap way to know the
+    /// old answer still stands. Monotonic within a session, meaningless across two.
+    revision: u64,
     needs_rebuild: bool,
     /// Whether the meter has moved since the render graph was built.
     ///
@@ -486,6 +492,7 @@ impl Session {
             headless: !options.audio,
             history: History::default(),
             transaction: None,
+            revision: 0,
             needs_rebuild: false,
             meter_is_stale: false,
             last_record: None,
@@ -730,6 +737,15 @@ impl Session {
         self.dirty
     }
 
+    /// A number that moves whenever the document does — edits, undo, redo, another document.
+    ///
+    /// For caching answers derived from the document: a frontend that repaints on a timer
+    /// compares this against the value it computed under, and only a change makes it ask an
+    /// expensive question again. Monotonic within a session, meaningless across two.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     /// Waveform peaks for an imported source, once it has been analysed.
     pub fn waveform(&self, source: SourceId) -> Option<&Arc<WaveformPeaks>> {
         self.waveforms.get(&source)
@@ -918,6 +934,7 @@ impl Session {
         // must be three steps, or undoing the second nudge would take the note with it.
         self.last_record = None;
         self.dirty = true;
+        self.revision = self.revision.wrapping_add(1);
     }
 
     /// How long a repeated edit keeps folding into the step before it.
@@ -943,6 +960,7 @@ impl Session {
             .is_some_and(|(last, at)| last == edit && now.duration_since(at) < Self::COALESCE);
         if folds {
             self.dirty = true;
+            self.revision = self.revision.wrapping_add(1);
         } else {
             self.record(edit);
         }
@@ -1036,6 +1054,7 @@ impl Session {
         self.transaction = None;
         self.needs_rebuild = false;
         self.last_record = None;
+        self.revision = self.revision.wrapping_add(1);
     }
 }
 

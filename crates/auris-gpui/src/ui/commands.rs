@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use auris_i18n::{Key, messages};
+use auris_session::SingerTakeState;
 use auris_session::prelude::*;
 use gpui::{Context, Window};
 
@@ -837,15 +838,13 @@ impl AurisApp {
         .detach();
     }
 
-    /// Prompts for a destination and writes the document out as a MIDI file.
-    /// Writes the singer track's frame features — phonemes, pitch, energy — to a JSON file.
+    /// The singer track a singer command should act on.
     ///
     /// The selected track when it is a singer; otherwise the project's only singer track, so
     /// the ordinary one-singer song never asks which. Two singers with neither selected is a
-    /// genuine question, and the status line answers it with what to do.
-    pub(crate) fn export_singer_frames(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let selected = self
-            .selected_track
+    /// genuine question, answered with `None` — the caller's status line says what to do.
+    fn singer_target(&self) -> Option<TrackId> {
+        self.selected_track
             .filter(|track| {
                 self.project()
                     .track(*track)
@@ -859,8 +858,188 @@ impl AurisApp {
                     .filter(|track| track.kind.is_singer());
                 let only = singers.next().map(|track| track.id);
                 singers.next().is_none().then_some(only).flatten()
+            })
+    }
+
+    /// How a singer track's take stands against its notes, cached against the document.
+    ///
+    /// The answer renders the track's frames, and the repaint timer would otherwise ask thirty
+    /// times a second for a header badge; the cache empties whenever
+    /// [`Session::revision`](auris_session::session::Session::revision) moves, so an edit is
+    /// what makes the question worth asking again.
+    pub(crate) fn singer_take_badge(&mut self, track: TrackId) -> SingerTakeState {
+        let revision = self.session.revision();
+        if self.sung_badges_revision != revision {
+            self.sung_badges.clear();
+            self.sung_badges_revision = revision;
+        }
+        if let Some(state) = self.sung_badges.get(&track) {
+            return *state;
+        }
+        let state = self
+            .session
+            .singer_take_state(track)
+            .unwrap_or(SingerTakeState::Absent);
+        self.sung_badges.insert(track, state);
+        state
+    }
+
+    /// Asks which voice model should sing the singer track, and writes the answer down.
+    ///
+    /// The model is opened by the session before anything is recorded, so a file that is not a
+    /// voice fails right here, at the picker that chose it. Opening a couple of hundred
+    /// megabytes costs a beat on the main thread and is accepted: it happens once per voice per
+    /// session, on a deliberate action.
+    pub(crate) fn choose_singer_voice(&mut self, cx: &mut Context<Self>) {
+        let Some(track) = self.singer_target() else {
+            self.set_failed_status(self.t(Key::ErrorNoSingerTrack).to_string());
+            return;
+        };
+        let language = self.language();
+        cx.spawn(async move |this, cx| {
+            let handle = rfd::AsyncFileDialog::new()
+                .set_title(Key::DialogChooseVoice.get(language))
+                .add_filter(Key::FilterVoiceModel.get(language), &["onnx"])
+                .pick_file()
+                .await;
+            let Some(handle) = handle else { return };
+            let path = handle.path().to_path_buf();
+            let _ = this.update(cx, |this, cx| {
+                match this.session.set_singer_voice(track, Some(&path)) {
+                    Ok(()) => {
+                        let name = this
+                            .session
+                            .singer_voice(track)
+                            .ok()
+                            .flatten()
+                            .map(|voice| voice.name.clone())
+                            .unwrap_or_default();
+                        let language = this.language();
+                        this.set_status(messages::voice_chosen(language, &name));
+                    }
+                    Err(error) => {
+                        let line = this.failure(Key::CmdChooseVoice, &error);
+                        this.set_failed_status(line);
+                    }
+                }
+                cx.notify();
             });
-        let Some(track) = selected else {
+        })
+        .detach();
+    }
+
+    /// Renders the singer track through its voice model, off the main thread.
+    ///
+    /// The render reuses the export overlay — a sung take *is* an offline render, with the same
+    /// progress bar and the same stop button — and the same one-at-a-time rule, because two
+    /// long renders at once would fight over the machine and the status line. The plan is
+    /// checked up front, so every refusal a person can act on arrives before any work is spent;
+    /// the landing happens back on this thread, where the session is.
+    pub(crate) fn sing_track(&mut self, cx: &mut Context<Self>) {
+        if self.choosing_export || self.export.as_ref().is_some_and(|e| e.result.is_none()) {
+            self.set_status(self.t(Key::ExportAlreadyRunning));
+            return;
+        }
+        let Some(track) = self.singer_target() else {
+            self.set_failed_status(self.t(Key::ErrorNoSingerTrack).to_string());
+            return;
+        };
+        let plan = match self.session.sing_plan(track, None) {
+            Ok(plan) => plan,
+            Err(error) => {
+                let line = self.failure(Key::CmdSing, &error);
+                self.set_failed_status(line);
+                return;
+            }
+        };
+        let model = match self.session.voice_model_at(&plan.voice) {
+            Ok(model) => model,
+            Err(error) => {
+                let line = self.failure(Key::CmdSing, &error);
+                self.set_failed_status(line);
+                return;
+            }
+        };
+        let voice_name = self
+            .session
+            .singer_voice(track)
+            .ok()
+            .flatten()
+            .map(|voice| voice.name.clone())
+            .unwrap_or_default();
+        let track_name = self
+            .project()
+            .track(track)
+            .map(|track| track.name.clone())
+            .unwrap_or_default();
+
+        let progress = Arc::new(AtomicU32::new(0));
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.export = Some(ExportState {
+            path: PathBuf::from(track_name),
+            progress: Arc::clone(&progress),
+            result: None,
+            cancel: Arc::clone(&cancel),
+        });
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let sung = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut model = model.lock().expect("no thread panics holding a voice");
+                    model
+                        .sing_with(&plan.frames, plan.seed, |done, total| {
+                            let fraction = done as f32 / total.max(1) as f32;
+                            progress.store(fraction.to_bits(), Ordering::Relaxed);
+                            !cancel.load(Ordering::Relaxed)
+                        })
+                        .map(|samples| (plan, samples))
+                        .map_err(auris_session::SessionError::from)
+                        .map_err(|error| (error.is_cancellation(), error))
+                })
+                .await;
+
+            let _ = this.update(cx, |this, cx| {
+                let message = match sung {
+                    Ok((plan, samples)) => match this.session.land_singer_take(&plan, &samples) {
+                        Ok(seconds) => {
+                            let language = this.language();
+                            let text = messages::take_sung(language, &voice_name, seconds);
+                            this.set_status(text.clone());
+                            Ok(text)
+                        }
+                        Err(error) => {
+                            let text = this.failure(Key::CmdSing, &error);
+                            this.set_failed_status(text.clone());
+                            Err(text)
+                        }
+                    },
+                    // Stopped on purpose: the previous take, if any, is untouched.
+                    Err((true, _)) => {
+                        let text = this.t(Key::SingCancelled).to_string();
+                        this.set_status(text.clone());
+                        Ok(text)
+                    }
+                    Err((false, error)) => {
+                        let text = this.failure(Key::CmdSing, &error);
+                        this.set_failed_status(text.clone());
+                        Err(text)
+                    }
+                };
+                if let Some(export) = this.export.as_mut() {
+                    export.result = Some(message);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Prompts for a destination and writes the document out as a MIDI file.
+    /// Writes the singer track's frame features — phonemes, pitch, energy — to a JSON file.
+    pub(crate) fn export_singer_frames(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(track) = self.singer_target() else {
             self.set_failed_status(self.t(Key::ErrorNoSingerTrack).to_string());
             return;
         };

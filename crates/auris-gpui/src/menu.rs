@@ -387,6 +387,13 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
             ),
             MenuRow::Separator,
             command(
+                t(Key::CmdChooseVoice),
+                actions::ChooseSingerVoice,
+                "track.choose_voice",
+            ),
+            command(t(Key::CmdSing), actions::Sing, "track.sing"),
+            MenuRow::Separator,
+            command(
                 t(Key::CmdToggleTrackMute),
                 actions::ToggleTrackMute,
                 "track.mute",

@@ -73,6 +73,10 @@ actions!(
         AddInstrumentTrack,
         /// Add a singer track.
         AddSingerTrack,
+        /// Choose the voice model a singer track is sung by.
+        ChooseSingerVoice,
+        /// Render the selected singer track through its voice model.
+        Sing,
         /// Add an audio track.
         AddAudioTrack,
         /// Delete the selected track.
@@ -458,6 +462,10 @@ bindable! {
 
         "track.add_instrument", GroupTrack,     CmdAddInstrumentTrack, "secondary-t" => AddInstrumentTrack;
         "track.add_singer",     GroupTrack,     CmdAddSingerTrack,     "secondary-alt-v" => AddSingerTrack;
+        // No keystrokes: choosing a voice happens once per track, and a render that takes tens
+        // of seconds is a command to reach for on purpose, the way balancing is.
+        "track.choose_voice",   GroupTrack,     CmdChooseVoice,        ""            => ChooseSingerVoice;
+        "track.sing",           GroupTrack,     CmdSing,               ""            => Sing;
         "track.add_audio",      GroupTrack,     CmdAddAudioTrack,      "secondary-shift-t" => AddAudioTrack;
         // B for bus, and it is the one plain letter of the three that was still free.
         "track.add_bus",        GroupTrack,     CmdAddBusTrack,        "secondary-b" => AddBusTrack;

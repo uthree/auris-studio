@@ -790,6 +790,12 @@ strings! {
         ja: "先にシンガートラックを選択してください。フレームは 1 トラック分の特徴量です"
     }
     FilterWav { en: "WAV audio", ja: "WAV オーディオ" }
+    FilterVoiceModel { en: "auris-singer voice model", ja: "auris-singer 声モデル" }
+    DialogChooseVoice { en: "Choose a voice model", ja: "声のモデルを選択" }
+    CmdChooseVoice { en: "Choose Voice…", ja: "声を選ぶ…" }
+    CmdSing { en: "Sing", ja: "歌わせる" }
+    SingCancelled { en: "Singing stopped; the previous take stands", ja: "歌唱を中止しました。前のテイクのままです" }
+    TakeBehind { en: "behind the notes", ja: "テイクが楽譜より古い" }
     SpecRejectedTitle { en: "The specification was not accepted", ja: "仕様書を読み取れませんでした" }
 
     // ------------------------------------------------------------------ statuses

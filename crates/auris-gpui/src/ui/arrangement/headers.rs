@@ -151,6 +151,9 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> gpui::AnyElement {
         let theme = self.theme.clone();
+        // Asked before the track is borrowed: the answer is cached on `self` against the
+        // document revision, and reading the cache needs the borrow the track would hold.
+        let take_state = self.singer_take_badge(track_id);
         let Some(track) = self.project().track(track_id) else {
             return div().into_any_element();
         };
@@ -166,6 +169,17 @@ impl AurisApp {
                 let soloed = track.mixer.solo;
                 let name = track.name.clone();
                 let kind = self.t(track_kind_key(&track.kind));
+                // The voice that sings this track, where one has been chosen — beside the kind
+                // label, with the one fact about the take worth a glance: whether it is still
+                // what the notes say. Behind is a badge and never a fallback; the take keeps
+                // playing, and this is what says to sing it again.
+                let voice = track
+                    .kind
+                    .as_singer()
+                    .and_then(|singer| singer.voice.as_ref())
+                    .map(|voice| voice.name.clone());
+                let behind = take_state == auris_session::SingerTakeState::Behind;
+                let behind_tip = self.tip(Key::TakeBehind, "");
                 let level_db = gain_to_db(self.track_level(index));
                 // Latched by the engine and only put out by asking, so a transient that went
                 // over is still saying so long after the meter beside it has fallen back.
@@ -312,9 +326,26 @@ impl AurisApp {
                                                 ),
                                             ),
                                     )
-                                    .child(
-                                        div().text_xs().text_color(theme.text_faint).child(kind),
-                                    ),
+                                    .child(div().text_xs().text_color(theme.text_faint).child(kind))
+                                    .when_some(voice, |this, voice| {
+                                        this.child(
+                                            div()
+                                                .id(("voice-badge", index))
+                                                .text_xs()
+                                                .max_w(px(120.0))
+                                                .truncate()
+                                                .text_color(if behind {
+                                                    theme.record
+                                                } else {
+                                                    theme.text_faint
+                                                })
+                                                .child(match behind {
+                                                    true => format!("♪ {voice} !"),
+                                                    false => format!("♪ {voice}"),
+                                                })
+                                                .when(behind, |this| this.tooltip(behind_tip)),
+                                        )
+                                    }),
                             )
                             .child(
                                 div()

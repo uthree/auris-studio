@@ -1029,6 +1029,14 @@ pub struct AurisApp {
     pub(crate) panels: PanelLayout,
     pub(crate) status: String,
     pub(crate) export: Option<ExportState>,
+    /// Each singer track's take freshness, cached under the document revision it was read at.
+    ///
+    /// The repaint timer redraws thirty times a second and the freshness question renders a
+    /// track's frames to answer; cached against [`Session::revision`](auris_session::session::Session::revision),
+    /// it is asked once per edit instead. See [`AurisApp::singer_take_badge`].
+    pub(crate) sung_badges: std::collections::HashMap<TrackId, auris_session::SingerTakeState>,
+    /// The revision [`Self::sung_badges`] was computed under.
+    pub(crate) sung_badges_revision: u64,
     /// The song sheet's dials while it is open, and nothing when it is not.
     ///
     /// State of the sheet rather than of the document: nothing here has been written until Write
@@ -1288,6 +1296,8 @@ impl AurisApp {
             panels: PanelLayout::load(),
             status,
             export: None,
+            sung_badges: std::collections::HashMap::new(),
+            sung_badges_revision: 0,
             song_sheet: None,
             progressions: auris_session::progressions::ProgressionBook::load(),
             auditioning: None,

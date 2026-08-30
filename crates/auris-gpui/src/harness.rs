@@ -404,6 +404,43 @@ mod tests {
         assert_eq!(after, before + 1, "Track → Add Instrument Track added one");
     }
 
+    /// Sing without a voice refuses with the line naming the cure, and costs no undo step —
+    /// the whole refusal path from the menu row to the status bar, no model file involved.
+    #[gpui::test]
+    fn singing_without_a_voice_names_the_cure_and_records_nothing(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let singer = app.update(cx, |this, cx| {
+            let track = this.session.add_singer_track("Voice");
+            let clip = this
+                .session
+                .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks::from_beats(4.0))
+                .expect("a singer track takes a note clip");
+            this.session
+                .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+                .unwrap();
+            cx.notify();
+            track
+        });
+        cx.run_until_parked();
+
+        cx.dispatch_action(actions::Sing);
+        cx.run_until_parked();
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.status
+                    .contains(auris_i18n::Key::ErrorNoVoice.get(this.language())),
+                "the status must say to choose a voice, said: {}",
+                this.status
+            );
+            assert!(this.export.is_none(), "no render was started");
+            // And the badge machinery answers Absent without a model anywhere near.
+            assert_eq!(
+                this.session.singer_take_state(singer).unwrap(),
+                auris_session::SingerTakeState::Absent
+            );
+        });
+    }
+
     /// The same command through the keyboard, which is the half a dispatched action skips: the
     /// binding table, the `secondary-` translation that means ⌘ on one platform and Ctrl on the
     /// other, the key context the window names, and the pane holding focus.

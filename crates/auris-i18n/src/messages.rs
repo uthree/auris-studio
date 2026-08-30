@@ -265,6 +265,18 @@ messages! {
         ja: "{path} に {frames} フレームを書き出しました"
     }
 
+    /// Confirmation that a voice model was put on a singer track.
+    fn voice_chosen(name: &str) {
+        en: "{name} will sing this track",
+        ja: "このトラックは {name} が歌います"
+    }
+
+    /// Confirmation that a take was rendered, sung by the named voice.
+    fn take_sung(name: &str, seconds: f64) {
+        en: "{name} sang {seconds:.1} s",
+        ja: "{name} が {seconds:.1} 秒を歌いました"
+    }
+
     /// Confirmation that a piece left as a MIDI file.
     fn midi_exported(path: &str, notes: usize) {
         en: "Wrote {notes} note(s) to {path}",

@@ -148,6 +148,8 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_import_midi))
             .on_action(cx.listener(Self::on_export_midi))
             .on_action(cx.listener(Self::on_export_singer_frames))
+            .on_action(cx.listener(Self::on_choose_singer_voice))
+            .on_action(cx.listener(Self::on_sing))
             .on_action(cx.listener(Self::on_collect_assets))
             .on_action(cx.listener(Self::on_export_audio))
             .on_action(cx.listener(Self::on_export_cycle))
@@ -1563,6 +1565,19 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.export_singer_frames(window, cx);
+    }
+
+    fn on_choose_singer_voice(
+        &mut self,
+        _: &actions::ChooseSingerVoice,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.choose_singer_voice(cx);
+    }
+
+    fn on_sing(&mut self, _: &actions::Sing, _window: &mut Window, cx: &mut Context<Self>) {
+        self.sing_track(cx);
     }
 
     fn on_collect_assets(

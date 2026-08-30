@@ -78,6 +78,11 @@ pub use settings::{
 ///
 /// Re-exported so a frontend can name the type without depending on [`auris_clap`], which it may
 /// not do — a frontend depends on this crate and its own toolkit and nothing else.
+/// Re-exported so a frontend can render a take on its own thread — the model behind
+/// [`Session::voice_model_at`](session::Session::voice_model_at) — without depending on
+/// `auris-singer` itself, the same door `ClapPluginInfo` walks through below.
+pub use auris_singer::{SingError, VoiceModel};
+
 pub use auris_clap::ClapPluginInfo;
 
 /// The platform's own handle for a window, and the trait a toolkit hands one out through.
