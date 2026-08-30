@@ -17,6 +17,12 @@ format rather than a convention: `## <version> — <date>`.
   peak landing five milliseconds ahead of the downbeat (measured on the shipped font; the lead
   converts per section tempo, so the swell is the same second of cymbal at any speed). Declare
   it with `role = "riser"`; the pop-band, city-pop and synthwave presets now do.
+* A piece can end by leaving the room: **`ending = "fade"`** rides the master fader from unity
+  to silence across the final eight bars (or the whole final section, where it is shorter), and
+  is the composer's first piece of written **automation** — the ride arrives as an ordinary
+  lane on the master gain, in the same view as one drawn by hand, so it can be reshaped or
+  deleted like anything a person wrote. A fading piece takes no landing bar; the fade is the
+  deliberate refusal of one.
 
 ### Performance: the score does not change, the playing does
 

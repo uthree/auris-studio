@@ -386,6 +386,21 @@ impl Session {
             false => report.substituted.push(MASTER_LIMITER.to_string()),
         }
 
+        // The composer's automation, which today is one fader: a fade-out ending arrives as
+        // points on the master gain, and a piece that does not fade arrives with none. Written
+        // as a lane like any a person draws, so the fade can be reshaped, shortened or deleted
+        // in the automation view — a fade a person cannot find is one they cannot disagree with,
+        // the same argument the limiter makes.
+        for point in &composition.master_gain {
+            project.automation.set_point(
+                auris_core::param::ParamTarget::MasterGain,
+                None,
+                auris_core::automation::AutomationCurve::Linear,
+                point.tick,
+                point.value,
+            );
+        }
+
         // Loop over the whole piece, so pressing play and leaving it running plays the song.
         project.loop_region = Some((Ticks::ZERO, composition.length));
         project.loop_enabled = false;
@@ -460,6 +475,41 @@ mod tests {
         assert_eq!(session.undo(), Some(Edit::Compose));
         assert_eq!(session.project().tracks.len(), 1);
         assert_eq!(session.project().tracks[0].name, "Old");
+    }
+
+    #[test]
+    fn a_fading_piece_arrives_with_its_ride_written_into_the_lanes() {
+        // The composer's automation lands as automation — a lane a person can find, reshape or
+        // delete in the same view as one they drew — rather than as arithmetic in the renderer.
+        let mut session = session();
+        let spec = auris_compose::SongSpec::parse(
+            r#"
+                title = "Leaving the room"
+                form = "verse chorus"
+                chords = "@axis"
+                ending = "fade"
+                [section.verse]
+                bars = 4
+                [section.chorus]
+                bars = 4
+                "#,
+        )
+        .unwrap();
+        let composition = auris_compose::compose(&spec);
+        assert_eq!(
+            composition.master_gain.len(),
+            2,
+            "the spec asked for a fade"
+        );
+        session.compose(&composition).unwrap();
+
+        let lane = session
+            .automation()
+            .lane(auris_core::param::ParamTarget::MasterGain)
+            .expect("the ride reached the document");
+        assert_eq!(lane.points().len(), 2);
+        assert_eq!(lane.points()[1].tick, composition.length);
+        assert_eq!(lane.points()[1].value, -60.0);
     }
 
     #[test]

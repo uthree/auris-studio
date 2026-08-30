@@ -283,6 +283,15 @@ pub enum Ending {
     /// No extra bar. The last section plays out and the piece simply stops — what a loop being
     /// exported wants, and nothing else does.
     None,
+    /// The last section plays on while the master fader rides down to nothing.
+    ///
+    /// The other classic way a record ends, and the composer's first piece of *automation*: the
+    /// piece gets no landing bar — a fade is the deliberate refusal of one — and instead
+    /// arrives with a lane on the master fader, sliding from unity to silence across the final
+    /// bars. The band never stops playing; the listener leaves the room. Because the fade ends
+    /// at nothing, the mid-groove stop that makes [`Ending::None`] sound like the tape running
+    /// out is below hearing by the time it happens.
+    Fade,
 }
 
 impl Ending {
@@ -291,6 +300,7 @@ impl Ending {
         match self {
             Ending::Held => "held",
             Ending::None => "none",
+            Ending::Fade => "fade",
         }
     }
 
@@ -299,6 +309,7 @@ impl Ending {
         Some(match text.trim().to_ascii_lowercase().as_str() {
             "held" | "hold" | "tonic" => Ending::Held,
             "none" | "stop" | "off" => Ending::None,
+            "fade" | "fadeout" | "fade-out" => Ending::Fade,
             _ => return None,
         })
     }

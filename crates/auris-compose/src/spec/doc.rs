@@ -484,7 +484,7 @@ impl SongDoc {
             match Ending::parse(text) {
                 Some(ending) => spec.ending = ending,
                 None => errors.push(SpecError::about(format!(
-                    "`{text}` is not an ending; try held or none"
+                    "`{text}` is not an ending; try held, fade or none"
                 ))),
             }
         }

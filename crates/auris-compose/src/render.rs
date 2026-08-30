@@ -1,5 +1,6 @@
 //! Turning the parts into clips a document can hold.
 
+use auris_core::automation::AutomationPoint;
 use auris_core::harmony::{ChordMap, ChordPoint, Harmony, KeyMap, KeyPoint};
 use auris_core::plugin::PluginState;
 use auris_core::project::Color;
@@ -14,7 +15,7 @@ use crate::perform::part_performance;
 use crate::phrase::SEED_RANGE;
 use crate::phrase::clip_seed;
 use crate::phrase::recipe_for;
-use crate::spec::{PartSpec, Role, SongSpec};
+use crate::spec::{Ending, PartSpec, Role, SongSpec};
 
 /// The bus a whole kit sits under, so one fader moves the drums.
 const DRUM_BUS: &str = "Drums";
@@ -211,6 +212,15 @@ pub struct Composition {
     /// spent the first ten minutes setting up before they could hear whether the piece was any
     /// good, which is ten minutes of not listening to it.
     pub buses: Vec<BusDraft>,
+    /// Points the master fader is asked to ride through, in decibels; empty leaves it alone.
+    ///
+    /// The composer's first automation lane, and today the whole of it: a fade-out ending
+    /// ([`Ending::Fade`](crate::spec::Ending)) is these points and nothing else. Handed over as
+    /// data rather than written into the document, for the reason everything here is — the
+    /// composer knows no track ids, and the session is the layer that turns a draft into a
+    /// project. When the composer learns to ride more than one fader this becomes a list of
+    /// lanes; until then a single fader's points do not need a vocabulary for naming faders.
+    pub master_gain: Vec<AutomationPoint>,
 }
 
 impl Composition {
@@ -438,7 +448,47 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
         sections: sections_of(frame),
         tracks,
         buses,
+        master_gain: fade_of(spec, frame),
     }
+}
+
+/// How many bars a fade-out rides down across, at most.
+///
+/// Eight bars of the final section — around fifteen seconds at a pop tempo, which is where
+/// records put it: long enough that the fade is a gesture rather than an edit, short enough that
+/// the listener is not asked to sit through a minute of leaving. A final section shorter than
+/// this fades over all of itself.
+const FADE_BARS: usize = 8;
+
+/// Where the master fader lands at the end of a fade, in decibels.
+///
+/// Effectively silence: −60 under a −14 LUFS master is below anything a listener will catch the
+/// stop of, and stopping *at* silence rather than asymptotically near it is what lets the
+/// renderer's tail end the file.
+const FADE_FLOOR_DB: f32 = -60.0;
+
+/// The master fader's ride for a piece that fades out, or nothing for one that does not.
+///
+/// Two points, linear between them — and linear *in decibels*, which is the curve a fade-out on
+/// a console draws: equal loudness lost per bar, all the way down.
+fn fade_of(spec: &SongSpec, frame: &Frame) -> Vec<AutomationPoint> {
+    if spec.ending != Ending::Fade {
+        return Vec::new();
+    }
+    let Some(last) = frame.sections.last() else {
+        return Vec::new();
+    };
+    let over = frame
+        .grid
+        .bar_ticks()
+        .max(Ticks(1))
+        .raw()
+        .saturating_mul(FADE_BARS as i64)
+        .min(last.length.raw());
+    vec![
+        AutomationPoint::new(frame.length - Ticks(over), 0.0),
+        AutomationPoint::new(frame.length, FADE_FLOOR_DB),
+    ]
 }
 
 /// The buses a roster needs, in the order they should be created.
@@ -1837,6 +1887,45 @@ mod tests {
         for track in &piece.tracks {
             assert!(summary.contains(&track.name), "`{}` is missing", track.name);
         }
+    }
+
+    #[test]
+    fn a_fade_out_is_a_ride_on_the_master_and_no_landing_bar() {
+        let held = compose_text(BASE);
+        let fade = compose_text(&BASE.replace("form =", "ending = \"fade\"\nform ="));
+        let bar = TimeSignature::default().ticks_per_bar();
+
+        // A fade is the deliberate refusal of a landing bar: the piece is exactly its form, one
+        // bar shorter than the held version, and no clip carries the landing chord.
+        assert_eq!(fade.length, held.length - bar);
+
+        // The ride itself: unity where the fade begins, silence where the piece ends, and the
+        // final eight bars — the whole of BASE's chorus — between them.
+        assert_eq!(fade.master_gain.len(), 2);
+        assert_eq!(fade.master_gain[0].tick, fade.length - bar * 8);
+        assert_eq!(fade.master_gain[0].value, 0.0);
+        assert_eq!(fade.master_gain[1].tick, fade.length);
+        assert_eq!(fade.master_gain[1].value, -60.0);
+
+        // And a piece that does not fade asks nothing of the fader.
+        assert!(held.master_gain.is_empty());
+    }
+
+    #[test]
+    fn a_final_section_shorter_than_the_fade_fades_over_all_of_itself() {
+        let piece = compose_text(
+            r#"
+            form = "verse chorus"
+            chords = "@axis"
+            ending = "fade"
+            [section.verse]
+            bars = 8
+            [section.chorus]
+            bars = 2
+            "#,
+        );
+        let bar = TimeSignature::default().ticks_per_bar();
+        assert_eq!(piece.master_gain[0].tick, piece.length - bar * 2);
     }
 
     #[test]
