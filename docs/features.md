@@ -1090,14 +1090,23 @@ auris collect song.auris                       # gather every file it uses into 
 
 `auris-mcp` is the third frontend: the same session behind the
 [Model Context Protocol](https://modelcontextprotocol.io), over stdio, so a language model's
-harness can drive it. Seven tools cover the loop of writing a song and hearing it —
+harness can drive it. The tools cover the loop of writing a song and hearing it —
 `spec_reference` teaches the `.asong` format by example, `check_spec` validates a draft and
 answers with every default filled in, `compose` writes the piece and saves the project,
 `render` turns a project into WAV files (the mix, or one per track), `describe` reads a
-project back, and `list_presets` / `list_progressions` are the vocabulary a spec can quote.
-Answers are written for a reader that will act on the text: a rejected spec names its lines
-and fields, a render reports each file's length and peak. Registering the server with a
-client is one line:
+project back with every clip numbered, and `list_presets` / `list_progressions` are the
+vocabulary a spec can quote. Answers are written for a reader that will act on the text: a
+rejected spec names its lines and fields, a render reports each file's length and peak.
+
+The loop that *improves* a piece is `analyze`: the server renders the project and listens in
+the model's place, reporting loudness and peaks for the whole mix, per named section — the
+piece's dynamic arc as numbers — and, on request, per track alone. Against that answer the
+model either edits the specification and composes again, or aims `another_take` (same ask,
+next seed) or `write_again` (same seed, follows the harmony as it stands) at one clip, using
+the numbering `describe` prints. `teach_progression` keeps a chord progression by name on
+this machine, and `forget_progression` takes it back out.
+
+Registering the server with a client is one line:
 
 ```bash
 claude mcp add auris -- ./target/release/auris-mcp

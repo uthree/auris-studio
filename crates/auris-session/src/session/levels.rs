@@ -304,7 +304,7 @@ impl Session {
     /// Soloed rather than rendered by itself, so that the buses it feeds stay open: what a part is
     /// worth in the mix includes the room it is sent to, and a stem measured dry would put every
     /// part that carries reverb a little too loud.
-    fn measure_alone(&mut self, track: TrackId) -> Result<Option<f32>, SessionError> {
+    pub(super) fn measure_alone(&mut self, track: TrackId) -> Result<Option<f32>, SessionError> {
         let mut alone = self.project.clone();
         for entry in &mut alone.tracks {
             entry.mixer.solo = entry.id == track;

@@ -43,9 +43,12 @@ const INSTRUCTIONS: &str = "Auris Studio is a digital audio workstation; these t
     learn the format, `check_spec` to validate a draft (errors name lines and fields, and a \
     valid spec comes back with every default filled in), `compose` to write the piece and save \
     it as a project, `render` to hear it as a WAV file. `describe` inspects an existing \
-    project; `list_presets` and `list_progressions` are the vocabulary a spec can quote. Give \
-    every path as an absolute path — the server's working directory is wherever the client \
-    happened to launch it.";
+    project; `list_presets` and `list_progressions` are the vocabulary a spec can quote. To \
+    improve a piece, iterate: `analyze` listens for you — loudness and peaks for the mix, per \
+    section and (on request) per track — then either edit the spec and `compose` again with \
+    force, or aim `another_take` / `write_again` at one clip the way `describe` numbers them. \
+    Give every path as an absolute path — the server's working directory is wherever the \
+    client happened to launch it.";
 
 /// The server. Stateless on purpose — see the crate doc for why each tool opens its own session.
 #[derive(Clone, Copy, Debug, Default)]
@@ -99,6 +102,48 @@ struct RenderArgs {
 struct DescribeArgs {
     /// The project to describe — an absolute path to a `.auris` file.
     project: String,
+}
+
+/// Arguments to `analyze`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct AnalyzeArgs {
+    /// The project to listen to — an absolute path to a `.auris` file.
+    project: String,
+    /// Also measure every track alone, through the buses it feeds. Costs one render per
+    /// track, so ask only when the question is about the balance.
+    #[serde(default)]
+    per_track: bool,
+}
+
+/// Arguments to `another_take` and `write_again`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct RegenerateArgs {
+    /// The project to change — an absolute path to a `.auris` file.
+    project: String,
+    /// The track whose clip to write again, by name as `describe` lists it.
+    track: String,
+    /// Which clip on that track, by the 1-based number `describe` shows. Every generated
+    /// clip on the track when left out.
+    clip: Option<usize>,
+}
+
+/// Arguments to `teach_progression`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct TeachArgs {
+    /// The name to keep the progression under.
+    name: String,
+    /// The chords, as bars of roman numerals — e.g. `| i | bVII | IVmaj7 | v7 |`.
+    chords: String,
+    /// Which mode the numerals are written against: "major" or "minor". Left out, the
+    /// progression is read against whatever key a song is in.
+    mode: Option<String>,
+}
+
+/// Arguments to `forget_progression`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct ForgetArgs {
+    /// The kept progression to forget, by name.
+    name: String,
 }
 
 #[tool_router]
@@ -165,6 +210,62 @@ impl AurisMcp {
         Parameters(args): Parameters<DescribeArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         blocking(move || describe_project(Path::new(&args.project))).await
+    }
+
+    /// Listens to a project and reports what it measured, changing nothing: length, integrated
+    /// loudness and peaks for the whole mix, the same per named section — the piece's dynamic
+    /// arc as numbers — and, with `per_track`, each track alone. This is the ears of the
+    /// improve loop: render, analyze, edit the spec or rewrite one clip, and ask again.
+    #[tool]
+    async fn analyze(
+        &self,
+        Parameters(args): Parameters<AnalyzeArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || analyze_project(&args)).await
+    }
+
+    /// Writes another take of a generated clip: the same ask, the next seed, different notes.
+    /// The change is saved into the project — render again to hear it. Aim it with `track`
+    /// and the clip number `describe` shows; without a number, every generated clip on the
+    /// track gets a new take.
+    #[tool]
+    async fn another_take(
+        &self,
+        Parameters(args): Parameters<RegenerateArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || regenerate(&args, Take::Another)).await
+    }
+
+    /// Writes a generated clip again with its own seed, following the key and chords as they
+    /// stand now — the tool to reach for after changing the harmony under an existing piece.
+    /// The change is saved into the project. Addressed exactly like `another_take`.
+    #[tool]
+    async fn write_again(
+        &self,
+        Parameters(args): Parameters<RegenerateArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || regenerate(&args, Take::Same)).await
+    }
+
+    /// Keeps a chord progression under a name on this machine. It then shows up in
+    /// `list_progressions` and the desktop picker; a specification still writes the chords
+    /// out in full — only the built-in catalogue is quotable as `@name`, so a document stays
+    /// portable.
+    #[tool]
+    async fn teach_progression(
+        &self,
+        Parameters(args): Parameters<TeachArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || teach_progression(&args)).await
+    }
+
+    /// Forgets a progression kept with `teach_progression`, by name.
+    #[tool]
+    async fn forget_progression(
+        &self,
+        Parameters(args): Parameters<ForgetArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || forget_progression(&args.name)).await
     }
 
     /// Lists the chord progressions a specification can quote by name, with the chords each
@@ -452,6 +553,34 @@ fn describe_project(path: &Path) -> Result<String, String> {
         if !routing.is_empty() {
             text.push_str(&format!("    {:<20} {}\n", "", routing.join(", ")));
         }
+        // The clips, numbered — this numbering is the address `another_take` and
+        // `write_again` take, so it is printed rather than implied.
+        if let Some(clips) = track.kind.note_clips() {
+            for (index, clip) in clips.iter().enumerate() {
+                let last = (clip.start + clip.length - Ticks(1)).max_zero();
+                let origin = match &clip.recipe {
+                    Some(recipe) => {
+                        let edited = match session.clip_hand_edited(clip.id) {
+                            true => ", edited by hand",
+                            false => "",
+                        };
+                        format!(
+                            "generated ({}, seed {}{edited})",
+                            recipe.preset.name(),
+                            recipe.seed
+                        )
+                    }
+                    None => "written by hand".to_string(),
+                };
+                text.push_str(&format!(
+                    "      [{}] '{}' bars {}-{} — {origin}\n",
+                    index + 1,
+                    clip.name,
+                    project.signatures.bar_of(clip.start),
+                    project.signatures.bar_of(last),
+                ));
+            }
+        }
     }
     if !project.master.effects.is_empty() {
         let chain: Vec<&str> = project
@@ -483,6 +612,219 @@ fn describe_project(path: &Path) -> Result<String, String> {
         None => {}
     }
     Ok(text.trim_end().to_string())
+}
+
+/// The work behind `analyze`: open, listen, report.
+fn analyze_project(args: &AnalyzeArgs) -> Result<String, String> {
+    let mut session = headless()?;
+    let missing = session
+        .open(Path::new(&args.project))
+        .map_err(|error| error.to_string())?;
+    let report = session
+        .analyze(args.per_track)
+        .map_err(|error| error.to_string())?;
+
+    let mut text = String::new();
+    for path in &missing {
+        text.push_str(&format!(
+            "Note: the audio file {} is missing; its track rendered silent.\n",
+            path.display()
+        ));
+    }
+    text.push_str(&analysis_text(&report));
+    Ok(text.trim_end().to_string())
+}
+
+/// One loudness, spelt for a reader — a part that made no sound says so.
+fn lufs_text(lufs: Option<f32>) -> String {
+    lufs.map_or_else(|| "silent".to_string(), |lufs| format!("{lufs:.1} LUFS"))
+}
+
+/// [`auris_session::MixAnalysis`], laid out as the tables a reader scans.
+fn analysis_text(report: &auris_session::MixAnalysis) -> String {
+    let mut text = format!(
+        "The mix — {}, {}, peak {:.1} dBFS (true peak {:.1}).\n",
+        Seconds(report.seconds).format_clock(),
+        lufs_text(report.lufs),
+        report.peak_db,
+        report.true_peak_db,
+    );
+    if !report.sections.is_empty() {
+        text.push_str("By section:\n");
+        for section in &report.sections {
+            // The second chorus is named as the second, because the two differing is usually
+            // the very question being asked.
+            let label = match section.instance {
+                1 => section.label.clone(),
+                instance => format!("{} ({instance})", section.label),
+            };
+            text.push_str(&format!(
+                "  {:<14} bars {:>3}-{:<3}  {:>11}  peak {:.1} dBFS\n",
+                label,
+                section.start_bar,
+                section.end_bar,
+                lufs_text(section.lufs),
+                section.peak_db,
+            ));
+        }
+    }
+    if !report.tracks.is_empty() {
+        text.push_str("Each track alone, through its buses:\n");
+        for track in &report.tracks {
+            text.push_str(&format!(
+                "  {:<14} {:>11}\n",
+                track.name,
+                lufs_text(track.lufs)
+            ));
+        }
+    }
+    text
+}
+
+/// Which seed a rewritten clip keeps — the difference between the two rewrite tools.
+#[derive(Clone, Copy)]
+enum Take {
+    /// The next seed: different notes for the same ask.
+    Another,
+    /// The same seed: the same take, following the harmony as it stands now.
+    Same,
+}
+
+/// The work behind `another_take` and `write_again`.
+fn regenerate(args: &RegenerateArgs, take: Take) -> Result<String, String> {
+    let mut session = headless()?;
+    session
+        .open(Path::new(&args.project))
+        .map_err(|error| error.to_string())?;
+
+    let track = session
+        .project()
+        .tracks
+        .iter()
+        .find(|track| track.name.eq_ignore_ascii_case(&args.track))
+        .ok_or_else(|| {
+            let names: Vec<&str> = session
+                .project()
+                .tracks
+                .iter()
+                .map(|track| track.name.as_str())
+                .collect();
+            format!(
+                "no track is named '{}' — this project has: {}",
+                args.track,
+                names.join(", ")
+            )
+        })?;
+    let clips: Vec<(usize, ClipId, String, bool)> = track
+        .kind
+        .note_clips()
+        .ok_or_else(|| format!("'{}' holds no note clips", track.name))?
+        .iter()
+        .enumerate()
+        .map(|(index, clip)| (index + 1, clip.id, clip.name.clone(), clip.recipe.is_some()))
+        .collect();
+
+    let chosen: Vec<(usize, ClipId, String)> = match args.clip {
+        Some(wanted) => {
+            let (index, id, name, generated) = clips
+                .iter()
+                .find(|(index, ..)| *index == wanted)
+                .cloned()
+                .ok_or_else(|| {
+                    format!(
+                        "'{}' has {} clips, numbered as `describe` shows them — there is no [{wanted}]",
+                        args.track,
+                        clips.len()
+                    )
+                })?;
+            if !generated {
+                return Err(format!(
+                    "clip [{index}] '{name}' was not generated — it carries no recipe, so \
+                     there is nothing to write again"
+                ));
+            }
+            vec![(index, id, name)]
+        }
+        None => {
+            let generated: Vec<_> = clips
+                .iter()
+                .filter(|(.., generated)| *generated)
+                .map(|(index, id, name, _)| (*index, *id, name.clone()))
+                .collect();
+            if generated.is_empty() {
+                return Err(format!("'{}' has no generated clips", args.track));
+            }
+            generated
+        }
+    };
+
+    let mut text = String::new();
+    for (index, id, name) in &chosen {
+        // Asked before the rewrite, because writing the clip again is exactly what resets
+        // the measurement that knows.
+        let edited = session.clip_hand_edited(*id);
+        let notes = match take {
+            Take::Another => session.reroll_clip(*id),
+            Take::Same => session.regenerate_clip(*id),
+        }
+        .map_err(|error| error.to_string())?;
+        let seed = session
+            .clip_recipe(*id)
+            .map_or_else(String::new, |recipe| format!(", seed {}", recipe.seed));
+        text.push_str(&format!("[{index}] '{name}' — {notes} notes{seed}.\n"));
+        if edited {
+            text.push_str(&format!(
+                "Note: [{index}] had been edited by hand; those edits are gone.\n"
+            ));
+        }
+    }
+    session.save_in_place().map_err(|error| error.to_string())?;
+    text.push_str("Saved. Render again to hear it.");
+    Ok(text)
+}
+
+/// The work behind `teach_progression`.
+fn teach_progression(args: &TeachArgs) -> Result<String, String> {
+    let chart = Chart::parse(&args.chords).ok_or_else(|| {
+        format!(
+            "could not read '{}' as chords — write bars of roman numerals, like \
+             \"| i | bVII | IVmaj7 | v7 |\"",
+            args.chords
+        )
+    })?;
+    let mode = match args.mode.as_deref() {
+        None => None,
+        Some("major") => Some(ChartMode::Major),
+        Some("minor") => Some(ChartMode::Minor),
+        Some(other) => {
+            return Err(format!("mode is \"major\" or \"minor\", not \"{other}\""));
+        }
+    };
+    let mut book = auris_session::progressions::ProgressionBook::load();
+    if !book.keep(&args.name, &chart, mode) {
+        return Err(format!(
+            "'{}' cannot be kept under that name — it is empty, or the built-in catalogue \
+             already uses it",
+            args.name
+        ));
+    }
+    book.save().map_err(|error| error.to_string())?;
+    Ok(format!(
+        "Kept '{}' — {chart}. It now shows in `list_progressions` on this machine; a \
+         specification still writes the chords out in full, which is what keeps a document \
+         portable.",
+        args.name
+    ))
+}
+
+/// The work behind `forget_progression`.
+fn forget_progression(name: &str) -> Result<String, String> {
+    let mut book = auris_session::progressions::ProgressionBook::load();
+    if !book.forget(name) {
+        return Err(format!("nothing is kept under '{name}'"));
+    }
+    book.save().map_err(|error| error.to_string())?;
+    Ok(format!("Forgot '{name}'."))
 }
 
 /// The chord progressions a specification can quote by name.
@@ -587,6 +929,25 @@ mod tests {
         assert!(presets_text().contains(auris_session::prelude::PRESETS[0].name));
     }
 
+    #[test]
+    fn bad_chords_and_bad_modes_are_refused_with_directions() {
+        // Neither reaches the book, so nothing on the machine changes under a test.
+        let unreadable = teach_progression(&TeachArgs {
+            name: "test".to_string(),
+            chords: "definitely not chords !!".to_string(),
+            mode: None,
+        })
+        .unwrap_err();
+        assert!(unreadable.contains("roman numerals"), "{unreadable}");
+        let sideways = teach_progression(&TeachArgs {
+            name: "test".to_string(),
+            chords: "| i | iv |".to_string(),
+            mode: Some("sideways".to_string()),
+        })
+        .unwrap_err();
+        assert!(sideways.contains("major"), "{sideways}");
+    }
+
     /// The whole loop a client would run, against one four-bar piece: compose it, read the
     /// project back, render it. One test rather than three because the compose is the slow
     /// part — it listens to what it wrote — and each stage here feeds the next its file.
@@ -617,6 +978,50 @@ mod tests {
         assert!(described.contains("Loop"), "{described}");
         assert!(described.contains("tempo"), "{described}");
         assert!(described.contains("instrument"), "{described}");
+        // The clips are numbered and marked, because that numbering is the rewrite address.
+        assert!(described.contains("[1]"), "{described}");
+        assert!(described.contains("generated"), "{described}");
+
+        // The ears: the mix and its one section, measured off a render that changes nothing.
+        let heard = analyze_project(&AnalyzeArgs {
+            project: document.display().to_string(),
+            per_track: false,
+        })
+        .unwrap();
+        assert!(heard.contains("LUFS"), "{heard}");
+        assert!(heard.contains("By section"), "{heard}");
+
+        // A new take of one part, addressed the way describe numbers it, lands in the file.
+        let before = std::fs::read_to_string(&document).unwrap();
+        let took = regenerate(
+            &RegenerateArgs {
+                project: document.display().to_string(),
+                track: "lead".to_string(),
+                clip: Some(1),
+            },
+            Take::Another,
+        )
+        .unwrap();
+        assert!(took.contains("seed"), "{took}");
+        assert!(took.contains("Saved"), "{took}");
+        assert_ne!(
+            before,
+            std::fs::read_to_string(&document).unwrap(),
+            "another take was saved into the project"
+        );
+        let missing = regenerate(
+            &RegenerateArgs {
+                project: document.display().to_string(),
+                track: "nobody".to_string(),
+                clip: None,
+            },
+            Take::Another,
+        )
+        .unwrap_err();
+        assert!(
+            missing.contains("lead"),
+            "the refusal lists the real tracks: {missing}"
+        );
 
         // Composing over the same folder again is a refusal until `force` says otherwise.
         let refused = compose_project(&ComposeArgs {

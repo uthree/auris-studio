@@ -31,6 +31,7 @@
 //! now share.
 
 mod accompany;
+mod analysis;
 mod assets;
 mod autosave;
 mod clipboard;
@@ -56,6 +57,7 @@ mod typing;
 mod fixtures;
 
 pub use accompany::{AccompanyReport, DEFAULT_PARTS};
+pub use analysis::{MixAnalysis, SectionLoudness, TrackLoudness};
 pub use autosave::{AUTOSAVE_INTERVAL, AutosaveState, should_autosave};
 pub use clipboard::{Clipboard, CopiedClip, CopiedContent};
 pub use compose::{composed_gain_db, kit_trim_db};

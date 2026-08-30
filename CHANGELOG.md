@@ -21,6 +21,15 @@ format rather than a convention: `## <version> — <date>`.
   `list_progressions` are the quotable vocabulary. Errors are tool answers rather than
   failures — a rejected spec names its lines and fields, which is exactly the loop a model
   iterates in.
+* The loop that improves a piece: **`analyze`** renders a project and listens in the model's
+  place — loudness and peaks for the mix, per named section (the dynamic arc as numbers), and
+  on request per track alone, soloed through its buses. Behind it is a new session command,
+  `Session::analyze`, so every frontend can ask the same question. Against the answer a model
+  edits the spec and composes again, or aims **`another_take`** (same ask, next seed) or
+  **`write_again`** (same seed, follows the harmony as it stands now) at one clip, addressed
+  by the numbering `describe` now prints beside every clip — along with each clip's recipe,
+  seed, and whether a hand has edited it. **`teach_progression`** keeps a chord progression
+  by name on this machine; **`forget_progression`** takes it back out.
 
 ### Arrangement: the joins learn a second word
 

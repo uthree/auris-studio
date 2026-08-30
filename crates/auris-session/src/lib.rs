@@ -62,11 +62,11 @@ pub use render::{ExportSummary, RenderJob, StemSummary, stem_tracks};
 pub use session::{
     AccompanyReport, Arm, AudioStatus, BalanceReport, CEILING_DB, Clipboard, ComposeReport,
     CopiedClip, CopiedContent, DEFAULT_OCTAVE, DEFAULT_PARTS, DEFAULT_VELOCITY, InputChannels,
-    LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont, MusicalTyping, OCTAVE_RANGE, Played, PluginWindow,
-    Quantize, RecordingReport, RecordingStatus, Release, SaveReport, Session, SessionOptions,
-    Struck, TARGET_LUFS, TYPING_BEND, TakeReport, TrackLevel, TypingRole, VELOCITY_STEP,
-    WHEEL_STEPS, decode_audio, fader_for, faders_lift_db, input_level_of, master_gain_db,
-    quantized, read_soundfont, shadows_musical_typing,
+    LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont, MixAnalysis, MusicalTyping, OCTAVE_RANGE, Played,
+    PluginWindow, Quantize, RecordingReport, RecordingStatus, Release, SaveReport, SectionLoudness,
+    Session, SessionOptions, Struck, TARGET_LUFS, TYPING_BEND, TakeReport, TrackLevel,
+    TrackLoudness, TypingRole, VELOCITY_STEP, WHEEL_STEPS, decode_audio, fader_for, faders_lift_db,
+    input_level_of, master_gain_db, quantized, read_soundfont, shadows_musical_typing,
 };
 pub use settings::{
     AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings, WindowPlacement, config_dir,
@@ -135,7 +135,9 @@ pub mod prelude {
         ParamDescriptor, ParamId, ParamUnit, ParamValueCurve, db_to_gain, gain_to_db,
     };
     pub use auris_core::plugin::{PluginCategory, PluginDescriptor, PluginKind};
-    pub use auris_core::theory::chart::{CatalogEntry, Chart, ChartOrigin, HarmonicEvent};
+    pub use auris_core::theory::chart::{
+        CatalogEntry, Chart, ChartMode, ChartOrigin, HarmonicEvent,
+    };
     pub use auris_core::theory::chord::{Chord, Quality};
     pub use auris_core::theory::key::Key as MusicalKey;
     pub use auris_core::theory::numeral::Numeral;
