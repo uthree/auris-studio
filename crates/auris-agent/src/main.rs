@@ -401,6 +401,12 @@ session_tool!(TeachProgression, teach_progression);
 session_tool!(ForgetProgression, forget_progression);
 text_tool!(ListProgressions, list_progressions);
 text_tool!(ListPresets, list_presets);
+text_tool!(ListInstruments, list_instruments);
+session_tool!(AddTrack, add_track);
+session_tool!(AddPart, add_part);
+session_tool!(SetInstrument, set_instrument);
+session_tool!(RenameTrack, rename_track);
+session_tool!(RemoveTrack, remove_track);
 
 /// Every tool in the box, onto one agent — the one list to keep when a tool is added.
 fn armed(builder: AgentBuilder) -> Agent {
@@ -423,6 +429,12 @@ fn armed(builder: AgentBuilder) -> Agent {
         .tool(ForgetProgression)
         .tool(ListProgressions)
         .tool(ListPresets)
+        .tool(ListInstruments)
+        .tool(AddTrack)
+        .tool(AddPart)
+        .tool(SetInstrument)
+        .tool(RenameTrack)
+        .tool(RemoveTrack)
         .build()
 }
 
@@ -1399,9 +1411,15 @@ mod tests {
             ForgetProgression::NAME,
             ListProgressions::NAME,
             ListPresets::NAME,
+            ListInstruments::NAME,
+            AddTrack::NAME,
+            AddPart::NAME,
+            SetInstrument::NAME,
+            RenameTrack::NAME,
+            RemoveTrack::NAME,
         ];
         let unique: std::collections::BTreeSet<&str> = names.into_iter().collect();
-        assert_eq!(unique.len(), 17, "seventeen tools, no name worn twice");
+        assert_eq!(unique.len(), 23, "twenty-three tools, no name worn twice");
 
         // The schema is the toolbox derive, fields and all — the same one the MCP door hands
         // its clients.

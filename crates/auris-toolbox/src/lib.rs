@@ -55,6 +55,11 @@ pub const INSTRUCTIONS: &str = "Auris Studio is a digital audio workstation; the
     parameter, `set_level` / `set_send` / `set_effect` move one, and `section_gain` holds one \
     section's gain at a level — often the better instrument than rewriting notes when `analyze` \
     says a section is too loud, a part is buried, or the master limiter is pinned. \
+    The arrangement itself can be edited in place: `add_track` puts a new track in an existing \
+    project (`list_instruments` names the built-in instruments, and any General MIDI sound can \
+    be asked for by name), `add_part` writes a generated part onto a track from the harmony \
+    underneath, `set_instrument` re-voices a track, and `rename_track` / `remove_track` do what \
+    they say — so one more part is an edit, not a recomposition. \
     Give every path as an absolute path — the working directory is wherever the host process \
     happened to be launched.";
 
@@ -88,6 +93,11 @@ pub const WRITES_PROJECTS: &[&str] = &[
     set_send::NAME,
     set_effect::NAME,
     section_gain::NAME,
+    add_track::NAME,
+    add_part::NAME,
+    set_instrument::NAME,
+    rename_track::NAME,
+    remove_track::NAME,
 ];
 
 /// The address of one project change: which clip, and which take of it.
@@ -1308,6 +1318,380 @@ pub mod list_presets {
     }
 }
 
+/// The instruments a track can be voiced with.
+pub mod list_instruments {
+    use super::*;
+
+    /// The tool's wire name.
+    pub const NAME: &str = "list_instruments";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Lists the built-in instruments a track can play, by the id \
+        `add_track` and `set_instrument` take. Any General MIDI sound is also available — name \
+        it in those tools' `sound` field instead, as a GM name or program number.";
+
+    /// Every registered instrument, one line each.
+    pub fn run() -> String {
+        let mut text = String::from("Instruments `add_track` and `set_instrument` accept:\n");
+        match headless() {
+            Ok(session) => {
+                for descriptor in session.registry().instruments() {
+                    text.push_str(&format!("  {:<24} {}\n", descriptor.id, descriptor.name));
+                }
+            }
+            Err(error) => text.push_str(&format!("  (unlisted: {error})\n")),
+        }
+        text.push_str(
+            "\nOr pass `sound` instead of `instrument`: any General MIDI sound by name \
+             (\"Electric Piano 1\", \"Fretless Bass\") or program number 0-127, with \
+             `drums: true` to read the number as a drum kit.",
+        );
+        text.trim_end().to_string()
+    }
+}
+
+/// A track, added to a project that already exists.
+pub mod add_track {
+    use super::*;
+
+    /// The tool's wire name.
+    pub const NAME: &str = "add_track";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Adds a track to an existing project and saves. An instrument \
+        track by default — voiced by `instrument` (an id from `list_instruments`) or by `sound` \
+        (a General MIDI name or program number, `drums: true` for a kit) — or, with `kind`, an \
+        audio track or a bus. A new instrument track has no clips: `add_part` writes one.";
+
+    /// Arguments to `add_track`.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// The project to change — an absolute path to a `.auris` file.
+        pub project: String,
+        /// What to call the track.
+        pub name: String,
+        /// A built-in instrument id from `list_instruments`. Pass this or `sound`, not both;
+        /// with neither, the default instrument plays.
+        pub instrument: Option<String>,
+        /// A General MIDI sound instead — a name like "Electric Piano 1" or a program number
+        /// 0-127, out of the shipped library.
+        pub sound: Option<String>,
+        /// Read `sound`'s number as a drum kit rather than a melodic program.
+        #[serde(default)]
+        pub drums: bool,
+        /// "instrument" (the default), "audio", or "bus".
+        pub kind: Option<String>,
+    }
+
+    /// Adds the track, voices it, and saves.
+    pub fn run(args: &Args) -> Result<String, String> {
+        let mut session = opened(&args.project)?;
+        let kind = args.kind.as_deref().unwrap_or("instrument");
+        let voiced = match kind {
+            "instrument" => {
+                let id = match &args.instrument {
+                    Some(id) => session
+                        .add_instrument_track(&args.name, id)
+                        .map_err(|error| {
+                            format!("{error} — `list_instruments` names the real ones")
+                        })?,
+                    None => session
+                        .add_default_instrument_track(&args.name)
+                        .map_err(|error| error.to_string())?,
+                };
+                voice(&mut session, id, &args.sound, args.drums, &args.instrument)?
+            }
+            "audio" | "bus" => {
+                if args.instrument.is_some() || args.sound.is_some() {
+                    return Err(format!("a {kind} track plays no instrument — drop it"));
+                }
+                match kind {
+                    "audio" => session.add_audio_track(&args.name),
+                    _ => session.add_bus_track(&args.name),
+                };
+                kind.to_string()
+            }
+            other => {
+                return Err(format!(
+                    "`kind` is \"instrument\", \"audio\" or \"bus\", not \"{other}\""
+                ));
+            }
+        };
+        session.save_in_place().map_err(|error| error.to_string())?;
+        let mut text = format!("Added track '{}' — {voiced}. Saved.", args.name);
+        if kind == "instrument" {
+            text.push_str(" The track holds no clips yet; `add_part` writes one.");
+        }
+        Ok(text)
+    }
+
+    /// Voices an instrument track by `sound` when one is named, answering with what plays.
+    ///
+    /// Shared with `set_instrument`, where the same three fields mean the same things.
+    pub(super) fn voice(
+        session: &mut Session,
+        id: auris_session::prelude::TrackId,
+        sound: &Option<String>,
+        drums: bool,
+        instrument: &Option<String>,
+    ) -> Result<String, String> {
+        if let Some(wanted) = sound {
+            if instrument.is_some() {
+                return Err(
+                    "pass `instrument` or `sound`, not both — a sound implies the sampler".into(),
+                );
+            }
+            let program = gm::Program::parse(wanted).ok_or_else(|| {
+                format!(
+                    "no General MIDI sound answers to '{wanted}' — give a name like \
+                     \"Electric Piano 1\" or a program number 0-127"
+                )
+            })?;
+            let chosen = program.sound(drums);
+            session
+                .set_track_general_midi(id, i32::from(chosen.bank), i32::from(chosen.patch))
+                .map_err(|error| error.to_string())?;
+            return Ok(format!(
+                "playing {} (General MIDI {})",
+                program.label(drums),
+                chosen.patch
+            ));
+        }
+        let playing = session
+            .project()
+            .track(id)
+            .and_then(|track| track.kind.as_instrument())
+            .map(|inner| inner.instrument_id.clone())
+            .unwrap_or_default();
+        Ok(format!("instrument {playing}"))
+    }
+}
+
+/// A generated part, written onto a track that is already there.
+pub mod add_part {
+    use super::*;
+
+    /// The tool's wire name.
+    pub const NAME: &str = "add_part";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Writes a generated part onto an existing instrument track, \
+        from the key and chords already under the song — lead, chords, pad, arp, bass, stab, \
+        drums, kick, snare or hat. Covers the whole song unless `start_bar` and `bars` aim it. \
+        The clip keeps its recipe, so `another_take` rerolls it and `write_again` follows a \
+        harmony change; the answer numbers it the way `describe` does.";
+
+    /// Arguments to `add_part`.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// The project to change — an absolute path to a `.auris` file.
+        pub project: String,
+        /// The track to write on, by name as `describe` lists it.
+        pub track: String,
+        /// What the part plays: lead, chords, pad, arp, bass, stab, drums, kick, snare or hat.
+        pub part: String,
+        /// The 1-based bar the part starts at. Bar 1 when left out.
+        pub start_bar: Option<u32>,
+        /// How many bars it covers. To the end of the song when left out.
+        pub bars: Option<u32>,
+        /// The seed of the take. 0 when left out; every answer names it, and `another_take`
+        /// moves to the next.
+        pub seed: Option<u64>,
+    }
+
+    /// Writes the part, and saves.
+    pub fn run(args: &Args) -> Result<String, String> {
+        let preset = ClipPreset::parse(&args.part).ok_or_else(|| {
+            let names: Vec<&str> = ClipPreset::ALL.iter().map(|preset| preset.name()).collect();
+            format!(
+                "no part is called '{}' — the parts are: {}",
+                args.part,
+                names.join(", ")
+            )
+        })?;
+        let mut session = opened(&args.project)?;
+        let track = track_by_name(session.project(), &args.track)?.id;
+
+        let start_bar = args.start_bar.unwrap_or(1).max(1);
+        let start = session.project().signatures.bar_start(start_bar);
+        let bars = match args.bars {
+            Some(bars) if bars > 0 => bars,
+            Some(_) => {
+                return Err("`bars` is how many bars the part covers; give at least 1".into());
+            }
+            None => {
+                let end = session.project().end_tick();
+                if end <= start {
+                    return Err(format!(
+                        "the song ends before bar {start_bar}, so there is nothing to cover — \
+                         pass `bars` to write into silence deliberately"
+                    ));
+                }
+                let last = session.project().signatures.bar_of(end - Ticks(1));
+                last - start_bar + 1
+            }
+        };
+        let length = session.project().signatures.bar_start(start_bar + bars) - start;
+        let seed = args.seed.unwrap_or(0);
+
+        let clip = session
+            .generate_clip(track, start, length, ClipRecipe::new(preset, seed))
+            .map_err(|error| error.to_string())?;
+        session.save_in_place().map_err(|error| error.to_string())?;
+
+        let notes = session
+            .project()
+            .midi_clip(clip)
+            .map(|(_, midi)| midi.notes.len())
+            .unwrap_or(0);
+        let number = session
+            .project()
+            .track(track)
+            .and_then(|entry| entry.kind.note_clips())
+            .and_then(|clips| clips.iter().position(|entry| entry.id == clip))
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        let mut text = format!(
+            "Wrote clip [{number}] '{}' on {} — bars {start_bar}-{}, {notes} notes, seed \
+             {seed}. Saved.",
+            preset.name(),
+            args.track,
+            start_bar + bars - 1,
+        );
+        if notes == 0 {
+            text.push_str(
+                "\nNote: no chords lie under those bars, so the clip is empty — the harmony \
+                 covers the song `compose` wrote; aim the part there, or compose again longer.",
+            );
+        }
+        Ok(text)
+    }
+}
+
+/// A track's voice, changed.
+pub mod set_instrument {
+    use super::*;
+
+    /// The tool's wire name.
+    pub const NAME: &str = "set_instrument";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Re-voices an instrument track: `instrument` names a built-in \
+        from `list_instruments`, or `sound` names a General MIDI sound (a name or a program \
+        number, `drums: true` for a kit). The previous instrument's dial positions and the \
+        automation that drove them go with it. The change is saved.";
+
+    /// Arguments to `set_instrument`.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// The project to change — an absolute path to a `.auris` file.
+        pub project: String,
+        /// The track to re-voice, by name as `describe` lists it.
+        pub track: String,
+        /// A built-in instrument id from `list_instruments`. Pass this or `sound`.
+        pub instrument: Option<String>,
+        /// A General MIDI sound instead — a name like "Electric Piano 1" or a program number
+        /// 0-127, out of the shipped library.
+        pub sound: Option<String>,
+        /// Read `sound`'s number as a drum kit rather than a melodic program.
+        #[serde(default)]
+        pub drums: bool,
+    }
+
+    /// Changes the voice, and saves.
+    pub fn run(args: &Args) -> Result<String, String> {
+        if args.instrument.is_none() && args.sound.is_none() {
+            return Err("pass `instrument` or `sound` — there is nothing else here to set".into());
+        }
+        let mut session = opened(&args.project)?;
+        let track = track_by_name(session.project(), &args.track)?.id;
+        if let Some(id) = &args.instrument {
+            if args.sound.is_some() {
+                return Err(
+                    "pass `instrument` or `sound`, not both — a sound implies the sampler".into(),
+                );
+            }
+            session
+                .set_track_instrument(track, id)
+                .map_err(|error| format!("{error} — `list_instruments` names the real ones"))?;
+        }
+        let voiced = add_track::voice(&mut session, track, &args.sound, args.drums, &None)?;
+        session.save_in_place().map_err(|error| error.to_string())?;
+        Ok(format!("{} — now {voiced}. Saved.", args.track))
+    }
+}
+
+/// A track, renamed.
+pub mod rename_track {
+    use super::*;
+
+    /// The tool's wire name.
+    pub const NAME: &str = "rename_track";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Renames a track. Every other tool addresses tracks by name, \
+        so the new name is the address from here on. The change is saved.";
+
+    /// Arguments to `rename_track`.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// The project to change — an absolute path to a `.auris` file.
+        pub project: String,
+        /// The track to rename, by name as `describe` lists it.
+        pub track: String,
+        /// The new name.
+        pub name: String,
+    }
+
+    /// Renames, and saves.
+    pub fn run(args: &Args) -> Result<String, String> {
+        if args.name.trim().is_empty() {
+            return Err("the new name is empty — a track no tool can address again".into());
+        }
+        let mut session = opened(&args.project)?;
+        let track = track_by_name(session.project(), &args.track)?.id;
+        session
+            .rename_track(track, args.name.trim())
+            .map_err(|error| error.to_string())?;
+        session.save_in_place().map_err(|error| error.to_string())?;
+        Ok(format!(
+            "'{}' is now '{}'. Saved.",
+            args.track,
+            args.name.trim()
+        ))
+    }
+}
+
+/// A track, removed.
+pub mod remove_track {
+    use super::*;
+
+    /// The tool's wire name.
+    pub const NAME: &str = "remove_track";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Removes a track and everything on it — its clips, its effect \
+        chain, its sends and its automation. The change is saved.";
+
+    /// Arguments to `remove_track`.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// The project to change — an absolute path to a `.auris` file.
+        pub project: String,
+        /// The track to remove, by name as `describe` lists it.
+        pub track: String,
+    }
+
+    /// Removes, and saves.
+    pub fn run(args: &Args) -> Result<String, String> {
+        let mut session = opened(&args.project)?;
+        let track = track_by_name(session.project(), &args.track)?.id;
+        session
+            .remove_track(track)
+            .map_err(|error| error.to_string())?;
+        session.save_in_place().map_err(|error| error.to_string())?;
+        Ok(format!(
+            "Removed '{}' — {} tracks remain. Saved.",
+            args.track,
+            session.project().tracks.len()
+        ))
+    }
+}
+
 /// A session with no audio device and no GPU, with the shipped SoundFonts.
 ///
 /// The fonts for the same reason `auris compose` loads them: `compose` here and **Compose a
@@ -1825,6 +2209,174 @@ mod tests {
         })
         .unwrap();
         assert!(!safe.contains("not limited"), "{safe}");
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The arrangement tools, on one composed piece: a track added, a part written from the
+    /// harmony already under the song, a re-voice, a rename that becomes the address, and a
+    /// removal — with every refusal naming the real vocabulary. The General MIDI leg runs
+    /// only where the fetched library is installed; elsewhere the honest refusal is asserted
+    /// instead, because that is what a user without the fonts gets too.
+    #[test]
+    fn the_arrangement_tools_add_voice_write_and_remove() {
+        let root =
+            std::env::temp_dir().join(format!("auris-toolbox-arrange-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let spec = r#"
+            title = "Arrange"
+            form = "verse"
+            chords = "@axis"
+            ending = "none"
+            [section.verse]
+            bars = 4
+        "#;
+        compose::run(&compose::Args {
+            spec: spec_args(Some(spec), None),
+            output: root.join("Arrange.auris").display().to_string(),
+            force: false,
+        })
+        .unwrap();
+        let path = root
+            .join("Arrange")
+            .join("Arrange.auris")
+            .display()
+            .to_string();
+
+        // The vocabulary teaches both doors: the registry ids and the General MIDI field.
+        let listed = list_instruments::run();
+        assert!(listed.contains("General MIDI"), "{listed}");
+        let default_id = headless()
+            .unwrap()
+            .registry()
+            .default_instrument_id()
+            .unwrap()
+            .to_string();
+        assert!(listed.contains(&default_id), "{listed}");
+
+        // A plain instrument track lands on the default voice and says what to do next.
+        let added = add_track::run(&add_track::Args {
+            project: path.clone(),
+            name: "Keys".to_string(),
+            instrument: None,
+            sound: None,
+            drums: false,
+            kind: None,
+        })
+        .unwrap();
+        assert!(added.contains(&default_id), "{added}");
+        assert!(added.contains("add_part"), "{added}");
+
+        // The General MIDI door: the sound where the library is installed, the honest
+        // refusal where it is not — never a silent substitution.
+        let voiced = add_track::run(&add_track::Args {
+            project: path.clone(),
+            name: "EP".to_string(),
+            instrument: None,
+            sound: Some("Electric Piano 1".to_string()),
+            drums: false,
+            kind: None,
+        });
+        match voiced {
+            Ok(text) => assert!(text.contains("Electric Piano 1"), "{text}"),
+            Err(text) => assert!(text.contains("library"), "{text}"),
+        }
+        let nonsense = add_track::run(&add_track::Args {
+            project: path.clone(),
+            name: "X".to_string(),
+            instrument: None,
+            sound: Some("Theremin Choir 9".to_string()),
+            drums: false,
+            kind: None,
+        })
+        .unwrap_err();
+        assert!(nonsense.contains("0-127"), "{nonsense}");
+
+        // A part covers the song by default, numbers itself the way `describe` does, and
+        // really wrote notes — the harmony was under those bars.
+        let wrote = add_part::run(&add_part::Args {
+            project: path.clone(),
+            track: "Keys".to_string(),
+            part: "chords".to_string(),
+            start_bar: None,
+            bars: None,
+            seed: None,
+        })
+        .unwrap();
+        assert!(wrote.contains("bars 1-4"), "{wrote}");
+        assert!(wrote.contains("seed 0"), "{wrote}");
+        assert!(!wrote.contains("empty"), "{wrote}");
+        let described = describe::run(&describe::Args {
+            project: path.clone(),
+        })
+        .unwrap();
+        assert!(
+            described.contains("generated (chords, seed 0)"),
+            "the part is addressable by `another_take`: {described}"
+        );
+
+        // A wrong part name answers with the whole vocabulary.
+        let unknown = add_part::run(&add_part::Args {
+            project: path.clone(),
+            track: "Keys".to_string(),
+            part: "sitar solo".to_string(),
+            start_bar: None,
+            bars: None,
+            seed: None,
+        })
+        .unwrap_err();
+        assert!(unknown.contains("bass"), "{unknown}");
+
+        // Re-voicing refuses an id nothing answers to, pointing at the list.
+        let wrong = set_instrument::run(&set_instrument::Args {
+            project: path.clone(),
+            track: "Keys".to_string(),
+            instrument: Some("auris.not.a.thing".to_string()),
+            sound: None,
+            drums: false,
+        })
+        .unwrap_err();
+        assert!(wrong.contains("list_instruments"), "{wrong}");
+        let revoiced = set_instrument::run(&set_instrument::Args {
+            project: path.clone(),
+            track: "Keys".to_string(),
+            instrument: Some(default_id.clone()),
+            sound: None,
+            drums: false,
+        })
+        .unwrap();
+        assert!(revoiced.contains(&default_id), "{revoiced}");
+
+        // The rename is the address from then on: the old name refuses, naming the new.
+        rename_track::run(&rename_track::Args {
+            project: path.clone(),
+            track: "Keys".to_string(),
+            name: "Piano".to_string(),
+        })
+        .unwrap();
+        let stale = add_part::run(&add_part::Args {
+            project: path.clone(),
+            track: "Keys".to_string(),
+            part: "chords".to_string(),
+            start_bar: None,
+            bars: None,
+            seed: None,
+        })
+        .unwrap_err();
+        assert!(stale.contains("Piano"), "{stale}");
+
+        // Removal takes the clips with it and counts what remains.
+        let removed = remove_track::run(&remove_track::Args {
+            project: path.clone(),
+            track: "Piano".to_string(),
+        })
+        .unwrap();
+        assert!(removed.contains("remain"), "{removed}");
+        let after = describe::run(&describe::Args {
+            project: path.clone(),
+        })
+        .unwrap();
+        assert!(!after.contains("Piano"), "{after}");
 
         std::fs::remove_dir_all(&root).unwrap();
     }

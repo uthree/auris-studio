@@ -38,6 +38,14 @@ format rather than a convention: `## <version> — <date>`.
   model applies it on the spot** — the choice writes through to the settings as the menu
   closes, and Enter in the chat treats a completed settings form as applied, so the Apply
   button now only serves the typed fields.
+* **The model can edit the arrangement in place.** Six tools at both model doors, so one more
+  part is an edit rather than a recomposition: `add_track` (a new track in an existing
+  project, voiced by a built-in id or any General MIDI sound by name or number — the shipped
+  font is adopted into the project in the same step), `add_part` (a generated part written
+  onto a track from the harmony already under the song, recipe kept so `another_take` and
+  `write_again` apply), `set_instrument`, `rename_track`, `remove_track`, and
+  `list_instruments` for the vocabulary. Twenty-three tools in all. Behind them,
+  `Session::set_track_general_midi` is new: font adoption and preset choice as one undo step.
 * **The model can be handed audio.** `auris-agent --attach mix.wav "how is this?"` sends the
   file base64-encoded as an OpenAI `input_audio` content part beside the words, and the JSON
   wire takes `{"say": …, "audio": ["mix.wav"]}` per message. OpenAI-compatible servers only —

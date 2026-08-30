@@ -413,6 +413,46 @@ impl Session {
         Ok(())
     }
 
+    /// Points a track at a General MIDI sound out of the shipped library, adopting the font
+    /// into the project when it is not referenced yet.
+    ///
+    /// One undo step for both: a font adopted for a choice that was then taken back is a
+    /// reference nothing plays. `bank` and `patch` are the sound's address in the font — a
+    /// kit lives in bank 128, a melodic program in bank 0 — and which reading a program
+    /// number gets is the caller's decision, made where the part's kind is known.
+    pub fn set_track_general_midi(
+        &mut self,
+        id: TrackId,
+        bank: i32,
+        patch: i32,
+    ) -> Result<(), SessionError> {
+        self.require_track(id)?;
+        // The kind check `set_track_preset` would make, made before anything is adopted or
+        // recorded: a refusal after the adoption would leave the font behind it.
+        if !self
+            .project
+            .track(id)
+            .is_some_and(|track| track.kind.is_instrument())
+        {
+            return Err(SessionError::WrongTrackKind {
+                id: id.0,
+                actual: self
+                    .project
+                    .track(id)
+                    .map_or("a track", |track| track.kind.label()),
+                expected: "an instrument track",
+            });
+        }
+        self.begin_transaction(Edit::ChoosePreset);
+        let Some(font) = self.adopt_general_midi_here() else {
+            self.end_transaction();
+            return Err(SessionError::LibraryMissing);
+        };
+        let outcome = self.set_track_preset(id, PresetRef { font, bank, patch });
+        self.end_transaction();
+        outcome
+    }
+
     /// Which SoundFont sound a track plays, or `None` when it plays something else entirely.
     pub fn track_preset(&self, id: TrackId) -> Option<PresetRef> {
         let inner = self.project.track(id)?.kind.as_instrument()?;

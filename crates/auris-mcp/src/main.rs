@@ -227,6 +227,71 @@ impl AurisMcp {
     async fn list_presets(&self) -> Result<CallToolResult, ErrorData> {
         finished(Ok(toolbox::list_presets::run()))
     }
+
+    /// Lists the built-in instruments a track can play, by the id `add_track` and
+    /// `set_instrument` take. Any General MIDI sound is also available — name it in those
+    /// tools' `sound` field instead, as a GM name or program number.
+    #[tool]
+    async fn list_instruments(&self) -> Result<CallToolResult, ErrorData> {
+        blocking(move || Ok(toolbox::list_instruments::run())).await
+    }
+
+    /// Adds a track to an existing project and saves. An instrument track by default — voiced
+    /// by `instrument` (an id from `list_instruments`) or by `sound` (a General MIDI name or
+    /// program number, `drums: true` for a kit) — or, with `kind`, an audio track or a bus. A
+    /// new instrument track has no clips: `add_part` writes one.
+    #[tool]
+    async fn add_track(
+        &self,
+        Parameters(args): Parameters<toolbox::add_track::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::add_track::run(&args)).await
+    }
+
+    /// Writes a generated part onto an existing instrument track, from the key and chords
+    /// already under the song — lead, chords, pad, arp, bass, stab, drums, kick, snare or
+    /// hat. Covers the whole song unless `start_bar` and `bars` aim it. The clip keeps its
+    /// recipe, so `another_take` rerolls it and `write_again` follows a harmony change; the
+    /// answer numbers it the way `describe` does.
+    #[tool]
+    async fn add_part(
+        &self,
+        Parameters(args): Parameters<toolbox::add_part::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::add_part::run(&args)).await
+    }
+
+    /// Re-voices an instrument track: `instrument` names a built-in from `list_instruments`,
+    /// or `sound` names a General MIDI sound (a name or a program number, `drums: true` for a
+    /// kit). The previous instrument's dial positions and the automation that drove them go
+    /// with it. The change is saved.
+    #[tool]
+    async fn set_instrument(
+        &self,
+        Parameters(args): Parameters<toolbox::set_instrument::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::set_instrument::run(&args)).await
+    }
+
+    /// Renames a track. Every other tool addresses tracks by name, so the new name is the
+    /// address from here on. The change is saved.
+    #[tool]
+    async fn rename_track(
+        &self,
+        Parameters(args): Parameters<toolbox::rename_track::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::rename_track::run(&args)).await
+    }
+
+    /// Removes a track and everything on it — its clips, its effect chain, its sends and its
+    /// automation. The change is saved.
+    #[tool]
+    async fn remove_track(
+        &self,
+        Parameters(args): Parameters<toolbox::remove_track::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::remove_track::run(&args)).await
+    }
 }
 
 #[tool_handler]
@@ -307,9 +372,10 @@ mod tests {
     #[test]
     fn every_wire_description_is_the_toolbox_text_word_for_word() {
         use toolbox::{
-            analyze, another_take, check_spec, compose, describe, forget_progression, list_presets,
-            list_progressions, mixer, render, section_gain, set_effect, set_level, set_send,
-            spec_reference, teach_progression, write_again,
+            add_part, add_track, analyze, another_take, check_spec, compose, describe,
+            forget_progression, list_instruments, list_presets, list_progressions, mixer,
+            remove_track, rename_track, render, section_gain, set_effect, set_instrument,
+            set_level, set_send, spec_reference, teach_progression, write_again,
         };
         let expected: std::collections::BTreeMap<&str, &str> = [
             (spec_reference::NAME, spec_reference::DESCRIPTION),
@@ -329,12 +395,22 @@ mod tests {
             (forget_progression::NAME, forget_progression::DESCRIPTION),
             (list_progressions::NAME, list_progressions::DESCRIPTION),
             (list_presets::NAME, list_presets::DESCRIPTION),
+            (list_instruments::NAME, list_instruments::DESCRIPTION),
+            (add_track::NAME, add_track::DESCRIPTION),
+            (add_part::NAME, add_part::DESCRIPTION),
+            (set_instrument::NAME, set_instrument::DESCRIPTION),
+            (rename_track::NAME, rename_track::DESCRIPTION),
+            (remove_track::NAME, remove_track::DESCRIPTION),
         ]
         .into_iter()
         .collect();
 
         let served = AurisMcp::tool_router().list_all();
-        assert_eq!(served.len(), expected.len(), "seventeen tools at this door");
+        assert_eq!(
+            served.len(),
+            expected.len(),
+            "twenty-three tools at this door"
+        );
         for tool in served {
             let description = tool.description.as_deref().unwrap_or_default();
             let toolbox_text = expected

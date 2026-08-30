@@ -35,6 +35,10 @@ pub enum SessionError {
     #[error("no soundfont with id {0}")]
     UnknownSoundFont(u64),
 
+    /// The shipped sound library is not installed, so a General MIDI sound cannot be adopted.
+    #[error("the shipped sound library is not installed; General MIDI sounds are unavailable")]
+    LibraryMissing,
+
     /// Nothing in the catalogue answers to that name.
     ///
     /// An error rather than a clamp, unlike the settings a session quietly corrects: a grid of

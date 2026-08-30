@@ -962,6 +962,10 @@ strings! {
         en: "that SoundFont is not part of this project",
         ja: "そのサウンドフォントはこのプロジェクトにありません"
     }
+    ErrorLibraryMissing {
+        en: "the shipped sound library is not installed, so General MIDI sounds are unavailable",
+        ja: "同梱の音色ライブラリが未インストールのため、General MIDI音源は使えません"
+    }
     ErrorCannotSplit {
         en: "a clip can only be split inside itself",
         ja: "クリップの内側でしか分割できません"

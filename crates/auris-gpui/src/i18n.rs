@@ -228,6 +228,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::NotABus(_) => Key::ErrorNotABus.get(language).to_string(),
         SessionError::RoutingLoop { .. } => Key::ErrorRoutingLoop.get(language).to_string(),
         SessionError::UnknownSoundFont(_) => Key::ErrorUnknownSoundFont.get(language).to_string(),
+        SessionError::LibraryMissing => Key::ErrorLibraryMissing.get(language).to_string(),
         SessionError::UnknownProgression(name) => messages::unknown_progression(language, name),
         SessionError::CannotSplit(_) => Key::ErrorCannotSplit.get(language).to_string(),
         SessionError::NotAudio(_) => Key::ErrorNotAudio.get(language).to_string(),
