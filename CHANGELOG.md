@@ -9,6 +9,29 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### The singer gets a real voice
+
+* **Singing-voice synthesis works end to end.** A singer track can now be pointed at a trained
+  [auris-singer](https://github.com/uthree/auris-singer) voice model — one self-contained
+  `.onnx` file, chosen the way a SoundFont is and left where it lies — and asked to **sing**:
+  notes and lyrics become frames, the frames become a waveform, and the waveform lands in
+  `Audio/` as the track's *take*, an ordinary audio source that plays, exports and reopens
+  with everything else. Track → Choose Voice… and Track → Sing in the window (the render runs
+  off the main thread behind the export overlay, with the same stop button), and
+  `auris sing <project> [--track <name>] [--voice <model.onnx>] [--seed <n>]` at the command
+  line.
+* **A take is kept, never silently rewritten.** Every random choice is pinned by a seed the
+  document stores, so the same document, seed and voice render the same audio on any machine.
+  Editing notes after a render leaves the take playing — a voice someone chose does not fall
+  back to the formant preview over one edited word — and the track header says
+  *behind the notes* until Sing is pressed again. Clicked notes still audition through the
+  preview instrument while a take plays.
+* Under the hood: the new `auris-singer` crate runs the model on the CPU via onnxruntime,
+  cutting the timeline at silences into chunks of at most twenty seconds — the model's
+  attention grows with the square of the frame count, and a whole song in one inference has
+  taken a machine down — and deciding each frame's voicing from the phoneme class
+  (`auris_vocal::is_voiceless`), never from `f0 > 0`, which would hum through every /k/.
+
 ### The conversation moves into the window
 
 * **The Agent panel** — View → Agent, docked on the right beside the inspector the way an

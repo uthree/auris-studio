@@ -1007,14 +1007,49 @@ pub mod composition {
 }
 
 pub mod singing {
-    //! The singer track: notes that carry words, and the frames a voice model is fed.
+    //! The singer track: notes that carry words, the frames a voice model is fed, and the take
+    //! it sings back.
     //!
     //! A [`SingerTrack`](auris_core::SingerTrack) is the frontend for a singing-voice
-    //! synthesiser that renders offline and, today, does not exist yet. What exists is
-    //! everything around it: the notes carry lyrics, the lyrics become phonemes, the track
-    //! plays through a preview instrument, and
-    //! [`Session::export_singer_frames`](crate::Session::export_singer_frames) writes exactly
-    //! what such a model consumes.
+    //! synthesiser that renders offline. The notes carry lyrics, the lyrics become phonemes,
+    //! the frames become a waveform through a trained
+    //! [auris-singer](https://github.com/uthree/auris-singer) model, and what playback uses is
+    //! the [`SingerTake`](auris_core::SingerTake) that render produced.
+    //! [`Session::export_singer_frames`](crate::Session::export_singer_frames) still writes
+    //! the raw frames, which is how a model is developed against real documents.
+    //!
+    //! # The voice, and the take
+    //!
+    //! A voice is one self-contained ONNX file: the phoneme table, the audio parameters and a
+    //! presentational voice card all ride inside it, so
+    //! [`Session::set_singer_voice`](crate::Session::set_singer_voice) pointing at the file is
+    //! the whole installation. The file gets the policy a SoundFont gets — a library shared by
+    //! every project, referenced where it lies — while the card's display name is written into
+    //! the document the way a font's name is, so a header can say 波音リツ without opening two
+    //! hundred megabytes. Loaded models are kept for the session, keyed by path, shared by
+    //! every track that sings with them.
+    //!
+    //! [`Session::sing`](crate::Session::sing) is the whole pipeline in one synchronous call;
+    //! a window that must keep painting takes the three-step form —
+    //! [`sing_plan`](crate::Session::sing_plan) checks and gathers everything up front,
+    //! [`VoiceModel::sing_with`](crate::VoiceModel::sing_with) runs on the caller's thread,
+    //! [`land_singer_take`](crate::Session::land_singer_take) files the result. The take lands
+    //! in `Audio/` exactly as a recorded take does: an ordinary audio source, reloaded with
+    //! everything else when the project reopens, played by the graph from the beginning of the
+    //! timeline. The engine keeps the preview instrument standing by under a take, fed nothing
+    //! but auditioned notes, so clicking a note in the roll still sounds.
+    //!
+    //! # A take is kept, never silently rewritten
+    //!
+    //! The contract from "the score does not change; the performer does": every random choice
+    //! in a render is pinned by a seed the document stores, regeneration is always a command
+    //! aimed at the track, and an edit after a render leaves the take *playing* — a voice
+    //! someone chose must not fall back to the formant preview over one edited word. What an
+    //! edit does change is the answer to
+    //! [`Session::singer_take_state`](crate::Session::singer_take_state), which compares a
+    //! fingerprint of everything the render read (the frames, the voice, the seed) against the
+    //! one the take carries: `Behind` is a badge a frontend shows, never a fallback the
+    //! playback takes.
     //!
     //! # Two representations, one stored
     //!
@@ -1048,27 +1083,30 @@ pub mod singing {
     //! were the same sound. Text that needs the dictionary on a machine without one is its own
     //! error variant, so a frontend answers with the setting that fixes it.
     //!
-    //! # Why the preview is an instrument and the model will not be `process`
+    //! # Why the preview is an instrument and the model is never `process`
     //!
-    //! Until a model is wired in, a singer track plays through `auris.synth.vocal` — a formant
-    //! filter over a saw, one vowel, built from the same primitives as every other built-in —
-    //! by way of the same render-graph arm an instrument track uses: the track carries an
-    //! `instrument_id`, and the graph neither knows nor cares what kind of track handed it
-    //! over. Neural inference can never take that path. [`realtime`](super::realtime) is the
-    //! contract it would break — allocation, latency, everything — so the model, when it
-    //! arrives, renders **offline**: frames in, audio out, cached and played back the way an
-    //! audio clip is. The export exists now so the model can be developed against real
-    //! documents before that plumbing does.
+    //! Without a take, a singer track plays through `auris.synth.vocal` — a formant filter
+    //! over a saw, one vowel, built from the same primitives as every other built-in — by way
+    //! of the same render-graph arm an instrument track uses. Neural inference can never take
+    //! that path: [`realtime`](super::realtime) is the contract it would break — allocation,
+    //! latency, everything — so the model renders **offline**, frames in, audio out, and what
+    //! reaches the audio thread is the finished take. Nor is a whole song ever one inference:
+    //! the model's attention grows with the square of the frame count, so `auris-singer` cuts
+    //! the timeline at silences into bounded chunks and stitches the answers — memory is paid
+    //! per chunk, not per song.
     //!
     //! # Where each piece lives
     //!
     //! The same split as everything else. What a track *stores* is `auris-core`. How text
     //! becomes phonemes and notes become frames is [`auris_vocal`], which depends on the
-    //! document model and nothing else local, the same shape as `auris-compose`. What a person
-    //! can *ask for* — add the track, set a lyric, lay a phrase across a selection, export —
-    //! is a command on [`Session`](crate::Session), so every frontend gets it. The lyric
-    //! sheet, the words on the roll and the folder picker are presentation, and stay in the
-    //! frontend.
+    //! document model and nothing else local, the same shape as `auris-compose`; how frames
+    //! become audio is `auris-singer`, one step further down the same pipeline, and the only
+    //! crate that knows an inference runtime exists. What a person can *ask for* — add the
+    //! track, set a lyric, choose a voice, sing — is a command on
+    //! [`Session`](crate::Session), so every frontend gets it. The lyric sheet, the picker,
+    //! the progress overlay and the behind-the-notes badge are presentation, and stay in the
+    //! frontend — which reaches the model type through this crate's re-export
+    //! ([`VoiceModel`](crate::VoiceModel)), never by naming `auris-singer` itself.
 }
 
 pub mod documents {

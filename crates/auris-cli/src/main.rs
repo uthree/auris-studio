@@ -51,6 +51,7 @@ fn main() -> ExitCode {
         "compose" => compose(&args),
         "info" => with_path(&args, info),
         "render" => render(&args),
+        "sing" => sing(&args),
         "new" => new_project(&args),
         "collect" => with_path(&args, collect),
         "help" | "-h" | "--help" => {
@@ -496,6 +497,120 @@ fn list_plugins() -> Result<(), String> {
 /// The command for archiving a project or handing it to someone else, from a script. Audio is
 /// already collected as a matter of course; what this adds is the SoundFonts, which are left in
 /// place on an ordinary save because one font is shared by every project that uses it.
+/// Renders a singer track through its voice model and keeps the take in the project.
+///
+/// The document is saved afterwards, because the take *is* a document change: a render whose
+/// pointer evaporated with the process would be a file in `Audio/` nothing plays.
+fn sing(args: &[String]) -> Result<(), String> {
+    let source = args
+        .get(1)
+        .filter(|arg| !arg.starts_with('-'))
+        .ok_or_else(|| Key::CliExpectedProjectPath.get(LANGUAGE).to_string())?;
+    let source = PathBuf::from(source);
+    let mut track_name: Option<String> = None;
+    let mut voice: Option<PathBuf> = None;
+    let mut seed: Option<u64> = None;
+
+    let mut index = 2;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--track" => {
+                index += 1;
+                track_name = Some(
+                    args.get(index)
+                        .ok_or_else(|| {
+                            messages::option_needs_value(
+                                LANGUAGE,
+                                "--track",
+                                Key::CliNeedsValue.get(LANGUAGE),
+                            )
+                        })?
+                        .clone(),
+                );
+            }
+            "--voice" => {
+                index += 1;
+                voice = Some(PathBuf::from(args.get(index).ok_or_else(|| {
+                    messages::option_needs_value(
+                        LANGUAGE,
+                        "--voice",
+                        Key::CliNeedsPath.get(LANGUAGE),
+                    )
+                })?));
+            }
+            "--seed" => {
+                index += 1;
+                seed = Some(
+                    args.get(index)
+                        .and_then(|value| value.parse().ok())
+                        .ok_or_else(|| {
+                            messages::option_needs_value(
+                                LANGUAGE,
+                                "--seed",
+                                Key::CliNeedsNumber.get(LANGUAGE),
+                            )
+                        })?,
+                );
+            }
+            other => return Err(messages::unknown_option(LANGUAGE, other)),
+        }
+        index += 1;
+    }
+
+    let mut session = headless()?;
+    for missing in session.open(&source).map_err(|error| error.to_string())? {
+        warned(messages::warning_missing_audio(
+            LANGUAGE,
+            &missing.display().to_string(),
+        ));
+    }
+    warn_foreign_build(&session);
+
+    // The named track, or the project's only singer — the ordinary one-singer song never asks.
+    let target = match &track_name {
+        Some(name) => session
+            .project()
+            .tracks
+            .iter()
+            .find(|track| track.kind.is_singer() && &track.name == name)
+            .map(|track| track.id)
+            .ok_or_else(|| messages::no_singer_named(LANGUAGE, name))?,
+        None => {
+            let mut singers = session
+                .project()
+                .tracks
+                .iter()
+                .filter(|track| track.kind.is_singer());
+            let only = singers.next().map(|track| track.id);
+            match (only, singers.next()) {
+                (Some(track), None) => track,
+                _ => return Err(Key::ErrorNoSingerTrack.get(LANGUAGE).to_string()),
+            }
+        }
+    };
+    if let Some(voice) = &voice {
+        session
+            .set_singer_voice(target, Some(voice))
+            .map_err(|error| error.to_string())?;
+    }
+    let name = session
+        .singer_voice(target)
+        .map_err(|error| error.to_string())?
+        .map(|voice| voice.name.clone())
+        .unwrap_or_default();
+
+    let seconds = session
+        .sing(target, seed)
+        .map_err(|error| error.to_string())?;
+    session.save_in_place().map_err(|error| error.to_string())?;
+    printed(writeln!(
+        std::io::stdout(),
+        "{}",
+        messages::take_sung(LANGUAGE, &name, seconds)
+    ))?;
+    Ok(())
+}
+
 fn collect(path: &Path) -> Result<(), String> {
     let mut session = headless()?;
     for missing in session.open(path).map_err(|error| error.to_string())? {

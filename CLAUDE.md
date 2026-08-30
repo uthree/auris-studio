@@ -62,6 +62,8 @@ crates/auris-dsp         effects and DSP primitives
 crates/auris-synth       built-in chiptune instruments; depends on auris-dsp
 crates/auris-sampler     SoundFont playback: the font bank and the sampler instrument;
                          depends on auris-dsp
+crates/auris-singer      singing-voice synthesis: runs auris-singer ONNX voice models offline;
+                         depends on auris-core and auris-vocal
 crates/auris-clap        hosting of third-party CLAP plugins; depends on auris-core only
 crates/auris-engine      render graph, transport, cpal in and out, offline renderer
 crates/auris-io          audio file import/export, project save/load
@@ -184,6 +186,9 @@ thread returns replaced graphs down a second channel so they are dropped off the
 ```bash
 cargo run                                   # launch the DAW (default-members)
 cargo run -p auris-cli -- help              # the command line frontend
+
+# The singing pipeline sings for real wherever this points at an exported voice model:
+AURIS_SINGER_TEST_MODEL=/path/to/voice.onnx cargo test -p auris-singer -p auris-session
 cargo test --workspace                      # all tests
 cargo clippy --workspace --all-targets      # lints
 cargo doc --workspace --no-deps --open      # the API documentation

@@ -277,6 +277,12 @@ messages! {
         ja: "{name} が {seconds:.1} 秒を歌いました"
     }
 
+    /// `--track` named a track that is not a singer, or is not there at all.
+    fn no_singer_named(name: &str) {
+        en: "no singer track is named `{name}`",
+        ja: "`{name}` という名前のシンガートラックはありません"
+    }
+
     /// Confirmation that a piece left as a MIDI file.
     fn midi_exported(path: &str, notes: usize) {
         en: "Wrote {notes} note(s) to {path}",

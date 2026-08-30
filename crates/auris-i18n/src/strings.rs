@@ -1075,6 +1075,7 @@ COMMANDS
     soundfonts [--manifest]       List the SoundFonts shipped with this build
     info <project.auris>          Print a project's tracks, clips and duration
     render <project.auris> [opts] Render a project to a WAV file
+    sing <project.auris> [opts]   Render a singer track through its voice model
     new <project.auris> [opts]    Create a project with one instrument track
     collect <project.auris>       Copy everything the project uses into its folder
     help                          Show this message
@@ -1101,6 +1102,11 @@ RENDER OPTIONS
         --loop                    Render only the project's cycle region
         --stems <folder>          Write one file per track into a folder instead of a mix
 
+SING OPTIONS
+        --track <name>            Which singer track (default: the project's only one)
+        --voice <model.onnx>      Choose the voice model first, and remember it
+        --seed <n>                Pin the take's random choices (default: the current take's)
+
 NEW OPTIONS
         --bpm <tempo>             Tempo of the new project (default: 120)
         --sample-rate <hz>        Rate of the new project (default: 48000)
@@ -1119,6 +1125,7 @@ auris — コマンドラインから使う Auris Studio
     soundfonts [--manifest]       同梱サウンドフォントを一覧表示
     info <project.auris>          プロジェクトのトラック・クリップ・長さを表示
     render <project.auris> [opts] プロジェクトを WAV に書き出す
+    sing <project.auris> [opts]   シンガートラックを声のモデルで歌わせる
     new <project.auris> [opts]    ソフト音源トラック 1 本のプロジェクトを作成
     collect <project.auris>       プロジェクトが使うファイルをフォルダ内に集める
     help                          このメッセージを表示
@@ -1144,6 +1151,11 @@ render のオプション
         --no-tail                 エフェクトの残響を待たず最後のクリップで終える
         --loop                    サイクル範囲のみを書き出す
         --stems <folder>          ミックスの代わりにトラックごとのファイルをフォルダに書き出す
+
+sing のオプション
+        --track <name>            歌わせるシンガートラック（既定: プロジェクト唯一の 1 本）
+        --voice <model.onnx>      先に声のモデルを選んで記憶させる
+        --seed <n>                テイクの乱数を固定（既定: 現在のテイクのシード）
 
 new のオプション
         --bpm <tempo>             新規プロジェクトのテンポ（既定: 120）
