@@ -63,6 +63,8 @@ struct Options {
     max_turns: usize,
     /// The one-shot prompt; a conversation is opened instead when there is none.
     prompt: Option<String>,
+    /// Audio files to send with the one-shot prompt, in the order given.
+    attachments: Vec<String>,
     /// Speak JSON lines on stdin and stdout instead of prose — the mode another program
     /// drives, the desktop's agent panel first among them.
     json: bool,
@@ -97,6 +99,10 @@ options:
   --api-key-env <VAR>   environment variable holding the API key; OPENAI_API_KEY
                         is used for openai when it is set and this is not given
   --max-turns <n>       model-call budget per prompt (default 40)
+  --attach <file>       send an audio file with the prompt (wav, mp3, flac,
+                        ogg, aac, aiff, m4a); repeat for more than one.
+                        Needs --provider openai and a model that takes audio
+                        input — Ollama's API has no audio field
   --json                speak JSON lines on stdin and stdout instead, for
                         another program to drive — the desktop panel's mode
   -h, --help            this text
@@ -134,6 +140,7 @@ fn parse_args(
     let mut key_env = None;
     let mut max_turns = 40usize;
     let mut json = false;
+    let mut attachments: Vec<String> = Vec::new();
     let mut prompt_words: Vec<&str> = Vec::new();
 
     let mut words = args.iter();
@@ -157,6 +164,7 @@ fn parse_args(
                     .map_err(|_| format!("--max-turns needs a number, not '{value}'"))?;
             }
             "--json" => json = true,
+            "--attach" => attachments.push(value_of("--attach")?),
             flag if flag.starts_with('-') => {
                 return Err(format!("unknown option '{flag}' — try --help"));
             }
@@ -208,6 +216,17 @@ fn parse_args(
     if json && prompt.is_some() {
         return Err("--json is driven over stdin; drop the prompt".to_string());
     }
+    if !attachments.is_empty() {
+        if json {
+            return Err(
+                "--json carries audio per message: {\"say\": \"...\", \"audio\": [\"file.wav\"]}"
+                    .to_string(),
+            );
+        }
+        if prompt.is_none() {
+            return Err("--attach rides with a prompt; give one".to_string());
+        }
+    }
     Ok(Command::Run(Options {
         provider,
         url,
@@ -215,6 +234,7 @@ fn parse_args(
         key,
         max_turns,
         prompt,
+        attachments,
         json,
     }))
 }
@@ -618,15 +638,92 @@ fn changed_project(tool: &str, args: &str) -> Option<String> {
     Some(toolbox::resolve_project(path).ok()?.display().to_string())
 }
 
-/// One line of the host's side of the wire: `{"say": "..."}` and nothing else yet.
-fn parse_say(line: &str) -> Result<String, String> {
+/// One line of the host's side of the wire: `{"say": "..."}`, with an optional `"audio"`
+/// array naming files to send along with the words.
+fn parse_say(line: &str) -> Result<(String, Vec<String>), String> {
     let parsed: serde_json::Value =
         serde_json::from_str(line).map_err(|error| format!("not JSON: {error}"))?;
-    parsed
+    let said = parsed
         .get("say")
         .and_then(|say| say.as_str())
         .map(str::to_string)
-        .ok_or_else(|| "expected {\"say\": \"...\"}".to_string())
+        .ok_or_else(|| "expected {\"say\": \"...\"}".to_string())?;
+    let audio = parsed
+        .get("audio")
+        .and_then(|audio| audio.as_array())
+        .map(|paths| {
+            paths
+                .iter()
+                .filter_map(|path| path.as_str())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok((said, audio))
+}
+
+/// The media type an audio file's extension names, in rig's vocabulary.
+///
+/// By extension and not by sniffing, because the mistake worth catching is a typo'd path or a
+/// MIDI file, and both fail louder later anyway; a wrong extension on real audio is the one
+/// case sniffing would win, and it is not worth a decoder.
+fn audio_media_type(path: &std::path::Path) -> Result<rig::message::AudioMediaType, String> {
+    use rig::message::AudioMediaType as Type;
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "wav" => Ok(Type::WAV),
+        "mp3" => Ok(Type::MP3),
+        "aiff" | "aif" => Ok(Type::AIFF),
+        "aac" => Ok(Type::AAC),
+        "ogg" => Ok(Type::OGG),
+        "flac" => Ok(Type::FLAC),
+        "m4a" => Ok(Type::M4A),
+        _ => Err(format!(
+            "cannot tell what kind of audio '{}' is — wav, mp3, aiff, aac, ogg, flac and m4a \
+             are understood",
+            path.display()
+        )),
+    }
+}
+
+/// One user turn as the wire carries it: each audio file base64-encoded and typed by its
+/// extension, then the words about them.
+///
+/// Audio before text because that is the order a person hands someone a recording and asks
+/// about it; models are trained on that shape too.
+fn framed_message(text: &str, audio: &[String]) -> Result<Message, String> {
+    let mut content = Vec::new();
+    for path in audio {
+        let path = std::path::Path::new(path);
+        let media_type = audio_media_type(path)?;
+        let bytes = std::fs::read(path)
+            .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+        use base64::Engine;
+        let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+        content.push(rig::message::UserContent::audio(data, Some(media_type)));
+    }
+    content.push(rig::message::UserContent::text(text));
+    Ok(Message::User { content })
+}
+
+/// Refuses audio bound for a door with no audio field, before any file is read.
+///
+/// rig's Ollama conversion would refuse too, but only after the whole request is built; this
+/// says it in this program's own words, at the moment the attachment is asked for.
+fn check_audio(provider: Provider, audio: &[String]) -> Result<(), String> {
+    match provider {
+        Provider::Ollama if !audio.is_empty() => Err(
+            "Ollama's API has no audio input; use --provider openai against a server that \
+             takes audio (an audio-capable API, or a local OpenAI-compatible server that \
+             implements input_audio)"
+                .to_string(),
+        ),
+        _ => Ok(()),
+    }
 }
 
 /// Reports the tool loop as JSON events on stdout, for a host program to render.
@@ -672,7 +769,7 @@ impl AgentHook for Reporter {
 /// conversation can keep it.
 async fn converse(
     agent: &Agent,
-    prompt: String,
+    prompt: Message,
     history: Vec<Message>,
     max_turns: usize,
     json: bool,
@@ -694,7 +791,7 @@ async fn converse(
     // exchange are still worth keeping — better a thin memory than none.
     let history = response.messages.unwrap_or_else(|| {
         let mut kept = history;
-        kept.push(Message::user(asked));
+        kept.push(asked);
         kept.push(Message::assistant(&response.output));
         kept
     });
@@ -719,7 +816,7 @@ async fn conversation(agent: &Agent, max_turns: usize) -> Result<(), String> {
             return Ok(());
         }
         let (answer, kept, _) =
-            converse(agent, line.to_string(), history, max_turns, false).await?;
+            converse(agent, Message::user(line), history, max_turns, false).await?;
         history = kept;
         println!("{answer}\n");
     }
@@ -731,7 +828,9 @@ async fn conversation(agent: &Agent, max_turns: usize) -> Result<(), String> {
 /// prompt through the loop — `call`, `result` and `changed` events as it works, then one
 /// `answer` — and a failure is an `error` event rather than an exit, because the host's
 /// window is still open and its next message may well work. End of stdin ends the
-/// conversation; a line that is not a `say` is answered with an `error` and skipped.
+/// conversation; a line that is not a `say` is answered with an `error` and skipped. A say
+/// may carry `"audio": ["file.wav", …]` — files sent along with the words, for a provider
+/// whose API has an audio field.
 async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), String> {
     emit(serde_json::json!({
         "event": "ready",
@@ -754,14 +853,23 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
         if line.is_empty() {
             continue;
         }
-        let said = match parse_say(line) {
-            Ok(said) => said,
+        let (said, audio) = match parse_say(line) {
+            Ok(parsed) => parsed,
             Err(message) => {
                 emit(serde_json::json!({ "event": "error", "message": message }));
                 continue;
             }
         };
-        match converse(agent, said, history.clone(), options.max_turns, true).await {
+        let message = match check_audio(options.provider, &audio)
+            .and_then(|()| framed_message(&said, &audio))
+        {
+            Ok(message) => message,
+            Err(message) => {
+                emit(serde_json::json!({ "event": "error", "message": message }));
+                continue;
+            }
+        };
+        match converse(agent, message, history.clone(), options.max_turns, true).await {
             Ok((answer, kept, usage)) => {
                 history = kept;
                 emit(serde_json::json!({
@@ -828,9 +936,10 @@ fn main() -> ExitCode {
                 }
                 match &options.prompt {
                     Some(prompt) => {
+                        check_audio(options.provider, &options.attachments)?;
+                        let message = framed_message(prompt, &options.attachments)?;
                         let (answer, ..) =
-                            converse(&agent, prompt.clone(), Vec::new(), options.max_turns, false)
-                                .await?;
+                            converse(&agent, message, Vec::new(), options.max_turns, false).await?;
                         println!("{answer}");
                         Ok(())
                     }
@@ -987,13 +1096,57 @@ mod tests {
 
     #[test]
     fn the_wire_reads_says_and_nothing_else() {
-        assert_eq!(parse_say(r#"{"say":"hello"}"#).unwrap(), "hello");
+        assert_eq!(
+            parse_say(r#"{"say":"hello"}"#).unwrap(),
+            ("hello".to_string(), Vec::new())
+        );
+        assert_eq!(
+            parse_say(r#"{"say":"listen","audio":["mix.wav","stem.mp3"]}"#).unwrap(),
+            (
+                "listen".to_string(),
+                vec!["mix.wav".to_string(), "stem.mp3".to_string()]
+            )
+        );
         assert!(parse_say("not json").unwrap_err().contains("JSON"));
         assert!(
             parse_say(r#"{"shout":"hello"}"#)
                 .unwrap_err()
                 .contains("say")
         );
+    }
+
+    #[test]
+    fn audio_is_typed_by_extension_and_refused_where_no_api_takes_it() {
+        use rig::message::AudioMediaType;
+        let of = |name: &str| audio_media_type(std::path::Path::new(name));
+        assert_eq!(of("Mix.WAV").unwrap(), AudioMediaType::WAV);
+        assert_eq!(of("take.flac").unwrap(), AudioMediaType::FLAC);
+        assert_eq!(of("old.aif").unwrap(), AudioMediaType::AIFF);
+        let refused = of("song.mid").unwrap_err();
+        assert!(refused.contains("song.mid"), "{refused}");
+
+        let audio = vec!["mix.wav".to_string()];
+        let refused = check_audio(Provider::Ollama, &audio).unwrap_err();
+        assert!(refused.contains("openai"), "{refused}");
+        check_audio(Provider::Ollama, &[]).unwrap();
+        check_audio(Provider::OpenAi, &audio).unwrap();
+    }
+
+    #[test]
+    fn attachments_ride_a_prompt_and_never_the_json_wire() {
+        let Command::Run(options) = parse(
+            "--model m --attach a.wav --attach b.mp3 listen to this",
+            &no_env,
+        )
+        .unwrap() else {
+            panic!("a prompt with attachments runs");
+        };
+        assert_eq!(options.attachments, vec!["a.wav", "b.mp3"]);
+
+        let refused = parse("--model m --json --attach a.wav", &no_env).unwrap_err();
+        assert!(refused.contains("audio"), "{refused}");
+        let refused = parse("--model m --attach a.wav", &no_env).unwrap_err();
+        assert!(refused.contains("prompt"), "{refused}");
     }
 
     #[test]
@@ -1129,12 +1282,13 @@ mod tests {
             key: Some("test-key".to_string()),
             max_turns: 5,
             prompt: None,
+            attachments: Vec::new(),
             json: false,
         })
         .unwrap();
         let (answer, history, _) = converse(
             &agent,
-            "What styles are there?".to_string(),
+            Message::user("What styles are there?"),
             Vec::new(),
             5,
             true,
@@ -1170,6 +1324,57 @@ mod tests {
             requests[1].contains(first_preset),
             "the toolbox's own answer rode back to the model: {}",
             requests[1]
+        );
+    }
+
+    /// An attached file really crosses the wire: base64 in an `input_audio` content part,
+    /// beside the words — the shape OpenAI's chat completions and every compatible server
+    /// that takes audio expect.
+    #[tokio::test]
+    async fn an_attachment_reaches_the_wire_as_input_audio() {
+        let done = r#"{"role":"assistant","content":"A fine mix."}"#;
+        let (url, seen) = mock_server(vec![completion(done, "stop")]);
+
+        let clip =
+            std::env::temp_dir().join(format!("auris-agent-clip-{}.wav", std::process::id()));
+        std::fs::write(&clip, b"RIFFfake-wav-bytes").unwrap();
+        let attachments = vec![clip.display().to_string()];
+
+        let agent = build_agent(&Options {
+            provider: Provider::OpenAi,
+            url: Some(url),
+            model: "mock".to_string(),
+            key: Some("test-key".to_string()),
+            max_turns: 5,
+            prompt: None,
+            attachments: Vec::new(),
+            json: false,
+        })
+        .unwrap();
+        let message = framed_message("How is this mix?", &attachments).unwrap();
+        let (answer, ..) = converse(&agent, message, Vec::new(), 5, false)
+            .await
+            .unwrap();
+        std::fs::remove_file(&clip).unwrap();
+
+        assert_eq!(answer, "A fine mix.");
+        let requests = seen.lock().unwrap();
+        assert!(
+            requests[0].contains("\"input_audio\""),
+            "the audio content part is on the wire: {}",
+            requests[0]
+        );
+        use base64::Engine;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(b"RIFFfake-wav-bytes");
+        assert!(
+            requests[0].contains(&encoded),
+            "the file's own bytes rode along: {}",
+            requests[0]
+        );
+        assert!(
+            requests[0].contains("How is this mix?"),
+            "and so did the words: {}",
+            requests[0]
         );
     }
 

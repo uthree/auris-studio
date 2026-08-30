@@ -34,7 +34,15 @@ format rather than a convention: `## <version> — <date>`.
   counts that now ride every `answer` event. **Tool rows open on a click** to the whole answer
   the model saw, which makes the transcript the loop's log. And a send with no model
   configured now says so in the transcript instead of silently doing nothing, which is what
-  the first Enter ever pressed in the panel ran into.
+  the first Enter ever pressed in the panel ran into. From the sittings after it: **picking a
+  model applies it on the spot** — the choice writes through to the settings as the menu
+  closes, and Enter in the chat treats a completed settings form as applied, so the Apply
+  button now only serves the typed fields.
+* **The model can be handed audio.** `auris-agent --attach mix.wav "how is this?"` sends the
+  file base64-encoded as an OpenAI `input_audio` content part beside the words, and the JSON
+  wire takes `{"say": …, "audio": ["mix.wav"]}` per message. OpenAI-compatible servers only —
+  Ollama's API has no audio field, and the agent says so up front rather than after the
+  request is built. wav, mp3, flac, ogg, aac, aiff and m4a are typed by extension.
 
 ### The model gets its hands on the mixer
 

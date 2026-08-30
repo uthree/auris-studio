@@ -858,6 +858,7 @@ version = "0.3.0"
 dependencies = [
  "auris-session",
  "auris-toolbox",
+ "base64 0.22.1",
  "env_logger",
  "log",
  "reqwest 0.13.4",

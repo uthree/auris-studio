@@ -1141,6 +1141,15 @@ into a command line. Without a prompt the program holds a conversation, carrying
 transcript forward each turn, which is the improve loop with a person in it: ask for a piece,
 hear it, and say what to change.
 
+A model that takes audio input can be handed the audio itself: `--attach mix.wav` sends the
+file base64-encoded as an OpenAI `input_audio` content part beside the prompt (wav, mp3,
+flac, ogg, aac, aiff, m4a — typed by extension; repeat the flag for more files), and on the
+JSON wire a say may carry `"audio": ["mix.wav"]`. This is the `openai` provider's territory —
+an audio-capable API, or a local OpenAI-compatible server that implements `input_audio` —
+because Ollama's API has no audio field, and the agent says so up front. For everything else,
+`analyze` remains the model's ears: it reads levels and peaks as numbers, which any model
+understands.
+
 The same conversation lives in the desktop application as the **Agent panel** — View → Agent,
 on the right beside the inspector, the way an editor's chat sidebar sits. It spawns
 `auris-agent --json` beside its own binary and talks to it over stdin/stdout, so the window
