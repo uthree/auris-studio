@@ -1,0 +1,30 @@
+# Singing-voice synthesis: an auris-singer voice model, run offline over a singer track's
+# frames. Frames in, a waveform out — never on the audio thread.
+[package]
+name = "auris-singer"
+description = "Singing-voice synthesis for Auris Studio: ONNX voice models, frames in, audio out"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# Depends on the document model and the frame renderer, nothing else local — the same shape as
+# `auris-vocal`, whose output this crate consumes.
+#
+# `ort` is onnxruntime. Its default `download-binaries` feature fetches the prebuilt runtime
+# library at *build* time, which looks like the network-in-the-build that got `naist-jdic`
+# rejected — but the two are not alike: the dictionary was runtime data with a runtime home
+# (a folder in the settings), while this is a link-time artifact, the same thing any `-sys`
+# crate obtains, cached by cargo like every other dependency. The *voice model* itself is
+# runtime data and is loaded from wherever the user keeps it, exactly like a SoundFont.
+[dependencies]
+auris-core.workspace = true
+auris-vocal.workspace = true
+# Pinned to the release candidate `rig`'s optional fastembed support also names: Cargo resolves
+# optional dependencies whether or not they are built, so any other rc here is an unresolvable
+# conflict with a feature nobody enables. Revisit when either side reaches a stable 2.0.
+ort = "=2.0.0-rc.9"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

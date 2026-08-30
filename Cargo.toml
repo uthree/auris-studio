@@ -24,6 +24,7 @@ auris-compose = { path = "crates/auris-compose", version = "0.3.0" }
 auris-core = { path = "crates/auris-core", version = "0.3.0" }
 auris-dsp = { path = "crates/auris-dsp", version = "0.3.0" }
 auris-sampler = { path = "crates/auris-sampler", version = "0.3.0" }
+auris-singer = { path = "crates/auris-singer", version = "0.3.0" }
 auris-synth = { path = "crates/auris-synth", version = "0.3.0" }
 auris-gpu = { path = "crates/auris-gpu", version = "0.3.0" }
 auris-i18n = { path = "crates/auris-i18n", version = "0.3.0" }

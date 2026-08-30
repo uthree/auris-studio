@@ -29,6 +29,30 @@ pub fn is_syllabic(phoneme: &str) -> bool {
     VOWELS.contains(&phoneme) || phoneme == "ɴ" || phoneme == "ʔ"
 }
 
+/// The phonemes produced without vocal-fold vibration.
+///
+/// This is what decides a frame's *voiced* flag when frames are handed to a voice model: the
+/// renderer writes f0 as a contour — consonant frames carry the pitch of the vowel they lead
+/// into — so voicing can never be read off `f0 > 0`, which would hum through every /k/ and /s/.
+/// The list is the voiceless obstruents of the vocabulary plus the devoiced vowels, and it
+/// matches the `VOICELESS` table in auris-singer's training pipeline symbol for symbol.
+pub const VOICELESS: [&str; 26] = [
+    // Devoiced vowels — a vowel whispered between voiceless neighbours, as in きし.
+    "ḁ", "i̥", "ɯ̥", "e̥", "o̥", // Plosives, including the glottal stop the sokuon becomes.
+    "p", "pʲ", "t", "tʲ", "k", "kʲ", "kʷ", "ʔ", // Affricates.
+    "ts", "tɕ", "tʃ", // Fricatives.
+    "ɸ", "ɸʲ", "f", "θ", "s", "ɕ", "ʃ", "ç", "x", "h",
+];
+
+/// `true` for a phoneme produced without vocal-fold vibration, and for [`SILENCE`].
+///
+/// An unknown token answers `false` — voiced — because the two mistakes are not symmetric: a
+/// wrongly-voiced frame keeps the pitch contour intact, while a wrongly-unvoiced one silences
+/// a sung frame outright.
+pub fn is_voiceless(phoneme: &str) -> bool {
+    phoneme == SILENCE || VOICELESS.contains(&phoneme)
+}
+
 /// Splits a phoneme sequence into moras: each syllabic phoneme ends one.
 ///
 /// This is what lets a phrase be distributed across notes without asking the dictionary a
@@ -84,6 +108,19 @@ mod tests {
                 strings(&["w", "a"]),
             ]
         );
+    }
+
+    #[test]
+    fn voicing_follows_the_phoneme_class_and_errs_voiced() {
+        for voiceless in ["k", "s", "tɕ", "ʔ", "i̥", "h", SILENCE] {
+            assert!(is_voiceless(voiceless), "{voiceless}");
+        }
+        for voiced in ["a", "ɴ", "g", "dʑ", "m", "w"] {
+            assert!(!is_voiceless(voiced), "{voiced}");
+        }
+        // The open vocabulary rule: a token from a language this crate has never heard of is
+        // sung voiced, keeping its pitch contour, rather than silenced.
+        assert!(!is_voiceless("ʈʂ"));
     }
 
     #[test]
