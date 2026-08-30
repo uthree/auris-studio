@@ -160,6 +160,15 @@ fn a_plugin_that_will_only_embed_is_lent_a_window_to_draw_in() {
     let mut plugin = instrument_library()
         .instantiate(TONE_ID)
         .expect("the instrument fixture");
+    // On a platform with no window to lend, the honest answer is the opposite one: saying
+    // "it has a window" and failing to open it would be a button on screen that does nothing.
+    if !crate::window::CAN_LEND {
+        assert!(
+            !plugin.has_gui(),
+            "with nothing to lend, an embed-only plugin has no window to offer"
+        );
+        return;
+    }
     assert!(
         plugin.has_gui(),
         "a plugin that will only embed still has a window, given one to embed in"
