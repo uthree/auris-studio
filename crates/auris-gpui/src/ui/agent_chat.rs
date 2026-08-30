@@ -746,6 +746,25 @@ impl AurisApp {
         }
     }
 
+    /// Writes a complete form straight into the shared preferences, leaving the section open.
+    ///
+    /// Picking a model is a whole decision, unlike a half-typed URL: it takes effect the
+    /// moment it is made, and the Apply button remains for the text fields. An incomplete
+    /// form is left alone — nothing is saved until there is a model to save.
+    pub(crate) fn agent_write_through(&mut self) {
+        let formed = self.agent_chat.preferences();
+        if !formed.is_configured() || formed == self.settings.agent {
+            return;
+        }
+        self.settings.agent = formed;
+        if let Err(error) = self.settings.save() {
+            log::warn!("the agent settings did not save: {error}");
+        }
+        // The child read its configuration at spawn; the next message spawns a fresh one.
+        self.agent_chat.link = None;
+        self.agent_chat.model_label = String::new();
+    }
+
     /// Writes the settings section back to the shared preferences and restarts the wire.
     ///
     /// The child read its configuration at spawn, so a change means a new child; dropping the
@@ -1199,6 +1218,9 @@ impl AurisApp {
                             this.agent_chat.context_window = option.context_length;
                         }
                         this.agent_chat.model_menu = false;
+                        // The pick counts the moment it is made — no Apply between the
+                        // menu and the setting.
+                        this.agent_write_through();
                     },
                     cx,
                 ))
@@ -1307,6 +1329,7 @@ impl AurisApp {
             list = list.child(
                 div()
                     .id((id, index))
+                    .debug_selector(move || format!("{id}-{index}"))
                     .px_1p5()
                     .py_0p5()
                     .text_xs()

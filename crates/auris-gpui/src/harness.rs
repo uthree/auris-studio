@@ -501,6 +501,42 @@ mod tests {
         });
     }
 
+    /// The whole gesture the third live run asked for: click the dropdown, click a model,
+    /// and the setting is written then and there — no Apply between the menu and the wire.
+    #[gpui::test]
+    fn picking_a_model_from_the_menu_applies_it_at_once(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        cx.dispatch_action(actions::ToggleAgent);
+        app.update(cx, |this, _| {
+            this.settings.agent = Default::default();
+            this.agent_chat.configuring = true;
+            // What the provider would have answered, so no subprocess is involved.
+            this.agent_chat.models = vec![crate::ui::agent_chat::ModelOption {
+                name: "qwen3.8:27b".to_string(),
+                context_length: Some(262_144),
+            }];
+        });
+        paint(&app, cx);
+        click("agent-model", cx);
+        paint(&app, cx);
+        click("agent-model-option-0", cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.settings.agent.model, "qwen3.8:27b",
+                "the pick wrote itself through"
+            );
+            assert_eq!(
+                this.agent_chat.context_window,
+                Some(262_144),
+                "the gauge learned the window from the listing"
+            );
+            assert!(
+                this.agent_chat.configuring,
+                "the section stays open for the rest of the form"
+            );
+        });
+    }
+
     /// A pointer at a position, hit-testing against a real frame — the path a keystroke never
     /// takes, and the one that breaks when a control moves out from under its own click handler.
     #[gpui::test]
