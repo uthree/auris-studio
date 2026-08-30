@@ -28,8 +28,11 @@ format rather than a convention: `## <version> — <date>`.
   edits the spec and composes again, or aims **`another_take`** (same ask, next seed) or
   **`write_again`** (same seed, follows the harmony as it stands now) at one clip, addressed
   by the numbering `describe` now prints beside every clip — along with each clip's recipe,
-  seed, and whether a hand has edited it. **`teach_progression`** keeps a chord progression
-  by name on this machine; **`forget_progression`** takes it back out.
+  seed, and whether a hand has edited it. Every take names its seed, and `another_take` takes
+  a named `seed` back — the first model to drive the loop lost a take it liked behind the
+  advancing counter, and a rewrite that measured worse should never be a one-way door.
+  **`teach_progression`** keeps a chord progression by name on this machine;
+  **`forget_progression`** takes it back out.
 
 ### Arrangement: the joins learn a second word
 

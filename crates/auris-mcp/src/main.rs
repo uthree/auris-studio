@@ -125,6 +125,9 @@ struct RegenerateArgs {
     /// Which clip on that track, by the 1-based number `describe` shows. Every generated
     /// clip on the track when left out.
     clip: Option<usize>,
+    /// `another_take` only: the exact seed to take, instead of the next one — how a take
+    /// that measured better earlier is got back, since every result names its seed.
+    seed: Option<u64>,
 }
 
 /// Arguments to `teach_progression`.
@@ -227,7 +230,8 @@ impl AurisMcp {
     /// Writes another take of a generated clip: the same ask, the next seed, different notes.
     /// The change is saved into the project — render again to hear it. Aim it with `track`
     /// and the clip number `describe` shows; without a number, every generated clip on the
-    /// track gets a new take.
+    /// track gets a new take. Every answer names its seed, and passing `seed` takes that
+    /// exact take again — how a rewrite that measured worse is rolled back.
     #[tool]
     async fn another_take(
         &self,
@@ -758,14 +762,30 @@ fn regenerate(args: &RegenerateArgs, take: Take) -> Result<String, String> {
         }
     };
 
+    if matches!(take, Take::Same) && args.seed.is_some() {
+        return Err(
+            "write_again keeps the clip's own seed — use another_take with `seed` to choose one"
+                .to_string(),
+        );
+    }
+
     let mut text = String::new();
     for (index, id, name) in &chosen {
         // Asked before the rewrite, because writing the clip again is exactly what resets
         // the measurement that knows.
         let edited = session.clip_hand_edited(*id);
-        let notes = match take {
-            Take::Another => session.reroll_clip(*id),
-            Take::Same => session.regenerate_clip(*id),
+        let notes = match (take, args.seed) {
+            // The named seed, so a take that measured better two rewrites ago is not lost
+            // behind a counter that only advances.
+            (Take::Another, Some(seed)) => {
+                let recipe = session
+                    .clip_recipe(*id)
+                    .expect("only generated clips were chosen above")
+                    .with_seed(seed);
+                session.set_clip_recipe(*id, recipe)
+            }
+            (Take::Another, None) => session.reroll_clip(*id),
+            (Take::Same, _) => session.regenerate_clip(*id),
         }
         .map_err(|error| error.to_string())?;
         let seed = session
@@ -993,15 +1013,18 @@ mod tests {
 
         // A new take of one part, addressed the way describe numbers it, lands in the file.
         let before = std::fs::read_to_string(&document).unwrap();
-        let took = regenerate(
-            &RegenerateArgs {
-                project: document.display().to_string(),
-                track: "lead".to_string(),
-                clip: Some(1),
-            },
-            Take::Another,
-        )
-        .unwrap();
+        let take_of_lead = |clip: Option<usize>, seed: Option<u64>| {
+            regenerate(
+                &RegenerateArgs {
+                    project: document.display().to_string(),
+                    track: "lead".to_string(),
+                    clip,
+                    seed,
+                },
+                Take::Another,
+            )
+        };
+        let took = take_of_lead(Some(1), None).unwrap();
         assert!(took.contains("seed"), "{took}");
         assert!(took.contains("Saved"), "{took}");
         assert_ne!(
@@ -1009,11 +1032,33 @@ mod tests {
             std::fs::read_to_string(&document).unwrap(),
             "another take was saved into the project"
         );
+
+        // A take the numbers liked is not lost behind the advancing counter: every answer
+        // names its seed, and naming it back restores the take byte for byte.
+        let at = took.find("seed ").unwrap() + "seed ".len();
+        let liked: u64 = took[at..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+            .parse()
+            .unwrap();
+        let kept = std::fs::read_to_string(&document).unwrap();
+        take_of_lead(Some(1), None).unwrap();
+        assert_ne!(kept, std::fs::read_to_string(&document).unwrap());
+        let back = take_of_lead(Some(1), Some(liked)).unwrap();
+        assert!(back.contains(&format!("seed {liked}")), "{back}");
+        assert_eq!(
+            kept,
+            std::fs::read_to_string(&document).unwrap(),
+            "naming the seed brings the earlier take back exactly"
+        );
+
         let missing = regenerate(
             &RegenerateArgs {
                 project: document.display().to_string(),
                 track: "nobody".to_string(),
                 clip: None,
+                seed: None,
             },
             Take::Another,
         )
