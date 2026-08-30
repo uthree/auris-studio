@@ -494,6 +494,14 @@ impl Session {
         if self.input.is_some() {
             return Ok(());
         }
+        // A headless session opens no devices — the same rule as the output side, where
+        // `start_audio` is skipped. `Ok` rather than an error because the callers that can live
+        // without a device (the monitor's bookkeeping) should, machine-independently; the one
+        // that cannot, a take, checks for the capture itself. This is also what keeps a test
+        // from turning on the microphone light of whatever machine happens to run it.
+        if self.headless {
+            return Ok(());
+        }
         let settings = CaptureSettings {
             device: self.audio.input_device.clone(),
             // The rate the project renders at, so a take needs no resampling on the way in. A
@@ -635,10 +643,12 @@ impl Session {
             self.input = None;
             self.open_input()?;
         }
-        let reader = self
-            .input
-            .as_mut()
-            .expect("the input was just opened")
+        // `open_input` succeeding with no capture is a headless session, which has no device to
+        // record from — said the way a machine without a microphone says it.
+        let Some(capture) = self.input.as_mut() else {
+            return Err(auris_engine::EngineError::NoInputDevice.into());
+        };
+        let reader = capture
             .take_reader()
             .expect("a fresh capture has its reader");
 

@@ -74,6 +74,9 @@ pub(crate) const PROVISIONAL: GuiSize = GuiSize {
 /// gets a window it can still be found and closed at. Both ends are deliberately generous: a
 /// modern synth's interface really is fifteen hundred pixels across, and clamping a real answer is
 /// worse than passing on a strange one.
+// On the platforms that lend no window nothing calls this, but the rule and its test hold
+// everywhere — allowed dead there rather than gated out with them.
+#[cfg_attr(not(any(target_os = "windows", target_os = "macos")), allow(dead_code))]
 pub(crate) fn sane_size(size: GuiSize) -> GuiSize {
     GuiSize {
         width: size.width.clamp(120, 8192),
