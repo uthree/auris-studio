@@ -59,6 +59,13 @@ pub enum MenuCommand {
         /// The note's index.
         index: usize,
     },
+    /// Take every hand-placed phoneme pin off one note.
+    ResetPhonemeTiming {
+        /// The clip the note is in.
+        clip: ClipId,
+        /// The note's index.
+        index: usize,
+    },
     /// Open the sheet that lays a phrase across the selected notes.
     WriteLyrics {
         /// The clip whose selection takes the phrase.
@@ -610,6 +617,9 @@ impl AurisApp {
             }
             MenuCommand::EditLyric { clip, index } => self.open_lyric_prompt(clip, index),
             MenuCommand::EditPhonemes { clip, index } => self.open_phonemes_prompt(clip, index),
+            MenuCommand::ResetPhonemeTiming { clip, index } => {
+                let _ = self.session.clear_phoneme_timing(clip, index);
+            }
             MenuCommand::WriteLyrics { clip } => self.open_write_lyrics_prompt(clip),
             MenuCommand::NewInstrumentTrack => self.add_instrument_track(),
             MenuCommand::NewSingerTrack => self.add_singer_track(),

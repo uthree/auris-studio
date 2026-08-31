@@ -54,6 +54,14 @@ pub struct Note {
     /// this one alone.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub phonemes: Vec<String>,
+    /// Seconds each phoneme is pinned to, parallel to [`Self::phonemes`]; 0 lets the timing
+    /// rule decide.
+    ///
+    /// A hand adjustment of where one syllable is cut, so it rides the note the way the
+    /// phonemes themselves do. Rewriting the lyric or the phonemes clears it — a pin on a
+    /// phoneme that no longer exists would land on whichever one took its place.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub phoneme_seconds: Vec<f64>,
 }
 
 impl Note {
@@ -66,6 +74,7 @@ impl Note {
             length,
             lyric: String::new(),
             phonemes: Vec::new(),
+            phoneme_seconds: Vec::new(),
         }
     }
 

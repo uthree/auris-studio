@@ -416,6 +416,20 @@ pub enum Drag {
         /// drawing a brand-new note, whose end starts on the grid and should follow at once.
         pressed_at: Option<Point<Pixels>>,
     },
+    /// Dragging the boundary between two phonemes inside a note.
+    PhonemeDuration {
+        /// Clip the note lives in.
+        clip: ClipId,
+        /// Note whose syllable is being re-cut.
+        index: usize,
+        /// The phoneme whose end is in hand, as the note's own list counts them.
+        phoneme: usize,
+        /// Timeline seconds where that phoneme begins — what the pointer is measured
+        /// against, fixed at the grab so the boundary cannot chase its own consequences.
+        from_seconds: f64,
+        /// Timeline seconds where the note ends, which the boundary must stay short of.
+        end_seconds: f64,
+    },
     /// Carrying a panel's scrollbar along its track.
     PanelScroll {
         /// Which panel's, which is also which way the drag is measured.
@@ -642,6 +656,12 @@ impl Drag {
             Drag::NoteMove { .. } => Some(Edit::MoveNotes),
             Drag::NoteResize { .. } => Some(Edit::ResizeNote),
             Drag::NoteVelocity { .. } => Some(Edit::SetNoteVelocity),
+            Drag::PhonemeDuration {
+                clip,
+                index,
+                phoneme,
+                ..
+            } => Some(Edit::SetPhonemeDuration(*clip, *index, *phoneme)),
             Drag::Param { target, .. } => Some(Edit::AdjustParameter(*target)),
             // The decay corner moves two parameters and this names one of them. The undo step is
             // one either way — the whole drag is a transaction — so this only decides the label.

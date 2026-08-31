@@ -54,6 +54,7 @@ strings! {
     PromptLyrics { en: "Write Lyrics Across Selection", ja: "選択ノートに歌詞を流し込む" }
     MenuEditLyric { en: "Edit Lyric…", ja: "歌詞を編集…" }
     MenuEditPhonemes { en: "Edit Phonemes…", ja: "音素を編集…" }
+    MenuResetPhonemeTiming { en: "Reset Phoneme Timing", ja: "音素タイミングをリセット" }
     MenuWriteLyrics { en: "Write Lyrics…", ja: "歌詞をまとめて入力…" }
     Mixer { en: "Mixer", ja: "ミキサー" }
     Inspector { en: "Inspector", ja: "インスペクタ" }
@@ -899,6 +900,8 @@ strings! {
     EditSetLyric { en: "writing a lyric", ja: "歌詞の入力" }
     EditWriteLyrics { en: "writing lyrics", ja: "歌詞の流し込み" }
     EditSetPhonemes { en: "editing phonemes", ja: "音素の編集" }
+    EditPhonemeDuration { en: "adjusting phoneme timing", ja: "音素の長さの調整" }
+    EditResetPhonemeTiming { en: "resetting phoneme timing", ja: "音素タイミングのリセット" }
     EditSetFrameHop { en: "changing the frame hop", ja: "フレーム間隔の変更" }
     EditSetSingerVoice { en: "choosing a voice", ja: "声の選択" }
     EditSing { en: "the sung take", ja: "歌唱テイク" }

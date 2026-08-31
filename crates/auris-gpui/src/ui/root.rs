@@ -871,6 +871,29 @@ impl AurisApp {
                     self.audition(pitch);
                 }
             }
+            Drag::PhonemeDuration {
+                clip,
+                index,
+                phoneme,
+                from_seconds,
+                end_seconds,
+            } => {
+                // Unsnapped, like a fade: a syllable's cut is placed by ear, and the grid
+                // knows nothing about consonants. The pointer names where the boundary
+                // should fall; the pin is that minus where the phoneme begins.
+                let x = event.position.x - self.roll_origin().x;
+                let at = self
+                    .project()
+                    .tempo_map
+                    .ticks_to_seconds(self.timeline.x_to_tick(x))
+                    .0;
+                let widest = (end_seconds - from_seconds - auris_session::MIN_PHONEME_SECONDS)
+                    .max(auris_session::MIN_PHONEME_SECONDS);
+                let seconds = (at - from_seconds).clamp(auris_session::MIN_PHONEME_SECONDS, widest);
+                let _ = self
+                    .session
+                    .set_phoneme_duration(clip, index, phoneme, Some(seconds));
+            }
             Drag::NoteVelocity {
                 clip,
                 start_y,

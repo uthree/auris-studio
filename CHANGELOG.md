@@ -62,6 +62,12 @@ format rather than a convention: `## <version> — <date>`.
   each cut, the symbol above the note at the position its frames begin. The old untimed
   phoneme list above a note yields to this wherever frames exist; zoomed far out the symbols
   step aside and the dividers stay.
+* **The cuts are draggable.** Take hold of a divider and the phoneme to its left is pinned
+  to that many seconds — stored on the note beside its phonemes (`Note::phoneme_seconds`),
+  so the adjustment travels, saves and re-renders with the word. The timing rule lays the
+  unpinned phonemes out around the pins, squeezing proportionally where pins outgrow the
+  note; retyping a lyric clears its pins, the note's menu offers Reset Phoneme Timing while
+  any stand, and one drag is one undo step.
 * Under the hood: the new `auris-singer` crate runs the model on the CPU via onnxruntime,
   cutting the timeline at silences into chunks of at most twenty seconds — the model's
   attention grows with the square of the frame count, and a whole song in one inference has

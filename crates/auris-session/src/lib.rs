@@ -62,12 +62,12 @@ pub use render::{ExportSummary, RenderJob, StemSummary, stem_tracks};
 pub use session::{
     AccompanyReport, Arm, AudioStatus, BalanceReport, CEILING_DB, Clipboard, ComposeReport,
     CopiedClip, CopiedContent, DEFAULT_OCTAVE, DEFAULT_PARTS, DEFAULT_VELOCITY, InputChannels,
-    LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont, MixAnalysis, MusicalTyping, OCTAVE_RANGE, Played,
-    PluginWindow, Quantize, RecordingReport, RecordingStatus, Release, SaveReport, SectionLoudness,
-    Session, SessionOptions, SingPlan, SingerTakeState, Struck, TARGET_LUFS, TYPING_BEND,
-    TakeReport, TrackLevel, TrackLoudness, TypingRole, VELOCITY_STEP, WHEEL_STEPS, decode_audio,
-    fader_for, faders_lift_db, input_level_of, master_gain_db, quantized, read_soundfont,
-    shadows_musical_typing, take_fingerprint,
+    LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont, MIN_PHONEME_SECONDS, MixAnalysis, MusicalTyping,
+    OCTAVE_RANGE, Played, PluginWindow, Quantize, RecordingReport, RecordingStatus, Release,
+    SaveReport, SectionLoudness, Session, SessionOptions, SingPlan, SingerTakeState, Struck,
+    TARGET_LUFS, TYPING_BEND, TakeReport, TrackLevel, TrackLoudness, TypingRole, VELOCITY_STEP,
+    WHEEL_STEPS, decode_audio, fader_for, faders_lift_db, input_level_of, master_gain_db,
+    quantized, read_soundfont, shadows_musical_typing, take_fingerprint,
 };
 pub use settings::{
     AgentPreferences, AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings,
@@ -173,7 +173,9 @@ pub mod prelude {
     };
     /// What a singer track stores and what its voice model is fed — see [`auris_vocal`] and
     /// the singer commands on [`Session`].
-    pub use auris_vocal::{SILENCE, SingerFrames, VocalError, split_kana_lyric, split_kana_moras};
+    pub use auris_vocal::{
+        SILENCE, SingerFrames, VocalError, phoneme_layout, split_kana_lyric, split_kana_moras,
+    };
     // The curves a clip carries, and how far each may go. A frontend drawing one has to know the
     // range it is drawing against, and may not reach past this crate to find out.
     pub use auris_core::plugin::{CC_MODULATION, CONTROLLER_MAX};

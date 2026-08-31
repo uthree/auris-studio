@@ -264,6 +264,15 @@ a faint divider inside the note at each cut and the IPA symbol above the note wh
 frames begin, so the sixty milliseconds a consonant takes is sixty milliseconds on screen
 however long the note holds. Zoomed far out the symbols step aside and the dividers stay.
 
+The cuts are yours to move: **drag a divider** and the phoneme to its left is pinned to the
+length you gave it, stored on the note beside its phonemes so it travels and saves with the
+word. The rule lays the unpinned phonemes out around the pins — the last syllabic still
+absorbs the rest of the note, and pins that outgrow the note squeeze together proportionally
+so every phoneme keeps sounding. Retyping the word takes its pins with it (they belonged to
+phonemes that no longer exist), the note's right-click menu offers **Reset Phoneme Timing**
+while any pin stands, one drag is one undo step, and the take re-renders itself afterwards
+like after any other edit.
+
 **Double-click a note** to type its word. **Return commits and walks to the next note**, so a
 verse is typed word after word without touching the mouse; an empty field takes the word off.
 The note's right-click menu offers **Edit Lyric…**, **Edit Phonemes…** (space-separated IPA,

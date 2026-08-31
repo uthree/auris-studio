@@ -27,7 +27,7 @@ pub mod kana;
 pub mod openjtalk;
 pub mod phoneme;
 
-pub use frames::{SingerFrames, render_frames};
+pub use frames::{SingerFrames, phoneme_layout, render_frames};
 pub use g2p::{JapaneseDictionary, VocalError, lyric_phonemes};
 pub use kana::{kana_phonemes, split_kana_lyric, split_kana_moras};
 pub use phoneme::{SILENCE, is_syllabic, is_voiceless, phoneme_moras};

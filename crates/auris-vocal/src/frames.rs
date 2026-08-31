@@ -89,6 +89,10 @@ struct TimedNote<'a> {
     velocity: f32,
     /// The phonemes sung, `a` where none were written.
     phonemes: Vec<String>,
+    /// Seconds each phoneme is pinned to, 0 meaning the rule decides. Empty when the note
+    /// carries no pins — or no phonemes, since a pin on the placeholder vowel would be a
+    /// pin on nothing the person ever saw.
+    phoneme_seconds: Vec<f64>,
     /// Timeline tick the note's clip pass begins at — what the curves are measured from.
     curve_base: Ticks,
     /// The clip's bend, in semitones.
@@ -185,9 +189,9 @@ fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNot
                 }
                 let length = note.length.min(span - note.start);
                 let start = base + note.start;
-                let phonemes = match note.phonemes.is_empty() {
-                    true => vec!["a".to_string()],
-                    false => note.phonemes.clone(),
+                let (phonemes, phoneme_seconds) = match note.phonemes.is_empty() {
+                    true => (vec!["a".to_string()], Vec::new()),
+                    false => (note.phonemes.clone(), note.phoneme_seconds.clone()),
                 };
                 placed.push((
                     start,
@@ -198,6 +202,7 @@ fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNot
                         pitch: f32::from(note.pitch),
                         velocity: note.velocity.clamp(0.0, 1.0),
                         phonemes,
+                        phoneme_seconds,
                         curve_base: base,
                         bend: &clip.bend,
                         expression,
@@ -243,38 +248,85 @@ fn phoneme_at<'a>(note: &'a TimedNote<'a>, t: f64) -> &'a str {
 }
 
 /// The note's phonemes laid across its length: `(from, to, token)` in seconds from its start.
-///
-/// Fixed-width consonants at the edges, the middle shared equally — the rule the module doc
-/// states, in one place, where the tests can measure it.
 fn segment<'a>(note: &'a TimedNote<'a>) -> Vec<(f64, f64, &'a String)> {
     let length = (note.end - note.start).max(0.0);
-    let phonemes = &note.phonemes;
+    phoneme_layout(&note.phonemes, &note.phoneme_seconds, length)
+        .into_iter()
+        .zip(&note.phonemes)
+        .map(|((from, to), token)| (from, to, token))
+        .collect()
+}
+
+/// The seconds each of a note's phonemes occupies, as `(from, to)` pairs from its start.
+///
+/// The rule the module doc states — fixed-width consonants at the edges, the middle shared
+/// equally, consonants scaled down together rather than swallowing a short note — bent by
+/// any pins in `pinned` (parallel to `phonemes`, 0 meaning the rule decides): a pinned
+/// phoneme takes exactly its seconds, the unpinned middle shares whatever remains, and where
+/// the widths alone overrun the note everything is squeezed together proportionally so every
+/// phoneme still sounds. A total shorter than the note is left alone — the frames extend the
+/// final phoneme over the tail, which is what holding a vowel means.
+///
+/// Public because an editor that lets a boundary be dragged has to lay the phonemes out
+/// exactly as the frames will, and two implementations of this rule would drift.
+pub fn phoneme_layout(phonemes: &[String], pinned: &[f64], length: f64) -> Vec<(f64, f64)> {
+    let length = length.max(0.0);
+    let count = phonemes.len();
+    if count == 0 {
+        return Vec::new();
+    }
     let first_syllabic = phonemes.iter().position(|p| is_syllabic(p));
     let last_syllabic = phonemes.iter().rposition(|p| is_syllabic(p));
-
-    let (prefix, middle, suffix) = match (first_syllabic, last_syllabic) {
-        (Some(first), Some(last)) => (first, last + 1 - first, phonemes.len() - last - 1),
+    let (prefix, middle) = match (first_syllabic, last_syllabic) {
+        (Some(first), Some(last)) => (first, last + 1 - first),
         // No syllabic at all: share the whole note equally rather than inventing an edge.
-        _ => (0, phonemes.len(), 0),
+        _ => (0, count),
     };
+    let edge = |index: usize| index < prefix || index >= prefix + middle;
+    let pin = |index: usize| pinned.get(index).copied().filter(|seconds| *seconds > 0.0);
 
-    // Fixed consonant slots, scaled down together so they never claim more than half the note.
-    let fixed = (prefix + suffix) as f64 * CONSONANT_SECONDS;
+    // Unpinned edge consonants keep their fixed slots, scaled down together so that with no
+    // pins anywhere the layout is exactly the standing rule.
+    let fixed: f64 = (0..count)
+        .filter(|index| edge(*index) && pin(*index).is_none())
+        .count() as f64
+        * CONSONANT_SECONDS;
     let scale = match fixed > length / 2.0 {
         true => (length / 2.0) / fixed.max(f64::EPSILON),
         false => 1.0,
     };
     let consonant = CONSONANT_SECONDS * scale;
-    let shared = (length - (prefix + suffix) as f64 * consonant).max(0.0) / (middle.max(1)) as f64;
 
-    let mut out = Vec::with_capacity(phonemes.len());
+    let mut widths: Vec<f64> = (0..count)
+        .map(|index| match pin(index) {
+            Some(seconds) => seconds,
+            None if edge(index) => consonant,
+            // A placeholder the stretchy middle fills in below.
+            None => f64::NAN,
+        })
+        .collect();
+    let reserved: f64 = widths.iter().filter(|width| width.is_finite()).sum();
+    let stretchy = widths.iter().filter(|width| width.is_nan()).count();
+    let shared = (length - reserved).max(0.0) / stretchy.max(1) as f64;
+    for width in &mut widths {
+        if width.is_nan() {
+            *width = shared;
+        }
+    }
+
+    // Pins can overrun the note; a squeeze keeps every phoneme audible, proportionally.
+    let total: f64 = widths.iter().sum();
+    if total > length && total > f64::EPSILON {
+        let squeeze = length / total;
+        for width in &mut widths {
+            *width *= squeeze;
+        }
+    }
+
+    let mut out = Vec::with_capacity(count);
     let mut at = 0.0;
-    for (index, token) in phonemes.iter().enumerate() {
-        let width = match index < prefix || index >= prefix + middle {
-            true => consonant,
-            false => shared,
-        };
-        out.push((at, at + width, token));
+    for width in widths {
+        out.push((at, at + width));
         at += width;
     }
     out
@@ -381,6 +433,52 @@ mod tests {
         let a_frames = frames.phonemes.iter().filter(|id| **id == 2).count();
         assert_eq!(k_frames, 5, "50 ms of k — half the note, not sixty");
         assert_eq!(a_frames, 5, "and the vowel keeps its half");
+    }
+
+    #[test]
+    fn a_pinned_phoneme_takes_exactly_its_seconds() {
+        // か for one beat, with the k pinned to 120 ms — twice what the rule would give it.
+        let mut note = sung(60, 0.0, 1.0, &["k", "a"]);
+        note.phoneme_seconds = vec![0.120, 0.0];
+        let frames = render_frames(&track(vec![note]), &map());
+        let k_frames = frames.phonemes.iter().filter(|id| **id == 1).count();
+        assert_eq!(k_frames, 12, "120 ms of k at a 10 ms hop");
+        assert_eq!(
+            frames.phonemes[12], 2,
+            "the vowel starts where the pin ends"
+        );
+    }
+
+    #[test]
+    fn pins_that_overrun_the_note_squeeze_together() {
+        // A 200 ms note whose pins ask for two full seconds: everything scales down in
+        // proportion, so both phonemes still sound and the note still ends on time.
+        let mut note = sung(60, 0.0, 0.4, &["k", "a"]);
+        note.phoneme_seconds = vec![1.0, 1.0];
+        let frames = render_frames(&track(vec![note]), &map());
+        let k_frames = frames.phonemes.iter().filter(|id| **id == 1).count();
+        let a_frames = frames.phonemes.iter().filter(|id| **id == 2).count();
+        assert_eq!(k_frames, 10, "equal pins squeeze to equal halves");
+        assert_eq!(a_frames, 10);
+    }
+
+    #[test]
+    fn a_pin_that_ends_early_leaves_the_tail_to_the_last_phoneme() {
+        // The vowel pinned to 100 ms of a one-second note: past the pin there is no next
+        // segment, and holding the final phoneme is what a held note means.
+        let mut note = sung(60, 0.0, 2.0, &["k", "a"]);
+        note.phoneme_seconds = vec![0.0, 0.100];
+        let frames = render_frames(&track(vec![note]), &map());
+        assert_eq!(frames.phonemes[50], 2, "half a second in, the vowel holds");
+    }
+
+    #[test]
+    fn the_layout_without_pins_is_the_standing_rule() {
+        let phonemes: Vec<String> = ["k", "a"].iter().map(|s| s.to_string()).collect();
+        let layout = phoneme_layout(&phonemes, &[], 1.0);
+        assert_eq!(layout.len(), 2);
+        assert!((layout[0].1 - CONSONANT_SECONDS).abs() < 1e-9);
+        assert!((layout[1].1 - 1.0).abs() < 1e-9, "the vowel fills the rest");
     }
 
     #[test]

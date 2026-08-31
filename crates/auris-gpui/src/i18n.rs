@@ -149,6 +149,8 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::SetLyric => Key::EditSetLyric,
         Edit::WriteLyrics => Key::EditWriteLyrics,
         Edit::SetPhonemes => Key::EditSetPhonemes,
+        Edit::SetPhonemeDuration(..) => Key::EditPhonemeDuration,
+        Edit::ResetPhonemeTiming => Key::EditResetPhonemeTiming,
         Edit::SetFrameHop => Key::EditSetFrameHop,
         Edit::SetSingerVoice => Key::EditSetSingerVoice,
         Edit::Sing => Key::EditSing,

@@ -39,6 +39,12 @@ pub const PREVIEW_NOTE_SECONDS: f64 = 0.5;
 /// Silence appended after the held note, where the voice lets go of the syllable.
 const PREVIEW_TAIL_SECONDS: f64 = 0.3;
 
+/// The narrowest a phoneme may be pinned, in seconds.
+///
+/// One frame at the default hop: any narrower and the pin rounds to no frames at all, which
+/// reads as the drag refusing to work.
+pub const MIN_PHONEME_SECONDS: f64 = 0.01;
+
 impl Session {
     /// Appends a singer track, previewing through the built-in vocal instrument.
     pub fn add_singer_track(&mut self, name: impl Into<String>) -> TrackId {
@@ -89,6 +95,8 @@ impl Session {
         {
             note.lyric = lyric.trim().to_string();
             note.phonemes = phonemes;
+            // A pin belongs to the phoneme it was placed on; the new word has new ones.
+            note.phoneme_seconds.clear();
         }
         Ok(())
     }
@@ -116,6 +124,8 @@ impl Session {
                 .map(|p| p.trim().to_string())
                 .filter(|p| !p.is_empty())
                 .collect();
+            // A pin belongs to the phoneme it was placed on, and those were just rewritten.
+            note.phoneme_seconds.clear();
         }
         Ok(())
     }
@@ -177,10 +187,88 @@ impl Session {
                 if let Some(note) = target.notes.get_mut(index) {
                     note.lyric = lyric;
                     note.phonemes = phonemes;
+                    // A pin belongs to the phoneme it was placed on; the phrase brought new
+                    // ones.
+                    note.phoneme_seconds.clear();
                 }
             }
         }
         Ok(filled)
+    }
+
+    /// Pins one phoneme of one note to `seconds` of sung time, or hands it back to the rule.
+    ///
+    /// The hand adjustment behind dragging a boundary in the roll: the pin rides the note in
+    /// [`Note::phoneme_seconds`](auris_core::Note::phoneme_seconds), and
+    /// [`auris_vocal::phoneme_layout`] bends the timing rule around it. `None` unpins. An
+    /// index past the note's phonemes is forgiven rather than refused — the allowance every
+    /// many-note command extends to a stale selection — and so is a note with no phonemes,
+    /// whose placeholder vowel is nothing a person ever placed. Repeated pins on one
+    /// boundary fold into one undo step, because a drag arrives as repeats.
+    pub fn set_phoneme_duration(
+        &mut self,
+        clip: ClipId,
+        note: usize,
+        phoneme: usize,
+        seconds: Option<f64>,
+    ) -> Result<(), SessionError> {
+        self.require_note(clip, note)?;
+        let count = self
+            .project
+            .midi_clip(clip)
+            .and_then(|(_, target)| target.notes.get(note))
+            .map(|target| target.phonemes.len())
+            .unwrap_or(0);
+        if phoneme >= count {
+            return Ok(());
+        }
+        if let Some(seconds) = seconds
+            && !seconds.is_finite()
+        {
+            return Err(SessionError::NotFinite(seconds));
+        }
+        // Clamped rather than refused, unlike most bounded numbers at this door, because the
+        // number arrives from a drag: the hand at the edge of the range wants the edge.
+        let seconds = seconds.map(|seconds| seconds.clamp(MIN_PHONEME_SECONDS, 10.0));
+        self.record_repeating(Edit::SetPhonemeDuration(clip, note, phoneme));
+        if let Some(target) = self
+            .project
+            .midi_clip_mut(clip)
+            .and_then(|target| target.notes.get_mut(note))
+        {
+            if target.phoneme_seconds.len() < count {
+                target.phoneme_seconds.resize(count, 0.0);
+            }
+            target.phoneme_seconds[phoneme] = seconds.unwrap_or(0.0);
+            // Trailing zeros say nothing; dropping them keeps an unpinned note's file entry
+            // exactly what it was before this field existed.
+            while target.phoneme_seconds.last() == Some(&0.0) {
+                target.phoneme_seconds.pop();
+            }
+        }
+        Ok(())
+    }
+
+    /// Takes every pin off one note, handing the whole syllable back to the timing rule.
+    pub fn clear_phoneme_timing(&mut self, clip: ClipId, note: usize) -> Result<(), SessionError> {
+        self.require_note(clip, note)?;
+        let pinned = self
+            .project
+            .midi_clip(clip)
+            .and_then(|(_, target)| target.notes.get(note))
+            .is_some_and(|target| !target.phoneme_seconds.is_empty());
+        if !pinned {
+            return Ok(());
+        }
+        self.record(Edit::ResetPhonemeTiming);
+        if let Some(target) = self
+            .project
+            .midi_clip_mut(clip)
+            .and_then(|target| target.notes.get_mut(note))
+        {
+            target.phoneme_seconds.clear();
+        }
+        Ok(())
     }
 
     /// Sets the seconds-per-frame a singer track's features are sampled at.
@@ -693,6 +781,62 @@ mod tests {
                 .unwrap();
         }
         (session, track, clip)
+    }
+
+    #[test]
+    fn a_pinned_phoneme_moves_the_frames_and_a_new_word_takes_the_pin_off() {
+        let (mut session, track, clip) = sung(1);
+        session.set_note_lyric(clip, 0, "か").unwrap();
+
+        // Pin the k to 150 ms: the boundary in the frames moves to match.
+        session
+            .set_phoneme_duration(clip, 0, 0, Some(0.150))
+            .unwrap();
+        let frames = session.singer_frames(track).unwrap();
+        let k = frames
+            .inventory
+            .iter()
+            .position(|entry| entry == "k")
+            .unwrap() as u32;
+        let held = frames.phonemes.iter().filter(|id| **id == k).count();
+        assert_eq!(held, 15, "150 ms of k at a 10 ms hop");
+
+        // A drag is repeats on one address: they fold into a single undo step, and undoing
+        // it lands back at no pin at all.
+        session
+            .set_phoneme_duration(clip, 0, 0, Some(0.200))
+            .unwrap();
+        session.undo();
+        let note = &session.midi_clip(clip).unwrap().notes[0];
+        assert!(note.phoneme_seconds.is_empty(), "one gesture, one step");
+
+        // Pin again, then retype the word: the pin belongs to phonemes that are gone.
+        session
+            .set_phoneme_duration(clip, 0, 0, Some(0.150))
+            .unwrap();
+        session.set_note_lyric(clip, 0, "さ").unwrap();
+        let note = &session.midi_clip(clip).unwrap().notes[0];
+        assert!(note.phoneme_seconds.is_empty(), "a new word unpins");
+
+        // A stale address is forgiven, and unpinning by hand trims the field away whole.
+        session.set_phoneme_duration(clip, 0, 9, Some(0.5)).unwrap();
+        session
+            .set_phoneme_duration(clip, 0, 1, Some(0.300))
+            .unwrap();
+        session.set_phoneme_duration(clip, 0, 1, None).unwrap();
+        let note = &session.midi_clip(clip).unwrap().notes[0];
+        assert!(
+            note.phoneme_seconds.is_empty(),
+            "trailing zeros are dropped"
+        );
+
+        // And a reset takes every pin off in one step.
+        session
+            .set_phoneme_duration(clip, 0, 0, Some(0.100))
+            .unwrap();
+        session.clear_phoneme_timing(clip, 0).unwrap();
+        let note = &session.midi_clip(clip).unwrap().notes[0];
+        assert!(note.phoneme_seconds.is_empty());
     }
 
     #[test]

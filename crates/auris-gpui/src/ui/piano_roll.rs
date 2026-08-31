@@ -140,6 +140,36 @@ fn ghosted(clips: &[(ClipId, Ticks, Ticks)], editing: ClipId, view: (Ticks, Tick
         .collect()
 }
 
+/// How near a press must land to a phoneme boundary to take hold of it, in pixels.
+const PHONEME_GRAB: f32 = 5.0;
+
+/// Which phoneme boundary of `note` a press `at` seconds along the timeline takes hold of.
+///
+/// The answer is the phoneme whose *end* sits within `slack` — the one whose width the drag
+/// will pin — and where that phoneme begins, in timeline seconds. Only boundaries strictly
+/// inside the note answer: its edges belong to the resize and move gestures, and a note
+/// singing a single phoneme has no cut to move.
+fn grabbed_phoneme_boundary(
+    note: &Note,
+    start_seconds: f64,
+    end_seconds: f64,
+    at_seconds: f64,
+    slack_seconds: f64,
+) -> Option<(usize, f64)> {
+    if note.phonemes.len() < 2 {
+        return None;
+    }
+    let length = (end_seconds - start_seconds).max(0.0);
+    let layout = phoneme_layout(&note.phonemes, &note.phoneme_seconds, length);
+    layout
+        .iter()
+        .take(layout.len().saturating_sub(1))
+        .enumerate()
+        .filter(|(_, (_, to))| *to > 0.0 && *to < length)
+        .find(|(_, (_, to))| (start_seconds + to - at_seconds).abs() <= slack_seconds)
+        .map(|(index, (from, _))| (index, start_seconds + from))
+}
+
 /// The pitch contour a singer track's frames describe, as drawable runs.
 ///
 /// One run per voiced span — silence is a gap in the line, not a dive to nowhere — each
@@ -372,7 +402,9 @@ impl AurisApp {
         let notes = clip.notes.clone();
         let singing = self.editing_a_singer_clip();
         let ghosts = self.neighbouring_notes();
-        let note_ends = self.note_end_zones(clip_start, &notes);
+        let mut note_ends = self.note_end_zones(clip_start, &notes);
+        // The phoneme boundaries wear the same arrow: both zones drag a vertical edge.
+        note_ends.extend(self.phoneme_divider_zones(clip_start, &notes));
         let selected: Vec<usize> = self.selected_notes.iter().copied().collect();
         let clip_name = clip.name.clone();
         // After the last read of `clip`, whose borrow the cache lookup cannot share. What
@@ -976,6 +1008,19 @@ impl AurisApp {
                         index,
                         pressed_at: Some(event.position),
                     });
+                } else if let Some((phoneme, from_seconds, end_seconds)) =
+                    self.grabbed_boundary_at(&note, clip_start, event.position.x - origin.x)
+                {
+                    // A press near a phoneme cut takes the cut, not the note: dragging the
+                    // divider is how a syllable is re-timed, and moving the whole note is
+                    // still there a few pixels either side.
+                    self.begin_drag(Drag::PhonemeDuration {
+                        clip: clip_id,
+                        index,
+                        phoneme,
+                        from_seconds,
+                        end_seconds,
+                    });
                 } else {
                     let origins = self.selected_note_origins(clip_id);
                     self.begin_drag(Drag::NoteMove {
@@ -1129,6 +1174,71 @@ impl AurisApp {
     ///
     /// Empty while the velocity tool is in hand. That tool drags a note's velocity rather than
     /// its length, and the grid already says so with a cursor of its own.
+    /// The grab zones over each phoneme boundary of a singer clip's notes.
+    ///
+    /// The same coordinate frame as [`Self::note_end_zones`], and appended to its answer:
+    /// both wear the left-right resize arrow, because both drag a vertical edge.
+    fn phoneme_divider_zones(&self, clip_start: Ticks, notes: &[Note]) -> Vec<Bounds<Pixels>> {
+        if self.tool != RollTool::Pointer || !self.editing_a_singer_clip() {
+            return Vec::new();
+        }
+        let tempo = &self.project().tempo_map;
+        let row = px(self.pitch.row_height);
+        let mut zones = Vec::new();
+        for note in notes {
+            if note.phonemes.len() < 2 {
+                continue;
+            }
+            let start = tempo.ticks_to_seconds(clip_start + note.start).0;
+            let end = tempo.ticks_to_seconds(clip_start + note.end()).0;
+            let layout = phoneme_layout(
+                &note.phonemes,
+                &note.phoneme_seconds,
+                (end - start).max(0.0),
+            );
+            for (_, to) in layout.iter().take(layout.len().saturating_sub(1)) {
+                let tick = tempo.seconds_to_ticks(Seconds(start + to));
+                let x = self.timeline.tick_to_x(tick);
+                zones.push(Bounds {
+                    origin: point(
+                        x - px(PHONEME_GRAB / 2.0),
+                        self.pitch.pitch_to_y(note.pitch) + px(1.0),
+                    ),
+                    size: size(px(PHONEME_GRAB), (row - px(2.0)).max(px(2.0))),
+                });
+            }
+        }
+        zones
+    }
+
+    /// The phoneme boundary a press at roll-relative `x` takes hold of, with the anchors
+    /// the drag measures against.
+    ///
+    /// Answers `(phoneme, from_seconds, end_seconds)`. The rule is
+    /// [`grabbed_phoneme_boundary`]; this only turns pixels into seconds at the current
+    /// zoom, giving the grab the same few pixels of slack at every magnification.
+    fn grabbed_boundary_at(
+        &self,
+        note: &Note,
+        clip_start: Ticks,
+        x: Pixels,
+    ) -> Option<(usize, f64, f64)> {
+        if !self.editing_a_singer_clip() {
+            return None;
+        }
+        let tempo = &self.project().tempo_map;
+        let start = tempo.ticks_to_seconds(clip_start + note.start).0;
+        let end = tempo.ticks_to_seconds(clip_start + note.end()).0;
+        let at = tempo.ticks_to_seconds(self.timeline.x_to_tick(x)).0;
+        let slack = (tempo
+            .ticks_to_seconds(self.timeline.x_to_tick(x + px(PHONEME_GRAB)))
+            .0
+            - at)
+            .abs();
+        grabbed_phoneme_boundary(note, start, end, at, slack)
+            .map(|(phoneme, from)| (phoneme, from, end))
+    }
+
     fn note_end_zones(&self, clip_start: Ticks, notes: &[Note]) -> Vec<Bounds<Pixels>> {
         if self.tool != RollTool::Pointer {
             return Vec::new();
@@ -2018,6 +2128,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_boundary_grab_answers_the_phoneme_and_ignores_the_edges() {
+        let mut note = Note::new(60, Ticks::ZERO, Ticks::from_beats(1.0));
+        note.phonemes = vec!["k".to_string(), "a".to_string()];
+        // Near the 60 ms cut of a note spanning 1.0..1.5 s: the k is in hand, measured
+        // from the note's start.
+        assert_eq!(
+            grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.062, 0.01),
+            Some((0, 1.0))
+        );
+        // Too far from the cut, nothing answers; the note's own edges never do.
+        assert_eq!(grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.2, 0.01), None);
+        assert_eq!(grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.0, 0.005), None);
+        // A pin moves the cut, and the grab follows it.
+        note.phoneme_seconds = vec![0.2, 0.0];
+        assert_eq!(
+            grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.2, 0.01),
+            Some((0, 1.0))
+        );
+        // One phoneme has no cut to move.
+        note.phonemes = vec!["a".to_string()];
+        note.phoneme_seconds.clear();
+        assert_eq!(grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.06, 0.5), None);
+    }
+
+    #[test]
     fn the_contour_splits_at_silence_and_reads_pitch_in_fractions() {
         // Two voiced spans around a rest, the second a quarter-tone above A3: the drawn
         // line must break at the rest, and the fraction must survive into the pitch so a
@@ -2677,6 +2812,63 @@ mod window_tests {
         paint(&app, cx);
         show_pitch(&app, cx, MIDDLE_C);
         (app, cx, clip)
+    }
+
+    /// The whole re-timing flow, made as a hand makes it: grab the k|a divider inside the
+    /// note, drag it right, and the k's length lands in the document as a pin — then the
+    /// note's menu offers the reset, and the pin comes off.
+    #[gpui::test]
+    fn dragging_a_phoneme_divider_pins_its_length(cx: &mut TestAppContext) {
+        let (app, cx, _, clip) = with_a_singer_clip(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .add_note(clip, Note::new(MIDDLE_C, Ticks::ZERO, BEAT * 2))
+                .unwrap();
+            this.session.set_note_lyric(clip, 0, "か").unwrap();
+            this.open_clip_in_editor(clip);
+        });
+        paint(&app, cx);
+        show_pitch(&app, cx, MIDDLE_C);
+
+        // Where the rule put the cut, and where the hand will carry it — asked of the same
+        // layout the grab and the painter read.
+        let (from_tick, to_tick) = app.read_with(cx, |this, _| {
+            let tempo = &this.project().tempo_map;
+            let note = &this.session.midi_clip(clip).unwrap().notes[0];
+            assert_eq!(note.phonemes, ["k", "a"]);
+            let length = tempo.ticks_to_seconds(note.end()).0;
+            let layout = phoneme_layout(&note.phonemes, &note.phoneme_seconds, length);
+            (
+                tempo.seconds_to_ticks(Seconds(layout[0].1)),
+                tempo.seconds_to_ticks(Seconds(0.200)),
+            )
+        });
+        let from = roll_point(&app, cx, from_tick, MIDDLE_C);
+        let to = roll_point(&app, cx, to_tick, MIDDLE_C);
+        drag(cx, from, to);
+
+        app.read_with(cx, |this, _| {
+            let note = &this.session.midi_clip(clip).unwrap().notes[0];
+            let pinned = note.phoneme_seconds.first().copied().unwrap_or_default();
+            assert!(
+                (pinned - 0.200).abs() < 0.02,
+                "the k now holds about 200 ms, got {pinned}"
+            );
+            assert!(
+                this.session.midi_clip(clip).unwrap().notes[0].start == Ticks::ZERO,
+                "the note itself never moved"
+            );
+        });
+
+        // The gesture is one undo step.
+        app.update(cx, |this, _| {
+            this.session.undo();
+            let note = &this.session.midi_clip(clip).unwrap().notes[0];
+            assert!(
+                note.phoneme_seconds.is_empty(),
+                "one drag, one step, and it lands back at the rule"
+            );
+        });
     }
 
     /// The whole lyric flow, made as a hand makes it: double-click a note, type the word,

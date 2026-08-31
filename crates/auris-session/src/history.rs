@@ -153,6 +153,13 @@ pub enum Edit {
     WriteLyrics,
     /// A note's phonemes were corrected by hand.
     SetPhonemes,
+    /// One phoneme's sung length was pinned by hand.
+    ///
+    /// Carries its whole address because a boundary drag arrives as repeats and coalescing
+    /// compares `Edit` values — two different boundaries must not fold into one step.
+    SetPhonemeDuration(ClipId, usize, usize),
+    /// A note's phoneme pins were all taken off, handing the timing back to the rule.
+    ResetPhonemeTiming,
     /// A singer track's frame hop was changed.
     SetFrameHop,
     /// A singer track was pointed at a voice model, or its voice was taken away.

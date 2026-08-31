@@ -327,6 +327,21 @@ impl AurisApp {
                 self.t(Key::MenuWriteLyrics),
                 MenuCommand::WriteLyrics { clip },
             )
+            // Only where a pin actually stands: a reset over nothing is a row that lies.
+            .item_if(
+                singing
+                    && under_pointer.is_some_and(|index| {
+                        self.session
+                            .midi_clip(clip)
+                            .and_then(|target| target.notes.get(index))
+                            .is_some_and(|note| !note.phoneme_seconds.is_empty())
+                    }),
+                self.t(Key::MenuResetPhonemeTiming),
+                MenuCommand::ResetPhonemeTiming {
+                    clip,
+                    index: under_pointer.unwrap_or(0),
+                },
+            )
             .separator()
             .item_if(has_selection, self.t(Key::MenuCut), MenuCommand::CutNotes)
             .item_if(has_selection, self.t(Key::MenuCopy), MenuCommand::CopyNotes)
