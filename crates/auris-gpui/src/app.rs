@@ -953,6 +953,12 @@ pub struct AutoSing {
     pub checked: u64,
 }
 
+/// A sung pitch contour: one run of (tick, fractional MIDI pitch) points per voiced span.
+///
+/// Split at silences so a rest is a gap in the drawn line rather than a dive to nowhere,
+/// and in fractional pitch so a bend curve reads as the slide it is.
+pub type PitchContour = Vec<Vec<(Ticks, f32)>>;
+
 /// The address a rendered preview note is cached under.
 ///
 /// The voice's display name stands in for its file — resolving the real path on every
@@ -1093,6 +1099,13 @@ pub struct AurisApp {
     /// What makes dragging a note across pitches instant the second time it passes one.
     /// Cleared when a voice is chosen, and capped in the poll so a long session cannot hoard.
     pub(crate) sung_previews: std::collections::HashMap<SungPreviewKey, Arc<AudioBuffer>>,
+    /// Each singer track's sung pitch contour, cached under the revision it was read at.
+    ///
+    /// The frames render walks the whole track and the roll paints thirty times a second —
+    /// the same arithmetic as [`Self::sung_badges`], and the same cure.
+    pub(crate) f0_curves: std::collections::HashMap<TrackId, Arc<PitchContour>>,
+    /// The revision [`Self::f0_curves`] was computed under.
+    pub(crate) f0_curves_revision: u64,
     /// The preview note the audition path wants next, until the poll starts singing it.
     pub(crate) sung_preview_wish: Option<SungPreviewWish>,
     /// Whether a preview render is on the background executor right now.
@@ -1371,6 +1384,8 @@ impl AurisApp {
             sung_previews: std::collections::HashMap::new(),
             sung_preview_wish: None,
             sung_preview_rendering: false,
+            f0_curves: std::collections::HashMap::new(),
+            f0_curves_revision: 0,
             song_sheet: None,
             progressions: auris_session::progressions::ProgressionBook::load(),
             auditioning: None,

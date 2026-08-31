@@ -256,6 +256,11 @@ the moment it is ready. Renders are cached, so dragging across pitches is instan
 the drag has already been; a track with no voice previews through the formant instrument as
 before.
 
+While a singer clip is open, the piano roll draws the **sung pitch curve** over the notes:
+the contour the model is fed — pitch plus bend in fractional semitones, consonants riding
+their vowel's pitch, rests leaving a gap in the line — so a drawn portamento or vibrato
+reads exactly as it will sound.
+
 **Double-click a note** to type its word. **Return commits and walks to the next note**, so a
 verse is typed word after word without touching the mouse; an empty field takes the word off.
 The note's right-click menu offers **Edit Lyric…**, **Edit Phonemes…** (space-separated IPA,

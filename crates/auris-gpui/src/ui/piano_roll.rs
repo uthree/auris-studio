@@ -8,7 +8,7 @@ use gpui::{
     point, prelude::*, px, size,
 };
 
-use crate::app::{AurisApp, Drag};
+use crate::app::{AurisApp, Drag, PitchContour};
 use crate::dock::Dock;
 use crate::gestures::{EmptyPress, empty_press};
 use crate::theme::{Metrics, Theme};
@@ -140,7 +140,89 @@ fn ghosted(clips: &[(ClipId, Ticks, Ticks)], editing: ClipId, view: (Ticks, Tick
         .collect()
 }
 
+/// The pitch contour a singer track's frames describe, as drawable runs.
+///
+/// One run per voiced span — silence is a gap in the line, not a dive to nowhere — each
+/// point a timeline tick and a *fractional* MIDI pitch, so a drawn bend reads as the slide
+/// it is and a consonant rides its vowel's pitch the way the model will sing it. Pure
+/// arithmetic on the frames, which is what lets a test hear it without a window.
+fn f0_contour(frames: &SingerFrames, tempo: &TempoMap) -> PitchContour {
+    let mut runs: PitchContour = Vec::new();
+    let mut run: Vec<(Ticks, f32)> = Vec::new();
+    for (index, hz) in frames.f0_hz.iter().enumerate() {
+        if *hz > 0.0 {
+            let seconds = index as f64 * frames.hop_seconds;
+            let tick = tempo.seconds_to_ticks(Seconds(seconds));
+            let pitch = 69.0 + 12.0 * (hz / 440.0).log2();
+            run.push((tick, pitch));
+        } else if !run.is_empty() {
+            runs.push(std::mem::take(&mut run));
+        }
+    }
+    if !run.is_empty() {
+        runs.push(run);
+    }
+    runs
+}
+
+/// Draws the sung pitch contour over the notes.
+///
+/// Trimmed to the edited clip's span — the frames cover the whole track, and the
+/// neighbouring clips are already ghosts — with y at the centre of the row a note at that
+/// pitch would occupy, which is where the eye lines a curve up against a note.
+fn paint_f0_curve(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    contour: &PitchContour,
+    from: Ticks,
+    to: Ticks,
+    view: &TimelineView,
+    pitch_view: &PitchView,
+    theme: &Theme,
+) {
+    let centre = |pitch: f32| {
+        (pitch_view.top_pitch as f32 - pitch) * pitch_view.row_height + pitch_view.row_height / 2.0
+    };
+    for run in contour {
+        let drawn: Vec<gpui::Point<Pixels>> = run
+            .iter()
+            .filter(|(tick, _)| *tick >= from && *tick < to)
+            .map(|(tick, pitch)| {
+                point(
+                    bounds.origin.x + view.tick_to_x(*tick),
+                    bounds.origin.y + px(centre(*pitch)),
+                )
+            })
+            .collect();
+        if drawn.len() > 1 {
+            paint::polyline(window, &drawn, px(1.5), theme.accent);
+        }
+    }
+}
+
 impl AurisApp {
+    /// The selected clip's track's sung pitch contour, cached against the revision.
+    ///
+    /// The frames render walks the whole track and the roll paints thirty times a second;
+    /// the cache is the same arithmetic, and the same cure, as the take badge's.
+    fn singer_pitch_contour(&mut self) -> Option<std::sync::Arc<PitchContour>> {
+        let clip = self.selected_clip?;
+        let (track, _) = self.project().midi_clip(clip)?;
+        let revision = self.session.revision();
+        if self.f0_curves_revision != revision {
+            self.f0_curves.clear();
+            self.f0_curves_revision = revision;
+        }
+        if let Some(contour) = self.f0_curves.get(&track) {
+            return Some(std::sync::Arc::clone(contour));
+        }
+        let frames = self.session.singer_frames(track).ok()?;
+        let contour = std::sync::Arc::new(f0_contour(&frames, &self.project().tempo_map));
+        self.f0_curves
+            .insert(track, std::sync::Arc::clone(&contour));
+        Some(contour)
+    }
+
     /// Renders the piano roll panel.
     pub(crate) fn render_piano_roll(
         &mut self,
@@ -177,6 +259,13 @@ impl AurisApp {
         let note_ends = self.note_end_zones(clip_start, &notes);
         let selected: Vec<usize> = self.selected_notes.iter().copied().collect();
         let clip_name = clip.name.clone();
+        // After the last read of `clip`, whose borrow the cache lookup cannot share. The
+        // contour the voice will sing — pitch plus bend, consonants riding their vowel —
+        // is drawn over the notes, so a drawn slide reads as the slide it is.
+        let contour = match singing {
+            true => self.singer_pitch_contour(),
+            false => None,
+        };
         let band = self.rubber_band(crate::app::BandSurface::Roll);
         let velocity_tag = self.velocity_tag();
         // Built before the chain rather than inside it: each one needs `&mut self`, and the
@@ -399,6 +488,18 @@ impl AurisApp {
                                                 &theme,
                                                 singing,
                                             );
+                                            if let Some(contour) = &contour {
+                                                paint_f0_curve(
+                                                    window,
+                                                    bounds,
+                                                    contour,
+                                                    clip_start,
+                                                    clip_start + clip_length,
+                                                    &view,
+                                                    &pitch_view,
+                                                    &theme,
+                                                );
+                                            }
                                             paint::playhead(
                                                 window,
                                                 bounds,
@@ -1782,6 +1883,33 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_contour_splits_at_silence_and_reads_pitch_in_fractions() {
+        // Two voiced spans around a rest, the second a quarter-tone above A3: the drawn
+        // line must break at the rest, and the fraction must survive into the pitch so a
+        // bend reads as a slide rather than a stair.
+        let frames = SingerFrames {
+            hop_seconds: 0.01,
+            inventory: vec![SILENCE.to_string(), "a".to_string()],
+            phonemes: vec![1, 1, 0, 1, 1],
+            f0_hz: vec![440.0, 440.0, 0.0, 226.446, 226.446],
+            energy: vec![0.5, 0.5, 0.0, 0.5, 0.5],
+        };
+        let tempo = TempoMap::constant(120.0);
+        let runs = f0_contour(&frames, &tempo);
+        assert_eq!(runs.len(), 2, "the rest is a gap, not a point");
+        assert!(runs[0].iter().all(|(_, pitch)| (pitch - 69.0).abs() < 1e-3));
+        assert!(
+            runs[1].iter().all(|(_, pitch)| (pitch - 57.5).abs() < 0.01),
+            "a quarter-tone above A3 stays a fraction, got {:?}",
+            runs[1]
+        );
+        // Ticks march with time: at 120 BPM a 10 ms hop is 1/50 beat.
+        assert_eq!(runs[0][0].0, Ticks::ZERO);
+        assert!(runs[0][1].0 > Ticks::ZERO);
+        assert!(runs[1][0].0 > runs[0][1].0);
+    }
 
     #[test]
     fn the_roll_ghosts_the_rest_of_the_track_and_never_the_clip_in_hand() {

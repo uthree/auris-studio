@@ -50,6 +50,12 @@ format rather than a convention: `## <version> — <date>`.
   one-shot playback: a pre-rendered buffer crosses the command channel whole, is mixed in by
   the callback without ever being freed there, and travels back up the retired-data channel
   when replaced — the `SetGraph` discipline in miniature.
+* **The piano roll draws the sung pitch curve.** Editing a singer clip overlays the contour
+  the voice will actually sing — the note's pitch plus its bend curve, in fractional
+  semitones, with consonants riding their vowel and rests leaving a gap in the line — over
+  the notes, the way vocal editors draw it. It is computed from the same frames the model is
+  fed, cached against the document revision like the take badge, so what is drawn and what
+  is sung cannot drift apart.
 * Under the hood: the new `auris-singer` crate runs the model on the CPU via onnxruntime,
   cutting the timeline at silences into chunks of at most twenty seconds — the model's
   attention grows with the square of the frame count, and a whole song in one inference has
