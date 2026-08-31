@@ -52,6 +52,11 @@ strings! {
     PromptLyric { en: "Lyric", ja: "歌詞" }
     PromptPhonemes { en: "Phonemes (space-separated IPA)", ja: "音素(スペース区切りの IPA)" }
     PromptLyrics { en: "Write Lyrics Across Selection", ja: "選択ノートに歌詞を流し込む" }
+    PromptComposeLyrics { en: "Compose from Lyrics", ja: "歌詞から作曲" }
+    HintComposeLyrics {
+        en: "、！？ and spaces between phrases are breaths; every run is a fresh take",
+        ja: "、や！？がフレーズの切れ目。実行のたびに新しいテイクになります"
+    }
     MenuEditLyric { en: "Edit Lyric…", ja: "歌詞を編集…" }
     MenuEditPhonemes { en: "Edit Phonemes…", ja: "音素を編集…" }
     MenuResetPhonemeTiming { en: "Reset Phoneme Timing", ja: "音素タイミングをリセット" }
@@ -370,6 +375,7 @@ strings! {
     CmdOpenProject { en: "Open Project", ja: "プロジェクトを開く" }
     CmdComposeSong { en: "Compose a Song…", ja: "曲を作る…" }
     CmdAccompanyMelody { en: "Accompany the Melody", ja: "旋律に伴奏をつける" }
+    CmdComposeFromLyrics { en: "Compose from Lyrics…", ja: "歌詞から作曲…" }
     CmdComposeFromSpec { en: "Compose from Specification…", ja: "仕様ファイルから作曲…" }
     CmdBalanceLevels { en: "Balance the Mix", ja: "ミックスの自動調整" }
     CmdOpenPluginWindow { en: "Open Plugin Window", ja: "プラグインの画面を開く" }

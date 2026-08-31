@@ -65,6 +65,11 @@ pub enum PromptTarget {
         /// The clip whose selection takes the phrase.
         clip: ClipId,
     },
+    /// Lyrics a whole song is composed from — a melody under the words, chords, a band.
+    ///
+    /// No payload: the command writes new material rather than editing anything on screen,
+    /// so there is nothing for it to point at yet.
+    ComposeLyrics,
     /// The seed a generated clip is written from.
     ///
     /// Typed for a different reason than the other three: "another take" is the *next* seed, so
@@ -199,6 +204,7 @@ impl PromptTarget {
             | PromptTarget::Lyric { .. }
             | PromptTarget::Phonemes { .. }
             | PromptTarget::Lyrics { .. }
+            | PromptTarget::ComposeLyrics
             // No shared notation: every parameter is written in its own units, and the range
             // and the unit are in the prompt's title instead, where they can name this one.
             | PromptTarget::Param(_) => return None,
@@ -212,6 +218,11 @@ impl PromptTarget {
     /// said that the case of a numeral is what makes it major or minor, so the only way to find
     /// out was to type something, have it refused, and read the refusal.
     pub fn hint(self) -> Option<Key> {
+        // Not a notation — the field takes prose — but the one rule worth stating under it
+        // is where the phrases break.
+        if matches!(self, PromptTarget::ComposeLyrics) {
+            return Some(Key::HintComposeLyrics);
+        }
         self.notation().map(Notation::hint)
     }
 }
@@ -645,6 +656,9 @@ impl AurisApp {
             PromptTarget::Lyric { .. }
                 | PromptTarget::Phonemes { .. }
                 | PromptTarget::Lyrics { .. }
+                // Not a clear, but the session's own refusal names the problem better than
+                // a generic "cannot be empty" would.
+                | PromptTarget::ComposeLyrics
                 // No motif is an answer here — it hands the tune back to the seed.
                 | PromptTarget::SongMotif
         );
@@ -695,6 +709,44 @@ impl AurisApp {
                     }
                     Err(error) => {
                         self.set_failed_status(self.failure(Key::PromptLyrics, &error));
+                        return;
+                    }
+                }
+            }
+            PromptTarget::ComposeLyrics => {
+                // A fresh seed per run, from the clock: pressing the command twice on the
+                // same words should be two takes, and the status names the number so the
+                // take can be asked for again at any of the model doors.
+                let seed = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|now| u64::from(now.subsec_nanos()) ^ now.as_secs())
+                    .unwrap_or(0);
+                match self
+                    .session
+                    .compose_from_lyrics(&text, &auris_session::DEFAULT_PARTS, seed)
+                {
+                    Ok(report) => {
+                        // Land the person in front of what was written.
+                        self.open_clip_in_editor(report.clip);
+                        let written = match report.accented {
+                            true => messages::lyric_song_written(
+                                self.language(),
+                                report.notes,
+                                report.phrases,
+                                seed,
+                            ),
+                            false => messages::lyric_song_unaccented(
+                                self.language(),
+                                report.notes,
+                                report.phrases,
+                                seed,
+                            ),
+                        };
+                        self.set_status(written);
+                        return;
+                    }
+                    Err(error) => {
+                        self.set_failed_status(self.failure(Key::PromptComposeLyrics, &error));
                         return;
                     }
                 }

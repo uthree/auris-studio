@@ -404,6 +404,59 @@ mod tests {
         assert_eq!(after, before + 1, "Track → Add Instrument Track added one");
     }
 
+    /// The whole words-first flow, made as a hand makes it: the palette's action opens the
+    /// lyric field, the words are typed, Return composes — a singer track carrying every
+    /// mora, chords in the harmony lane, the band behind, and one Undo takes it all back.
+    #[gpui::test]
+    fn composing_from_lyrics_is_one_action_one_field_one_song(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let before = app.read_with(cx, |this, _| this.session.project().tracks.len());
+
+        cx.dispatch_action(actions::ComposeFromLyrics);
+        paint(&app, cx);
+        assert!(
+            app.read_with(cx, |this, _| this.prompt.is_some()),
+            "the action opened the lyric field"
+        );
+
+        cx.simulate_input("さくら さいた、はるが きた");
+        cx.simulate_keystrokes("enter");
+        paint(&app, cx);
+
+        app.read_with(cx, |this, _| {
+            let project = this.session.project();
+            // The vocal and the standard band: three parts behind the singer.
+            assert_eq!(project.tracks.len(), before + 4);
+            let singer = project
+                .tracks
+                .iter()
+                .find(|track| track.kind.is_singer())
+                .expect("a singer track was written");
+            let clips = &singer.kind.as_singer().unwrap().clips;
+            assert_eq!(clips.len(), 1);
+            assert_eq!(
+                clips[0].notes.len(),
+                11,
+                "six moras and five, one note each"
+            );
+            assert_eq!(clips[0].notes[0].lyric, "さ");
+            assert!(
+                project.harmony.numeral_at(Ticks::ZERO).is_some(),
+                "the chords are on the lane, where they can be argued with"
+            );
+            assert!(
+                this.status.contains("11"),
+                "the status counts what was written: {}",
+                this.status
+            );
+        });
+
+        app.update(cx, |this, _| {
+            this.session.undo();
+            assert_eq!(this.session.project().tracks.len(), before, "one step back");
+        });
+    }
+
     /// Sing without a voice refuses with the line naming the cure, and costs no undo step —
     /// the whole refusal path from the menu row to the status bar, no model file involved.
     #[gpui::test]

@@ -98,6 +98,22 @@ messages! {
         ja: "{count} 個のノートに歌詞を書き込みました"
     }
 
+    /// What composing from lyrics wrote, seed included — the number that names this take
+    /// wherever the tools are asked for it again.
+    fn lyric_song_written(notes: usize, phrases: usize, seed: u64) {
+        en: "wrote {notes} sung notes over {phrases} phrases, seed {seed}",
+        ja: "{phrases} フレーズ・{notes} ノートの歌を書きました(シード {seed})"
+    }
+
+    /// The same, when no dictionary constrained the melody — worth a longer sentence, because
+    /// a person who expected Orpheus deserves to know they got free composition.
+    fn lyric_song_unaccented(notes: usize, phrases: usize, seed: u64) {
+        en: "wrote {notes} sung notes over {phrases} phrases, seed {seed} — no Japanese \
+             dictionary, so the tune is free of the words' accent",
+        ja: "{phrases} フレーズ・{notes} ノートの歌を書きました(シード {seed})— 辞書が\
+             ないため、メロディは歌詞のアクセントに従っていません"
+    }
+
     /// How many notes a quantise pass actually moved.
     ///
     /// The count rather than "done": a pass that moved four notes out of a selection of twenty is

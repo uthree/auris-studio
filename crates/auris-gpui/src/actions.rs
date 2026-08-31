@@ -21,6 +21,8 @@ actions!(
         ComposeFromSpec,
         /// Read the selected clip's melody and write a band behind it.
         AccompanyMelody,
+        /// Type lyrics and have a song written under them.
+        ComposeFromLyrics,
         /// Render every track alone, measure it, and set the mix from what came out.
         BalanceLevels,
         /// Save the current project.
@@ -442,6 +444,9 @@ bindable! {
         // this one has neither, and squatting on a third combination would take it from whoever
         // wanted it more. The row is here so it can be given one.
         "file.accompany",       GroupCompose,   CmdAccompanyMelody,    ""            => AccompanyMelody;
+        // No default for the accompany row's reason: no chord is both free and guessable, and
+        // the palette reaches it by name either way.
+        "file.compose_lyrics",  GroupCompose,   CmdComposeFromLyrics,  ""            => ComposeFromLyrics;
         // No default either, and for a different reason: this one renders the piece once per part
         // before it answers, which is seconds rather than milliseconds. A command that costs that
         // much is one to reach for on purpose, not one to land on with a slip of the hand.

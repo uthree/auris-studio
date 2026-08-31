@@ -447,6 +447,13 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                 actions::AccompanyMelody,
                 "file.accompany",
             ),
+            // The words-first way around the same corner: type lyrics, get the tune and the
+            // band written under them.
+            command(
+                t(Key::CmdComposeFromLyrics),
+                actions::ComposeFromLyrics,
+                "file.compose_lyrics",
+            ),
             // With the composer rather than with the mixer, because this is what composing already
             // does at the end of every piece — the row is here for the piece that was written
             // before it existed, and for the one whose instruments have been changed since.
