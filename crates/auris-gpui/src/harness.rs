@@ -441,6 +441,91 @@ mod tests {
         });
     }
 
+    /// The auto-render poll walks past a voiceless singer track without a word: no render,
+    /// no complaint — the preview instrument is that track's whole sound until a voice is
+    /// chosen, and an excuse per edit would be noise about a non-problem.
+    #[gpui::test]
+    fn a_voiceless_singer_track_is_not_auto_rendered(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, cx| {
+            let track = this.session.add_singer_track("Voice");
+            let clip = this
+                .session
+                .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks::from_beats(4.0))
+                .unwrap();
+            this.session
+                .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+                .unwrap();
+            // The poll waits out the debounce on real time; the test hands it a revision
+            // that has already sat still long enough.
+            this.auto_sing_seen = (
+                this.session.revision(),
+                std::time::Instant::now() - crate::ui::commands::AUTO_SING_DEBOUNCE,
+            );
+            this.poll_auto_sing(cx);
+            assert!(this.auto_sing.is_none(), "no voice, no render");
+            assert!(
+                !this.status_failed,
+                "and no complaint either, said: {}",
+                this.status
+            );
+        });
+    }
+
+    /// With a real voice on the track, an edited score sings itself again: the debounce
+    /// elapses, the poll starts a background render with no overlay, and the landed take
+    /// matches the notes. Skips silently without `AURIS_SINGER_TEST_MODEL`.
+    #[gpui::test]
+    fn an_edited_score_sings_itself_again(cx: &mut TestAppContext) {
+        let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") else {
+            eprintln!("AURIS_SINGER_TEST_MODEL not set; skipping the auto-sing test");
+            return;
+        };
+        let (app, cx) = open(cx);
+        let folder = std::env::temp_dir().join(format!("auris-auto-sing-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+
+        let track = app.update(cx, |this, cx| {
+            let track = this.session.add_singer_track("Voice");
+            let clip = this
+                .session
+                .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks::from_beats(4.0))
+                .unwrap();
+            this.session
+                .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+                .unwrap();
+            this.session.write_lyrics(clip, &[0], "ら").unwrap();
+            // A take lands in the project folder, so the project needs one.
+            this.session.save(&folder.join("Song.auris")).unwrap();
+            this.session
+                .set_singer_voice(track, Some(std::path::Path::new(&model)))
+                .unwrap();
+            this.auto_sing_seen = (
+                this.session.revision(),
+                std::time::Instant::now() - crate::ui::commands::AUTO_SING_DEBOUNCE,
+            );
+            this.poll_auto_sing(cx);
+            assert!(
+                this.auto_sing.is_some(),
+                "the stale take starts rendering unasked, status: {}",
+                this.status
+            );
+            assert!(this.export.is_none(), "and no overlay stands over it");
+            track
+        });
+        cx.run_until_parked();
+        app.read_with(cx, |this, _| {
+            assert!(this.auto_sing.is_none(), "the render finished");
+            assert_eq!(
+                this.session.singer_take_state(track).unwrap(),
+                auris_session::SingerTakeState::Current,
+                "the take matches the score, status: {}",
+                this.status
+            );
+        });
+        std::fs::remove_dir_all(&folder).ok();
+    }
+
     /// The same command through the keyboard, which is the half a dispatched action skips: the
     /// binding table, the `secondary-` translation that means ⌘ on one platform and Ctrl on the
     /// other, the key context the window names, and the pane holding focus.

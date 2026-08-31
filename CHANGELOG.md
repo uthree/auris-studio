@@ -26,6 +26,15 @@ format rather than a convention: `## <version> — <date>`.
   back to the formant preview over one edited word — and the track header says
   *behind the notes* until Sing is pressed again. Clicked notes still audition through the
   preview instrument while a take plays.
+* **The take keeps up with the score by itself.** Once a track has a voice, editing the notes
+  *is* the ask: shortly after an edit settles, the window re-renders the take in the
+  background — no overlay, no button, just the header badge reading *… ♪ voice* while the
+  CPU is spent, which is the standing rule that a cost switched on without a click must say
+  so on screen. A burst of edits coalesces into one render; an edit landing mid-render
+  cancels the stale work between chunks; a manual Sing or an export takes the stage and the
+  background render steps off it. Refusals worth acting on — an unsaved project, a voice
+  that stopped loading — are said once in the status bar rather than once per frame, and an
+  empty or voiceless track is simply left alone.
 * **The model doors sing too.** Three additions to the toolbox, identical over MCP and in the
   agent panel: `add_track` accepts kind `singer`, `write_lyrics` lays a phrase across a clip's
   notes one syllable each (`notes` reads the words back beside the pitches), and `sing`

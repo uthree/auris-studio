@@ -180,6 +180,15 @@ impl AurisApp {
                     .map(|voice| voice.name.clone());
                 let behind = take_state == auris_session::SingerTakeState::Behind;
                 let behind_tip = self.tip(Key::TakeBehind, "");
+                // The voice at work in the background. It outranks `behind` on the badge —
+                // a take being re-sung is behind by definition, and "working on it" is the
+                // truer word — and it is the on-screen sign the CPU is being spent, which
+                // every costly thing switched on without a click owes the screen.
+                let singing = self
+                    .auto_sing
+                    .as_ref()
+                    .is_some_and(|auto| auto.track == track_id);
+                let singing_tip = self.tip(Key::TakeRendering, "");
                 let level_db = gain_to_db(self.track_level(index));
                 // Latched by the engine and only put out by asking, so a transient that went
                 // over is still saying so long after the meter beside it has fallen back.
@@ -334,7 +343,9 @@ impl AurisApp {
                                                 .text_xs()
                                                 .max_w(px(120.0))
                                                 .truncate()
-                                                .text_color(if behind {
+                                                .text_color(if singing {
+                                                    theme.accent
+                                                } else if behind {
                                                     theme.record
                                                 } else {
                                                     theme.text_faint
@@ -342,11 +353,15 @@ impl AurisApp {
                                                 // The mark goes *before* the name: the label
                                                 // truncates from the right, and a warning that
                                                 // only long names hide is no warning at all.
-                                                .child(match behind {
-                                                    true => format!("! ♪ {voice}"),
-                                                    false => format!("♪ {voice}"),
+                                                .child(match (singing, behind) {
+                                                    (true, _) => format!("… ♪ {voice}"),
+                                                    (false, true) => format!("! ♪ {voice}"),
+                                                    (false, false) => format!("♪ {voice}"),
                                                 })
-                                                .when(behind, |this| this.tooltip(behind_tip)),
+                                                .when(singing, |this| this.tooltip(singing_tip))
+                                                .when(behind && !singing, |this| {
+                                                    this.tooltip(behind_tip)
+                                                }),
                                         )
                                     }),
                             )

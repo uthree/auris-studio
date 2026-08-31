@@ -231,10 +231,24 @@ at the start of the timeline is always there and cannot be removed, exactly like
 ## Singer tracks
 
 A singer track holds ordinary note clips — everything the piano roll does applies unchanged —
-but each note can carry a **lyric** and the **phonemes** it is sung as, written in IPA. The
-track is the frontend for a singing-voice synthesiser that renders offline; until one is wired
-in, it plays through the built-in **Vocal** preview instrument (a formant filter singing one
-open vowel), so a melody with words on it can be heard while it is written.
+but each note can carry a **lyric** and the **phonemes** it is sung as, written in IPA. Until
+a voice is chosen, the track plays through the built-in **Vocal** preview instrument (a
+formant filter singing one open vowel), so a melody with words on it can be heard while it is
+written.
+
+**Track → Choose Voice…** points the track at a trained
+[auris-singer](https://github.com/uthree/auris-singer) voice model — one self-contained
+`.onnx` file, chosen the way a SoundFont is and left where it lies — and from then on the
+track sings for real. The render is a **take**: an ordinary audio file in `Audio/` that
+plays, exports and reopens with everything else, pinned by a seed so the same notes, lyrics,
+voice and seed give the same audio on any machine. **The window keeps the take abreast of
+the score by itself**: shortly after an edit settles, the voice re-renders in the background
+— the header badge reads *… ♪ voice* while it works, and an edit landing mid-render throws
+the stale work away and starts over at the next quiet moment. **Track → Sing** remains as
+the explicit ask (it shows the export overlay's progress bar and stop button), and is the
+road to a *different* take: another seed is another performance. A take is never silently
+rewritten to different text — between the edit and the re-render it keeps playing, with the
+badge reading *! ♪ voice*, behind the notes.
 
 **Double-click a note** to type its word. **Return commits and walks to the next note**, so a
 verse is typed word after word without touching the mouse; an empty field takes the word off.

@@ -15,9 +15,15 @@ use auris_session::SingerTakeState;
 use auris_session::prelude::*;
 use gpui::{Context, Window};
 
-use crate::app::{AurisApp, Drag, ExportState};
+use crate::app::{AurisApp, AutoSing, Drag, ExportState};
 use crate::i18n::{edit_key, error_text};
 use crate::ui::drop::{DropAction, DropKind, DropOutcome, Dropped, drop_action};
+
+/// How long the document must hold still before an edited singer track is re-sung.
+///
+/// Long enough that a run of keystrokes or a chain of drags coalesces into one render,
+/// short enough that the voice answers while the edit is still on the editor's mind.
+pub(crate) const AUTO_SING_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(800);
 
 /// Where the playhead lands after `direction` steps of `step` from `at`.
 ///
@@ -940,6 +946,7 @@ impl AurisApp {
             self.set_status(self.t(Key::ExportAlreadyRunning));
             return;
         }
+        self.cancel_auto_sing();
         let Some(track) = self.singer_target() else {
             self.set_failed_status(self.t(Key::ErrorNoSingerTrack).to_string());
             return;
@@ -1029,6 +1036,172 @@ impl AurisApp {
                 };
                 if let Some(export) = this.export.as_mut() {
                     export.result = Some(message);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Asks any background re-render to stop: a person just took the stage.
+    ///
+    /// The flag is read between chunks, so the model finishes the chunk in hand and then
+    /// puts the work down; whatever was rendered is thrown away, and the next quiet moment
+    /// starts over from the text as it stands then.
+    pub(crate) fn cancel_auto_sing(&mut self) {
+        if let Some(auto) = &self.auto_sing {
+            auto.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Keeps voiced singer tracks' takes abreast of their notes, from the repaint timer.
+    ///
+    /// Editing the score *is* the ask — pressing Sing after every word was the workflow this
+    /// replaces — so no command starts this and no overlay stands over it; the header badge
+    /// is the on-screen sign the voice is at work. Three rules keep it civil. It waits for
+    /// [`AUTO_SING_DEBOUNCE`] of stillness, so a run of keystrokes costs one render, not
+    /// one per key. It renders one track at a time and yields to the export overlay, so it
+    /// never doubles the machine's load. And a refusal — an unsaved project, an empty track
+    /// — is remembered per revision and said once, so the status line is not thirty excuses
+    /// a second; a track without a voice is simply not its business.
+    pub(crate) fn poll_auto_sing(&mut self, cx: &mut Context<Self>) {
+        let revision = self.session.revision();
+
+        // A render in flight: once per edit, ask whether the edit outdated it.
+        if let Some(auto) = &mut self.auto_sing {
+            if auto.checked != revision {
+                auto.checked = revision;
+                let track = auto.track;
+                let fingerprint = auto.fingerprint;
+                let stale = match self.session.sing_plan(track, None) {
+                    Ok(plan) => plan.fingerprint != fingerprint,
+                    Err(_) => true,
+                };
+                if stale {
+                    self.cancel_auto_sing();
+                }
+            }
+            return;
+        }
+
+        // The debounce: any movement of the revision restarts the clock.
+        let now = std::time::Instant::now();
+        if self.auto_sing_seen.0 != revision {
+            self.auto_sing_seen = (revision, now);
+            return;
+        }
+        if now.duration_since(self.auto_sing_seen.1) < AUTO_SING_DEBOUNCE {
+            return;
+        }
+        if self.auto_sing_refused == Some(revision) {
+            return;
+        }
+        if self.choosing_export || self.export.as_ref().is_some_and(|e| e.result.is_none()) {
+            return;
+        }
+
+        // The first voiced singer track whose take no longer says what the notes say.
+        let voiced: Vec<TrackId> = self
+            .project()
+            .tracks
+            .iter()
+            .filter(|track| {
+                track
+                    .kind
+                    .as_singer()
+                    .is_some_and(|singer| singer.voice.is_some())
+            })
+            .map(|track| track.id)
+            .collect();
+        let Some(track) = voiced
+            .into_iter()
+            .find(|track| self.singer_take_badge(*track) != SingerTakeState::Current)
+        else {
+            return;
+        };
+
+        let plan = match self.session.sing_plan(track, None) {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.auto_sing_refused = Some(revision);
+                // An empty track is not a problem, just nothing to do yet. The rest — no
+                // folder to land in, a voice that stopped loading — is worth one line, once,
+                // because the person is otherwise left listening to the preview and
+                // wondering; the original report behind this feature was exactly that.
+                if !matches!(error, auris_session::SessionError::NothingToSing(_)) {
+                    let line = self.failure(Key::CmdSing, &error);
+                    if self.auto_sing_excuse.as_deref() != Some(line.as_str()) {
+                        self.set_failed_status(line.clone());
+                        self.auto_sing_excuse = Some(line);
+                    }
+                }
+                return;
+            }
+        };
+        let model = match self.session.voice_model_at(&plan.voice) {
+            Ok(model) => model,
+            Err(error) => {
+                self.auto_sing_refused = Some(revision);
+                let line = self.failure(Key::CmdSing, &error);
+                if self.auto_sing_excuse.as_deref() != Some(line.as_str()) {
+                    self.set_failed_status(line.clone());
+                    self.auto_sing_excuse = Some(line);
+                }
+                return;
+            }
+        };
+        let voice_name = self
+            .session
+            .singer_voice(track)
+            .ok()
+            .flatten()
+            .map(|voice| voice.name.clone())
+            .unwrap_or_default();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.auto_sing = Some(AutoSing {
+            track,
+            fingerprint: plan.fingerprint,
+            cancel: Arc::clone(&cancel),
+            checked: revision,
+        });
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let sung = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut model = model.lock().expect("no thread panics holding a voice");
+                    model
+                        .sing_with(&plan.frames, plan.seed, |_, _| {
+                            !cancel.load(Ordering::Relaxed)
+                        })
+                        .map(|samples| (plan, samples))
+                        .map_err(auris_session::SessionError::from)
+                })
+                .await;
+
+            let _ = this.update(cx, |this, cx| {
+                this.auto_sing = None;
+                match sung {
+                    Ok((plan, samples)) => match this.session.land_singer_take(&plan, &samples) {
+                        Ok(seconds) => {
+                            this.auto_sing_excuse = None;
+                            let language = this.language();
+                            this.set_status(messages::take_sung(language, &voice_name, seconds));
+                        }
+                        Err(error) => {
+                            let line = this.failure(Key::CmdSing, &error);
+                            this.set_failed_status(line);
+                        }
+                    },
+                    // Cancelled: a newer edit or a manual render took the stage, and the
+                    // next quiet moment starts over. Anything else is worth its line.
+                    Err(error) if error.is_cancellation() => {}
+                    Err(error) => {
+                        let line = this.failure(Key::CmdSing, &error);
+                        this.set_failed_status(line);
+                    }
                 }
                 cx.notify();
             });
@@ -1691,6 +1864,7 @@ impl AurisApp {
             self.set_status(self.t(Key::ExportAlreadyRunning));
             return;
         }
+        self.cancel_auto_sing();
         let mut job = self.session.render_job();
         // Refused before the dialog opens, for the reason a cycle export is: a folder chosen for
         // an export that cannot happen is a question asked for nothing.
@@ -1795,6 +1969,7 @@ impl AurisApp {
             self.set_status(self.t(Key::ExportAlreadyRunning));
             return;
         }
+        self.cancel_auto_sing();
         // A snapshot, so the render is unaffected by anything edited while it runs.
         let mut job = self.session.render_job();
         // The depth, the dither and the rate somebody masters at, from the settings rather than

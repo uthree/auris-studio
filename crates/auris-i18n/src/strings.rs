@@ -796,6 +796,7 @@ strings! {
     CmdSing { en: "Sing", ja: "歌わせる" }
     SingCancelled { en: "Singing stopped; the previous take stands", ja: "歌唱を中止しました。前のテイクのままです" }
     TakeBehind { en: "behind the notes", ja: "テイクが楽譜より古い" }
+    TakeRendering { en: "singing the notes…", ja: "歌声をレンダリング中…" }
     SpecRejectedTitle { en: "The specification was not accepted", ja: "仕様書を読み取れませんでした" }
 
     // ------------------------------------------------------------------ statuses

@@ -935,6 +935,24 @@ impl ExportState {
     }
 }
 
+/// One background sing keeping a take abreast of its notes.
+///
+/// Started by the repaint timer once the document has held still, never by a person — the
+/// person's render is [`ExportState`] and the overlay. This one stays out of the way: no
+/// overlay, no stop button, just the header badge saying the voice is at work. Cancelled
+/// between chunks whenever the text it is rendering stops being the text on the screen.
+pub struct AutoSing {
+    /// The track being rendered.
+    pub track: TrackId,
+    /// The fingerprint of the text under render, to notice an edit outdating it midway.
+    pub fingerprint: u64,
+    /// Raised to stop the render between chunks.
+    pub cancel: Arc<AtomicBool>,
+    /// The revision the staleness check last ran under, so it runs once per edit rather
+    /// than once per frame.
+    pub checked: u64,
+}
+
 /// One cell per curve strip the roll has drawn, shared with the closures that paint them.
 type CurveBounds = Rc<RefCell<HashMap<ClipCurve, Rc<Cell<Option<Bounds<Pixels>>>>>>>;
 
@@ -1037,6 +1055,19 @@ pub struct AurisApp {
     pub(crate) sung_badges: std::collections::HashMap<TrackId, auris_session::SingerTakeState>,
     /// The revision [`Self::sung_badges`] was computed under.
     pub(crate) sung_badges_revision: u64,
+    /// The background re-render keeping voiced singer tracks abreast of their notes.
+    ///
+    /// Editing the score is the ask; this is the performer noticing. The repaint timer
+    /// watches the revision, waits for [`crate::ui::commands`]'s debounce, and renders
+    /// with no overlay — the header badge is the on-screen sign the CPU is spent.
+    pub(crate) auto_sing: Option<AutoSing>,
+    /// The revision the auto-render debounce last saw, and when it saw it arrive.
+    pub(crate) auto_sing_seen: (u64, std::time::Instant),
+    /// The revision whose auto-render was refused, so a standing refusal — an unsaved
+    /// project, an empty track — waits for the next edit instead of retrying every frame.
+    pub(crate) auto_sing_refused: Option<u64>,
+    /// The refusal last said out loud, so the same excuse is not repeated per edit.
+    pub(crate) auto_sing_excuse: Option<String>,
     /// The song sheet's dials while it is open, and nothing when it is not.
     ///
     /// State of the sheet rather than of the document: nothing here has been written until Write
@@ -1263,6 +1294,9 @@ impl AurisApp {
                         // The agent's wire is another thread writing and this one reading, so
                         // it is drained where everything with that shape is.
                         this.drain_agent(cx);
+                        // Edits to a voiced singer track re-render its take without being
+                        // asked; the debounce and the one-at-a-time rule live in the poll.
+                        this.poll_auto_sing(cx);
                         cx.notify();
                     })
                     .is_err()
@@ -1298,6 +1332,10 @@ impl AurisApp {
             export: None,
             sung_badges: std::collections::HashMap::new(),
             sung_badges_revision: 0,
+            auto_sing: None,
+            auto_sing_seen: (0, std::time::Instant::now()),
+            auto_sing_refused: None,
+            auto_sing_excuse: None,
             song_sheet: None,
             progressions: auris_session::progressions::ProgressionBook::load(),
             auditioning: None,
