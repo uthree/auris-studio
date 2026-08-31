@@ -280,6 +280,7 @@ fn paint_phoneme_spans(
 /// Trimmed to the edited clip's span — the frames cover the whole track, and the
 /// neighbouring clips are already ghosts — with y at the centre of the row a note at that
 /// pitch would occupy, which is where the eye lines a curve up against a note.
+#[allow(clippy::too_many_arguments)]
 fn paint_f0_curve(
     window: &mut Window,
     bounds: Bounds<Pixels>,
