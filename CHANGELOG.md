@@ -56,6 +56,12 @@ format rather than a convention: `## <version> — <date>`.
   the notes, the way vocal editors draw it. It is computed from the same frames the model is
   fed, cached against the document revision like the take badge, so what is drawn and what
   is sung cannot drift apart.
+* **And the phoneme segmentation beside it.** The same frames say where each phoneme's time
+  actually falls — the sixty milliseconds a consonant takes at a note's edge, the vowel
+  stretched over the rest — and the roll now draws it: a faint divider inside the note at
+  each cut, the symbol above the note at the position its frames begin. The old untimed
+  phoneme list above a note yields to this wherever frames exist; zoomed far out the symbols
+  step aside and the dividers stay.
 * Under the hood: the new `auris-singer` crate runs the model on the CPU via onnxruntime,
   cutting the timeline at silences into chunks of at most twenty seconds — the model's
   attention grows with the square of the frame count, and a whole song in one inference has

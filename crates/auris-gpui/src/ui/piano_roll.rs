@@ -8,7 +8,7 @@ use gpui::{
     point, prelude::*, px, size,
 };
 
-use crate::app::{AurisApp, Drag, PitchContour};
+use crate::app::{AurisApp, Drag, PhonemeSpan, PitchContour, SungGeometry};
 use crate::dock::Dock;
 use crate::gestures::{EmptyPress, empty_press};
 use crate::theme::{Metrics, Theme};
@@ -165,6 +165,116 @@ fn f0_contour(frames: &SingerFrames, tempo: &TempoMap) -> PitchContour {
     runs
 }
 
+/// The phoneme segmentation a singer track's frames describe: each sung span's half-open
+/// tick range and the symbol the model is given for it.
+///
+/// Run-length over the frames, silence dropped — a rest is the absence of a phoneme, not a
+/// segment called silence. Two notes singing the same vowel back to back come out as one
+/// span, and the painter clips against the notes to give each its own symbol.
+fn phoneme_spans(frames: &SingerFrames, tempo: &TempoMap) -> Vec<PhonemeSpan> {
+    let tick = |frame: usize| tempo.seconds_to_ticks(Seconds(frame as f64 * frames.hop_seconds));
+    let mut spans = Vec::new();
+    let mut start = 0usize;
+    for index in 1..=frames.phonemes.len() {
+        if index < frames.phonemes.len() && frames.phonemes[index] == frames.phonemes[start] {
+            continue;
+        }
+        let symbol = frames
+            .inventory
+            .get(frames.phonemes[start] as usize)
+            .cloned()
+            .unwrap_or_default();
+        if symbol != SILENCE {
+            spans.push(PhonemeSpan {
+                from: tick(start),
+                to: tick(index),
+                symbol,
+            });
+        }
+        start = index;
+    }
+    spans
+}
+
+/// Shortest a phoneme segment may be drawn before its symbol is left off, in pixels.
+///
+/// The divider still marks the cut: a sixty-millisecond consonant far zoomed out is a
+/// boundary worth seeing even where its symbol would smear into its neighbour's.
+const PHONEME_LABEL_MIN: f32 = 12.0;
+
+/// Draws the model's phoneme segmentation on the notes: a divider inside the note at each
+/// cut, the symbol above it where there is room.
+///
+/// This is the *timed* truth — the same frames the model is fed, so a sixty-millisecond
+/// consonant is sixty milliseconds wide however long its note holds — where the static list
+/// [`paint_lyric`] used to write only said what the phonemes were. Spans are clipped to
+/// each note, so two same-vowel notes in a row each carry their own symbol even though the
+/// frames run them together.
+#[allow(clippy::too_many_arguments)]
+fn paint_phoneme_spans(
+    window: &mut Window,
+    cx: &mut App,
+    bounds: Bounds<Pixels>,
+    spans: &[PhonemeSpan],
+    notes: &[Note],
+    clip_start: Ticks,
+    view: &TimelineView,
+    pitch_view: &PitchView,
+    theme: &Theme,
+) {
+    // The symbols borrow the row above the note, the same bargain as the untimed list they
+    // replace: below this zoom they would read as notes, so only the dividers stay.
+    let labelled = pitch_view.row_height + 2.0 >= LYRIC_PHONEME_MIN_ROW;
+    for note in notes {
+        let from = clip_start + note.start;
+        let to = clip_start + note.end();
+        let y = bounds.origin.y + pitch_view.pitch_to_y(note.pitch);
+        if y + px(pitch_view.row_height) < bounds.origin.y
+            || y > bounds.origin.y + bounds.size.height
+        {
+            continue;
+        }
+        // The dividers stop short of the note's edges, so a cut reads as a mark on the note
+        // rather than a note ending there.
+        let row = Bounds {
+            origin: point(bounds.origin.x, y + px(3.0)),
+            size: size(
+                bounds.size.width,
+                px((pitch_view.row_height - 6.0).max(1.0)),
+            ),
+        };
+        let ink = theme.text_on(theme.velocity_color(note.velocity));
+        let faint = gpui::Hsla {
+            a: ink.a * 0.5,
+            ..ink
+        };
+        for span in spans {
+            if span.to <= from || span.from >= to {
+                continue;
+            }
+            let begin = span.from.max(from);
+            let end = span.to.min(to);
+            let x = bounds.origin.x + view.tick_to_x(begin);
+            if x < bounds.origin.x || x > bounds.origin.x + bounds.size.width {
+                continue;
+            }
+            if begin > from {
+                paint::vline(window, row, x, px(1.0), faint);
+            }
+            if labelled && f32::from(view.duration_to_width(end - begin)) >= PHONEME_LABEL_MIN {
+                paint::label(
+                    window,
+                    cx,
+                    point(x + px(2.0), y - px(11.0)),
+                    span.symbol.clone(),
+                    px(8.5),
+                    theme.text_muted,
+                );
+            }
+        }
+    }
+}
+
 /// Draws the sung pitch contour over the notes.
 ///
 /// Trimmed to the edited clip's span — the frames cover the whole track, and the
@@ -201,26 +311,31 @@ fn paint_f0_curve(
 }
 
 impl AurisApp {
-    /// The selected clip's track's sung pitch contour, cached against the revision.
+    /// The selected clip's track's sung geometry — pitch contour and phoneme cuts — cached
+    /// against the revision.
     ///
     /// The frames render walks the whole track and the roll paints thirty times a second;
     /// the cache is the same arithmetic, and the same cure, as the take badge's.
-    fn singer_pitch_contour(&mut self) -> Option<std::sync::Arc<PitchContour>> {
+    fn singer_sung_geometry(&mut self) -> Option<std::sync::Arc<SungGeometry>> {
         let clip = self.selected_clip?;
         let (track, _) = self.project().midi_clip(clip)?;
         let revision = self.session.revision();
-        if self.f0_curves_revision != revision {
-            self.f0_curves.clear();
-            self.f0_curves_revision = revision;
+        if self.sung_geometry_revision != revision {
+            self.sung_geometry.clear();
+            self.sung_geometry_revision = revision;
         }
-        if let Some(contour) = self.f0_curves.get(&track) {
-            return Some(std::sync::Arc::clone(contour));
+        if let Some(geometry) = self.sung_geometry.get(&track) {
+            return Some(std::sync::Arc::clone(geometry));
         }
         let frames = self.session.singer_frames(track).ok()?;
-        let contour = std::sync::Arc::new(f0_contour(&frames, &self.project().tempo_map));
-        self.f0_curves
-            .insert(track, std::sync::Arc::clone(&contour));
-        Some(contour)
+        let tempo = &self.project().tempo_map;
+        let geometry = std::sync::Arc::new(SungGeometry {
+            contour: f0_contour(&frames, tempo),
+            phonemes: phoneme_spans(&frames, tempo),
+        });
+        self.sung_geometry
+            .insert(track, std::sync::Arc::clone(&geometry));
+        Some(geometry)
     }
 
     /// Renders the piano roll panel.
@@ -259,11 +374,12 @@ impl AurisApp {
         let note_ends = self.note_end_zones(clip_start, &notes);
         let selected: Vec<usize> = self.selected_notes.iter().copied().collect();
         let clip_name = clip.name.clone();
-        // After the last read of `clip`, whose borrow the cache lookup cannot share. The
-        // contour the voice will sing — pitch plus bend, consonants riding their vowel —
-        // is drawn over the notes, so a drawn slide reads as the slide it is.
-        let contour = match singing {
-            true => self.singer_pitch_contour(),
+        // After the last read of `clip`, whose borrow the cache lookup cannot share. What
+        // the voice will sing, drawn over the notes: the pitch contour so a drawn slide
+        // reads as the slide it is, and the phoneme cuts so the sixty milliseconds a
+        // consonant takes is sixty milliseconds on screen.
+        let geometry = match singing {
+            true => self.singer_sung_geometry(),
             false => None,
         };
         let band = self.rubber_band(crate::app::BandSurface::Roll);
@@ -487,12 +603,24 @@ impl AurisApp {
                                                 &pitch_view,
                                                 &theme,
                                                 singing,
+                                                geometry.is_some(),
                                             );
-                                            if let Some(contour) = &contour {
+                                            if let Some(geometry) = &geometry {
+                                                paint_phoneme_spans(
+                                                    window,
+                                                    cx,
+                                                    bounds,
+                                                    &geometry.phonemes,
+                                                    &notes,
+                                                    clip_start,
+                                                    &view,
+                                                    &pitch_view,
+                                                    &theme,
+                                                );
                                                 paint_f0_curve(
                                                     window,
                                                     bounds,
-                                                    contour,
+                                                    &geometry.contour,
                                                     clip_start,
                                                     clip_start + clip_length,
                                                     &view,
@@ -1434,6 +1562,7 @@ fn paint_lyric(
     note_bounds: Bounds<Pixels>,
     note: &Note,
     theme: &Theme,
+    timed: bool,
 ) {
     let row = f32::from(note_bounds.size.height);
     if row >= LYRIC_MIN_ROW && !note.lyric.is_empty() {
@@ -1450,7 +1579,9 @@ fn paint_lyric(
             theme.text_on(theme.velocity_color(note.velocity)),
         );
     }
-    if row + 2.0 >= LYRIC_PHONEME_MIN_ROW && !note.phonemes.is_empty() {
+    // The untimed list yields to the timed segmentation — the same symbols drawn where
+    // their frames actually fall — so it is only written when no frames are around to say.
+    if !timed && row + 2.0 >= LYRIC_PHONEME_MIN_ROW && !note.phonemes.is_empty() {
         paint::label(
             window,
             cx,
@@ -1478,6 +1609,7 @@ fn paint_notes(
     pitch_view: &PitchView,
     theme: &Theme,
     lyrics: bool,
+    timed_phonemes: bool,
 ) {
     // Where the tag goes, decided in the loop and drawn after it, so a note painted later cannot
     // land on top of the one thing on the canvas that is only there to be read.
@@ -1509,7 +1641,7 @@ fn paint_notes(
         // The word and the bar want the same pixels; on a singer track the word wins, and the
         // fill still says how hard the note is struck.
         if lyrics {
-            paint_lyric(window, cx, note_bounds, note, theme);
+            paint_lyric(window, cx, note_bounds, note, theme, timed_phonemes);
         }
         if !(lyrics
             && !note.lyric.is_empty()
@@ -1909,6 +2041,33 @@ mod tests {
         assert_eq!(runs[0][0].0, Ticks::ZERO);
         assert!(runs[0][1].0 > Ticks::ZERO);
         assert!(runs[1][0].0 > runs[0][1].0);
+    }
+
+    #[test]
+    fn the_segmentation_reads_the_frames_and_drops_the_rests() {
+        // か held over four frames between rests: the consonant and the vowel come out as
+        // two spans sharing one boundary, and the silence around them is no segment at all.
+        let frames = SingerFrames {
+            hop_seconds: 0.01,
+            inventory: vec![SILENCE.to_string(), "k".to_string(), "a".to_string()],
+            phonemes: vec![0, 1, 1, 2, 2, 0],
+            f0_hz: vec![0.0, 440.0, 440.0, 440.0, 440.0, 0.0],
+            energy: vec![0.0, 0.5, 0.5, 0.5, 0.5, 0.0],
+        };
+        let tempo = TempoMap::constant(120.0);
+        let spans = phoneme_spans(&frames, &tempo);
+        assert_eq!(spans.len(), 2, "silence is no segment");
+        assert_eq!(spans[0].symbol, "k");
+        assert_eq!(spans[1].symbol, "a");
+        assert_eq!(
+            spans[0].to, spans[1].from,
+            "the cut is one boundary, not a gap"
+        );
+        assert!(
+            spans[0].from > Ticks::ZERO,
+            "the leading rest pushed the consonant off zero"
+        );
+        assert!(spans[1].to > spans[1].from);
     }
 
     #[test]

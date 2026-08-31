@@ -259,7 +259,10 @@ before.
 While a singer clip is open, the piano roll draws the **sung pitch curve** over the notes:
 the contour the model is fed — pitch plus bend in fractional semitones, consonants riding
 their vowel's pitch, rests leaving a gap in the line — so a drawn portamento or vibrato
-reads exactly as it will sound.
+reads exactly as it will sound. The **phoneme segmentation** is drawn from the same frames:
+a faint divider inside the note at each cut and the IPA symbol above the note where its
+frames begin, so the sixty milliseconds a consonant takes is sixty milliseconds on screen
+however long the note holds. Zoomed far out the symbols step aside and the dividers stay.
 
 **Double-click a note** to type its word. **Return commits and walks to the next note**, so a
 verse is typed word after word without touching the mouse; an empty field takes the word off.
