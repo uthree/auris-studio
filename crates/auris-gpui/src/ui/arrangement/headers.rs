@@ -339,8 +339,11 @@ impl AurisApp {
                                                 } else {
                                                     theme.text_faint
                                                 })
+                                                // The mark goes *before* the name: the label
+                                                // truncates from the right, and a warning that
+                                                // only long names hide is no warning at all.
                                                 .child(match behind {
-                                                    true => format!("♪ {voice} !"),
+                                                    true => format!("! ♪ {voice}"),
                                                     false => format!("♪ {voice}"),
                                                 })
                                                 .when(behind, |this| this.tooltip(behind_tip)),

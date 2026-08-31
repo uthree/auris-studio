@@ -75,6 +75,52 @@ fn the_real_voice_sings_a_note_reproducibly() {
     assert_ne!(first, other, "a different seed is a different take");
 }
 
+/// A held vowel at 330 Hz — the fixture for asking whether phonemes actually reach the model.
+fn vowel(token: &str) -> SingerFrames {
+    let len = 150;
+    let mut phonemes = vec![0u32; len];
+    let mut f0_hz = vec![0.0f32; len];
+    let mut energy = vec![0.0f32; len];
+    for at in 25..125 {
+        phonemes[at] = 1;
+        f0_hz[at] = 330.0;
+        energy[at] = 0.75;
+    }
+    SingerFrames {
+        hop_seconds: 0.010,
+        inventory: vec![SILENCE.to_string(), token.to_string()],
+        phonemes,
+        f0_hz,
+        energy,
+    }
+}
+
+#[test]
+fn two_vowels_are_two_sounds() {
+    // The regression this guards: every symbol quietly mapping to one id — <unk>, say —
+    // would still pass every loudness assertion while singing every word as the same vowel.
+    // Same seed, same noise, same curves: the *only* difference between these renders is the
+    // phoneme, so any audible difference between them came through the phoneme path.
+    let Some(path) = model_path() else {
+        eprintln!("AURIS_SINGER_TEST_MODEL not set; skipping the real-voice test");
+        return;
+    };
+    let mut voice = VoiceModel::load(&path).expect("the named model loads");
+    let a = voice.sing(&vowel("a"), 7).expect("あ renders");
+    let i = voice.sing(&vowel("i"), 7).expect("い renders");
+    let difference: f32 = a
+        .iter()
+        .zip(&i)
+        .map(|(a, i)| (a - i) * (a - i))
+        .sum::<f32>()
+        / a.len() as f32;
+    let level: f32 = a.iter().map(|s| s * s).sum::<f32>() / a.len() as f32;
+    assert!(
+        difference > level * 0.1,
+        "あ and い should sound different, difference power was {difference} against {level}"
+    );
+}
+
 #[test]
 fn a_cancelled_render_stops_between_chunks() {
     let Some(path) = model_path() else {
