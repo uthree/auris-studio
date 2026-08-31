@@ -135,6 +135,39 @@ pub struct SingerVoice {
     /// Stored in the document the way a SoundFont's name is, so a track header can say 波音リツ
     /// without opening two hundred megabytes first.
     pub name: String,
+    /// The consonant widths the model measured from its own training data, where its export
+    /// carried them.
+    ///
+    /// Copied into the document when the voice is chosen, for the name's reason: the phoneme
+    /// timing has to lay out the same on a machine that has not loaded — or does not have —
+    /// the model file. `None` means the export predates the table, and the timing rule falls
+    /// back to its single fixed width.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consonants: Option<ConsonantWidths>,
+}
+
+/// Per-phoneme consonant widths, in seconds, measured by a voice model from its training data.
+///
+/// Consonant length in sung Japanese spans a factor of three by phoneme class — an affricate
+/// like `ts` takes twice what a plain stop does — so a single fixed width mistimes half the
+/// inventory. A voice model's export can carry the widths it was actually trained on; this is
+/// that table as the document stores it. The application rule is one line:
+/// [`ConsonantWidths::width`] answers the table's entry, or `default` for a phoneme it never
+/// measured.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ConsonantWidths {
+    /// Seconds for a phoneme the table has no entry for.
+    pub default: f64,
+    /// Seconds per phoneme, keyed by the model's own symbols.
+    #[serde(default)]
+    pub seconds: std::collections::BTreeMap<String, f64>,
+}
+
+impl ConsonantWidths {
+    /// Seconds `phoneme` takes: its measured width, or the default where none was measured.
+    pub fn width(&self, phoneme: &str) -> f64 {
+        self.seconds.get(phoneme).copied().unwrap_or(self.default)
+    }
 }
 
 /// One rendered performance of a singer track, kept as audio.

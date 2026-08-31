@@ -267,8 +267,15 @@ the contour the model is fed — pitch plus bend in fractional semitones, conson
 their vowel's pitch, rests leaving a gap in the line — so a drawn portamento or vibrato
 reads exactly as it will sound. The **phoneme segmentation** is drawn from the same frames:
 a faint divider inside the note at each cut and the IPA symbol above the note where its
-frames begin, so the sixty milliseconds a consonant takes is sixty milliseconds on screen
+frames begin, so the milliseconds a consonant takes are the same milliseconds on screen
 however long the note holds. Zoomed far out the symbols step aside and the dividers stay.
+
+How many milliseconds that is belongs to the voice: a newer auris-singer export carries the
+**consonant durations it measured from its own training data** (an affricate like つ's `ts`
+runs about twice a plain stop), choosing the voice copies that table into the document
+beside its name, and the segmentation, the boundary grab, the note preview and the render
+all lay phonemes out from it. A voice without the table — or a track without a voice — uses
+a fixed sixty milliseconds, the rule as it always was.
 
 The cuts are yours to move: **drag a divider** and the phoneme to its left is pinned to the
 length you gave it, stored on the note beside its phonemes so it travels and saves with the

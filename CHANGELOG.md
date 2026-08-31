@@ -11,6 +11,16 @@ format rather than a convention: `## <version> — <date>`.
 
 ### The words write the tune
 
+* **Consonants take the width their voice measured.** A newer auris-singer export carries
+  per-phoneme consonant durations measured from its training data (`phoneme_durations` in
+  the model's metadata — consonant length in sung Japanese spans a factor of three by
+  phoneme class, so one fixed width mistimed half the inventory). Choosing the voice copies
+  the table into the document beside its name, and everything that lays phonemes out reads
+  it: the sung frames, the drawn segmentation, the divider grab, the dragged-note preview.
+  Old exports, and tracks with no voice, keep the fixed sixty milliseconds. A table in a
+  unit this build cannot read is refused outright rather than misread by two orders of
+  magnitude.
+
 * **Compose from lyrics, the Orpheus way.** `compose_lyrics` at both model doors — and
   `Session::compose_from_lyrics` beneath it, for every frontend to come — takes Japanese
   lyrics and writes a song: phrases cut where a singer breathes, one note per mora, and a

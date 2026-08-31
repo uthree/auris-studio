@@ -55,8 +55,8 @@ pub use ornament::{Fall, Scoop, Vibrato};
 pub use recipe::{ClipPreset, ClipRecipe, Subdivision};
 pub use routing::{AuxSend, EffectSlot, MixerStrip, Output};
 pub use track::{
-    AudioTrack, Color, InstrumentTrack, SingerTake, SingerTrack, SingerVoice, Track, TrackKind,
-    default_frame_hop,
+    AudioTrack, Color, ConsonantWidths, InstrumentTrack, SingerTake, SingerTrack, SingerVoice,
+    Track, TrackKind, default_frame_hop,
 };
 pub use transform::{NoteTransform, performed};
 

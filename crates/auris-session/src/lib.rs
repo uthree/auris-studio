@@ -159,10 +159,10 @@ pub mod prelude {
     };
     pub use auris_core::{
         AudioBuffer, AudioClip, AudioSource, AuxSend, ClipId, ClipPreset, ClipRecipe, Color,
-        EffectSlotId, FadeCurve, Fall, MidiClip, MixerStrip, Note, NoteTransform, Output,
-        PluginRegistry, PresetRef, Project, Scoop, SectionMap, SectionPoint, SectionSpan, SendId,
-        SingerTrack, SoundFontId, SoundFontRef, SourceId, Subdivision, Track, TrackId, TrackKind,
-        Vibrato, default_frame_hop, default_loop_end, loop_passes, sounding_length,
+        ConsonantWidths, EffectSlotId, FadeCurve, Fall, MidiClip, MixerStrip, Note, NoteTransform,
+        Output, PluginRegistry, PresetRef, Project, Scoop, SectionMap, SectionPoint, SectionSpan,
+        SendId, SingerTrack, SoundFontId, SoundFontRef, SourceId, Subdivision, Track, TrackId,
+        TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes, sounding_length,
     };
     /// The equalizer's band table, the settings a display reads out of one, and the curve those
     /// settings make.

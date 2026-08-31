@@ -155,12 +155,13 @@ fn grabbed_phoneme_boundary(
     end_seconds: f64,
     at_seconds: f64,
     slack_seconds: f64,
+    widths: Option<&ConsonantWidths>,
 ) -> Option<(usize, f64)> {
     if note.phonemes.len() < 2 {
         return None;
     }
     let length = (end_seconds - start_seconds).max(0.0);
-    let layout = phoneme_layout(&note.phonemes, &note.phoneme_seconds, length);
+    let layout = phoneme_layout(&note.phonemes, &note.phoneme_seconds, length, widths);
     layout
         .iter()
         .take(layout.len().saturating_sub(1))
@@ -1289,6 +1290,7 @@ impl AurisApp {
         if self.tool != RollTool::Pointer || !self.editing_a_singer_clip() {
             return Vec::new();
         }
+        let widths = self.editing_voice_widths();
         let tempo = &self.project().tempo_map;
         let row = px(self.pitch.row_height);
         let mut zones = Vec::new();
@@ -1302,6 +1304,7 @@ impl AurisApp {
                 &note.phonemes,
                 &note.phoneme_seconds,
                 (end - start).max(0.0),
+                widths.as_ref(),
             );
             for (_, to) in layout.iter().take(layout.len().saturating_sub(1)) {
                 let tick = tempo.seconds_to_ticks(Seconds(start + to));
@@ -1379,7 +1382,8 @@ impl AurisApp {
             .0
             - at)
             .abs();
-        grabbed_phoneme_boundary(note, start, end, at, slack)
+        let widths = self.editing_voice_widths();
+        grabbed_phoneme_boundary(note, start, end, at, slack, widths.as_ref())
             .map(|(phoneme, from)| (phoneme, from, end))
     }
 
@@ -1452,6 +1456,19 @@ impl AurisApp {
     ///
     /// The one question that turns the lyric affordances on: the fields exist on every note,
     /// but words drawn over an instrument part would be noise about a feature it does not have.
+    /// The consonant widths of the edited clip's voice, where a voice with a table is chosen.
+    ///
+    /// What keeps the drawn segmentation, the boundary grab and the sung frames one story: all
+    /// three lay phonemes out through [`phoneme_layout`] with this same answer.
+    pub(crate) fn editing_voice_widths(&self) -> Option<ConsonantWidths> {
+        self.selected_clip
+            .and_then(|clip| self.project().track_of_clip(clip))
+            .and_then(|track| self.project().track(track))
+            .and_then(|track| track.kind.as_singer())
+            .and_then(|singer| singer.voice.as_ref())
+            .and_then(|voice| voice.consonants.clone())
+    }
+
     pub(crate) fn editing_a_singer_clip(&self) -> bool {
         self.selected_clip
             .and_then(|clip| self.project().track_of_clip(clip))
@@ -2278,22 +2295,46 @@ mod tests {
         // Near the 60 ms cut of a note spanning 1.0..1.5 s: the k is in hand, measured
         // from the note's start.
         assert_eq!(
-            grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.062, 0.01),
+            grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.062, 0.01, None),
             Some((0, 1.0))
         );
         // Too far from the cut, nothing answers; the note's own edges never do.
-        assert_eq!(grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.2, 0.01), None);
-        assert_eq!(grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.0, 0.005), None);
+        assert_eq!(
+            grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.2, 0.01, None),
+            None
+        );
+        assert_eq!(
+            grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.0, 0.005, None),
+            None
+        );
+        // A voice whose export measured its consonants moves the cut, and the grab sits on
+        // the moved cut — the segmentation drawn and the boundary grabbed stay one layout.
+        let widths = ConsonantWidths {
+            default: 0.060,
+            seconds: [("k".to_string(), 0.100)].into_iter().collect(),
+        };
+        assert_eq!(
+            grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.1, 0.01, Some(&widths)),
+            Some((0, 1.0))
+        );
+        assert_eq!(
+            grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.062, 0.01, Some(&widths)),
+            None,
+            "the old fixed cut no longer answers"
+        );
         // A pin moves the cut, and the grab follows it.
         note.phoneme_seconds = vec![0.2, 0.0];
         assert_eq!(
-            grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.2, 0.01),
+            grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.2, 0.01, None),
             Some((0, 1.0))
         );
         // One phoneme has no cut to move.
         note.phonemes = vec!["a".to_string()];
         note.phoneme_seconds.clear();
-        assert_eq!(grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.06, 0.5), None);
+        assert_eq!(
+            grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.06, 0.5, None),
+            None
+        );
     }
 
     #[test]
@@ -3018,7 +3059,7 @@ mod window_tests {
             let note = &this.session.midi_clip(clip).unwrap().notes[0];
             assert_eq!(note.phonemes, ["k", "a"]);
             let length = tempo.ticks_to_seconds(note.end()).0;
-            let layout = phoneme_layout(&note.phonemes, &note.phoneme_seconds, length);
+            let layout = phoneme_layout(&note.phonemes, &note.phoneme_seconds, length, None);
             (
                 tempo.seconds_to_ticks(Seconds(layout[0].1)),
                 tempo.seconds_to_ticks(Seconds(0.200)),

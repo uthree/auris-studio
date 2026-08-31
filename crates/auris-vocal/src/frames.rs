@@ -9,9 +9,11 @@
 //!   the earlier one off at its own start — the legato a keyboardist means by overlapping two
 //!   notes slightly.
 //! * **Consonants are short; syllabics stretch.** Each consonant before the first syllabic
-//!   phoneme takes [`CONSONANT_SECONDS`] at the note's start, each one after the last takes the
-//!   same at its end, and everything between shares the remainder equally. Consonants scale
-//!   down rather than swallow a short note, never past half of it.
+//!   phoneme takes its width at the note's start, each one after the last takes its width at
+//!   the end, and everything between shares the remainder equally. The width is the voice
+//!   model's own measurement where the track's voice carries a table
+//!   ([`ConsonantWidths`](auris_core::ConsonantWidths)) and [`CONSONANT_SECONDS`] where it
+//!   does not. Consonants scale down rather than swallow a short note, never past half of it.
 //! * **Pitch is the note plus its bend plus its ornaments, everywhere in the note.** No
 //!   portamento is invented between notes — the bend curve is where a slide is written, and a
 //!   scoop, fall or vibrato only where the note carries one ([`ornament_offset`] is the shape).
@@ -30,16 +32,22 @@ use serde::{Deserialize, Serialize};
 use auris_core::plugin::{CC_EXPRESSION, pitch_to_hz};
 use auris_core::project::{ClipCurve, CurvePoint, curve_at};
 use auris_core::time::{Seconds, TempoMap, Ticks};
-use auris_core::{Fall, Scoop, SingerTrack, Vibrato, default_frame_hop, loop_passes};
+use auris_core::{
+    ConsonantWidths, Fall, Scoop, SingerTrack, Vibrato, default_frame_hop, loop_passes,
+};
 
 use crate::ornament::ornament_offset;
 use crate::phoneme::{SILENCE, is_syllabic};
 
-/// Seconds a consonant is given before its vowel.
+/// Seconds a consonant is given before its vowel, when its voice measured nothing better.
 ///
 /// Sixty milliseconds sits inside the range measured for Japanese obstruents in running speech
 /// and is short enough that a sixteenth note at 120 BPM (125 ms) keeps most of itself for the
-/// vowel. A voice model learns real durations; this only has to hand it a sane target.
+/// vowel. Consonant length actually spans a factor of three by phoneme class, which is why a
+/// voice model's export can carry its own per-phoneme table
+/// ([`ConsonantWidths`](auris_core::ConsonantWidths)) and the table wins wherever the track's
+/// voice has one; this number is the fallback for the models — and the voiceless tracks — that
+/// do not.
 pub const CONSONANT_SECONDS: f64 = 0.060;
 
 /// Seconds the energy takes to rise from silence at a note's start.
@@ -107,6 +115,8 @@ struct TimedNote<'a> {
     bend: &'a [CurvePoint],
     /// The clip's expression pedal, 0 to 1, empty meaning "all the way up".
     expression: &'a [CurvePoint],
+    /// The track's voice's consonant widths, where its export carried a table.
+    widths: Option<&'a ConsonantWidths>,
 }
 
 /// Samples a singer track into the frames its voice model is fed.
@@ -190,6 +200,10 @@ pub fn render_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames 
 
 /// Every note of every unmuted clip, repeats included, flattened, sorted and made monophonic.
 fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNote<'a>> {
+    let widths = track
+        .voice
+        .as_ref()
+        .and_then(|voice| voice.consonants.as_ref());
     let mut placed: Vec<(Ticks, Ticks, TimedNote<'a>)> = Vec::new();
     for clip in &track.clips {
         if clip.muted {
@@ -224,6 +238,7 @@ fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNot
                         curve_base: base,
                         bend: &clip.bend,
                         expression,
+                        widths,
                     },
                 ));
             }
@@ -268,7 +283,7 @@ fn phoneme_at<'a>(note: &'a TimedNote<'a>, t: f64) -> &'a str {
 /// The note's phonemes laid across its length: `(from, to, token)` in seconds from its start.
 fn segment<'a>(note: &'a TimedNote<'a>) -> Vec<(f64, f64, &'a String)> {
     let length = (note.end - note.start).max(0.0);
-    phoneme_layout(&note.phonemes, &note.phoneme_seconds, length)
+    phoneme_layout(&note.phonemes, &note.phoneme_seconds, length, note.widths)
         .into_iter()
         .zip(&note.phonemes)
         .map(|((from, to), token)| (from, to, token))
@@ -277,7 +292,7 @@ fn segment<'a>(note: &'a TimedNote<'a>) -> Vec<(f64, f64, &'a String)> {
 
 /// The seconds each of a note's phonemes occupies, as `(from, to)` pairs from its start.
 ///
-/// The rule the module doc states — fixed-width consonants at the edges, the middle shared
+/// The rule the module doc states — measured-width consonants at the edges, the middle shared
 /// equally, consonants scaled down together rather than swallowing a short note — bent by
 /// any pins in `pinned` (parallel to `phonemes`, 0 meaning the rule decides): a pinned
 /// phoneme takes exactly its seconds, the unpinned middle shares whatever remains, and where
@@ -285,9 +300,17 @@ fn segment<'a>(note: &'a TimedNote<'a>) -> Vec<(f64, f64, &'a String)> {
 /// phoneme still sounds. A total shorter than the note is left alone — the frames extend the
 /// final phoneme over the tail, which is what holding a vowel means.
 ///
+/// `widths` is the track's voice's own consonant table, where its export carried one; `None`
+/// gives every consonant [`CONSONANT_SECONDS`], the rule as it stood before models measured.
+///
 /// Public because an editor that lets a boundary be dragged has to lay the phonemes out
 /// exactly as the frames will, and two implementations of this rule would drift.
-pub fn phoneme_layout(phonemes: &[String], pinned: &[f64], length: f64) -> Vec<(f64, f64)> {
+pub fn phoneme_layout(
+    phonemes: &[String],
+    pinned: &[f64],
+    length: f64,
+    widths: Option<&ConsonantWidths>,
+) -> Vec<(f64, f64)> {
     let length = length.max(0.0);
     let count = phonemes.len();
     if count == 0 {
@@ -302,23 +325,30 @@ pub fn phoneme_layout(phonemes: &[String], pinned: &[f64], length: f64) -> Vec<(
     };
     let edge = |index: usize| index < prefix || index >= prefix + middle;
     let pin = |index: usize| pinned.get(index).copied().filter(|seconds| *seconds > 0.0);
+    // A width that is not a positive number is a table entry nobody can mean; the fallback
+    // keeps a broken export from writing zero-length consonants.
+    let width_of = |index: usize| {
+        widths
+            .map(|table| table.width(&phonemes[index]))
+            .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+            .unwrap_or(CONSONANT_SECONDS)
+    };
 
-    // Unpinned edge consonants keep their fixed slots, scaled down together so that with no
-    // pins anywhere the layout is exactly the standing rule.
+    // Unpinned edge consonants keep their measured slots, scaled down together so a cluster
+    // of them still leaves the vowel half the note.
     let fixed: f64 = (0..count)
         .filter(|index| edge(*index) && pin(*index).is_none())
-        .count() as f64
-        * CONSONANT_SECONDS;
+        .map(&width_of)
+        .sum();
     let scale = match fixed > length / 2.0 {
         true => (length / 2.0) / fixed.max(f64::EPSILON),
         false => 1.0,
     };
-    let consonant = CONSONANT_SECONDS * scale;
 
     let mut widths: Vec<f64> = (0..count)
         .map(|index| match pin(index) {
             Some(seconds) => seconds,
-            None if edge(index) => consonant,
+            None if edge(index) => width_of(index) * scale,
             // A placeholder the stretchy middle fills in below.
             None => f64::NAN,
         })
@@ -493,10 +523,79 @@ mod tests {
     #[test]
     fn the_layout_without_pins_is_the_standing_rule() {
         let phonemes: Vec<String> = ["k", "a"].iter().map(|s| s.to_string()).collect();
-        let layout = phoneme_layout(&phonemes, &[], 1.0);
+        let layout = phoneme_layout(&phonemes, &[], 1.0, None);
         assert_eq!(layout.len(), 2);
         assert!((layout[0].1 - CONSONANT_SECONDS).abs() < 1e-9);
         assert!((layout[1].1 - 1.0).abs() < 1e-9, "the vowel fills the rest");
+    }
+
+    /// The table the width tests below hand in: an affricate twice a stop's length, roughly
+    /// the spread the auris-singer measurement reports.
+    fn measured() -> auris_core::ConsonantWidths {
+        auris_core::ConsonantWidths {
+            default: 0.070,
+            seconds: [("ts".to_string(), 0.120), ("k".to_string(), 0.090)]
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_voice_s_own_widths_replace_the_fixed_sixty_milliseconds() {
+        let phonemes: Vec<String> = ["ts", "a"].iter().map(|s| s.to_string()).collect();
+        let layout = phoneme_layout(&phonemes, &[], 1.0, Some(&measured()));
+        assert!(
+            (layout[0].1 - 0.120).abs() < 1e-9,
+            "the affricate's measured width"
+        );
+
+        // A consonant the table never measured takes the table's own default, not the
+        // built-in one.
+        let phonemes: Vec<String> = ["m", "a"].iter().map(|s| s.to_string()).collect();
+        let layout = phoneme_layout(&phonemes, &[], 1.0, Some(&measured()));
+        assert!((layout[0].1 - 0.070).abs() < 1e-9);
+
+        // A pin still beats the table: the by-hand correction outranks the measurement.
+        let phonemes: Vec<String> = ["ts", "a"].iter().map(|s| s.to_string()).collect();
+        let layout = phoneme_layout(&phonemes, &[0.200, 0.0], 1.0, Some(&measured()));
+        assert!((layout[0].1 - 0.200).abs() < 1e-9);
+    }
+
+    #[test]
+    fn measured_widths_scale_down_together_on_a_short_note() {
+        // ts + k ask for 210 ms of a 200 ms note; the half-note cap squeezes them in
+        // proportion, so the affricate stays longer than the stop.
+        let phonemes: Vec<String> = ["ts", "k", "a"].iter().map(|s| s.to_string()).collect();
+        let layout = phoneme_layout(&phonemes, &[], 0.2, Some(&measured()));
+        let ts = layout[0].1 - layout[0].0;
+        let k = layout[1].1 - layout[1].0;
+        assert!(
+            (ts + k - 0.1).abs() < 1e-9,
+            "together they take half the note"
+        );
+        assert!(
+            (ts / k - 0.120 / 0.090).abs() < 1e-9,
+            "in their measured ratio"
+        );
+    }
+
+    #[test]
+    fn the_frames_read_the_widths_off_the_track_s_voice() {
+        // The same [ts a] note, sung twice: once voiceless, once by a voice whose export
+        // measured its consonants. The frames move without any caller passing a table.
+        let note = sung(60, 0.0, 1.0, &["ts", "a"]);
+        let plain = render_frames(&track(vec![note.clone()]), &map());
+        let mut voiced = track(vec![note]);
+        voiced.voice = Some(auris_core::SingerVoice {
+            path: auris_core::AssetPath::external("/nowhere/voice.onnx"),
+            name: "Measured".into(),
+            consonants: Some(measured()),
+        });
+        let voiced = render_frames(&voiced, &map());
+
+        let ts = |frames: &SingerFrames| frames.phonemes.iter().filter(|id| **id == 1).count();
+        assert_eq!(ts(&plain), 6, "60 ms at a 10 ms hop, the fallback");
+        assert_eq!(ts(&voiced), 12, "120 ms — the voice's own measurement");
     }
 
     #[test]

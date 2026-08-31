@@ -49,11 +49,11 @@ pub use plugin::{
 };
 pub use project::{
     AudioClip, AudioSource, AudioSourceBank, AudioTrack, AuxSend, ClipId, ClipPreset, ClipRecipe,
-    Color, EffectSlot, EffectSlotId, FadeCurve, Fall, InstrumentTrack, MidiClip, MixerStrip, Note,
-    NoteTransform, Output, PresetRef, Project, Scoop, SendId, SingerTake, SingerTrack, SingerVoice,
-    SoundFontId, SoundFontRef, SourceId, Subdivision, Track, TrackId, TrackKind, Vibrato,
-    default_frame_hop, default_loop_end, loop_passes, notes_digest, notes_trimmed_from_front,
-    performed, sounding_length,
+    Color, ConsonantWidths, EffectSlot, EffectSlotId, FadeCurve, Fall, InstrumentTrack, MidiClip,
+    MixerStrip, Note, NoteTransform, Output, PresetRef, Project, Scoop, SendId, SingerTake,
+    SingerTrack, SingerVoice, SoundFontId, SoundFontRef, SourceId, Subdivision, Track, TrackId,
+    TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes, notes_digest,
+    notes_trimmed_from_front, performed, sounding_length,
 };
 pub use registry::{PluginPack, PluginRegistry};
 pub use structure::{SectionMap, SectionPoint, SectionSpan};

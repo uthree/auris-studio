@@ -495,7 +495,7 @@ impl Session {
         let chosen = match path {
             Some(file) => {
                 let model = self.voice_model_at(file)?;
-                let (name, hop) = {
+                let (name, hop, consonants) = {
                     let model = model.lock().expect("no thread panics holding a voice");
                     let card = model.info().display_name().to_string();
                     let name = match card.is_empty() {
@@ -505,7 +505,14 @@ impl Session {
                             .unwrap_or_else(|| "Voice".to_string()),
                         false => card,
                     };
-                    (name, model.info().hop_seconds())
+                    // The consonant widths ride into the document beside the name, for the
+                    // name's reason: the phoneme timing must lay out the same before the
+                    // model file is opened again — or on a machine that does not have it.
+                    (
+                        name,
+                        model.info().hop_seconds(),
+                        model.info().consonant_widths(),
+                    )
                 };
                 let reference = match self
                     .project_folder()
@@ -514,7 +521,7 @@ impl Session {
                     Some(relative) => AssetPath::inside(relative),
                     None => AssetPath::external(file),
                 };
-                Some((reference, name, hop))
+                Some((reference, name, hop, consonants))
             }
             None => None,
         };
@@ -525,8 +532,12 @@ impl Session {
             .and_then(|track| track.kind.as_singer_mut())
         {
             match chosen {
-                Some((path, name, hop)) => {
-                    singer.voice = Some(SingerVoice { path, name });
+                Some((path, name, hop, consonants)) => {
+                    singer.voice = Some(SingerVoice {
+                        path,
+                        name,
+                        consonants,
+                    });
                     singer.frame_hop = hop;
                 }
                 None => singer.voice = None,
@@ -644,7 +655,9 @@ impl Session {
             instrument_state: auris_core::PluginState::default(),
             clips: vec![clip],
             frame_hop: singer.frame_hop,
-            voice: None,
+            // The real track's voice, so the preview's consonants take the widths the take
+            // will — a dragged note and the song must stay one story.
+            voice: singer.voice.clone(),
             take: None,
         };
         let mut frames = render_frames(&one_note, tempo);
@@ -1148,6 +1161,7 @@ mod tests {
             singer.voice = Some(SingerVoice {
                 path: AssetPath::external("/voices/test.onnx"),
                 name: "Test Voice".into(),
+                consonants: None,
             });
         }
     }
@@ -1280,6 +1294,21 @@ mod tests {
                 .name
                 .is_empty(),
             "the card's name rides into the document"
+        );
+        // The consonant table rides in beside the name exactly when the export measured one
+        // — asserted against the model's own metadata, so this holds for old and new
+        // exports alike.
+        let measured = {
+            let model = session
+                .voice_model_at(std::path::Path::new(&model))
+                .unwrap();
+            let model = model.lock().unwrap();
+            model.info().consonant_widths()
+        };
+        assert_eq!(
+            session.singer_voice(track).unwrap().unwrap().consonants,
+            measured,
+            "the document carries what the model measured, no more and no less"
         );
 
         let seconds = session.sing(track, None).unwrap();

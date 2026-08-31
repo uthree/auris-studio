@@ -41,9 +41,37 @@ pub struct VoiceInfo {
     /// Speaker names to ids, for models trained on more than one voice.
     #[serde(default)]
     pub speaker_to_id: BTreeMap<String, u32>,
+    /// The consonant widths this model measured from its own training data, where the export
+    /// carried the table. Newer exports do; older ones simply fall back to the host's fixed
+    /// width.
+    #[serde(default)]
+    pub phoneme_durations: Option<PhonemeDurations>,
     /// The presentational voice card, where the export carried one.
     #[serde(default)]
     pub voice: Option<VoiceCard>,
+}
+
+/// The consonant-width table an export measures from its training labels.
+///
+/// The application rule is the exporter's own: a phoneme takes `seconds[phoneme]` where the
+/// table has it and `default` where it does not. The export also records how many labels each
+/// number was measured from and what corpus they came from; that is provenance for a person,
+/// not an input, and is deliberately not read here.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PhonemeDurations {
+    /// What the numbers are measured in. This build reads `seconds` and refuses anything
+    /// else, because a table of frames read as seconds would be wrong by two orders.
+    #[serde(default = "seconds")]
+    pub unit: String,
+    /// Seconds for a phoneme the table has no entry for.
+    pub default: f64,
+    /// Seconds per phoneme, keyed by the model's own symbols.
+    #[serde(default)]
+    pub seconds: BTreeMap<String, f64>,
+}
+
+fn seconds() -> String {
+    "seconds".to_string()
 }
 
 fn one() -> u32 {
@@ -100,7 +128,34 @@ impl VoiceInfo {
                 )));
             }
         }
+        if let Some(durations) = &info.phoneme_durations {
+            if durations.unit != "seconds" {
+                return Err(SingError::Metadata(format!(
+                    "phoneme durations in `{}` — this build reads seconds",
+                    durations.unit
+                )));
+            }
+            let broken = |seconds: &f64| !seconds.is_finite() || *seconds <= 0.0;
+            if broken(&durations.default) || durations.seconds.values().any(broken) {
+                return Err(SingError::Metadata(
+                    "a phoneme duration that is not a positive number".into(),
+                ));
+            }
+        }
         Ok(info)
+    }
+
+    /// The model's consonant widths in the shape the document stores, where it measured any.
+    ///
+    /// The conversion lives here so a host never touches the raw table: what travels into a
+    /// project is [`auris_core::ConsonantWidths`], the same struct the frame layout reads.
+    pub fn consonant_widths(&self) -> Option<auris_core::ConsonantWidths> {
+        self.phoneme_durations
+            .as_ref()
+            .map(|durations| auris_core::ConsonantWidths {
+                default: durations.default,
+                seconds: durations.seconds.clone(),
+            })
     }
 
     /// Seconds per feature frame — what a track's `frame_hop` must equal to be sung.
@@ -144,6 +199,52 @@ mod tests {
         assert_eq!(info.display_name(), "波音リツ");
         assert_eq!(info.speaker_to_id.get("namine_ritsu"), Some(&0));
         // Fields this build does not know — f0_min, audio — pass through without complaint.
+    }
+
+    /// The new-spec export: the same voice with its measured consonant table aboard.
+    const WITH_DURATIONS: &str = r#"{
+        "format_version": 1,
+        "sample_rate": 48000,
+        "hop_length": 480,
+        "inter_channels": 192,
+        "symbols": ["<pad>", "<unk>", "<sil>", "a", "ts", "k"],
+        "phoneme_durations": {
+            "unit": "seconds",
+            "default": 0.060,
+            "seconds": {"ts": 0.119, "k": 0.091},
+            "counts": {"ts": 679, "k": 4859},
+            "measured_from": "Namine Ritsu singing DB Ver2.0.2, mono labels, 110 songs"
+        }
+    }"#;
+
+    #[test]
+    fn a_measured_consonant_table_rides_in_and_out_as_the_document_s_own_type() {
+        let info = VoiceInfo::parse(WITH_DURATIONS).unwrap();
+        let widths = info.consonant_widths().expect("the table was aboard");
+        assert_eq!(widths.default, 0.060);
+        assert_eq!(widths.width("ts"), 0.119, "measured");
+        assert_eq!(widths.width("m"), 0.060, "unmeasured takes the default");
+        // The provenance fields — counts, measured_from — pass through unread.
+
+        // An old export simply has no table, and says so rather than inventing one.
+        assert!(
+            VoiceInfo::parse(RITSU)
+                .unwrap()
+                .consonant_widths()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_duration_table_this_build_cannot_read_is_refused() {
+        // A unit of frames read as seconds would be wrong by two orders of magnitude.
+        let raw = WITH_DURATIONS.replace("\"unit\": \"seconds\"", "\"unit\": \"frames\"");
+        let error = VoiceInfo::parse(&raw).unwrap_err();
+        assert!(error.to_string().contains("frames"), "{error}");
+
+        // A zero-length consonant is a table nobody can mean.
+        let raw = WITH_DURATIONS.replace("0.119", "0.0");
+        assert!(VoiceInfo::parse(&raw).is_err());
     }
 
     #[test]

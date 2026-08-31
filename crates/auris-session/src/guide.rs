@@ -1080,9 +1080,14 @@ pub mod singing {
     //! the tempo map — [`auris_vocal::render_frames`] — sampled at the track's
     //! [`frame_hop`](auris_core::SingerTrack::frame_hop): one phoneme id, one pitch in Hz and
     //! one energy per hop, with the bend curve moving the pitch and controller 11 scaling the
-    //! energy. The timing rules (consonants take sixty milliseconds at a note's edges,
-    //! syllabics stretch, one note sounds at a time) live in [`auris_vocal::frames`] beside
-    //! the tests that measure them.
+    //! energy. The timing rules (consonants take their width at a note's edges, syllabics
+    //! stretch, one note sounds at a time) live in [`auris_vocal::frames`] beside the tests
+    //! that measure them. The consonant's width is the voice model's own: a newer
+    //! auris-singer export carries the per-phoneme durations it measured from its training
+    //! data, [`Session::set_singer_voice`](crate::Session::set_singer_voice) copies them
+    //! into the document as [`auris_core::ConsonantWidths`] beside the voice's name — same
+    //! reason: the layout must not change with whether the model file is present — and the
+    //! layout falls back to a fixed sixty milliseconds where no table rode in.
     //!
     //! # One vocabulary, two readers
     //!
