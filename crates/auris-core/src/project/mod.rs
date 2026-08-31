@@ -23,8 +23,9 @@
 //! together: every exhaustive match over [`TrackKind`] answers for a block of notes and a
 //! reference to a file in the same body, and a boundary between the two would leave each side
 //! importing the other back. `track` is what a clip sits on, `routing` is the mixer strip and
-//! where what leaves it goes, `recipe` is how a written clip was written, and `curve` is the
-//! bend and the wheel drawn across one. Every one of them is private and re-exported, so
+//! where what leaves it goes, `recipe` is how a written clip was written, `curve` is the
+//! bend and the wheel drawn across one, and `ornament` is the scoop, fall and vibrato a sung
+//! note carries. Every one of them is private and re-exported, so
 //! `auris_core::project::MidiClip` is the path it always was.
 //!
 //! A method lives with the type it is about rather than here: `add_midi_clip` is in `clip`,
@@ -33,6 +34,7 @@
 
 mod clip;
 mod curve;
+mod ornament;
 mod recipe;
 mod routing;
 mod track;
@@ -49,6 +51,7 @@ pub use clip::{
 pub use curve::{
     BEND_LIMIT, CONTROLLER_LIMIT, CURVE_STEP, ClipCurve, CurvePoint, curve_at, curve_events,
 };
+pub use ornament::{Fall, Scoop, Vibrato};
 pub use recipe::{ClipPreset, ClipRecipe, Subdivision};
 pub use routing::{AuxSend, EffectSlot, MixerStrip, Output};
 pub use track::{

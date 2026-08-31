@@ -12,10 +12,11 @@
 //!   phoneme takes [`CONSONANT_SECONDS`] at the note's start, each one after the last takes the
 //!   same at its end, and everything between shares the remainder equally. Consonants scale
 //!   down rather than swallow a short note, never past half of it.
-//! * **Pitch is the note plus its bend, everywhere in the note.** No portamento is invented
-//!   between notes — the bend curve is where a slide is written — and consonant frames carry
-//!   the same pitch as the vowel they lead into, because a model treats f0 as a contour and
-//!   decides voicing from the phoneme, not from a zero.
+//! * **Pitch is the note plus its bend plus its ornaments, everywhere in the note.** No
+//!   portamento is invented between notes — the bend curve is where a slide is written, and a
+//!   scoop, fall or vibrato only where the note carries one ([`ornament_offset`] is the shape).
+//!   Consonant frames carry the same pitch as the vowel they lead into, because a model treats
+//!   f0 as a contour and decides voicing from the phoneme, not from a zero.
 //! * **Energy is the velocity, shaped.** A linear rise over [`ATTACK_SECONDS`], a linear fall
 //!   over the last [`RELEASE_SECONDS`], scaled by the expression pedal (controller 11) where
 //!   one is written. Outside every note the energy is zero, the pitch is zero, and the phoneme
@@ -29,8 +30,9 @@ use serde::{Deserialize, Serialize};
 use auris_core::plugin::{CC_EXPRESSION, pitch_to_hz};
 use auris_core::project::{ClipCurve, CurvePoint, curve_at};
 use auris_core::time::{Seconds, TempoMap, Ticks};
-use auris_core::{SingerTrack, default_frame_hop, loop_passes};
+use auris_core::{Fall, Scoop, SingerTrack, Vibrato, default_frame_hop, loop_passes};
 
+use crate::ornament::ornament_offset;
 use crate::phoneme::{SILENCE, is_syllabic};
 
 /// Seconds a consonant is given before its vowel.
@@ -93,6 +95,12 @@ struct TimedNote<'a> {
     /// carries no pins — or no phonemes, since a pin on the placeholder vowel would be a
     /// pin on nothing the person ever saw.
     phoneme_seconds: Vec<f64>,
+    /// The scoop into the note, where one is written.
+    scoop: Option<Scoop>,
+    /// The fall off its end, where one is written.
+    fall: Option<Fall>,
+    /// The sway across it, where one is written.
+    vibrato: Option<Vibrato>,
     /// Timeline tick the note's clip pass begins at — what the curves are measured from.
     curve_base: Ticks,
     /// The clip's bend, in semitones.
@@ -155,7 +163,14 @@ pub fn render_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames 
 
         let tick = tempo_map.seconds_to_ticks(Seconds(t));
         let bend = curve_at(note.bend, tick - note.curve_base);
-        f0_hz.push(pitch_to_hz(note.pitch + bend));
+        let ornament = ornament_offset(
+            note.scoop.as_ref(),
+            note.fall.as_ref(),
+            note.vibrato.as_ref(),
+            t - note.start,
+            note.end - note.start,
+        );
+        f0_hz.push(pitch_to_hz(note.pitch + bend + ornament));
 
         let expression = match note.expression.is_empty() {
             true => 1.0,
@@ -203,6 +218,9 @@ fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNot
                         velocity: note.velocity.clamp(0.0, 1.0),
                         phonemes,
                         phoneme_seconds,
+                        scoop: note.scoop,
+                        fall: note.fall,
+                        vibrato: note.vibrato,
                         curve_base: base,
                         bend: &clip.bend,
                         expression,
@@ -501,6 +519,25 @@ mod tests {
             (frames.f0_hz[50] - expected).abs() < 1e-2,
             "{} should be {expected}",
             frames.f0_hz[50]
+        );
+    }
+
+    #[test]
+    fn ornaments_move_the_frames_the_model_is_fed() {
+        // A4 for two beats — one second — with a 100 ms scoop of one semitone.
+        let mut note = sung(69, 0.0, 2.0, &["a"]);
+        note.scoop = Some(Scoop {
+            depth: 1.0,
+            seconds: 0.100,
+        });
+        let frames = render_frames(&track(vec![note]), &map());
+        // The first frame starts the full semitone under, and by the rise's end the note
+        // stands at its own pitch.
+        assert!((frames.f0_hz[0] - pitch_to_hz(68.0)).abs() < 1e-2);
+        assert!((frames.f0_hz[50] - pitch_to_hz(69.0)).abs() < 1e-2);
+        assert!(
+            frames.f0_hz[5] > frames.f0_hz[0] && frames.f0_hz[5] < frames.f0_hz[50],
+            "the rise is under way at 50 ms"
         );
     }
 

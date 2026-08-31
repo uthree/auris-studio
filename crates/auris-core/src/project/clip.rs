@@ -19,6 +19,7 @@ use crate::buffer::AudioBuffer;
 use crate::time::{TempoMap, Ticks};
 
 use super::curve::{ClipCurve, CurvePoint, curve_at, curve_events};
+use super::ornament::{Fall, Scoop, Vibrato};
 use super::recipe::ClipRecipe;
 use super::track::TrackKind;
 use super::{ClipId, Project, SourceId, TrackId};
@@ -62,6 +63,19 @@ pub struct Note {
     /// phoneme that no longer exists would land on whichever one took its place.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub phoneme_seconds: Vec<f64>,
+    /// A rise into the note from below its pitch, when a singer sings it — しゃくり.
+    ///
+    /// The three ornaments ride the note the way the lyric does, and unlike
+    /// [`Self::phoneme_seconds`] they survive the lyric being rewritten: they belong to the
+    /// pitch, not to any phoneme. On other track kinds they are ignored and never written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scoop: Option<Scoop>,
+    /// A drop away at the note's end — フォール.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fall: Option<Fall>,
+    /// A periodic sway around the note's pitch once it has settled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vibrato: Option<Vibrato>,
 }
 
 impl Note {
@@ -75,6 +89,9 @@ impl Note {
             lyric: String::new(),
             phonemes: Vec::new(),
             phoneme_seconds: Vec::new(),
+            scoop: None,
+            fall: None,
+            vibrato: None,
         }
     }
 
