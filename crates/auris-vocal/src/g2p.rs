@@ -16,7 +16,8 @@ use std::path::{Path, PathBuf};
 
 use jpreprocess::{DefaultTokenizer, JPreprocess, SystemDictionaryConfig};
 
-use crate::kana::kana_phonemes;
+use crate::accent::{AccentPhrase, SungMora};
+use crate::kana::{kana_phonemes, split_kana_lyric};
 use crate::openjtalk::openjtalk_phoneme;
 
 /// What went wrong turning text into phonemes.
@@ -110,6 +111,55 @@ impl JapaneseDictionary {
         }
         Ok(phonemes)
     }
+
+    /// The accent phrases of a Japanese text — moras with phonemes, and each phrase's nucleus.
+    ///
+    /// The same dictionary run as [`Self::phonemes`], read one level higher: nodes are
+    /// grouped into accent phrases the way OpenJTalk's own label stage groups them (a node
+    /// whose chain flag is set continues the phrase before it), and a phrase's nucleus is its
+    /// first node's, which is where the chaining rules leave the recomputed accent.
+    /// Punctuation contributes no moras — splitting a lyric at 、 and 。 is the caller's
+    /// business, who is cutting *musical* phrases, not accentual ones.
+    pub fn accent_phrases(&self, text: &str) -> Result<Vec<AccentPhrase>, VocalError> {
+        let refused = |detail: String| VocalError::Text {
+            text: text.to_string(),
+            detail,
+        };
+        let mut njd = self
+            .inner
+            .text_to_njd(text)
+            .map_err(|error| refused(error.to_string()))?;
+        njd.preprocess();
+
+        let mut phrases: Vec<AccentPhrase> = Vec::new();
+        for node in &njd.nodes {
+            let pron = node.get_pron();
+            // Katakana per mora; a devoiced mora prints a trailing ’ the kana table has no
+            // interest in, and punctuation moras are not sung at all.
+            let kana: String = pron
+                .moras()
+                .iter()
+                .map(|mora| mora.to_string().replace('’', ""))
+                .filter(|text| !matches!(text.as_str(), "、" | "？"))
+                .collect();
+            if kana.is_empty() {
+                continue;
+            }
+            let moras: Vec<SungMora> = split_kana_lyric(&kana)
+                .ok_or_else(|| refused(format!("unreadable moras `{kana}`")))?
+                .into_iter()
+                .map(|(text, phonemes)| SungMora { text, phonemes })
+                .collect();
+            match (node.get_chain_flag(), phrases.last_mut()) {
+                (Some(true), Some(last)) => last.moras.extend(moras),
+                _ => phrases.push(AccentPhrase {
+                    moras,
+                    accent: Some(pron.accent()),
+                }),
+            }
+        }
+        Ok(phrases)
+    }
 }
 
 /// The current phoneme of one full-context label: the stretch between `-` and `+`.
@@ -156,6 +206,33 @@ mod tests {
         assert_eq!(label_phoneme("xx^sil-k+o=N/A:-3+1+5"), Some("k"));
         assert_eq!(label_phoneme("k^o-N+n=i/A:0+2+4"), Some("N"));
         assert_eq!(label_phoneme("no separators"), None);
+    }
+
+    /// Runs only where `AURIS_JAPANESE_DICTIONARY` points at a compiled dictionary folder —
+    /// the same silent-skip contract the singer's model tests keep, and for the same reason:
+    /// CI has no dictionary, and a test that fails for that would teach people to ignore it.
+    #[test]
+    fn the_dictionary_reads_accent_phrases() {
+        let Some(folder) = std::env::var_os("AURIS_JAPANESE_DICTIONARY") else {
+            return;
+        };
+        let dictionary = JapaneseDictionary::load(Path::new(&folder)).expect("a loadable folder");
+        let phrases = dictionary
+            .accent_phrases("端を渡る")
+            .expect("plain text reads");
+        assert!(!phrases.is_empty());
+        for phrase in &phrases {
+            assert!(phrase.accent.is_some(), "the dictionary knows its accents");
+            assert!(!phrase.moras.is_empty());
+            assert!(
+                phrase.moras.iter().all(|mora| !mora.phonemes.is_empty()),
+                "every mora sings something"
+            );
+            assert!(
+                phrase.accent.unwrap_or(0) <= phrase.moras.len(),
+                "a nucleus falls inside its own phrase"
+            );
+        }
     }
 
     #[test]

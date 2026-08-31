@@ -21,6 +21,7 @@
 
 #![warn(missing_docs)]
 
+pub mod accent;
 pub mod frames;
 pub mod g2p;
 pub mod kana;
@@ -28,6 +29,7 @@ pub mod openjtalk;
 pub mod ornament;
 pub mod phoneme;
 
+pub use accent::{AccentPhrase, SungMora, accent_contour, kana_accent_phrase};
 pub use frames::{SingerFrames, phoneme_layout, render_frames};
 pub use g2p::{JapaneseDictionary, VocalError, lyric_phonemes};
 pub use kana::{kana_phonemes, split_kana_lyric, split_kana_moras};

@@ -6,6 +6,7 @@
 pub mod chart;
 pub mod chord;
 pub mod chord_scale;
+pub mod contour;
 pub mod key;
 pub mod numeral;
 pub mod pitch;
