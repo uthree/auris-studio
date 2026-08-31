@@ -54,14 +54,15 @@ strings! {
     PromptLyrics { en: "Write Lyrics Across Selection", ja: "選択ノートに歌詞を流し込む" }
     PromptComposeLyrics { en: "Compose from Lyrics", ja: "歌詞から作曲" }
     HintComposeLyrics {
-        en: "、！？ and spaces between phrases are breaths; every run is a fresh take",
-        ja: "、や！？がフレーズの切れ目。実行のたびに新しいテイクになります"
+        en: "One line per phrase (、！？ break too) · secondary-Return composes, a fresh take each run",
+        ja: "1行が1フレーズ(、や！？も切れ目)。Ctrl/⌘+Enterで作曲、実行のたびに新しいテイク"
     }
     PromptSectionLyrics { en: "Lyrics", ja: "歌詞" }
     HintSectionLyrics {
-        en: "、！？ cut the phrases; empty makes the section instrumental again",
-        ja: "、や！？がフレーズの切れ目。空にすると歌なしに戻ります"
+        en: "One line per phrase · Tab walks the sections · empty makes a section instrumental",
+        ja: "1行が1フレーズ(、や！？も切れ目)。Tabで次のセクションへ。空にすると歌なしに戻ります"
     }
+    LyricsNoWords { en: "(no words — instrumental)", ja: "(歌詞なし — インスト)" }
     MenuEditLyric { en: "Edit Lyric…", ja: "歌詞を編集…" }
     MenuEditPhonemes { en: "Edit Phonemes…", ja: "音素を編集…" }
     MenuResetPhonemeTiming { en: "Reset Phoneme Timing", ja: "音素タイミングをリセット" }

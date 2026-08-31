@@ -26,24 +26,6 @@ use super::dials::*;
 const LABEL_WIDTH: gpui::Pixels = px(116.0);
 
 impl AurisApp {
-    /// Opens the words of one section of the song sheet, current text and all.
-    pub(crate) fn open_section_lyrics_prompt(&mut self, index: usize) {
-        let Some((name, lyrics)) = self.song_sheet.as_ref().and_then(|dials| {
-            dials
-                .sections
-                .get(index)
-                .map(|section| (section.name.clone(), section.lyrics.clone()))
-        }) else {
-            return;
-        };
-        let title = format!("{name} — {}", self.t(Key::PromptSectionLyrics));
-        self.open_prompt(crate::ui::prompt::Prompt::new(
-            title,
-            crate::ui::prompt::PromptTarget::SongSectionLyrics(index),
-            lyrics,
-        ));
-    }
-
     /// Opens the song sheet: on the song it was last set to, on the one the document was written
     /// from, or on the default one.
     ///
@@ -183,6 +165,9 @@ impl AurisApp {
                                     &theme,
                                     cx.listener(|this, _, _, cx| {
                                         this.song_sheet = None;
+                                        // The lyrics sheet edits the song sheet's sections;
+                                        // it cannot outlive them.
+                                        this.lyrics_sheet = None;
                                         cx.notify();
                                     }),
                                 ))
@@ -224,6 +209,7 @@ impl AurisApp {
                                     cx.listener(|this, _, _, cx| {
                                         this.write_song_from_sheet();
                                         this.song_sheet = None;
+                                        this.lyrics_sheet = None;
                                         cx.notify();
                                     }),
                                 )),
@@ -480,7 +466,8 @@ impl AurisApp {
                 Self::opens_menu(cx, move |this, at| this.song_section_tempo_menu(at, index)),
             )));
             // The words, down with the dials for the tempo's reason. Lit while the section
-            // carries any, so a sheet with a singing chorus says so at a glance.
+            // carries any, so a sheet with a singing chorus says so at a glance. It opens the
+            // lyrics sheet — every section's words on one page — on this one.
             dial_row = dial_row.child(div().w(px(52.0)).child(button(
                 ("song-section-lyrics", place),
                 self.t(Key::PromptSectionLyrics),
@@ -489,7 +476,7 @@ impl AurisApp {
                 theme.accent,
                 &theme,
                 cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                    this.open_section_lyrics_prompt(index);
+                    this.open_lyrics_sheet(index);
                     cx.notify();
                 }),
             )));

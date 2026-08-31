@@ -331,18 +331,22 @@ document already has its own), the standard band comes along behind, and every n
 carrying its mora and phonemes, ready for **Sing** once the track has a voice.
 
 In the window it is **File → Compose from Lyrics…** (also in the command palette): type or
-paste the words — 、and ！？ cut the phrases — press Return, and the piano roll opens on
-what was written. Every run draws a fresh seed, so the command pressed twice is two takes,
-and the status bar names the seed so a take can be asked for again at any of the model
-doors.
+paste the words into a multi-line field — Return breaks a phrase, and 、and ！？ cut them
+too — then press Ctrl+Return (⌘Return on a Mac) and the piano roll opens on what was
+written. Every run draws a fresh seed, so the command pressed twice is two takes, and the
+status bar names the seed so a take can be asked for again at any of the model doors.
 
 It is also part of **composing a whole song**: every section of the song sheet has a
 **歌詞** button beside its dials — lit while the section carries words — and an `.asong`
-specification says the same thing as `lyrics = "..."` on a `[section]`. Writing the piece
-then adds a Vocal track beside the band, one clip per playing of each lyrical section, the
-melody searched over that section's own harmony; a chorus sings the same words on every
-playing, which is what makes it the same chorus. Leave the field empty and the section is
-instrumental, exactly as before.
+specification says the same thing as `lyrics = "..."` on a `[section]`. The button opens
+the **lyrics sheet**, where every section's words stand on one page in the order the form
+plays them and the section that was clicked is a real multi-line editor: Return breaks a
+phrase, Tab walks to the next section, a click lands the caret on the character under it,
+and every keystroke is already on the song sheet — closing the page commits nothing because
+nothing is left uncommitted. Writing the piece then adds a Vocal track beside the band, one
+clip per playing of each lyrical section, the melody searched over that section's own
+harmony; a chorus sings the same words on every playing, which is what makes it the same
+chorus. Leave a section's words empty and it is instrumental, exactly as before.
 
 A composed vocal also arrives **ornamented, by rule**: the first note of each phrase scoops
 in, any note held past half a second carries a vibrato that waits out the front of the note

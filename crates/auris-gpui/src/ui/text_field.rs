@@ -1,4 +1,9 @@
-//! A one-line text field, and the platform input plumbing that makes it accept an IME.
+//! An editable text field, and the platform input plumbing that makes it accept an IME.
+//!
+//! The field holds one line almost everywhere; lyrics are the exception, and what makes the
+//! same struct serve both is that a line is just text without `'\n'` in it. The caret's moves
+//! are line-aware — Home, End, Up and Down work within and between lines — which costs a
+//! one-line field nothing, because its only line is the whole content.
 //!
 //! Renaming is the one place in the application where the user types prose rather than pressing
 //! a shortcut, so the field goes through the system input handler instead of reading key events.
@@ -29,7 +34,11 @@ pub enum KeyEffect {
     Changed,
 }
 
-/// A single line of editable text with a selection and optional IME pre-edit.
+/// Editable text with a selection and optional IME pre-edit.
+///
+/// One line almost everywhere; a field asked to hold lyrics holds newlines too, and the caret
+/// knows how to move among them. Whether Return commits or inserts a line is the caller's
+/// question, not this struct's.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TextField {
     content: String,
@@ -162,14 +171,102 @@ impl TextField {
         self.move_caret(head, extend);
     }
 
-    /// Moves the caret to the start of the line.
+    /// Moves the caret to the start of its line.
+    ///
+    /// For content with no newline that is the start of everything, which is what this did
+    /// before the field learnt to hold more than one line.
     pub fn move_home(&mut self, extend: bool) {
-        self.move_caret(0, extend);
+        let base = if extend {
+            self.head()
+        } else {
+            self.selection.start
+        };
+        self.move_caret(self.line_start(base), extend);
     }
 
-    /// Moves the caret to the end of the line.
+    /// Moves the caret to the end of its line.
     pub fn move_end(&mut self, extend: bool) {
-        self.move_caret(self.content.len(), extend);
+        let base = if extend {
+            self.head()
+        } else {
+            self.selection.end
+        };
+        self.move_caret(self.line_end(base), extend);
+    }
+
+    /// Puts the caret after the last character, selecting nothing.
+    ///
+    /// What an editor opening on existing text wants: [`Self::new`] selects everything so a
+    /// rename's first keystroke replaces the old name, and that is exactly wrong for a verse
+    /// being extended — one key and the verse is gone.
+    pub fn caret_to_end(&mut self) {
+        self.move_caret(self.content.len(), false);
+    }
+
+    /// Moves the caret up one line, keeping its column where the line above is long enough.
+    pub fn move_up(&mut self, extend: bool) {
+        let base = if extend {
+            self.head()
+        } else {
+            self.selection.start
+        };
+        let start = self.line_start(base);
+        if start == 0 {
+            // Already on the first line; the only place above it is its start.
+            self.move_caret(0, extend);
+            return;
+        }
+        let column = self.content[start..base].chars().count();
+        let above = self.line_start(start - 1);
+        self.move_caret(self.at_column(above, column), extend);
+    }
+
+    /// Moves the caret down one line, keeping its column where the line below is long enough.
+    pub fn move_down(&mut self, extend: bool) {
+        let base = if extend {
+            self.head()
+        } else {
+            self.selection.end
+        };
+        let end = self.line_end(base);
+        if end == self.content.len() {
+            // Already on the last line; the only place below it is its end.
+            self.move_caret(end, extend);
+            return;
+        }
+        let column = self.content[self.line_start(base)..base].chars().count();
+        self.move_caret(self.at_column(end + 1, column), extend);
+    }
+
+    /// Where the line holding `offset` begins: just after the previous newline.
+    fn line_start(&self, offset: usize) -> usize {
+        self.content[..self.floor_boundary(offset)]
+            .rfind('\n')
+            .map_or(0, |at| at + 1)
+    }
+
+    /// Where the line holding `offset` ends: just before the next newline.
+    fn line_end(&self, offset: usize) -> usize {
+        let offset = self.floor_boundary(offset);
+        self.content[offset..]
+            .find('\n')
+            .map_or(self.content.len(), |at| offset + at)
+    }
+
+    /// The offset `column` characters into the line starting at `start`, or the line's end
+    /// where the line is shorter — a caret carried down from a long line lands there.
+    fn at_column(&self, start: usize, column: usize) -> usize {
+        let end = self.line_end(start);
+        self.content[start..end]
+            .char_indices()
+            .nth(column)
+            .map_or(end, |(at, _)| start + at)
+    }
+
+    /// Puts the caret at `offset` — a click landing it — extending the selection on a
+    /// shift-click.
+    pub fn place_caret(&mut self, offset: usize, extend: bool) {
+        self.move_caret(offset, extend);
     }
 
     /// Selects everything.
@@ -698,6 +795,63 @@ mod tests {
             KeyEffect::Changed
         );
         assert_eq!(field.content(), "ドラ");
+    }
+
+    #[test]
+    fn home_and_end_stay_on_the_caret_s_line() {
+        let mut field = TextField::new("ひらり\nはらり");
+        field.caret_to_end();
+        assert_eq!(field.selection(), 19..19);
+
+        field.move_home(false);
+        assert_eq!(
+            field.selection(),
+            10..10,
+            "home of the second line, not of everything"
+        );
+        field.move_end(false);
+        assert_eq!(field.selection(), 19..19);
+
+        // And on a field with no newline, the line is the whole content — what Home and End
+        // always did there.
+        let mut field = TextField::new("Lead");
+        field.caret_to_end();
+        field.move_home(false);
+        assert_eq!(field.selection(), 0..0);
+    }
+
+    #[test]
+    fn up_and_down_walk_the_lines_keeping_the_column() {
+        // Multi-byte on purpose: a column is characters, and these are three bytes each.
+        let mut field = TextField::new("さくら\nちる\nまいちる");
+        field.caret_to_end();
+        // End of the last line is column 4; the line above has only 2.
+        field.move_up(false);
+        assert_eq!(field.selection(), 16..16, "clamped to ちる's end");
+        field.move_up(false);
+        assert_eq!(field.selection(), 6..6, "column 2 of さくら");
+        field.move_up(false);
+        assert_eq!(field.selection(), 0..0, "above the first line is its start");
+
+        field.move_right(false);
+        field.move_down(false);
+        assert_eq!(field.selection(), 13..13, "column 1 of ちる");
+        field.move_down(false);
+        assert_eq!(field.selection(), 20..20, "column 1 of まいちる");
+        field.move_down(false);
+        field.move_down(false);
+        assert_eq!(field.selection(), 29..29, "below the last line is its end");
+    }
+
+    #[test]
+    fn shift_up_extends_the_selection_across_the_newline() {
+        let mut field = TextField::new("ab\ncd");
+        field.caret_to_end();
+        field.move_up(true);
+        assert_eq!(field.selection(), 2..5, "from ab's end to cd's end");
+        assert!(field.is_reversed());
+        field.insert("X");
+        assert_eq!(field.content(), "abX");
     }
 
     #[test]

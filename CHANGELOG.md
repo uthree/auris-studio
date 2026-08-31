@@ -30,17 +30,23 @@ format rather than a convention: `## <version> — <date>`.
   richer rhythm scheme or a trained melody engine can stand beside either without touching
   the rest.
 * **In the window: File → Compose from Lyrics…** — also findable in the command palette,
-  with an empty keystroke slot for whoever wants one. Type the words, press Return, and the
-  piano roll opens on the song; every run draws a fresh seed and the status bar names it,
+  with an empty keystroke slot for whoever wants one. Type the words — Return breaks a
+  phrase, secondary-Return composes — and the piano roll opens on the song; every run draws
+  a fresh seed and the status bar names it,
   so a take can be asked for again at any of the model doors. The refusals speak through
   the same field: empty words, or kanji with no dictionary anywhere, say exactly that.
-* **Lyrics join the song sheet, one field per section.** Every section of the sheet grows a
+* **Lyrics join the song sheet, on a page of their own.** Every section of the sheet grows a
   歌詞 button — lit while the section carries words — and the `.asong` format grows the
   matching `lyrics = "..."` field, round-tripped like every other, shown in the annotated
-  reference example. Writing the piece adds a Vocal track beside the band, one clip per
-  playing of each lyrical section, the melody searched over that section's own harmony;
-  every playing of a chorus sings the same chorus. Lyrics nobody can read cost their
-  sections and are named in the report, never the piece.
+  reference example. The button opens the lyrics sheet: every section's words standing on one
+  page in the order the form plays them, the clicked one a real multi-line editor — Return
+  breaks a phrase, Tab walks to the next section, a click lands the caret, the IME composes
+  in place — and every keystroke is already on the song sheet's dials. Writing the piece adds
+  a Vocal track beside the band, one clip per playing of each lyrical section, the melody
+  searched over that section's own harmony; every playing of a chorus sings the same chorus.
+  Lyrics nobody can read cost their sections and are named in the report, never the piece.
+  File → Compose from Lyrics… grew the same multi-line field: Return breaks a line there
+  too, and secondary-Return composes.
 * **A composed vocal arrives ornamented, by rule.** The first note of each phrase scoops
   in, notes held past half a second sway (the vibrato waits out the front of the note and
   fades in), and the line's last note falls away — the phrase-final syllable is now held a

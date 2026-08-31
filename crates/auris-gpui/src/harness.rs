@@ -404,8 +404,9 @@ mod tests {
         assert_eq!(after, before + 1, "Track → Add Instrument Track added one");
     }
 
-    /// The song sheet takes words per section — typed into the same field every other sheet
-    /// text uses — and a piece written from it arrives singing them.
+    /// The song sheet takes words per section — on the lyrics sheet, where every section's
+    /// words stand on one page — and a piece written from it arrives singing them. Return
+    /// breaks a line rather than committing, because on this sheet a line is a phrase.
     #[gpui::test]
     fn the_song_sheet_takes_words_per_section_and_the_piece_sings_them(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
@@ -420,18 +421,29 @@ mod tests {
                 dials.sections[0].bars = 2;
                 dials.form = vec![dials.sections[0].name.clone()];
             }
-            this.open_section_lyrics_prompt(0);
+            this.open_lyrics_sheet(0);
+            assert!(
+                this.lyrics_sheet.is_some(),
+                "the lyrics sheet opened over it"
+            );
         });
         paint(&app, cx);
-        cx.simulate_input("さくら さいた");
+        cx.simulate_input("さくら");
         cx.simulate_keystrokes("enter");
+        cx.simulate_input("さいた");
+        paint(&app, cx);
+        cx.simulate_keystrokes("escape");
         paint(&app, cx);
 
         app.update(cx, |this, _| {
+            assert!(
+                this.lyrics_sheet.is_none(),
+                "escape closed the lyrics sheet"
+            );
             let dials = this.song_sheet.as_ref().unwrap();
             assert_eq!(
-                dials.sections[0].lyrics, "さくら さいた",
-                "the sheet keeps the words"
+                dials.sections[0].lyrics, "さくら\nさいた",
+                "every keystroke landed on the dials, the line break included"
             );
 
             let spec = crate::ui::compose_sheet::song_spec(dials);
@@ -446,6 +458,45 @@ mod tests {
                     .iter()
                     .any(|track| track.kind.is_singer()),
                 "on a vocal track of their own"
+            );
+        });
+    }
+
+    /// Tab walks the lyrics sheet from section to section, and each keeps the words it was
+    /// given — a verse is usually followed by writing the chorus, without touching the mouse.
+    #[gpui::test]
+    fn tab_walks_the_lyrics_sheet_from_verse_to_chorus(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        cx.dispatch_action(actions::ComposeSong);
+        paint(&app, cx);
+
+        app.update(cx, |this, _| {
+            let dials = this.song_sheet.as_mut().expect("the song sheet is open");
+            dials.sections.truncate(2);
+            // The chorus twice, so the walk also proves a repeated section is one stop.
+            dials.form = vec![
+                dials.sections[0].name.clone(),
+                dials.sections[1].name.clone(),
+                dials.sections[1].name.clone(),
+            ];
+            this.open_lyrics_sheet(0);
+        });
+        paint(&app, cx);
+        cx.simulate_input("ひらり");
+        cx.simulate_keystrokes("tab");
+        paint(&app, cx);
+        cx.simulate_input("はらり");
+        cx.simulate_keystrokes("tab");
+        paint(&app, cx);
+
+        app.update(cx, |this, _| {
+            let dials = this.song_sheet.as_ref().unwrap();
+            assert_eq!(dials.sections[0].lyrics, "ひらり");
+            assert_eq!(dials.sections[1].lyrics, "はらり");
+            assert_eq!(
+                this.lyrics_sheet.as_ref().map(|sheet| sheet.section),
+                Some(0),
+                "two stops on the walk, however often the chorus plays: it wrapped"
             );
         });
     }
@@ -493,8 +544,9 @@ mod tests {
     }
 
     /// The whole words-first flow, made as a hand makes it: the palette's action opens the
-    /// lyric field, the words are typed, Return composes — a singer track carrying every
-    /// mora, chords in the harmony lane, the band behind, and one Undo takes it all back.
+    /// lyric field, the words are typed — Return breaking a phrase, since the field holds
+    /// lines — and secondary-Return composes: a singer track carrying every mora, chords in
+    /// the harmony lane, the band behind, and one Undo takes it all back.
     #[gpui::test]
     fn composing_from_lyrics_is_one_action_one_field_one_song(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
@@ -507,8 +559,21 @@ mod tests {
             "the action opened the lyric field"
         );
 
-        cx.simulate_input("さくら さいた、はるが きた");
+        cx.simulate_input("さくら さいた");
         cx.simulate_keystrokes("enter");
+        cx.simulate_input("はるが きた");
+        app.read_with(cx, |this, _| {
+            let field = this
+                .prompt
+                .as_ref()
+                .and_then(crate::ui::prompt::Prompt::field);
+            assert_eq!(
+                field.map(|field| field.content()),
+                Some("さくら さいた\nはるが きた"),
+                "Return broke the line instead of committing"
+            );
+        });
+        cx.simulate_keystrokes("secondary-enter");
         paint(&app, cx);
 
         app.read_with(cx, |this, _| {

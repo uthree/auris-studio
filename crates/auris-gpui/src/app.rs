@@ -1187,6 +1187,11 @@ pub struct AurisApp {
     /// State of the sheet rather than of the document: nothing here has been written until Write
     /// is pressed, which is what lets a whole song be set up and then thrown away.
     pub(crate) song_sheet: Option<crate::ui::compose_sheet::SongDials>,
+    /// The lyrics sheet over it, when a section's words are being written.
+    ///
+    /// Also sheet state: it edits `song_sheet`'s sections in place, keystroke by keystroke,
+    /// and closing it commits nothing because there is nothing left uncommitted.
+    pub(crate) lyrics_sheet: Option<crate::ui::lyrics_sheet::LyricsSheet>,
     /// The progressions this installation has been taught, beside the ones it shipped with.
     ///
     /// Loaded once and held, because every chart picker lists it and reading a file per frame to
@@ -1465,6 +1470,7 @@ impl AurisApp {
             sung_geometry: std::collections::HashMap::new(),
             sung_geometry_revision: 0,
             song_sheet: None,
+            lyrics_sheet: None,
             progressions: auris_session::progressions::ProgressionBook::load(),
             auditioning: None,
             focus: cx.focus_handle(),
@@ -1568,6 +1574,7 @@ impl AurisApp {
     pub(crate) fn taking_text_input(&self) -> bool {
         self.prompt.is_some()
             || self.palette.is_some()
+            || self.lyrics_sheet.is_some()
             || self.library_search_focused
             || self.agent_chat.typing()
     }

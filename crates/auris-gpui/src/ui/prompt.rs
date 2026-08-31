@@ -133,10 +133,6 @@ pub enum PromptTarget {
     SongMotif,
     /// The chords the section at this position in the song sheet plays, written out.
     SongSectionChart(usize),
-    /// The words one section of the song sheet sings, by its position in the sheet's list.
-    ///
-    /// Sheet state, not document state: nothing is sung until Write, like every other dial.
-    SongSectionLyrics(usize),
     /// The name to keep the chart of the section at this position under.
     ///
     /// The one prompt here that reaches past the sheet: it writes to the progression book, which
@@ -209,7 +205,6 @@ impl PromptTarget {
             | PromptTarget::Phonemes { .. }
             | PromptTarget::Lyrics { .. }
             | PromptTarget::ComposeLyrics
-            | PromptTarget::SongSectionLyrics(_)
             // No shared notation: every parameter is written in its own units, and the range
             // and the unit are in the prompt's title instead, where they can name this one.
             | PromptTarget::Param(_) => return None,
@@ -228,10 +223,16 @@ impl PromptTarget {
         if matches!(self, PromptTarget::ComposeLyrics) {
             return Some(Key::HintComposeLyrics);
         }
-        if matches!(self, PromptTarget::SongSectionLyrics(_)) {
-            return Some(Key::HintSectionLyrics);
-        }
         self.notation().map(Notation::hint)
+    }
+
+    /// Whether the field holds lines rather than a line.
+    ///
+    /// On a multi-line field Return breaks a line instead of committing — the words being
+    /// asked for are phrases, and a phrase break is the likeliest thing to want next — and
+    /// secondary-Return is what commits.
+    pub fn multiline(self) -> bool {
+        matches!(self, PromptTarget::ComposeLyrics)
     }
 }
 
@@ -667,8 +668,6 @@ impl AurisApp {
                 // Not a clear, but the session's own refusal names the problem better than
                 // a generic "cannot be empty" would.
                 | PromptTarget::ComposeLyrics
-                // Empty words make the section instrumental again.
-                | PromptTarget::SongSectionLyrics(_)
                 // No motif is an answer here — it hands the tune back to the seed.
                 | PromptTarget::SongMotif
         );
@@ -897,19 +896,6 @@ impl AurisApp {
                     .map(|section| section.name.clone());
                 if let (Some(dials), Some(name)) = (self.song_sheet.as_mut(), name) {
                     crate::ui::compose_sheet::give_section_chart(dials, index, &name, chart);
-                }
-                Ok(())
-            }
-            // A section's words. Stored on the sheet like every other dial — the singing
-            // happens at Write, in the session's compose — and empty makes the section
-            // instrumental again.
-            PromptTarget::SongSectionLyrics(index) => {
-                if let Some(section) = self
-                    .song_sheet
-                    .as_mut()
-                    .and_then(|dials| dials.sections.get_mut(index))
-                {
-                    section.lyrics = text.clone();
                 }
                 Ok(())
             }
@@ -1189,6 +1175,8 @@ impl AurisApp {
         let Some(prompt) = self.prompt.as_mut() else {
             return false;
         };
+        // Whether Return breaks a line or commits, decided before the field is borrowed.
+        let multiline = prompt.target().is_some_and(PromptTarget::multiline);
         // A question has no field to type into, so only the two keys that answer it apply.
         let Some(field) = prompt.field_mut() else {
             match event.keystroke.key.as_str() {
@@ -1208,11 +1196,16 @@ impl AurisApp {
             "escape" if !composing => {
                 self.cancel_prompt();
             }
+            // On a multi-line field a bare Return is a phrase break; secondary-Return is the
+            // commit, and the hint under the field says so.
+            "enter" if !composing && multiline && !command => field.insert("\n"),
             "enter" if !composing => {
                 self.commit_prompt(window, cx);
             }
-            // Up and Down are this sheet's own: it has one line and no rows, so the only
-            // sensible reading of them is the ends of that line.
+            // Up and Down walk the lines where there are lines to walk. On the one-line
+            // fields the only sensible reading of them is the ends of that line.
+            "up" if multiline => field.move_up(shift),
+            "down" if multiline => field.move_down(shift),
             "up" => field.move_home(shift),
             "down" => field.move_end(shift),
             // Copy, cut and paste. A rename box that cannot take a name off the clipboard means
@@ -1234,9 +1227,14 @@ impl AurisApp {
             "v" if command => {
                 let pasted = cx.read_from_clipboard().and_then(|item| item.text());
                 if let Some(text) = pasted {
-                    // One line. A clipboard full of newlines would otherwise be typed into a
-                    // field that draws exactly one row of text.
-                    field.insert(&text.replace(['\n', '\r'], " "));
+                    // One line, unless the field draws several. A clipboard full of newlines
+                    // would otherwise be typed into a field with exactly one row of text —
+                    // and on the lyric field those newlines are the phrase breaks the person
+                    // pasted them for.
+                    match multiline {
+                        true => field.insert(&text.replace("\r\n", "\n").replace('\r', "\n")),
+                        false => field.insert(&text.replace(['\n', '\r'], " ")),
+                    }
                 }
             }
             // Everything else that is not a character: backspace, the caret, Select All. Shared
@@ -1257,20 +1255,28 @@ impl AurisApp {
         let focus = self.focus.clone();
         let view = cx.entity();
 
+        let multiline = prompt.target().is_some_and(PromptTarget::multiline);
         let (body, buttons) = match &prompt.body {
             PromptBody::Text { target, field } => (
                 div()
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .child(self.render_prompt_field(
-                        field.content().to_string().into(),
-                        field.selection(),
-                        field.marked(),
-                        focus,
-                        view,
-                        &theme,
-                    ))
+                    .child(match multiline {
+                        true => self
+                            .render_prompt_area(field, focus, view, &theme, cx)
+                            .into_any_element(),
+                        false => self
+                            .render_prompt_field(
+                                field.content().to_string().into(),
+                                field.selection(),
+                                field.marked(),
+                                focus,
+                                view,
+                                &theme,
+                            )
+                            .into_any_element(),
+                    })
                     .children(
                         target
                             .hint()
@@ -1278,7 +1284,17 @@ impl AurisApp {
                     )
                     .children(self.render_prompt_completions(prompt, cx))
                     .into_any_element(),
-                self.render_prompt_buttons(None, self.t(Key::Rename).into(), cx),
+                self.render_prompt_buttons(
+                    None,
+                    // The default button answers what the sheet asked. Most of these fields
+                    // rename something; the lyric field composes, and a button that said
+                    // Rename over it would be answering a different question.
+                    match target {
+                        PromptTarget::ComposeLyrics => self.t(Key::PromptComposeLyrics).into(),
+                        _ => self.t(Key::Rename).into(),
+                    },
+                    cx,
+                ),
             ),
             PromptBody::Ask(question) => {
                 let (message, confirm, deny) = self.question_text(question);
@@ -1333,7 +1349,9 @@ impl AurisApp {
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .w(px(360.0))
+                        // Wider for a field that holds verses: a phrase per line wants the
+                        // room a name never needed.
+                        .w(px(if multiline { 480.0 } else { 360.0 }))
                         .p_3()
                         .rounded(Metrics::RADIUS_LG)
                         .bg(theme.surface_raised)
@@ -1372,6 +1390,56 @@ impl AurisApp {
                 text,
                 selection,
                 marked,
+                focus,
+                view,
+                theme.clone(),
+            ))
+    }
+
+    /// The taller box for the fields that take verses rather than names.
+    ///
+    /// Grows with its lines between two clamps, and a click lands the caret on the character
+    /// under it — the one thing a field whose Return commits never needed.
+    fn render_prompt_area(
+        &self,
+        field: &TextField,
+        focus: gpui::FocusHandle,
+        view: gpui::Entity<AurisApp>,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        div()
+            .h(crate::ui::text_area::area_height(field.content(), 4, 12))
+            .w_full()
+            .rounded(Metrics::RADIUS_SM)
+            .bg(theme.surface_sunken)
+            .border_1()
+            .border_color(theme.accent)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    let Some(text) = this
+                        .prompt
+                        .as_ref()
+                        .and_then(Prompt::field)
+                        .map(|field| field.content().to_string())
+                    else {
+                        return;
+                    };
+                    if let Some(offset) =
+                        crate::ui::text_area::area_offset_at(window, &text, event.position)
+                        && let Some(field) = this.prompt.as_mut().and_then(Prompt::field_mut)
+                    {
+                        field.place_caret(offset, event.modifiers.shift);
+                    }
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            )
+            .child(crate::ui::text_area::editable_area(
+                field.content().to_string().into(),
+                field.selection(),
+                field.marked(),
                 focus,
                 view,
                 theme.clone(),
@@ -1553,6 +1621,11 @@ impl AurisApp {
         if let Some(field) = self.prompt.as_mut().and_then(Prompt::field_mut) {
             return Some(field);
         }
+        // The lyrics sheet sits over the song sheet, and nothing else opens over *it* but the
+        // palette and a prompt — both already answered above.
+        if let Some(sheet) = self.lyrics_sheet.as_mut() {
+            return Some(&mut sheet.field);
+        }
         if self.library_search_focused {
             return Some(&mut self.library_search);
         }
@@ -1574,6 +1647,9 @@ impl crate::ui::text_field::HasTextField for AurisApp {
         if let Some(field) = self.prompt.as_ref().and_then(Prompt::field) {
             return Some(field);
         }
+        if let Some(sheet) = self.lyrics_sheet.as_ref() {
+            return Some(&sheet.field);
+        }
         if self.library_search_focused {
             return Some(&self.library_search);
         }
@@ -1589,6 +1665,9 @@ impl crate::ui::text_field::HasTextField for AurisApp {
         if let Some(palette) = self.palette.as_mut() {
             palette.selected = 0;
         }
+        // The lyrics sheet writes through to the song sheet's dials on every change; typing
+        // arrives here, so this is where the copy has to happen.
+        self.sync_lyrics_sheet();
     }
 }
 
