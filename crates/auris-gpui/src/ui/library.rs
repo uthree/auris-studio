@@ -54,6 +54,8 @@ pub(crate) enum Branch {
     InstrumentCategory(PluginCategory),
     /// The SoundFonts section.
     SoundFonts,
+    /// The singer voices section.
+    Voices,
     /// One imported font.
     Font(SoundFontId),
     /// One bank of one font.
@@ -294,6 +296,8 @@ enum Found {
     /// is loaded — and a result list that loads a shared library per row is a result list that
     /// runs somebody else's code to answer a keystroke.
     ClapFile(usize, String, std::path::PathBuf),
+    /// A singer voice on the shelf: its name, and the file it is.
+    Voice(String, std::path::PathBuf),
 }
 
 /// The gap a row with no mark leaves where one would have been, so its name still lines up with
@@ -483,6 +487,8 @@ impl AurisApp {
         rows.push(divider(&theme).into_any_element());
         rows.extend(self.soundfont_rows(cx));
         rows.push(divider(&theme).into_any_element());
+        rows.extend(self.voice_rows(cx));
+        rows.push(divider(&theme).into_any_element());
         rows.extend(self.effect_rows(cx));
         rows.push(divider(&theme).into_any_element());
         rows.extend(self.installed_plugin_rows(cx));
@@ -539,6 +545,9 @@ impl AurisApp {
                 .map(|stem| stem.to_string_lossy().to_string())
                 .unwrap_or_default();
             entries.push((name.clone(), Found::ClapFile(index, name, file)));
+        }
+        for (name, path) in self.voice_list() {
+            entries.push((name.clone(), Found::Voice(name, path)));
         }
 
         let found = best_matches(entries, query, SEARCH_LIMIT);
@@ -612,8 +621,149 @@ impl AurisApp {
                         }),
                     )
                 }
+                Found::Voice(name, path) => self.voice_row(&name, path, cx),
             })
             .collect()
+    }
+
+    /// The singer voices this machine can offer, scanned once and kept.
+    fn voice_list(&mut self) -> Vec<(String, std::path::PathBuf)> {
+        self.voices
+            .get_or_insert_with(|| {
+                let mut roots = auris_session::library::voice_roots();
+                roots.extend(self.settings.voice_paths.iter().cloned());
+                auris_session::library::installed_voices_in(&roots)
+            })
+            .clone()
+    }
+
+    /// The singer voices section — the browser interface a voice shares with the instruments.
+    ///
+    /// A voice is chosen the way a sound is: one row, one click, onto the selected singer
+    /// track. Track → Choose Voice… keeps the file dialog for the one-off file somewhere
+    /// unusual; what this section holds is the shelf — every `.onnx` in a `Voices` folder
+    /// (beside the binaries, in the configuration directory) or in a folder registered below.
+    fn voice_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
+        let voices = self.voice_list();
+        let mut rows = vec![self.section_row(
+            Branch::Voices,
+            Key::BrowserVoices,
+            Icon::Notes,
+            voices.len(),
+            cx,
+        )];
+        if !self.library.is_open(Branch::Voices) {
+            return rows;
+        }
+        if voices.is_empty() {
+            rows.push(self.note_row(1, self.t(Key::BrowserNoVoices)));
+        }
+        for (name, path) in voices {
+            rows.push(self.voice_row(&name, path, cx));
+        }
+        rows.extend(self.voice_path_rows(cx));
+        rows
+    }
+
+    /// One voice on the shelf. Clicking it is choosing it, exactly like a sound.
+    fn voice_row(
+        &self,
+        name: &str,
+        path: std::path::PathBuf,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let theme = self.theme.clone();
+        let accent = theme.group_color(group_hue(1, 3));
+        let shown = path.display().to_string();
+        div()
+            .id(gpui::SharedString::from(format!("lib-voice-{shown}")))
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .pl(indent(2))
+            .px_1p5()
+            .py_0p5()
+            .rounded(Metrics::RADIUS_SM)
+            .cursor_pointer()
+            .hover(|this| this.bg(theme.surface_hover))
+            .child(swatch(accent))
+            .child(crate::ui::icons::icon(Icon::Notes, px(11.0), accent))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text)
+                    .child(name.to_string()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_xs()
+                    .text_color(theme.text_faint)
+                    .truncate()
+                    .child(shown),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                    this.set_track_voice(&path);
+                    this.leave_library_search();
+                    cx.notify();
+                }),
+            )
+            .into_any_element()
+    }
+
+    /// The folders voices are also looked for in, and the row that adds another — the
+    /// plugin-path arrangement, on the voice shelf.
+    fn voice_path_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
+        let theme = self.theme.clone();
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for (index, path) in self.settings.voice_paths.clone().into_iter().enumerate() {
+            let shown = path.display().to_string();
+            rows.push(
+                div()
+                    .id(("voice-path", index))
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .pl(indent(1))
+                    .pr_1()
+                    .h(Metrics::CONTROL_HEIGHT)
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(div().flex_1().min_w_0().truncate().child(shown))
+                    .child(
+                        div()
+                            .id(("forget-voice-path", index))
+                            .cursor_pointer()
+                            .child(icon(Icon::Cross, px(10.0), theme.text_faint))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                                    this.forget_voice_path(index);
+                                    cx.notify();
+                                }),
+                            ),
+                    )
+                    .into_any_element(),
+            );
+        }
+        rows.push(
+            div()
+                .pl(indent(1))
+                .pr_1()
+                .py_1()
+                .child(crate::ui::widgets::icon_label(
+                    "add-voice-path",
+                    Icon::Plus,
+                    self.t(Key::BrowserAddVoiceFolder),
+                    &theme,
+                    cx.listener(|this, _, _, cx| this.add_voice_path(cx)),
+                ))
+                .into_any_element(),
+        );
+        rows
     }
 
     /// The extra places plugins are looked for, and the row that adds another.
@@ -1331,6 +1481,8 @@ fn branch_key(branch: Branch) -> usize {
         Branch::Font(_) | Branch::Bank(..) => 3 + 2 * PluginCategory::ALL.len(),
         Branch::Plugins => 4 + 2 * PluginCategory::ALL.len(),
         Branch::PluginFile(index) => 5 + 2 * PluginCategory::ALL.len() + index,
+        // Far past anything the plugin-file counter reaches; the key only has to be stable.
+        Branch::Voices => 1_000_000,
     }
 }
 

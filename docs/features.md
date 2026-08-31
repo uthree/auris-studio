@@ -236,10 +236,16 @@ a voice is chosen, the track plays through the built-in **Vocal** preview instru
 formant filter singing one open vowel), so a melody with words on it can be heard while it is
 written.
 
-**Track → Choose Voice…** points the track at a trained
+A voice lives on the **library shelf, with the instruments**: the browser's Voices section
+lists every `.onnx` found in a `Voices` folder — beside the binaries, in the configuration
+directory (`AURIS_VOICES` overrides the search), or in any folder registered from the
+section's own *Add Voice Folder…* row, remembered and never copied, the way plugin folders
+are. **One click puts the voice on the selected singer track**, exactly as one click puts a
+sound on an instrument track, and the search box finds voices by name like everything else.
+**Track → Choose Voice…** remains as the file dialog for a one-off file somewhere unusual;
+either way the track is pointed at a trained
 [auris-singer](https://github.com/uthree/auris-singer) voice model — one self-contained
-`.onnx` file, chosen the way a SoundFont is and left where it lies — and from then on the
-track sings for real. The render is a **take**: an ordinary audio file in `Audio/` that
+`.onnx` file, left where it lies — and from then on the track sings for real. The render is a **take**: an ordinary audio file in `Audio/` that
 plays, exports and reopens with everything else, pinned by a seed so the same notes, lyrics,
 voice and seed give the same audio on any machine. **The window keeps the take abreast of
 the score by itself**: shortly after an edit settles, the voice re-renders in the background
@@ -646,7 +652,7 @@ A **release build has no console at all** — `windows_subsystem = "windows"`, s
 `auris-studio.exe` opens the window and nothing else. A debug build keeps its terminal, because
 `cargo run` and `RUST_LOG=debug` are how this is worked on, and the records go to both.
 
-The library panel is a tree: instruments, SoundFonts and effects, each opening into
+The library panel is a tree: instruments, SoundFonts, singer voices and effects, each opening into
 groups rather than a flat list — the plugins by category, a font by the banks it declares. Every
 branch remembers whether it was left open. Clicking an instrument sets it on the selected track,
 clicking an effect appends it to that track's chain.

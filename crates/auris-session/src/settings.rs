@@ -220,6 +220,13 @@ pub struct Settings {
     /// the command that turns *new* kanji into phonemes asks for it, and it names this setting
     /// when it is missing.
     pub japanese_dictionary: Option<PathBuf>,
+    /// Extra folders holding singer voice models, on top of the `Voices` library folders.
+    ///
+    /// Each is a directory walked for `.onnx` files — the [`Self::plugin_paths`]
+    /// arrangement, and a fact about the machine for the same reason: a voice is hundreds of
+    /// megabytes somebody keeps where they keep it, and registering it in the library means
+    /// remembering where it lies, never copying it.
+    pub voice_paths: Vec<PathBuf>,
     /// How the built-in agent dials a language model.
     pub agent: AgentPreferences,
 }
@@ -238,6 +245,7 @@ impl Default for Settings {
             recent: Vec::new(),
             plugin_paths: Vec::new(),
             japanese_dictionary: None,
+            voice_paths: Vec::new(),
             agent: AgentPreferences::default(),
         }
     }

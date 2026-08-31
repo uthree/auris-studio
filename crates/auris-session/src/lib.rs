@@ -57,7 +57,7 @@ pub use error::SessionError;
 pub use history::{Edit, History};
 pub use library::{
     DICTIONARY_DIR_VAR, DICTIONARY_FOLDER, GENERAL_MIDI, JAPANESE_DICTIONARY, LIBRARY_DIR_VAR,
-    LIBRARY_FOLDER, ShippedDictionary, ShippedFont,
+    LIBRARY_FOLDER, ShippedDictionary, ShippedFont, VOICES_DIR_VAR, VOICES_FOLDER,
 };
 pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};

@@ -180,6 +180,67 @@ pub fn installed_dictionary_in(roots: &[PathBuf]) -> Option<PathBuf> {
         .find(|candidate| candidate.join("metadata.json").is_file())
 }
 
+/// Environment variable naming the directory singer voices are kept in.
+///
+/// The [`LIBRARY_DIR_VAR`] arrangement once more: set it and nothing else is searched.
+pub const VOICES_DIR_VAR: &str = "AURIS_VOICES";
+
+/// What the directory holding singer voice models is called, wherever it turns up.
+pub const VOICES_FOLDER: &str = "Voices";
+
+/// Directories singer voices are looked for in, best first.
+///
+/// The same walk the fonts make, under its own name — beside the executable, in a bundle's
+/// resources, up through a checkout, and in the configuration directory, which is where a
+/// person who wants a voice "installed" most naturally drops it.
+pub fn voice_roots() -> Vec<PathBuf> {
+    roots_from(
+        std::env::var_os(VOICES_DIR_VAR).map(PathBuf::from),
+        std::env::current_exe().ok().as_deref(),
+        &config_dir(),
+        VOICES_FOLDER,
+    )
+}
+
+/// Every voice model found under `roots`, as `(name, path)`, sorted by name.
+///
+/// No manifest, unlike the fonts: voices are the user's own exports, so this is enumeration
+/// rather than verification — every `.onnx` in every root, named by its file stem, first root
+/// to name a file winning the way the font search wins. Nothing is opened here; whether a
+/// file really is a voice is found out by the one deliberate click that loads it.
+pub fn installed_voices_in(roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
+    let mut voices: Vec<(String, PathBuf)> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let named = path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("onnx"))
+                .then(|| {
+                    path.file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                })
+                .flatten();
+            let Some(file) = named else { continue };
+            if seen.contains(&file) {
+                continue;
+            }
+            seen.push(file);
+            let name = path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Voice".to_string());
+            voices.push((name, path));
+        }
+    }
+    voices.sort_by(|a, b| a.0.cmp(&b.0));
+    voices
+}
+
 /// Directories the shipped SoundFonts are looked for in, best first.
 pub fn library_roots() -> Vec<PathBuf> {
     roots_from(
@@ -447,6 +508,27 @@ mod tests {
             installed_dictionary_in(&[PathBuf::from("/no/such/place")]),
             None
         );
+    }
+
+    #[test]
+    fn voices_are_enumerated_named_and_deduplicated() {
+        let root = std::env::temp_dir().join(format!("auris-voices-test-{}", std::process::id()));
+        let first = root.join("a");
+        let second = root.join("b");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(first.join("Ritsu.onnx"), b"x").unwrap();
+        std::fs::write(first.join("notes.txt"), b"x").unwrap();
+        std::fs::write(second.join("Ritsu.onnx"), b"y").unwrap();
+        std::fs::write(second.join("Alto.ONNX"), b"y").unwrap();
+
+        let voices = installed_voices_in(&[first.clone(), second]);
+        let names: Vec<&str> = voices.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["Alto", "Ritsu"], "sorted, case-blind, no .txt");
+        let ritsu = voices.iter().find(|(name, _)| name == "Ritsu").unwrap();
+        assert!(ritsu.1.starts_with(&first), "the first root wins the name");
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

@@ -1237,6 +1237,9 @@ pub struct AurisApp {
     /// `None` until the plugins section is first drawn: walking three directory trees is not a
     /// thing to do on every frame, and not a thing to do at all for somebody who never opens it.
     pub(crate) clap_files: Option<Vec<std::path::PathBuf>>,
+    /// The singer voices found on this machine, scanned once and kept — the
+    /// [`Self::clap_files`] arrangement, cleared when a voice folder is added or forgotten.
+    pub(crate) voices: Option<Vec<(String, std::path::PathBuf)>>,
     /// What each opened `.clap` file turned out to hold.
     ///
     /// Filled the first time a file's branch is opened, which is also the first time its binary
@@ -1481,6 +1484,7 @@ impl AurisApp {
             plugin_window: None,
             library: crate::ui::library::LibraryTree::default(),
             clap_files: None,
+            voices: None,
             clap_contents: std::collections::HashMap::new(),
             titled: String::new(),
             choosing_export: false,

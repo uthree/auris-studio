@@ -404,6 +404,48 @@ mod tests {
         assert_eq!(after, before + 1, "Track → Add Instrument Track added one");
     }
 
+    /// A voice clicked on the shelf with no singer track anywhere refuses with the line
+    /// naming the cure, exactly as the file picker does.
+    #[gpui::test]
+    fn a_shelf_voice_needs_a_singer_track(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.set_track_voice(std::path::Path::new("/nowhere/voice.onnx"));
+            assert!(
+                this.status
+                    .contains(auris_i18n::Key::ErrorNoSingerTrack.get(this.language())),
+                "the status names the missing track, said: {}",
+                this.status
+            );
+        });
+    }
+
+    /// One click on the shelf gives the singer its voice — the same interface a sound gets.
+    /// Runs only where `AURIS_SINGER_TEST_MODEL` points at a real exported voice.
+    #[gpui::test]
+    fn a_shelf_voice_lands_on_the_singer_track(cx: &mut TestAppContext) {
+        let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") else {
+            return;
+        };
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            let track = this.session.add_singer_track("Voice");
+            this.selected_track = Some(track);
+            this.set_track_voice(std::path::Path::new(&model));
+            let voice = this
+                .session
+                .singer_voice(track)
+                .expect("a singer track answers")
+                .expect("the click chose a voice");
+            assert!(!voice.name.is_empty(), "the voice landed with its name");
+            assert!(
+                this.status.contains(&voice.name),
+                "and the status says so: {}",
+                this.status
+            );
+        });
+    }
+
     /// The whole words-first flow, made as a hand makes it: the palette's action opens the
     /// lyric field, the words are typed, Return composes — a singer track carrying every
     /// mora, chords in the harmony lane, the band behind, and one Undo takes it all back.

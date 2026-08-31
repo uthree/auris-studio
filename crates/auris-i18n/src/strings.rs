@@ -1228,6 +1228,13 @@ new のオプション
         en: "not installed — run tools/fetch-soundfonts.sh",
         ja: "未インストール — tools/fetch-soundfonts.sh を実行してください"
     }
+    BrowserVoices { en: "Voices", ja: "シンガーボイス" }
+    BrowserNoVoices {
+        en: "Put .onnx voices in a Voices folder, or add a folder below",
+        ja: "Voices フォルダに .onnx を置くか、下からフォルダを追加してください"
+    }
+    BrowserAddVoiceFolder { en: "Add Voice Folder…", ja: "ボイスフォルダを追加…" }
+    DialogVoiceFolder { en: "Choose a folder of voice models", ja: "ボイスモデルのフォルダを選択" }
     CliDictionary { en: "SHIPPED JAPANESE DICTIONARY", ja: "同梱日本語辞書" }
     CliDictionaryMissing {
         en: "not installed — run tools/fetch-dictionary.sh",

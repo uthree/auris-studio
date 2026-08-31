@@ -34,6 +34,14 @@ format rather than a convention: `## <version> — <date>`.
   piano roll opens on the song; every run draws a fresh seed and the status bar names it,
   so a take can be asked for again at any of the model doors. The refusals speak through
   the same field: empty words, or kanji with no dictionary anywhere, say exactly that.
+* **Singer voices join the library, on the instruments' own terms.** The browser grows a
+  Voices section: every `.onnx` in a `Voices` folder — beside the binaries, in the
+  configuration directory, or under `AURIS_VOICES` — plus any folder registered from the
+  section's *Add Voice Folder…* row (remembered, never copied, exactly like plugin
+  folders). One click puts a voice on the selected singer track the way one click puts a
+  sound on an instrument track; the search box finds voices by name beside everything
+  else; Track → Choose Voice… keeps the file dialog for the one-off file somewhere
+  unusual.
 * **The Japanese dictionary now ships with a release.** `naist-jdic` (jpreprocess's build,
   BSD-3-Clause) travels in a `Dictionary` directory beside the SoundFonts — inside the
   bundle on macOS — fetched at packaging time by `tools/fetch-dictionary.sh` against a

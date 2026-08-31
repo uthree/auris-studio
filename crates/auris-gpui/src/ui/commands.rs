@@ -917,29 +917,91 @@ impl AurisApp {
             let Some(handle) = handle else { return };
             let path = handle.path().to_path_buf();
             let _ = this.update(cx, |this, cx| {
-                match this.session.set_singer_voice(track, Some(&path)) {
-                    Ok(()) => {
-                        // Renders of the old voice must not answer for the new one.
-                        this.sung_previews.clear();
-                        let name = this
-                            .session
-                            .singer_voice(track)
-                            .ok()
-                            .flatten()
-                            .map(|voice| voice.name.clone())
-                            .unwrap_or_default();
-                        let language = this.language();
-                        this.set_status(messages::voice_chosen(language, &name));
-                    }
-                    Err(error) => {
-                        let line = this.failure(Key::CmdChooseVoice, &error);
-                        this.set_failed_status(line);
-                    }
+                this.apply_singer_voice(track, &path);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Points a singer track at a voice file and says what happened — the shared tail of
+    /// the file picker above and the library's voice rows.
+    pub(crate) fn apply_singer_voice(&mut self, track: TrackId, path: &std::path::Path) {
+        match self.session.set_singer_voice(track, Some(path)) {
+            Ok(()) => {
+                // Renders of the old voice must not answer for the new one.
+                self.sung_previews.clear();
+                let name = self
+                    .session
+                    .singer_voice(track)
+                    .ok()
+                    .flatten()
+                    .map(|voice| voice.name.clone())
+                    .unwrap_or_default();
+                let language = self.language();
+                self.set_status(messages::voice_chosen(language, &name));
+            }
+            Err(error) => {
+                let line = self.failure(Key::CmdChooseVoice, &error);
+                self.set_failed_status(line);
+            }
+        }
+    }
+
+    /// Chooses a voice from the library shelf for the selected — or only — singer track.
+    ///
+    /// The browser interface a voice shares with the instruments: one row, one click. Like
+    /// the picker, this loads a couple of hundred megabytes on the main thread and accepts
+    /// the beat — it happens once per voice per session, on a deliberate action.
+    pub(crate) fn set_track_voice(&mut self, path: &std::path::Path) {
+        let Some(track) = self.singer_target() else {
+            self.set_failed_status(self.t(Key::ErrorNoSingerTrack).to_string());
+            return;
+        };
+        self.apply_singer_voice(track, path);
+    }
+
+    /// Asks for a folder of voice models to put on the library shelf, and remembers it.
+    ///
+    /// Remembered, never copied: a voice is hundreds of megabytes somebody keeps where they
+    /// keep it, and the shelf is a listing — the plugin-folder arrangement exactly.
+    pub(crate) fn add_voice_path(&mut self, cx: &mut Context<Self>) {
+        let language = self.language();
+        cx.spawn(async move |this, cx| {
+            let handle = rfd::AsyncFileDialog::new()
+                .set_title(Key::DialogVoiceFolder.get(language))
+                .pick_folder()
+                .await;
+            let Some(handle) = handle else { return };
+            let path = handle.path().to_path_buf();
+            let _ = this.update(cx, |this, cx| {
+                if !this.settings.voice_paths.contains(&path) {
+                    this.settings.voice_paths.push(path);
+                    this.save_voice_paths();
                 }
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// Stops listing one of the added voice folders.
+    ///
+    /// The files are untouched and a track that names a voice there still names it — this is
+    /// a shelf, not the document.
+    pub(crate) fn forget_voice_path(&mut self, index: usize) {
+        if index < self.settings.voice_paths.len() {
+            self.settings.voice_paths.remove(index);
+            self.save_voice_paths();
+        }
+    }
+
+    /// Writes the voice folders out and makes the shelf look again.
+    fn save_voice_paths(&mut self) {
+        self.voices = None;
+        if let Err(error) = self.settings.save() {
+            log::warn!("could not save settings: {error}");
+        }
     }
 
     /// Renders the singer track through its voice model, off the main thread.
