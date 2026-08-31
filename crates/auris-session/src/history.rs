@@ -160,6 +160,17 @@ pub enum Edit {
     SetPhonemeDuration(ClipId, usize, usize),
     /// A note's phoneme pins were all taken off, handing the timing back to the rule.
     ResetPhonemeTiming,
+    /// A note's scoop — the rise into it — was set, adjusted or taken off.
+    ///
+    /// Carries its address for the reason [`Edit::SetPhonemeDuration`]'s does: a handle drag
+    /// arrives as repeats, and two notes' handles must not fold into one step.
+    SetScoop(ClipId, usize),
+    /// A note's fall — the drop off its end — was set, adjusted or taken off.
+    SetFall(ClipId, usize),
+    /// A note's vibrato was set, adjusted or taken off.
+    SetVibrato(ClipId, usize),
+    /// A note's pitch ornaments were all taken off.
+    ResetOrnaments,
     /// A singer track's frame hop was changed.
     SetFrameHop,
     /// A singer track was pointed at a voice model, or its voice was taken away.

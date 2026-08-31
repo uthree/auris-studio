@@ -10,7 +10,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use auris_core::{AssetPath, ClipId, SingerTake, SingerVoice, TrackId};
+use auris_core::project::BEND_LIMIT;
+use auris_core::{AssetPath, ClipId, Fall, Scoop, SingerTake, SingerVoice, TrackId, Vibrato};
 use auris_singer::VoiceModel;
 use auris_vocal::{
     JapaneseDictionary, SingerFrames, lyric_phonemes, phoneme_moras, render_frames,
@@ -267,6 +268,134 @@ impl Session {
             .and_then(|target| target.notes.get_mut(note))
         {
             target.phoneme_seconds.clear();
+        }
+        Ok(())
+    }
+
+    /// Puts a scoop on one note — a rise into it from below — adjusts it, or takes it off.
+    ///
+    /// The ornament rides the note in [`Note::scoop`](auris_core::Note::scoop), and
+    /// [`auris_vocal::ornament_offset`] is the one implementation of its shape. Numbers are
+    /// clamped rather than refused, like a phoneme pin's, because they arrive from a drag:
+    /// the hand at the edge of the range wants the edge. Repeats on one note fold into one
+    /// undo step, because a drag arrives as repeats.
+    pub fn set_note_scoop(
+        &mut self,
+        clip: ClipId,
+        note: usize,
+        scoop: Option<Scoop>,
+    ) -> Result<(), SessionError> {
+        self.require_note(clip, note)?;
+        let scoop = match scoop {
+            Some(scoop) => Some(Scoop {
+                depth: ornament_depth(scoop.depth)?,
+                seconds: ornament_seconds(scoop.seconds)?,
+            }),
+            None => None,
+        };
+        self.record_repeating(Edit::SetScoop(clip, note));
+        if let Some(target) = self
+            .project
+            .midi_clip_mut(clip)
+            .and_then(|target| target.notes.get_mut(note))
+        {
+            target.scoop = scoop;
+        }
+        Ok(())
+    }
+
+    /// Puts a fall on one note — a drop away at its end — adjusts it, or takes it off.
+    ///
+    /// Everything said of [`Session::set_note_scoop`] holds here too.
+    pub fn set_note_fall(
+        &mut self,
+        clip: ClipId,
+        note: usize,
+        fall: Option<Fall>,
+    ) -> Result<(), SessionError> {
+        self.require_note(clip, note)?;
+        let fall = match fall {
+            Some(fall) => Some(Fall {
+                depth: ornament_depth(fall.depth)?,
+                seconds: ornament_seconds(fall.seconds)?,
+            }),
+            None => None,
+        };
+        self.record_repeating(Edit::SetFall(clip, note));
+        if let Some(target) = self
+            .project
+            .midi_clip_mut(clip)
+            .and_then(|target| target.notes.get_mut(note))
+        {
+            target.fall = fall;
+        }
+        Ok(())
+    }
+
+    /// Puts a vibrato on one note — a sway around its pitch — adjusts it, or takes it off.
+    ///
+    /// Everything said of [`Session::set_note_scoop`] holds here too. The rate is clamped
+    /// into 0.1–12 Hz: below is a slow bend nobody hears as vibrato, above is a trill no
+    /// singer produces.
+    pub fn set_note_vibrato(
+        &mut self,
+        clip: ClipId,
+        note: usize,
+        vibrato: Option<Vibrato>,
+    ) -> Result<(), SessionError> {
+        self.require_note(clip, note)?;
+        let vibrato = match vibrato {
+            Some(vibrato) => {
+                for value in [vibrato.delay, vibrato.fade_in] {
+                    if !value.is_finite() {
+                        return Err(SessionError::NotFinite(value));
+                    }
+                }
+                if !vibrato.rate.is_finite() {
+                    return Err(SessionError::NotFinite(f64::from(vibrato.rate)));
+                }
+                Some(Vibrato {
+                    depth: ornament_depth(vibrato.depth)?,
+                    rate: vibrato.rate.clamp(0.1, 12.0),
+                    delay: vibrato.delay.clamp(0.0, 10.0),
+                    fade_in: vibrato.fade_in.clamp(0.0, 10.0),
+                })
+            }
+            None => None,
+        };
+        self.record_repeating(Edit::SetVibrato(clip, note));
+        if let Some(target) = self
+            .project
+            .midi_clip_mut(clip)
+            .and_then(|target| target.notes.get_mut(note))
+        {
+            target.vibrato = vibrato;
+        }
+        Ok(())
+    }
+
+    /// Takes every pitch ornament off one note, in one step.
+    pub fn clear_note_ornaments(&mut self, clip: ClipId, note: usize) -> Result<(), SessionError> {
+        self.require_note(clip, note)?;
+        let worn = self
+            .project
+            .midi_clip(clip)
+            .and_then(|(_, target)| target.notes.get(note))
+            .is_some_and(|target| {
+                target.scoop.is_some() || target.fall.is_some() || target.vibrato.is_some()
+            });
+        if !worn {
+            return Ok(());
+        }
+        self.record(Edit::ResetOrnaments);
+        if let Some(target) = self
+            .project
+            .midi_clip_mut(clip)
+            .and_then(|target| target.notes.get_mut(note))
+        {
+            target.scoop = None;
+            target.fall = None;
+            target.vibrato = None;
         }
         Ok(())
     }
@@ -719,6 +848,26 @@ pub enum SingerTakeState {
     Behind,
 }
 
+/// A finite ornament depth, clamped into the bend's own range.
+fn ornament_depth(depth: f32) -> Result<f32, SessionError> {
+    match depth.is_finite() {
+        true => Ok(depth.clamp(0.0, BEND_LIMIT)),
+        false => Err(SessionError::NotFinite(f64::from(depth))),
+    }
+}
+
+/// A finite scoop or fall span, clamped between one frame and two seconds.
+///
+/// The floor is [`MIN_PHONEME_SECONDS`] for the pin's reason — narrower rounds to no frames
+/// and reads as the drag refusing to work — and past two seconds the gesture is a slide the
+/// bend curve draws better.
+fn ornament_seconds(seconds: f64) -> Result<f64, SessionError> {
+    match seconds.is_finite() {
+        true => Ok(seconds.clamp(MIN_PHONEME_SECONDS, 2.0)),
+        false => Err(SessionError::NotFinite(seconds)),
+    }
+}
+
 /// One number naming everything a render reads: the frames, the voice, the seed.
 ///
 /// FNV-1a, written out the way [`auris_core::rng`] writes it and for the same reason: the value
@@ -837,6 +986,98 @@ mod tests {
         session.clear_phoneme_timing(clip, 0).unwrap();
         let note = &session.midi_clip(clip).unwrap().notes[0];
         assert!(note.phoneme_seconds.is_empty());
+    }
+
+    #[test]
+    fn an_ornament_moves_the_frames_and_survives_a_new_word() {
+        use auris_core::plugin::pitch_to_hz;
+        let (mut session, track, clip) = sung(1);
+        session.set_note_lyric(clip, 0, "あ").unwrap();
+
+        // Wild numbers are clamped rather than refused — the hand at the edge wants the edge.
+        session
+            .set_note_scoop(
+                clip,
+                0,
+                Some(Scoop {
+                    depth: 99.0,
+                    seconds: 99.0,
+                }),
+            )
+            .unwrap();
+        let note = &session.midi_clip(clip).unwrap().notes[0];
+        let scoop = note.scoop.unwrap();
+        assert_eq!(scoop.depth, BEND_LIMIT);
+        assert_eq!(scoop.seconds, 2.0);
+
+        // The frames start the full clamped depth under the note and settle onto it — the
+        // span itself is capped at half the note by the shape.
+        let frames = session.singer_frames(track).unwrap();
+        let sung: Vec<f32> = frames
+            .f0_hz
+            .iter()
+            .copied()
+            .filter(|hz| *hz > 0.0)
+            .collect();
+        assert!((sung[0] - pitch_to_hz(60.0 - BEND_LIMIT)).abs() < 1.0);
+        assert!((sung[sung.len() - 1] - pitch_to_hz(60.0)).abs() < 0.5);
+
+        // A drag is repeats on one address: they fold into one step, and undo takes it off.
+        session
+            .set_note_scoop(
+                clip,
+                0,
+                Some(Scoop {
+                    depth: 1.0,
+                    seconds: 0.1,
+                }),
+            )
+            .unwrap();
+        session.undo();
+        let note = &session.midi_clip(clip).unwrap().notes[0];
+        assert!(note.scoop.is_none(), "one gesture, one step");
+
+        // Ornaments are pitch, not phonemes: a new word keeps them, unlike a timing pin.
+        session
+            .set_note_vibrato(
+                clip,
+                0,
+                Some(Vibrato {
+                    rate: 99.0,
+                    ..Vibrato::default()
+                }),
+            )
+            .unwrap();
+        session.set_note_lyric(clip, 0, "さ").unwrap();
+        let note = &session.midi_clip(clip).unwrap().notes[0];
+        let vibrato = note.vibrato.unwrap();
+        assert_eq!(vibrato.rate, 12.0, "the trill is clamped to a vibrato");
+
+        // The sway reaches above the note, which no other ornament does.
+        session
+            .set_note_vibrato(
+                clip,
+                0,
+                Some(Vibrato {
+                    depth: 0.5,
+                    rate: 6.0,
+                    delay: 0.0,
+                    fade_in: 0.0,
+                }),
+            )
+            .unwrap();
+        let frames = session.singer_frames(track).unwrap();
+        let ceiling = frames.f0_hz.iter().copied().fold(0.0f32, f32::max);
+        assert!(ceiling > pitch_to_hz(60.2), "the crest rises over the note");
+
+        // One reset takes every ornament off, and a note past the clip refuses.
+        session
+            .set_note_fall(clip, 0, Some(Fall::default()))
+            .unwrap();
+        session.clear_note_ornaments(clip, 0).unwrap();
+        let note = &session.midi_clip(clip).unwrap().notes[0];
+        assert!(note.scoop.is_none() && note.fall.is_none() && note.vibrato.is_none());
+        assert!(session.set_note_scoop(clip, 9, None).is_err());
     }
 
     #[test]
