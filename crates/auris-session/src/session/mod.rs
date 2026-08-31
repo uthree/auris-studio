@@ -378,6 +378,11 @@ pub struct Session {
     /// session, not once a song. Behind `Arc<Mutex<_>>` because a frontend renders takes on a
     /// worker thread while the session keeps answering commands; see [`singer`].
     voices: HashMap<PathBuf, Arc<Mutex<auris_singer::VoiceModel>>>,
+    /// Where those models run their inference — the settings' choice, applied to every load.
+    ///
+    /// Kept beside the cache it governs: changing it empties [`Self::voices`], which is what
+    /// makes the change take effect at the very next render rather than the next launch.
+    acceleration: auris_singer::Acceleration,
     /// The track the live input is being played through, if anybody asked for that. See
     /// [`monitor`].
     monitored: Vec<TrackId>,
@@ -546,6 +551,7 @@ impl Session {
             japanese: None,
             shipped_dictionary: options.shipped_dictionary,
             voices: HashMap::new(),
+            acceleration: auris_singer::Acceleration::default(),
             hosted: hosted::HostedPlugins::default(),
         };
         session.install_shipped_fonts();

@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use auris_singer::VoiceModel;
+use auris_singer::{Acceleration, VoiceModel};
 use auris_vocal::{SILENCE, SingerFrames};
 
 /// The model under test, or `None` on a machine that keeps no model around.
@@ -44,7 +44,7 @@ fn the_real_voice_sings_a_note_reproducibly() {
         eprintln!("AURIS_SINGER_TEST_MODEL not set; skipping the real-voice test");
         return;
     };
-    let mut voice = VoiceModel::load(&path).expect("the named model loads");
+    let mut voice = VoiceModel::load(&path, Acceleration::Auto).expect("the named model loads");
     assert_eq!(
         voice.info().hop_seconds(),
         0.010,
@@ -105,7 +105,7 @@ fn two_vowels_are_two_sounds() {
         eprintln!("AURIS_SINGER_TEST_MODEL not set; skipping the real-voice test");
         return;
     };
-    let mut voice = VoiceModel::load(&path).expect("the named model loads");
+    let mut voice = VoiceModel::load(&path, Acceleration::Auto).expect("the named model loads");
     let a = voice.sing(&vowel("a"), 7).expect("あ renders");
     let i = voice.sing(&vowel("i"), 7).expect("い renders");
     let difference: f32 = a
@@ -127,7 +127,7 @@ fn a_cancelled_render_stops_between_chunks() {
         eprintln!("AURIS_SINGER_TEST_MODEL not set; skipping the real-voice test");
         return;
     };
-    let mut voice = VoiceModel::load(&path).expect("the named model loads");
+    let mut voice = VoiceModel::load(&path, Acceleration::Auto).expect("the named model loads");
     let error = voice
         .sing_with(&ka(), 0, |_, _| false)
         .expect_err("refusing the first chunk cancels the render");

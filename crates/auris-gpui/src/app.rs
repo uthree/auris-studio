@@ -1380,6 +1380,9 @@ impl AurisApp {
         {
             log::warn!("the Japanese dictionary did not load: {error}");
         }
+        // Where singer voices run their inference. Nothing is loaded yet, so this only sets
+        // the course; the first voice loaded follows it.
+        session.set_singer_acceleration(settings.singer_acceleration);
 
         let status = audio_line(&session.audio_status(), language);
         log::info!("{status}");
@@ -2233,6 +2236,18 @@ impl AurisApp {
         }
     }
 
+    /// Chooses where singer voices run their inference, and remembers the choice.
+    ///
+    /// Cannot fail here: the session only drops its cached models, and whether the GPU
+    /// actually answers is found out — and reported — by the next render that asks for it.
+    pub(crate) fn apply_singer_acceleration(&mut self, acceleration: Acceleration) {
+        self.session.set_singer_acceleration(acceleration);
+        self.settings.singer_acceleration = acceleration;
+        if let Err(error) = self.settings.save() {
+            log::warn!("could not save settings: {error}");
+        }
+    }
+
     /// Points the session's Japanese text frontend at a dictionary folder, and remembers it.
     ///
     /// The error comes back in the user's language for the settings window to show beside the
@@ -2338,6 +2353,7 @@ impl AurisApp {
         let pointer = self.pointer;
         let autosave = self.session.autosave_enabled();
         let dictionary = self.settings.japanese_dictionary.clone();
+        let singer_acceleration = self.settings.singer_acceleration;
         let export = self.settings.export;
 
         let bounds = Bounds::centered(None, size(px(560.), px(620.)), cx);
@@ -2354,8 +2370,19 @@ impl AurisApp {
             |_, cx| {
                 cx.new(|cx| {
                     SettingsWindow::new(
-                        app, theme, devices, audio, live, keymap, language, pointer, autosave,
-                        dictionary, export, cx,
+                        app,
+                        theme,
+                        devices,
+                        audio,
+                        live,
+                        keymap,
+                        language,
+                        pointer,
+                        autosave,
+                        dictionary,
+                        singer_acceleration,
+                        export,
+                        cx,
                     )
                 })
             },

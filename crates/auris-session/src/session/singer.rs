@@ -720,9 +720,29 @@ impl Session {
         if let Some(loaded) = self.voices.get(file) {
             return Ok(Arc::clone(loaded));
         }
-        let model = Arc::new(Mutex::new(VoiceModel::load(file)?));
+        let model = Arc::new(Mutex::new(VoiceModel::load(file, self.acceleration)?));
         self.voices.insert(file.to_path_buf(), Arc::clone(&model));
         Ok(model)
+    }
+
+    /// Chooses where singer voices run their inference, from now on.
+    ///
+    /// Not an edit, for [`Self::set_japanese_dictionary`]'s reason: which processor a machine
+    /// sings on is a fact about the machine, and an Undo that moved a render to the CPU would
+    /// be a surprise. Changing it drops every cached model, so the very next render loads the
+    /// voice the new way; a render already in flight keeps the model it holds and finishes as
+    /// it started.
+    pub fn set_singer_acceleration(&mut self, acceleration: auris_singer::Acceleration) {
+        if self.acceleration == acceleration {
+            return;
+        }
+        self.acceleration = acceleration;
+        self.voices.clear();
+    }
+
+    /// Where singer voices run their inference.
+    pub fn singer_acceleration(&self) -> auris_singer::Acceleration {
+        self.acceleration
     }
 
     /// Writes a rendered take to disk and into the document, replacing any previous take.
@@ -1318,6 +1338,42 @@ mod tests {
         assert!(
             (held - asked).abs() <= 1.0,
             "ts held {held} frames where its own measure asks {asked}"
+        );
+    }
+
+    /// The acceleration setting reaches the model a render is handed, and changing it does
+    /// not wait for a relaunch: the cache is emptied, so the same file comes back loaded the
+    /// new way.
+    #[test]
+    fn the_acceleration_setting_reaches_the_next_loaded_voice() {
+        let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") else {
+            eprintln!("AURIS_SINGER_TEST_MODEL not set; skipping the acceleration test");
+            return;
+        };
+        let path = std::path::PathBuf::from(&model);
+        let (mut session, _, _) = sung(1);
+
+        session.set_singer_acceleration(auris_singer::Acceleration::Cpu);
+        let on_cpu = session.voice_model_at(&path).unwrap();
+        assert_eq!(
+            on_cpu.lock().unwrap().acceleration(),
+            auris_singer::Acceleration::Cpu
+        );
+        // Asking again without changing anything answers from the cache, not a reload.
+        assert!(Arc::ptr_eq(
+            &on_cpu,
+            &session.voice_model_at(&path).unwrap()
+        ));
+
+        session.set_singer_acceleration(auris_singer::Acceleration::Auto);
+        let on_auto = session.voice_model_at(&path).unwrap();
+        assert!(
+            !Arc::ptr_eq(&on_cpu, &on_auto),
+            "changing the setting must reload the voice, not answer from the cache"
+        );
+        assert_eq!(
+            on_auto.lock().unwrap().acceleration(),
+            auris_singer::Acceleration::Auto
         );
     }
 

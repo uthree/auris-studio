@@ -377,6 +377,12 @@ strings! {
         en: "Shipped dictionary (naist-jdic)",
         ja: "同梱辞書(naist-jdic)を使用中"
     }
+    SingerComputeHeading { en: "Singing Synthesis", ja: "歌声合成" }
+    SingerComputeAuto { en: "Auto", ja: "自動" }
+    SingerComputeNote {
+        en: "Where a voice model sings: Auto takes the GPU when the runtime offers one — DirectML on Windows, Core ML on macOS — and the CPU otherwise. Takes effect from the next render.",
+        ja: "歌声モデルの計算をどこで行うか。「自動」は GPU が使えるとき(Windows は DirectML、macOS は Core ML)に GPU を使い、なければ CPU で歌います。次のレンダリングから反映されます。"
+    }
     DialogDictionaryFolder { en: "Choose the dictionary folder", ja: "辞書フォルダを選択" }
     ValueNotSet { en: "Not set", ja: "未設定" }
     MenuChoose { en: "Choose…", ja: "選択…" }

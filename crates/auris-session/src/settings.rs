@@ -220,6 +220,13 @@ pub struct Settings {
     /// the command that turns *new* kanji into phonemes asks for it, and it names this setting
     /// when it is missing.
     pub japanese_dictionary: Option<PathBuf>,
+    /// Where a singer voice's inference runs: on the GPU when one is offered, or on the CPU.
+    ///
+    /// Auto by default, which sings on the GPU wherever the runtime has one to offer —
+    /// DirectML on Windows, Core ML on macOS — and on the CPU everywhere else. A machine
+    /// fact like the device above it: the same project renders through whichever of these
+    /// the machine that opens it prefers, and a frozen take keeps what it was sung with.
+    pub singer_acceleration: auris_singer::Acceleration,
     /// Extra folders holding singer voice models, on top of the `Voices` library folders.
     ///
     /// Each is a directory walked for `.onnx` files — the [`Self::plugin_paths`]
@@ -245,6 +252,7 @@ impl Default for Settings {
             recent: Vec::new(),
             plugin_paths: Vec::new(),
             japanese_dictionary: None,
+            singer_acceleration: auris_singer::Acceleration::default(),
             voice_paths: Vec::new(),
             agent: AgentPreferences::default(),
         }

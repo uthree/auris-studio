@@ -21,6 +21,7 @@ rust-version.workspace = true
 [dependencies]
 auris-core.workspace = true
 auris-vocal.workspace = true
+log.workspace = true
 # Pinned to the release candidate `rig`'s optional fastembed support also names: Cargo resolves
 # optional dependencies whether or not they are built, so any other rc here is an unresolvable
 # conflict with a feature nobody enables. Revisit when either side reaches a stable 2.0.
@@ -28,3 +29,14 @@ ort = "=2.0.0-rc.9"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+# The GPU execution providers, one per desktop platform, both riding the OS itself: DirectML
+# is part of Windows and Core ML part of macOS, so neither adds a runtime to ship. The
+# features are target-gated because each one links a platform API — the provider *types*
+# exist everywhere (registration simply fails where the feature is off), which is what lets
+# the choosing code be `cfg!` rather than `#[cfg]`.
+[target.'cfg(target_os = "windows")'.dependencies]
+ort = { version = "=2.0.0-rc.9", features = ["directml"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+ort = { version = "=2.0.0-rc.9", features = ["coreml"] }

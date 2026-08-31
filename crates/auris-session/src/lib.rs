@@ -85,7 +85,7 @@ pub use settings::{
 /// Re-exported so a frontend can render a take on its own thread — the model behind
 /// [`Session::voice_model_at`](session::Session::voice_model_at) — without depending on
 /// `auris-singer` itself, the same door `ClapPluginInfo` walks through below.
-pub use auris_singer::{SingError, VoiceModel};
+pub use auris_singer::{Acceleration, SingError, VoiceModel};
 
 pub use auris_clap::ClapPluginInfo;
 
@@ -210,7 +210,7 @@ pub mod prelude {
     pub use auris_sampler::{SAMPLER_ENVELOPE_KEY, SAMPLER_ID};
 
     pub use crate::{
-        AccompanyReport, Arm, AudioPreferences, Clipboard, ComposeReport, CopiedClip,
+        Acceleration, AccompanyReport, Arm, AudioPreferences, Clipboard, ComposeReport, CopiedClip,
         CopiedContent, DEFAULT_LYRIC_PROGRESSION, DEFAULT_PARTS, Edit, ExportPreferences,
         ExportSummary, InputChannels, LoadedFont, LyricSongReport, MusicalTyping, ParamTarget,
         Quantize, RecordingReport, RecordingStatus, RenderJob, SaveReport, Session, SessionError,

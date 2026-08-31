@@ -11,6 +11,15 @@ format rather than a convention: `## <version> — <date>`.
 
 ### The words write the tune
 
+* **Singing synthesis can take the GPU.** Settings → General chooses where a voice model
+  runs its inference: Auto (the default) sings on the platform's own GPU provider —
+  DirectML on Windows, Core ML on macOS — wherever the runtime offers one, and falls back
+  to the CPU where it does not, including mid-render: a provider that accepts the session
+  and then refuses its shapes (DirectML does, to this model family, today) demotes the
+  voice to the CPU and the render finishes. Forcing GPU makes those refusals visible
+  errors instead; CPU opts out entirely. The choice applies from the next render — no
+  relaunch.
+
 * **Consonants take the width their voice measured.** A newer auris-singer export carries
   per-phoneme consonant durations measured from its training data (`phoneme_durations` in
   the model's metadata — consonant length in sung Japanese spans a factor of three by

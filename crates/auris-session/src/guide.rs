@@ -1029,6 +1029,18 @@ pub mod singing {
     //! hundred megabytes. Loaded models are kept for the session, keyed by path, shared by
     //! every track that sings with them.
     //!
+    //! Where a model runs its inference is the settings' choice, applied through
+    //! [`Session::set_singer_acceleration`](crate::Session::set_singer_acceleration) — a
+    //! machine fact like the dictionary, not an edit. [`Acceleration::Auto`](crate::Acceleration)
+    //! (the default) takes the platform's GPU provider — DirectML on Windows, Core ML on
+    //! macOS — whenever the linked runtime carries one, and the loaded voice demotes itself
+    //! to the CPU if the provider takes the session and then refuses its shapes mid-render,
+    //! which is how DirectML treats this model family today: auto promises the render, not
+    //! the processor. Insisting on the GPU turns each of those refusals into a visible error
+    //! instead. Changing the choice empties the model cache, so the very next render follows
+    //! it. A GPU also rounds in its own way, which is one more reason a take is a thing the
+    //! file *keeps* rather than a thing a seed re-derives on another machine.
+    //!
     //! [`Session::sing`](crate::Session::sing) is the whole pipeline in one synchronous call;
     //! a window that must keep painting takes the three-step form —
     //! [`sing_plan`](crate::Session::sing_plan) checks and gathers everything up front,

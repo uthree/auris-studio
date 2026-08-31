@@ -69,6 +69,8 @@ pub struct SettingsWindow {
     autosave: bool,
     /// The dictionary folder kanji lyrics are read through. `None` on most machines.
     japanese_dictionary: Option<std::path::PathBuf>,
+    /// Where singer voices run their inference.
+    singer_acceleration: Acceleration,
     /// What a click creates and what deletes.
     /// How a bounce is written.
     export: ExportPreferences,
@@ -122,6 +124,7 @@ impl SettingsWindow {
         pointer: PointerGestures,
         autosave: bool,
         japanese_dictionary: Option<std::path::PathBuf>,
+        singer_acceleration: Acceleration,
         export: ExportPreferences,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -137,6 +140,7 @@ impl SettingsWindow {
             language: Language::resolve(language_preference),
             autosave,
             japanese_dictionary,
+            singer_acceleration,
             export,
             pointer,
             capturing: None,
@@ -493,7 +497,44 @@ impl SettingsWindow {
                     )),
             )
             .child(note(self.t(Key::JapaneseDictionaryNote), &theme))
+            .child(divider(&theme))
+            .child(section_title(self.t(Key::SingerComputeHeading), &theme))
+            .child(
+                div().flex().gap_1().children(
+                    [
+                        (Acceleration::Auto, self.t(Key::SingerComputeAuto)),
+                        // Initialisms, not words: the same three letters in every language.
+                        (Acceleration::Gpu, "GPU"),
+                        (Acceleration::Cpu, "CPU"),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, (choice, label))| {
+                        button(
+                            ("singer-compute", index),
+                            label,
+                            ButtonStyle::Normal,
+                            self.singer_acceleration == choice,
+                            theme.accent,
+                            &theme,
+                            cx.listener(move |this, _, _, cx| {
+                                this.apply_singer_acceleration(choice, cx)
+                            }),
+                        )
+                    }),
+                ),
+            )
+            .child(note(self.t(Key::SingerComputeNote), &theme))
             .into_any_element()
+    }
+
+    /// Hands the acceleration choice to the application, which installs and saves it.
+    fn apply_singer_acceleration(&mut self, acceleration: Acceleration, cx: &mut Context<Self>) {
+        self.singer_acceleration = acceleration;
+        let _ = self
+            .app
+            .update(cx, |app, _| app.apply_singer_acceleration(acceleration));
+        cx.notify();
     }
 
     /// Hands an autosave choice to the application, which installs and saves it.

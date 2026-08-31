@@ -247,7 +247,8 @@ either way the track is pointed at a trained
 [auris-singer](https://github.com/uthree/auris-singer) voice model — one self-contained
 `.onnx` file, left where it lies — and from then on the track sings for real. The render is a **take**: an ordinary audio file in `Audio/` that
 plays, exports and reopens with everything else, pinned by a seed so the same notes, lyrics,
-voice and seed give the same audio on any machine. **The window keeps the take abreast of
+voice and seed sing the same performance again — and kept as audio in the project, so what
+was frozen is what every machine plays. **The window keeps the take abreast of
 the score by itself**: shortly after an edit settles, the voice re-renders in the background
 — the header badge reads *… ♪ voice* while it works, and an edit landing mid-render throws
 the stale work away and starts over at the next quiet moment. **Track → Sing** remains as
@@ -276,6 +277,13 @@ runs about twice a plain stop), choosing the voice copies that table into the do
 beside its name, and the segmentation, the boundary grab, the note preview and the render
 all lay phonemes out from it. A voice without the table — or a track without a voice — uses
 a fixed sixty milliseconds, the rule as it always was.
+
+Where the model computes is a preference in **Settings → General → Singing Synthesis**:
+*Auto* (the default) sings on the platform's own GPU provider — DirectML on Windows, Core ML
+on macOS — whenever the runtime offers one, and on the CPU everywhere else, including
+mid-render: a GPU that accepts the model and then refuses its shapes hands the render to the
+CPU and it finishes. *GPU* insists, and shows the refusal as an error instead; *CPU* opts
+out. The choice takes effect from the next render.
 
 The cuts are yours to move: **drag a divider** and the phoneme to its left is pinned to the
 length you gave it, stored on the note beside its phonemes so it travels and saves with the

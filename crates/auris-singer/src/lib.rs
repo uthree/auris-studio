@@ -21,8 +21,10 @@
 //!   bounded by the chunk, not the song.
 //! * **The randomness is an input.** The model's stochastic draws — the prior sample, the
 //!   excitation noise — are graph inputs by its own design, and this crate fills them from
-//!   [`auris_core::rng`] streams named by a seed: the same document, seed and voice render
-//!   the same take, on any machine, which is what lets a take be a *thing a file keeps*.
+//!   [`auris_core::rng`] streams named by a seed: the same document, seed and voice are fed
+//!   the same numbers on any machine, and on the CPU render the same take to the sample. A
+//!   GPU ([`Acceleration`]) rounds in its own way — which is one more reason a take is a
+//!   *thing a file keeps*, frozen, rather than a thing another machine re-derives.
 
 #![warn(missing_docs)]
 
@@ -31,7 +33,7 @@ mod model;
 mod score;
 
 pub use metadata::{FORMAT_VERSION, METADATA_KEY, VoiceCard, VoiceInfo};
-pub use model::{NOISE_SCALE, VoiceModel};
+pub use model::{Acceleration, NOISE_SCALE, VoiceModel};
 pub use score::{ENERGY_FULL_SCALE, MAX_CHUNK_FRAMES};
 
 /// Why a voice could not be loaded, or frames could not be sung.
@@ -57,6 +59,9 @@ pub enum SingError {
         /// Seconds per frame the model wants.
         model: f64,
     },
+    /// The GPU was insisted on, on a platform with no GPU provider to insist on.
+    #[error("this platform has no GPU provider for singing — choose Auto or CPU")]
+    NoGpu,
     /// The runtime refused an inference mid-render.
     #[error("the voice model refused the score: {0}")]
     Inference(String),

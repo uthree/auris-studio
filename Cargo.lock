@@ -1036,6 +1036,7 @@ version = "0.4.0"
 dependencies = [
  "auris-core",
  "auris-vocal",
+ "log",
  "ort",
  "serde",
  "serde_json",
