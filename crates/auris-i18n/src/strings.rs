@@ -884,6 +884,7 @@ strings! {
     EditChangeInstrument { en: "changing the instrument", ja: "音源の変更" }
     EditAddClip { en: "adding a clip", ja: "クリップの追加" }
     EditAccompany { en: "adding an accompaniment", ja: "伴奏の追加" }
+    EditComposeLyrics { en: "composing from lyrics", ja: "歌詞からの作曲" }
     EditDeleteClip { en: "deleting a clip", ja: "クリップの削除" }
     EditCutClips { en: "cutting clips", ja: "クリップの切り取り" }
     EditPasteClips { en: "pasting clips", ja: "クリップの貼り付け" }
@@ -1064,6 +1065,10 @@ strings! {
     ErrorNothingToSing {
         en: "there are no notes to sing",
         ja: "歌うノートがありません"
+    }
+    ErrorNoLyrics {
+        en: "the lyrics contain nothing to sing",
+        ja: "歌詞に歌える言葉がありません"
     }
     ErrorSing {
         en: "the voice model failed",

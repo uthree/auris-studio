@@ -149,6 +149,13 @@ pub enum SessionError {
     #[error("track {0} has no notes to sing")]
     NothingToSing(u64),
 
+    /// Composing from lyrics was asked with nothing to sing.
+    ///
+    /// The [`Self::NothingToAccompany`] reasoning: a melody written from no words would be a
+    /// melody to nothing, and answering "done" to that is worse than saying so.
+    #[error("the lyrics contain nothing to sing")]
+    NoLyrics,
+
     /// The operation only applies to one kind of track.
     #[error("track {id} is {actual}, but this needs {expected}")]
     WrongTrackKind {

@@ -82,6 +82,8 @@ pub enum Edit {
     ChangeInstrument,
     /// A key, a progression and a set of parts were written around a melody.
     Accompany,
+    /// A melody, its words and a band were written from a lyric.
+    ComposeLyrics,
     /// A clip was created.
     AddClip,
     /// A clip was deleted.
