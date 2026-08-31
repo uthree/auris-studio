@@ -526,6 +526,82 @@ mod tests {
         std::fs::remove_dir_all(&folder).ok();
     }
 
+    /// A singer track with no voice auditions through the formant instrument, exactly as
+    /// before: the sung-preview path never files a wish for it.
+    #[gpui::test]
+    fn a_voiceless_singer_track_auditions_through_the_instrument(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, cx| {
+            let track = this.session.add_singer_track("Voice");
+            this.selected_track = Some(track);
+            this.audition(60);
+            assert!(this.sung_preview_wish.is_none(), "no voice, no wish");
+            assert!(
+                this.auditioning.is_some(),
+                "the note still sounds somewhere"
+            );
+            this.stop_audition();
+            cx.notify();
+        });
+    }
+
+    /// With a real voice, a grabbed note is sung by the model: the audition files a wish,
+    /// the poll renders it in the background, and the render lands in the cache so the next
+    /// pass over the same pitch is instant. Skips without `AURIS_SINGER_TEST_MODEL`.
+    #[gpui::test]
+    fn a_dragged_note_previews_in_the_real_voice(cx: &mut TestAppContext) {
+        let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") else {
+            eprintln!("AURIS_SINGER_TEST_MODEL not set; skipping the sung-preview test");
+            return;
+        };
+        let (app, cx) = open(cx);
+        app.update(cx, |this, cx| {
+            let track = this.session.add_singer_track("Voice");
+            let clip = this
+                .session
+                .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks::from_beats(4.0))
+                .unwrap();
+            this.session
+                .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+                .unwrap();
+            this.session.write_lyrics(clip, &[0], "か").unwrap();
+            this.session
+                .set_singer_voice(track, Some(std::path::Path::new(&model)))
+                .unwrap();
+            this.selected_track = Some(track);
+            this.selected_clip = Some(clip);
+            this.selected_notes.insert(0);
+
+            this.audition(60);
+            assert!(
+                this.sung_preview_wish.is_some(),
+                "a voiced note is wished for, not struck on the formant"
+            );
+            this.poll_sung_preview(cx);
+        });
+        cx.run_until_parked();
+        app.update(cx, |this, cx| {
+            assert_eq!(
+                this.sung_previews.len(),
+                1,
+                "the render landed in the cache"
+            );
+            assert!(
+                this.sung_preview_wish.is_none(),
+                "the wish was played and put down"
+            );
+            // The same pitch again plays straight from the cache, no new wish filed.
+            this.stop_audition();
+            this.audition(60);
+            assert!(
+                this.sung_preview_wish.is_none(),
+                "a cache hit files no wish"
+            );
+            this.stop_audition();
+            cx.notify();
+        });
+    }
+
     /// The same command through the keyboard, which is the half a dispatched action skips: the
     /// binding table, the `secondary-` translation that means ⌘ on one platform and Ctrl on the
     /// other, the key context the window names, and the pane holding focus.

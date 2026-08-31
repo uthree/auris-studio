@@ -16,7 +16,7 @@ use crossbeam_channel::{Receiver, Sender, TrySendError};
 use crate::command::EngineCommand;
 use crate::error::EngineError;
 use crate::graph::{RETIRED_GRAPH_SLOTS, RenderGraph};
-use crate::handle::EngineHandle;
+use crate::handle::{EngineHandle, Retired};
 use crate::meter::MeterBank;
 use crate::renderer::render_block;
 use crate::transport::Transport;
@@ -523,14 +523,15 @@ pub(crate) struct AudioEngine {
     graph: Option<Box<RenderGraph>>,
     transport: Transport,
     commands: Receiver<EngineCommand>,
-    returned_graphs: Sender<Box<RenderGraph>>,
-    /// Graphs waiting for room in the return queue. Fixed capacity: pushing never allocates.
+    returned_graphs: Sender<Retired>,
+    /// Retired data waiting for room in the return queue. Fixed capacity: pushing never
+    /// allocates.
     ///
-    /// The `Box` is what travels down the return channel, and unwrapping it here would mean
-    /// copying a large struct out of the heap and boxing it again to send it — an allocation on
-    /// the audio thread, which is exactly what this whole mechanism exists to avoid.
-    #[allow(clippy::vec_box)]
-    retired: Vec<Box<RenderGraph>>,
+    /// The `Box` inside [`Retired::Graph`] is what travels down the return channel, and
+    /// unwrapping it here would mean copying a large struct out of the heap and boxing it
+    /// again to send it — an allocation on the audio thread, which is exactly what this whole
+    /// mechanism exists to avoid.
+    retired: Vec<Retired>,
     playhead: Arc<AtomicU64>,
     /// Frames of count-in left, published beside the playhead and read by the same stranger.
     ///
@@ -567,7 +568,7 @@ impl AudioEngine {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         commands: Receiver<EngineCommand>,
-        returned_graphs: Sender<Box<RenderGraph>>,
+        returned_graphs: Sender<Retired>,
         playhead: Arc<AtomicU64>,
         count_in: Arc<AtomicU64>,
         meters: Arc<MeterBank>,
@@ -689,13 +690,13 @@ impl AudioEngine {
         }
     }
 
-    /// Hands stashed graphs back to the UI thread as soon as the queue has room.
+    /// Hands stashed retirements back to the UI thread as soon as the queue has room.
     fn flush_retired(&mut self) {
-        while let Some(graph) = self.retired.pop() {
-            match self.returned_graphs.try_send(graph) {
+        while let Some(load) = self.retired.pop() {
+            match self.returned_graphs.try_send(load) {
                 Ok(()) => {}
-                Err(TrySendError::Full(graph)) => {
-                    self.retired.push(graph);
+                Err(TrySendError::Full(load)) => {
+                    self.retired.push(load);
                     break;
                 }
                 // The UI is gone, so this is shutdown and there is nobody left to free it.
@@ -704,10 +705,10 @@ impl AudioEngine {
         }
     }
 
-    fn retire(&mut self, graph: Box<RenderGraph>) {
-        match self.returned_graphs.try_send(graph) {
+    fn retire(&mut self, load: Retired) {
+        match self.returned_graphs.try_send(load) {
             Ok(()) => {}
-            Err(TrySendError::Full(graph)) => self.retired.push(graph),
+            Err(TrySendError::Full(load)) => self.retired.push(load),
             Err(TrySendError::Disconnected(_)) => {}
         }
     }
@@ -719,7 +720,7 @@ impl AudioEngine {
                 // track last reached, with nothing left to report them down.
                 self.meters.clear_tracks_from(graph.track_count());
                 if let Some(previous) = self.graph.replace(graph) {
-                    self.retire(previous);
+                    self.retire(Retired::Graph(previous));
                 }
                 // A freshly built graph is compensated for its own chains, so this clears any
                 // staleness the graph it replaced had reported.
@@ -835,6 +836,20 @@ impl AudioEngine {
                     graph.controller(track, number, value);
                 }
             }
+            EngineCommand::PlayOneShot { track, buffer } => match &mut self.graph {
+                Some(graph) => {
+                    if let Some(previous) = graph.play_one_shot(track, buffer) {
+                        self.retire(Retired::Buffer(previous));
+                    }
+                }
+                // No graph, nowhere to play it — and nowhere to free it either.
+                None => self.retire(Retired::Buffer(buffer)),
+            },
+            EngineCommand::StopOneShot { track } => {
+                if let Some(graph) = &mut self.graph {
+                    graph.stop_one_shot(track);
+                }
+            }
             EngineCommand::SetMetronome(enabled) => {
                 if let Some(graph) = &mut self.graph {
                     graph.set_metronome(enabled);
@@ -915,7 +930,7 @@ mod tests {
     fn engine() -> (
         AudioEngine,
         Sender<EngineCommand>,
-        Receiver<Box<RenderGraph>>,
+        Receiver<Retired>,
         Arc<MeterBank>,
         Arc<AtomicU64>,
     ) {
@@ -948,7 +963,7 @@ mod tests {
         AudioEngine,
         Sender<EngineCommand>,
         Arc<AtomicU64>,
-        Receiver<Box<RenderGraph>>,
+        Receiver<Retired>,
     ) {
         let (command_tx, command_rx) = crossbeam_channel::bounded(16);
         let (graph_tx, graph_rx) = crossbeam_channel::bounded(16);
@@ -1053,6 +1068,46 @@ mod tests {
     }
 
     #[test]
+    fn a_replaced_one_shot_travels_back_as_retired_data() {
+        // The Arc must never lose its last reference on the audio thread, so the swap hands
+        // the previous buffer up the same channel retired graphs use.
+        let (mut engine, commands, graphs, _meters, _playhead) = engine();
+        commands.send(EngineCommand::SetGraph(graph())).unwrap();
+        let voice = || {
+            let mut buffer = AudioBuffer::new(1, 64, SAMPLE_RATE);
+            buffer.channel_mut(0)[..64].fill(0.5);
+            Arc::new(buffer)
+        };
+        commands
+            .send(EngineCommand::PlayOneShot {
+                track: 0,
+                buffer: voice(),
+            })
+            .unwrap();
+        let mut data = [0.0f32; 64];
+        engine.fill(&mut data);
+        assert_eq!(
+            graphs.try_iter().count(),
+            0,
+            "the first play replaces nothing"
+        );
+
+        commands
+            .send(EngineCommand::PlayOneShot {
+                track: 0,
+                buffer: voice(),
+            })
+            .unwrap();
+        engine.fill(&mut data);
+        let retired: Vec<Retired> = graphs.try_iter().collect();
+        assert_eq!(retired.len(), 1);
+        assert!(
+            matches!(retired[0], Retired::Buffer(_)),
+            "the replaced buffer travels back to the UI thread"
+        );
+    }
+
+    #[test]
     fn replacing_a_graph_hands_the_old_one_back() {
         let (mut engine, commands, graphs, _meters, _playhead) = engine();
         commands.send(EngineCommand::SetGraph(graph())).unwrap();
@@ -1145,11 +1200,7 @@ mod tests {
     #[allow(clippy::type_complexity)]
     fn engine_with_channels(
         channels: usize,
-    ) -> (
-        AudioEngine,
-        Sender<EngineCommand>,
-        Receiver<Box<RenderGraph>>,
-    ) {
+    ) -> (AudioEngine, Sender<EngineCommand>, Receiver<Retired>) {
         let (command_tx, command_rx) = crossbeam_channel::bounded(64);
         let (graph_tx, graph_rx) = crossbeam_channel::bounded(64);
         let engine = AudioEngine::new(

@@ -151,6 +151,10 @@ fn render_segment(
             // Every note-on that outlived its lost note-off came back sounding on the unmute and
             // stayed there. The track cannot be heard either way, so the notes are dropped here.
             track.audition.clear();
+            // And a one-shot is silenced the same way, rather than left paused to blast out
+            // whenever the track is unmuted. Silenced, not freed: the buffer stays in its
+            // slot for the UI thread's next swap.
+            track.stop_one_shot();
             continue;
         }
         track.scratch.set_frame_count(frames);
@@ -328,6 +332,7 @@ fn render_source(
         scratch,
         block_events,
         audition,
+        one_shot,
         continued_from,
         chase_counts,
         chase_velocity,
@@ -401,6 +406,27 @@ fn render_source(
             None => scratch.clear(),
         },
         RenderSource::Silence => scratch.clear(),
+    }
+
+    // The one-shot — a dragged note the voice model sang — plays over whatever the source
+    // put down, transport rolling or not, exactly as an auditioned note does. The buffer is
+    // kept when it runs out rather than dropped: freeing it belongs to the UI thread.
+    if let Some(shot) = one_shot {
+        let remaining = shot.buffer.frame_count().saturating_sub(shot.cursor);
+        let count = remaining.min(ctx.block_frames);
+        if count > 0 {
+            let source_channels = shot.buffer.channel_count();
+            for channel in 0..scratch.channel_count() {
+                // A mono render feeds every output channel rather than only the left one.
+                let source = &shot.buffer.channel(channel.min(source_channels - 1))
+                    [shot.cursor..shot.cursor + count];
+                let destination = &mut scratch.channel_mut(channel)[..count];
+                for (sample, input) in destination.iter_mut().zip(source) {
+                    *sample += *input;
+                }
+            }
+            shot.cursor += count;
+        }
     }
 }
 
@@ -1276,6 +1302,50 @@ mod tests {
             out.peak()
         );
         graph.note_off(0, 60);
+    }
+
+    #[test]
+    fn a_one_shot_sounds_with_the_transport_parked_and_ends_by_itself() {
+        // The singer's drag preview: a pre-rendered buffer handed to the track plays once,
+        // rolling or not, and past its end the track is quiet again — no drop happens on
+        // this thread, the spent buffer just waits in its slot for the next swap.
+        let (mut graph, mut transport, mut out) = sung_track();
+        let mut voice = AudioBuffer::new(1, 512, SAMPLE_RATE);
+        voice.channel_mut(0)[..512].fill(0.5);
+        assert!(
+            graph.play_one_shot(0, Arc::new(voice)).is_none(),
+            "an empty slot has nothing to hand back"
+        );
+
+        render_block(&mut graph, &mut transport, &mut out, false);
+        assert!(
+            (out.peak() - 0.5).abs() < 1e-5,
+            "the one-shot sounds while stopped, peak was {}",
+            out.peak()
+        );
+        render_block(&mut graph, &mut transport, &mut out, false);
+        assert_eq!(out.peak(), 0.0, "one play is the whole performance");
+
+        // A replacement starts from its own top and hands the spent buffer back.
+        let mut louder = AudioBuffer::new(1, 256, SAMPLE_RATE);
+        louder.channel_mut(0)[..256].fill(0.75);
+        let replaced = graph.play_one_shot(0, Arc::new(louder));
+        assert!(
+            replaced.is_some(),
+            "the spent buffer leaves with the caller"
+        );
+        render_block(&mut graph, &mut transport, &mut out, false);
+        assert!((out.peak() - 0.75).abs() < 1e-5);
+
+        // Stopping silences the rest without freeing anything here.
+        let mut long = AudioBuffer::new(1, 4_096, SAMPLE_RATE);
+        long.channel_mut(0)[..4_096].fill(0.5);
+        let _spent = graph.play_one_shot(0, Arc::new(long));
+        render_block(&mut graph, &mut transport, &mut out, false);
+        assert!(out.peak() > 0.0);
+        graph.stop_one_shot(0);
+        render_block(&mut graph, &mut transport, &mut out, false);
+        assert_eq!(out.peak(), 0.0, "a stopped one-shot is silent at once");
     }
 
     #[test]

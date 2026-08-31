@@ -250,6 +250,12 @@ road to a *different* take: another seed is another performance. A take is never
 rewritten to different text — between the edit and the re-render it keeps playing, with the
 badge reading *! ♪ voice*, behind the notes.
 
+Auditioning sings too: once a voice is chosen, clicking or dragging a note sounds the model
+singing that note's own syllable at the grabbed pitch, rendered in the background and played
+the moment it is ready. Renders are cached, so dragging across pitches is instant everywhere
+the drag has already been; a track with no voice previews through the formant instrument as
+before.
+
 **Double-click a note** to type its word. **Return commits and walks to the next note**, so a
 verse is typed word after word without touching the mouse; an empty field takes the word off.
 The note's right-click menu offers **Edit Lyric…**, **Edit Phonemes…** (space-separated IPA,

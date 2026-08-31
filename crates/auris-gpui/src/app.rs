@@ -953,6 +953,26 @@ pub struct AutoSing {
     pub checked: u64,
 }
 
+/// The address a rendered preview note is cached under.
+///
+/// The voice's display name stands in for its file — resolving the real path on every
+/// pointer move would buy nothing the name does not already give — and the seed and
+/// phonemes are part of the sound, so they are part of the address.
+pub type SungPreviewKey = (String, u64, u8, Vec<String>);
+
+/// One preview note the audition path has asked for and the model has not sung yet.
+///
+/// Written by the audition path, read by the repaint timer's poll: a pointer handler has no
+/// executor in hand to spawn a render from, so the wish waits — at most one frame — for the
+/// poll to pick it up. Overwritten freely: a drag sweeping pitches wants the newest note,
+/// not a queue of everywhere it has been.
+pub struct SungPreviewWish {
+    /// The singer track that will play the render.
+    pub track: TrackId,
+    /// The cache address of the render.
+    pub key: SungPreviewKey,
+}
+
 /// One cell per curve strip the roll has drawn, shared with the closures that paint them.
 type CurveBounds = Rc<RefCell<HashMap<ClipCurve, Rc<Cell<Option<Bounds<Pixels>>>>>>>;
 
@@ -1068,6 +1088,15 @@ pub struct AurisApp {
     pub(crate) auto_sing_refused: Option<u64>,
     /// The refusal last said out loud, so the same excuse is not repeated per edit.
     pub(crate) auto_sing_excuse: Option<String>,
+    /// Preview notes the voice has already sung, at the engine's rate.
+    ///
+    /// What makes dragging a note across pitches instant the second time it passes one.
+    /// Cleared when a voice is chosen, and capped in the poll so a long session cannot hoard.
+    pub(crate) sung_previews: std::collections::HashMap<SungPreviewKey, Arc<AudioBuffer>>,
+    /// The preview note the audition path wants next, until the poll starts singing it.
+    pub(crate) sung_preview_wish: Option<SungPreviewWish>,
+    /// Whether a preview render is on the background executor right now.
+    pub(crate) sung_preview_rendering: bool,
     /// The song sheet's dials while it is open, and nothing when it is not.
     ///
     /// State of the sheet rather than of the document: nothing here has been written until Write
@@ -1297,6 +1326,9 @@ impl AurisApp {
                         // Edits to a voiced singer track re-render its take without being
                         // asked; the debounce and the one-at-a-time rule live in the poll.
                         this.poll_auto_sing(cx);
+                        // And a grabbed note's preview is sung here too, because the
+                        // pointer handler that wished for it had no executor in hand.
+                        this.poll_sung_preview(cx);
                         cx.notify();
                     })
                     .is_err()
@@ -1336,6 +1368,9 @@ impl AurisApp {
             auto_sing_seen: (0, std::time::Instant::now()),
             auto_sing_refused: None,
             auto_sing_excuse: None,
+            sung_previews: std::collections::HashMap::new(),
+            sung_preview_wish: None,
+            sung_preview_rendering: false,
             song_sheet: None,
             progressions: auris_session::progressions::ProgressionBook::load(),
             auditioning: None,
@@ -1845,14 +1880,88 @@ impl AurisApp {
     /// Sounds a set of notes, replacing anything already sounding.
     fn sound(&mut self, track: TrackId, pitches: Vec<u8>, velocity: f32) {
         self.stop_audition();
-        self.session.notes_on(track, &pitches, velocity);
+        // A voiced singer track auditions through its own voice: the grabbed note is sung
+        // by the model off the main thread and played back as audio, so what a drag sounds
+        // like is what the take will sing. The formant preview remains for tracks with no
+        // voice yet, and chords stay on the instrument path — nothing polyphonic has a
+        // syllable.
+        match pitches.as_slice() {
+            &[pitch] if self.wish_sung_preview(track, pitch) => {}
+            _ => self.session.notes_on(track, &pitches, velocity),
+        }
         self.auditioning = Some((track, pitches));
+    }
+
+    /// Files a wish for one sung preview note, when the track sings at all.
+    ///
+    /// Answers `false` for everything that belongs on the ordinary note-on path: a track
+    /// that is not a singer, and a singer with no voice chosen. A cached render plays at
+    /// once; anything else waits — at most a frame — for the repaint poll, which is the
+    /// nearest thing to an executor a pointer press has.
+    fn wish_sung_preview(&mut self, track: TrackId, pitch: u8) -> bool {
+        let Some(singer) = self
+            .project()
+            .track(track)
+            .and_then(|entry| entry.kind.as_singer())
+        else {
+            return false;
+        };
+        let Some(voice) = singer.voice.as_ref() else {
+            return false;
+        };
+        let seed = singer.take.as_ref().map(|take| take.seed).unwrap_or(0);
+        let key: SungPreviewKey = (
+            voice.name.clone(),
+            seed,
+            pitch,
+            self.selected_phonemes(track),
+        );
+        if let Some(buffer) = self.sung_previews.get(&key) {
+            let buffer = Arc::clone(buffer);
+            self.session.play_singer_preview(track, &buffer);
+            self.sung_preview_wish = None;
+            return true;
+        }
+        self.sung_preview_wish = Some(SungPreviewWish { track, key });
+        true
+    }
+
+    /// The syllable the grabbed note carries, read off the primary selection.
+    ///
+    /// Empty when nothing selected sits on this track — the keyboard strip at the left edge
+    /// has no words to offer — and the pipeline sings that as its placeholder vowel.
+    fn selected_phonemes(&self, track: TrackId) -> Vec<String> {
+        let Some(clip) = self.selected_clip else {
+            return Vec::new();
+        };
+        let Some((owner, clip)) = self.project().midi_clip(clip) else {
+            return Vec::new();
+        };
+        if owner != track {
+            return Vec::new();
+        }
+        self.selected_notes
+            .iter()
+            .next()
+            .and_then(|index| clip.notes.get(*index))
+            .map(|note| note.phonemes.clone())
+            .unwrap_or_default()
     }
 
     /// Releases whatever is being auditioned.
     pub(crate) fn stop_audition(&mut self) {
+        // A wish nobody is holding a note for any more is withdrawn rather than played
+        // late; the render still lands in the cache for the next pass over that pitch.
+        self.sung_preview_wish = None;
         if let Some((track, pitches)) = self.auditioning.take() {
             self.session.notes_off(track, &pitches);
+            if self
+                .project()
+                .track(track)
+                .is_some_and(|entry| entry.kind.is_singer())
+            {
+                self.session.stop_singer_preview(track);
+            }
         }
     }
 

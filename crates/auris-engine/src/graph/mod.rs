@@ -462,6 +462,7 @@ impl RenderGraph {
                 scratch,
                 block_events: Vec::with_capacity(block_events),
                 audition: Vec::with_capacity(AUDITION_HEADROOM),
+                one_shot: None,
                 continued_from: None,
                 chase_counts: [0; PITCH_COUNT],
                 chase_velocity: [0.0; PITCH_COUNT],
@@ -904,6 +905,30 @@ impl RenderGraph {
     pub fn note_off(&mut self, track: usize, pitch: u8) {
         if let Some(track) = self.tracks.get_mut(track) {
             track.note_off(pitch);
+        }
+    }
+
+    /// Starts a pre-rendered one-shot on a track, answering with the buffer it replaced.
+    ///
+    /// The answer is the caller's to retire off the audio thread; see
+    /// [`RenderTrack::play_one_shot`].
+    #[must_use]
+    pub fn play_one_shot(
+        &mut self,
+        track: usize,
+        buffer: std::sync::Arc<AudioBuffer>,
+    ) -> Option<std::sync::Arc<AudioBuffer>> {
+        match self.tracks.get_mut(track) {
+            Some(track) => track.play_one_shot(buffer),
+            // No such track: the buffer itself is the thing to carry off and free.
+            None => Some(buffer),
+        }
+    }
+
+    /// Silences a track's one-shot without freeing it.
+    pub fn stop_one_shot(&mut self, track: usize) {
+        if let Some(track) = self.tracks.get_mut(track) {
+            track.stop_one_shot();
         }
     }
 

@@ -29,6 +29,16 @@ use super::Session;
 /// which anybody who has lyriced a run of notes elsewhere already reads as "still that word".
 pub const LYRIC_CONTINUATION: &str = "+";
 
+/// How long an auditioned note is held, in seconds.
+///
+/// Long enough to hear the syllable open and settle, short enough that a drag across the
+/// keyboard answers as it moves. Fixed rather than the note's own length so a preview is one
+/// render whatever is grabbed, and so a cache keyed on pitch and phonemes actually hits.
+pub const PREVIEW_NOTE_SECONDS: f64 = 0.5;
+
+/// Silence appended after the held note, where the voice lets go of the syllable.
+const PREVIEW_TAIL_SECONDS: f64 = 0.3;
+
 impl Session {
     /// Appends a singer track, previewing through the built-in vocal instrument.
     pub fn add_singer_track(&mut self, name: impl Into<String>) -> TrackId {
@@ -347,6 +357,108 @@ impl Session {
         })
     }
 
+    /// The loaded voice behind a singer track, for a caller's own render thread.
+    ///
+    /// The audition half of [`Session::sing_plan`]: no folder is needed because nothing
+    /// lands, and no notes are needed because the note being auditioned is the caller's to
+    /// describe. A track with no voice refuses the same way singing does.
+    pub fn singer_voice_model(
+        &mut self,
+        track: TrackId,
+    ) -> Result<Arc<Mutex<VoiceModel>>, SessionError> {
+        let singer = self.require_singer(track)?;
+        let voice = singer.voice.clone().ok_or(SessionError::NoVoice(track.0))?;
+        let resolved = voice
+            .path
+            .resolve(self.project_folder())
+            .ok_or(SessionError::NoVoice(track.0))?;
+        self.voice_model_at(&resolved)
+    }
+
+    /// The frames one auditioned note would sing, in a singer track's voice.
+    ///
+    /// A tiny score built around the note alone — its pitch, its phonemes, a fixed held
+    /// length with a silent tail for the release — rendered through the same
+    /// [`render_frames`] as the song, so what a dragged note sounds like and what the take
+    /// will sing stay one story. The velocity is the default on purpose: a preview keyed by
+    /// every velocity would defeat the cache every caller wants to keep.
+    pub fn preview_note_frames(
+        &self,
+        track: TrackId,
+        pitch: u8,
+        phonemes: &[String],
+    ) -> Result<SingerFrames, SessionError> {
+        let singer = self.require_singer(track)?;
+        let tempo = &self.project.tempo_map;
+        let held = tempo.seconds_to_ticks(auris_core::Seconds(PREVIEW_NOTE_SECONDS));
+        let mut clip =
+            auris_core::MidiClip::new(ClipId(0), "Preview", auris_core::Ticks::ZERO, held);
+        let mut note = auris_core::Note::new(pitch, auris_core::Ticks::ZERO, held);
+        note.phonemes = phonemes.to_vec();
+        clip.notes.push(note);
+        let one_note = auris_core::SingerTrack {
+            instrument_id: singer.instrument_id.clone(),
+            instrument_state: auris_core::PluginState::default(),
+            clips: vec![clip],
+            frame_hop: singer.frame_hop,
+            voice: None,
+            take: None,
+        };
+        let mut frames = render_frames(&one_note, tempo);
+        // The tail is appended rather than scored: silence after the note is where the
+        // model lets go of the syllable, and the first inventory entry is always SILENCE.
+        let tail = (PREVIEW_TAIL_SECONDS / frames.hop_seconds).ceil() as usize;
+        for _ in 0..tail {
+            frames.phonemes.push(0);
+            frames.f0_hz.push(0.0);
+            frames.energy.push(0.0);
+        }
+        Ok(frames)
+    }
+
+    /// Turns a preview render into the buffer the engine plays.
+    ///
+    /// The model sings at its own rate and the engine renders at the device's; the resample
+    /// happens here, off the audio thread. The buffer comes back to the caller so the same
+    /// note can be played again without another render.
+    pub fn singer_preview_buffer(
+        &self,
+        samples: &[f32],
+        source_rate: f64,
+    ) -> Arc<auris_core::AudioBuffer> {
+        let mut buffer = auris_core::AudioBuffer::new(1, samples.len(), source_rate);
+        buffer.channel_mut(0)[..samples.len()].copy_from_slice(samples);
+        let rate = self.engine.sample_rate();
+        let buffer = match auris_io::resample_buffer(&buffer, rate) {
+            Ok(resampled) => resampled,
+            // A rate the resampler cannot bridge: the note previews at the wrong speed
+            // rather than not at all.
+            Err(_) => buffer,
+        };
+        Arc::new(buffer)
+    }
+
+    /// Plays a prepared preview buffer once on a track, immediately.
+    ///
+    /// The buffer crosses the command channel whole, the discipline every heap crossing to
+    /// the audio thread follows; whatever the track was previewing before travels back to be
+    /// dropped here on the next garbage sweep.
+    pub fn play_singer_preview(&mut self, track: TrackId, buffer: &Arc<auris_core::AudioBuffer>) {
+        if let Ok(index) = self.require_track(track) {
+            self.send(auris_engine::EngineCommand::PlayOneShot {
+                track: index,
+                buffer: Arc::clone(buffer),
+            });
+        }
+    }
+
+    /// Silences a track's preview, the way a note-off ends an auditioned note.
+    pub fn stop_singer_preview(&mut self, track: TrackId) {
+        if let Ok(index) = self.require_track(track) {
+            self.send(auris_engine::EngineCommand::StopOneShot { track: index });
+        }
+    }
+
     /// The loaded model behind a plan's voice, for rendering on a caller's thread.
     pub fn voice_model_at(&mut self, file: &Path) -> Result<Arc<Mutex<VoiceModel>>, SessionError> {
         if let Some(loaded) = self.voices.get(file) {
@@ -581,6 +693,37 @@ mod tests {
                 .unwrap();
         }
         (session, track, clip)
+    }
+
+    #[test]
+    fn a_preview_note_is_a_tiny_score_with_a_silent_tail() {
+        let (session, track, _clip) = sung(1);
+        let frames = session
+            .preview_note_frames(track, 69, &["r".to_string(), "a".to_string()])
+            .unwrap();
+        // The note sings at its pitch — A4 at 440 Hz, consonant frames included, since a
+        // consonant carries its vowel's pitch through the contour...
+        let voiced: Vec<f32> = frames
+            .f0_hz
+            .iter()
+            .copied()
+            .filter(|hz| *hz > 0.0)
+            .collect();
+        assert!(!voiced.is_empty());
+        assert!(
+            voiced.iter().all(|hz| (*hz - 440.0).abs() < 0.5),
+            "A4 previews at 440 Hz"
+        );
+        // ...for its fixed length, and the frames past it are silence for the release.
+        let held = (PREVIEW_NOTE_SECONDS / frames.hop_seconds).round() as usize;
+        assert!(frames.len() > held, "the tail extends past the note");
+        assert_eq!(*frames.phonemes.last().unwrap(), 0, "the tail is silence");
+        assert_eq!(*frames.f0_hz.last().unwrap(), 0.0);
+        // The same syllable at another pitch is the same length — what a cache wants.
+        let other = session
+            .preview_note_frames(track, 57, &["a".to_string()])
+            .unwrap();
+        assert_eq!(other.len(), frames.len());
     }
 
     /// Puts a voice on the track without opening a model file — the doors can be tested

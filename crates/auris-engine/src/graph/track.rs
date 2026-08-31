@@ -5,6 +5,8 @@
 //! sounds is `schedule`'s. Everything here is either a wire or a pre-sized buffer, which is what
 //! keeps the render loop free of the allocator.
 
+use std::sync::Arc;
+
 use auris_core::plugin::{Instrument, NoteEvent};
 use auris_core::project::TrackId;
 use auris_core::{AudioBuffer, ParamId};
@@ -56,6 +58,19 @@ pub enum RenderSource {
     Silence,
 }
 
+/// A short pre-rendered voice, playing once over whatever the track renders.
+///
+/// The singer's audition: a dragged note is sung by the model off the audio thread, and this
+/// is where the result lands. The `Arc` is never dropped here — a finished or silenced
+/// one-shot keeps its buffer, silent, until [`RenderTrack::play_one_shot`] swaps it out and
+/// the engine retires it up the return channel.
+pub(crate) struct OneShot {
+    /// The audio, at the graph's sample rate.
+    pub(crate) buffer: Arc<AudioBuffer>,
+    /// Frames of it already played. At or past the end, the slot is silent.
+    pub(crate) cursor: usize,
+}
+
 /// A copy of a track's signal, on its way to a bus.
 ///
 /// The gain is smoothed for the same reason a fader is: a send level moved during playback would
@@ -102,6 +117,8 @@ pub struct RenderTrack {
     pub(crate) block_events: Vec<NoteEvent>,
     /// Notes triggered from the UI, consumed at the start of the next block.
     pub(crate) audition: Vec<NoteEvent>,
+    /// A pre-rendered voice playing once, mixed over the source whatever the transport does.
+    pub(crate) one_shot: Option<OneShot>,
     /// Frame the previous rendered block ended on. A mismatch with the next block's start means
     /// the playhead jumped — a seek, a loop wrap or a fresh start — and the notes that should be
     /// sounding there have to be chased.
@@ -200,6 +217,25 @@ impl RenderTrack {
         }
     }
 
+    /// Starts a one-shot from its top, answering with the buffer it replaced.
+    ///
+    /// The answer must leave the audio thread: dropping the last `Arc` to a buffer here
+    /// would free audio inside the callback, which is what the retired-data channel exists
+    /// to prevent.
+    #[must_use]
+    pub fn play_one_shot(&mut self, buffer: Arc<AudioBuffer>) -> Option<Arc<AudioBuffer>> {
+        self.one_shot
+            .replace(OneShot { buffer, cursor: 0 })
+            .map(|shot| shot.buffer)
+    }
+
+    /// Silences the one-shot without freeing it; the buffer waits for the next swap.
+    pub fn stop_one_shot(&mut self) {
+        if let Some(shot) = &mut self.one_shot {
+            shot.cursor = shot.buffer.frame_count();
+        }
+    }
+
     /// Writes a parameter on the track's instrument.
     pub fn set_instrument_param(&mut self, param: ParamId, value: f32) {
         if let RenderSource::Instrument { instrument, .. } | RenderSource::Sung { instrument, .. } =
@@ -215,6 +251,7 @@ impl RenderTrack {
     /// wants, where the point is that everything shuts up until the next note begins.
     pub fn silence_voices(&mut self) {
         self.audition.clear();
+        self.stop_one_shot();
         if let RenderSource::Instrument { instrument, .. } | RenderSource::Sung { instrument, .. } =
             &mut self.source
         {

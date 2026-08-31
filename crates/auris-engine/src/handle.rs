@@ -10,8 +10,21 @@ use crate::error::EngineError;
 use crate::graph::RenderGraph;
 use crate::meter::MeterBank;
 
-/// Retired graphs travelling back from the audio thread to be dropped here.
-pub(crate) type GraphReceiver = Receiver<Box<RenderGraph>>;
+/// Heap-owning data travelling back from the audio thread to be dropped here.
+///
+/// One channel for everything the callback must not free itself: a graph holds plugin
+/// instances and sample buffers, and a preview buffer is a couple of hundred kilobytes of
+/// audio — either one deallocated inside the callback would risk an xrun. The UI never looks
+/// inside; [`EngineHandle::collect_garbage`] drops whatever arrives.
+pub enum Retired {
+    /// A render graph replaced by [`EngineCommand::SetGraph`].
+    Graph(Box<RenderGraph>),
+    /// A preview buffer replaced by [`EngineCommand::PlayOneShot`].
+    Buffer(Arc<auris_core::AudioBuffer>),
+}
+
+/// Retired data travelling back from the audio thread to be dropped here.
+pub(crate) type GraphReceiver = Receiver<Retired>;
 
 /// Everything the UI needs to talk to a running engine.
 ///

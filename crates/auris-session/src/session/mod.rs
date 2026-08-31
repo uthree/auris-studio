@@ -69,7 +69,9 @@ pub use levels::{
 };
 pub use monitor::MonitorStatus;
 pub use notes::{Quantize, quantized};
-pub use singer::{LYRIC_CONTINUATION, SingPlan, SingerTakeState, take_fingerprint};
+pub use singer::{
+    LYRIC_CONTINUATION, PREVIEW_NOTE_SECONDS, SingPlan, SingerTakeState, take_fingerprint,
+};
 
 pub use record::{
     Arm, InputChannels, RecordingReport, RecordingStatus, TakeReport, input_level_of,

@@ -25,6 +25,12 @@ use crate::ui::drop::{DropAction, DropKind, DropOutcome, Dropped, drop_action};
 /// short enough that the voice answers while the edit is still on the editor's mind.
 pub(crate) const AUTO_SING_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(800);
 
+/// How many preview renders the cache holds before it is emptied and started over.
+///
+/// Each is under a second of mono audio; the cap is about bounding a marathon session, not
+/// about memory pressure, so wholesale clearing beats bookkeeping an eviction order.
+const SUNG_PREVIEW_CACHE: usize = 128;
+
 /// Where the playhead lands after `direction` steps of `step` from `at`.
 ///
 /// Onto the grid first, then along it. A playhead left between two lines by a click steps onto
@@ -913,6 +919,8 @@ impl AurisApp {
             let _ = this.update(cx, |this, cx| {
                 match this.session.set_singer_voice(track, Some(&path)) {
                     Ok(()) => {
+                        // Renders of the old voice must not answer for the new one.
+                        this.sung_previews.clear();
                         let name = this
                             .session
                             .singer_voice(track)
@@ -1202,6 +1210,75 @@ impl AurisApp {
                         let line = this.failure(Key::CmdSing, &error);
                         this.set_failed_status(line);
                     }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Sings the wished preview note in the background, from the repaint timer.
+    ///
+    /// The audition path files a wish because a pointer handler has no executor in hand;
+    /// this poll — one frame later at worst — renders it, caches it at the engine's rate,
+    /// and plays it if the hand is still down on that note. One render at a time, and a
+    /// drag sweeping pitches overwrites the wish while it waits, so the sweep costs the
+    /// notes it settles on rather than everywhere it passed through.
+    pub(crate) fn poll_sung_preview(&mut self, cx: &mut Context<Self>) {
+        if self.sung_preview_rendering {
+            return;
+        }
+        let Some(wish) = &self.sung_preview_wish else {
+            return;
+        };
+        let track = wish.track;
+        let key = wish.key.clone();
+        let model = match self.session.singer_voice_model(track) {
+            Ok(model) => model,
+            Err(_) => {
+                self.sung_preview_wish = None;
+                return;
+            }
+        };
+        let frames = match self.session.preview_note_frames(track, key.2, &key.3) {
+            Ok(frames) => frames,
+            Err(_) => {
+                self.sung_preview_wish = None;
+                return;
+            }
+        };
+        let seed = key.1;
+        self.sung_preview_rendering = true;
+        cx.spawn(async move |this, cx| {
+            let sung = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut model = model.lock().expect("no thread panics holding a voice");
+                    let rate = f64::from(model.info().sample_rate);
+                    model.sing(&frames, seed).map(|samples| (samples, rate))
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.sung_preview_rendering = false;
+                let Ok((samples, rate)) = sung else {
+                    // A voice that cannot sing half a second will have said why through
+                    // the auto-render's status line; the preview just stays quiet.
+                    this.sung_preview_wish = None;
+                    return;
+                };
+                let buffer = this.session.singer_preview_buffer(&samples, rate);
+                if this.sung_previews.len() >= SUNG_PREVIEW_CACHE {
+                    this.sung_previews.clear();
+                }
+                this.sung_previews.insert(key.clone(), Arc::clone(&buffer));
+                // Played only while the hand is still down on this very note.
+                if this
+                    .sung_preview_wish
+                    .as_ref()
+                    .is_some_and(|wish| wish.track == track && wish.key == key)
+                {
+                    this.session.play_singer_preview(track, &buffer);
+                    this.sung_preview_wish = None;
                 }
                 cx.notify();
             });

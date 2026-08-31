@@ -131,6 +131,28 @@ pub enum EngineCommand {
         /// How far it is up, 0.0 to 1.0.
         value: f32,
     },
+    /// Plays a pre-rendered buffer once on a track, immediately — the singer's audition.
+    ///
+    /// The buffer crosses whole and pre-built at the graph's sample rate, the same discipline
+    /// as [`Self::SetGraph`]: the callback only adds it into the track's scratch. Whatever
+    /// buffer the track was already playing travels back up the retired-data channel to be
+    /// dropped off the audio thread.
+    PlayOneShot {
+        /// Track position in the project.
+        track: usize,
+        /// The audio, at the graph's rate. Mono feeds every channel; extra channels are read
+        /// as far as they go.
+        buffer: std::sync::Arc<auris_core::AudioBuffer>,
+    },
+    /// Silences a track's one-shot, the way a note-off ends an auditioned note.
+    ///
+    /// The buffer stays in its slot — silent, finished — until the next
+    /// [`Self::PlayOneShot`] retires it or the graph itself is replaced, because freeing it
+    /// here would be freeing it on the audio thread.
+    StopOneShot {
+        /// Track position in the project.
+        track: usize,
+    },
     /// Turns the click on or off.
     SetMetronome(bool),
     /// Silences everything: voices, delay lines and filter memory.
@@ -238,6 +260,14 @@ impl std::fmt::Debug for EngineCommand {
                 .field("number", number)
                 .field("value", value)
                 .finish(),
+            Self::PlayOneShot { track, buffer } => f
+                .debug_struct("PlayOneShot")
+                .field("track", track)
+                .field("frames", &buffer.frame_count())
+                .finish(),
+            Self::StopOneShot { track } => {
+                f.debug_struct("StopOneShot").field("track", track).finish()
+            }
             Self::SetMetronome(enabled) => f.debug_tuple("SetMetronome").field(enabled).finish(),
             Self::Panic => f.write_str("Panic"),
         }

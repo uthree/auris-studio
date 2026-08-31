@@ -1039,6 +1039,20 @@ pub mod singing {
     //! timeline. The engine keeps the preview instrument standing by under a take, fed nothing
     //! but auditioned notes, so clicking a note in the roll still sounds.
     //!
+    //! Once a voice is chosen, the audition itself sings. The pieces:
+    //! [`Session::preview_note_frames`](crate::Session::preview_note_frames) writes a tiny
+    //! fixed-length score around the one grabbed note,
+    //! [`Session::singer_voice_model`](crate::Session::singer_voice_model) hands the loaded
+    //! model to whatever thread the frontend renders on, and the finished audio goes to the
+    //! engine as a *one-shot*: [`Session::singer_preview_buffer`](crate::Session::singer_preview_buffer)
+    //! resamples it to the engine's rate off the audio thread, and
+    //! [`Session::play_singer_preview`](crate::Session::play_singer_preview) sends the whole
+    //! buffer across the command channel — the `SetGraph` discipline in miniature. The
+    //! callback only adds the buffer into the track's scratch; a replaced or spent buffer is
+    //! never freed there, it travels back up the retired-data channel with the graphs. A
+    //! frontend is expected to cache renders (same voice, seed, pitch and phonemes are the
+    //! same audio) so a drag across pitches is instant everywhere it has already been.
+    //!
     //! # A take is kept, never silently rewritten
     //!
     //! The contract from "the score does not change; the performer does": every random choice

@@ -40,6 +40,16 @@ format rather than a convention: `## <version> — <date>`.
   notes one syllable each (`notes` reads the words back beside the pitches), and `sing`
   renders the track through its voice model into the project's take — so a model can write a
   song and make it sing without a window open. Twenty-nine tools in all.
+* **A dragged note previews in the real voice.** Grabbing or dragging a note on a voiced
+  singer track no longer strikes the formant instrument: the model sings that one note — its
+  own syllable, half a second at the grabbed pitch — in the background, and the engine plays
+  the render at once, transport rolling or not. Renders are cached by voice, seed, pitch and
+  syllable, so a drag is instant everywhere it has already been; short sequences sit well
+  inside what a desktop CPU renders faster than real time. Tracks with no voice keep the
+  formant preview, and chords stay on the instrument path. Under the hood the engine grew
+  one-shot playback: a pre-rendered buffer crosses the command channel whole, is mixed in by
+  the callback without ever being freed there, and travels back up the retired-data channel
+  when replaced — the `SetGraph` discipline in miniature.
 * Under the hood: the new `auris-singer` crate runs the model on the CPU via onnxruntime,
   cutting the timeline at silences into chunks of at most twenty seconds — the model's
   attention grows with the square of the frame count, and a whole song in one inference has
