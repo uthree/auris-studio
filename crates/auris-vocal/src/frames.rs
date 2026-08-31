@@ -12,7 +12,7 @@
 //!   phoneme takes its width at the note's start, each one after the last takes its width at
 //!   the end, and everything between shares the remainder equally. The width is the voice
 //!   model's own measurement where the track's voice carries a table
-//!   ([`ConsonantWidths`](auris_core::ConsonantWidths)) and [`CONSONANT_SECONDS`] where it
+//!   ([`ConsonantWidths`]) and [`CONSONANT_SECONDS`] where it
 //!   does not. Consonants scale down rather than swallow a short note, never past half of it.
 //! * **Pitch is the note plus its bend plus its ornaments, everywhere in the note.** No
 //!   portamento is invented between notes — the bend curve is where a slide is written, and a
@@ -45,7 +45,7 @@ use crate::phoneme::{SILENCE, is_syllabic};
 /// and is short enough that a sixteenth note at 120 BPM (125 ms) keeps most of itself for the
 /// vowel. Consonant length actually spans a factor of three by phoneme class, which is why a
 /// voice model's export can carry its own per-phoneme table
-/// ([`ConsonantWidths`](auris_core::ConsonantWidths)) and the table wins wherever the track's
+/// ([`ConsonantWidths`]) and the table wins wherever the track's
 /// voice has one; this number is the fallback for the models — and the voiceless tracks — that
 /// do not.
 pub const CONSONANT_SECONDS: f64 = 0.060;
