@@ -68,7 +68,7 @@ pub use levels::{
     BalanceReport, CEILING_DB, LIMITER_ALLOWANCE_DB, TARGET_LUFS, TrackLevel, fader_for,
     faders_lift_db, master_gain_db,
 };
-pub use lyrics::{DEFAULT_LYRIC_PROGRESSION, LyricSongReport};
+pub use lyrics::{DEFAULT_LYRIC_PROGRESSION, LyricSongReport, LyricsMeasure};
 pub use monitor::MonitorStatus;
 pub use notes::{Quantize, quantized};
 pub use singer::{

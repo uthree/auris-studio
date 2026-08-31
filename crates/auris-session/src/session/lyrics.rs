@@ -16,7 +16,7 @@
 
 use auris_compose::vocal::{VocalRange, ornament_vocal, vocal_rhythm, write_vocal};
 use auris_core::theory::contour::Contour;
-use auris_core::time::Ticks;
+use auris_core::time::{Ticks, TimeSignature};
 use auris_core::{ClipId, ClipPreset, ClipRecipe, Note, PresetRef, TrackId};
 use auris_vocal::{SungMora, kana_accent_phrase};
 
@@ -319,6 +319,71 @@ impl Session {
     }
 }
 
+/// What a lyric would cost in notes and bars, line by line — the writer's tape measure.
+///
+/// Computed by the same splitting, the same mora reading and the same [`vocal_rhythm`] that
+/// composing uses, so the numbers a lyrics editor shows are the numbers Write will act on:
+/// a display that ran its own arithmetic would drift the day either side changed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LyricsMeasure {
+    /// Notes each line of the lyric would sing — one per mora — or `None` for a line that
+    /// cannot be read at all (kanji with no dictionary anywhere).
+    pub lines: Vec<Option<usize>>,
+    /// Notes the whole lyric would sing, counting only the readable lines.
+    pub notes: usize,
+    /// Bars the sung rhythm would cover: each phrase on a fresh bar, the last syllable held.
+    pub bars: usize,
+}
+
+impl Session {
+    /// Measures a lyric without writing anything: notes per line, notes in all, bars needed.
+    ///
+    /// For the editor's margin, so words can be fitted to a section while they are typed
+    /// rather than discovered to outrun it at Write. Unreadable lines measure as `None` and
+    /// simply do not count — the same lines Write would refuse or skip.
+    pub fn measure_lyrics(&self, lyrics: &str, meter: TimeSignature) -> LyricsMeasure {
+        let mut lines = Vec::new();
+        let mut counts: Vec<usize> = Vec::new();
+        let mut notes = 0usize;
+        for line in lyrics.split('\n') {
+            let mut sung = Some(0usize);
+            for segment in line.split(['\r', '、', '。', '！', '？', '!', '?']) {
+                let segment = segment.trim();
+                if segment.is_empty() {
+                    continue;
+                }
+                let read: Option<usize> = match self.japanese.as_ref() {
+                    Some(dictionary) => dictionary
+                        .accent_phrases(segment)
+                        .ok()
+                        .map(|read| read.iter().map(|accent| accent.moras.len()).sum()),
+                    None => kana_accent_phrase(segment).map(|phrase| phrase.moras.len()),
+                };
+                match read {
+                    Some(count) if count > 0 => {
+                        counts.push(count);
+                        if let Some(total) = sung.as_mut() {
+                            *total += count;
+                        }
+                        notes += count;
+                    }
+                    Some(_) => {}
+                    None => sung = None,
+                }
+            }
+            lines.push(sung);
+        }
+        let bars = match counts.is_empty() {
+            true => 0,
+            false => {
+                let bar = meter.ticks_per_bar().raw().max(1);
+                (vocal_rhythm(&counts, meter).length.raw() / bar) as usize
+            }
+        };
+        LyricsMeasure { lines, notes, bars }
+    }
+}
+
 /// Cuts a lyric into musical phrases and reads each one's moras and contours.
 ///
 /// The dictionary is preferred over the kana table when it is loaded — the opposite of
@@ -498,6 +563,33 @@ mod tests {
                 .all(|track| !track.kind.is_singer()),
             "no empty vocal track for an instrumental piece"
         );
+    }
+
+    #[test]
+    fn the_measure_counts_what_write_would_sing() {
+        let session = session();
+        let meter = auris_core::time::TimeSignature::new(4, 4);
+        let measure = session.measure_lyrics("さくら さいた\nはるが きた", meter);
+
+        assert_eq!(measure.lines, vec![Some(6), Some(5)]);
+        assert_eq!(measure.notes, 11, "one note per mora, same as composing");
+        // The same rhythm Write uses: phrase one holds its last syllable into bar two,
+        // phrase two starts on the next free bar line and does the same.
+        let rhythm = vocal_rhythm(&[6, 5], meter);
+        let bar = meter.ticks_per_bar().raw();
+        assert_eq!(measure.bars as i64, rhythm.length.raw() / bar);
+        assert_eq!(measure.bars, 3);
+
+        // A line nobody can read measures as None and costs nothing; the readable line
+        // still counts. Punctuation splits phrases without adding notes.
+        let mixed = session.measure_lyrics("漢字の歌詞\nゆき、ふる", meter);
+        assert_eq!(mixed.lines, vec![None, Some(4)]);
+        assert_eq!(mixed.notes, 4);
+
+        // Nothing to sing, nothing to measure: no phantom bar for an empty box.
+        let empty = session.measure_lyrics("", meter);
+        assert_eq!(empty.bars, 0);
+        assert_eq!(empty.notes, 0);
     }
 
     #[test]

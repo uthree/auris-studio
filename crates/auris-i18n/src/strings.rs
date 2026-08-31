@@ -63,6 +63,7 @@ strings! {
         ja: "1行が1フレーズ(、や！？も切れ目)。Tabで次のセクションへ。空にすると歌なしに戻ります"
     }
     LyricsNoWords { en: "(no words — instrumental)", ja: "(歌詞なし — インスト)" }
+    LyricsNotesUnit { en: "notes", ja: "音" }
     MenuEditLyric { en: "Edit Lyric…", ja: "歌詞を編集…" }
     MenuEditPhonemes { en: "Edit Phonemes…", ja: "音素を編集…" }
     MenuResetPhonemeTiming { en: "Reset Phoneme Timing", ja: "音素タイミングをリセット" }

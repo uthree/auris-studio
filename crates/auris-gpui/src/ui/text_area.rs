@@ -96,11 +96,22 @@ pub(crate) fn area_offset_at(
     Some(range.start + shaped.closest_index_for_x(x))
 }
 
+/// How wide the margin the per-line annotations sit in is, when there are any.
+///
+/// Room for a two-digit count and a breath of air; the text scrolls sideways before it runs
+/// under the numbers, exactly as it scrolls before running off the edge.
+const ANNOTATION_GUTTER: Pixels = px(30.0);
+
 /// A multi-line editable text element, registered as the window's input target while painted.
+///
+/// `annotations` is one short label per line — a note count, in the lyrics boxes — drawn
+/// faint against the right edge, row for row with the text. Pass an empty list for a plain
+/// area; rows past the list's end simply have no label.
 pub(crate) fn editable_area<V: gpui::EntityInputHandler>(
     text: SharedString,
     selection: Range<usize>,
     marked: Option<Range<usize>>,
+    annotations: Vec<SharedString>,
     focus: gpui::FocusHandle,
     view: gpui::Entity<V>,
     theme: Theme,
@@ -118,6 +129,7 @@ pub(crate) fn editable_area<V: gpui::EntityInputHandler>(
                 &text,
                 &selection,
                 marked.clone(),
+                &annotations,
                 &theme,
             );
         },
@@ -133,6 +145,10 @@ fn watched_offset(selection: &Range<usize>, marked: Option<&Range<usize>>) -> us
 
 /// Draws the text line by line, with the selection, the caret and the IME's pre-edit underline
 /// on whichever lines they cross.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one canvas, one bundle of what it draws"
+)]
 fn paint_area(
     window: &mut Window,
     cx: &mut gpui::App,
@@ -140,6 +156,7 @@ fn paint_area(
     text: &SharedString,
     selection: &Range<usize>,
     marked: Option<Range<usize>>,
+    annotations: &[SharedString],
     theme: &Theme,
 ) {
     let lines = lines(text);
@@ -174,7 +191,11 @@ fn paint_area(
         let watched = watched_offset(selection, marked.as_ref());
         let watched_row = row_of(watched);
         let caret_x = advance(window, &lines[watched_row], watched);
-        let visible = bounds.size.width - FIELD_PADDING * 2.0;
+        let gutter = match annotations.is_empty() {
+            true => px(0.0),
+            false => ANNOTATION_GUTTER,
+        };
+        let visible = bounds.size.width - FIELD_PADDING * 2.0 - gutter;
         let scroll = (caret_x - visible).max(px(0.0));
         AREA.with(|area| area.set(Some((bounds, scroll))));
 
@@ -219,6 +240,23 @@ fn paint_area(
                 TEXT_SIZE,
                 theme.text,
             );
+
+            // The margin note for this row — a note count, in the lyrics boxes — pinned to
+            // the right edge, unmoved by the sideways scroll: it annotates the line, not a
+            // place in it.
+            if let Some(label) = annotations.get(row).filter(|label| !label.is_empty()) {
+                paint::label_right(
+                    window,
+                    cx,
+                    point(
+                        bounds.origin.x + bounds.size.width - FIELD_PADDING,
+                        text_top(row) + px(1.0),
+                    ),
+                    label.clone(),
+                    px(10.0),
+                    theme.text_faint,
+                );
+            }
 
             // The pre-edit is underlined rather than boxed, matching what every other
             // application on the platform does while an IME is composing.

@@ -40,8 +40,12 @@ format rather than a convention: `## <version> — <date>`.
   button and no popup between the writer and the verse. Click a box and it is a real editor
   in place — Return breaks a phrase, Tab walks to the next section, a click lands the caret,
   the IME composes where the text is — and every keystroke is already on the sheet's dials;
-  Escape just puts the keyboard down. The parts moved beneath to make the room: a strip of
-  cards, two abreast, scrolling past its height. The `.asong` format grows the matching
+  Escape just puts the keyboard down. The margin measures the words as they are typed: a
+  note count per line (one note per mora), and in each box's heading the bars the sung
+  rhythm needs against the bars the section has — red once the words would outrun it, and
+  computed by the very reading and rhythm Write uses (`Session::measure_lyrics`), so the
+  display cannot drift from what happens. The parts moved beneath to make the room: a strip
+  of cards, two abreast, scrolling past its height. The `.asong` format grows the matching
   `lyrics = "..."` field, round-tripped like every other, shown in the annotated reference
   example. Writing the piece adds a Vocal track beside the band, one clip per playing of
   each lyrical section, the melody searched over that section's own harmony; every playing

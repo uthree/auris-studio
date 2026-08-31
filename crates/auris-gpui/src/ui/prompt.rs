@@ -1440,6 +1440,19 @@ impl AurisApp {
                 field.content().to_string().into(),
                 field.selection(),
                 field.marked(),
+                // The margin counts what each line would sing — the same measure the song
+                // sheet's boxes show, minus the bar budget: a song composed from lyrics
+                // alone grows to fit its words.
+                self.session
+                    .measure_lyrics(field.content(), self.session.signature_at(Ticks::ZERO))
+                    .lines
+                    .iter()
+                    .map(|line| match line {
+                        Some(0) => "".into(),
+                        Some(count) => count.to_string().into(),
+                        None => "?".into(),
+                    })
+                    .collect(),
                 focus,
                 view,
                 theme.clone(),

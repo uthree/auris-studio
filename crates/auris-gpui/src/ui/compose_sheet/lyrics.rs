@@ -197,6 +197,12 @@ impl AurisApp {
 
     /// One section's box: its name over its words, a live editor where it holds the keyboard
     /// and standing text everywhere else.
+    ///
+    /// The margin shows what the words would cost as they are typed: a note count per line —
+    /// one note per mora — and, in the heading, the bars the sung rhythm needs against the
+    /// bars the section has. Measured by the same reading and the same rhythm Write will
+    /// use, so the numbers cannot drift from what happens; words that would outrun the
+    /// section turn the tally the colour of a problem *before* Write quietly cuts them.
     fn lyrics_box(&self, dials: &SongDials, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
         let Some(spec) = dials.sections.get(index) else {
@@ -212,6 +218,32 @@ impl AurisApp {
             spec.bars,
             self.t(Key::SongBarsUnit)
         );
+
+        // Measure what is actually on screen: the editor's text where one is open, the
+        // dials otherwise.
+        let words_now = edit.map_or(spec.lyrics.as_str(), |edit| edit.field.content());
+        let measure = self.session.measure_lyrics(words_now, dials.meter);
+        let counts: Vec<gpui::SharedString> = measure
+            .lines
+            .iter()
+            .map(|line| match line {
+                Some(0) => "".into(),
+                Some(count) => count.to_string().into(),
+                // A line nobody can read — kanji with no dictionary — measures as a shrug.
+                None => "?".into(),
+            })
+            .collect();
+        let over = measure.bars > spec.bars;
+        let tally = (measure.notes > 0).then(|| {
+            format!(
+                "{} {} · {} / {} {}",
+                measure.notes,
+                self.t(Key::LyricsNotesUnit),
+                measure.bars,
+                spec.bars,
+                self.t(Key::SongBarsUnit)
+            )
+        });
 
         let words: AnyElement = if let Some(edit) = edit {
             let field = &edit.field;
@@ -244,6 +276,7 @@ impl AurisApp {
                     field.content().to_string().into(),
                     field.selection(),
                     field.marked(),
+                    counts,
                     self.focus.clone(),
                     cx.entity(),
                     theme.clone(),
@@ -251,9 +284,14 @@ impl AurisApp {
                 .into_any_element()
         } else {
             let empty = spec.lyrics.is_empty();
-            let lines: Vec<String> = match empty {
-                true => vec![self.t(Key::LyricsNoWords).to_string()],
-                false => spec.lyrics.split('\n').map(str::to_string).collect(),
+            let lines: Vec<(String, gpui::SharedString)> = match empty {
+                true => vec![(self.t(Key::LyricsNoWords).to_string(), "".into())],
+                false => spec
+                    .lyrics
+                    .split('\n')
+                    .map(str::to_string)
+                    .zip(counts.into_iter().chain(std::iter::repeat("".into())))
+                    .collect(),
             };
             div()
                 .w_full()
@@ -278,11 +316,23 @@ impl AurisApp {
                     true => theme.text_faint,
                     false => theme.text_muted,
                 })
-                .children(lines.into_iter().map(|line| {
-                    div().h(px(20.0)).child(match line.is_empty() {
-                        true => " ".to_string(),
-                        false => line,
-                    })
+                .children(lines.into_iter().map(|(line, count)| {
+                    div()
+                        .h(px(20.0))
+                        .flex()
+                        .justify_between()
+                        .gap_2()
+                        .child(div().min_w_0().truncate().child(match line.is_empty() {
+                            true => " ".to_string(),
+                            false => line,
+                        }))
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_size(px(10.0))
+                                .text_color(theme.text_faint)
+                                .child(count),
+                        )
                 }))
                 .into_any_element()
         };
@@ -293,12 +343,30 @@ impl AurisApp {
             .gap_1()
             .child(
                 div()
-                    .text_xs()
-                    .text_color(match edit.is_some() {
-                        true => theme.text,
-                        false => theme.text_muted,
-                    })
-                    .child(heading),
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(match edit.is_some() {
+                                true => theme.text,
+                                false => theme.text_muted,
+                            })
+                            .child(heading),
+                    )
+                    // The running total: notes the words would sing, bars they need against
+                    // bars the section has — the colour of a problem once they outrun it.
+                    .children(tally.map(|tally| {
+                        div()
+                            .text_xs()
+                            .text_color(match over {
+                                true => theme.danger,
+                                false => theme.text_faint,
+                            })
+                            .child(tally)
+                    })),
             )
             .child(words)
             .into_any_element()

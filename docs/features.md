@@ -343,7 +343,11 @@ An `.asong` specification says the same thing as `lyrics = "..."` on a `[section
 box and it is a real editor in place: Return breaks a phrase, Tab walks to the next
 section, a click lands the caret on the character under it, and every keystroke is already
 on the song sheet — Escape merely puts the keyboard down, because nothing is left
-uncommitted. Writing the piece then adds a Vocal track beside the band, one clip per
+uncommitted. The margin measures the words as they are typed: each line shows the notes it
+would sing (one per mora), and the box's heading tallies the bars the sung rhythm needs
+against the bars the section has, turning red once the words would outrun it — computed by
+the same reading and the same rhythm Write uses, so the numbers cannot drift from what
+happens. Writing the piece then adds a Vocal track beside the band, one clip per
 playing of each lyrical section, the melody searched over that section's own harmony; a
 chorus sings the same words on every playing, which is what makes it the same chorus. Leave
 a section's box empty and it is instrumental, exactly as before.
