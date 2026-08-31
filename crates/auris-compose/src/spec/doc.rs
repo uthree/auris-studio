@@ -341,6 +341,8 @@ struct SectionDoc {
         skip_serializing_if = "Option::is_none"
     )]
     parts: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lyrics: Option<String>,
     /// `[section.chorus.part.lead]`: what this section changes about one part.
     ///
     /// A table keyed by name, unlike the roster's `[[part]]`, which is an array. The order of the
@@ -721,6 +723,9 @@ impl SectionDoc {
             // list already means. Still accepted, so nobody's document breaks over a star.
             section.parts = parts.into_iter().filter(|name| name != "*").collect();
         }
+        if let Some(lyrics) = self.lyrics {
+            section.lyrics = lyrics;
+        }
         for (part, tweak) in self.part {
             let tweak = tweak.into_spec(name, &part, errors);
             if !tweak.is_empty() {
@@ -927,6 +932,7 @@ impl SectionDoc {
             tempo: section.tempo,
             lead_in: (section.lead_in != plain.lead_in).then(|| section.lead_in.name().to_string()),
             parts: (!section.parts.is_empty()).then(|| section.parts.clone()),
+            lyrics: (!section.lyrics.is_empty()).then(|| section.lyrics.clone()),
             part: section
                 .tweaks
                 .iter()
@@ -1413,6 +1419,24 @@ mod tests {
             "a section named in the form but not described still exists"
         );
         assert_eq!(spec.total_bars(), 4 + 8 + 16);
+    }
+
+    #[test]
+    fn a_section_carries_its_words_and_they_survive_the_file() {
+        let spec = SongSpec::parse(
+            "form = \"verse\"\n[section.verse]\nlyrics = \"さくら さいた、はるが きた\"\n",
+        )
+        .unwrap();
+        assert_eq!(spec.sections["verse"].lyrics, "さくら さいた、はるが きた");
+        assert_eq!(SongSpec::parse(&spec.to_toml()), Ok(spec));
+        // A section that says nothing sings nothing, and writes nothing into the file.
+        assert!(
+            !SongSpec::parse("form = \"verse\"")
+                .unwrap()
+                .to_toml()
+                .contains("lyrics"),
+            "an instrumental spec stays free of the field"
+        );
     }
 
     #[test]

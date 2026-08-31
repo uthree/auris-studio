@@ -443,6 +443,11 @@ pub struct ComposeReport {
     /// the level a part wants depends on the instrument that answered, and the composer chooses
     /// the part while the session finds the instrument.
     pub balance: Option<BalanceReport>,
+    /// How many sung notes the sections' lyrics became — zero for an instrumental piece.
+    pub sung: usize,
+    /// Sections whose lyrics could not be read — kanji with no Japanese dictionary anywhere —
+    /// and so play instrumentally. Their words cost themselves, never the piece.
+    pub unsung: Vec<String>,
 }
 
 struct Transaction {

@@ -250,6 +250,18 @@ pub mod compose {
                  that part."
             ));
         }
+        if report.sung > 0 {
+            text.push_str(&format!(
+                "\nThe lyrics became {} sung notes on a Vocal track — `sing` gives it a voice.",
+                report.sung
+            ));
+        }
+        for section in &report.unsung {
+            text.push_str(&format!(
+                "\nNote: section '{section}' has lyrics no dictionary here can read; it plays \
+                 instrumentally."
+            ));
+        }
         if let Some(lufs) = report.balance.as_ref().and_then(|balance| balance.now_lufs) {
             text.push_str(&format!(
                 "\nThe mix was measured and set to {lufs:.1} LUFS."

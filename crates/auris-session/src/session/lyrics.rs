@@ -200,6 +200,125 @@ impl Session {
     }
 }
 
+impl Session {
+    /// Writes the singer track a composed piece's lyrics ask for, into a project still
+    /// being built.
+    ///
+    /// Called from [`Session::compose`] before the document is swapped in, so the vocal is
+    /// part of the same single edit. Every *playing* of a section sings that section's own
+    /// lyrics — the same words both times round is what makes the second chorus the same
+    /// chorus — over the harmony already stamped under that span, dressed by the ornament
+    /// rules, one clip per playing. Words that outrun their section are dropped with a
+    /// warning rather than spilling into the next one, and a lyric that cannot be read at
+    /// all (kanji with no dictionary anywhere) costs its sections, never the piece: their
+    /// names come back for the report. Answers `(sung notes, clips, unsung sections)`.
+    pub(super) fn write_spec_vocal(
+        &self,
+        project: &mut auris_core::Project,
+        composition: &auris_compose::Composition,
+    ) -> (usize, usize, Vec<String>) {
+        // The composition carries its specification as the text it will be saved as; the
+        // lyrics ride it there, and reading them back costs one parse of a document this
+        // session already validated.
+        let Ok(spec) = auris_compose::SongSpec::parse(&composition.spec) else {
+            return (0, 0, Vec::new());
+        };
+        if spec
+            .sections
+            .values()
+            .all(|section| section.lyrics.trim().is_empty())
+        {
+            return (0, 0, Vec::new());
+        }
+
+        // Read every lyrical span first, so a piece whose every lyric refuses gains no
+        // empty vocal track for its trouble.
+        let mut unsung: Vec<String> = Vec::new();
+        let mut prepared = Vec::new();
+        for span in project.sections.spans_in(Ticks::ZERO, composition.length) {
+            let Some(section) = spec.sections.get(&span.label) else {
+                continue;
+            };
+            if section.lyrics.trim().is_empty() {
+                continue;
+            }
+            match read_lyrics(&section.lyrics, self.japanese.as_ref()) {
+                Ok(phrases) if !phrases.is_empty() => prepared.push((span, phrases)),
+                Ok(_) => {}
+                Err(_) => {
+                    if !unsung.contains(&span.label) {
+                        unsung.push(span.label.clone());
+                    }
+                }
+            }
+        }
+        if prepared.is_empty() {
+            return (0, 0, unsung);
+        }
+
+        let track = project.add_singer_track("Vocal", auris_synth::Vocal::ID);
+        let meter = composition.meter;
+        let (mut sung, mut clips) = (0usize, 0usize);
+        for (span, phrases) in prepared {
+            let counts: Vec<usize> = phrases.iter().map(|phrase| phrase.moras.len()).collect();
+            let contours: Vec<Vec<Contour>> = phrases
+                .iter()
+                .map(|phrase| phrase.contours.clone())
+                .collect();
+            let rhythm = vocal_rhythm(&counts, meter);
+            let mut notes = write_vocal(
+                &project.harmony,
+                span.start,
+                &rhythm,
+                &contours,
+                VocalRange::default(),
+                spec.seed,
+            );
+            ornament_vocal(&mut notes, &rhythm, &project.tempo_map, span.start);
+
+            let mut moras: std::collections::HashMap<Ticks, &SungMora> = Default::default();
+            for (slots, phrase) in rhythm.phrases.iter().zip(&phrases) {
+                for ((onset, _), mora) in slots.iter().zip(&phrase.moras) {
+                    moras.insert(*onset, mora);
+                }
+            }
+
+            let length = span.end - span.start;
+            let Some(clip) = project.add_midi_clip(track, &span.label, span.start, length) else {
+                continue;
+            };
+            let mut cut = 0usize;
+            if let Some(target) = project.midi_clip_mut(clip) {
+                // The length is the section's, exactly as a band clip's is.
+                target.length_is_explicit = true;
+                for note in notes {
+                    if note.end() > length {
+                        cut += 1;
+                        continue;
+                    }
+                    let Some(mora) = moras.get(&note.start) else {
+                        continue;
+                    };
+                    target.notes.push(Note {
+                        lyric: mora.text.clone(),
+                        phonemes: mora.phonemes.clone(),
+                        ..note
+                    });
+                    sung += 1;
+                }
+            }
+            clips += 1;
+            if cut > 0 {
+                log::warn!(
+                    "section `{}`: {cut} syllables outran its bars and were dropped",
+                    span.label
+                );
+            }
+        }
+        (sung, clips, unsung)
+    }
+}
+
 /// Cuts a lyric into musical phrases and reads each one's moras and contours.
 ///
 /// The dictionary is preferred over the kana table when it is loaded — the opposite of
@@ -326,6 +445,59 @@ mod tests {
         );
         assert!(!session.can_undo(), "a refusal costs no step");
         assert_eq!(session.project().tracks.len(), 0);
+    }
+
+    #[test]
+    fn a_composed_piece_sings_the_sections_that_carry_words() {
+        let spec = auris_compose::SongSpec::parse(
+            "form = \"verse chorus verse\"\nending = \"none\"\n[section.verse]\nbars = 4\nlyrics = \"さくら さいた\"\n[section.chorus]\nbars = 4\n",
+        )
+        .unwrap();
+        let piece = auris_compose::compose(&spec);
+        let mut session =
+            crate::Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let report = session.compose(&piece).unwrap();
+
+        assert_eq!(report.sung, 12, "six moras, sung on both playings");
+        assert!(report.unsung.is_empty());
+        let singer = session
+            .project()
+            .tracks
+            .iter()
+            .find(|track| track.kind.is_singer())
+            .expect("a vocal track was written");
+        let clips = &singer.kind.as_singer().unwrap().clips;
+        assert_eq!(
+            clips.len(),
+            2,
+            "one clip per playing of the lyrical section"
+        );
+        assert_eq!(clips[0].notes.len(), 6);
+        assert_eq!(clips[0].notes[0].lyric, "さ");
+        assert!(clips[0].notes.iter().all(|note| !note.phonemes.is_empty()));
+        assert!(clips[0].notes[0].scoop.is_some(), "the phrase scoops in");
+        assert!(
+            clips[0].notes.last().unwrap().vibrato.is_some(),
+            "the held final sways"
+        );
+        // Two playings of one section are one idea, sung the same both times.
+        assert_eq!(clips[0].notes, clips[1].notes);
+
+        // An instrumental spec writes no vocal track at all.
+        let plain =
+            auris_compose::compose(&auris_compose::SongSpec::parse("form = \"verse\"").unwrap());
+        let mut second =
+            crate::Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let report = second.compose(&plain).unwrap();
+        assert_eq!(report.sung, 0);
+        assert!(
+            second
+                .project()
+                .tracks
+                .iter()
+                .all(|track| !track.kind.is_singer()),
+            "no empty vocal track for an instrumental piece"
+        );
     }
 
     #[test]

@@ -53,6 +53,12 @@ parts = "pad bass hat"
 bars      = 8
 intensity = 0.55
 parts     = "lead chords bass kick snare hat"
+# Words make the section sing: a Vocal track is written beside the band, one note per
+# syllable, the melody searched so it never contradicts the words' own pitch accent
+# (with a Japanese dictionary installed; kana works without one). Line breaks and 、。！？
+# cut the phrases where the singer breathes. Every playing of this section sings these
+# same words — leave the field out for an instrumental section.
+lyrics = "ネオンのまちを はしりぬける"
 
 [section.chorus]
 bars      = 8

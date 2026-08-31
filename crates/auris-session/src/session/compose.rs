@@ -164,6 +164,8 @@ impl Session {
             length: composition.length,
             substituted: Vec::new(),
             balance: None,
+            sung: 0,
+            unsung: Vec::new(),
         };
 
         // The buses first, so that the tracks routed into them have somewhere to land. They are
@@ -343,6 +345,19 @@ impl Session {
                 report.clips += 1;
             }
         }
+
+        // The words, where any section carries them: one singer track beside the band, one
+        // clip per playing of a lyrical section — the whole account is on
+        // [`Session::write_spec_vocal`]. Before the buses move down, so the voice stands
+        // with the music rather than among the plumbing.
+        let (sung, sung_clips, unsung) = self.write_spec_vocal(&mut project, composition);
+        if sung > 0 {
+            report.tracks += 1;
+        }
+        report.clips += sung_clips;
+        report.notes += sung;
+        report.sung = sung;
+        report.unsung = unsung;
 
         // The buses to the bottom, where a mixing point belongs. Moved rather than created there,
         // because a send cannot name a bus that does not exist yet.

@@ -355,6 +355,15 @@ pub struct SectionSpec {
     /// and a tweak pointing at "the third part" would follow the move to somewhere it means
     /// nothing. A name that no part answers to is a mistake the format reports.
     pub tweaks: BTreeMap<String, PartTweak>,
+    /// The words this section sings, or empty for an instrumental section.
+    ///
+    /// Line breaks and sentence punctuation cut the phrases, exactly as they do everywhere
+    /// lyrics are read. The *text* lives here — the composer's vocabulary has no way to sing
+    /// it — and whoever materialises the piece writes the vocal: the session lays a melody
+    /// under these words over this section's own harmony, on a singer track beside the band.
+    /// A property of the section, so every playing of a chorus sings the same chorus, which
+    /// is what makes it the same chorus.
+    pub lyrics: String,
 }
 
 impl SectionSpec {
@@ -382,6 +391,7 @@ impl SectionSpec {
             tempo: None,
             lead_in: LeadIn::default(),
             tweaks: BTreeMap::new(),
+            lyrics: String::new(),
         }
     }
 }
