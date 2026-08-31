@@ -1270,6 +1270,57 @@ mod tests {
         );
     }
 
+    /// A voice whose export measured its consonants times them by that measure, end to end:
+    /// the model's metadata, through the document, into the frames it is fed.
+    ///
+    /// Runs only where the test model actually carries the table — an old export skips
+    /// rather than fails, since predating a measurement is not a defect — so the day a
+    /// measuring export lands on the machine, the whole chain starts being held to its
+    /// numbers.
+    #[test]
+    fn a_measuring_voice_times_its_consonants_end_to_end() {
+        let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") else {
+            eprintln!("AURIS_SINGER_TEST_MODEL not set; skipping the consonant-width test");
+            return;
+        };
+        let (mut session, track, clip) = sung(1);
+        session
+            .set_singer_voice(track, Some(std::path::Path::new(&model)))
+            .unwrap();
+        let Some(widths) = session
+            .singer_voice(track)
+            .unwrap()
+            .unwrap()
+            .consonants
+            .clone()
+        else {
+            eprintln!("the test model predates phoneme_durations; skipping");
+            return;
+        };
+        assert!(
+            !widths.seconds.is_empty(),
+            "a model that carries the table measured at least one phoneme"
+        );
+
+        // つ — [ts ɯ] — the affricate whose measured width strays furthest from the old
+        // fixed sixty milliseconds. A quarter note leaves it room not to be scaled.
+        session
+            .set_note_phonemes(clip, 0, vec!["ts".into(), "ɯ".into()])
+            .unwrap();
+        let frames = session.singer_frames(track).unwrap();
+        let ts = frames
+            .inventory
+            .iter()
+            .position(|phoneme| phoneme == "ts")
+            .expect("the affricate reached the frames") as u32;
+        let held = frames.phonemes.iter().filter(|id| **id == ts).count() as f64;
+        let asked = widths.width("ts") / frames.hop_seconds;
+        assert!(
+            (held - asked).abs() <= 1.0,
+            "ts held {held} frames where its own measure asks {asked}"
+        );
+    }
+
     #[test]
     fn the_real_voice_sings_a_take_into_the_project() {
         let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") else {
