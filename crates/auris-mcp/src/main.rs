@@ -238,8 +238,9 @@ impl AurisMcp {
 
     /// Adds a track to an existing project and saves. An instrument track by default — voiced
     /// by `instrument` (an id from `list_instruments`) or by `sound` (a General MIDI name or
-    /// program number, `drums: true` for a kit) — or, with `kind`, an audio track or a bus. A
-    /// new instrument track has no clips: `add_part` writes one.
+    /// program number, `drums: true` for a kit) — or, with `kind`, a singer track (notes that
+    /// carry lyrics, sung by a voice model), an audio track or a bus. A new instrument track
+    /// has no clips: `add_part` writes one.
     #[tool]
     async fn add_track(
         &self,
@@ -293,9 +294,9 @@ impl AurisMcp {
         blocking(move || toolbox::remove_track::run(&args)).await
     }
 
-    /// Opens an empty clip on an instrument track, for `edit_notes` to write into — the way a
-    /// melody is placed note by note. Aim it with `start_bar` and `bars`; the answer numbers
-    /// the clip the way `describe` does.
+    /// Opens an empty clip on an instrument or singer track, for `edit_notes` to write into —
+    /// the way a melody is placed note by note. Aim it with `start_bar` and `bars`; the answer
+    /// numbers the clip the way `describe` does.
     #[tool]
     async fn add_clip(
         &self,
@@ -304,9 +305,10 @@ impl AurisMcp {
         blocking(move || toolbox::add_clip::run(&args)).await
     }
 
-    /// Reads one clip's notes, numbered in time order — pitch, bar, beat, length in beats and
-    /// velocity. The numbers are the address `edit_notes` removes by; aim with `track` and the
-    /// clip number `describe` shows.
+    /// Reads one clip's notes, numbered in time order — pitch, bar, beat, length in beats,
+    /// velocity and, where a note carries one, its lyric. The numbers are the address
+    /// `edit_notes` removes and `write_lyrics` starts by; aim with `track` and the clip number
+    /// `describe` shows.
     #[tool]
     async fn notes(
         &self,
@@ -339,6 +341,33 @@ impl AurisMcp {
         Parameters(args): Parameters<toolbox::accompany::Args>,
     ) -> Result<CallToolResult, ErrorData> {
         blocking(move || toolbox::accompany::run(&args)).await
+    }
+
+    /// Lays a phrase across a singer clip's notes, one syllable to each, and derives the
+    /// phonemes it will be sung as — kana through the built-in table, other text through the
+    /// Japanese dictionary where one is installed. `from` starts partway in, at a number the
+    /// way `notes` counts them, so a verse is filled one line at a time; notes past the end of
+    /// the phrase keep their words. The change is saved.
+    #[tool]
+    async fn write_lyrics(
+        &self,
+        Parameters(args): Parameters<toolbox::write_lyrics::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::write_lyrics::run(&args)).await
+    }
+
+    /// Renders a singer track through its voice model and keeps the audio as the track's
+    /// take, which is what playback and `render` then play. Aims at the project's only singer
+    /// track when `track` is left out. `voice` chooses a model the first time — an absolute
+    /// path to an exported `.onnx` voice, which the track keeps. A take is deterministic: the
+    /// same notes, lyrics, voice and `seed` render the same audio, and another seed is
+    /// another take. The change is saved.
+    #[tool]
+    async fn sing(
+        &self,
+        Parameters(args): Parameters<toolbox::sing::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::sing::run(&args)).await
     }
 }
 
@@ -423,8 +452,8 @@ mod tests {
             accompany, add_clip, add_part, add_track, analyze, another_take, check_spec, compose,
             describe, edit_notes, forget_progression, list_instruments, list_presets,
             list_progressions, mixer, notes, remove_track, rename_track, render, section_gain,
-            set_effect, set_instrument, set_level, set_send, spec_reference, teach_progression,
-            write_again,
+            set_effect, set_instrument, set_level, set_send, sing, spec_reference,
+            teach_progression, write_again, write_lyrics,
         };
         let expected: std::collections::BTreeMap<&str, &str> = [
             (spec_reference::NAME, spec_reference::DESCRIPTION),
@@ -454,6 +483,8 @@ mod tests {
             (notes::NAME, notes::DESCRIPTION),
             (edit_notes::NAME, edit_notes::DESCRIPTION),
             (accompany::NAME, accompany::DESCRIPTION),
+            (write_lyrics::NAME, write_lyrics::DESCRIPTION),
+            (sing::NAME, sing::DESCRIPTION),
         ]
         .into_iter()
         .collect();
@@ -462,7 +493,7 @@ mod tests {
         assert_eq!(
             served.len(),
             expected.len(),
-            "twenty-seven tools at this door"
+            "twenty-nine tools at this door"
         );
         for tool in served {
             let description = tool.description.as_deref().unwrap_or_default();

@@ -1130,7 +1130,16 @@ removals and additions in one call), `notes` reads a clip back numbered in time 
 without touching a note of the tune — the same command as the window's accompany, so a model
 and a person derive the same band from the same melody. The intended shape: the model writes
 the tune note by note where it wants control, and derives everything else from the harmony
-where it does not. Twenty-seven tools in all, identical at both model doors.
+where it does not.
+
+The song can also sing through this door. `add_track` with kind `singer` makes a track whose
+notes carry lyrics; `write_lyrics` lays a phrase across a clip's notes one syllable each, kana
+through the built-in table and anything else through the Japanese dictionary where one is
+installed (`notes` reads the words back beside the pitches); and `sing` renders the track
+through its voice model — chosen once with `voice`, an absolute path to an exported `.onnx`
+file — into the take that playback and `render` then play. The same determinism as in the
+window: the same notes, lyrics, voice and seed render the same take on any machine.
+Twenty-nine tools in all, identical at both model doors.
 
 Registering the server with a client is one line:
 

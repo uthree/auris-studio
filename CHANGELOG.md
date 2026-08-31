@@ -26,6 +26,11 @@ format rather than a convention: `## <version> — <date>`.
   back to the formant preview over one edited word — and the track header says
   *behind the notes* until Sing is pressed again. Clicked notes still audition through the
   preview instrument while a take plays.
+* **The model doors sing too.** Three additions to the toolbox, identical over MCP and in the
+  agent panel: `add_track` accepts kind `singer`, `write_lyrics` lays a phrase across a clip's
+  notes one syllable each (`notes` reads the words back beside the pitches), and `sing`
+  renders the track through its voice model into the project's take — so a model can write a
+  song and make it sing without a window open. Twenty-nine tools in all.
 * Under the hood: the new `auris-singer` crate runs the model on the CPU via onnxruntime,
   cutting the timeline at silences into chunks of at most twenty seconds — the model's
   attention grows with the square of the frame count, and a whole song in one inference has

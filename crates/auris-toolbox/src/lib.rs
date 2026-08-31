@@ -64,6 +64,10 @@ pub const INSTRUCTIONS: &str = "Auris Studio is a digital audio workstation; the
     bar, `notes` reads a clip back numbered — and `accompany` reads a melody clip and writes \
     the key, the chords and a backing band under it, which is the melody-first way around: \
     write the tune by hand, derive the accompaniment. \
+    A song can also sing: `add_track` with kind \"singer\" holds notes that carry lyrics, \
+    `write_lyrics` lays a phrase across a clip's notes one syllable each, and `sing` renders \
+    the track through a voice model into a take that playback and `render` play — pass \
+    `voice` the first time to choose the model. \
     Give every path as an absolute path — the working directory is wherever the host process \
     happened to be launched.";
 
@@ -105,6 +109,8 @@ pub const WRITES_PROJECTS: &[&str] = &[
     add_clip::NAME,
     edit_notes::NAME,
     accompany::NAME,
+    write_lyrics::NAME,
+    sing::NAME,
 ];
 
 /// The address of one project change: which clip, and which take of it.
@@ -1365,8 +1371,9 @@ pub mod add_track {
     /// The tool's model-facing description.
     pub const DESCRIPTION: &str = "Adds a track to an existing project and saves. An instrument \
         track by default — voiced by `instrument` (an id from `list_instruments`) or by `sound` \
-        (a General MIDI name or program number, `drums: true` for a kit) — or, with `kind`, an \
-        audio track or a bus. A new instrument track has no clips: `add_part` writes one.";
+        (a General MIDI name or program number, `drums: true` for a kit) — or, with `kind`, a \
+        singer track (notes that carry lyrics, sung by a voice model), an audio track or a \
+        bus. A new instrument track has no clips: `add_part` writes one.";
 
     /// Arguments to `add_track`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1384,7 +1391,7 @@ pub mod add_track {
         /// Read `sound`'s number as a drum kit rather than a melodic program.
         #[serde(default)]
         pub drums: bool,
-        /// "instrument" (the default), "audio", or "bus".
+        /// "instrument" (the default), "singer", "audio", or "bus".
         pub kind: Option<String>,
     }
 
@@ -1406,19 +1413,26 @@ pub mod add_track {
                 };
                 voice(&mut session, id, &args.sound, args.drums, &args.instrument)?
             }
-            "audio" | "bus" => {
+            "singer" | "audio" | "bus" => {
                 if args.instrument.is_some() || args.sound.is_some() {
                     return Err(format!("a {kind} track plays no instrument — drop it"));
                 }
                 match kind {
-                    "audio" => session.add_audio_track(&args.name),
-                    _ => session.add_bus_track(&args.name),
+                    "singer" => {
+                        session.add_singer_track(&args.name);
+                    }
+                    "audio" => {
+                        session.add_audio_track(&args.name);
+                    }
+                    _ => {
+                        session.add_bus_track(&args.name);
+                    }
                 };
                 kind.to_string()
             }
             other => {
                 return Err(format!(
-                    "`kind` is \"instrument\", \"audio\" or \"bus\", not \"{other}\""
+                    "`kind` is \"instrument\", \"singer\", \"audio\" or \"bus\", not \"{other}\""
                 ));
             }
         };
@@ -1426,6 +1440,12 @@ pub mod add_track {
         let mut text = format!("Added track '{}' — {voiced}. Saved.", args.name);
         if kind == "instrument" {
             text.push_str(" The track holds no clips yet; `add_part` writes one.");
+        }
+        if kind == "singer" {
+            text.push_str(
+                " The track holds no clips yet; `add_clip` opens one, `edit_notes` places the \
+                 tune, `write_lyrics` gives it words and `sing` renders the voice.",
+            );
         }
         Ok(text)
     }
@@ -1707,9 +1727,9 @@ pub mod add_clip {
     /// The tool's wire name.
     pub const NAME: &str = "add_clip";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Opens an empty clip on an instrument track, for `edit_notes` \
-        to write into — the way a melody is placed note by note. Aim it with `start_bar` and \
-        `bars`; the answer numbers the clip the way `describe` does.";
+    pub const DESCRIPTION: &str = "Opens an empty clip on an instrument or singer track, for \
+        `edit_notes` to write into — the way a melody is placed note by note. Aim it with \
+        `start_bar` and `bars`; the answer numbers the clip the way `describe` does.";
 
     /// Arguments to `add_clip`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1760,8 +1780,9 @@ pub mod notes {
     pub const NAME: &str = "notes";
     /// The tool's model-facing description.
     pub const DESCRIPTION: &str = "Reads one clip's notes, numbered in time order — pitch, bar, \
-        beat, length in beats and velocity. The numbers are the address `edit_notes` removes \
-        by; aim with `track` and the clip number `describe` shows.";
+        beat, length in beats, velocity and, where a note carries one, its lyric. The numbers \
+        are the address `edit_notes` removes and `write_lyrics` starts by; aim with `track` \
+        and the clip number `describe` shows.";
 
     /// Arguments to `notes`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1799,8 +1820,12 @@ pub mod notes {
             let per_beat = project.signatures.signature_at(tick).ticks_per_beat();
             let beat = within.raw() as f64 / per_beat.raw().max(1) as f64 + 1.0;
             let beats = note.length.raw() as f64 / per_beat.raw().max(1) as f64;
+            let lyric = match note.lyric.is_empty() {
+                true => String::new(),
+                false => format!(", lyric '{}'", note.lyric),
+            };
             text.push_str(&format!(
-                "  [{}] bar {bar} beat {} — {}, {} beats, vel {}\n",
+                "  [{}] bar {bar} beat {} — {}, {} beats, vel {}{lyric}\n",
                 number + 1,
                 trimmed(beat as f32),
                 auris_session::prelude::midi_name(i32::from(note.pitch)),
@@ -2039,6 +2064,176 @@ pub mod accompany {
              ear: `analyze`, then `write_again` on any part after fixing what it follows.",
         );
         Ok(text)
+    }
+}
+
+/// A phrase, laid across a clip's notes.
+pub mod write_lyrics {
+    use super::*;
+
+    /// The tool's wire name.
+    pub const NAME: &str = "write_lyrics";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Lays a phrase across a singer clip's notes, one syllable to \
+        each, and derives the phonemes it will be sung as — kana through the built-in table, \
+        other text through the Japanese dictionary where one is installed. `from` starts \
+        partway in, at a number the way `notes` counts them, so a verse is filled one line at \
+        a time; notes past the end of the phrase keep their words. The change is saved.";
+
+    /// Arguments to `write_lyrics`.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// The project to change — an absolute path to a `.auris` file.
+        pub project: String,
+        /// The singer track the clip is on, by name as `describe` lists it.
+        pub track: String,
+        /// Which clip, by the 1-based number `describe` shows.
+        pub clip: usize,
+        /// The phrase to sing, e.g. "こんにちは" — one mora lands on each note.
+        pub text: String,
+        /// The 1-based note number to start at, as `notes` counts them. The first note when
+        /// left out.
+        pub from: Option<usize>,
+    }
+
+    /// Lays the phrase, and saves.
+    pub fn run(args: &Args) -> Result<String, String> {
+        if args.text.trim().is_empty() {
+            return Err("`text` is the phrase to lay across the notes — give it words".into());
+        }
+        let mut session = opened(&args.project)?;
+        let track = track_by_name(session.project(), &args.track)?;
+        if !track.kind.is_singer() {
+            return Err(format!(
+                "{} plays an instrument — lyrics go on a singer track",
+                args.track
+            ));
+        }
+        let track = track.id;
+        let (id, clip) = clip_by_number(session.project(), track, args.clip)?;
+        let ordered = time_ordered(clip);
+        let from = args.from.unwrap_or(1);
+        if from == 0 || from > ordered.len() {
+            return Err(format!(
+                "the clip has notes [1]-[{}]; there is no [{from}] to start from — `notes` \
+                 lists them",
+                ordered.len()
+            ));
+        }
+        let indices: Vec<usize> = ordered[from - 1..]
+            .iter()
+            .map(|(index, _)| *index)
+            .collect();
+        let filled = session
+            .write_lyrics(id, &indices, &args.text)
+            .map_err(|error| error.to_string())?;
+        session.save_in_place().map_err(|error| error.to_string())?;
+        let mut text = format!(
+            "Laid '{}' across {filled} notes starting at [{from}]. Saved.",
+            args.text.trim()
+        );
+        if filled == indices.len() {
+            text.push_str(
+                " Every note from there is filled — a longer phrase would have run out of \
+                 notes.",
+            );
+        }
+        Ok(text)
+    }
+}
+
+/// A singer track, rendered through its voice model.
+pub mod sing {
+    use super::*;
+
+    /// The tool's wire name.
+    pub const NAME: &str = "sing";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Renders a singer track through its voice model and keeps \
+        the audio as the track's take, which is what playback and `render` then play. Aims at \
+        the project's only singer track when `track` is left out. `voice` chooses a model the \
+        first time — an absolute path to an exported `.onnx` voice, which the track keeps. A \
+        take is deterministic: the same notes, lyrics, voice and `seed` render the same audio, \
+        and another seed is another take. The change is saved.";
+
+    /// Arguments to `sing`.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// The project to sing in — an absolute path to a `.auris` file.
+        pub project: String,
+        /// The singer track, by name as `describe` lists it. The project's only singer track
+        /// when left out.
+        pub track: Option<String>,
+        /// An absolute path to a voice model (`.onnx`) to choose before singing. The track
+        /// keeps the voice, so later takes need not name it again.
+        pub voice: Option<String>,
+        /// The take's seed. The previous take's seed — or 0 — when left out, so singing again
+        /// after an edit keeps the same take.
+        pub seed: Option<u64>,
+    }
+
+    /// Renders the take, and saves.
+    pub fn run(args: &Args) -> Result<String, String> {
+        let mut session = opened(&args.project)?;
+        let target = match &args.track {
+            Some(name) => {
+                let track = track_by_name(session.project(), name)?;
+                if !track.kind.is_singer() {
+                    return Err(format!("{name} is not a singer track — `sing` needs one"));
+                }
+                track.id
+            }
+            None => {
+                let mut singers = session
+                    .project()
+                    .tracks
+                    .iter()
+                    .filter(|track| track.kind.is_singer());
+                let only = singers.next().map(|track| track.id);
+                match (only, singers.next()) {
+                    (Some(track), None) => track,
+                    (None, _) => {
+                        return Err("this project has no singer track — `add_track` with kind \
+                             \"singer\" makes one"
+                            .into());
+                    }
+                    _ => {
+                        return Err(
+                            "this project has more than one singer track — name one with \
+                             `track`"
+                                .into(),
+                        );
+                    }
+                }
+            }
+        };
+        if let Some(voice) = &args.voice {
+            session
+                .set_singer_voice(target, Some(Path::new(voice)))
+                .map_err(|error| error.to_string())?;
+        }
+        let name = session
+            .singer_voice(target)
+            .map_err(|error| error.to_string())?
+            .map(|voice| voice.name.clone())
+            .unwrap_or_default();
+        let seconds = session
+            .sing(target, args.seed)
+            .map_err(|error| error.to_string())?;
+        // A take names its audio by a pointer in the document; a pointer that only lived in
+        // memory would leave the rendered file orphaned on disk.
+        session.save_in_place().map_err(|error| error.to_string())?;
+        let seed = session
+            .project()
+            .track(target)
+            .and_then(|track| track.kind.as_singer())
+            .and_then(|singer| singer.take.as_ref())
+            .map(|take| take.seed)
+            .unwrap_or_default();
+        Ok(format!(
+            "{name} sang {seconds:.1} s into the project — seed {seed} names this take, and \
+             playback and `render` now sing it. Saved."
+        ))
     }
 }
 
@@ -3112,6 +3307,122 @@ mod tests {
         .unwrap();
         assert!(rendered.contains("16-bit"), "{rendered}");
         assert!(wav.exists());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The singer tools at the model door: a track that sings, words laid across its notes,
+    /// and a refusal naming the cure at every missing piece. With
+    /// `AURIS_SINGER_TEST_MODEL` set, the voice actually sings at the end.
+    #[test]
+    fn the_singer_tools_write_words_and_name_their_cures() {
+        let root = std::env::temp_dir().join(format!("auris-toolbox-sing-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let spec = r#"
+            title = "Verse"
+            form = "verse"
+            chords = "@axis"
+            ending = "none"
+            [section.verse]
+            bars = 2
+        "#;
+        compose::run(&compose::Args {
+            spec: spec_args(Some(spec), None),
+            output: root.join("Verse.auris").display().to_string(),
+            force: false,
+        })
+        .unwrap();
+        let path = root.join("Verse").join("Verse.auris").display().to_string();
+        let sing_the = |track: Option<&str>, voice: Option<String>| {
+            sing::run(&sing::Args {
+                project: path.clone(),
+                track: track.map(String::from),
+                voice,
+                seed: None,
+            })
+        };
+
+        // Before a singer exists, the refusal says how to get one.
+        let unsung = sing_the(None, None).unwrap_err();
+        assert!(unsung.contains("add_track"), "{unsung}");
+
+        // The track arrives through the same door as every other kind, with directions on.
+        let added = add_track::run(&add_track::Args {
+            project: path.clone(),
+            name: "Vocal".to_string(),
+            instrument: None,
+            sound: None,
+            drums: false,
+            kind: Some("singer".to_string()),
+        })
+        .unwrap();
+        assert!(added.contains("write_lyrics"), "{added}");
+
+        // A tune note by note, then its words, one mora to each.
+        add_clip::run(&add_clip::Args {
+            project: path.clone(),
+            track: "Vocal".to_string(),
+            name: None,
+            start_bar: Some(1),
+            bars: 2,
+        })
+        .unwrap();
+        let note = |beat: f64| edit_notes::NoteSpec {
+            pitch: "C4".to_string(),
+            bar: 1,
+            beat,
+            beats: 1.0,
+            velocity: None,
+        };
+        edit_notes::run(&edit_notes::Args {
+            project: path.clone(),
+            track: "Vocal".to_string(),
+            clip: 1,
+            remove: None,
+            add: Some(vec![note(1.0), note(2.0), note(3.0)]),
+        })
+        .unwrap();
+        let laid = write_lyrics::run(&write_lyrics::Args {
+            project: path.clone(),
+            track: "Vocal".to_string(),
+            clip: 1,
+            text: "かえる".to_string(),
+            from: None,
+        })
+        .unwrap();
+        assert!(laid.contains("3 notes"), "{laid}");
+        let listing = notes::run(&notes::Args {
+            project: path.clone(),
+            track: "Vocal".to_string(),
+            clip: 1,
+        })
+        .unwrap();
+        assert!(listing.contains("lyric 'か'"), "{listing}");
+
+        // Words on an instrument track are met with directions, not silence...
+        let sideways = write_lyrics::run(&write_lyrics::Args {
+            project: path.clone(),
+            track: "lead".to_string(),
+            clip: 1,
+            text: "か".to_string(),
+            from: None,
+        })
+        .unwrap_err();
+        assert!(sideways.contains("singer"), "{sideways}");
+        // ...and so is singing a track that plays rather than sings.
+        let wrong = sing_the(Some("lead"), None).unwrap_err();
+        assert!(wrong.contains("singer"), "{wrong}");
+
+        // With a singer but no voice, the refusal names the missing piece.
+        let unvoiced = sing_the(None, None).unwrap_err();
+        assert!(unvoiced.contains("voice"), "{unvoiced}");
+
+        // Where a real voice model is around, the door sings for real.
+        if let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") {
+            let sung = sing_the(None, Some(model.to_string_lossy().into_owned())).unwrap();
+            assert!(sung.contains("sang"), "{sung}");
+            assert!(sung.contains("seed 0"), "{sung}");
+        }
 
         std::fs::remove_dir_all(&root).unwrap();
     }
