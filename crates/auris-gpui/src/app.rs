@@ -1340,6 +1340,9 @@ fn session_options(settings: &Settings) -> SessionOptions {
         audio: live,
         gpu: live,
         shipped_fonts: live,
+        // Off in a test for the fonts' reason: a checkout with the dictionary fetched would
+        // otherwise run a different suite than a CI machine without it.
+        shipped_dictionary: live,
         ..SessionOptions::default()
     }
 }

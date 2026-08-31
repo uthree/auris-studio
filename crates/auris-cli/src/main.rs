@@ -47,6 +47,7 @@ fn main() -> ExitCode {
         "plugins" => list_plugins(),
         "progressions" => list_progressions(),
         "soundfonts" => list_soundfonts(&args),
+        "dictionary" => list_dictionary(&args),
         "presets" => list_presets(),
         "compose" => compose(&args),
         "info" => with_path(&args, info),
@@ -202,8 +203,12 @@ fn with_path(args: &[String], run: impl Fn(&Path) -> Result<(), String>) -> Resu
 /// and **Compose a Song…** in the window have to write the same piece, and half the instruments
 /// a piece asks for are in that library.
 fn headless() -> Result<Session, String> {
-    Session::new(SessionOptions::headless().with_shipped_fonts(true))
-        .map_err(|error| error.to_string())
+    Session::new(
+        SessionOptions::headless()
+            .with_shipped_fonts(true)
+            .with_shipped_dictionary(true),
+    )
+    .map_err(|error| error.to_string())
 }
 
 /// Lists the chord progressions the composer knows by name.
@@ -302,6 +307,42 @@ fn list_soundfonts(args: &[String]) -> Result<(), String> {
             writeln!(out, "  {} {}", pad(font.name, 22), font.license)?;
             writeln!(out, "  {} {state}", pad("", 22))?;
         }
+        Ok(())
+    })();
+    printed(print)
+}
+
+/// Shows the Japanese dictionary this build ships with, and whether it is installed.
+///
+/// With `--manifest`, prints tab-separated fields instead: `id`, `folder`, `bytes`, `sha256`,
+/// `url`, `license_url` — what `tools/fetch-dictionary.sh` downloads from, for the SoundFont
+/// manifest's reason: the record lives in [`auris_session::library`] and nowhere else.
+fn list_dictionary(args: &[String]) -> Result<(), String> {
+    let manifest = args.iter().any(|arg| arg == "--manifest");
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    let print = (|| {
+        let dictionary = auris_session::library::JAPANESE_DICTIONARY;
+        if manifest {
+            writeln!(
+                out,
+                "{}\t{}\t{}\t{}\t{}\t{}",
+                dictionary.id,
+                dictionary.folder,
+                dictionary.bytes,
+                dictionary.sha256,
+                dictionary.url,
+                dictionary.license_url
+            )?;
+            return Ok(());
+        }
+        writeln!(out, "{}", Key::CliDictionary.get(LANGUAGE))?;
+        let state = match auris_session::library::installed_dictionary() {
+            Some(path) => path.display().to_string(),
+            None => Key::CliDictionaryMissing.get(LANGUAGE).to_string(),
+        };
+        writeln!(out, "  {} {}", pad(dictionary.name, 22), dictionary.license)?;
+        writeln!(out, "  {} {state}", pad("", 22))?;
         Ok(())
     })();
     printed(print)
@@ -977,7 +1018,8 @@ fn new_project(args: &[String]) -> Result<(), String> {
     let mut session = Session::new(
         SessionOptions::headless()
             .with_sample_rate(sample_rate)
-            .with_shipped_fonts(true),
+            .with_shipped_fonts(true)
+            .with_shipped_dictionary(true),
     )
     .map_err(|error| error.to_string())?;
     session.set_bpm(bpm);

@@ -99,12 +99,94 @@ pub fn shipped(id: &str) -> Option<&'static ShippedFont> {
     SHIPPED.iter().find(|font| font.id == id)
 }
 
+/// Environment variable naming the directory the shipped Japanese dictionary is installed in.
+///
+/// The [`LIBRARY_DIR_VAR`] arrangement, for the same reason: set it and nothing else is
+/// searched.
+pub const DICTIONARY_DIR_VAR: &str = "AURIS_DICTIONARY";
+
+/// What the directory holding the shipped Japanese dictionary is called, wherever it turns up.
+pub const DICTIONARY_FOLDER: &str = "Dictionary";
+
+/// The Japanese dictionary a build ships with — a folder rather than a file, which is the one
+/// way it differs from a [`ShippedFont`].
+///
+/// What it is for: kanji lyrics, and the pitch accent that makes a composed melody follow the
+/// words. Kana sings without it; this is what reads everything else.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ShippedDictionary {
+    /// Short name commands and messages refer to it by.
+    pub id: &'static str,
+    /// The directory the archive unpacks to, and what the folder is called wherever it is
+    /// installed.
+    pub folder: &'static str,
+    /// What to call it in an interface.
+    pub name: &'static str,
+    /// The licence it is redistributed under.
+    pub license: &'static str,
+    /// Where the licence text lives, fetched and installed beside the folder — the
+    /// [`ShippedFont::license_url`] reasoning: the notice travels with the work.
+    pub license_url: &'static str,
+    /// Where the fetch script downloads the archive from.
+    ///
+    /// The v0.14.0 tarball on purpose: jpreprocess's v0.15.0 release ships no standalone
+    /// dictionary archive, only per-platform binaries with one baked in, and the v0.14.0
+    /// folder loads under the 0.15 crate — proven by the accent test this repository runs
+    /// against it, not assumed. Revisit when a newer standalone archive appears.
+    pub url: &'static str,
+    /// The archive's length in bytes.
+    pub bytes: u64,
+    /// SHA-256 of the archive, in lowercase hexadecimal — checked by the fetch script, like a
+    /// font's.
+    pub sha256: &'static str,
+}
+
+/// The dictionary the fetch script knows how to install: NAIST's, in jpreprocess's build.
+pub const JAPANESE_DICTIONARY: ShippedDictionary = ShippedDictionary {
+    id: "naist-jdic",
+    folder: "naist-jdic",
+    name: "NAIST Japanese Dictionary",
+    license: "BSD-3-Clause",
+    license_url: "https://raw.githubusercontent.com/jpreprocess/naist-jdic/main/COPYING",
+    url: "https://github.com/jpreprocess/jpreprocess/releases/download/v0.14.0/naist-jdic-jpreprocess.tar.gz",
+    bytes: 28_668_709,
+    sha256: "d96062f8dc546caa4579a8fc1e3c0baf0a2863b2b8719675c0cbf305c299e52f",
+};
+
+/// Directories the shipped dictionary is looked for in, best first.
+pub fn dictionary_roots() -> Vec<PathBuf> {
+    roots_from(
+        std::env::var_os(DICTIONARY_DIR_VAR).map(PathBuf::from),
+        std::env::current_exe().ok().as_deref(),
+        &config_dir(),
+        DICTIONARY_FOLDER,
+    )
+}
+
+/// Where the shipped dictionary is installed, or `None` when it is not.
+///
+/// A folder answers when it holds the metadata file jpreprocess writes into every dictionary
+/// it builds — the cheapest marker that distinguishes an installed dictionary from a
+/// half-extracted archive or a stray directory wearing the right name.
+pub fn installed_dictionary() -> Option<PathBuf> {
+    installed_dictionary_in(&dictionary_roots())
+}
+
+/// [`installed_dictionary`] against a given set of directories.
+pub fn installed_dictionary_in(roots: &[PathBuf]) -> Option<PathBuf> {
+    roots
+        .iter()
+        .map(|root| root.join(JAPANESE_DICTIONARY.folder))
+        .find(|candidate| candidate.join("metadata.json").is_file())
+}
+
 /// Directories the shipped SoundFonts are looked for in, best first.
 pub fn library_roots() -> Vec<PathBuf> {
     roots_from(
         std::env::var_os(LIBRARY_DIR_VAR).map(PathBuf::from),
         std::env::current_exe().ok().as_deref(),
         &config_dir(),
+        LIBRARY_FOLDER,
     )
 }
 
@@ -126,6 +208,7 @@ fn roots_from(
     override_dir: Option<PathBuf>,
     executable: Option<&Path>,
     config: &Path,
+    folder: &str,
 ) -> Vec<PathBuf> {
     if let Some(dir) = override_dir.filter(|dir| !dir.as_os_str().is_empty()) {
         return vec![dir];
@@ -139,18 +222,18 @@ fn roots_from(
     };
 
     if let Some(directory) = executable.and_then(Path::parent) {
-        push(directory.join(LIBRARY_FOLDER));
+        push(directory.join(folder));
         // Then a macOS bundle's resource directory, which is one *sideways* rather than up: a
         // font in `Contents/MacOS` beside the executable is a font Gatekeeper complains about,
         // so a packaged one goes in `Contents/Resources` and is reached from nowhere else.
         if let Some(contents) = directory.parent() {
-            push(contents.join("Resources").join(LIBRARY_FOLDER));
+            push(contents.join("Resources").join(folder));
         }
         for ancestor in directory.ancestors().skip(1).take(LIBRARY_SEARCH_DEPTH) {
-            push(ancestor.join(LIBRARY_FOLDER));
+            push(ancestor.join(folder));
         }
     }
-    push(config.join(LIBRARY_FOLDER));
+    push(config.join(folder));
     roots
 }
 
@@ -240,6 +323,7 @@ mod tests {
             Some(PathBuf::from("/volumes/samples")),
             Some(Path::new("/apps/auris-studio")),
             Path::new("/home/me/.config/auris-studio"),
+            LIBRARY_FOLDER,
         );
         assert_eq!(roots, vec![PathBuf::from("/volumes/samples")]);
     }
@@ -250,6 +334,7 @@ mod tests {
             Some(PathBuf::new()),
             None,
             Path::new("/home/me/.config/auris-studio"),
+            LIBRARY_FOLDER,
         );
         assert_eq!(
             roots,
@@ -263,6 +348,7 @@ mod tests {
             None,
             Some(Path::new("/downloads/auris-studio-v0.1.0/auris-studio")),
             Path::new("/home/me/.config/auris-studio"),
+            LIBRARY_FOLDER,
         );
         assert_eq!(
             roots[0],
@@ -283,6 +369,7 @@ mod tests {
                 "/Applications/Auris Studio.app/Contents/MacOS/auris-studio",
             )),
             Path::new("/Users/me/.config/auris-studio"),
+            LIBRARY_FOLDER,
         );
         assert!(
             roots.contains(&PathBuf::from(
@@ -306,6 +393,7 @@ mod tests {
                 None,
                 Some(Path::new(executable)),
                 Path::new("/home/me/.config/auris-studio"),
+                LIBRARY_FOLDER,
             );
             assert!(
                 roots.contains(&PathBuf::from("/checkout/SoundFonts")),
@@ -323,12 +411,42 @@ mod tests {
             None,
             Some(Path::new("/checkout/target/debug/auris-studio")),
             Path::new("/checkout"),
+            LIBRARY_FOLDER,
         );
         assert!(roots.contains(&PathBuf::from("/checkout/SoundFonts")));
         let mut unique = roots.clone();
         unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), roots.len(), "{roots:?}");
+    }
+
+    #[test]
+    fn the_dictionary_manifest_describes_an_archive_that_could_be_fetched() {
+        let dictionary = JAPANESE_DICTIONARY;
+        assert!(dictionary.url.starts_with("https://"), "fetched over TLS");
+        assert!(dictionary.license_url.starts_with("https://"));
+        assert!(
+            dictionary.url.ends_with(".tar.gz"),
+            "an archive of a folder"
+        );
+        assert_eq!(dictionary.sha256.len(), 64);
+        assert!(dictionary.sha256.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(dictionary.bytes > 0);
+
+        // The dictionary walks the same roots the fonts walk, under its own name.
+        let roots = roots_from(
+            None,
+            Some(Path::new("/checkout/target/debug/auris-studio")),
+            Path::new("/home/me/.config/auris-studio"),
+            DICTIONARY_FOLDER,
+        );
+        assert!(roots.contains(&PathBuf::from("/checkout/Dictionary")));
+        // And an empty machine answers honestly.
+        assert_eq!(installed_dictionary_in(&[]), None);
+        assert_eq!(
+            installed_dictionary_in(&[PathBuf::from("/no/such/place")]),
+            None
+        );
     }
 
     #[test]

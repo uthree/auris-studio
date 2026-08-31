@@ -29,6 +29,22 @@ format rather than a convention: `## <version> — <date>`.
   search in `auris-compose` is one function with rhythm assignment as its own stage, so a
   richer rhythm scheme or a trained melody engine can stand beside either without touching
   the rest.
+* **In the window: File → Compose from Lyrics…** — also findable in the command palette,
+  with an empty keystroke slot for whoever wants one. Type the words, press Return, and the
+  piano roll opens on the song; every run draws a fresh seed and the status bar names it,
+  so a take can be asked for again at any of the model doors. The refusals speak through
+  the same field: empty words, or kanji with no dictionary anywhere, say exactly that.
+* **The Japanese dictionary now ships with a release.** `naist-jdic` (jpreprocess's build,
+  BSD-3-Clause) travels in a `Dictionary` directory beside the SoundFonts — inside the
+  bundle on macOS — fetched at packaging time by `tools/fetch-dictionary.sh` against a
+  digest recorded once, in `auris_session::library`, where the fonts' manifest already
+  lives (`auris dictionary --manifest` prints it, `auris dictionary` says what is
+  installed). Kanji lyrics read out of the box, and a melody composed from lyrics follows
+  their accent out of the box. The settings entry becomes an **override**: choose a folder
+  to swap in your own build, Clear to return to the shipped one, `AURIS_DICTIONARY` to
+  point the search elsewhere entirely. The shipped archive is v0.14.0's — jpreprocess's
+  v0.15.0 release ships no standalone dictionary — and the accent test proves it loads
+  under the 0.15 crate rather than assuming so.
 
 ## 0.4.0 — 2026-08-31
 

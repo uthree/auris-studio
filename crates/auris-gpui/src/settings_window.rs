@@ -451,14 +451,24 @@ impl SettingsWindow {
                             .flex_1()
                             .min_w_0()
                             .text_sm()
-                            .text_color(match self.japanese_dictionary {
-                                Some(_) => theme.text,
-                                None => theme.text_muted,
-                            })
+                            .text_color(
+                                match (
+                                    &self.japanese_dictionary,
+                                    auris_session::library::installed_dictionary(),
+                                ) {
+                                    (None, None) => theme.text_muted,
+                                    _ => theme.text,
+                                },
+                            )
                             .truncate()
+                            // An empty setting is not an empty state: the shipped dictionary
+                            // stands in, and the row should say which one is answering.
                             .child(match &self.japanese_dictionary {
                                 Some(folder) => folder.display().to_string(),
-                                None => self.t(Key::ValueNotSet).to_string(),
+                                None => match auris_session::library::installed_dictionary() {
+                                    Some(_) => self.t(Key::ValueShippedDictionary).to_string(),
+                                    None => self.t(Key::ValueNotSet).to_string(),
+                                },
                             }),
                     )
                     .child(button(

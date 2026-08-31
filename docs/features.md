@@ -296,11 +296,13 @@ a phrase across the selected notes one mora to a note: こんにちは across fi
 こ・ん・に・ち・は. A kanji word carries itself on the first note with `+` on the rest.
 
 Lyrics in **kana need nothing installed** — a built-in table reads them directly. **Kanji**
-goes through a Japanese dictionary named in the settings (*Settings → General → Japanese
-Dictionary*): a prebuilt `naist-jdic` folder from the
-[jpreprocess releases](https://github.com/jpreprocess/jpreprocess/releases), pointed at where
-it lies, like a SoundFont. A machine without one sings every kana lyric identically; only new
-kanji asks for it, with an error naming the setting.
+goes through the Japanese dictionary, and **a release ships one**: the prebuilt `naist-jdic`
+(jpreprocess's build, BSD-3-Clause) sits in a `Dictionary` directory beside the binaries —
+inside the bundle on macOS — and is found the way the SoundFonts are, including from a
+checkout after `tools/fetch-dictionary.sh`. The setting (*Settings → General → Japanese
+Dictionary*) is an **override** for swapping in a folder of your own; *Clear* returns to the
+shipped one, and `AURIS_DICTIONARY` overrides the search the way `AURIS_SOUNDFONTS` does.
+`auris dictionary` at the command line says which one is answering.
 
 **File → Export Singer Frames…** writes what a voice model consumes: one phoneme id, one pitch
 in Hz and one energy per frame, as JSON, sampled at the track's frame hop (10 ms unless
@@ -322,11 +324,18 @@ the sung words stay intelligible. Chords go into the harmony lane first (王道�
 document already has its own), the standard band comes along behind, and every note lands
 carrying its mora and phonemes, ready for **Sing** once the track has a voice.
 
-The accent comes from the same Japanese dictionary the lyrics use. Without one configured,
-kana lyrics still compose — the melody is simply free of the accent, and the tool says so —
-so the dictionary is what turns "a tune with words attached" into "a tune the words shaped".
-The same lyrics and seed always write the same song, and everything written is ordinary
-editable material: notes, chords, recipes, one undo step.
+In the window it is **File → Compose from Lyrics…** (also in the command palette): type or
+paste the words — 、and ！？ cut the phrases — press Return, and the piano roll opens on
+what was written. Every run draws a fresh seed, so the command pressed twice is two takes,
+and the status bar names the seed so a take can be asked for again at any of the model
+doors.
+
+The accent comes from the same Japanese dictionary the lyrics use — shipped with a release,
+so it is simply there. Without one (a checkout that has not fetched it), kana lyrics still
+compose — the melody is free of the accent, and the tool says so — so the dictionary is what
+turns "a tune with words attached" into "a tune the words shaped". The same lyrics and seed
+always write the same song, and everything written is ordinary editable material: notes,
+chords, recipes, one undo step.
 
 ## MIDI files
 

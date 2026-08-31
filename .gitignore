@@ -39,6 +39,10 @@ target
 # `auris_session::library` is what is version-controlled instead.
 /SoundFonts
 
+# The Japanese dictionary, fetched by `tools/fetch-dictionary.sh` for the same reason; its
+# manifest lives beside the fonts' in `auris_session::library`.
+/Dictionary
+
 # macOS
 .DS_Store
 

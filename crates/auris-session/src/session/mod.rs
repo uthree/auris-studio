@@ -140,6 +140,14 @@ pub struct SessionOptions {
     /// the middle of that would be a file appearing that nobody asked for. See
     /// [`should_autosave`] for what the feature costs when it is on.
     pub autosave: bool,
+    /// Load the Japanese dictionary the application ships with, when one is installed.
+    ///
+    /// `false` in a test for [`Self::shipped_fonts`]'s reason: whether the dictionary is
+    /// installed is a fact about the machine, and a suite whose accent analysis appears and
+    /// disappears with it would disagree with itself between two runners. An explicit folder
+    /// handed to [`Session::set_japanese_dictionary`](crate::Session::set_japanese_dictionary)
+    /// always wins over the shipped one.
+    pub shipped_dictionary: bool,
 }
 
 impl Default for SessionOptions {
@@ -152,6 +160,7 @@ impl Default for SessionOptions {
             shipped_fonts: true,
             balance_composed: true,
             autosave: true,
+            shipped_dictionary: true,
         }
     }
 }
@@ -168,6 +177,7 @@ impl SessionOptions {
             gpu: false,
             shipped_fonts: false,
             autosave: false,
+            shipped_dictionary: false,
             ..Self::default()
         }
     }
@@ -175,6 +185,12 @@ impl SessionOptions {
     /// Whether to read the SoundFonts the application ships with.
     pub fn with_shipped_fonts(mut self, shipped_fonts: bool) -> Self {
         self.shipped_fonts = shipped_fonts;
+        self
+    }
+
+    /// Whether to load the Japanese dictionary the application ships with.
+    pub fn with_shipped_dictionary(mut self, shipped_dictionary: bool) -> Self {
+        self.shipped_dictionary = shipped_dictionary;
         self
     }
 
@@ -345,12 +361,15 @@ pub struct Session {
     input: Option<auris_engine::Capture>,
     /// The take that is running, if one is. See [`record`].
     take: Option<record::Take>,
-    /// The Japanese text frontend, loaded once the settings name a dictionary folder.
+    /// The Japanese text frontend: the folder the settings name, or the shipped dictionary.
     ///
-    /// `None` on most machines, and the session sings anyway: kana lyrics go through the
-    /// built-in table. Owned here rather than loaded per lyric because opening the folder
-    /// parses a compiled dictionary — work worth doing once. See [`singer`].
+    /// `None` only where neither exists, and the session sings anyway: kana lyrics go
+    /// through the built-in table. Owned here rather than loaded per lyric because opening
+    /// the folder parses a compiled dictionary — work worth doing once. See [`singer`].
     japanese: Option<auris_vocal::JapaneseDictionary>,
+    /// Whether the shipped dictionary stands in while no folder is named — the option, kept
+    /// so that clearing the setting returns to the shipped one instead of to nothing.
+    shipped_dictionary: bool,
     /// The voice models behind singer tracks, by the file each was read from.
     ///
     /// Keyed by path rather than by track or document id, like [`Self::shipped`] and for the
@@ -520,10 +539,12 @@ impl Session {
             typing: MusicalTyping::default(),
             take: None,
             japanese: None,
+            shipped_dictionary: options.shipped_dictionary,
             voices: HashMap::new(),
             hosted: hosted::HostedPlugins::default(),
         };
         session.install_shipped_fonts();
+        session.install_shipped_dictionary();
         session.rebuild_graph();
         Ok(session)
     }

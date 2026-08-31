@@ -2336,8 +2336,12 @@ pub mod sing {
 /// Song…** in the window have to write the same piece, and half the instruments a piece asks
 /// for are in that library.
 fn headless() -> Result<Session, String> {
-    Session::new(SessionOptions::headless().with_shipped_fonts(true))
-        .map_err(|error| error.to_string())
+    Session::new(
+        SessionOptions::headless()
+            .with_shipped_fonts(true)
+            .with_shipped_dictionary(true),
+    )
+    .map_err(|error| error.to_string())
 }
 
 /// The project file a path means: absolute, and reaching inside the folder a project becomes.
@@ -3425,9 +3429,13 @@ mod tests {
         assert!(answer.contains("2 phrases"), "{answer}");
         assert!(answer.contains("11 sung notes"), "{answer}");
         assert!(answer.contains("3 backing parts"), "{answer}");
-        assert!(
+        // The tool sessions load the shipped dictionary, so what the answer says about the
+        // accent depends on whether this machine has fetched it — a fetched checkout hears
+        // the accent, a bare CI runner is told plainly that nothing did.
+        assert_eq!(
             answer.contains("pitch accent"),
-            "honest about the accent: {answer}"
+            auris_session::library::installed_dictionary().is_none(),
+            "honest about the accent either way: {answer}"
         );
         assert!(
             answer.contains("`sing`"),

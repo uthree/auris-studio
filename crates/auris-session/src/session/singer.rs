@@ -55,18 +55,44 @@ impl Session {
         id
     }
 
-    /// Points the Japanese text frontend at a compiled dictionary folder, or unloads it.
+    /// Points the Japanese text frontend at a compiled dictionary folder, or lets it go.
     ///
     /// Not an edit: which machine has a dictionary is a fact about the machine, exactly like
     /// which folders hold its plugins, and an Undo that unloaded one would be a surprise. The
     /// folder is opened here rather than at first use so a wrong path fails at the settings
     /// screen that names it, not under a lyric someone typed an hour later.
+    ///
+    /// `None` does not mean *no dictionary* on a build that ships one: clearing the setting
+    /// returns to the shipped dictionary, because the setting is an *override* — the way to
+    /// swap in a folder of one's own — and taking the override off should restore the
+    /// default, not silence the kanji.
     pub fn set_japanese_dictionary(&mut self, folder: Option<&Path>) -> Result<(), SessionError> {
         self.japanese = match folder {
             Some(folder) => Some(JapaneseDictionary::load(folder)?),
             None => None,
         };
+        if folder.is_none() {
+            self.install_shipped_dictionary();
+        }
         Ok(())
+    }
+
+    /// Loads the Japanese dictionary the build ships with, where one is installed.
+    ///
+    /// A failure is logged rather than fatal: a session without the shipped dictionary is
+    /// still a session — kana lyrics sing through the built-in table — and a *named* folder
+    /// that fails gets its visible error at the settings screen instead, through
+    /// [`Self::set_japanese_dictionary`].
+    pub(super) fn install_shipped_dictionary(&mut self) {
+        if !self.shipped_dictionary || self.japanese.is_some() {
+            return;
+        }
+        if let Some(folder) = crate::library::installed_dictionary() {
+            match JapaneseDictionary::load(&folder) {
+                Ok(dictionary) => self.japanese = Some(dictionary),
+                Err(error) => log::warn!("the shipped dictionary did not load: {error}"),
+            }
+        }
     }
 
     /// The dictionary folder currently loaded, if one is.

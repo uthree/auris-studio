@@ -363,8 +363,12 @@ strings! {
     }
     JapaneseDictionaryHeading { en: "Japanese Dictionary", ja: "日本語辞書" }
     JapaneseDictionaryNote {
-        en: "Reads kanji lyrics on singer tracks: point this at a prebuilt naist-jdic folder from the jpreprocess releases. Kana lyrics need nothing.",
-        ja: "シンガートラックの漢字歌詞を読むための設定です。jpreprocess のリリースにあるビルド済み naist-jdic フォルダを指定してください。かなの歌詞には不要です。"
+        en: "Reads kanji lyrics and the pitch accent a composed melody follows. A build ships with naist-jdic; choose a folder here only to override it, and Clear to return to the shipped one.",
+        ja: "漢字歌詞の読みと、歌詞から作曲するときのアクセントに使われます。naist-jdic は同梱されています。差し替えたい場合のみフォルダを指定し、「解除」で同梱辞書に戻ります。"
+    }
+    ValueShippedDictionary {
+        en: "Shipped dictionary (naist-jdic)",
+        ja: "同梱辞書(naist-jdic)を使用中"
     }
     DialogDictionaryFolder { en: "Choose the dictionary folder", ja: "辞書フォルダを選択" }
     ValueNotSet { en: "Not set", ja: "未設定" }
@@ -1099,6 +1103,7 @@ COMMANDS
     progressions                  List every chord progression known by name
     plugins                       List every registered instrument and effect
     soundfonts [--manifest]       List the SoundFonts shipped with this build
+    dictionary [--manifest]       Show the shipped Japanese dictionary and whether it is installed
     info <project.auris>          Print a project's tracks, clips and duration
     render <project.auris> [opts] Render a project to a WAV file
     sing <project.auris> [opts]   Render a singer track through its voice model
@@ -1149,6 +1154,7 @@ auris — コマンドラインから使う Auris Studio
     progressions                  名前の付いたコード進行を一覧表示
     plugins                       登録済みの音源とエフェクトを一覧表示
     soundfonts [--manifest]       同梱サウンドフォントを一覧表示
+    dictionary [--manifest]       同梱日本語辞書とその導入状態を表示
     info <project.auris>          プロジェクトのトラック・クリップ・長さを表示
     render <project.auris> [opts] プロジェクトを WAV に書き出す
     sing <project.auris> [opts]   シンガートラックを声のモデルで歌わせる
@@ -1221,6 +1227,11 @@ new のオプション
     CliSoundFontMissing {
         en: "not installed — run tools/fetch-soundfonts.sh",
         ja: "未インストール — tools/fetch-soundfonts.sh を実行してください"
+    }
+    CliDictionary { en: "SHIPPED JAPANESE DICTIONARY", ja: "同梱日本語辞書" }
+    CliDictionaryMissing {
+        en: "not installed — run tools/fetch-dictionary.sh",
+        ja: "未インストール — tools/fetch-dictionary.sh を実行してください"
     }
     CliInstruments { en: "INSTRUMENTS", ja: "音源" }
     CliEffects { en: "EFFECTS", ja: "エフェクト" }

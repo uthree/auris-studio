@@ -41,10 +41,13 @@ jobs:
             cargo build --release --locked --target "$target" -p auris-gpui -p auris-cli -p auris-mcp -p auris-agent
           done
 
-      # After the build, because the script asks the command line tool what to fetch — the
-      # manifest lives in `auris_session::library` and is not duplicated in the script.
+      # After the build, because the scripts ask the command line tool what to fetch — the
+      # manifests live in `auris_session::library` and are not duplicated in the scripts.
       - name: Fetch the shipped SoundFonts
         run: tools/fetch-soundfonts.sh
+
+      - name: Fetch the shipped Japanese dictionary
+        run: tools/fetch-dictionary.sh
 
       # `Auris Studio.app` around the desktop binary, with the command line tool, the MCP
       # server and the LLM agent beside it.
@@ -79,6 +82,9 @@ jobs:
           mkdir -p "$app/Contents/Resources"
           cp -R SoundFonts "$app/Contents/Resources/SoundFonts"
           ln -s "Auris Studio.app/Contents/Resources/SoundFonts" "$stage/SoundFonts"
+          # The Japanese dictionary travels the same way, for the same two readers.
+          cp -R Dictionary "$app/Contents/Resources/Dictionary"
+          ln -s "Auris Studio.app/Contents/Resources/Dictionary" "$stage/Dictionary"
 
           cp README.md CHANGELOG.md LICENSE "$stage/"
           # The README links into `docs/`, so an archive without it has dead links in the
@@ -108,6 +114,10 @@ jobs:
         shell: bash
         run: tools/fetch-soundfonts.sh
 
+      - name: Fetch the shipped Japanese dictionary
+        shell: bash
+        run: tools/fetch-dictionary.sh
+
       - name: Assemble the archive
         shell: bash
         run: |
@@ -116,6 +126,7 @@ jobs:
           cp target/release/auris-studio.exe target/release/auris.exe target/release/auris-mcp.exe target/release/auris-agent.exe "$stage/"
           # Beside the binaries, which is the first place `auris_session::library` looks.
           cp -R SoundFonts "$stage/SoundFonts"
+          cp -R Dictionary "$stage/Dictionary"
           cp README.md CHANGELOG.md LICENSE "$stage/"
           # The README links into `docs/`, so an archive without it has dead links in the
           # first file anybody opens.
@@ -152,6 +163,9 @@ jobs:
       - name: Fetch the shipped SoundFonts
         run: tools/fetch-soundfonts.sh
 
+      - name: Fetch the shipped Japanese dictionary
+        run: tools/fetch-dictionary.sh
+
       - name: Assemble the archive
         run: |
           stage="auris-${GITHUB_REF_NAME}-linux-x86_64"
@@ -159,8 +173,11 @@ jobs:
           cp target/release/auris "$stage/"
           # The command line tool composes too, and a piece written on Linux has to be the piece
           # written on Windows. Skipping the fonts here would make `auris compose` quietly answer
-          # in three oscillators on one platform and an orchestra on the others.
+          # in three oscillators on one platform and an orchestra on the others. The dictionary
+          # rides along for the same reason: a lyric composed here has to follow its accent the
+          # way it would anywhere else.
           cp -R SoundFonts "$stage/SoundFonts"
+          cp -R Dictionary "$stage/Dictionary"
           cp README.md CHANGELOG.md LICENSE "$stage/"
           # The README links into `docs/`, so an archive without it has dead links in the
           # first file anybody opens.
@@ -215,8 +232,11 @@ jobs:
 
           Every archive carries **MuseScore General**, a General MIDI SoundFont under the MIT
           licence, in a `SoundFonts` directory — which is most of the download size and all of the
-          instruments beyond the four built in. On macOS it lives inside the bundle, so dragging
-          `Auris Studio.app` to /Applications takes it along.
+          instruments beyond the four built in. Beside it, a `Dictionary` directory holds the
+          **NAIST Japanese dictionary** (BSD-3-Clause, jpreprocess's build): what reads kanji
+          lyrics, and what gives a melody composed from lyrics the words' pitch accent to follow.
+          On macOS both live inside the bundle, so dragging `Auris Studio.app` to /Applications
+          takes them along.
 
           None of it is code-signed. macOS will refuse the first launch and say the developer
           cannot be verified: open it from the right-click menu once, or run
