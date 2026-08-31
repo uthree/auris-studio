@@ -30,13 +30,13 @@
 //! bass; the risk is an occasional parallel octave, and the account is here so nobody thinks
 //! it was forgotten.
 
-use auris_core::Note;
 use auris_core::harmony::Harmony;
 use auris_core::rng::{Key as RngKey, Rng};
 use auris_core::theory::chord::Chord;
 use auris_core::theory::contour::Contour;
 use auris_core::theory::pitch::PitchClass;
-use auris_core::time::{TICKS_PER_QUARTER, Ticks, TimeSignature};
+use auris_core::time::{TICKS_PER_QUARTER, TempoMap, Ticks, TimeSignature};
+use auris_core::{Fall, Note, Scoop, Vibrato};
 
 /// Where the voice is comfortable, in MIDI notes, inclusive at both ends.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -71,16 +71,18 @@ pub struct VocalRhythm {
     pub length: Ticks,
 }
 
-/// Lays each phrase's syllables onto the grid: one per eighth, the last held a quarter.
+/// Lays each phrase's syllables onto the grid: one per eighth, the last held a half note.
 ///
 /// Each phrase starts a fresh bar, and the next starts at the first bar line that leaves at
 /// least an eighth of breath after this one ends — a singer breathes between phrases, and a
-/// melody with nowhere to breathe reads as wrong before it sounds wrong. The scheme is
-/// Orpheus's "rhythm decision" reduced to its plainest honest form; the rhythm-tree library
-/// that would vary it is future work, and lives behind this signature when it comes.
+/// melody with nowhere to breathe reads as wrong before it sounds wrong. The last syllable
+/// is *held*, because that is what a sung phrase does — and the held note is where the
+/// vibrato rule below finds room to sway. The scheme is Orpheus's "rhythm decision" reduced
+/// to its plainest honest form; the rhythm-tree library that would vary it is future work,
+/// and lives behind this signature when it comes.
 pub fn vocal_rhythm(counts: &[usize], meter: TimeSignature) -> VocalRhythm {
     let eighth = Ticks(TICKS_PER_QUARTER / 2);
-    let quarter = Ticks(TICKS_PER_QUARTER);
+    let half = Ticks(TICKS_PER_QUARTER * 2);
     let bar = Ticks(meter.ticks_per_bar().raw().max(1));
 
     let mut phrases = Vec::with_capacity(counts.len());
@@ -91,7 +93,7 @@ pub fn vocal_rhythm(counts: &[usize], meter: TimeSignature) -> VocalRhythm {
         for syllable in 0..count {
             let onset = at + eighth * syllable as i64;
             let length = match syllable + 1 == count {
-                true => quarter,
+                true => half,
                 false => eighth,
             };
             slots.push((onset, length));
@@ -106,6 +108,62 @@ pub fn vocal_rhythm(counts: &[usize], meter: TimeSignature) -> VocalRhythm {
 
     let length = Ticks(((end.raw() + bar.raw() - 1) / bar.raw()).max(1) * bar.raw());
     VocalRhythm { phrases, length }
+}
+
+/// The shortest note the vibrato rule sways, in seconds.
+///
+/// Under half a second there is no room for the sway to grow before the note is over, and a
+/// vibrato that never reaches depth reads as a wobble. With the phrase-final half note this
+/// rhythm writes, the held syllable clears the bar at any tempo under ~260 BPM and the
+/// passing eighths never do — which is the rule the numbers were chosen to produce.
+pub const VIBRATO_FROM_SECONDS: f64 = 0.45;
+
+/// Dresses a written vocal line in the ornaments a singer would add, by rule.
+///
+/// Three rules, each the plainest reading of what singers actually do:
+///
+/// * **A phrase is entered from below.** Its first note gets the stock scoop — the voice
+///   finds the pitch rather than starting on it.
+/// * **A held note sways.** Any note at least [`VIBRATO_FROM_SECONDS`] long gets a vibrato
+///   that waits out roughly the first third of the note and fades in over the next — the
+///   straight-then-sway shape of a sung long tone.
+/// * **The song lets go at the end.** The very last note, and only that one, gets the stock
+///   fall; a fall on every phrase would make a manner out of a gesture.
+///
+/// The ornaments land on the notes as ordinary [`Note::scoop`]-family data — the same fields
+/// a hand sets from the piano roll, visible on the drawn pitch curve, adjustable and
+/// removable one by one. Rule-based on purpose: a learned ornament model would be another
+/// *sibling* of this function, chosen the way a melody engine would be.
+pub fn ornament_vocal(notes: &mut [Note], rhythm: &VocalRhythm, tempo: &TempoMap, start: Ticks) {
+    let firsts: Vec<Ticks> = rhythm
+        .phrases
+        .iter()
+        .filter_map(|slots| slots.first().map(|(onset, _)| *onset))
+        .collect();
+    let last = rhythm
+        .phrases
+        .last()
+        .and_then(|slots| slots.last())
+        .map(|(onset, _)| *onset);
+
+    for note in notes {
+        let seconds = tempo.ticks_to_seconds(start + note.end()).0
+            - tempo.ticks_to_seconds(start + note.start).0;
+        if firsts.contains(&note.start) {
+            note.scoop = Some(Scoop::default());
+        }
+        if Some(note.start) == last {
+            note.fall = Some(Fall::default());
+        }
+        if seconds >= VIBRATO_FROM_SECONDS {
+            note.vibrato = Some(Vibrato {
+                depth: 0.3,
+                rate: 5.8,
+                delay: (seconds * 0.35).clamp(0.12, 0.6),
+                fade_in: (seconds * 0.3).min(0.3),
+            });
+        }
+    }
 }
 
 /// Breaching a syllable's contour — expensive, and deliberately not impossible.
@@ -361,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn the_rhythm_gives_every_syllable_an_eighth_and_the_last_a_quarter() {
+    fn the_rhythm_gives_every_syllable_an_eighth_and_holds_the_last() {
         let rhythm = vocal_rhythm(&[3, 2], TimeSignature::default());
         let eighth = TICKS_PER_QUARTER / 2;
         assert_eq!(
@@ -369,7 +427,7 @@ mod tests {
             [
                 (Ticks(0), Ticks(eighth)),
                 (Ticks(eighth), Ticks(eighth)),
-                (Ticks(eighth * 2), Ticks(TICKS_PER_QUARTER)),
+                (Ticks(eighth * 2), Ticks(TICKS_PER_QUARTER * 2)),
             ]
         );
         // The second phrase starts on the next bar line, a breath after the first ends.
@@ -433,6 +491,48 @@ mod tests {
         assert!(
             [0, 4, 7].contains(&last),
             "C major owns the cadence, got {last}"
+        );
+    }
+
+    #[test]
+    fn the_rules_dress_the_line_the_way_a_singer_would() {
+        let harmony = c_major();
+        let rhythm = vocal_rhythm(&[3, 2], TimeSignature::default());
+        let phrases = vec![vec![Contour::Free; 3], vec![Contour::Free; 2]];
+        let mut notes = write_vocal(
+            &harmony,
+            Ticks::ZERO,
+            &rhythm,
+            &phrases,
+            VocalRange::default(),
+            0,
+        );
+        let tempo = TempoMap::constant(120.0);
+        ornament_vocal(&mut notes, &rhythm, &tempo, Ticks::ZERO);
+
+        // Each phrase is entered from below; nothing mid-phrase is.
+        assert!(notes[0].scoop.is_some(), "the first phrase scoops in");
+        assert!(notes[3].scoop.is_some(), "and so does the second");
+        assert!(notes[1].scoop.is_none() && notes[2].scoop.is_none());
+
+        // The held finals sway — a half note at 120 BPM is a second — and the sway waits
+        // out the front of the note and still has the back half to be heard in.
+        for held in [2usize, 4] {
+            let vibrato = notes[held].vibrato.expect("a held note sways");
+            assert!(vibrato.delay >= 0.12 && vibrato.delay <= 0.6);
+            assert!(
+                vibrato.delay + vibrato.fade_in < 1.0,
+                "the sway reaches depth inside the note"
+            );
+        }
+        // The passing eighths — a quarter of a second — never do.
+        assert!(notes[0].vibrato.is_none() && notes[1].vibrato.is_none());
+
+        // Only the song's last note lets go.
+        assert!(notes[4].fall.is_some(), "the end falls away");
+        assert!(
+            notes[..4].iter().all(|note| note.fall.is_none()),
+            "and nothing before it does"
         );
     }
 

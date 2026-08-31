@@ -45,7 +45,7 @@ pub use phrase::{
 pub use preset::{PRESETS, SongPreset, preset};
 pub use render::{ClipDraft, Composition, EffectDraft, TrackDraft, compose};
 pub use spec::{Ending, Mood, PartSpec, Role, SectionSpec, SongSpec, SpecError};
-pub use vocal::{VocalRange, VocalRhythm, vocal_rhythm, write_vocal};
+pub use vocal::{VocalRange, VocalRhythm, ornament_vocal, vocal_rhythm, write_vocal};
 
 /// File extension of a song specification, for a file-picker filter.
 pub const SPEC_EXTENSION: &str = "asong";

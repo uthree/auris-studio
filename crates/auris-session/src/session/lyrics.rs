@@ -14,7 +14,7 @@
 //! is free: the Orpheus constraint — sing the words the way they are spoken — only has teeth
 //! where something actually analysed the accent. The report says which of the two happened.
 
-use auris_compose::vocal::{VocalRange, vocal_rhythm, write_vocal};
+use auris_compose::vocal::{VocalRange, ornament_vocal, vocal_rhythm, write_vocal};
 use auris_core::theory::contour::Contour;
 use auris_core::time::Ticks;
 use auris_core::{ClipId, ClipPreset, ClipRecipe, Note, PresetRef, TrackId};
@@ -111,7 +111,7 @@ impl Session {
             }
         }
 
-        let notes = write_vocal(
+        let mut notes = write_vocal(
             &self.project.harmony,
             Ticks::ZERO,
             &rhythm,
@@ -119,6 +119,9 @@ impl Session {
             VocalRange::default(),
             seed,
         );
+        // The ornaments a singer would add, by rule: scoop into each phrase, sway on the
+        // held notes, let go at the end. Ordinary note data, adjustable one by one.
+        ornament_vocal(&mut notes, &rhythm, &self.project.tempo_map, Ticks::ZERO);
 
         // Each note finds its mora by onset rather than by position in a flat list, so a
         // phrase the writer could not fill (a degenerate range) cannot shift every word
