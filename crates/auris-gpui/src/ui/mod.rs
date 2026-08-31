@@ -17,7 +17,6 @@ pub mod icons;
 pub mod inspector;
 pub mod library;
 pub mod log_panel;
-pub mod lyrics_sheet;
 pub mod menu_bar;
 pub mod mixer;
 pub mod paint;

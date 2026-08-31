@@ -105,7 +105,6 @@ impl Render for AurisApp {
         let status = self.render_status_bar(cx);
         let export_overlay = self.render_export_overlay(cx);
         let song_sheet = self.render_song_sheet(cx);
-        let lyrics_sheet = self.render_lyrics_sheet(cx);
         let prompt = self.render_prompt(cx);
         let palette = self.render_palette(cx);
         let menu = self.render_context_menu(window, cx);
@@ -278,7 +277,6 @@ impl Render for AurisApp {
             .child(status)
             .children(export_overlay)
             .children(song_sheet)
-            .children(lyrics_sheet)
             .child(drop_ring)
             // These come last so they paint — and are hit-tested — above the panels. The plugin
             // editor sits below the menu because a right-click inside it opens one.

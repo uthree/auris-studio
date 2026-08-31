@@ -404,9 +404,9 @@ mod tests {
         assert_eq!(after, before + 1, "Track → Add Instrument Track added one");
     }
 
-    /// The song sheet takes words per section — on the lyrics sheet, where every section's
-    /// words stand on one page — and a piece written from it arrives singing them. Return
-    /// breaks a line rather than committing, because on this sheet a line is a phrase.
+    /// The song sheet takes words per section — in the lyrics boxes standing beside the form,
+    /// no popup anywhere — and a piece written from it arrives singing them. Return breaks a
+    /// line rather than committing, because in these boxes a line is a phrase.
     #[gpui::test]
     fn the_song_sheet_takes_words_per_section_and_the_piece_sings_them(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
@@ -421,11 +421,8 @@ mod tests {
                 dials.sections[0].bars = 2;
                 dials.form = vec![dials.sections[0].name.clone()];
             }
-            this.open_lyrics_sheet(0);
-            assert!(
-                this.lyrics_sheet.is_some(),
-                "the lyrics sheet opened over it"
-            );
+            this.focus_section_lyrics(0);
+            assert!(this.lyrics_edit.is_some(), "the box took the keyboard");
         });
         paint(&app, cx);
         cx.simulate_input("さくら");
@@ -436,9 +433,10 @@ mod tests {
         paint(&app, cx);
 
         app.update(cx, |this, _| {
+            assert!(this.lyrics_edit.is_none(), "escape put the keyboard down");
             assert!(
-                this.lyrics_sheet.is_none(),
-                "escape closed the lyrics sheet"
+                this.song_sheet.is_some(),
+                "and the song sheet stayed up — the words are on it, not over it"
             );
             let dials = this.song_sheet.as_ref().unwrap();
             assert_eq!(
@@ -462,10 +460,10 @@ mod tests {
         });
     }
 
-    /// Tab walks the lyrics sheet from section to section, and each keeps the words it was
+    /// Tab walks the lyrics boxes from section to section, and each keeps the words it was
     /// given — a verse is usually followed by writing the chorus, without touching the mouse.
     #[gpui::test]
-    fn tab_walks_the_lyrics_sheet_from_verse_to_chorus(cx: &mut TestAppContext) {
+    fn tab_walks_the_lyrics_boxes_from_verse_to_chorus(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
         cx.dispatch_action(actions::ComposeSong);
         paint(&app, cx);
@@ -479,7 +477,7 @@ mod tests {
                 dials.sections[1].name.clone(),
                 dials.sections[1].name.clone(),
             ];
-            this.open_lyrics_sheet(0);
+            this.focus_section_lyrics(0);
         });
         paint(&app, cx);
         cx.simulate_input("ひらり");
@@ -494,7 +492,7 @@ mod tests {
             assert_eq!(dials.sections[0].lyrics, "ひらり");
             assert_eq!(dials.sections[1].lyrics, "はらり");
             assert_eq!(
-                this.lyrics_sheet.as_ref().map(|sheet| sheet.section),
+                this.lyrics_edit.as_ref().map(|edit| edit.section),
                 Some(0),
                 "two stops on the walk, however often the chorus plays: it wrapped"
             );

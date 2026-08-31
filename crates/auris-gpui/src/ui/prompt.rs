@@ -1621,10 +1621,10 @@ impl AurisApp {
         if let Some(field) = self.prompt.as_mut().and_then(Prompt::field_mut) {
             return Some(field);
         }
-        // The lyrics sheet sits over the song sheet, and nothing else opens over *it* but the
-        // palette and a prompt — both already answered above.
-        if let Some(sheet) = self.lyrics_sheet.as_mut() {
-            return Some(&mut sheet.field);
+        // The lyrics box on the song sheet, while one holds the keyboard; nothing opens over
+        // the sheet but the palette and a prompt — both already answered above.
+        if let Some(edit) = self.lyrics_edit.as_mut() {
+            return Some(&mut edit.field);
         }
         if self.library_search_focused {
             return Some(&mut self.library_search);
@@ -1647,8 +1647,8 @@ impl crate::ui::text_field::HasTextField for AurisApp {
         if let Some(field) = self.prompt.as_ref().and_then(Prompt::field) {
             return Some(field);
         }
-        if let Some(sheet) = self.lyrics_sheet.as_ref() {
-            return Some(&sheet.field);
+        if let Some(edit) = self.lyrics_edit.as_ref() {
+            return Some(&edit.field);
         }
         if self.library_search_focused {
             return Some(&self.library_search);
@@ -1665,9 +1665,9 @@ impl crate::ui::text_field::HasTextField for AurisApp {
         if let Some(palette) = self.palette.as_mut() {
             palette.selected = 0;
         }
-        // The lyrics sheet writes through to the song sheet's dials on every change; typing
+        // The lyrics box writes through to the song sheet's dials on every change; typing
         // arrives here, so this is where the copy has to happen.
-        self.sync_lyrics_sheet();
+        self.sync_section_lyrics();
     }
 }
 

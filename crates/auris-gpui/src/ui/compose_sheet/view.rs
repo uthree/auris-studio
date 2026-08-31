@@ -4,7 +4,8 @@
 //! every rule they are built from — what a dial means, what a gesture does to the form — is next
 //! door in `dials` where a test can reach it. A condition that grows here belongs there.
 //!
-//! Three columns: the song, the form, the roster. The pickers the buttons open are in `menus`.
+//! Three columns — the song, the form, the words — over a strip of part cards. The pickers the
+//! buttons open are in `menus`; the words' own rules and elements are in `lyrics`.
 
 use gpui::{
     AnyElement, Context, IntoElement, MouseDownEvent, Window, div, prelude::*, px, relative,
@@ -131,17 +132,35 @@ impl AurisApp {
                                         .overflow_y_scroll()
                                         .children(self.song_form_rows(&dials, cx)),
                                 )
+                                // The words, beside the form that plays them: no button, no
+                                // page of their own — the boxes are right here, and clicking
+                                // one is typing into it.
                                 .child(
                                     div()
-                                        .id("song-sheet-parts")
+                                        .id("song-sheet-lyrics")
                                         .flex()
                                         .flex_col()
                                         .gap_1()
                                         .flex_1()
                                         .min_w_0()
                                         .overflow_y_scroll()
-                                        .children(self.song_part_rows(&dials, cx)),
+                                        .children(self.song_lyrics_rows(&dials, cx)),
                                 ),
+                        )
+                        .child(divider(&theme))
+                        // The roster, moved down so the words could stand beside the form. It
+                        // wraps into cards and scrolls past its strip's height, so a big band
+                        // costs the columns above nothing.
+                        .child(self.song_parts_header(&dials, cx))
+                        .child(
+                            div()
+                                .id("song-sheet-parts")
+                                .flex()
+                                .flex_wrap()
+                                .gap_2()
+                                .max_h(px(240.0))
+                                .overflow_y_scroll()
+                                .children(self.song_part_rows(&dials, cx)),
                         )
                         .child(divider(&theme))
                         .child(
@@ -165,9 +184,9 @@ impl AurisApp {
                                     &theme,
                                     cx.listener(|this, _, _, cx| {
                                         this.song_sheet = None;
-                                        // The lyrics sheet edits the song sheet's sections;
+                                        // The lyrics box edits the song sheet's sections;
                                         // it cannot outlive them.
-                                        this.lyrics_sheet = None;
+                                        this.lyrics_edit = None;
                                         cx.notify();
                                     }),
                                 ))
@@ -209,7 +228,7 @@ impl AurisApp {
                                     cx.listener(|this, _, _, cx| {
                                         this.write_song_from_sheet();
                                         this.song_sheet = None;
-                                        this.lyrics_sheet = None;
+                                        this.lyrics_edit = None;
                                         cx.notify();
                                     }),
                                 )),
@@ -465,21 +484,6 @@ impl AurisApp {
                 &theme,
                 Self::opens_menu(cx, move |this, at| this.song_section_tempo_menu(at, index)),
             )));
-            // The words, down with the dials for the tempo's reason. Lit while the section
-            // carries any, so a sheet with a singing chorus says so at a glance. It opens the
-            // lyrics sheet — every section's words on one page — on this one.
-            dial_row = dial_row.child(div().w(px(52.0)).child(button(
-                ("song-section-lyrics", place),
-                self.t(Key::PromptSectionLyrics),
-                ButtonStyle::Normal,
-                !section.lyrics.is_empty(),
-                theme.accent,
-                &theme,
-                cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                    this.open_lyrics_sheet(index);
-                    cx.notify();
-                }),
-            )));
 
             rows.push(
                 div()
@@ -594,31 +598,35 @@ impl AurisApp {
         rows
     }
 
-    /// The right half: one block per part, with a button that adds another.
+    /// The heading over the roster strip, with the button that adds another part.
+    fn song_parts_header(&mut self, _dials: &SongDials, cx: &mut Context<Self>) -> AnyElement {
+        let theme = self.theme.clone();
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .flex_1()
+                    .child(self.group_heading(Key::SongPartsHeading)),
+            )
+            .child(button(
+                "song-add-part",
+                self.t(Key::SongAddPart),
+                ButtonStyle::Normal,
+                false,
+                theme.accent,
+                &theme,
+                Self::opens_menu(cx, |this, at| this.song_add_part_menu(at)),
+            ))
+            .into_any_element()
+    }
+
+    /// The roster: one card per part, sized so two stand side by side in the strip.
     fn song_part_rows(&mut self, dials: &SongDials, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let theme = self.theme.clone();
         let removable = dials.parts.len() > 1;
-        let mut rows: Vec<AnyElement> = vec![
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    div()
-                        .flex_1()
-                        .child(self.group_heading(Key::SongPartsHeading)),
-                )
-                .child(button(
-                    "song-add-part",
-                    self.t(Key::SongAddPart),
-                    ButtonStyle::Normal,
-                    false,
-                    theme.accent,
-                    &theme,
-                    Self::opens_menu(cx, |this, at| this.song_add_part_menu(at)),
-                ))
-                .into_any_element(),
-        ];
+        let mut rows: Vec<AnyElement> = Vec::new();
 
         for (index, part) in dials.parts.iter().enumerate() {
             // What the part will be *heard* as: the General MIDI sound where it names one, and
@@ -668,6 +676,9 @@ impl AurisApp {
                     .flex()
                     .flex_col()
                     .gap_1()
+                    // A card, not a row: two of these stand side by side in the strip, and
+                    // the width is what makes them wrap instead of stretching.
+                    .w(px(520.0))
                     .p_2()
                     .rounded(Metrics::RADIUS_SM)
                     .bg(theme.surface_sunken)

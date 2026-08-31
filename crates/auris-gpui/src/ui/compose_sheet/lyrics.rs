@@ -1,41 +1,40 @@
-//! The lyrics sheet: every section's words on one page, one of them being typed into.
+//! The lyrics column of the song sheet: every section's words, one of them being typed into.
 //!
-//! The song sheet's lyric field started as the one-line prompt every other sheet text uses,
-//! and words outgrew it immediately: a verse is lines, and a section's words mean most next to
-//! the other sections'. So the sheet lays the whole song out — one block per section, in the
-//! order the form plays them — and the block that was clicked is a real multi-line editor
-//! while the rest stand around it as text. Return breaks a line, because here a line is a
-//! phrase; Tab walks to the next section, because a verse is usually followed by writing the
-//! chorus.
+//! The words started life in the one-line rename prompt, then in a page of their own over the
+//! sheet, and both were the same mistake at different sizes: the lyrics were somewhere else.
+//! They belong *on the sheet*, beside the form that plays them — so the sheet's third column is
+//! the words themselves, one multi-line box per section in the order the form first plays them,
+//! and clicking a box makes it a real editor in place. Return breaks a line, because here a
+//! line is a phrase; Tab walks to the next section, because a verse is usually followed by
+//! writing the chorus; Escape puts the keyboard down without closing anything.
 //!
-//! Everything typed lands on the song sheet's dials immediately — the same state the 歌詞
-//! buttons light from, and the same state Write reads. Closing this sheet loses nothing and
-//! commits nothing, exactly like every other dial: nothing sings until Write.
+//! Everything typed lands on the song sheet's dials immediately — the state Write reads.
+//! Nothing sings until Write, exactly like every other dial.
 
 use auris_i18n::Key;
-use gpui::{Context, IntoElement, MouseButton, MouseDownEvent, div, prelude::*, px, relative};
+use gpui::{AnyElement, Context, MouseButton, MouseDownEvent, div, prelude::*, px};
 
 use crate::app::AurisApp;
-use crate::theme::{Metrics, Theme};
-use crate::ui::compose_sheet::{SongDials, section_at};
+use crate::theme::Metrics;
 use crate::ui::text_area::{area_height, area_offset_at, editable_area};
 use crate::ui::text_field::TextField;
-use crate::ui::widgets::{ButtonStyle, button};
 
-/// The open lyrics sheet: which section is being written, and the editor holding its words.
+use super::dials::{SongDials, section_at};
+
+/// The section being written into, and the editor holding its words.
 ///
 /// The field is the working copy for exactly as long as the keystroke takes: every change is
 /// copied straight onto the song sheet's dials, so the rest of the application never has to
 /// know which of the two is current.
 #[derive(Clone, Debug, PartialEq)]
-pub struct LyricsSheet {
-    /// Index into the song sheet's `sections` of the block being edited.
+pub struct LyricsEdit {
+    /// Index into the song sheet's `sections` of the box being edited.
     pub section: usize,
     /// The words being typed.
     pub field: TextField,
 }
 
-/// The sections the sheet lists: each one once, in the order the form first plays them.
+/// The sections the column lists: each one once, in the order the form first plays them.
 ///
 /// A chorus played three times is still one chorus with one set of words — the same rule the
 /// form column lives by — and a section the form never plays is left out because nothing would
@@ -52,13 +51,13 @@ pub fn sections_in_form_order(dials: &SongDials) -> Vec<usize> {
     seen
 }
 
-/// The fewest and most rows a section's editor shows before the sheet itself scrolls.
+/// The fewest and most rows a section's box shows before the column scrolls.
 const MIN_ROWS: usize = 2;
 const MAX_ROWS: usize = 12;
 
 impl AurisApp {
-    /// Opens the lyrics sheet on one section of the song sheet.
-    pub(crate) fn open_lyrics_sheet(&mut self, section: usize) {
+    /// Puts the keyboard into one section's lyrics box.
+    pub(crate) fn focus_section_lyrics(&mut self, section: usize) {
         let Some(lyrics) = self
             .song_sheet
             .as_ref()
@@ -73,30 +72,19 @@ impl AurisApp {
         // half written, and a rename's select-all would put the whole of it one keystroke from
         // gone.
         field.caret_to_end();
-        self.lyrics_sheet = Some(LyricsSheet { section, field });
-    }
-
-    /// Moves the editor to another section, leaving the words it held on the dials.
-    ///
-    /// There is nothing to save first — every keystroke already landed on the sheet — so
-    /// switching is only loading the other section's words.
-    pub(crate) fn lyrics_pick_section(&mut self, section: usize) {
-        if self.lyrics_sheet.is_some() {
-            self.open_lyrics_sheet(section);
-        }
+        self.lyrics_edit = Some(LyricsEdit { section, field });
     }
 
     /// Copies the editor's words onto the song sheet's dials.
     ///
     /// Called from every path that changes the field — the platform's input handler and the
-    /// key handler both — because the dials are what the 歌詞 buttons light from and what
-    /// Write reads, and a field that drifted from them would sing something the sheet never
-    /// showed.
-    pub(crate) fn sync_lyrics_sheet(&mut self) {
-        let Some(sheet) = self.lyrics_sheet.as_ref() else {
+    /// key handler both — because the dials are what Write reads, and a field that drifted
+    /// from them would sing something the sheet never showed.
+    pub(crate) fn sync_section_lyrics(&mut self) {
+        let Some(edit) = self.lyrics_edit.as_ref() else {
             return;
         };
-        let (section, words) = (sheet.section, sheet.field.content().to_string());
+        let (section, words) = (edit.section, edit.field.content().to_string());
         if let Some(spec) = self
             .song_sheet
             .as_mut()
@@ -106,32 +94,32 @@ impl AurisApp {
         }
     }
 
-    /// Handles a keystroke aimed at the open lyrics sheet.
+    /// Handles a keystroke aimed at the lyrics box being typed into.
     ///
     /// Returns `true` when the key was used. Return breaks a line rather than committing —
-    /// there is nothing to commit; the dials already have every keystroke — and Tab walks the
-    /// sections, which is why this sheet has no default button to walk to instead.
+    /// there is nothing to commit; the dials already have every keystroke — and Escape puts
+    /// the keyboard down while the sheet stays up.
     pub(crate) fn lyrics_key(
         &mut self,
         event: &gpui::KeyDownEvent,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(sheet) = self.lyrics_sheet.as_mut() else {
+        let Some(edit) = self.lyrics_edit.as_mut() else {
             return false;
         };
         let shift = event.keystroke.modifiers.shift;
         let command = event.keystroke.modifiers.secondary();
         // While the IME is composing, Escape, Return, Tab and the arrows belong to the
         // candidate window, and the platform has already offered them to it before we see them.
-        let composing = sheet.field.marked().is_some();
+        let composing = edit.field.marked().is_some();
 
         match event.keystroke.key.as_str() {
             "escape" if !composing => {
-                self.lyrics_sheet = None;
+                self.lyrics_edit = None;
             }
             "enter" if !composing => {
-                sheet.field.insert("\n");
-                self.sync_lyrics_sheet();
+                edit.field.insert("\n");
+                self.sync_section_lyrics();
             }
             "tab" if !composing => {
                 let order = self
@@ -139,45 +127,44 @@ impl AurisApp {
                     .as_ref()
                     .map(sections_in_form_order)
                     .unwrap_or_default();
-                if let Some(at) = order.iter().position(|&index| index == sheet.section) {
+                if let Some(at) = order.iter().position(|&index| index == edit.section) {
                     let next = match shift {
                         true => (at + order.len() - 1) % order.len(),
                         false => (at + 1) % order.len(),
                     };
-                    self.lyrics_pick_section(order[next]);
+                    self.focus_section_lyrics(order[next]);
                 }
             }
-            "up" => sheet.field.move_up(shift),
-            "down" => sheet.field.move_down(shift),
+            "up" => edit.field.move_up(shift),
+            "down" => edit.field.move_down(shift),
             // Copy, cut and paste — and paste keeps its newlines, because here they mean what
             // they mean everywhere else words are written.
             "c" if command => {
-                let selected = sheet.field.selected_text();
+                let selected = edit.field.selected_text();
                 if !selected.is_empty() {
                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected));
                 }
             }
             "x" if command => {
-                let selected = sheet.field.selected_text();
+                let selected = edit.field.selected_text();
                 if !selected.is_empty() {
                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected));
-                    sheet.field.backspace();
-                    self.sync_lyrics_sheet();
+                    edit.field.backspace();
+                    self.sync_section_lyrics();
                 }
             }
             "v" if command => {
                 let pasted = cx.read_from_clipboard().and_then(|item| item.text());
                 if let Some(text) = pasted {
-                    sheet
-                        .field
+                    edit.field
                         .insert(&text.replace("\r\n", "\n").replace('\r', "\n"));
-                    self.sync_lyrics_sheet();
+                    self.sync_section_lyrics();
                 }
             }
             key => {
-                let effect = sheet.field.apply_key(key, shift, command);
+                let effect = edit.field.apply_key(key, shift, command);
                 if effect == crate::ui::text_field::KeyEffect::Changed {
-                    self.sync_lyrics_sheet();
+                    self.sync_section_lyrics();
                 }
                 return effect != crate::ui::text_field::KeyEffect::Ignored;
             }
@@ -185,110 +172,40 @@ impl AurisApp {
         true
     }
 
-    /// Draws the sheet over the song sheet.
-    pub(crate) fn render_lyrics_sheet(
+    /// The third column: a heading, then one box of words per section the form plays.
+    pub(crate) fn song_lyrics_rows(
         &mut self,
+        dials: &SongDials,
         cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement + use<>> {
-        let sheet = self.lyrics_sheet.clone()?;
-        let dials = self.song_sheet.clone()?;
-        let theme = self.theme.clone();
-        let order = sections_in_form_order(&dials);
-
-        let blocks: Vec<gpui::AnyElement> = order
-            .iter()
-            .map(|&index| self.lyrics_block(&dials, index, &sheet, cx))
-            .collect();
-
-        Some(
+    ) -> Vec<AnyElement> {
+        let mut rows: Vec<AnyElement> = vec![
+            self.group_heading(Key::PromptSectionLyrics)
+                .into_any_element(),
+        ];
+        for index in sections_in_form_order(dials) {
+            rows.push(self.lyrics_box(dials, index, cx));
+        }
+        rows.push(
             div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(Theme::translucent(theme.background, 0.55))
-                .occlude()
-                // A click outside the sheet closes it — nothing is lost, the dials have
-                // everything — which is what every sheet in the application does.
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _: &MouseDownEvent, _, cx| {
-                        this.lyrics_sheet = None;
-                        cx.stop_propagation();
-                        cx.notify();
-                    }),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .w(px(560.0))
-                        .max_h(relative(0.92))
-                        .p_4()
-                        .rounded(Metrics::RADIUS_LG)
-                        .bg(theme.surface_raised)
-                        .border_1()
-                        .border_color(theme.border)
-                        .shadow_lg()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            |_: &MouseDownEvent, _, cx: &mut gpui::App| cx.stop_propagation(),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(theme.text)
-                                .child(self.t(Key::PromptSectionLyrics)),
-                        )
-                        .child(
-                            div()
-                                .id("lyrics-sheet-sections")
-                                .flex()
-                                .flex_col()
-                                .gap_2()
-                                .flex_1()
-                                .min_h_0()
-                                .overflow_y_scroll()
-                                .children(blocks),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(theme.text_faint)
-                                .child(self.t(Key::HintSectionLyrics)),
-                        )
-                        .child(div().flex().justify_end().child(button(
-                            "lyrics-sheet-close",
-                            self.t(Key::Close),
-                            ButtonStyle::Primary,
-                            false,
-                            theme.accent,
-                            &theme,
-                            cx.listener(|this, _, _, cx| {
-                                this.lyrics_sheet = None;
-                                cx.notify();
-                            }),
-                        ))),
-                ),
-        )
+                .text_xs()
+                .text_color(self.theme.text_faint)
+                .child(self.t(Key::HintSectionLyrics))
+                .into_any_element(),
+        );
+        rows
     }
 
-    /// One section's block: its name over its words, editable where it is the one being
-    /// written and standing text everywhere else.
-    fn lyrics_block(
-        &self,
-        dials: &SongDials,
-        index: usize,
-        sheet: &LyricsSheet,
-        cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    /// One section's box: its name over its words, a live editor where it holds the keyboard
+    /// and standing text everywhere else.
+    fn lyrics_box(&self, dials: &SongDials, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
         let Some(spec) = dials.sections.get(index) else {
             return div().into_any_element();
         };
-        let active = sheet.section == index;
+        let edit = self
+            .lyrics_edit
+            .as_ref()
+            .filter(|edit| edit.section == index);
         let heading = format!(
             "{} · {} {}",
             spec.name,
@@ -296,8 +213,8 @@ impl AurisApp {
             self.t(Key::SongBarsUnit)
         );
 
-        let words: gpui::AnyElement = if active {
-            let field = &sheet.field;
+        let words: AnyElement = if let Some(edit) = edit {
+            let field = &edit.field;
             div()
                 .h(area_height(field.content(), MIN_ROWS, MAX_ROWS))
                 .w_full()
@@ -310,14 +227,14 @@ impl AurisApp {
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                        let Some(sheet) = this.lyrics_sheet.as_ref() else {
+                        let Some(edit) = this.lyrics_edit.as_ref() else {
                             return;
                         };
-                        let text = sheet.field.content().to_string();
+                        let text = edit.field.content().to_string();
                         if let Some(offset) = area_offset_at(window, &text, event.position)
-                            && let Some(sheet) = this.lyrics_sheet.as_mut()
+                            && let Some(edit) = this.lyrics_edit.as_mut()
                         {
-                            sheet.field.place_caret(offset, event.modifiers.shift);
+                            edit.field.place_caret(offset, event.modifiers.shift);
                         }
                         cx.stop_propagation();
                         cx.notify();
@@ -351,7 +268,7 @@ impl AurisApp {
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                        this.lyrics_pick_section(index);
+                        this.focus_section_lyrics(index);
                         cx.stop_propagation();
                         cx.notify();
                     }),
@@ -377,7 +294,7 @@ impl AurisApp {
             .child(
                 div()
                     .text_xs()
-                    .text_color(match active {
+                    .text_color(match edit.is_some() {
                         true => theme.text,
                         false => theme.text_muted,
                     })
@@ -393,7 +310,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_sheet_lists_each_section_once_in_the_order_the_form_plays_them() {
+    fn the_column_lists_each_section_once_in_the_order_the_form_plays_them() {
         let mut dials = SongDials::default();
         let names: Vec<String> = dials
             .sections
@@ -409,7 +326,7 @@ mod tests {
         ];
         assert_eq!(sections_in_form_order(&dials), vec![0, 1]);
 
-        // A section the form never plays is not on the sheet: nothing would sing it.
+        // A section the form never plays is not in the column: nothing would sing it.
         dials.form = vec![names[1].clone()];
         assert_eq!(sections_in_form_order(&dials), vec![1]);
     }
