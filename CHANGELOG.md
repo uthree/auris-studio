@@ -7,6 +7,29 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
+## Unreleased
+
+### The words write the tune
+
+* **Compose from lyrics, the Orpheus way.** `compose_lyrics` at both model doors — and
+  `Session::compose_from_lyrics` beneath it, for every frontend to come — takes Japanese
+  lyrics and writes a song: phrases cut where a singer breathes, one note per mora, and a
+  melody found by dynamic programming under the constraint Orpheus made famous: the tune
+  must not contradict the lyric's spoken pitch accent. Chords are stamped visibly into the
+  harmony lane first (王道進行 by default; a harmony already written is left alone), the
+  standard band comes along behind on its usual recipes, and every note lands carrying its
+  mora and phonemes, ready for `sing`. Kana lyrics compose without any dictionary — the
+  accent constraint simply has nothing to say, and the answer says so — while a configured
+  Japanese dictionary reads each phrase's accent nucleus and makes the melody follow the
+  words. The same lyrics and seed write the same song.
+* Under the hood, three seams left open on purpose: `Contour` (rise / fall / no-fall /
+  free) lives in `auris-core` and names no language, so another prosody — or a learned
+  model — can produce it; the accent analysis in `auris-vocal` reads jpreprocess's own
+  accent phrases, from the same dictionary run that already yields phonemes; and the pitch
+  search in `auris-compose` is one function with rhythm assignment as its own stage, so a
+  richer rhythm scheme or a trained melody engine can stand beside either without touching
+  the rest.
+
 ## 0.4.0 — 2026-08-31
 
 ### The singer gets a real voice

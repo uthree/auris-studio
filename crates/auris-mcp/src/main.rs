@@ -369,6 +369,20 @@ impl AurisMcp {
     ) -> Result<CallToolResult, ErrorData> {
         blocking(move || toolbox::sing::run(&args)).await
     }
+
+    /// Writes a song from Japanese lyrics and saves it as a new project: a melody searched
+    /// under the words the Orpheus way, sung notes carrying each syllable, chords in the
+    /// harmony lane, and a backing band unless `melody_only`. Where a Japanese dictionary is
+    /// configured the melody follows the lyric's pitch accent; kana lyrics work without one,
+    /// free of the accent. Phrases break at line breaks and punctuation. The same lyrics and
+    /// `seed` write the same song; `sing` then gives the vocal its voice.
+    #[tool]
+    async fn compose_lyrics(
+        &self,
+        Parameters(args): Parameters<toolbox::compose_lyrics::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::compose_lyrics::run(&args)).await
+    }
 }
 
 #[tool_handler]
@@ -450,9 +464,9 @@ mod tests {
     fn every_wire_description_is_the_toolbox_text_word_for_word() {
         use toolbox::{
             accompany, add_clip, add_part, add_track, analyze, another_take, check_spec, compose,
-            describe, edit_notes, forget_progression, list_instruments, list_presets,
-            list_progressions, mixer, notes, remove_track, rename_track, render, section_gain,
-            set_effect, set_instrument, set_level, set_send, sing, spec_reference,
+            compose_lyrics, describe, edit_notes, forget_progression, list_instruments,
+            list_presets, list_progressions, mixer, notes, remove_track, rename_track, render,
+            section_gain, set_effect, set_instrument, set_level, set_send, sing, spec_reference,
             teach_progression, write_again, write_lyrics,
         };
         let expected: std::collections::BTreeMap<&str, &str> = [
@@ -485,16 +499,13 @@ mod tests {
             (accompany::NAME, accompany::DESCRIPTION),
             (write_lyrics::NAME, write_lyrics::DESCRIPTION),
             (sing::NAME, sing::DESCRIPTION),
+            (compose_lyrics::NAME, compose_lyrics::DESCRIPTION),
         ]
         .into_iter()
         .collect();
 
         let served = AurisMcp::tool_router().list_all();
-        assert_eq!(
-            served.len(),
-            expected.len(),
-            "twenty-nine tools at this door"
-        );
+        assert_eq!(served.len(), expected.len(), "thirty tools at this door");
         for tool in served {
             let description = tool.description.as_deref().unwrap_or_default();
             let toolbox_text = expected

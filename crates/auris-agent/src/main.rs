@@ -413,6 +413,7 @@ session_tool!(EditNotes, edit_notes);
 session_tool!(Accompany, accompany);
 session_tool!(WriteLyrics, write_lyrics);
 session_tool!(Sing, sing);
+session_tool!(ComposeLyrics, compose_lyrics);
 
 /// Every tool in the box, onto one agent — the one list to keep when a tool is added.
 fn armed(builder: AgentBuilder) -> Agent {
@@ -447,6 +448,7 @@ fn armed(builder: AgentBuilder) -> Agent {
         .tool(Accompany)
         .tool(WriteLyrics)
         .tool(Sing)
+        .tool(ComposeLyrics)
         .build()
 }
 
@@ -1507,9 +1509,10 @@ mod tests {
             Accompany::NAME,
             WriteLyrics::NAME,
             Sing::NAME,
+            ComposeLyrics::NAME,
         ];
         let unique: std::collections::BTreeSet<&str> = names.into_iter().collect();
-        assert_eq!(unique.len(), 29, "twenty-nine tools, no name worn twice");
+        assert_eq!(unique.len(), 30, "thirty tools, no name worn twice");
 
         // The schema is the toolbox derive, fields and all — the same one the MCP door hands
         // its clients.

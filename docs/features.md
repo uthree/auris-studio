@@ -308,6 +308,26 @@ changed). Pitch is the note plus its bend curve plus its ornaments; energy is th
 and the expression pedal (controller 11), which the preview instrument also obeys — what you
 hear and what the model is told stay one story.
 
+### Composing from lyrics
+
+The words-first direction, modelled on
+[Orpheus](https://www.orpheus-music.org/): the `compose_lyrics` tool (over MCP and in the
+agent panel) takes Japanese lyrics and writes a song under them. Phrases are cut where a
+singer breathes — line breaks and punctuation — each mora becomes one note, and the melody is
+*searched* rather than sampled: a dynamic-programming pass over the candidate pitches,
+scored so that the tune stays in the voice's range, leaps sensibly, lands its cadences on the
+chord, and — the Orpheus constraint — **does not contradict the lyric's spoken pitch
+accent**: the line rises where the word rises and falls exactly where its accent falls, so
+the sung words stay intelligible. Chords go into the harmony lane first (王道進行 unless the
+document already has its own), the standard band comes along behind, and every note lands
+carrying its mora and phonemes, ready for **Sing** once the track has a voice.
+
+The accent comes from the same Japanese dictionary the lyrics use. Without one configured,
+kana lyrics still compose — the melody is simply free of the accent, and the tool says so —
+so the dictionary is what turns "a tune with words attached" into "a tune the words shaped".
+The same lyrics and seed always write the same song, and everything written is ordinary
+editable material: notes, chords, recipes, one undo step.
+
 ## MIDI files
 
 **File → Import MIDI File…**, or dropping a `.mid` on the window, reads it as a **new piece**: its
