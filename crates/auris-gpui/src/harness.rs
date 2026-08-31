@@ -404,6 +404,52 @@ mod tests {
         assert_eq!(after, before + 1, "Track → Add Instrument Track added one");
     }
 
+    /// The song sheet takes words per section — typed into the same field every other sheet
+    /// text uses — and a piece written from it arrives singing them.
+    #[gpui::test]
+    fn the_song_sheet_takes_words_per_section_and_the_piece_sings_them(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        cx.dispatch_action(actions::ComposeSong);
+        paint(&app, cx);
+
+        app.update(cx, |this, _| {
+            assert!(this.song_sheet.is_some(), "the sheet opened");
+            // A tiny song, so the write below is a moment rather than a minute.
+            if let Some(dials) = this.song_sheet.as_mut() {
+                dials.sections.truncate(1);
+                dials.sections[0].bars = 2;
+                dials.form = vec![dials.sections[0].name.clone()];
+            }
+            this.open_section_lyrics_prompt(0);
+        });
+        paint(&app, cx);
+        cx.simulate_input("さくら さいた");
+        cx.simulate_keystrokes("enter");
+        paint(&app, cx);
+
+        app.update(cx, |this, _| {
+            let dials = this.song_sheet.as_ref().unwrap();
+            assert_eq!(
+                dials.sections[0].lyrics, "さくら さいた",
+                "the sheet keeps the words"
+            );
+
+            let spec = crate::ui::compose_sheet::song_spec(dials);
+            assert!(spec.to_toml().contains("さくら"), "and the file would too");
+            let piece = auris_session::prelude::compose(&spec);
+            let report = this.session.compose(&piece).unwrap();
+            assert_eq!(report.sung, 6, "six moras reached the song");
+            assert!(
+                this.session
+                    .project()
+                    .tracks
+                    .iter()
+                    .any(|track| track.kind.is_singer()),
+                "on a vocal track of their own"
+            );
+        });
+    }
+
     /// A voice clicked on the shelf with no singer track anywhere refuses with the line
     /// naming the cure, exactly as the file picker does.
     #[gpui::test]

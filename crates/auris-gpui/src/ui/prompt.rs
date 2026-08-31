@@ -133,6 +133,10 @@ pub enum PromptTarget {
     SongMotif,
     /// The chords the section at this position in the song sheet plays, written out.
     SongSectionChart(usize),
+    /// The words one section of the song sheet sings, by its position in the sheet's list.
+    ///
+    /// Sheet state, not document state: nothing is sung until Write, like every other dial.
+    SongSectionLyrics(usize),
     /// The name to keep the chart of the section at this position under.
     ///
     /// The one prompt here that reaches past the sheet: it writes to the progression book, which
@@ -205,6 +209,7 @@ impl PromptTarget {
             | PromptTarget::Phonemes { .. }
             | PromptTarget::Lyrics { .. }
             | PromptTarget::ComposeLyrics
+            | PromptTarget::SongSectionLyrics(_)
             // No shared notation: every parameter is written in its own units, and the range
             // and the unit are in the prompt's title instead, where they can name this one.
             | PromptTarget::Param(_) => return None,
@@ -218,10 +223,13 @@ impl PromptTarget {
     /// said that the case of a numeral is what makes it major or minor, so the only way to find
     /// out was to type something, have it refused, and read the refusal.
     pub fn hint(self) -> Option<Key> {
-        // Not a notation — the field takes prose — but the one rule worth stating under it
-        // is where the phrases break.
+        // Not notations — these fields take prose — but the one rule worth stating under
+        // them is where the phrases break.
         if matches!(self, PromptTarget::ComposeLyrics) {
             return Some(Key::HintComposeLyrics);
+        }
+        if matches!(self, PromptTarget::SongSectionLyrics(_)) {
+            return Some(Key::HintSectionLyrics);
         }
         self.notation().map(Notation::hint)
     }
@@ -659,6 +667,8 @@ impl AurisApp {
                 // Not a clear, but the session's own refusal names the problem better than
                 // a generic "cannot be empty" would.
                 | PromptTarget::ComposeLyrics
+                // Empty words make the section instrumental again.
+                | PromptTarget::SongSectionLyrics(_)
                 // No motif is an answer here — it hands the tune back to the seed.
                 | PromptTarget::SongMotif
         );
@@ -887,6 +897,19 @@ impl AurisApp {
                     .map(|section| section.name.clone());
                 if let (Some(dials), Some(name)) = (self.song_sheet.as_mut(), name) {
                     crate::ui::compose_sheet::give_section_chart(dials, index, &name, chart);
+                }
+                Ok(())
+            }
+            // A section's words. Stored on the sheet like every other dial — the singing
+            // happens at Write, in the session's compose — and empty makes the section
+            // instrumental again.
+            PromptTarget::SongSectionLyrics(index) => {
+                if let Some(section) = self
+                    .song_sheet
+                    .as_mut()
+                    .and_then(|dials| dials.sections.get_mut(index))
+                {
+                    section.lyrics = text.clone();
                 }
                 Ok(())
             }

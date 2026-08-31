@@ -57,6 +57,11 @@ strings! {
         en: "、！？ and spaces between phrases are breaths; every run is a fresh take",
         ja: "、や！？がフレーズの切れ目。実行のたびに新しいテイクになります"
     }
+    PromptSectionLyrics { en: "Lyrics", ja: "歌詞" }
+    HintSectionLyrics {
+        en: "、！？ cut the phrases; empty makes the section instrumental again",
+        ja: "、や！？がフレーズの切れ目。空にすると歌なしに戻ります"
+    }
     MenuEditLyric { en: "Edit Lyric…", ja: "歌詞を編集…" }
     MenuEditPhonemes { en: "Edit Phonemes…", ja: "音素を編集…" }
     MenuResetPhonemeTiming { en: "Reset Phoneme Timing", ja: "音素タイミングをリセット" }

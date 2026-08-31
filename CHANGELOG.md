@@ -34,6 +34,19 @@ format rather than a convention: `## <version> — <date>`.
   piano roll opens on the song; every run draws a fresh seed and the status bar names it,
   so a take can be asked for again at any of the model doors. The refusals speak through
   the same field: empty words, or kanji with no dictionary anywhere, say exactly that.
+* **Lyrics join the song sheet, one field per section.** Every section of the sheet grows a
+  歌詞 button — lit while the section carries words — and the `.asong` format grows the
+  matching `lyrics = "..."` field, round-tripped like every other, shown in the annotated
+  reference example. Writing the piece adds a Vocal track beside the band, one clip per
+  playing of each lyrical section, the melody searched over that section's own harmony;
+  every playing of a chorus sings the same chorus. Lyrics nobody can read cost their
+  sections and are named in the report, never the piece.
+* **A composed vocal arrives ornamented, by rule.** The first note of each phrase scoops
+  in, notes held past half a second sway (the vibrato waits out the front of the note and
+  fades in), and the line's last note falls away — the phrase-final syllable is now held a
+  half note, which is both what a sung phrase does and the room the sway needs. The
+  ornaments are the ordinary scoop / fall / vibrato fields, visible on the pitch curve and
+  editable one by one; the rules are a starting point, never a verdict.
 * **Singer voices join the library, on the instruments' own terms.** The browser grows a
   Voices section: every `.onnx` in a `Voices` folder — beside the binaries, in the
   configuration directory, or under `AURIS_VOICES` — plus any folder registered from the

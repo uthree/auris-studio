@@ -336,6 +336,20 @@ what was written. Every run draws a fresh seed, so the command pressed twice is 
 and the status bar names the seed so a take can be asked for again at any of the model
 doors.
 
+It is also part of **composing a whole song**: every section of the song sheet has a
+**歌詞** button beside its dials — lit while the section carries words — and an `.asong`
+specification says the same thing as `lyrics = "..."` on a `[section]`. Writing the piece
+then adds a Vocal track beside the band, one clip per playing of each lyrical section, the
+melody searched over that section's own harmony; a chorus sings the same words on every
+playing, which is what makes it the same chorus. Leave the field empty and the section is
+instrumental, exactly as before.
+
+A composed vocal also arrives **ornamented, by rule**: the first note of each phrase scoops
+in, any note held past half a second carries a vibrato that waits out the front of the note
+and fades in, and the line's last note falls away. These are the same scoop, fall and
+vibrato a hand places in the piano roll — visible on the drawn pitch curve, adjustable and
+removable one by one — so the rules are a starting point, never a verdict.
+
 The accent comes from the same Japanese dictionary the lyrics use — shipped with a release,
 so it is simply there. Without one (a checkout that has not fetched it), kana lyrics still
 compose — the melody is free of the accent, and the tool says so — so the dictionary is what
