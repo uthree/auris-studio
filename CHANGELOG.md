@@ -68,6 +68,17 @@ format rather than a convention: `## <version> — <date>`.
   unpinned phonemes out around the pins, squeezing proportionally where pins outgrow the
   note; retyping a lyric clears its pins, the note's menu offers Reset Phoneme Timing while
   any stand, and one drag is one undo step.
+* **A note can wear pitch ornaments: scoop, fall, vibrato.** しゃくり rises into the note
+  from below, a fall drops away at its end, a vibrato sways around it once settled — each a
+  handful of numbers stored on the note (`Note::scoop` / `fall` / `vibrato`), shaped by one
+  public function (`auris_vocal::ornament_offset`) that the frames, the painter and the
+  editor's grab test all read, so drawn, heard and grabbed can never disagree. The note's
+  menu toggles each ornament on with defaults taken from singer measurements, and every
+  ornament then carries a handle on the drawn pitch curve: the scoop's and fall's at the
+  corner of the gesture (drag for span and depth at once), the vibrato's at the crest of its
+  first sway (onset and depth). Scoop and fall cap at half the note so they cannot collide;
+  ornaments are pitch, not phonemes, so they survive the lyric being retyped; one drag is
+  one undo step, and the take re-renders itself afterwards like after any other edit.
 * Under the hood: the new `auris-singer` crate runs the model on the CPU via onnxruntime,
   cutting the timeline at silences into chunks of at most twenty seconds — the model's
   attention grows with the square of the frame count, and a whole song in one inference has

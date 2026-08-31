@@ -304,6 +304,21 @@ impl AurisApp {
         // The lyric rows, only where there are words to edit: on an instrument track they would
         // be three rows about a feature the track does not have.
         let singing = self.editing_a_singer_clip();
+        // Which ornaments the note under the pointer wears, for the toggle rows below.
+        let worn = under_pointer
+            .and_then(|index| {
+                self.session
+                    .midi_clip(clip)
+                    .and_then(|target| target.notes.get(index))
+            })
+            .map(|note| {
+                (
+                    note.scoop.is_some(),
+                    note.fall.is_some(),
+                    note.vibrato.is_some(),
+                )
+            })
+            .unwrap_or((false, false, false));
 
         ContextMenu::new(anchor, title)
             .item_if(
@@ -338,6 +353,53 @@ impl AurisApp {
                     }),
                 self.t(Key::MenuResetPhonemeTiming),
                 MenuCommand::ResetPhonemeTiming {
+                    clip,
+                    index: under_pointer.unwrap_or(0),
+                },
+            )
+            // Each ornament row reads the note and toggles, and the label says which way. A
+            // full reset appears only over two or more, where it is shorter than the removes
+            // it stands for — over one it would be a remove wearing a longer name.
+            .item_if(
+                singing && under_pointer.is_some(),
+                self.t(match worn.0 {
+                    true => Key::MenuRemoveScoop,
+                    false => Key::MenuAddScoop,
+                }),
+                MenuCommand::SetScoop {
+                    clip,
+                    index: under_pointer.unwrap_or(0),
+                    on: !worn.0,
+                },
+            )
+            .item_if(
+                singing && under_pointer.is_some(),
+                self.t(match worn.1 {
+                    true => Key::MenuRemoveFall,
+                    false => Key::MenuAddFall,
+                }),
+                MenuCommand::SetFall {
+                    clip,
+                    index: under_pointer.unwrap_or(0),
+                    on: !worn.1,
+                },
+            )
+            .item_if(
+                singing && under_pointer.is_some(),
+                self.t(match worn.2 {
+                    true => Key::MenuRemoveVibrato,
+                    false => Key::MenuAddVibrato,
+                }),
+                MenuCommand::SetVibrato {
+                    clip,
+                    index: under_pointer.unwrap_or(0),
+                    on: !worn.2,
+                },
+            )
+            .item_if(
+                singing && [worn.0, worn.1, worn.2].iter().filter(|on| **on).count() >= 2,
+                self.t(Key::MenuResetOrnaments),
+                MenuCommand::ResetOrnaments {
                     clip,
                     index: under_pointer.unwrap_or(0),
                 },

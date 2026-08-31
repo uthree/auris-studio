@@ -271,6 +271,17 @@ pub enum ClipEdge {
     End,
 }
 
+/// Which of a sung note's pitch ornaments a handle drag is shaping.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum OrnamentHandle {
+    /// The rise into the note — its handle is the corner of the scoop.
+    Scoop,
+    /// The drop off the note's end — its handle is the corner of the fall.
+    Fall,
+    /// The sway across the note — its handle is the crest of the first full cycle.
+    Vibrato,
+}
+
 /// Something the user is currently dragging.
 #[derive(Clone, Debug)]
 pub enum Drag {
@@ -429,6 +440,15 @@ pub enum Drag {
         from_seconds: f64,
         /// Timeline seconds where the note ends, which the boundary must stay short of.
         end_seconds: f64,
+    },
+    /// Dragging one of a sung note's pitch ornament handles.
+    Ornament {
+        /// Clip the note lives in.
+        clip: ClipId,
+        /// Note whose ornament is in hand.
+        index: usize,
+        /// Which of the note's ornaments the handle shapes.
+        handle: OrnamentHandle,
     },
     /// Carrying a panel's scrollbar along its track.
     PanelScroll {
@@ -662,6 +682,15 @@ impl Drag {
                 phoneme,
                 ..
             } => Some(Edit::SetPhonemeDuration(*clip, *index, *phoneme)),
+            Drag::Ornament {
+                clip,
+                index,
+                handle,
+            } => Some(match handle {
+                OrnamentHandle::Scoop => Edit::SetScoop(*clip, *index),
+                OrnamentHandle::Fall => Edit::SetFall(*clip, *index),
+                OrnamentHandle::Vibrato => Edit::SetVibrato(*clip, *index),
+            }),
             Drag::Param { target, .. } => Some(Edit::AdjustParameter(*target)),
             // The decay corner moves two parameters and this names one of them. The undo step is
             // one either way — the whole drag is a transaction — so this only decides the label.

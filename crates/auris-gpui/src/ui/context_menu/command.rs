@@ -66,6 +66,41 @@ pub enum MenuCommand {
         /// The note's index.
         index: usize,
     },
+    /// Put a default scoop on one note, or take the one it wears off.
+    SetScoop {
+        /// The clip the note is in.
+        clip: ClipId,
+        /// The note's index.
+        index: usize,
+        /// `true` puts the ornament on; `false` takes it off. The menu row that emits this
+        /// reads the note, so its label and this flag always agree.
+        on: bool,
+    },
+    /// Put a default fall on one note, or take the one it wears off.
+    SetFall {
+        /// The clip the note is in.
+        clip: ClipId,
+        /// The note's index.
+        index: usize,
+        /// `true` puts the ornament on; `false` takes it off.
+        on: bool,
+    },
+    /// Put a default vibrato on one note, or take the one it wears off.
+    SetVibrato {
+        /// The clip the note is in.
+        clip: ClipId,
+        /// The note's index.
+        index: usize,
+        /// `true` puts the ornament on; `false` takes it off.
+        on: bool,
+    },
+    /// Take every pitch ornament off one note.
+    ResetOrnaments {
+        /// The clip the note is in.
+        clip: ClipId,
+        /// The note's index.
+        index: usize,
+    },
     /// Open the sheet that lays a phrase across the selected notes.
     WriteLyrics {
         /// The clip whose selection takes the phrase.
@@ -619,6 +654,24 @@ impl AurisApp {
             MenuCommand::EditPhonemes { clip, index } => self.open_phonemes_prompt(clip, index),
             MenuCommand::ResetPhonemeTiming { clip, index } => {
                 let _ = self.session.clear_phoneme_timing(clip, index);
+            }
+            MenuCommand::SetScoop { clip, index, on } => {
+                let _ = self
+                    .session
+                    .set_note_scoop(clip, index, on.then(Scoop::default));
+            }
+            MenuCommand::SetFall { clip, index, on } => {
+                let _ = self
+                    .session
+                    .set_note_fall(clip, index, on.then(Fall::default));
+            }
+            MenuCommand::SetVibrato { clip, index, on } => {
+                let _ = self
+                    .session
+                    .set_note_vibrato(clip, index, on.then(Vibrato::default));
+            }
+            MenuCommand::ResetOrnaments { clip, index } => {
+                let _ = self.session.clear_note_ornaments(clip, index);
             }
             MenuCommand::WriteLyrics { clip } => self.open_write_lyrics_prompt(clip),
             MenuCommand::NewInstrumentTrack => self.add_instrument_track(),

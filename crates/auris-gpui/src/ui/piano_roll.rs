@@ -8,7 +8,7 @@ use gpui::{
     point, prelude::*, px, size,
 };
 
-use crate::app::{AurisApp, Drag, PhonemeSpan, PitchContour, SungGeometry};
+use crate::app::{AurisApp, Drag, OrnamentHandle, PhonemeSpan, PitchContour, SungGeometry};
 use crate::dock::Dock;
 use crate::gestures::{EmptyPress, empty_press};
 use crate::theme::{Metrics, Theme};
@@ -305,6 +305,81 @@ fn paint_phoneme_spans(
     }
 }
 
+/// How near a press must land to an ornament handle to take hold of it, in pixels.
+const ORNAMENT_GRAB: f32 = 6.0;
+
+/// Where a note's ornament handles sit: `(handle, seconds into the note, semitones off it)`.
+///
+/// The scoop's and the fall's handles sit at the *corner* of each gesture — as far into the
+/// note as it reaches, the full depth under it — because the corner is the one point whose x
+/// is the span and whose y is the depth, so a single drag shapes both. The vibrato's sits at
+/// the crest of its first sway: where the sway begins, the depth above. Spans wear the same
+/// half-note cap the sung shape wears, so a handle always sits on the audible gesture.
+fn ornament_handles(note: &Note, length: f64) -> Vec<(OrnamentHandle, f64, f32)> {
+    let mut handles = Vec::new();
+    if let Some(scoop) = &note.scoop {
+        handles.push((
+            OrnamentHandle::Scoop,
+            ornament_reach(scoop.seconds, length),
+            -scoop.depth,
+        ));
+    }
+    if let Some(fall) = &note.fall {
+        handles.push((
+            OrnamentHandle::Fall,
+            length - ornament_reach(fall.seconds, length),
+            -fall.depth,
+        ));
+    }
+    if let Some(vibrato) = &note.vibrato {
+        handles.push((
+            OrnamentHandle::Vibrato,
+            vibrato.delay.clamp(0.0, length),
+            vibrato.depth,
+        ));
+    }
+    handles
+}
+
+/// Draws the grab handles of every ornamented note: a small square at each shaping point.
+///
+/// Painted with the contour they shape and in its accent, and only while the sung geometry
+/// is on screen — a handle on a track that cannot sing would offer a gesture nothing hears.
+#[allow(clippy::too_many_arguments)]
+fn paint_ornament_handles(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    notes: &[Note],
+    clip_start: Ticks,
+    tempo: &TempoMap,
+    view: &TimelineView,
+    pitch_view: &PitchView,
+    theme: &Theme,
+) {
+    let half = px(ORNAMENT_GRAB / 2.0);
+    for note in notes {
+        if note.scoop.is_none() && note.fall.is_none() && note.vibrato.is_none() {
+            continue;
+        }
+        let start = tempo.ticks_to_seconds(clip_start + note.start).0;
+        let end = tempo.ticks_to_seconds(clip_start + note.end()).0;
+        let centre = (pitch_view.top_pitch as f32 - f32::from(note.pitch)) * pitch_view.row_height
+            + pitch_view.row_height / 2.0;
+        for (_, t, semis) in ornament_handles(note, end - start) {
+            let x = bounds.origin.x + view.tick_to_x(tempo.seconds_to_ticks(Seconds(start + t)));
+            let y = bounds.origin.y + px(centre - semis * pitch_view.row_height);
+            paint::rect(
+                window,
+                Bounds {
+                    origin: point(x - half, y - half),
+                    size: size(px(ORNAMENT_GRAB), px(ORNAMENT_GRAB)),
+                },
+                theme.accent,
+            );
+        }
+    }
+}
+
 /// Draws the sung pitch contour over the notes.
 ///
 /// Trimmed to the edited clip's span — the frames cover the whole track, and the
@@ -417,6 +492,7 @@ impl AurisApp {
         };
         let band = self.rubber_band(crate::app::BandSurface::Roll);
         let velocity_tag = self.velocity_tag();
+        let tempo = self.project().tempo_map.clone();
         // Built before the chain rather than inside it: each one needs `&mut self`, and the
         // builder below is already holding a borrow of it.
         let lanes: Vec<gpui::AnyElement> = self
@@ -656,6 +732,16 @@ impl AurisApp {
                                                     &geometry.contour,
                                                     clip_start,
                                                     clip_start + clip_length,
+                                                    &view,
+                                                    &pitch_view,
+                                                    &theme,
+                                                );
+                                                paint_ornament_handles(
+                                                    window,
+                                                    bounds,
+                                                    &notes,
+                                                    clip_start,
+                                                    &tempo,
                                                     &view,
                                                     &pitch_view,
                                                     &theme,
@@ -981,6 +1067,27 @@ impl AurisApp {
             return;
         }
 
+        // An ornament handle is asked before the notes are: it usually floats outside every
+        // note's rectangle, where a press would otherwise draw a brand-new note right under
+        // the hand.
+        if self.editing_a_singer_clip()
+            && let Some((index, handle)) = self.grabbed_ornament_at(
+                clip_id,
+                clip_start,
+                point(event.position.x - origin.x, event.position.y - origin.y),
+            )
+        {
+            self.selected_notes.clear();
+            self.selected_notes.insert(index);
+            self.begin_drag(Drag::Ornament {
+                clip: clip_id,
+                index,
+                handle,
+            });
+            cx.notify();
+            return;
+        }
+
         match under_pointer {
             Some(index) => {
                 if !event.modifiers.shift {
@@ -1217,6 +1324,43 @@ impl AurisApp {
     /// Answers `(phoneme, from_seconds, end_seconds)`. The rule is
     /// [`grabbed_phoneme_boundary`]; this only turns pixels into seconds at the current
     /// zoom, giving the grab the same few pixels of slack at every magnification.
+    /// The ornament handle under a roll-relative position, as `(note index, handle)`.
+    ///
+    /// Asked of every note in the clip rather than the one under the pointer, because the
+    /// handles float off their notes — a scoop's corner hangs below the row, in space that
+    /// belongs to no note at all.
+    fn grabbed_ornament_at(
+        &self,
+        clip: ClipId,
+        clip_start: Ticks,
+        position: Point<Pixels>,
+    ) -> Option<(usize, OrnamentHandle)> {
+        let (_, clip) = self.project().midi_clip(clip)?;
+        let tempo = &self.project().tempo_map;
+        for (index, note) in clip.notes.iter().enumerate() {
+            if note.scoop.is_none() && note.fall.is_none() && note.vibrato.is_none() {
+                continue;
+            }
+            let start = tempo.ticks_to_seconds(clip_start + note.start).0;
+            let end = tempo.ticks_to_seconds(clip_start + note.end()).0;
+            let centre = (self.pitch.top_pitch as f32 - f32::from(note.pitch))
+                * self.pitch.row_height
+                + self.pitch.row_height / 2.0;
+            for (handle, t, semis) in ornament_handles(note, end - start) {
+                let x = self
+                    .timeline
+                    .tick_to_x(tempo.seconds_to_ticks(Seconds(start + t)));
+                let y = centre - semis * self.pitch.row_height;
+                if f32::from(position.x - x).abs() <= ORNAMENT_GRAB
+                    && (f32::from(position.y) - y).abs() <= ORNAMENT_GRAB
+                {
+                    return Some((index, handle));
+                }
+            }
+        }
+        None
+    }
+
     fn grabbed_boundary_at(
         &self,
         note: &Note,
@@ -2153,6 +2297,42 @@ mod tests {
     }
 
     #[test]
+    fn the_handles_sit_on_the_corners_and_the_crest() {
+        let mut note = Note::new(60, Ticks::ZERO, Ticks::QUARTER);
+        note.scoop = Some(Scoop {
+            depth: 1.0,
+            seconds: 0.2,
+        });
+        note.fall = Some(Fall {
+            depth: 2.0,
+            seconds: 0.4,
+        });
+        note.vibrato = Some(Vibrato {
+            depth: 0.5,
+            rate: 6.0,
+            delay: 0.3,
+            fade_in: 0.2,
+        });
+        let handles = ornament_handles(&note, 1.0);
+        assert_eq!(handles.len(), 3);
+        assert_eq!(handles[0], (OrnamentHandle::Scoop, 0.2, -1.0));
+        assert_eq!(handles[1], (OrnamentHandle::Fall, 0.6, -2.0));
+        assert_eq!(handles[2], (OrnamentHandle::Vibrato, 0.3, 0.5));
+
+        // A span past half the note is capped where the audible gesture is capped, so the
+        // handle stays on the contour.
+        note.scoop = Some(Scoop {
+            depth: 1.0,
+            seconds: 3.0,
+        });
+        assert_eq!(ornament_handles(&note, 1.0)[0].1, 0.5);
+
+        // An unadorned note offers nothing to grab.
+        let plain = Note::new(60, Ticks::ZERO, Ticks::QUARTER);
+        assert!(ornament_handles(&plain, 1.0).is_empty());
+    }
+
+    #[test]
     fn the_contour_splits_at_silence_and_reads_pitch_in_fractions() {
         // Two voiced spans around a rest, the second a quarter-tone above A3: the drawn
         // line must break at the rest, and the fraction must survive into the pitch so a
@@ -2630,6 +2810,7 @@ mod window_tests {
         click_at, creating, deleting, double_click, drag, drag_with, paint, press, release,
         roll_point, show_pitch, with_a_clip, with_a_singer_clip,
     };
+    use crate::ui::context_menu::MenuCommand;
 
     /// Middle C, which is far enough from either end of the keyboard that a pitch either side of
     /// it is still a pitch.
@@ -2868,6 +3049,114 @@ mod window_tests {
                 note.phoneme_seconds.is_empty(),
                 "one drag, one step, and it lands back at the rule"
             );
+        });
+    }
+
+    /// The whole ornament flow, made as a hand makes it: the scoop's corner handle is
+    /// grabbed where the geometry says it sits, carried right and down, and the note's
+    /// scoop lands deeper and longer in the document — one gesture, one undo step.
+    #[gpui::test]
+    fn dragging_the_scoop_corner_deepens_and_lengthens_it(cx: &mut TestAppContext) {
+        let (app, cx, _, clip) = with_a_singer_clip(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .add_note(clip, Note::new(MIDDLE_C, Ticks::ZERO, BEAT * 2))
+                .unwrap();
+            this.session
+                .set_note_scoop(clip, 0, Some(Scoop::default()))
+                .unwrap();
+            this.open_clip_in_editor(clip);
+        });
+        paint(&app, cx);
+        show_pitch(&app, cx, MIDDLE_C);
+
+        // The corner sits at the scoop's reach, its depth under the note's centre row —
+        // the same arithmetic the painter and the grab test read.
+        let (from, to) = app.read_with(cx, |this, _| {
+            let origin = this.roll_origin();
+            let tempo = &this.project().tempo_map;
+            let row = this.pitch.row_height;
+            let centre = origin.y
+                + gpui::px((this.pitch.top_pitch as f32 - f32::from(MIDDLE_C)) * row + row / 2.0);
+            let scoop = this.session.midi_clip(clip).unwrap().notes[0]
+                .scoop
+                .expect("just set");
+            let x_at = |seconds: f64| {
+                origin.x
+                    + this
+                        .timeline
+                        .tick_to_x(tempo.seconds_to_ticks(Seconds(seconds)))
+            };
+            (
+                gpui::point(x_at(scoop.seconds), centre + gpui::px(scoop.depth * row)),
+                gpui::point(x_at(0.3), centre + gpui::px(2.0 * row)),
+            )
+        });
+        drag(cx, from, to);
+
+        app.read_with(cx, |this, _| {
+            let note = &this.session.midi_clip(clip).unwrap().notes[0];
+            let scoop = note.scoop.expect("still worn");
+            assert!(
+                (scoop.seconds - 0.3).abs() < 0.02,
+                "the rise now takes about 300 ms, got {}",
+                scoop.seconds
+            );
+            assert!(
+                (scoop.depth - 2.0).abs() < 0.05,
+                "and starts about two semitones under, got {}",
+                scoop.depth
+            );
+            assert_eq!(note.start, Ticks::ZERO, "the note itself never moved");
+            assert_eq!(note.pitch, MIDDLE_C);
+        });
+
+        // The gesture is one undo step, landing back at the default it started from.
+        app.update(cx, |this, _| {
+            this.session.undo();
+            let note = &this.session.midi_clip(clip).unwrap().notes[0];
+            assert_eq!(note.scoop, Some(Scoop::default()));
+        });
+    }
+
+    /// The note menu dresses and undresses a note: a toggle row adds a default ornament,
+    /// and the reset takes every ornament off at once.
+    #[gpui::test]
+    fn the_menu_toggles_ornaments_on_a_sung_note(cx: &mut TestAppContext) {
+        let (app, cx, _, clip) = with_a_singer_clip(cx);
+        app.update(cx, |this, cx| {
+            this.session
+                .add_note(clip, Note::new(MIDDLE_C, Ticks::ZERO, BEAT))
+                .unwrap();
+            this.open_clip_in_editor(clip);
+            this.run_menu_command(
+                MenuCommand::SetVibrato {
+                    clip,
+                    index: 0,
+                    on: true,
+                },
+                cx,
+            );
+        });
+        app.read_with(cx, |this, _| {
+            let note = &this.session.midi_clip(clip).unwrap().notes[0];
+            assert_eq!(note.vibrato, Some(Vibrato::default()));
+        });
+
+        app.update(cx, |this, cx| {
+            this.run_menu_command(
+                MenuCommand::SetScoop {
+                    clip,
+                    index: 0,
+                    on: true,
+                },
+                cx,
+            );
+            this.run_menu_command(MenuCommand::ResetOrnaments { clip, index: 0 }, cx);
+        });
+        app.read_with(cx, |this, _| {
+            let note = &this.session.midi_clip(clip).unwrap().notes[0];
+            assert!(note.scoop.is_none() && note.vibrato.is_none());
         });
     }
 

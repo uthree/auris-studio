@@ -9,7 +9,7 @@ use gpui::{
 };
 
 use crate::actions;
-use crate::app::{AurisApp, Drag, ExportOutcome, Pane};
+use crate::app::{AurisApp, Drag, ExportOutcome, OrnamentHandle, Pane};
 use crate::dock::{Dock, Panel, PanelLayout};
 use crate::gestures::past_drag_threshold;
 use crate::menu::MenuRow;
@@ -893,6 +893,70 @@ impl AurisApp {
                 let _ = self
                     .session
                     .set_phoneme_duration(clip, index, phoneme, Some(seconds));
+            }
+            Drag::Ornament {
+                clip,
+                index,
+                handle,
+            } => {
+                // Unsnapped like the phoneme cut, and unclamped on purpose: the pointer names
+                // a span and a depth, and the session's own clamps are the range. Horizontal
+                // is seconds along the timeline; vertical is semitones off the note's centre
+                // row, measured downward because two of the three gestures dip.
+                let origin = self.roll_origin();
+                let Some(clip_start) = self.session.midi_clip(clip).map(|c| c.start) else {
+                    return;
+                };
+                let Some(note) = self
+                    .project()
+                    .midi_clip(clip)
+                    .and_then(|(_, target)| target.notes.get(index).cloned())
+                else {
+                    return;
+                };
+                let tempo = &self.project().tempo_map;
+                let start = tempo.ticks_to_seconds(clip_start + note.start).0;
+                let end = tempo.ticks_to_seconds(clip_start + note.end()).0;
+                let at = tempo
+                    .ticks_to_seconds(self.timeline.x_to_tick(event.position.x - origin.x))
+                    .0;
+                let centre = (self.pitch.top_pitch as f32 - f32::from(note.pitch))
+                    * self.pitch.row_height
+                    + self.pitch.row_height / 2.0;
+                let below =
+                    (f32::from(event.position.y - origin.y) - centre) / self.pitch.row_height;
+                let _ = match handle {
+                    OrnamentHandle::Scoop => self.session.set_note_scoop(
+                        clip,
+                        index,
+                        Some(Scoop {
+                            depth: below,
+                            seconds: at - start,
+                        }),
+                    ),
+                    OrnamentHandle::Fall => self.session.set_note_fall(
+                        clip,
+                        index,
+                        Some(Fall {
+                            depth: below,
+                            seconds: end - at,
+                        }),
+                    ),
+                    // The crest is above the note and the rate and fade are not on this
+                    // handle, so only the sway's depth and onset move.
+                    OrnamentHandle::Vibrato => {
+                        let worn = note.vibrato.unwrap_or_default();
+                        self.session.set_note_vibrato(
+                            clip,
+                            index,
+                            Some(Vibrato {
+                                depth: -below,
+                                delay: at - start,
+                                ..worn
+                            }),
+                        )
+                    }
+                };
             }
             Drag::NoteVelocity {
                 clip,

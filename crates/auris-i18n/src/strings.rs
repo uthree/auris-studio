@@ -55,6 +55,13 @@ strings! {
     MenuEditLyric { en: "Edit Lyric…", ja: "歌詞を編集…" }
     MenuEditPhonemes { en: "Edit Phonemes…", ja: "音素を編集…" }
     MenuResetPhonemeTiming { en: "Reset Phoneme Timing", ja: "音素タイミングをリセット" }
+    MenuAddScoop { en: "Add Scoop", ja: "しゃくりを追加" }
+    MenuRemoveScoop { en: "Remove Scoop", ja: "しゃくりを削除" }
+    MenuAddFall { en: "Add Fall", ja: "フォールを追加" }
+    MenuRemoveFall { en: "Remove Fall", ja: "フォールを削除" }
+    MenuAddVibrato { en: "Add Vibrato", ja: "ビブラートを追加" }
+    MenuRemoveVibrato { en: "Remove Vibrato", ja: "ビブラートを削除" }
+    MenuResetOrnaments { en: "Reset Pitch Ornaments", ja: "ピッチ装飾をリセット" }
     MenuWriteLyrics { en: "Write Lyrics…", ja: "歌詞をまとめて入力…" }
     Mixer { en: "Mixer", ja: "ミキサー" }
     Inspector { en: "Inspector", ja: "インスペクタ" }

@@ -273,6 +273,21 @@ phonemes that no longer exist), the note's right-click menu offers **Reset Phone
 while any pin stands, one drag is one undo step, and the take re-renders itself afterwards
 like after any other edit.
 
+A sung note can also carry **pitch ornaments** — a **scoop** (しゃくり) rising into it from
+below, a **fall** dropping away at its end, and a **vibrato** swaying around it once settled.
+The note's right-click menu puts each one on with a measured default (about a semitone of
+scoop over a tenth of a second; a vibrato near six hertz at a third of a semitone, fading in
+after a moment) and the same rows take them off again. Each ornament then wears a small
+square **handle on the drawn pitch curve**: the scoop's and the fall's sit at the corner of
+the gesture — drag horizontally for how long, vertically for how deep — and the vibrato's
+rides the crest of its first sway, moving its onset and its depth the same way. A scoop or
+fall never takes more than half its note, so the two cannot collide; ornaments are stored on
+the note beside its lyric, travel and save with it, and — being pitch, not phonemes — survive
+the word being retyped. One drag is one undo step, the curve on screen is the exact contour
+the voice model is fed, and the take re-renders itself afterwards like after any other edit.
+Anything an ornament cannot say — a slide between notes, an off-template swoop — is still the
+bend curve's to draw, and the two add together.
+
 **Double-click a note** to type its word. **Return commits and walks to the next note**, so a
 verse is typed word after word without touching the mouse; an empty field takes the word off.
 The note's right-click menu offers **Edit Lyric…**, **Edit Phonemes…** (space-separated IPA,
@@ -289,7 +304,7 @@ kanji asks for it, with an error naming the setting.
 
 **File → Export Singer Frames…** writes what a voice model consumes: one phoneme id, one pitch
 in Hz and one energy per frame, as JSON, sampled at the track's frame hop (10 ms unless
-changed). Pitch is the note plus its bend curve; energy is the velocity shaped by an envelope
+changed). Pitch is the note plus its bend curve plus its ornaments; energy is the velocity shaped by an envelope
 and the expression pedal (controller 11), which the preview instrument also obeys — what you
 hear and what the model is told stay one story.
 

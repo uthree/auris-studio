@@ -44,7 +44,7 @@ pub fn ornament_offset(
     let mut offset = 0.0f64;
 
     if let Some(scoop) = scoop {
-        let seconds = reach(scoop.seconds, length);
+        let seconds = ornament_reach(scoop.seconds, length);
         if t < seconds {
             let ease = (1.0 + (PI * t / seconds).cos()) / 2.0;
             offset -= f64::from(scoop.depth) * ease;
@@ -52,7 +52,7 @@ pub fn ornament_offset(
     }
 
     if let Some(fall) = fall {
-        let seconds = reach(fall.seconds, length);
+        let seconds = ornament_reach(fall.seconds, length);
         let from = length - seconds;
         if seconds > 0.0 && t >= from {
             let ease = (1.0 - (PI * (t - from) / seconds).cos()) / 2.0;
@@ -76,7 +76,11 @@ pub fn ornament_offset(
 }
 
 /// A scoop or fall's span, capped at half the note and switched off when degenerate.
-fn reach(seconds: f64, length: f64) -> f64 {
+///
+/// Public for the editor's sake: a handle drawn on the gesture has to sit where the gesture
+/// audibly reaches, not where an over-long span asked to, and a second copy of this cap
+/// would drift from the one the frames obey.
+pub fn ornament_reach(seconds: f64, length: f64) -> f64 {
     match seconds.is_finite() && seconds > 0.0 {
         true => seconds.min(length / 2.0),
         false => 0.0,
