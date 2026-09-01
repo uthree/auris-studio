@@ -53,6 +53,8 @@ fn main() -> ExitCode {
         "info" => with_path(&args, info),
         "render" => render(&args),
         "sing" => sing(&args),
+        "frames" => frames(&args),
+        "sing-frames" => sing_frames(&args),
         "new" => new_project(&args),
         "collect" => with_path(&args, collect),
         "help" | "-h" | "--help" => {
@@ -607,28 +609,7 @@ fn sing(args: &[String]) -> Result<(), String> {
     }
     warn_foreign_build(&session);
 
-    // The named track, or the project's only singer — the ordinary one-singer song never asks.
-    let target = match &track_name {
-        Some(name) => session
-            .project()
-            .tracks
-            .iter()
-            .find(|track| track.kind.is_singer() && &track.name == name)
-            .map(|track| track.id)
-            .ok_or_else(|| messages::no_singer_named(LANGUAGE, name))?,
-        None => {
-            let mut singers = session
-                .project()
-                .tracks
-                .iter()
-                .filter(|track| track.kind.is_singer());
-            let only = singers.next().map(|track| track.id);
-            match (only, singers.next()) {
-                (Some(track), None) => track,
-                _ => return Err(Key::ErrorNoSingerTrack.get(LANGUAGE).to_string()),
-            }
-        }
-    };
+    let target = singer_track(&session, track_name.as_deref())?;
     if let Some(voice) = &voice {
         session
             .set_singer_voice(target, Some(voice))
@@ -648,6 +629,214 @@ fn sing(args: &[String]) -> Result<(), String> {
         std::io::stdout(),
         "{}",
         messages::take_sung(LANGUAGE, &name, seconds)
+    ))?;
+    Ok(())
+}
+
+/// The singer track a command was pointed at: the named one, or the project's only singer.
+///
+/// The ordinary one-singer song never asks; a project with two singers has to be told, and a
+/// name that is not a singer's is refused rather than guessed at.
+fn singer_track(session: &Session, name: Option<&str>) -> Result<TrackId, String> {
+    match name {
+        Some(name) => session
+            .project()
+            .tracks
+            .iter()
+            .find(|track| track.kind.is_singer() && track.name == name)
+            .map(|track| track.id)
+            .ok_or_else(|| messages::no_singer_named(LANGUAGE, name)),
+        None => {
+            let mut singers = session
+                .project()
+                .tracks
+                .iter()
+                .filter(|track| track.kind.is_singer());
+            let only = singers.next().map(|track| track.id);
+            match (only, singers.next()) {
+                (Some(track), None) => Ok(track),
+                _ => Err(Key::ErrorNoSingerTrack.get(LANGUAGE).to_string()),
+            }
+        }
+    }
+}
+
+/// Writes the frames a singer track's voice is fed, as JSON, for reading outside the program.
+///
+/// The frames are what `sing` hands the model *before* the model: one phoneme, one pitch and
+/// one energy per hop, laid out by the timing rules from the notes and their words. Written out,
+/// they are what a model is developed against, and what `sing-frames` reads back in.
+fn frames(args: &[String]) -> Result<(), String> {
+    let source = args
+        .get(1)
+        .filter(|arg| !arg.starts_with('-'))
+        .ok_or_else(|| Key::CliExpectedProjectPath.get(LANGUAGE).to_string())?;
+    let source = PathBuf::from(source);
+    let mut track_name: Option<String> = None;
+    let mut output: Option<PathBuf> = None;
+
+    let mut index = 2;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--track" => {
+                index += 1;
+                track_name = Some(
+                    args.get(index)
+                        .ok_or_else(|| {
+                            messages::option_needs_value(
+                                LANGUAGE,
+                                "--track",
+                                Key::CliNeedsValue.get(LANGUAGE),
+                            )
+                        })?
+                        .clone(),
+                );
+            }
+            "-o" | "--output" => {
+                index += 1;
+                output = Some(PathBuf::from(args.get(index).ok_or_else(|| {
+                    messages::option_needs_value(
+                        LANGUAGE,
+                        "--output",
+                        Key::CliNeedsPath.get(LANGUAGE),
+                    )
+                })?));
+            }
+            other => return Err(messages::unknown_option(LANGUAGE, other)),
+        }
+        index += 1;
+    }
+
+    let mut session = headless()?;
+    for missing in session.open(&source).map_err(|error| error.to_string())? {
+        warned(messages::warning_missing_audio(
+            LANGUAGE,
+            &missing.display().to_string(),
+        ));
+    }
+    warn_foreign_build(&session);
+    let target = singer_track(&session, track_name.as_deref())?;
+    let output = output.unwrap_or_else(|| source.with_extension("frames.json"));
+    let count = session
+        .export_singer_frames(target, &output)
+        .map_err(|error| error.to_string())?;
+    printed(writeln!(
+        std::io::stdout(),
+        "{}",
+        messages::frames_exported(LANGUAGE, &output.display().to_string(), count)
+    ))?;
+    Ok(())
+}
+
+/// Sings a frames file through a voice model into a WAV file, with no project in between.
+///
+/// The measuring instrument's door: the frames can be a track's, written by `frames`, or a
+/// corpus's — the curves a recording was made with, laid on the model's clock — and what comes
+/// back went through exactly the inference a take goes through: the same chunking, the same
+/// stitching, the same recorder. `--report` writes the session's own account of the render
+/// beside the audio, so a timing is read off a file rather than a status line.
+fn sing_frames(args: &[String]) -> Result<(), String> {
+    let source = args
+        .get(1)
+        .filter(|arg| !arg.starts_with('-'))
+        .ok_or_else(|| Key::CliExpectedFramesPath.get(LANGUAGE).to_string())?;
+    let source = PathBuf::from(source);
+    let mut voice: Option<PathBuf> = None;
+    let mut seed: u64 = 0;
+    let mut acceleration = auris_session::Acceleration::Auto;
+    let mut output: Option<PathBuf> = None;
+    let mut report: Option<PathBuf> = None;
+
+    let mut index = 2;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--voice" => {
+                index += 1;
+                voice = Some(PathBuf::from(args.get(index).ok_or_else(|| {
+                    messages::option_needs_value(
+                        LANGUAGE,
+                        "--voice",
+                        Key::CliNeedsPath.get(LANGUAGE),
+                    )
+                })?));
+            }
+            "--seed" => {
+                index += 1;
+                seed = args
+                    .get(index)
+                    .and_then(|value| value.parse().ok())
+                    .ok_or_else(|| {
+                        messages::option_needs_value(
+                            LANGUAGE,
+                            "--seed",
+                            Key::CliNeedsNumber.get(LANGUAGE),
+                        )
+                    })?;
+            }
+            "--acceleration" => {
+                index += 1;
+                acceleration = match args.get(index).map(String::as_str) {
+                    Some("auto") => auris_session::Acceleration::Auto,
+                    Some("gpu") => auris_session::Acceleration::Gpu,
+                    Some("cpu") => auris_session::Acceleration::Cpu,
+                    other => {
+                        return Err(messages::bad_acceleration(
+                            LANGUAGE,
+                            other.unwrap_or_default(),
+                        ));
+                    }
+                };
+            }
+            "-o" | "--output" => {
+                index += 1;
+                output = Some(PathBuf::from(args.get(index).ok_or_else(|| {
+                    messages::option_needs_value(
+                        LANGUAGE,
+                        "--output",
+                        Key::CliNeedsPath.get(LANGUAGE),
+                    )
+                })?));
+            }
+            "--report" => {
+                index += 1;
+                report = Some(PathBuf::from(args.get(index).ok_or_else(|| {
+                    messages::option_needs_value(
+                        LANGUAGE,
+                        "--report",
+                        Key::CliNeedsPath.get(LANGUAGE),
+                    )
+                })?));
+            }
+            other => return Err(messages::unknown_option(LANGUAGE, other)),
+        }
+        index += 1;
+    }
+    let voice = voice.ok_or_else(|| Key::CliNeedsVoice.get(LANGUAGE).to_string())?;
+
+    let frames = Session::read_singer_frames(&source).map_err(|error| error.to_string())?;
+    // A bare headless session, not [`headless`]: no document is opened, so the shipped fonts
+    // and dictionary would be loaded for nothing — and this command is run once per utterance
+    // of a corpus, where that nothing adds up.
+    let mut session =
+        Session::new(SessionOptions::headless()).map_err(|error| error.to_string())?;
+    session.set_singer_acceleration(acceleration);
+    let output = output.unwrap_or_else(|| source.with_extension("wav"));
+    let sung = session
+        .sing_frames(&voice, &frames, seed, &output)
+        .map_err(|error| error.to_string())?;
+    if let Some(report) = report {
+        let text = serde_json::to_string_pretty(&sung).map_err(|error| error.to_string())?;
+        std::fs::write(&report, text).map_err(|error| format!("{}: {error}", report.display()))?;
+    }
+    printed(writeln!(
+        std::io::stdout(),
+        "{}",
+        messages::frames_sung(
+            LANGUAGE,
+            &sung.voice,
+            sung.seconds,
+            &output.display().to_string()
+        )
     ))?;
     Ok(())
 }

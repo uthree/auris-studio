@@ -293,6 +293,18 @@ messages! {
         ja: "{name} が {seconds:.1} 秒を歌いました"
     }
 
+    /// Confirmation that a frames file was sung into a WAV, by the named voice.
+    fn frames_sung(name: &str, seconds: f64, path: &str) {
+        en: "{name} sang {seconds:.1} s into {path}",
+        ja: "{name} が {seconds:.1} 秒を {path} に歌いました"
+    }
+
+    /// An acceleration the singer does not offer.
+    fn bad_acceleration(given: &str) {
+        en: "--acceleration wants auto, gpu or cpu, not `{given}`",
+        ja: "--acceleration は auto, gpu, cpu のいずれかです。`{given}` は使えません"
+    }
+
     /// `--track` named a track that is not a singer, or is not there at all.
     fn no_singer_named(name: &str) {
         en: "no singer track is named `{name}`",

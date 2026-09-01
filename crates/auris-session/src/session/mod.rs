@@ -73,7 +73,7 @@ pub use monitor::MonitorStatus;
 pub use notes::{Quantize, quantized};
 pub use singer::{
     LYRIC_CONTINUATION, MIN_PHONEME_SECONDS, PREVIEW_NOTE_SECONDS, SingPlan, SingerTakeState,
-    take_fingerprint,
+    SungFrames, take_fingerprint,
 };
 
 pub use record::{

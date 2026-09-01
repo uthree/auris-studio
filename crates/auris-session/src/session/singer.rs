@@ -9,6 +9,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use auris_core::project::BEND_LIMIT;
 use auris_core::{AssetPath, ClipId, Fall, Scoop, SingerTake, SingerVoice, TrackId, Vibrato};
@@ -478,6 +479,77 @@ impl Session {
         Ok(frames.len())
     }
 
+    /// Reads frames off disk — [`Session::export_singer_frames`]'s file, or anything else
+    /// written in its shape.
+    ///
+    /// An associated function rather than a method because no document is involved: the
+    /// frames are one track's features already sampled, and where they came from is not this
+    /// reader's business. That is the point of the door — [`Session::sing_frames`] is how a
+    /// voice is handed curves that a corpus was *recorded* with, not curves the timing rules
+    /// laid out, so what comes back can be held against the recording.
+    pub fn read_singer_frames(path: &Path) -> Result<SingerFrames, SessionError> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| SessionError::Io(auris_io::IoError::from_fs(path, error)))?;
+        serde_json::from_str(&text)
+            .map_err(|error| SessionError::Io(auris_io::IoError::Json(error)))
+    }
+
+    /// Sings frames through a voice model into the WAV file at `path`, and nothing else.
+    ///
+    /// The same inference a take goes through — the model from the same cache, loaded the way
+    /// the acceleration setting says, cut into the same chunks and stitched the same way,
+    /// written by the same recorder — with the notes taken off the front and the document off
+    /// the back. That is what makes it a measuring instrument: hand it the curves a corpus
+    /// was recorded with and compare what comes back with the recording, and every
+    /// difference belongs to the export or to this host, because the score-to-frames step
+    /// never ran. Nothing is recorded in the document, and there need not be one.
+    ///
+    /// The answer carries what a measurement wants beside the audio: how the timeline was
+    /// chunked, how long the model took to open and to sing, and whether it sang on the GPU.
+    /// The load time is zero when the voice was already open, which the second call in a
+    /// batch always finds it.
+    pub fn sing_frames(
+        &mut self,
+        voice: &Path,
+        frames: &SingerFrames,
+        seed: u64,
+        path: &Path,
+    ) -> Result<SungFrames, SessionError> {
+        let opening = Instant::now();
+        let cached = self.voices.contains_key(voice);
+        let model = self.voice_model_at(voice)?;
+        let load_seconds = match cached {
+            true => 0.0,
+            false => opening.elapsed().as_secs_f64(),
+        };
+        let (samples, sung) = {
+            let mut model = model.lock().expect("no thread panics holding a voice");
+            let mut chunks = 0;
+            let singing = Instant::now();
+            let samples = model.sing_with(frames, seed, |_, total| {
+                chunks = total;
+                true
+            })?;
+            let render_seconds = singing.elapsed().as_secs_f64();
+            let sample_rate = model.info().sample_rate;
+            let sung = SungFrames {
+                voice: voice_name(&model, voice),
+                seconds: samples.len() as f64 / f64::from(sample_rate),
+                sample_rate,
+                frames: frames.len(),
+                chunks,
+                load_seconds,
+                render_seconds,
+                on_gpu: model.on_gpu(),
+            };
+            (samples, sung)
+        };
+        let mut recorder = auris_io::WavRecorder::create(path, f64::from(sung.sample_rate), 1)?;
+        recorder.write(&samples)?;
+        recorder.finish()?;
+        Ok(sung)
+    }
+
     /// Points a singer track at a voice model, or takes its voice away.
     ///
     /// The file is opened *before* anything is recorded, so a path that is not a voice fails at
@@ -497,14 +569,7 @@ impl Session {
                 let model = self.voice_model_at(file)?;
                 let (name, hop, consonants) = {
                     let model = model.lock().expect("no thread panics holding a voice");
-                    let card = model.info().display_name().to_string();
-                    let name = match card.is_empty() {
-                        true => file
-                            .file_stem()
-                            .map(|stem| stem.to_string_lossy().to_string())
-                            .unwrap_or_else(|| "Voice".to_string()),
-                        false => card,
-                    };
+                    let name = voice_name(&model, file);
                     // The consonant widths ride into the document beside the name, for the
                     // name's reason: the phoneme timing must lay out the same before the
                     // model file is opened again — or on a machine that does not have it.
@@ -894,6 +959,43 @@ pub struct SingPlan {
     pub fingerprint: u64,
     /// The rate the model sings at — the rate the take's file is written at.
     pub sample_rate: u32,
+}
+
+/// What [`Session::sing_frames`] wrote, and what it cost.
+///
+/// Serialisable so a frontend can hand the whole account to whatever asked for the file — a
+/// measurement wants the timings beside the audio, and a number retyped from a status line is
+/// a number retyped wrong.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct SungFrames {
+    /// The voice's display name, from its card, or the file's stem where the card has none.
+    pub voice: String,
+    /// Seconds of audio the file holds.
+    pub seconds: f64,
+    /// The rate the file was written at — the model's own.
+    pub sample_rate: u32,
+    /// How many frames were sung.
+    pub frames: usize,
+    /// How many inferences the timeline was cut into.
+    pub chunks: usize,
+    /// Seconds spent opening the model, or zero when it was already open.
+    pub load_seconds: f64,
+    /// Seconds the model spent singing, the chunks together.
+    pub render_seconds: f64,
+    /// Whether the GPU provider was in the session when the last chunk was sung.
+    pub on_gpu: bool,
+}
+
+/// The name a voice goes by in a document: its card's, or its file's where the card has none.
+fn voice_name(model: &VoiceModel, file: &Path) -> String {
+    let card = model.info().display_name();
+    match card.is_empty() {
+        true => file
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Voice".to_string()),
+        false => card.to_string(),
+    }
 }
 
 /// How a singer track's take stands against its notes.
@@ -1604,6 +1706,100 @@ mod tests {
         assert_eq!(frames.inventory[0], auris_vocal::SILENCE);
         assert!(frames.inventory.iter().any(|p| p == "s"));
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn frames_read_back_from_where_they_were_exported() {
+        let (mut session, track, clip) = sung(2);
+        session.write_lyrics(clip, &[0, 1], "さく").unwrap();
+        let scratch = crate::session::fixtures::Scratch::new("frames-read");
+        let path = scratch.join("melody.frames.json");
+        session.export_singer_frames(track, &path).unwrap();
+        let read = crate::Session::read_singer_frames(&path).unwrap();
+        assert_eq!(read, session.singer_frames(track).unwrap());
+    }
+
+    #[test]
+    fn a_file_that_is_not_frames_is_refused_as_a_file_error() {
+        let scratch = crate::session::fixtures::Scratch::new("frames-refused");
+        let path = scratch.join("notes.txt");
+        std::fs::write(&path, "these are not frames").unwrap();
+        match crate::Session::read_singer_frames(&path) {
+            Err(SessionError::Io(_)) => {}
+            other => panic!("expected a file error, got {other:?}"),
+        }
+        match crate::Session::read_singer_frames(&scratch.join("absent.json")) {
+            Err(SessionError::Io(_)) => {}
+            other => panic!("expected a file error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn singing_frames_without_a_voice_writes_nothing() {
+        let (mut session, track, clip) = sung(1);
+        session.write_lyrics(clip, &[0], "ら").unwrap();
+        let frames = session.singer_frames(track).unwrap();
+        let scratch = crate::session::fixtures::Scratch::new("frames-no-voice");
+        let output = scratch.join("take.wav");
+        let error = session
+            .sing_frames(Path::new("nowhere/no-such-voice.onnx"), &frames, 0, &output)
+            .expect_err("a voice that is not there cannot sing");
+        assert!(matches!(error, SessionError::Sing(_)), "{error}");
+        assert!(
+            !output.exists(),
+            "the file is only made once there is something to write"
+        );
+    }
+
+    /// Frames in, a file out, through the same model and recorder a take uses — asserted on
+    /// the numbers the measurement reads back. Skips without `AURIS_SINGER_TEST_MODEL`.
+    #[test]
+    fn the_real_voice_sings_frames_to_a_file() {
+        let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") else {
+            eprintln!("AURIS_SINGER_TEST_MODEL not set; skipping the frames-in test");
+            return;
+        };
+        let voice = std::path::PathBuf::from(model);
+        let (mut session, track, clip) = sung(2);
+        session.write_lyrics(clip, &[0, 1], "らら").unwrap();
+        let scratch = crate::session::fixtures::Scratch::new("frames-sung");
+        let frames_path = scratch.join("melody.frames.json");
+        session.export_singer_frames(track, &frames_path).unwrap();
+        let frames = crate::Session::read_singer_frames(&frames_path).unwrap();
+
+        let output = scratch.join("take.wav");
+        let sung = session.sing_frames(&voice, &frames, 7, &output).unwrap();
+        assert!(output.is_file(), "the waveform is where it was asked for");
+        assert_eq!(sung.frames, frames.len());
+        assert!(
+            sung.chunks >= 1,
+            "two sung notes are at least one inference"
+        );
+        assert!(sung.load_seconds > 0.0, "the first call opened the model");
+        assert!(sung.render_seconds > 0.0);
+        assert!(!sung.voice.is_empty(), "a voice always has a name to go by");
+        let expected = frames.len() as f64 * frames.hop_seconds;
+        assert!(
+            (sung.seconds - expected).abs() < frames.hop_seconds,
+            "{} s of audio for {expected} s of frames",
+            sung.seconds
+        );
+        let imported = auris_io::import_audio_file(&output, f64::from(sung.sample_rate)).unwrap();
+        assert_eq!(imported.sample_rate() as u32, sung.sample_rate);
+        assert!(
+            (imported.frame_count() as f64 / f64::from(sung.sample_rate) - sung.seconds).abs()
+                < 1e-6
+        );
+
+        // The second call finds the voice open, and the same seed is the same take to the byte.
+        let again = scratch.join("again.wav");
+        let second = session.sing_frames(&voice, &frames, 7, &again).unwrap();
+        assert_eq!(second.load_seconds, 0.0, "the voice was already open");
+        assert_eq!(
+            std::fs::read(&output).unwrap(),
+            std::fs::read(&again).unwrap(),
+            "a seed names a take"
+        );
     }
 
     #[test]

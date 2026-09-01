@@ -1016,7 +1016,14 @@ pub mod singing {
     //! the repository's `training/` directory, which is Python and out of this workspace — and
     //! what playback uses is the [`SingerTake`](auris_core::SingerTake) that render produced.
     //! [`Session::export_singer_frames`](crate::Session::export_singer_frames) still writes
-    //! the raw frames, which is how a model is developed against real documents.
+    //! the raw frames, which is how a model is developed against real documents, and
+    //! [`Session::sing_frames`](crate::Session::sing_frames) is the door in the other
+    //! direction: frames off disk — a track's, or a corpus's own curves laid on the model's
+    //! clock — through the same cached model, chunking and recorder a take goes through, into
+    //! a WAV, with no document before or after. That is what lets the trainer measure a voice
+    //! *through this host* rather than through PyTorch (`training/doc/evaluation.md`), and
+    //! it answers with [`SungFrames`](crate::SungFrames), the render's own account of itself:
+    //! how many chunks, how long to open and to sing, which processor sang.
     //!
     //! # The voice, and the take
     //!

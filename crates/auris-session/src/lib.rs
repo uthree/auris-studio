@@ -68,9 +68,9 @@ pub use session::{
     DEFAULT_VELOCITY, InputChannels, LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont, LyricSongReport,
     MIN_PHONEME_SECONDS, MixAnalysis, MusicalTyping, OCTAVE_RANGE, Played, PluginWindow, Quantize,
     RecordingReport, RecordingStatus, Release, SaveReport, SectionLoudness, Session,
-    SessionOptions, SingPlan, SingerTakeState, Struck, TARGET_LUFS, TYPING_BEND, TakeReport,
-    TrackLevel, TrackLoudness, TypingRole, VELOCITY_STEP, WHEEL_STEPS, decode_audio, fader_for,
-    faders_lift_db, input_level_of, master_gain_db, quantized, read_soundfont,
+    SessionOptions, SingPlan, SingerTakeState, Struck, SungFrames, TARGET_LUFS, TYPING_BEND,
+    TakeReport, TrackLevel, TrackLoudness, TypingRole, VELOCITY_STEP, WHEEL_STEPS, decode_audio,
+    fader_for, faders_lift_db, input_level_of, master_gain_db, quantized, read_soundfont,
     shadows_musical_typing, take_fingerprint,
 };
 pub use settings::{

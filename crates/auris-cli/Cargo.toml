@@ -16,3 +16,6 @@ auris-i18n.workspace = true
 auris-session.workspace = true
 env_logger.workspace = true
 log.workspace = true
+# The `--report` of `sing-frames` is the session's own account of the take, written out as it
+# is; the CLI adds no field of its own to it.
+serde_json.workspace = true

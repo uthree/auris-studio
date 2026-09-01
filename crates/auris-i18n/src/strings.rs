@@ -1120,6 +1120,9 @@ COMMANDS
     info <project.auris>          Print a project's tracks, clips and duration
     render <project.auris> [opts] Render a project to a WAV file
     sing <project.auris> [opts]   Render a singer track through its voice model
+    frames <project.auris> [opts] Write the frames a singer track's voice is fed
+    sing-frames <frames.json> [opts]
+                                  Sing a frames file through a voice model, into a WAV
     new <project.auris> [opts]    Create a project with one instrument track
     collect <project.auris>       Copy everything the project uses into its folder
     help                          Show this message
@@ -1151,6 +1154,18 @@ SING OPTIONS
         --voice <model.onnx>      Choose the voice model first, and remember it
         --seed <n>                Pin the take's random choices (default: the current take's)
 
+FRAMES OPTIONS
+        --track <name>            Which singer track (default: the project's only one)
+    -o, --output <file.json>      Where to write (default: alongside the project)
+
+SING-FRAMES OPTIONS
+        --voice <model.onnx>      The voice to sing with (required)
+        --seed <n>                Pin the take's random choices (default: 0)
+        --acceleration <auto|gpu|cpu>
+                                  Where the model runs its inference (default: auto)
+    -o, --output <file.wav>       Where to write (default: alongside the frames)
+        --report <file.json>      Also write the take's facts and timings as JSON
+
 NEW OPTIONS
         --bpm <tempo>             Tempo of the new project (default: 120)
         --sample-rate <hz>        Rate of the new project (default: 48000)
@@ -1171,6 +1186,9 @@ auris — コマンドラインから使う Auris Studio
     info <project.auris>          プロジェクトのトラック・クリップ・長さを表示
     render <project.auris> [opts] プロジェクトを WAV に書き出す
     sing <project.auris> [opts]   シンガートラックを声のモデルで歌わせる
+    frames <project.auris> [opts] シンガートラックが声のモデルに渡すフレームを書き出す
+    sing-frames <frames.json> [opts]
+                                  フレームファイルを声のモデルで歌わせて WAV にする
     new <project.auris> [opts]    ソフト音源トラック 1 本のプロジェクトを作成
     collect <project.auris>       プロジェクトが使うファイルをフォルダ内に集める
     help                          このメッセージを表示
@@ -1201,6 +1219,18 @@ sing のオプション
         --track <name>            歌わせるシンガートラック（既定: プロジェクト唯一の 1 本）
         --voice <model.onnx>      先に声のモデルを選んで記憶させる
         --seed <n>                テイクの乱数を固定（既定: 現在のテイクのシード）
+
+frames のオプション
+        --track <name>            対象のシンガートラック（既定: プロジェクト唯一の 1 本）
+    -o, --output <file.json>      出力先（既定: プロジェクトと同じ場所）
+
+sing-frames のオプション
+        --voice <model.onnx>      歌わせる声のモデル（必須）
+        --seed <n>                テイクの乱数を固定（既定: 0）
+        --acceleration <auto|gpu|cpu>
+                                  モデルの推論を走らせる場所（既定: auto）
+    -o, --output <file.wav>       出力先（既定: フレームファイルと同じ場所）
+        --report <file.json>      テイクの情報と所要時間を JSON でも書き出す
 
 new のオプション
         --bpm <tempo>             新規プロジェクトのテンポ（既定: 120）
@@ -1256,6 +1286,11 @@ new のオプション
     CliInstruments { en: "INSTRUMENTS", ja: "音源" }
     CliEffects { en: "EFFECTS", ja: "エフェクト" }
     CliExpectedProjectPath { en: "expected a project path", ja: "プロジェクトのパスを指定してください" }
+    CliExpectedFramesPath { en: "expected a frames file", ja: "フレームファイルのパスを指定してください" }
+    CliNeedsVoice {
+        en: "sing-frames needs --voice <model.onnx>",
+        ja: "sing-frames には --voice <model.onnx> が必要です"
+    }
     CliNoCycle {
         en: "the project has no cycle region to render",
         ja: "プロジェクトにサイクル範囲がありません"
