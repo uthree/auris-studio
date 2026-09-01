@@ -16,8 +16,13 @@ Two instruments, in order of cost:
   4 kHz against the energy below it, on sibilant frames, render against recording — says
   outright whether the /s/ was formed. Deterministic, dependency-free, and needs a
   recording to hold the render against.
-* **Phoneme error rate** — what a listener would have heard, by way of a recogniser. The
-  second instrument, and the next unit of work.
+* **Phoneme error rate** (:func:`phoneme_error_rate`). What a listener would have heard,
+  approximated by a recogniser: the render is transcribed (:mod:`auris_singer.asr`), the
+  transcript is turned back into IPA by the language's own front-end, and the edit
+  distance to the phonemes that were asked for is the rate. It needs no recording, so it
+  is the one instrument the score run can carry — and where there *is* a recording, the
+  recording's own rate is the ceiling, since a recogniser trained on speech is not at home
+  in song and the number to read is the render's distance from it.
 """
 
 from __future__ import annotations
@@ -27,13 +32,18 @@ import math
 import numpy as np
 import torch
 
-from auris_singer.text.ipa import SIBILANTS, phoneme_class
+from auris_singer.text.ipa import SIBILANTS, SPECIAL_SYMBOLS, phoneme_class
 
 __all__ = [
     "SIBILANT_SPLIT_HZ",
     "CLASS_METRICS",
     "frame_classes",
     "class_spectral_metrics",
+    "DEVOICED",
+    "content_phonemes",
+    "hearable",
+    "edit_distance",
+    "phoneme_error_rate",
 ]
 
 #: Where the sibilant tilt splits the spectrum. Sibilant identity lives above it; the
@@ -120,3 +130,50 @@ def class_spectral_metrics(
         tilt_real = 10.0 * math.log10(max(high_r, floor) / max(low_r, floor))
         out["sibilant_tilt_db"] = tilt_pred - tilt_real
     return out
+
+
+def content_phonemes(phonemes: list[str], silence: str = "sil") -> list[str]:
+    """The phonemes a listener could hear: the specials and the frames' own silence dropped.
+
+    A recogniser does not report rests, so neither may the reference it is held against.
+    """
+    return [p for p in phonemes if p not in SPECIAL_SYMBOLS and p != silence]
+
+
+#: Each devoiced vowel and the vowel it is: a listener hears the vowel and not whether the
+#: singer voiced it, the front-end decides devoicing by rule and a corpus by label, so
+#: neither side may be held to it.
+DEVOICED: dict[str, str] = {"a\u0325": "a", "i̥": "i", "ɯ̥": "ɯ", "e̥": "e", "o̥": "o"}
+
+
+def hearable(phonemes: list[str], silence: str = "sil") -> list[str]:
+    """The phonemes as a listener could report them: no rests, no devoicing.
+
+    Both what was asked for and what was heard go through this before the rate is taken,
+    so the two are compared in one spelling.
+    """
+    return [DEVOICED.get(p, p) for p in content_phonemes(phonemes, silence)]
+
+
+def edit_distance(reference: list[str], hypothesis: list[str]) -> int:
+    """Levenshtein distance between two symbol sequences."""
+    previous = list(range(len(hypothesis) + 1))
+    for i, ref in enumerate(reference, start=1):
+        current = [i]
+        for j, hyp in enumerate(hypothesis, start=1):
+            current.append(
+                min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (ref != hyp))
+            )
+        previous = current
+    return previous[-1]
+
+
+def phoneme_error_rate(reference: list[str], hypothesis: list[str]) -> float:
+    """Edits per reference phoneme — substitutions, insertions and deletions together.
+
+    Zero is every phoneme heard as asked; above one is possible, since insertions count.
+    An empty reference has no rate to report and answers NaN rather than a division.
+    """
+    if not reference:
+        return math.nan
+    return edit_distance(reference, hypothesis) / len(reference)

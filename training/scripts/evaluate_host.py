@@ -22,6 +22,12 @@ Examples::
         --baseline before.json
 
     uv run python scripts/evaluate_host.py --voice runs/small/model.onnx --score
+    uv run python scripts/evaluate_host.py --voice runs/small/model.onnx --score --asr
+
+``--asr`` adds a listener: a recogniser in the voice's language (ReazonSpeech for Japanese)
+transcribes every render, the transcript is turned back into IPA, and the phoneme error
+rate against what was asked for is one more row — with the recording's own rate beside it
+as the ceiling, in corpus mode.
 
 The host is ``cargo run -p auris-cli`` from the repository root, or the binary ``AURIS_CLI``
 names. ``--workdir`` keeps every file that crossed between the two languages — frames, WAVs,
@@ -62,6 +68,9 @@ def main() -> None:
     parser.add_argument("--no-reference", action="store_true", help="skip the PyTorch render")
     parser.add_argument("--no-pitch", action="store_true", help="skip FCPE, and so the pitch metrics")
     parser.add_argument("--gap", type=float, default=0.5, help="seconds of silence between song parts (default: 0.5)")
+    parser.add_argument("--asr", action="store_true", help="also listen: the phoneme error rate, by a recogniser (needs the `asr` extra)")
+    parser.add_argument("--asr-language", default="ja", help="the language the listener listens in (default: ja, ReazonSpeech)")
+    parser.add_argument("--asr-precision", default="fp32", help="the recogniser's weights, fp32 or int8 (default: fp32)")
     parser.add_argument("--n-mels", type=int, default=128)
     parser.add_argument("--tolerance-cents", type=float, default=50.0)
     parser.add_argument("--device", default=None, help="torch device for alignment, reference and FCPE (default: cuda if present)")
@@ -92,6 +101,9 @@ def main() -> None:
         n_mels=args.n_mels,
         tolerance_cents=args.tolerance_cents,
         device=args.device,
+        asr=args.asr,
+        asr_language=args.asr_language,
+        asr_options={"precision": args.asr_precision},
     )
     host = Host.find(release=args.release)
 

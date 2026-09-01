@@ -81,6 +81,38 @@ already has — which phoneme is on which frame — lets `mel_l1` be split by ma
 | `mel_l1_sibilant` | the same over the sibilants — `s ɕ ʃ ts tɕ tʃ` and their voiced pairs — the consonants a synthesiser fails to form first |
 | `sibilant_tilt_db` | on sibilant frames, the energy above 4 kHz against the energy below it, render minus recording, in dB |
 
+### Whether the words can be heard
+
+```bash
+uv pip install -e '.[dev,export,asr]' --torch-backend=auto
+uv run python scripts/evaluate_host.py ... --asr
+```
+
+The class metrics say whether a consonant was *formed*; `--asr` asks whether the words
+were *heard*. A recogniser in the voice's language transcribes each render, the
+language's own front-end (`text/`) turns the transcript back into IPA, and the phoneme
+error rate — edits per phoneme asked for, by Levenshtein — is the `per` row. Rests and
+devoicing are taken off both sides first (`intelligibility.hearable`): a listener reports
+words, not pauses, and hears a vowel rather than whether the singer voiced it.
+
+Japanese is [ReazonSpeech](https://github.com/reazon-research/ReazonSpeech), the k2 model
+on sherpa-onnx: 35 000 hours of broadcast Japanese, Apache-2.0, 200 MB into the Hugging
+Face cache on first use, and a few hundred milliseconds a phrase on the CPU. It is the
+`asr` extra, installed from the project's repository since it is not on PyPI, and nothing
+else needs it. `--asr-precision int8` halves the download where the CPU is small.
+
+A recogniser trained on speech is not at home in song, so in corpus mode the recording
+itself is transcribed too and its rate is the **recording** column: the ceiling, and the
+number to read the others against. On the mid-training JSUT voice the recording came back
+near word-perfect (`春が来た春が来た` for 春が来た春が来た) and the render as `パンがパーンがたい`
+— a `per` near one, which is what the ear said. There is no recording in the score run,
+so its `per` stands alone, against the phonemes the frames spelled.
+
+**Another language is one registration.** `asr.RECOGNISERS` maps a language code to a
+class with a `language` and a `transcribe(wav, sample_rate) -> str`; the front-end that
+turns its text into IPA is the one the trainer already has for that language in `text/`,
+or a new one there. Nothing else in the run knows what language it is listening in.
+
 The tilt is the consonant-width study's own measurement made permanent: at a too-short
 width the model did not form the /s/ at all, and the ratio went from 6.7 to 40.6 once it
 was given its width, against 36.6 in the recording. Zero is a sibilant formed as the singer

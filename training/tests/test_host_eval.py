@@ -22,10 +22,32 @@ from auris_singer.host_eval import (
     evaluate,
     evaluate_score,
     format_report,
+    phonemes_of_frames,
     summarize,
     validation_records,
     voice_info,
 )
+
+
+class Parroting:
+    """A listener that hears one thing whatever it is played, for runs without a model."""
+
+    def __init__(self, phonemes: list[str]):
+        self.phonemes = phonemes
+        self.heard = 0
+
+    def hear(self, wav, sample_rate):
+        from auris_singer.asr import Heard
+
+        self.heard += 1
+        return Heard(text=" ".join(self.phonemes), phonemes=list(self.phonemes))
+
+
+def test_a_frames_file_spells_the_phonemes_a_listener_is_held_to():
+    tokens = ["sil", "sil", "k", "a", "a", "a", "sil", "a", "a", "i̥", "sil"]
+    # Runs collapse — the host run-length-encodes them — rests go, devoicing goes.
+    assert phonemes_of_frames(tokens) == ["k", "a", "a", "i"]
+    assert phonemes_of_frames([]) == []
 
 
 def test_summary_is_a_mean_over_the_rows_that_answered():
@@ -108,6 +130,13 @@ def test_the_table_reads_every_column_it_is_given():
     with_baseline = format_report(report, baseline)
     assert "-0.100" in with_baseline, "host against the baseline's host"
 
+    # A listener adds a row and the recording's ceiling as a column, and reports its time.
+    report["summary"]["host"]["per"] = 0.9
+    report["summary"]["recording"] = {"per": 0.1}
+    report["summary"]["timing"]["asr_seconds"] = 3.0
+    heard = format_report(report)
+    assert "recording" in heard and "per" in heard and "listener took 3.00 s" in heard
+
     score = {
         "voice": {"path": "v.onnx", "name": ""},
         "summary": {
@@ -170,7 +199,10 @@ def test_the_host_sings_the_corpus_and_every_column_is_measured(exported_voice, 
     # `all` rather than `val`: twelve synthetic utterances make a one-utterance validation
     # split, and the song column needs two.
     settings = Settings(split="all", utterances=2, pitch=False, song_gap_seconds=0.2)
-    report = evaluate(voice, processed_dataset, checkpoint, Host.find(), tmp_path / "work", settings)
+    listener = Parroting(["a", "i", "k", "o"])
+    report = evaluate(
+        voice, processed_dataset, checkpoint, Host.find(), tmp_path / "work", settings, listener=listener
+    )
 
     assert report["kind"] == "corpus"
     assert len(report["utterances"]) == 2
@@ -184,7 +216,15 @@ def test_the_host_sings_the_corpus_and_every_column_is_measured(exported_voice, 
         assert facts["seconds"] == pytest.approx(row["seconds"], abs=0.011)
         assert facts["wall_seconds"] >= facts["render_seconds"] > 0
     summary = report["summary"]
-    assert set(summary) >= {"host", "reference", "song", "timing"}
+    assert set(summary) >= {"host", "reference", "song", "recording", "timing"}
+    # The listener heard every column of every utterance, and the recording's ceiling.
+    assert listener.heard == 2 * 4
+    for row in report["utterances"]:
+        assert row["asked"].startswith("a i k o"), "the synthetic transcript, made hearable"
+        for column in ("host", "reference", "song", "recording"):
+            assert math.isfinite(row[column]["per"]) and row[column]["heard"] == "a i k o"
+    assert 0 <= summary["recording"]["per"] < 1
+    assert summary["timing"]["asr_seconds"] >= 0
     assert summary["timing"]["song"]["seconds_of_frames"] > sum(r["seconds"] for r in report["utterances"])
     assert 0 < summary["timing"]["rtf"] < 1000
 
@@ -202,7 +242,8 @@ def test_the_host_sings_the_corpus_and_every_column_is_measured(exported_voice, 
 def test_the_host_sings_a_score_the_way_a_person_would(exported_voice, tmp_path):
     voice, _ = exported_voice
     settings = Settings(pitch=False)
-    report = evaluate_score(voice, Host.find(), tmp_path / "score", settings=settings)
+    listener = Parroting(["s", "a", "k", "ɯ", "ɾ", "a"])
+    report = evaluate_score(voice, Host.find(), tmp_path / "score", settings=settings, listener=listener)
 
     assert report["kind"] == "score"
     assert report["frames"]["count"] > 0
@@ -214,4 +255,13 @@ def test_the_host_sings_a_score_the_way_a_person_would(exported_voice, tmp_path)
     assert "mel_l1" not in metrics, "nothing to hold a spectral distance against"
     assert math.isfinite(metrics["energy_rmse_db"])
     assert report["summary"]["timing"]["wall_seconds"] > 0
+    assert listener.heard == 1 and math.isfinite(metrics["per"])
+    assert report["asked"].startswith("s a k ɯ ɾ a"), "さくら, as the frames spelt it"
     assert "wall RTF" in format_report(report)
+
+
+def test_a_log_line_carries_the_numbers_and_not_what_was_heard():
+    from auris_singer.host_eval import _one_line
+
+    line = _one_line({"mel_l1": 0.5, "per": 1.0, "heard": "パンがパーンがたい", "asr_seconds": 0.4})
+    assert line == "mel_l1=0.500  per=1.000  asr_seconds=0.400"

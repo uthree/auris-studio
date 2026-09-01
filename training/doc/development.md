@@ -50,6 +50,8 @@ src/auris_singer/
   export.py            # ONNX export wrapper + verification
   host.py              # driving `auris`, the Rust host, as a measuring instrument
   host_eval.py         # an exported voice measured through the host
+  intelligibility.py   # were the consonants formed, were the words heard
+  asr.py               # the recogniser per language behind the phoneme error rate
   modules/
     transformer.py     # RMSNorm, SwiGLU, RoPE, QK-Norm, SDPA encoder
     encoders.py        # TextEncoder, PriorEncoder, PosteriorEncoder

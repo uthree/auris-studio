@@ -58,7 +58,12 @@ from auris_singer.host import (
     frames_from_curves,
 )
 from auris_singer.infer import Synthesizer, frame_voicing
-from auris_singer.intelligibility import CLASS_METRICS, class_spectral_metrics
+from auris_singer.intelligibility import (
+    CLASS_METRICS,
+    class_spectral_metrics,
+    hearable,
+    phoneme_error_rate,
+)
 from auris_singer.metrics import energy_metrics, pitch_metrics
 from auris_singer.text.ipa import PhonemeTable, is_voiceless
 from auris_singer.utils.audio import frame_energy, mel_spectrogram, spectrogram
@@ -78,7 +83,9 @@ __all__ = [
     "evaluate_score",
     "summarize",
     "format_report",
+    "phonemes_of_frames",
     "METRICS",
+    "COLUMNS",
 ]
 
 #: The prior's sampling temperature the host sings at — ``auris_singer::NOISE_SCALE`` — and
@@ -99,7 +106,12 @@ METRICS = (
     "energy_bias_db",
     "energy_corr",
     "peak",
+    "per",
 )
+
+#: The columns a report can hold, in table order. ``recording`` holds the listener's own
+#: ceiling — what it makes of the real singer — and nothing else.
+COLUMNS = ("host", "reference", "song", "recording", "score")
 
 
 # ----------------------------------------------------------------------------------------------
@@ -392,6 +404,19 @@ class Analyst:
         return out
 
 
+def phonemes_of_frames(tokens: list[str]) -> list[str]:
+    """The phoneme sequence a frames file spells: runs collapsed, then made hearable.
+
+    The host run-length-encodes the frames before the model sees them, so two notes on one
+    vowel are one token to it — and one vowel to a listener.
+    """
+    collapsed: list[str] = []
+    for token in tokens:
+        if not collapsed or collapsed[-1] != token:
+            collapsed.append(token)
+    return hearable(collapsed)
+
+
 def read_wav(path: str | Path, sample_rate: int) -> np.ndarray:
     """A mono float32 waveform, refusing a file at the wrong rate rather than resampling it —
     the host writes at the model's rate, and anything else is a fault worth seeing."""
@@ -437,7 +462,33 @@ class Settings:
     n_mels: int = 128
     tolerance_cents: float = 50.0
     device: str = "cpu"
+    #: Whether to run the listener: the phoneme error rate, and the recording's ceiling.
+    asr: bool = False
+    #: The language the listener listens in — the recogniser and the front-end behind it.
+    asr_language: str = "ja"
+    #: Options for the recogniser's constructor (``precision``, ``device`` for ReazonSpeech).
+    asr_options: dict[str, Any] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+def make_listener(settings: Settings, listener: Any = None) -> Any:
+    """The listener a run uses: the one handed in, or the language's, or none."""
+    if listener is not None:
+        return listener
+    if not settings.asr:
+        return None
+    from auris_singer.asr import Listener
+
+    return Listener.for_language(settings.asr_language, **settings.asr_options)
+
+
+def listen(listener: Any, wav: np.ndarray, sample_rate: int, asked: list[str], into: dict) -> None:
+    """Hear ``wav`` and write the rate against ``asked`` into ``into``, with what was heard."""
+    started = time.perf_counter()
+    heard = listener.hear(wav, sample_rate)
+    into["per"] = phoneme_error_rate(asked, heard.phonemes)
+    into["heard"] = heard.text
+    into["asr_seconds"] = time.perf_counter() - started
 
 
 def evaluate(
@@ -447,13 +498,18 @@ def evaluate(
     host: Host,
     workdir: str | Path,
     settings: Settings | None = None,
+    listener: Any = None,
 ) -> dict:
     """Sing corpus utterances through the host and measure every column.
 
     ``workdir`` keeps every file that crossed the language boundary — the frames, the WAVs,
-    the host's reports — so a number in the table can be listened to.
+    the host's reports — so a number in the table can be listened to. With ``settings.asr``
+    a listener hears every render and the recording too, and the ``recording`` column is
+    the listener's ceiling; ``listener`` hands one in ready-made, which is how a test
+    listens without a model.
     """
     settings = settings or Settings()
+    listener = make_listener(settings, listener)
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     info = voice_info(voice)
@@ -515,6 +571,12 @@ def evaluate(
             ),
             "timing": facts,
         }
+        if listener is not None:
+            asked = hearable(phonemes)
+            row["asked"] = " ".join(asked)
+            listen(listener, sung, info.sample_rate, asked, row["host"])
+            row["recording"] = {}
+            listen(listener, wav, info.sample_rate, asked, row["recording"])
         if settings.reference:
             started = time.perf_counter()
             reference = aligner.reference(utterance, settings.take_seed)
@@ -524,6 +586,8 @@ def evaluate(
                 reference, f0, energy, utterance.voiced, reference=wav, tokens=utterance.tokens
             )
             row["reference_seconds"] = elapsed
+            if listener is not None:
+                listen(listener, reference, info.sample_rate, hearable(phonemes), row["reference"])
         rows.append(row)
         logger.info("%s: %s", record["id"], _one_line(row["host"]))
 
@@ -543,6 +607,8 @@ def evaluate(
                 piece, utterance.f0, utterance.energy, utterance.voiced,
                 reference=utterance.wav, tokens=utterance.tokens,
             )
+            if listener is not None:
+                listen(listener, piece, info.sample_rate, hearable(utterance.phonemes), row["song"])
         song_facts["seconds_of_frames"] = joined.seconds
 
     audio_seconds = sum(row["seconds"] for row in rows)
@@ -560,12 +626,18 @@ def evaluate(
         timing["reference_seconds"] = sum(row["reference_seconds"] for row in rows)
     if song_facts is not None:
         timing["song"] = song_facts
+    if listener is not None:
+        timing["asr_seconds"] = sum(
+            row[column]["asr_seconds"] for row in rows for column in COLUMNS if column in row
+        )
 
     summary: dict[str, Any] = {"host": summarize([row["host"] for row in rows]), "timing": timing}
     if settings.reference:
         summary["reference"] = summarize([row["reference"] for row in rows])
     if song_facts is not None:
         summary["song"] = summarize([row["song"] for row in rows])
+    if listener is not None:
+        summary["recording"] = summarize([row["recording"] for row in rows])
 
     return {
         "kind": "corpus",
@@ -603,6 +675,7 @@ def evaluate_score(
     workdir: str | Path,
     spec: str | Path | None = None,
     settings: Settings | None = None,
+    listener: Any = None,
 ) -> dict:
     """Notes and words through the whole path a person walks, measured against the frames.
 
@@ -613,6 +686,7 @@ def evaluate_score(
     exists to measure spectral distance against, so ``mel_l1`` is absent here by design.
     """
     settings = settings or Settings()
+    listener = make_listener(settings, listener)
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     info = voice_info(voice)
@@ -646,6 +720,9 @@ def evaluate_score(
         tolerance_cents=settings.tolerance_cents,
     )
     metrics = analyst.measure(sung, f0, energy, voiced)
+    asked = phonemes_of_frames(tokens)
+    if listener is not None:
+        listen(listener, sung, info.sample_rate, asked, metrics)
     seconds = frames.seconds
     return {
         "kind": "score",
@@ -656,6 +733,7 @@ def evaluate_score(
         "host": {"command": host.command},
         "settings": settings.__dict__ | {"energy_full_scale": scale},
         "frames": {"count": len(frames), "seconds": seconds, "inventory": frames.inventory},
+        "asked": " ".join(asked),
         "score": metrics,
         "summary": {
             "score": metrics,
@@ -667,8 +745,11 @@ def evaluate_score(
 # ----------------------------------------------------------------------------------------------
 # the table
 # ----------------------------------------------------------------------------------------------
-def _one_line(metrics: dict[str, float]) -> str:
-    return "  ".join(f"{name}={value:.3f}" for name, value in metrics.items())
+def _one_line(metrics: dict[str, Any]) -> str:
+    """The numbers of one row on one log line; what was heard is text and stays out."""
+    return "  ".join(
+        f"{name}={value:.3f}" for name, value in metrics.items() if isinstance(value, (int, float))
+    )
 
 
 def _cell(value: float | None, width: int = 9) -> str:
@@ -690,7 +771,7 @@ def format_report(report: dict, baseline: dict | None = None) -> str:
     name = report["voice"].get("name") or Path(report["voice"]["path"]).stem
     lines.append(f"{name} — {report['voice']['path']}")
 
-    columns = [key for key in ("host", "reference", "song", "score") if key in summary]
+    columns = [key for key in COLUMNS if key in summary]
     if baseline is not None:
         base = baseline.get("summary", {})
     else:
@@ -737,6 +818,8 @@ def format_report(report: dict, baseline: dict | None = None) -> str:
                 f"        song: {song['seconds_of_frames']:.1f} s of frames in {song['chunks']} "
                 f"chunk(s), sung in {song['render_seconds']:.2f} s"
             )
+        if "asr_seconds" in timing:
+            lines.append(f"        the listener took {timing['asr_seconds']:.2f} s over every column")
     elif "wall_rtf" in timing:
         lines.append(
             f"timing: `auris sing` took {timing['wall_seconds']:.2f} s wall for "

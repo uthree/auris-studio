@@ -231,7 +231,7 @@ uv run tools/eval/aesthetics.py --preset all   # learned aesthetic scores (see d
 # The voice trainer, from `training/` and its own environment. `--torch-backend=auto` reads the
 # machine's driver: the CUDA wheels where there is a card, the CPU ones where there is not.
 cd training && uv venv --python 3.11
-cd training && uv pip install -e '.[dev,export]' --torch-backend=auto
+cd training && uv pip install -e '.[dev,export]' --torch-backend=auto   # `,asr` adds ReazonSpeech, for `--asr`
 cd training && uv run pytest -m "not slow"     # `not slow` skips the FCPE and dictionary fetches
 cd training && uv run ruff check .
 # An exported voice measured *through the host* — `auris sing-frames`, the same session the

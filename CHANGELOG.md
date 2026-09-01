@@ -44,6 +44,12 @@ format rather than a convention: `## <version> — <date>`.
   frames, render against recording. It is the consonant-width study's measurement made a
   permanent column: a voice that tracks its pitch to the cent and hums through every /s/ now
   shows it as a number.
+* **And whether the words can be heard.** `--asr` transcribes every render with a
+  recogniser in the voice's language — ReazonSpeech for Japanese, the `asr` extra — turns
+  the transcript back into IPA through the trainer's own front-end and reports the phoneme
+  error rate against what was asked for, with the recording's own rate beside it as the
+  ceiling a speech recogniser reaches on song. Another language is one class registered
+  under its code.
 
 ### The words write the tune
 
