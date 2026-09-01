@@ -66,6 +66,28 @@ because the host's recorder does not clip and a peak near 1.0 is a voice about t
 table: how long the host took to sing how much audio, as a real-time factor, with the model's
 load time separated out.
 
+### Whether the consonants are formed
+
+Pitch and loudness reach the decoder through the excitation, and the metrics above ask
+whether they arrived. The *words* reach it through the latent, and a render can track its
+f0 to the cent while singing every syllable as the same vowel. The alignment the corpus run
+already has — which phoneme is on which frame — lets `mel_l1` be split by manner class
+(`auris_singer.intelligibility`, the classes in `text/ipa.py`):
+
+| metric | what it is |
+| --- | --- |
+| `mel_l1_vowel` | the mel distance over vowel frames alone |
+| `mel_l1_consonant` | the same over nasals, plosives, affricates, fricatives and approximants |
+| `mel_l1_sibilant` | the same over the sibilants — `s ɕ ʃ ts tɕ tʃ` and their voiced pairs — the consonants a synthesiser fails to form first |
+| `sibilant_tilt_db` | on sibilant frames, the energy above 4 kHz against the energy below it, render minus recording, in dB |
+
+The tilt is the consonant-width study's own measurement made permanent: at a too-short
+width the model did not form the /s/ at all, and the ratio went from 6.7 to 40.6 once it
+was given its width, against 36.6 in the recording. Zero is a sibilant formed as the singer
+formed it; well below zero is a hiss the model never made, and a vowel distance that holds
+while the consonant distance moves is a change that touched the words and not the tone. A
+class the utterance lacks is NaN and left out of the mean, never counted as zero.
+
 Corpus utterances carry no durations — training recovers them by monotonic alignment search —
 so the checkpoint the voice was exported from is required: it aligns each utterance exactly
 as validation does, and it is the reference render.
@@ -124,12 +146,13 @@ ears; the numbers say where to point them.
 * **Linux has no GPU provider.** The host reaches the GPU through the platform's own
   provider, DirectML on Windows and Core ML on macOS, and `--acceleration gpu` on Linux is
   refused as it is in the application. `timing` says which processor sang.
-* **The host column's timing is a cold one.** Each corpus utterance is its own `auris`
-  process, and its one chunk is that process's first inference, which onnxruntime spends
-  warming its arenas on. The song line under the table is the warm number — one process,
-  several chunks — and on the first run it was five times faster per second of audio. Read
-  the host line as "what pressing *Sing* on a fresh document costs" and the song line as
-  the model's speed.
+* **The host column's timing includes the machine's mood.** Each corpus utterance is its
+  own `auris` process, and its one chunk is that process's first inference; the same voice
+  measured RTF 0.28 on a first run with the model file not yet in the page cache and 0.055
+  on the next. The song line under the table — one process, several chunks — is the
+  steadier number for the model's own speed. Read the host line as "what pressing *Sing*
+  costs on this machine right now", and compare timings only between runs made back to
+  back.
 * **Timings are the dev profile's unless `--release` is given.** The workspace builds its
   dependencies at full optimisation even in debug, and onnxruntime is a prebuilt library, so
   the difference is small — but a number worth writing down wants the release build.

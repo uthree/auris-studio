@@ -38,6 +38,12 @@ format rather than a convention: `## <version> — <date>`.
   frames` writes what a singer track will be sung as, and `auris sing-frames` sings such a
   file through a voice into a WAV, with `--report` writing the session's account of the render
   — chunks, load and render time, which processor sang.
+* **The words are measured, not only the tune.** The corpus run splits its spectral distance
+  by the manner class of the phoneme on each frame — vowels, consonants, the sibilants on
+  their own — and measures the sibilant tilt, the energy above 4 kHz against below on /s/
+  frames, render against recording. It is the consonant-width study's measurement made a
+  permanent column: a voice that tracks its pitch to the cent and hums through every /s/ now
+  shows it as a number.
 
 ### The words write the tune
 

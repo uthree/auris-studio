@@ -20,6 +20,9 @@ __all__ = [
     "PAU",
     "SPECIAL_SYMBOLS",
     "IPA_SYMBOLS",
+    "PHONEME_CLASSES",
+    "SIBILANTS",
+    "phoneme_class",
     "PhonemeTable",
     "DEFAULT_PHONEME_TABLE",
 ]
@@ -75,6 +78,41 @@ VOICELESS: frozenset[str] = frozenset(
         "ɸ", "ɸʲ", "f", "θ", "s", "ɕ", "ʃ", "ç", "x", "h",
     }
 )
+
+
+#: Every symbol's manner class — the grouping the inventory above is written in, made
+#: something code can ask. A measurement that wants to know whether the *consonants* of a
+#: render are formed, and not just its vowels, needs to tell one from the other; the classes
+#: are the rows of the table, no finer, because a finer split leaves too few frames per class
+#: in a short utterance to average anything over.
+PHONEME_CLASSES: dict[str, frozenset[str]] = {
+    "vowel": frozenset(
+        {"a", "i", "u", "e", "o", "ɯ", "ɨ", "ə", "ɛ", "ɔ", "æ", "ʌ", "ɑ", "ɒ",
+         "ʊ", "ɪ", "y", "ø", "œ", "ɐ", "a\u0325", "i̥", "ɯ̥", "e̥", "o̥", "ː"}
+    ),
+    "nasal": frozenset({"m", "mʲ", "n", "nʲ", "ɲ", "ŋ", "ɴ"}),
+    "plosive": frozenset(
+        {"p", "pʲ", "b", "bʲ", "t", "tʲ", "d", "dʲ", "k", "kʲ", "kʷ", "g", "gʲ", "gʷ", "ʔ"}
+    ),
+    "affricate": frozenset({"ts", "dz", "tɕ", "dʑ", "tʃ", "dʒ"}),
+    "fricative": frozenset(
+        {"ɸ", "ɸʲ", "β", "f", "v", "θ", "ð", "s", "z", "ɕ", "ʑ", "ʃ", "ʒ", "ç", "x", "ɣ", "h", "ɦ"}
+    ),
+    "approximant": frozenset({"j", "w", "ɰ", "ɹ", "ɾ", "ɾʲ", "r", "l", "ʎ"}),
+    "special": frozenset(SPECIAL_SYMBOLS),
+}
+
+#: The sibilants: the consonants whose identity lives above 4 kHz, and so the ones a
+#: synthesiser fails to form first. Measured as a group of their own for that reason.
+SIBILANTS: frozenset[str] = frozenset({"s", "z", "ɕ", "ʑ", "ʃ", "ʒ", "ts", "dz", "tɕ", "dʑ", "tʃ", "dʒ"})
+
+
+def phoneme_class(symbol: str) -> str:
+    """The manner class of ``symbol``, or ``"unknown"`` for one the table never learned."""
+    for name, members in PHONEME_CLASSES.items():
+        if symbol in members:
+            return name
+    return "unknown"
 
 
 def is_voiceless(symbol: str) -> bool:

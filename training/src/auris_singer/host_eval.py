@@ -58,6 +58,7 @@ from auris_singer.host import (
     frames_from_curves,
 )
 from auris_singer.infer import Synthesizer, frame_voicing
+from auris_singer.intelligibility import CLASS_METRICS, class_spectral_metrics
 from auris_singer.metrics import energy_metrics, pitch_metrics
 from auris_singer.text.ipa import PhonemeTable, is_voiceless
 from auris_singer.utils.audio import frame_energy, mel_spectrogram, spectrogram
@@ -88,6 +89,7 @@ NOISE_SCALE = 0.667
 #: Every metric a column can hold, in the order the table prints them.
 METRICS = (
     "mel_l1",
+    *CLASS_METRICS,
     "f0_rmse_cent",
     "f0_accuracy",
     "f0_corr",
@@ -168,6 +170,11 @@ class Utterance:
     def voiced(self) -> np.ndarray:
         """The voicing the host will decide: phoneme class, cleared where f0 is zero."""
         return frame_voicing(self.phonemes, self.durations, self.f0)
+
+    @property
+    def tokens(self) -> list[str]:
+        """The phoneme on every frame, the alignment written out."""
+        return [p for p, d in zip(self.phonemes, self.durations) for _ in range(d)]
 
 
 def validation_records(root: str | Path, seed: int = 1234, val_size: int = 8) -> list[dict]:
@@ -336,19 +343,31 @@ class Analyst:
         energy: np.ndarray,
         voiced: np.ndarray,
         reference: np.ndarray | None = None,
+        tokens: list[str] | None = None,
     ) -> dict[str, float]:
         """The metrics of one render against the curves it was asked for.
 
-        ``mel_l1`` is against ``reference`` — the recording — and absent where there is none.
-        Everything else is the trainer's own :mod:`auris_singer.metrics`, so the numbers mean
-        what ``val/…`` means in the training log.
+        ``mel_l1`` is against ``reference`` — the recording — and absent where there is none;
+        with ``tokens``, the phoneme on each frame, it is also split by manner class and the
+        sibilant tilt is measured (:mod:`auris_singer.intelligibility`). Everything else is
+        the trainer's own :mod:`auris_singer.metrics`, so the numbers mean what ``val/…``
+        means in the training log.
         """
         n_frames = int(f0.shape[0])
         pred = self.trim(wav, n_frames)
         out: dict[str, float] = {}
         if reference is not None:
             real = self.trim(reference, n_frames)
-            out["mel_l1"] = float((self.mel(pred) - self.mel(real)).abs().mean())
+            mel_pred, mel_real = self.mel(pred), self.mel(real)
+            out["mel_l1"] = float((mel_pred - mel_real).abs().mean())
+            if tokens is not None:
+                power = lambda w: spectrogram(w, self.n_fft, self.hop_length, self.win_length, power=2.0)  # noqa: E731
+                out.update(
+                    class_spectral_metrics(
+                        mel_pred, mel_real, power(pred), power(real), tokens,
+                        self.sample_rate, self.n_fft,
+                    )
+                )
 
         valid = torch.ones(1, n_frames)
         target_energy = torch.from_numpy(np.asarray(energy, dtype=np.float32)).unsqueeze(0)
@@ -491,7 +510,9 @@ def evaluate(
             "speaker_id": int(record["speaker_id"]),
             "n_frames": utterance.n_frames,
             "seconds": utterance.n_frames * info.hop_seconds,
-            "host": analyst.measure(sung, f0, energy, utterance.voiced, reference=wav),
+            "host": analyst.measure(
+                sung, f0, energy, utterance.voiced, reference=wav, tokens=utterance.tokens
+            ),
             "timing": facts,
         }
         if settings.reference:
@@ -499,7 +520,9 @@ def evaluate(
             reference = aligner.reference(utterance, settings.take_seed)
             elapsed = time.perf_counter() - started
             sf.write(str(workdir / f"{stem}.reference.wav"), reference, info.sample_rate)
-            row["reference"] = analyst.measure(reference, f0, energy, utterance.voiced, reference=wav)
+            row["reference"] = analyst.measure(
+                reference, f0, energy, utterance.voiced, reference=wav, tokens=utterance.tokens
+            )
             row["reference_seconds"] = elapsed
         rows.append(row)
         logger.info("%s: %s", record["id"], _one_line(row["host"]))
@@ -517,7 +540,8 @@ def evaluate(
         for row, utterance, (start, end) in zip(rows, utterances, spans):
             piece = sung[start * info.hop_length : end * info.hop_length]
             row["song"] = analyst.measure(
-                piece, utterance.f0, utterance.energy, utterance.voiced, reference=utterance.wav
+                piece, utterance.f0, utterance.energy, utterance.voiced,
+                reference=utterance.wav, tokens=utterance.tokens,
             )
         song_facts["seconds_of_frames"] = joined.seconds
 
