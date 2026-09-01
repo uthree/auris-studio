@@ -138,3 +138,44 @@ jobs:
       # skips, so this exercises the DSP, the document model and the whole render path.
       - name: Test
         run: cargo test --workspace --exclude auris-gpui --locked
+
+  # `training/`, which is Python and has nothing to do with the workspace above — except that it
+  # writes the voice files `auris-singer` reads, and its `tests/test_host_contract.py` is the only
+  # thing checking that the two agree on the metadata format and the phoneme table.
+  #
+  # That is also why this job carries no path filter. The edit that breaks the contract is as
+  # likely to land in `crates/auris-vocal` as in `training/`, so a filter that skipped the job
+  # whenever no Python changed would skip it for exactly the changes it exists to catch.
+  training:
+    name: Voice model trainer
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: training
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to a patch version, not `@v10`: setup-uv stopped publishing floating major and
+      # minor tags at v8 deliberately, so the usual shorthand resolves to nothing.
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          python-version: "3.11"
+
+      # `--torch-backend=cpu`, where the documentation gives a person `auto`: the runner has no
+      # NVIDIA driver, so detection lands here anyway, and naming it outright is one less thing
+      # that can change underneath CI. The `export` extra is not optional here — the ONNX export
+      # is the artefact the whole contract is about, and skipping its tests would leave the file
+      # format checked only in the abstract.
+      - name: Install
+        run: |
+          uv venv
+          uv pip install -e '.[dev,export]' --torch-backend=cpu
+
+      - name: Lint
+        run: uv run ruff check .
+
+      # Everything but the tests marked slow, which fetch the FCPE pitch model and the
+      # jpreprocess dictionary — a download every run, for coverage the rest already gives.
+      - name: Test
+        run: uv run pytest -m "not slow"
