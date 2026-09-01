@@ -1,0 +1,70 @@
+[project]
+name = "auris-singer"
+version = "0.1.0"
+description = "VITS-based singing voice synthesizer with an NSF-HiFi-GAN vocoder at 48 kHz"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { file = "LICENSE" }
+dependencies = [
+    "torch>=2.4",
+    "torchaudio>=2.4",
+    "lightning>=2.4",
+    "omegaconf>=2.3",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "soundfile>=0.12",
+    "numba>=0.59",
+    "tqdm>=4.66",
+    "torchfcpe>=0.0.4",
+    "jpreprocess>=0.1.7",
+    "tensorboard>=2.16",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+]
+# scripts/export_onnx.py — torch's dynamo-based exporter needs onnxscript,
+# and onnxruntime is what the export is verified against.
+export = [
+    "onnx>=1.17",
+    "onnxscript>=0.2",
+    "onnxruntime>=1.20",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# PyTorch is pinned to the CUDA 12.8 wheels: the default PyPI wheels are built
+# against a newer CUDA runtime than many drivers support. Change the index URL
+# (e.g. to `.../whl/cpu` or `.../whl/cu126`) to match your driver.
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch" }
+torchaudio = { index = "pytorch" }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/auris_singer"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "slow: tests that load the FCPE model or the jpreprocess dictionary (deselect with '-m \"not slow\"')",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP"]
+ignore = ["E501"]

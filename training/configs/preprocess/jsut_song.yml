@@ -1,0 +1,42 @@
+# Preprocessing for JSUT-song (27 children's songs, one singer, 48 kHz).
+#
+# Run scripts/prepare_jsut_song.py first: it splits the 30-80 s recordings into
+# phrases and writes IPA transcripts derived from the corpus labels.
+#
+#   uv run python scripts/prepare_jsut_song.py \
+#       --wav-dir data/raw/jsut-song_ver1/child_song/wav \
+#       --label-dir data/raw/todai_child \
+#       --output data/raw/jsut_song
+#
+#   uv run python scripts/preprocess.py --config configs/preprocess/jsut_song.yml
+
+audio:
+  sample_rate: 48000
+  n_fft: 2048
+  hop_length: 480
+  win_length: 2048
+  # The preparation script already normalized each song as a whole; normalizing
+  # again per phrase would flatten the dynamics between phrases of one song.
+  peak_normalize: false
+  min_seconds: 0.5
+  max_seconds: 10.0
+
+f0:
+  device: cuda
+  f0_min: 60.0            # the corpus is a single female singer
+  f0_max: 1200.0
+  threshold: 0.006
+  decoder_mode: local_argmax
+
+text:
+  language: ipa           # transcripts are already IPA, written by the prep script
+  phoneme_table: null
+
+dataset:
+  output_dir: data/processed/jsut_song
+  sources:
+    - name: jsut_song
+      wav_dir: data/raw/jsut_song/wav
+      text_dir: data/raw/jsut_song/text
+
+num_workers: 8

@@ -1,0 +1,66 @@
+# JSUT-song plus four low-pitched VocalSet singers.
+#
+# JSUT-song on its own is a single soprano: 99.7% of its voiced frames sit
+# above 200 Hz and its 1st percentile is 225 Hz. A model trained on it has
+# never seen the dense harmonic structure of a low voice, so its behaviour
+# there is untested. The four VocalSet male singers fill 80-250 Hz with real
+# recordings.
+#
+# The VocalSet speakers sing single vowels only -- they contribute pitch range,
+# not phonetics. See scripts/prepare_vocalset.py for why, and doc/preprocessing.md
+# for what this mix does and does not buy.
+#
+#   uv run python scripts/prepare_jsut_song.py \
+#       --wav-dir data/raw/jsut-song_ver1/child_song/wav \
+#       --label-dir data/raw/todai_child \
+#       --output data/raw/jsut_song
+#
+#   uv run python scripts/prepare_vocalset.py \
+#       --source data/raw/VocalSet/FULL \
+#       --output data/raw/vocalset
+#
+#   uv run python scripts/preprocess.py --config configs/preprocess/jsut_song_vocalset.yml
+
+audio:
+  sample_rate: 48000
+  n_fft: 2048
+  hop_length: 480
+  win_length: 2048
+  # Both preparation scripts already set levels: JSUT-song per song, VocalSet
+  # per speaker. Normalizing again per clip would flatten the dynamics that
+  # the energy conditioning is supposed to carry.
+  peak_normalize: false
+  min_seconds: 0.5
+  max_seconds: 10.0
+
+f0:
+  device: cuda
+  f0_min: 50.0            # low enough for the bass end of the male singers
+  f0_max: 1200.0
+  threshold: 0.006
+  decoder_mode: local_argmax
+
+text:
+  language: ipa           # both preparation scripts write IPA directly
+  phoneme_table: null
+
+dataset:
+  output_dir: data/processed/jsut_song_vocalset
+  sources:
+    - name: jsut_song
+      wav_dir: data/raw/jsut_song/wav
+      text_dir: data/raw/jsut_song/text
+    - name: vocalset_male1
+      wav_dir: data/raw/vocalset/male1/wav
+      text_dir: data/raw/vocalset/male1/text
+    - name: vocalset_male3
+      wav_dir: data/raw/vocalset/male3/wav
+      text_dir: data/raw/vocalset/male3/text
+    - name: vocalset_male8
+      wav_dir: data/raw/vocalset/male8/wav
+      text_dir: data/raw/vocalset/male8/text
+    - name: vocalset_male11
+      wav_dir: data/raw/vocalset/male11/wav
+      text_dir: data/raw/vocalset/male11/text
+
+num_workers: 8

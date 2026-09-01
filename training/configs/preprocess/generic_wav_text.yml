@@ -1,0 +1,43 @@
+# Preprocessing for a generic "wav + transcript" corpus.
+#
+# Expected layout (one entry per speaker under dataset.sources):
+#
+#   data/raw/my_singer/wav/song01.wav
+#   data/raw/my_singer/text/song01.txt
+#
+# Durations are not required: training recovers the phoneme/frame alignment
+# with monotonic alignment search.
+
+audio:
+  sample_rate: 48000
+  n_fft: 2048
+  hop_length: 480       # 100 frames per second
+  win_length: 2048
+  peak_normalize: true
+  peak: 0.95
+  min_seconds: 0.5
+  max_seconds: 20.0
+
+f0:
+  device: cuda          # set to cpu if no GPU is available
+  f0_min: 40.0
+  f0_max: 1600.0        # high enough for soprano singing
+  threshold: 0.006
+  decoder_mode: local_argmax
+
+text:
+  language: ja          # "ja" runs jpreprocess; "ipa" takes IPA directly
+  phoneme_table: null   # null uses the built-in IPA table
+  options:
+    add_boundary_silence: true
+
+dataset:
+  output_dir: data/processed
+  sources:
+    - name: my_singer
+      wav_dir: data/raw/my_singer/wav
+      text_dir: data/raw/my_singer/text
+      wav_suffix: .wav
+      text_suffix: .txt
+
+num_workers: 8

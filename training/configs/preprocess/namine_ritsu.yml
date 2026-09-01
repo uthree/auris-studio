@@ -1,0 +1,44 @@
+# Preprocessing for the Namine Ritsu singing database Ver2 (107 songs, one
+# singer, 44.1 kHz -> resampled to 48 kHz, ~4.4 h voiced).
+#
+# Run scripts/prepare_namine_ritsu.py first: it splits the songs into phrases
+# at labeled pauses and writes IPA transcripts from the mono labels.
+#
+#   uv run python scripts/prepare_namine_ritsu.py \
+#       --db-dir 'data/raw/namine_ritsu_v2/「波音リツ」歌声データベースVer2.0.2/DATABASE' \
+#       --output data/raw/namine_ritsu
+#
+#   uv run python scripts/preprocess.py --config configs/preprocess/namine_ritsu.yml
+
+audio:
+  sample_rate: 48000
+  n_fft: 2048
+  hop_length: 480
+  win_length: 2048
+  # The preparation script normalized each song as a whole; normalizing again
+  # per phrase would flatten the dynamics between phrases of one song.
+  peak_normalize: false
+  min_seconds: 0.5
+  max_seconds: 10.0
+
+f0:
+  device: cuda
+  # The corpus's own note statistics (output2.csv) span D3 (147 Hz) to
+  # B5 (988 Hz); the bounds leave room for bends and scoops past both ends.
+  f0_min: 90.0
+  f0_max: 1400.0
+  threshold: 0.006
+  decoder_mode: local_argmax
+
+text:
+  language: ipa           # transcripts are already IPA, written by the prep script
+  phoneme_table: null
+
+dataset:
+  output_dir: data/processed/namine_ritsu
+  sources:
+    - name: namine_ritsu
+      wav_dir: data/raw/namine_ritsu/wav
+      text_dir: data/raw/namine_ritsu/text
+
+num_workers: 8

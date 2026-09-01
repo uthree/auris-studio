@@ -1,0 +1,81 @@
+# Smaller/faster configuration, for limited data or limited VRAM.
+
+defaults:
+  - presets.yml: small
+
+seed: 1234
+run_name: small
+
+data:
+  root: data/processed
+  batch_size: 16
+  num_workers: 8
+  val_size: 8
+  min_frames: 32
+  max_frames: 800           # 8 s at 100 frames/s
+  bucket_boundaries: [0, 100, 200, 300, 400, 600, 800]
+
+audio:
+  sample_rate: 48000
+  n_fft: 2048
+  hop_length: 480
+  win_length: 2048
+  n_mels: 128
+  f_min: 0.0
+  f_max: null
+
+loss:
+  mel: 45.0
+  kl: 1.0
+  kl_aux: 0.2
+  feature_matching: 1.0
+  envelope: 10.0
+  adversarial: 1.0
+  # Guards against posterior collapse: the decoder can read pitch and loudness
+  # off the excitation signal, so driving the latent to noise is a cheap local
+  # optimum. Free bits stop the KL from being minimized past a floor, and the
+  # warm-up gives the reconstruction path a head start.
+  kl_free_bits: 0.02       # nats per latent channel per frame; 0 disables
+  kl_warmup_steps: 10000   # optimizer steps to ramp the KL weight from 0 to 1
+  envelope_kernel_sizes: [128, 256, 512, 1024]
+  mel_params:
+    - [512, 120, 512, 40]
+    - [1024, 240, 1024, 80]
+    - [2048, 480, 2048, 128]
+
+optimizer:
+  learning_rate: 2.0e-4
+  betas: [0.8, 0.99]
+  eps: 1.0e-9
+  weight_decay: 0.0
+  lr_decay: 0.999875
+  grad_clip: 0.0
+
+validation:
+  pitch_metrics: true      # re-analyse generated audio with FCPE
+  f0_min: 40.0
+  f0_max: 1600.0
+  tolerance_cents: 50.0    # a quarter tone; used for val/f0_accuracy
+  log_audio_batches: 4
+
+trainer:
+  # NOTE: `max_steps` counts *optimizer* steps. This module uses manual
+  # optimization with two optimizers (generator + discriminator), so it
+  # advances by 2 per batch -- max_steps here is 2x the number of batches.
+  # `val_check_interval` and `log_every_n_steps`, in contrast, count batches.
+  max_steps: 500000
+  accelerator: auto
+  devices: 1
+  precision: bf16-mixed
+  log_every_n_steps: 50
+  val_check_interval: 2000
+  check_val_every_n_epoch: null
+  num_sanity_val_steps: 0
+
+checkpoint:
+  dirpath: runs/small/checkpoints
+  every_n_train_steps: 2000
+  save_top_k: 5
+  save_last: true
+
+log_dir: runs/small/logs
