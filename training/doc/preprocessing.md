@@ -42,9 +42,10 @@ Durations are **not** required. Training recovers the phoneme/frame alignment
 with monotonic alignment search (see [architecture.md](architecture.md)).
 
 Where a corpus *has* them, they are better than the search — measured on
-JSUT-song, the search gives a sibilant three quarters of its labelled frames,
-one ɕ in three no more than two frames, and lands a phoneme boundary a hundred
-milliseconds off on average, which is roughly a consonant. A source names a
+JSUT-song with `scripts/compare_alignment.py`, the search gives ɕ two thirds of
+its labelled frames and ts under three fifths, one ɕ in three no more than two
+frames, and lands a phoneme boundary 100–170 ms off on average, which is a
+consonant's worth. A source names a
 `duration_dir` of files holding one number per transcript token, its seconds:
 
 ```yaml

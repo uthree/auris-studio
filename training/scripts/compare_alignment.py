@@ -4,8 +4,8 @@
 Training recovers the phoneme-to-frame alignment by monotonic alignment search unless the
 preprocessor stored labelled durations. Where it did, the two can be compared — and the
 comparison is what decides whether a corpus's labels are worth using: on JSUT-song the
-search gave a sibilant three quarters of its labelled frames, one ɕ in three no more than
-two frames, and put a phoneme boundary a hundred milliseconds off on average.
+search gave ɕ two thirds of its labelled frames and ts under three fifths, one ɕ in three
+no more than two frames, and put a phoneme boundary 100–170 ms off on average.
 
 Example::
 
@@ -42,6 +42,33 @@ def alignment_table(rows: list[tuple[str, float, int]]) -> list[dict]:
         table.append(
             {
                 "class": cls,
+                "count": len(pairs),
+                "labelled_frames": float(labelled.mean()),
+                "searched_frames": float(searched.mean()),
+                "ratio": float(searched.mean() / labelled.mean()) if labelled.mean() else float("nan"),
+                "searched_at_most_two": float((searched <= 2).mean()),
+                "mean_abs_diff": float(np.abs(searched - labelled).mean()),
+            }
+        )
+    return table
+
+
+def symbol_table(rows: list[tuple[str, float, int]], at_least: int = 20) -> list[dict]:
+    """The same, per obstruent symbol with at least ``at_least`` occurrences — the class
+    means hide that the search treats /s/ and /ɕ/ very differently."""
+    by: dict[str, list[tuple[float, int]]] = {}
+    for symbol, labelled, searched in rows:
+        if symbol in SIBILANTS or phoneme_class(symbol) in {"plosive", "affricate", "fricative"}:
+            by.setdefault(symbol, []).append((labelled, searched))
+    table = []
+    for symbol, pairs in sorted(by.items(), key=lambda kv: -len(kv[1])):
+        if len(pairs) < at_least:
+            continue
+        labelled = np.asarray([p[0] for p in pairs], dtype=np.float64)
+        searched = np.asarray([p[1] for p in pairs], dtype=np.float64)
+        table.append(
+            {
+                "class": symbol,
                 "count": len(pairs),
                 "labelled_frames": float(labelled.mean()),
                 "searched_frames": float(searched.mean()),
@@ -93,6 +120,8 @@ def main() -> None:
         rows.extend(zip(phonemes, labelled, searched))
     print(f"{len(records)} utterances, {len(rows)} phonemes")
     print(format_table(alignment_table(rows)))
+    print()
+    print(format_table(symbol_table(rows)))
 
 
 if __name__ == "__main__":

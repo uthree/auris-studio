@@ -15,10 +15,10 @@ used here:
 Label timings find the phrase boundaries, and are also written out as seconds
 per phoneme (``dur/``), which the preprocessor stores when its source names a
 ``duration_dir``. Training then expands the phonemes by the labels instead of
-by monotonic alignment search — which, measured on this corpus, gives a
-sibilant three quarters of its labelled frames and lands a boundary a hundred
-milliseconds off on average. Leave ``duration_dir`` out to fall back to the
-search.
+by monotonic alignment search — which, measured on this corpus, gives ɕ two
+thirds of its labelled frames, one ɕ in three no more than two frames, and
+lands a boundary 100–170 ms off on average. Leave ``duration_dir`` out to
+fall back to the search.
 
 Loudness is normalized per **song**, not per phrase, so the dynamics between
 phrases of one song survive; run the preprocessor with
@@ -182,8 +182,8 @@ def to_durations(phrase: list[Phoneme], start: float, end: float) -> list[float]
     time goes to the token before it (or after it, at the very start), and the list lines
     up with the transcript token for token and sums to the clip. These are the alignment
     monotonic alignment search would otherwise have to guess, and for a consonant it
-    guesses badly: on this corpus it gives a sibilant three quarters of its labelled
-    frames and one ɕ in three no more than two frames.
+    guesses badly: on this corpus it gives ɕ two thirds of its labelled frames and one
+    ɕ in three no more than two frames.
     """
     durations: list[float] = []
     carried = 0.0

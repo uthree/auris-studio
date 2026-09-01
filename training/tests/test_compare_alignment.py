@@ -27,3 +27,11 @@ def test_the_table_reads_each_class_against_its_labels():
     text = compare.format_table(compare.alignment_table(rows))
     assert "sibilant" in text and "|diff|" in text
     assert [r["class"] for r in compare.alignment_table(rows)][0] in {"vowel", "sibilant"}, "largest class first"
+
+
+def test_the_symbol_table_keeps_the_obstruents_that_occur_enough():
+    rows = [("s", 16.0, 12)] * 3 + [("ɕ", 17.0, 2)] * 2 + [("a", 30.0, 30)] * 5 + [("k", 14.0, 15)] * 2
+    table = {row["class"]: row for row in compare.symbol_table(rows, at_least=2)}
+    assert set(table) == {"s", "ɕ", "k"}, "vowels are not obstruents; each obstruent is its own row"
+    assert table["ɕ"]["searched_at_most_two"] == 1.0
+    assert compare.symbol_table(rows, at_least=3) and set(r["class"] for r in compare.symbol_table(rows, at_least=3)) == {"s"}

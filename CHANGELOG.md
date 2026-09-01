@@ -46,9 +46,9 @@ format rather than a convention: `## <version> — <date>`.
   shows it as a number.
 * **A corpus's labels align the training, where it has them.** Training recovered every
   phoneme-to-frame alignment by monotonic alignment search, labels or no labels, and
-  measured against JSUT-song's labels the search gives a sibilant three quarters of its
-  frames, one ɕ in three no more than two frames, and puts a boundary a hundred
-  milliseconds off on average — a consonant's worth. A preprocessing source can now name
+  measured against JSUT-song's labels the search gives ɕ two thirds of its frames and ts
+  under three fifths, one ɕ in three no more than two frames, and puts a boundary
+  100–170 ms off on average — a consonant's worth. A preprocessing source can now name
   a `duration_dir` of labelled seconds per phoneme; the preprocessor stores them as frames,
   training expands the phonemes by them and skips the search (`data.use_durations`), the
   host evaluation measures every voice on the same labelled alignment, and
