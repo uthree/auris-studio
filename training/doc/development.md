@@ -3,28 +3,26 @@
 ## Environment
 
 The project uses [uv](https://docs.astral.sh/uv/) for a reproducible
-environment.
+environment. Everything below is run from `training/`, which has its own
+`pyproject.toml` and its own `.venv` — the Rust workspace a directory above
+knows nothing about either.
 
 ```bash
-uv venv --python 3.11
-uv pip install -e '.[dev]'
+uv sync --extra dev --torch-backend=auto
 ```
 
-PyTorch is pinned to the **CUDA 12.8** wheels in `pyproject.toml`, because the
-default PyPI wheels are built against a newer CUDA runtime than many drivers
-support. If your driver differs, change the index URL:
+`--torch-backend=auto` reads the installed NVIDIA driver and resolves PyTorch
+from the matching index: the CUDA build where there is a card to use it, the
+CPU build where there is not. That is what lets one command serve a training
+machine, a laptop and a CI runner, and it is why `pyproject.toml` pins no index
+of its own — it used to name the CUDA 12.8 wheels, which was correct on exactly
+one of those three.
 
-```toml
-[[tool.uv.index]]
-name = "pytorch"
-url = "https://download.pytorch.org/whl/cu128"   # or .../cpu, .../cu126
-explicit = true
-```
-
-Then force a re-resolve:
+Name a backend by hand where the detection is wrong, or where you want the CPU
+build on a machine that has a card:
 
 ```bash
-uv pip uninstall torch torchaudio && uv pip install -e '.[dev]'
+uv sync --extra dev --torch-backend=cpu     # or cu128, cu126, ...
 ```
 
 Check the result with:
@@ -32,6 +30,9 @@ Check the result with:
 ```bash
 uv run python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 ```
+
+Training needs the CUDA build and a card. Everything else here — the tests, the
+contract test, a preprocessing run — is content with the CPU build.
 
 ## Repository layout
 
@@ -59,8 +60,14 @@ configs/
   train/               # presets.yml + one config per model size
 scripts/               # preprocess.py, train.py, infer.py, export_onnx.py
 tests/                 # pytest suite
+  test_host_contract.py  # what this and the Rust host must agree on
 doc/                   # this documentation
 ```
+
+Everything above is under `training/` in the Auris Studio repository. The Rust
+crates a directory up are not importable from here and are not meant to be; the
+one place this project reads them is `tests/test_host_contract.py`, which reads
+them as *text*.
 
 ## Tests
 
@@ -76,6 +83,20 @@ uv run pytest -m "not slow"
 
 Everything runs on CPU. `tests/conftest.py` builds a synthetic preprocessed
 dataset, so most tests need neither network access nor real audio.
+
+### The contract test
+
+`tests/test_host_contract.py` checks this project against the code that plays
+what it exports — `crates/auris-singer` and `crates/auris-vocal`. Both sides
+write down the same three things independently: the `metadata_props` key, the
+metadata format version, and the phoneme table down to which symbols are
+voiceless. The test parses the constants out of the Rust sources and compares.
+
+A failure means the two halves have drifted, and the fix is a decision, not an
+edit to whichever side the test happened to name: either the export changes and
+the host must be taught to read it, or the host is right and the export is
+wrong. Bumping `FORMAT_VERSION` on both sides is how the first case is
+declared.
 
 Long test runs (or anything else long) should go in tmux so they survive a
 disconnected session:

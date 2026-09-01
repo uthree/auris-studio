@@ -7,7 +7,7 @@ uv run python scripts/train.py --config configs/train/base.yml
 Long runs should go in tmux so they survive a disconnect:
 
 ```bash
-tmux new-session -d -s train "cd /path/to/auris-singer && uv run python scripts/train.py --config configs/train/base.yml"
+tmux new-session -d -s train "cd /path/to/auris-studio/training && uv run python scripts/train.py --config configs/train/base.yml"
 ```
 
 ```bash

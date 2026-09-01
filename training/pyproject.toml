@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "VITS-based singing voice synthesizer with an NSF-HiFi-GAN vocoder at 48 kHz"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
-license = { file = "LICENSE" }
+# Named rather than pointed at a file: the licence is the repository's one `LICENSE`, a
+# directory above, and a path that leaves the project root is not something a build backend
+# will follow.
+license = "Apache-2.0"
 dependencies = [
     "torch>=2.4",
     "torchaudio>=2.4",
@@ -38,17 +41,11 @@ export = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-# PyTorch is pinned to the CUDA 12.8 wheels: the default PyPI wheels are built
-# against a newer CUDA runtime than many drivers support. Change the index URL
-# (e.g. to `.../whl/cpu` or `.../whl/cu126`) to match your driver.
-[[tool.uv.index]]
-name = "pytorch"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
-
-[tool.uv.sources]
-torch = { index = "pytorch" }
-torchaudio = { index = "pytorch" }
+# PyTorch is deliberately not pinned to one of pytorch.org's per-CUDA indexes. It was, to the
+# CUDA 12.8 wheels, which is right on a training machine and wrong everywhere else this project
+# now lives: CI has no NVIDIA driver at all, and neither does a machine that only runs the
+# contract test. `uv sync --torch-backend=auto` reads the installed driver and chooses the index
+# itself, so the one command serves both — see `doc/development.md`.
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/auris_singer"]
