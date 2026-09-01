@@ -198,7 +198,7 @@ def test_the_host_sings_the_corpus_and_every_column_is_measured(exported_voice, 
 
     # `all` rather than `val`: twelve synthetic utterances make a one-utterance validation
     # split, and the song column needs two.
-    settings = Settings(split="all", utterances=2, pitch=False, song_gap_seconds=0.2)
+    settings = Settings(split="all", utterances=2, pitch=False, song_gap_seconds=0.2, take_seeds=2)
     listener = Parroting(["a", "i", "k", "o"])
     report = evaluate(
         voice, processed_dataset, checkpoint, Host.find(), tmp_path / "work", settings, listener=listener
@@ -213,12 +213,15 @@ def test_the_host_sings_the_corpus_and_every_column_is_measured(exported_voice, 
         facts = row["timing"]
         assert facts["frames"] == row["n_frames"]
         assert facts["chunks"] >= 1
-        assert facts["seconds"] == pytest.approx(row["seconds"], abs=0.011)
+        assert facts["seconds"] == pytest.approx(row["seconds"] * facts["takes"], abs=0.011), "added over takes"
         assert facts["wall_seconds"] >= facts["render_seconds"] > 0
     summary = report["summary"]
     assert set(summary) >= {"host", "reference", "song", "recording", "timing"}
-    # The listener heard every column of every utterance, and the recording's ceiling.
-    assert listener.heard == 2 * 4
+    # The listener heard every take of every column of every utterance, and the recording.
+    assert listener.heard == 2 * (3 * 2 + 1)
+    assert report["utterances"][0]["seeds"] == [0, 1]
+    assert report["summary"]["timing"]["takes"] == 2
+    assert report["utterances"][0]["timing"]["takes"] == 2
     for row in report["utterances"]:
         assert row["asked"].startswith("a i k o"), "the synthetic transcript, made hearable"
         for column in ("host", "reference", "song", "recording"):
@@ -230,8 +233,8 @@ def test_the_host_sings_the_corpus_and_every_column_is_measured(exported_voice, 
 
     # Every file that crossed the boundary is kept, and the table reads.
     kept = {p.name for p in (tmp_path / "work").iterdir()}
-    assert "song.frames.json" in kept and "song.host.wav" in kept
-    assert any(name.endswith(".host.wav") and name != "song.host.wav" for name in kept)
+    assert "song.frames.json" in kept and "song.s0.host.wav" in kept and "song.s1.host.wav" in kept
+    assert any(name.endswith(".s1.host.wav") and not name.startswith("song") for name in kept)
     text = format_report(report)
     assert "mel_l1" in text and "realtime" in text
     json.dumps(report)  # the report is plain data
@@ -265,3 +268,22 @@ def test_a_log_line_carries_the_numbers_and_not_what_was_heard():
 
     line = _one_line({"mel_l1": 0.5, "per": 1.0, "heard": "パンがパーンがたい", "asr_seconds": 0.4})
     assert line == "mel_l1=0.500  per=1.000  asr_seconds=0.400"
+
+
+def test_several_takes_average_into_one_row():
+    from auris_singer.host_eval import average_rows, sum_facts
+
+    rows = [
+        {"mel_l1": 1.0, "per": 0.5, "heard": "first", "f0_rmse_cent": 10.0},
+        {"mel_l1": 3.0, "per": 0.7, "heard": "second", "f0_rmse_cent": float("nan")},
+    ]
+    row = average_rows(rows)
+    assert row["mel_l1"] == pytest.approx(2.0) and row["per"] == pytest.approx(0.6)
+    assert row["f0_rmse_cent"] == pytest.approx(10.0), "NaN is left out of the mean"
+    assert row["heard"] == "first"
+    facts = sum_facts([
+        {"seconds": 1.0, "chunks": 1, "render_seconds": 0.5, "load_seconds": 0.3, "wall_seconds": 2.0, "on_gpu": True, "sample_rate": 48_000, "frames": 100},
+        {"seconds": 1.0, "chunks": 1, "render_seconds": 0.4, "load_seconds": 0.0, "wall_seconds": 1.5, "on_gpu": False, "sample_rate": 48_000, "frames": 100},
+    ])
+    assert facts["takes"] == 2 and facts["seconds"] == 2.0 and facts["render_seconds"] == pytest.approx(0.9)
+    assert facts["on_gpu"] is False and facts["frames"] == 100

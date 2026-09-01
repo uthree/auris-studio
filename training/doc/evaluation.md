@@ -124,6 +124,12 @@ Corpus utterances carry no durations — training recovers them by monotonic ali
 so the checkpoint the voice was exported from is required: it aligns each utterance exactly
 as validation does, and it is the reference render.
 
+One take is one draw of the prior, and on a small voice a draw can put a phrase well out
+of tune — the same utterance measured 19 cents of pitch error on one seed and 46 on
+another. `--take-seeds 3` sings every column three times, seeds `--take-seed` onwards,
+and averages each utterance's numbers over the takes; the table then reads the voice
+rather than the throw. Each take's files are kept, suffixed `.s<seed>`.
+
 The noise differs between host and reference. Each draws its own — the host from
 `auris_core::rng` streams named by the seed, PyTorch from its generator — so the two columns
 are compared metric to metric, never sample to sample; a bit-exact comparison is what

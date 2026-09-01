@@ -82,6 +82,7 @@ __all__ = [
     "evaluate",
     "evaluate_score",
     "summarize",
+    "average_rows",
     "format_report",
     "phonemes_of_frames",
     "METRICS",
@@ -476,6 +477,10 @@ class Settings:
     n_mels: int = 128
     tolerance_cents: float = 50.0
     device: str = "cpu"
+    #: How many takes to average each column over, seeds ``take_seed`` onwards. One take
+    #: is one draw of the prior, and on a small voice a draw can put a phrase an octave out;
+    #: the mean over several is the voice, one is the throw.
+    take_seeds: int = 1
     #: Whether to run the listener: the phoneme error rate, and the recording's ceiling.
     asr: bool = False
     #: The language the listener listens in — the recogniser and the front-end behind it.
@@ -503,6 +508,33 @@ def listen(listener: Any, wav: np.ndarray, sample_rate: int, asked: list[str], i
     into["per"] = phoneme_error_rate(asked, heard.phonemes)
     into["heard"] = heard.text
     into["asr_seconds"] = time.perf_counter() - started
+
+
+def average_rows(rows: list[dict]) -> dict:
+    """One row from several takes: every number its mean over the takes that answered it,
+    NaN left out; what was heard, the first take's."""
+    out: dict[str, Any] = {}
+    for key in {k for row in rows for k in row}:
+        values = [row[key] for row in rows if key in row]
+        numbers = [v for v in values if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        if numbers:
+            finite = [v for v in numbers if math.isfinite(v)]
+            out[key] = sum(finite) / len(finite) if finite else math.nan
+        else:
+            out[key] = values[0]
+    return out
+
+
+def sum_facts(facts: list[dict]) -> dict:
+    """The host's reports of several takes as one: times and chunks added, the rest the
+    first's, and ``takes`` saying how many were added."""
+    out = dict(facts[0])
+    for key in ("seconds", "chunks", "load_seconds", "render_seconds", "wall_seconds", "asr_seconds"):
+        if key in facts[0]:
+            out[key] = sum(f[key] for f in facts)
+    out["on_gpu"] = all(f.get("on_gpu", False) for f in facts)
+    out["takes"] = len(facts)
+    return out
 
 
 def evaluate(
@@ -549,6 +581,7 @@ def evaluate(
     records = corpus.records(settings.split, settings.utterances, settings.seed, settings.val_size)
     if not records:
         raise ValueError(f"no utterances in {data_root}")
+    seeds = [settings.take_seed + at for at in range(max(1, settings.take_seeds))]
 
     utterances: list[Utterance] = []
     rows: list[dict] = []
@@ -572,38 +605,50 @@ def evaluate(
         frames_path = frames.write(workdir / f"{stem}.frames.json")
         sf.write(str(workdir / f"{stem}.real.wav"), wav, corpus.sample_rate)
 
-        rendered = workdir / f"{stem}.host.wav"
-        facts = host.sing_frames(
-            frames_path, info.path, rendered, seed=settings.take_seed, acceleration=settings.acceleration
-        )
-        sung = read_wav(rendered, info.sample_rate)
+        asked = hearable(phonemes)
+        takes: list[dict] = []
+        for seed in seeds:
+            suffix = "" if len(seeds) == 1 else f".s{seed}"
+            rendered = workdir / f"{stem}{suffix}.host.wav"
+            facts = host.sing_frames(
+                frames_path, info.path, rendered, seed=seed, acceleration=settings.acceleration
+            )
+            sung = read_wav(rendered, info.sample_rate)
+            take: dict[str, Any] = {
+                "host": analyst.measure(
+                    sung, f0, energy, utterance.voiced, reference=wav, tokens=utterance.tokens
+                ),
+                "timing": facts,
+            }
+            if listener is not None:
+                listen(listener, sung, info.sample_rate, asked, take["host"])
+            if settings.reference:
+                started = time.perf_counter()
+                reference = aligner.reference(utterance, seed)
+                take["reference_seconds"] = time.perf_counter() - started
+                sf.write(str(workdir / f"{stem}{suffix}.reference.wav"), reference, info.sample_rate)
+                take["reference"] = analyst.measure(
+                    reference, f0, energy, utterance.voiced, reference=wav, tokens=utterance.tokens
+                )
+                if listener is not None:
+                    listen(listener, reference, info.sample_rate, asked, take["reference"])
+            takes.append(take)
         row: dict[str, Any] = {
             "id": record["id"],
             "speaker_id": int(record["speaker_id"]),
             "n_frames": utterance.n_frames,
             "seconds": utterance.n_frames * info.hop_seconds,
-            "host": analyst.measure(
-                sung, f0, energy, utterance.voiced, reference=wav, tokens=utterance.tokens
-            ),
-            "timing": facts,
+            "seeds": list(seeds),
+            "host": average_rows([take["host"] for take in takes]),
+            "timing": sum_facts([take["timing"] for take in takes]),
         }
+        if settings.reference:
+            row["reference"] = average_rows([take["reference"] for take in takes])
+            row["reference_seconds"] = sum(take["reference_seconds"] for take in takes)
         if listener is not None:
-            asked = hearable(phonemes)
             row["asked"] = " ".join(asked)
-            listen(listener, sung, info.sample_rate, asked, row["host"])
             row["recording"] = {}
             listen(listener, wav, info.sample_rate, asked, row["recording"])
-        if settings.reference:
-            started = time.perf_counter()
-            reference = aligner.reference(utterance, settings.take_seed)
-            elapsed = time.perf_counter() - started
-            sf.write(str(workdir / f"{stem}.reference.wav"), reference, info.sample_rate)
-            row["reference"] = analyst.measure(
-                reference, f0, energy, utterance.voiced, reference=wav, tokens=utterance.tokens
-            )
-            row["reference_seconds"] = elapsed
-            if listener is not None:
-                listen(listener, reference, info.sample_rate, hearable(phonemes), row["reference"])
         rows.append(row)
         logger.info("%s: %s", record["id"], _one_line(row["host"]))
 
@@ -612,28 +657,39 @@ def evaluate(
         gap = int(round(settings.song_gap_seconds / info.hop_seconds))
         joined, spans = concatenate_frames(frames_list, gap)
         frames_path = joined.write(workdir / "song.frames.json")
-        rendered = workdir / "song.host.wav"
-        song_facts = host.sing_frames(
-            frames_path, info.path, rendered, seed=settings.take_seed, acceleration=settings.acceleration
-        )
-        sung = read_wav(rendered, info.sample_rate)
-        for row, utterance, (start, end) in zip(rows, utterances, spans):
-            piece = sung[start * info.hop_length : end * info.hop_length]
-            row["song"] = analyst.measure(
-                piece, utterance.f0, utterance.energy, utterance.voiced,
-                reference=utterance.wav, tokens=utterance.tokens,
+        song_takes: list[dict] = []
+        per_row: list[list[dict]] = [[] for _ in rows]
+        for seed in seeds:
+            suffix = "" if len(seeds) == 1 else f".s{seed}"
+            rendered = workdir / f"song{suffix}.host.wav"
+            song_takes.append(
+                host.sing_frames(
+                    frames_path, info.path, rendered, seed=seed, acceleration=settings.acceleration
+                )
             )
-            if listener is not None:
-                listen(listener, piece, info.sample_rate, hearable(utterance.phonemes), row["song"])
+            sung = read_wav(rendered, info.sample_rate)
+            for at, (utterance, (start, end)) in enumerate(zip(utterances, spans)):
+                piece = sung[start * info.hop_length : end * info.hop_length]
+                measured = analyst.measure(
+                    piece, utterance.f0, utterance.energy, utterance.voiced,
+                    reference=utterance.wav, tokens=utterance.tokens,
+                )
+                if listener is not None:
+                    listen(listener, piece, info.sample_rate, hearable(utterance.phonemes), measured)
+                per_row[at].append(measured)
+        for row, measured in zip(rows, per_row):
+            row["song"] = average_rows(measured)
+        song_facts = sum_facts(song_takes)
         song_facts["seconds_of_frames"] = joined.seconds
 
-    audio_seconds = sum(row["seconds"] for row in rows)
+    audio_seconds = sum(row["seconds"] for row in rows) * len(seeds)
     render_seconds = sum(row["timing"]["render_seconds"] for row in rows)
     timing = {
+        "takes": len(seeds),
         "audio_seconds": audio_seconds,
         "render_seconds": render_seconds,
         "rtf": render_seconds / audio_seconds if audio_seconds else math.nan,
-        "load_seconds_mean": sum(row["timing"]["load_seconds"] for row in rows) / len(rows),
+        "load_seconds_mean": sum(row["timing"]["load_seconds"] for row in rows) / (len(rows) * len(seeds)),
         "wall_seconds": sum(row["timing"]["wall_seconds"] for row in rows),
         "on_gpu": all(row["timing"]["on_gpu"] for row in rows),
         "chunks": sum(row["timing"]["chunks"] for row in rows),
@@ -719,10 +775,6 @@ def evaluate_score(
             f"the track's hop is {frames.hop_seconds} s and the voice's {info.hop_seconds} s; "
             "sing the project once with the voice first so the document carries its clock"
         )
-    take = host.sing(project, info.path, settings.take_seed)
-    wall = host.last_wall_seconds
-    sung = read_wav(take, info.sample_rate)
-
     tokens = frames.tokens()
     f0 = np.asarray(frames.f0_hz, dtype=np.float32)
     energy = np.asarray(frames.energy, dtype=np.float32) * scale
@@ -735,11 +787,21 @@ def evaluate_score(
         n_mels=settings.n_mels, pitch=settings.pitch, device=settings.device,
         tolerance_cents=settings.tolerance_cents,
     )
-    metrics = analyst.measure(sung, f0, energy, voiced)
     asked = phonemes_of_frames(tokens)
-    if listener is not None:
-        listen(listener, sung, info.sample_rate, asked, metrics)
-    seconds = frames.seconds
+    seeds = [settings.take_seed + at for at in range(max(1, settings.take_seeds))]
+    takes: list[dict] = []
+    wall = 0.0
+    take = None
+    for seed in seeds:
+        take = host.sing(project, info.path, seed)
+        wall += host.last_wall_seconds
+        sung = read_wav(take, info.sample_rate)
+        measured = analyst.measure(sung, f0, energy, voiced)
+        if listener is not None:
+            listen(listener, sung, info.sample_rate, asked, measured)
+        takes.append(measured)
+    metrics = average_rows(takes)
+    seconds = frames.seconds * len(seeds)
     return {
         "kind": "score",
         "voice": {"path": str(info.path), "name": info.name, "sample_rate": info.sample_rate},
@@ -748,12 +810,18 @@ def evaluate_score(
         "take": str(take),
         "host": {"command": host.command},
         "settings": settings.__dict__ | {"energy_full_scale": scale},
-        "frames": {"count": len(frames), "seconds": seconds, "inventory": frames.inventory},
+        "frames": {"count": len(frames), "seconds": frames.seconds, "inventory": frames.inventory},
         "asked": " ".join(asked),
+        "seeds": seeds,
         "score": metrics,
         "summary": {
             "score": metrics,
-            "timing": {"audio_seconds": seconds, "wall_seconds": wall, "wall_rtf": wall / seconds if seconds else math.nan},
+            "timing": {
+                "takes": len(seeds),
+                "audio_seconds": seconds,
+                "wall_seconds": wall,
+                "wall_rtf": wall / seconds if seconds else math.nan,
+            },
         },
     }
 
@@ -821,10 +889,12 @@ def format_report(report: dict, baseline: dict | None = None) -> str:
         rtf = timing["rtf"]
         faster = f"{1 / rtf:.0f}× realtime" if rtf and math.isfinite(rtf) and rtf > 0 else "—"
         gpu = "GPU" if timing.get("on_gpu") else "CPU"
+        takes = timing.get("takes", 1)
         lines.append(
             f"timing: {timing['render_seconds']:.2f} s to sing {timing['audio_seconds']:.1f} s "
             f"of audio on the {gpu} · RTF {rtf:.3f} ({faster}) · model open in "
             f"{timing['load_seconds_mean']:.2f} s · {timing['chunks']} chunk(s)"
+            + (f" · {takes} takes averaged" if takes > 1 else "")
         )
         if "reference_seconds" in timing:
             lines.append(f"        reference (PyTorch) took {timing['reference_seconds']:.2f} s")

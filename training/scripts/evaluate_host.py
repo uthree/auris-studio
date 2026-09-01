@@ -63,6 +63,7 @@ def main() -> None:
     parser.add_argument("--val-size", type=int, default=8, help="the training config's data.val_size (default: 8)")
     parser.add_argument("--seed", type=int, default=1234, help="the training config's seed, for the split (default: 1234)")
     parser.add_argument("--take-seed", type=int, default=0, help="the render's seed (default: 0)")
+    parser.add_argument("--take-seeds", type=int, default=1, help="how many takes to average, seeds --take-seed onwards (default: 1)")
     parser.add_argument("--acceleration", choices=["auto", "gpu", "cpu"], default="auto")
     parser.add_argument("--no-song", action="store_true", help="skip the concatenated render")
     parser.add_argument("--no-reference", action="store_true", help="skip the PyTorch render")
@@ -93,6 +94,7 @@ def main() -> None:
         seed=args.seed,
         val_size=args.val_size,
         take_seed=args.take_seed,
+        take_seeds=args.take_seeds,
         acceleration=args.acceleration,
         song=not args.no_song,
         reference=not args.no_reference,
