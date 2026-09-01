@@ -254,3 +254,42 @@ def test_latent_usage_is_zero_when_the_decoder_ignores_z(module, datamodule):
     )
     out["wav_hat"] = generated
     assert module._latent_usage(batch, out).abs().item() == pytest.approx(0.0, abs=1e-5)
+
+
+def test_training_expands_by_the_labels_when_the_batch_carries_them(module, datamodule, monkeypatch):
+    """With durations in the batch the alignment search is never run: the path is the labels'."""
+    from auris_singer.data.dataset import SingingDataset
+
+    plain = SingingDataset.__getitem__
+
+    def labelled(self, index):
+        item = plain(self, index)
+        s, t = item["phonemes"].numel(), item["spec"].size(-1)
+        durations = torch.full((s,), t // s, dtype=torch.long)
+        durations[-1] += t - int(durations.sum())
+        return dict(item, durations=durations)
+
+    monkeypatch.setattr(SingingDataset, "__getitem__", labelled)
+    batch = next(iter(datamodule.train_dataloader()))
+    assert "durations" in batch and torch.equal(batch["durations"].sum(1), batch["spec_lengths"])
+
+    with mock.patch.object(module.model, "_search_alignment", side_effect=AssertionError("searched")):
+        out = module.model(
+            phonemes=batch["phonemes"], phoneme_lengths=batch["phoneme_lengths"],
+            spec=batch["spec"], spec_lengths=batch["spec_lengths"], f0=batch["f0"],
+            energy=batch["energy"], voiced=batch["voiced"], speaker_ids=batch["speaker_ids"],
+            durations=batch["durations"],
+        )
+        assert torch.equal(out["durations"].round().long(), batch["durations"])
+        trainer = L.Trainer(
+            max_steps=1, accelerator="cpu", devices=1, logger=False, enable_checkpointing=False,
+            enable_progress_bar=False, num_sanity_val_steps=0, limit_val_batches=1,
+            val_check_interval=1, use_distributed_sampler=False,
+        )
+        trainer.fit(module, datamodule=datamodule)
+    assert torch.isfinite(trainer.callback_metrics["val/mel"])
+
+    # Switched off, the same corpus trains by the search again.
+    monkeypatch.undo()
+    off = SingingDataset(datamodule.root, use_durations=False)
+    assert "durations" not in off[0]

@@ -27,6 +27,11 @@ class SingingDataset(Dataset):
         min_frames / max_frames: keep only utterances within this frame range.
             ``max_frames`` bounds the memory of a batch; ``min_frames`` avoids
             degenerate clips.
+        use_durations: hand out the labelled frames-per-phoneme where the
+            preprocessor stored them (``durations``), so training expands the
+            phonemes by the labels instead of by alignment search. Off, the
+            key is left out and the search runs as it does for a corpus that
+            has no labels.
     """
 
     def __init__(
@@ -38,8 +43,10 @@ class SingingDataset(Dataset):
         n_fft: int | None = None,
         hop_length: int | None = None,
         win_length: int | None = None,
+        use_durations: bool = True,
     ):
         self.root = Path(root)
+        self.use_durations = use_durations
         audio_config = json.loads((self.root / "audio_config.json").read_text())
         self.sample_rate = int(audio_config["sample_rate"])
         self.n_fft = int(n_fft if n_fft is not None else audio_config["n_fft"])
@@ -73,12 +80,17 @@ class SingingDataset(Dataset):
             f0 = torch.from_numpy(data["f0"].astype(np.float32))
             energy = torch.from_numpy(data["energy"].astype(np.float32))
             voiced = torch.from_numpy(data["voiced"].astype(np.float32))
+            durations = (
+                torch.from_numpy(data["durations"].astype(np.int64))
+                if self.use_durations and "durations" in data
+                else None
+            )
 
         n_frames = min(wav.numel() // self.hop_length, f0.numel())
         wav = wav[: n_frames * self.hop_length]
         spec = spectrogram(wav, self.n_fft, self.hop_length, self.win_length)
 
-        return {
+        item = {
             "phonemes": phonemes,
             "spec": spec,
             "wav": wav.unsqueeze(0),
@@ -87,6 +99,9 @@ class SingingDataset(Dataset):
             "voiced": voiced[:n_frames],
             "speaker_id": torch.tensor(record["speaker_id"], dtype=torch.long),
         }
+        if durations is not None:
+            item["durations"] = durations
+        return item
 
 
 def read_metadata(root: str | Path) -> list[dict]:
@@ -101,7 +116,9 @@ def collate_batch(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tenso
 
     Frame-level tensors are padded to the longest spectrogram in the batch and
     the waveform to the matching number of samples, so ``wav.size(-1)`` is
-    always ``spec.size(-1) * hop_length``.
+    always ``spec.size(-1) * hop_length``. ``durations`` is in the batch only
+    when every item carries it — a batch half aligned by labels and half by
+    search would be neither.
     """
     batch_size = len(batch)
     max_phonemes = max(int(item["phonemes"].numel()) for item in batch)
@@ -132,7 +149,7 @@ def collate_batch(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tenso
         voiced[i, :n_frames] = item["voiced"]
         speaker_ids[i] = item["speaker_id"]
 
-    return {
+    batch_out = {
         "phonemes": phonemes,
         "phoneme_lengths": phoneme_lengths,
         "spec": spec,
@@ -143,6 +160,12 @@ def collate_batch(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tenso
         "voiced": voiced,
         "speaker_ids": speaker_ids,
     }
+    if all("durations" in item for item in batch):
+        durations = torch.zeros(batch_size, max_phonemes, dtype=torch.long)
+        for i, item in enumerate(batch):
+            durations[i, : item["durations"].numel()] = item["durations"]
+        batch_out["durations"] = durations
+    return batch_out
 
 
 class DistributedBucketSampler(DistributedSampler):

@@ -122,3 +122,20 @@ def test_dataloaders_yield_usable_batches(processed_dataset):
     assert batch["spec"].size(0) == 2
     val_batch = next(iter(dm.val_dataloader()))
     assert val_batch["spec"].size(0) == 1
+
+
+def test_a_batch_carries_durations_only_when_every_item_does(processed_dataset):
+    import torch
+
+    from auris_singer.data import SingingDataset, collate_batch
+
+    dataset = SingingDataset(processed_dataset)
+    a, b = dataset[0], dataset[1]
+    assert "durations" not in collate_batch([a, b]), "the synthetic corpus has no labels"
+    a = dict(a, durations=torch.full((a["phonemes"].numel(),), 3, dtype=torch.long))
+    assert "durations" not in collate_batch([a, b]), "half a batch labelled is not labelled"
+    b = dict(b, durations=torch.full((b["phonemes"].numel(),), 2, dtype=torch.long))
+    batch = collate_batch([a, b])
+    assert batch["durations"].shape == (2, max(a["phonemes"].numel(), b["phonemes"].numel()))
+    assert batch["durations"][0, : a["phonemes"].numel()].tolist() == [3] * a["phonemes"].numel()
+    assert batch["durations"][1, b["phonemes"].numel() :].tolist() == [0] * (batch["durations"].shape[1] - b["phonemes"].numel())

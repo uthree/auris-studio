@@ -12,9 +12,13 @@ used here:
   from the labels and written out as IPA — preprocess it with
   ``text.language: ipa``.
 
-Label *timings* are used only to find phrase boundaries. Phoneme durations are
-still recovered by monotonic alignment search during training, so a
-mis-timed label costs nothing.
+Label timings find the phrase boundaries, and are also written out as seconds
+per phoneme (``dur/``), which the preprocessor stores when its source names a
+``duration_dir``. Training then expands the phonemes by the labels instead of
+by monotonic alignment search — which, measured on this corpus, gives a
+sibilant three quarters of its labelled frames and lands a boundary a hundred
+milliseconds off on average. Leave ``duration_dir`` out to fall back to the
+search.
 
 Loudness is normalized per **song**, not per phrase, so the dynamics between
 phrases of one song survive; run the preprocessor with
@@ -170,6 +174,34 @@ def trim_edges(phrase: list[Phoneme], pad: float) -> tuple[float, float, list[st
     return start, end, symbols
 
 
+def to_durations(phrase: list[Phoneme], start: float, end: float) -> list[float]:
+    """Seconds per transcript token, in the order ``to_ipa_line`` writes them.
+
+    The edge pauses are as long as ``trim_edges`` left them, not as long as the label
+    says. A symbol the IPA mapping drops leaves the transcript but not the audio, so its
+    time goes to the token before it (or after it, at the very start), and the list lines
+    up with the transcript token for token and sums to the clip. These are the alignment
+    monotonic alignment search would otherwise have to guess, and for a consonant it
+    guesses badly: on this corpus it gives a sibilant three quarters of its labelled
+    frames and one ɕ in three no more than two frames.
+    """
+    durations: list[float] = []
+    carried = 0.0
+    for index, phoneme in enumerate(phrase):
+        first = max(phoneme.start, start) if index == 0 else phoneme.start
+        last = min(phoneme.end, end) if index == len(phrase) - 1 else phoneme.end
+        seconds = max(last - first, 0.0)
+        if not openjtalk_to_ipa([phoneme.symbol]):
+            if durations:
+                durations[-1] += seconds
+            else:
+                carried += seconds
+            continue
+        durations.append(seconds + carried)
+        carried = 0.0
+    return durations
+
+
 def to_ipa_line(symbols: list[str]) -> str:
     """Convert OpenJTalk phonemes to a space-separated IPA transcript.
 
@@ -213,8 +245,10 @@ def main() -> None:
 
     wav_out = args.output / "wav"
     text_out = args.output / "text"
+    dur_out = args.output / "dur"
     wav_out.mkdir(parents=True, exist_ok=True)
     text_out.mkdir(parents=True, exist_ok=True)
+    dur_out.mkdir(parents=True, exist_ok=True)
 
     n_phrases = 0
     total_seconds = 0.0
@@ -254,6 +288,10 @@ def main() -> None:
             name = f"{wav_path.stem}_{index:03d}"
             sf.write(wav_out / f"{name}.wav", wav[begin:finish], sample_rate)
             (text_out / f"{name}.txt").write_text(transcript, encoding="utf-8")
+            durations = to_durations(phrase, begin / sample_rate, finish / sample_rate)
+            (dur_out / f"{name}.txt").write_text(
+                " ".join(f"{d:.4f}" for d in durations), encoding="utf-8"
+            )
             n_phrases += 1
             total_seconds += (finish - begin) / sample_rate
 

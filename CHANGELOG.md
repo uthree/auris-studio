@@ -44,6 +44,16 @@ format rather than a convention: `## <version> — <date>`.
   frames, render against recording. It is the consonant-width study's measurement made a
   permanent column: a voice that tracks its pitch to the cent and hums through every /s/ now
   shows it as a number.
+* **A corpus's labels align the training, where it has them.** Training recovered every
+  phoneme-to-frame alignment by monotonic alignment search, labels or no labels, and
+  measured against JSUT-song's labels the search gives a sibilant three quarters of its
+  frames, one ɕ in three no more than two frames, and puts a boundary a hundred
+  milliseconds off on average — a consonant's worth. A preprocessing source can now name
+  a `duration_dir` of labelled seconds per phoneme; the preprocessor stores them as frames,
+  training expands the phonemes by them and skips the search (`data.use_durations`), the
+  host evaluation measures every voice on the same labelled alignment, and
+  `scripts/compare_alignment.py` prints the search against the labels by class.
+  `scripts/prepare_jsut_song.py` writes the durations beside the transcripts.
 * **And whether the words can be heard.** `--asr` transcribes every render with a
   recogniser in the voice's language — ReazonSpeech for Japanese, the `asr` extra — turns
   the transcript back into IPA through the trainer's own front-end and reports the phoneme

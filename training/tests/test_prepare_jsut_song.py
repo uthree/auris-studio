@@ -129,3 +129,47 @@ def test_transcript_keeps_internal_pauses_distinct_from_boundaries():
     line = prepare.to_ipa_line(["pau", "k", "a", "pau", "t", "o", "pau"]).split()
     assert line[0] == "<sil>" and line[-1] == "<sil>"
     assert "<pau>" in line, "an internal pause must stay a <pau>"
+
+
+def test_durations_line_up_with_the_transcript_and_the_trimmed_edges():
+    # A long leading pause is clipped to the pad; a symbol the mapping drops leaves its
+    # time with the token before it; the trailing pause is kept whole, being shorter than
+    # the pad. Whatever happens, the seconds sum to the clip.
+    phrase = make([("pau", 1.0), ("k", 0.08), ("a", 0.4), ("xx", 0.05), ("t", 0.06), ("o", 0.3), ("pau", 0.1)])
+    start, end, symbols = prepare.trim_edges(phrase, 0.15)
+    tokens = prepare.to_ipa_line(symbols).split()
+    durations = prepare.to_durations(phrase, start, end)
+    assert len(durations) == len(tokens) == 6
+    assert durations == pytest.approx([0.15, 0.08, 0.45, 0.06, 0.3, 0.1])
+    assert sum(durations) == pytest.approx(end - start)
+    # Dropped at the very start, the time goes forward instead.
+    leading = make([("xx", 0.05), ("k", 0.08), ("a", 0.4)])
+    assert prepare.to_durations(leading, 0.0, 0.53) == pytest.approx([0.13, 0.4])
+
+
+def test_the_script_writes_a_duration_beside_every_transcript(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+
+    import numpy as np
+    import soundfile as sf
+
+    wav_dir, label_dir, out = tmp_path / "wav", tmp_path / "lab", tmp_path / "out"
+    wav_dir.mkdir(), label_dir.mkdir()
+    sf.write(wav_dir / "001.wav", np.zeros(48_000 * 4, dtype=np.float32), 48_000)
+    lines = [(0, 5, "sil"), (5, 10, "k"), (10, 30, "a"), (30, 35, "sil")]
+    label_dir.joinpath("001.lab").write_text(
+        "\n".join(f"{a * 1_000_000} {b * 1_000_000} x-{s}+y" for a, b, s in lines), encoding="utf-8"
+    )
+    done = subprocess.run(
+        [sys.executable, str(SCRIPT), "--wav-dir", str(wav_dir), "--label-dir", str(label_dir),
+         "--output", str(out), "--min-seconds", "0.5", "--min-clip-seconds", "0.5"],
+        capture_output=True, text=True,
+    )
+    assert done.returncode == 0, done.stderr
+    texts = sorted((out / "text").glob("*.txt"))
+    assert texts, "nothing was prepared"
+    for text in texts:
+        tokens = text.read_text(encoding="utf-8").split()
+        seconds = [float(x) for x in (out / "dur" / text.name).read_text(encoding="utf-8").split()]
+        assert len(seconds) == len(tokens) and all(s >= 0 for s in seconds)

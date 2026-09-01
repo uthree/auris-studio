@@ -85,7 +85,10 @@ and an auxiliary term (`kl_aux`) against the duration-expanded
 the alignment objective and the training objective stay consistent.
 
 When a dataset does provide durations, pass them to
-`AurisSinger.forward(..., durations=...)` and MAS is skipped.
+`AurisSinger.forward(..., durations=...)` and MAS is skipped. The data
+pipeline does exactly that where the preprocessor stored labelled durations
+([preprocessing.md](preprocessing.md#input-layout)); `data.use_durations: false`
+makes a labelled corpus train by the search anyway, for comparing the two.
 
 ## Source signal (RefineGAN-style)
 

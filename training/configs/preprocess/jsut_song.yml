@@ -38,5 +38,9 @@ dataset:
     - name: jsut_song
       wav_dir: data/raw/jsut_song/wav
       text_dir: data/raw/jsut_song/text
+      # Seconds per phoneme from the labels, written by the preparation script; training
+      # expands the phonemes by these instead of by alignment search. Leave the line out to
+      # measure the search against them.
+      duration_dir: data/raw/jsut_song/dur
 
 num_workers: 8

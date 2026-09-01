@@ -25,6 +25,9 @@ class SingingDataModule(L.LightningDataModule):
 
     The split is deterministic given ``seed``, so resuming a run — or starting
     a second one with a different model size — sees the same validation set.
+    ``use_durations`` hands training the labelled frames-per-phoneme where the
+    preprocessor stored them; off, the alignment search runs as for a corpus
+    without labels, which is how the two are compared on one dataset.
 
     Note:
         The train loader uses :class:`DistributedBucketSampler`, which is
@@ -43,6 +46,7 @@ class SingingDataModule(L.LightningDataModule):
         bucket_boundaries: list[int] | None = None,
         seed: int = 1234,
         pin_memory: bool = True,
+        use_durations: bool = True,
     ):
         super().__init__()
         self.root = Path(root)
@@ -54,6 +58,7 @@ class SingingDataModule(L.LightningDataModule):
         self.bucket_boundaries = bucket_boundaries
         self.seed = seed
         self.pin_memory = pin_memory
+        self.use_durations = use_durations
 
         self.train_dataset: SingingDataset | None = None
         self.val_dataset: SingingDataset | None = None
@@ -85,7 +90,11 @@ class SingingDataModule(L.LightningDataModule):
         val_records = records[:val_size]
         train_records = records[val_size:] or records
 
-        common = dict(min_frames=self.min_frames, max_frames=self.max_frames)
+        common = dict(
+            min_frames=self.min_frames,
+            max_frames=self.max_frames,
+            use_durations=self.use_durations,
+        )
         self.train_dataset = SingingDataset(self.root, train_records, **common)
         self.val_dataset = SingingDataset(self.root, val_records, **common)
 

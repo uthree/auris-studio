@@ -147,3 +147,50 @@ def test_utterances_without_a_transcript_are_skipped(tmp_path):
         ]
     )
     assert sum(u.text_path is None for u in utterances) == 1
+
+
+def test_labelled_seconds_become_frames_that_sum_exactly():
+    from auris_singer.preprocess.pipeline import seconds_to_frames
+
+    assert seconds_to_frames([0.1, 0.2, 0.7], 100) == [10, 20, 70]
+    frames = seconds_to_frames([0.333, 0.333, 0.334], 100)
+    assert sum(frames) == 100 and min(frames) >= 1
+    # The rounding residue lands on the longest phoneme, and nothing goes below one frame.
+    frames = seconds_to_frames([0.001, 0.001, 0.998], 10)
+    assert frames == [1, 1, 8]
+    with pytest.raises(ValueError, match="cannot share"):
+        seconds_to_frames([0.5, 0.5], 1)
+    with pytest.raises(ValueError, match="nothing"):
+        seconds_to_frames([0.0, 0.0], 10)
+
+
+def test_a_source_with_labels_stores_frames_per_phoneme(tmp_path):
+    write_corpus(tmp_path, n_utterances=2)
+    dur_dir = tmp_path / "raw" / "singer" / "dur"
+    dur_dir.mkdir()
+    for text in (tmp_path / "raw" / "singer" / "text").glob("*.txt"):
+        tokens = text.read_text(encoding="utf-8").split()
+        (dur_dir / text.name).write_text(" ".join("0.1" for _ in tokens), encoding="utf-8")
+    # One label that does not line up: the utterance is skipped, not guessed at.
+    first = sorted(dur_dir.glob("*.txt"))[0]
+    first.write_text("0.1 0.1", encoding="utf-8")
+
+    config = build_config(tmp_path, tmp_path / "processed")
+    config.dataset.sources[0]["duration_dir"] = str(dur_dir)
+    config.f0.device = "cpu"
+    summary = run_preprocess(config)
+    assert summary["processed"] == 1 and summary["skipped"] == 1
+    records = [json.loads(line) for line in (tmp_path / "processed" / "metadata.jsonl").read_text().splitlines()]
+    assert records[0]["has_durations"] is True
+    with np.load(tmp_path / "processed" / records[0]["path"]) as data:
+        assert data["durations"].sum() == records[0]["n_frames"]
+        assert data["durations"].shape == (records[0]["n_phonemes"],)
+
+    from auris_singer.data import SingingDataset, collate_batch
+
+    dataset = SingingDataset(tmp_path / "processed", min_frames=1, max_frames=10_000)
+    batch = collate_batch([dataset[0]])
+    assert batch["durations"].shape == (1, records[0]["n_phonemes"])
+    assert int(batch["durations"].sum()) == records[0]["n_frames"]
+    without = SingingDataset(tmp_path / "processed", min_frames=1, max_frames=10_000, use_durations=False)
+    assert "durations" not in collate_batch([without[0]])

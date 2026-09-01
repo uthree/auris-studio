@@ -11,6 +11,8 @@ key          dtype      contents
 ``f0``       float32    Hz per frame, 0 on unvoiced frames, ``(T,)``
 ``energy``   float32    per-frame RMS, ``(T,)``
 ``voiced``   uint8      voiced flag, ``(T,)``
+``durations`` int32     frames per phoneme, ``(S,)`` — only where the source
+                        named a ``duration_dir`` of labelled seconds
 ===========  =========  ==============================================
 
 The linear spectrogram is *not* cached: recomputing it in the dataloader costs
@@ -38,7 +40,7 @@ from auris_singer.utils.audio import frame_energy
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["Utterance", "collect_utterances", "run_preprocess"]
+__all__ = ["Utterance", "collect_utterances", "run_preprocess", "seconds_to_frames"]
 
 
 @dataclass
@@ -49,6 +51,8 @@ class Utterance:
     wav_path: Path
     text_path: Path | None
     speaker: str
+    #: Labelled seconds per transcript token, where the corpus has labels.
+    duration_path: Path | None = None
 
 
 def collect_utterances(sources) -> list[Utterance]:
@@ -56,7 +60,9 @@ def collect_utterances(sources) -> list[Utterance]:
 
     Each source needs a ``name`` and a ``wav_dir``.  Transcripts are looked up
     in ``text_dir`` (default: ``wav_dir``) under the same stem with
-    ``text_suffix`` (default ``.txt``).
+    ``text_suffix`` (default ``.txt``). A source with labelled timings names a
+    ``duration_dir`` holding, under the same stem with ``duration_suffix``
+    (default ``.txt``), one number per transcript token: its seconds.
     """
     utterances: list[Utterance] = []
     for source in sources:
@@ -65,21 +71,62 @@ def collect_utterances(sources) -> list[Utterance]:
         text_dir = Path(source.get("text_dir") or wav_dir)
         text_suffix = str(source.get("text_suffix", ".txt"))
         wav_suffix = str(source.get("wav_suffix", ".wav"))
+        duration_dir = source.get("duration_dir")
+        duration_dir = Path(duration_dir) if duration_dir else None
+        duration_suffix = str(source.get("duration_suffix", ".txt"))
         if not wav_dir.is_dir():
             raise FileNotFoundError(f"wav_dir does not exist: {wav_dir}")
 
         for wav_path in sorted(wav_dir.rglob(f"*{wav_suffix}")):
             relative = wav_path.relative_to(wav_dir).with_suffix("")
             text_path = (text_dir / relative).with_suffix(text_suffix)
+            duration_path = (
+                (duration_dir / relative).with_suffix(duration_suffix) if duration_dir else None
+            )
             utterances.append(
                 Utterance(
                     utt_id=f"{speaker}/{relative.as_posix()}",
                     wav_path=wav_path,
                     text_path=text_path if text_path.is_file() else None,
                     speaker=speaker,
+                    duration_path=duration_path
+                    if duration_path is not None and duration_path.is_file()
+                    else None,
                 )
             )
     return utterances
+
+
+def seconds_to_frames(seconds: list[float], n_frames: int) -> list[int]:
+    """Labelled seconds per phoneme as whole frames that sum to ``n_frames`` exactly.
+
+    Each duration is scaled to the frames the clip actually has — the clip was cut to
+    whole frames, and may have been truncated — then rounded, and the rounding residue
+    is settled on the longest phonemes, a frame each, where it is least felt. Nothing
+    is rounded below one frame: the alignment search needs a frame per phoneme, and
+    so does a path built from these.
+    """
+    if not seconds or n_frames < len(seconds):
+        raise ValueError(f"{len(seconds)} phonemes cannot share {n_frames} frames")
+    total = float(sum(seconds))
+    if total <= 0:
+        raise ValueError("the durations sum to nothing")
+    exact = [s / total * n_frames for s in seconds]
+    frames = [max(1, int(round(x))) for x in exact]
+    order = sorted(range(len(frames)), key=lambda i: -exact[i])
+    at = 0
+    while sum(frames) != n_frames:
+        i = order[at % len(order)]
+        if sum(frames) < n_frames:
+            frames[i] += 1
+        elif frames[i] > 1:
+            frames[i] -= 1
+        at += 1
+    return frames
+
+
+def _read_durations(path: Path) -> list[float]:
+    return [float(x) for x in path.read_text(encoding="utf-8").split()]
 
 
 def _load_audio(path: Path, sample_rate: int, peak_normalize: bool, peak: float):
@@ -186,19 +233,34 @@ def run_preprocess(config: DictConfig) -> dict[str, int]:
                 skip("fewer frames than phonemes")
                 continue
 
+            durations = None
+            if utt.duration_path is not None:
+                seconds = _read_durations(utt.duration_path)
+                if len(seconds) != len(phoneme_ids):
+                    # A label that does not line up with its transcript is a fault in
+                    # the preparation, not something to paper over with the search.
+                    logger.warning(
+                        "%s: %d durations for %d phonemes", utt.utt_id, len(seconds), len(phoneme_ids)
+                    )
+                    skip("durations do not match phonemes")
+                    continue
+                durations = seconds_to_frames(seconds, n_frames)
+
             energy = frame_energy(wav, n_fft, hop_length, win_length)
             f0, voiced = extractor(wav, sample_rate, n_frames)
 
             out_path = output_dir / f"{utt.utt_id}.npz"
             out_path.parent.mkdir(parents=True, exist_ok=True)
-            np.savez(
-                out_path,
-                wav=(wav.numpy() * 32767.0).astype(np.int16),
-                phonemes=np.asarray(phoneme_ids, dtype=np.int32),
-                f0=f0.numpy().astype(np.float32),
-                energy=energy.numpy().astype(np.float32),
-                voiced=voiced.numpy().astype(np.uint8),
-            )
+            features = {
+                "wav": (wav.numpy() * 32767.0).astype(np.int16),
+                "phonemes": np.asarray(phoneme_ids, dtype=np.int32),
+                "f0": f0.numpy().astype(np.float32),
+                "energy": energy.numpy().astype(np.float32),
+                "voiced": voiced.numpy().astype(np.uint8),
+            }
+            if durations is not None:
+                features["durations"] = np.asarray(durations, dtype=np.int32)
+            np.savez(out_path, **features)
             records.append(
                 {
                     "id": utt.utt_id,
@@ -209,6 +271,7 @@ def run_preprocess(config: DictConfig) -> dict[str, int]:
                     "n_phonemes": len(phoneme_ids),
                     "seconds": round(n_frames * hop_length / sample_rate, 3),
                     "text": text,
+                    "has_durations": durations is not None,
                 }
             )
 

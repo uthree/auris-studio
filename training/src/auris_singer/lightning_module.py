@@ -195,6 +195,9 @@ class AurisSingerModule(L.LightningModule):
             energy=batch["energy"],
             voiced=batch["voiced"],
             speaker_ids=speaker_ids,
+            # Labelled where the corpus had labels and the data module kept them; the
+            # alignment search otherwise.
+            durations=batch.get("durations"),
         )
         wav_hat = out["wav_hat"]
         segment_samples = wav_hat.size(-1)
@@ -296,6 +299,9 @@ class AurisSingerModule(L.LightningModule):
             energy=batch["energy"],
             voiced=batch["voiced"],
             speaker_ids=speaker_ids,
+            # Labelled where the corpus had labels and the data module kept them; the
+            # alignment search otherwise.
+            durations=batch.get("durations"),
         )
         durations = out["durations"].round().long()
 

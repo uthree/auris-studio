@@ -41,6 +41,29 @@ dataset:
 Durations are **not** required. Training recovers the phoneme/frame alignment
 with monotonic alignment search (see [architecture.md](architecture.md)).
 
+Where a corpus *has* them, they are better than the search — measured on
+JSUT-song, the search gives a sibilant three quarters of its labelled frames,
+one ɕ in three no more than two frames, and lands a phoneme boundary a hundred
+milliseconds off on average, which is roughly a consonant. A source names a
+`duration_dir` of files holding one number per transcript token, its seconds:
+
+```yaml
+dataset:
+  sources:
+    - name: jsut_song
+      wav_dir: data/raw/jsut_song/wav
+      text_dir: data/raw/jsut_song/text
+      duration_dir: data/raw/jsut_song/dur    # optional
+```
+
+The preprocessor scales them to the frames the clip has, rounds them to whole
+frames that sum exactly, stores them as `durations` and marks the record
+`has_durations`; an utterance whose count does not match its transcript is
+skipped, not guessed at. Training then expands the phonemes by the labels
+(`data.use_durations`, on by default) instead of searching, and the host
+evaluation measures every voice on the same labelled alignment.
+`scripts/prepare_jsut_song.py` writes the `dur/` directory beside `text/`.
+
 ## Output layout
 
 ```
@@ -61,6 +84,7 @@ Each `.npz` contains:
 | `f0` | float32 | `(T,)` | Hz, exactly 0 on unvoiced frames |
 | `energy` | float32 | `(T,)` | per-frame RMS |
 | `voiced` | uint8 | `(T,)` | voiced flag |
+| `durations` | int32 | `(S,)` | frames per phoneme, summing to `T` — only where the source named a `duration_dir` |
 
 The linear spectrogram is deliberately **not** cached — recomputing it in the
 dataloader is cheap and keeps the dataset roughly 4× smaller.

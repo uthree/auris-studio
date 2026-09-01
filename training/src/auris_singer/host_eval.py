@@ -236,14 +236,28 @@ class Corpus:
         wav = wav[: n_frames * self.hop_length]
         return self.table.decode(ids), f0[:n_frames], energy[:n_frames], voiced[:n_frames], wav
 
+    def durations(self, record: dict) -> list[int] | None:
+        """The labelled frames per phoneme, where the preprocessor stored them.
+
+        Where the corpus had labels, these are the alignment — and the one every voice
+        is measured on, whether it trained by the labels or by the search — so what the
+        table compares is the voices and not two alignments.
+        """
+        with np.load(self.root / record["path"]) as data:
+            if "durations" not in data:
+                return None
+            return data["durations"].astype(np.int64).tolist()
+
 
 class Aligner:
     """Frames per phoneme for a corpus utterance, from the checkpoint's own alignment.
 
-    The corpus stores no durations — training recovers them by monotonic alignment search —
-    so an utterance can only be laid out on the model's clock by the model that learned it.
-    This runs the training forward pass with the recording's spectrogram, exactly as
-    validation does, and reads the path's column sums.
+    A corpus without labels stores no durations — training recovers them by monotonic
+    alignment search — so an utterance can only be laid out on the model's clock by the
+    model that learned it. This runs the training forward pass with the recording's
+    spectrogram, exactly as validation does, and reads the path's column sums. Where the
+    preprocessor stored labelled durations, :meth:`Corpus.durations` answers first and
+    this is not asked.
     """
 
     def __init__(self, checkpoint: str | Path, device: str = "cpu"):
@@ -541,10 +555,12 @@ def evaluate(
     frames_list: list[HostFrames] = []
     for record in records:
         phonemes, f0, energy, voiced, wav = corpus.load(record)
-        durations = aligner.durations(
+        durations = corpus.durations(record) or aligner.durations(
             phonemes, wav, f0, energy, voiced, int(record["speaker_id"]),
             corpus.n_fft, corpus.hop_length, corpus.win_length,
         )
+        if sum(durations) != f0.shape[0]:
+            raise RuntimeError(f"{record['id']}: {sum(durations)} frames of durations for {f0.shape[0]}")
         utterance = Utterance(
             id=record["id"], speaker_id=int(record["speaker_id"]), phonemes=phonemes,
             durations=durations, f0=f0, energy=energy, wav=wav,

@@ -72,6 +72,11 @@ stays small. It is already distribution-aware, so the trainer is created with
 `data.max_frames` bounds the memory of a batch (1200 frames = 12 s), and
 `data.bucket_boundaries` must cover up to `max_frames`.
 
+`data.use_durations` (default `true`) hands training the labelled frames per
+phoneme wherever the preprocessor stored them, so the phonemes are expanded by
+the labels and monotonic alignment search is skipped; a corpus without labels
+is unaffected. Set it `false` to train a labelled corpus by the search.
+
 ## Losses
 
 See [architecture.md](architecture.md#losses) for what each term does. The
