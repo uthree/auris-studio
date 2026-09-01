@@ -234,6 +234,10 @@ cd training && uv venv --python 3.11
 cd training && uv pip install -e '.[dev,export]' --torch-backend=auto
 cd training && uv run pytest -m "not slow"     # `not slow` skips the FCPE and dictionary fetches
 cd training && uv run ruff check .
+# An exported voice measured *through the host* — `auris sing-frames`, the same session the
+# window sings with — beside PyTorch and beside itself sung as one long song; `--score` sings
+# notes and words through `auris sing` instead. `training/doc/evaluation.md` is the account.
+cd training && uv run python scripts/evaluate_host.py --voice voice.onnx --checkpoint last.ckpt --data data/processed/jsut_song
 ```
 
 Before and after touching a writer or an audio constant, run the two measuring instruments —

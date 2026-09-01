@@ -48,6 +48,8 @@ src/auris_singer/
   losses.py            # envelope / multi-param mel / KL / GAN losses
   infer.py             # Synthesizer
   export.py            # ONNX export wrapper + verification
+  host.py              # driving `auris`, the Rust host, as a measuring instrument
+  host_eval.py         # an exported voice measured through the host
   modules/
     transformer.py     # RMSNorm, SwiGLU, RoPE, QK-Norm, SDPA encoder
     encoders.py        # TextEncoder, PriorEncoder, PosteriorEncoder
@@ -63,7 +65,7 @@ src/auris_singer/
 configs/
   preprocess/          # dataset preprocessing configs
   train/               # presets.yml + one config per model size
-scripts/               # preprocess.py, train.py, infer.py, export_onnx.py
+scripts/               # preprocess.py, train.py, infer.py, export_onnx.py, evaluate_host.py
 tests/                 # pytest suite
   test_host_contract.py  # what this and the Rust host must agree on
 doc/                   # this documentation

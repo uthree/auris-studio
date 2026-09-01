@@ -57,4 +57,5 @@ See [`doc/`](doc/):
 | [datasets.md](doc/datasets.md) | Corpus survey, license tiers, and the data policy |
 | [training.md](doc/training.md) | Training procedure, losses, presets |
 | [inference.md](doc/inference.md) | Inference API and input format |
+| [evaluation.md](doc/evaluation.md) | Measuring an exported voice through the host — the application, not PyTorch |
 | [development.md](doc/development.md) | Environment, tests, repository layout |

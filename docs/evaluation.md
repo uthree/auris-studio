@@ -75,3 +75,21 @@ literature are load-bearing here:
 * Objective metrics correlate weakly with human judgement across the board (survey,
   arXiv:2509.00051). Read several numbers together, never one alone, and let a pair of ears
   break every tie.
+
+## The singer's ruler
+
+```
+cd training && uv run python scripts/evaluate_host.py --voice voice.onnx \
+    --checkpoint last.ckpt --data data/processed/jsut_song --json before.json
+```
+
+The same discipline pointed at the singing voices. A voice is trained and verified in
+`training/`, in Python, and sung by `auris-singer`, in Rust, and the second is the one a
+person hears: it chunks a long timeline, arranges frames into tokens, scales the energy and
+runs its own copy of the runtime, none of which the training log sees. The script sings a
+corpus's own curves through `auris sing-frames` — the frames-in door of the same session the
+window uses — beside PyTorch singing the same curves, and beside the whole set sung as one
+song so the chunking is in the picture; a second mode composes from lyrics and sings through
+`auris sing`, the path a person walks. The metrics are the trainer's own, so a number in the
+table means what `val/…` means in the training log. `training/doc/evaluation.md` is the
+account, baseline diff and all.

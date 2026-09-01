@@ -26,6 +26,18 @@ format rather than a convention: `## <version> — <date>`.
 * **PyTorch is no longer pinned to a CUDA index.** The trainer named the CUDA 12.8 wheels
   outright, which is right on a machine with a card and wrong on every other;
   `uv pip install --torch-backend=auto` reads the driver and chooses.
+* **A voice is measured through the host, not only through PyTorch.** Training's validation
+  sings in PyTorch and export's verification compares one runtime against another on random
+  inputs; neither sees what `auris-singer` does with the file — the chunking of a long
+  timeline, the arrangement of frames into tokens, the energy scale, its own noise, its own
+  copy of the runtime — or what `auris-vocal` decided before it. `training/scripts/evaluate_host.py`
+  sings the validation set's own curves through the application and reports the trainer's
+  own metrics beside a PyTorch reference and beside the same utterances sung as one song, so
+  a seam or an arrangement bug shows as a number; `--score` composes from lyrics and sings
+  through `auris sing`, the path a person walks. Two CLI commands are the doors: `auris
+  frames` writes what a singer track will be sung as, and `auris sing-frames` sings such a
+  file through a voice into a WAV, with `--report` writing the session's account of the render
+  — chunks, load and render time, which processor sang.
 
 ### The words write the tune
 

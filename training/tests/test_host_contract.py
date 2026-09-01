@@ -27,13 +27,16 @@ both sides declares — or the host is right and the export is wrong.
 
 from __future__ import annotations
 
+import inspect
 import re
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from auris_singer import host, host_eval
 from auris_singer.export import FORMAT_VERSION, METADATA_KEY, metadata_block
+from auris_singer.infer import Synthesizer
 from auris_singer.phoneme_durations import METADATA_FIELD, summarize
 from auris_singer.text.ipa import (
     IPA_SYMBOLS,
@@ -48,6 +51,7 @@ from auris_singer.text.ipa import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 METADATA_RS = "crates/auris-singer/src/metadata.rs"
+MODEL_RS = "crates/auris-singer/src/model.rs"
 SCORE_RS = "crates/auris-singer/src/score.rs"
 PHONEME_RS = "crates/auris-vocal/src/phoneme.rs"
 OPENJTALK_RS = "crates/auris-vocal/src/openjtalk.rs"
@@ -88,6 +92,13 @@ def rust_u32_const(source: str, name: str) -> int:
     found = re.search(rf"const {name}: u32 = (\d+)", rust(source))
     assert found, f"no `const {name}: u32` in {source} — the parser or the constant has moved"
     return int(found.group(1))
+
+
+def rust_f32_const(source: str, name: str) -> float:
+    """The value of a ``const NAME: f32 = 0.5;``."""
+    found = re.search(rf"const {name}: f32 = ([0-9.]+)", rust(source))
+    assert found, f"no `const {name}: f32` in {source} — the parser or the constant has moved"
+    return float(found.group(1))
 
 
 def rust_str_array(source: str, name: str) -> list[str]:
@@ -300,3 +311,36 @@ def test_the_ipa_table_holds_no_duplicates():
     """Ids are positional, so a repeat would quietly shift every symbol after it."""
     symbols = list(SPECIAL_SYMBOLS) + list(IPA_SYMBOLS)
     assert len(set(symbols)) == len(symbols)
+
+
+# ----------------------------------------------------------------------------------------------
+# what the host evaluation has to know about the host
+# ----------------------------------------------------------------------------------------------
+def test_the_frames_silence_token_is_spelt_the_way_the_host_spells_it():
+    assert host.SILENCE == rust_str_const(PHONEME_RS, "SILENCE"), (
+        "a frames file's silence is `auris_vocal::SILENCE`, which the host maps to the model's "
+        "`<sil>`; spelt any other way, every rest would be sung as an unknown symbol"
+    )
+
+
+def test_the_energy_scale_the_evaluation_undoes_is_still_where_it_reads_it():
+    """Two parsers over one constant: the evaluation's own, and this file's.
+
+    The evaluation divides a corpus's energy by the host's scale so the model sees the corpus
+    curve, and it reads that scale out of the Rust source at run time. A rename or a move on
+    the Rust side would make its parser fail *there*, at the top of a long run; this makes it
+    fail here first.
+    """
+    assert host.energy_full_scale() == rust_f32_const(SCORE_RS, "ENERGY_FULL_SCALE")
+
+
+def test_the_reference_render_sings_at_the_hosts_temperature():
+    assert host_eval.NOISE_SCALE == rust_f32_const(MODEL_RS, "NOISE_SCALE"), (
+        "the host and the reference render must sample the prior at one temperature, or the "
+        "host−reference column measures the temperature rather than the runtime"
+    )
+    default = inspect.signature(Synthesizer.synthesize).parameters["noise_scale"].default
+    assert default == host_eval.NOISE_SCALE, (
+        "the Python API's default temperature is the host's; a voice auditioned here and sung "
+        "there should be the same voice"
+    )
