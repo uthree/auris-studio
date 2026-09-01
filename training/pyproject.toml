@@ -44,8 +44,8 @@ build-backend = "hatchling.build"
 # PyTorch is deliberately not pinned to one of pytorch.org's per-CUDA indexes. It was, to the
 # CUDA 12.8 wheels, which is right on a training machine and wrong everywhere else this project
 # now lives: CI has no NVIDIA driver at all, and neither does a machine that only runs the
-# contract test. `uv sync --torch-backend=auto` reads the installed driver and chooses the index
-# itself, so the one command serves both — see `doc/development.md`.
+# contract test. `uv pip install --torch-backend=auto` reads the installed driver and chooses the
+# index itself, so the one command serves both — see `doc/development.md`.
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/auris_singer"]

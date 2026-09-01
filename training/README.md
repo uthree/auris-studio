@@ -28,7 +28,8 @@ not in a repository of its own.
 
 ```bash
 cd training
-uv sync --extra dev --torch-backend=auto
+uv venv --python 3.11
+uv pip install -e '.[dev]' --torch-backend=auto
 ```
 
 `--torch-backend=auto` reads the installed driver and picks the matching PyTorch wheels — the CUDA

@@ -8,7 +8,8 @@ environment. Everything below is run from `training/`, which has its own
 knows nothing about either.
 
 ```bash
-uv sync --extra dev --torch-backend=auto
+uv venv --python 3.11
+uv pip install -e '.[dev]' --torch-backend=auto
 ```
 
 `--torch-backend=auto` reads the installed NVIDIA driver and resolves PyTorch
@@ -22,8 +23,12 @@ Name a backend by hand where the detection is wrong, or where you want the CPU
 build on a machine that has a card:
 
 ```bash
-uv sync --extra dev --torch-backend=cpu     # or cu128, cu126, ...
+uv pip install -e '.[dev]' --torch-backend=cpu     # or cu128, cu126, ...
 ```
+
+There is deliberately no `uv.lock`. A lock file would record whichever PyTorch
+index the machine that wrote it detected, and hand that machine's answer to
+every other one — which is the pin this project just stopped carrying.
 
 Check the result with:
 

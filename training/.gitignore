@@ -11,3 +11,8 @@ __pycache__/
 # where a dataset was fetched from and how it was prepared.
 data/
 runs/
+
+# No lock file, on purpose. It would record whichever PyTorch index the machine that wrote it
+# detected — the CUDA build on the one that trains — and hand that answer to every other machine.
+# `--torch-backend=auto` is what resolves it instead; `doc/development.md` has the account.
+uv.lock

@@ -26,10 +26,28 @@ from auris_singer.model import AurisSinger
 from auris_singer.phoneme_durations import METADATA_FIELD as DURATIONS_FIELD
 from auris_singer.utils.masks import sequence_mask
 
-__all__ = ["OnnxSingerWrapper", "export_onnx", "verify_onnx", "load_portrait", "METADATA_KEY"]
+__all__ = [
+    "OnnxSingerWrapper",
+    "export_onnx",
+    "verify_onnx",
+    "load_portrait",
+    "metadata_block",
+    "METADATA_KEY",
+    "FORMAT_VERSION",
+]
 
 #: The ``metadata_props`` key under which the model's JSON metadata is stored.
+#: The host reads the same string from ``crates/auris-singer/src/metadata.rs``;
+#: ``tests/test_host_contract.py`` is what keeps the two spellings one.
 METADATA_KEY = "auris_singer"
+
+#: The version stamped on every export's metadata block.
+#:
+#: A host refuses a file whose number is higher than the one it was built to
+#: read, rather than half-understanding it, so this rises only when a change
+#: would make an older reader wrong — a renamed or repurposed field, not a new
+#: optional one, which an older reader simply ignores.
+FORMAT_VERSION = 1
 
 #: Image types a voice-card portrait may use.
 PORTRAIT_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -234,6 +252,39 @@ def _fold_conv_transpose_output_padding(proto) -> int:
     return folded
 
 
+def metadata_block(
+    model: AurisSinger,
+    metadata: dict[str, Any] | None = None,
+    *,
+    voice: dict[str, Any] | None = None,
+    phoneme_durations: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The JSON block an export carries: what the model is, and what it needs.
+
+    Separate from :func:`export_onnx` because it is the half a host actually
+    parses, and the only half that can be checked without tracing a graph —
+    ``tests/test_host_contract.py`` builds one from a stand-in model and holds
+    its keys against the fields the Rust reader requires.
+
+    ``metadata`` is merged last, so a checkpoint's own record of the phoneme
+    table and the audio configuration wins over anything derived here.
+    """
+    block: dict[str, Any] = {
+        "format_version": FORMAT_VERSION,
+        "sample_rate": model.sample_rate,
+        "hop_length": model.hop_length,
+        "inter_channels": model.inter_channels,
+        "n_speakers": model.n_speakers,
+        "f0_min": model.generator.source_generator.f0_min,
+        **(metadata or {}),
+    }
+    if voice:
+        block["voice"] = voice
+    if phoneme_durations:
+        block[DURATIONS_FIELD] = phoneme_durations
+    return block
+
+
 def export_onnx(
     model: AurisSinger,
     path: str | Path,
@@ -314,19 +365,7 @@ def export_onnx(
             dynamo=True,
         )
 
-    merged: dict[str, Any] = {
-        "format_version": 1,
-        "sample_rate": model.sample_rate,
-        "hop_length": model.hop_length,
-        "inter_channels": model.inter_channels,
-        "n_speakers": model.n_speakers,
-        "f0_min": model.generator.source_generator.f0_min,
-        **(metadata or {}),
-    }
-    if voice:
-        merged["voice"] = voice
-    if phoneme_durations:
-        merged[DURATIONS_FIELD] = phoneme_durations
+    merged = metadata_block(model, metadata, voice=voice, phoneme_durations=phoneme_durations)
 
     import onnx
 
