@@ -79,6 +79,7 @@ crates/auris-gpui        desktop frontend (binary `auris-studio`)
 crates/auris-cli         command line frontend (binary `auris`)
 crates/auris-mcp         Model Context Protocol frontend (binary `auris-mcp`)
 crates/auris-agent       LLM client frontend: Ollama / OpenAI-compatible (binary `auris-agent`)
+training/                Python: what trains the voice models auris-singer plays — see below
 ```
 
 Dependency direction is strictly downhill and the frontend boundary matters:
@@ -114,6 +115,38 @@ Dependency direction is strictly downhill and the frontend boundary matters:
 
 New work that is a *command* (anything a user could ask for) goes in `auris-session` so every
 frontend gets it. New work that is *presentation* stays in the frontend.
+
+## The voice trainer
+
+`training/` is a **Python** project — PyTorch and Lightning, its own `uv` environment, its own
+`pyproject.toml` and its own `doc/` — that trains the singing voices `auris-singer` plays and
+exports each as a self-contained `.onnx`. `cargo` never sees it; it never imports a crate. It was
+its own repository (`uthree/auris-singer`) until the two were merged, and its whole history is in
+this one's.
+
+The merge was for a test. A voice file is a contract between two languages, and several halves of
+it were written down twice — the `metadata_props` key, the format version, the reserved `<sil>`
+and `<unk>`, and the phoneme table down to which symbols are voiceless. Across two checkouts
+nothing compared them, to the point where `auris_vocal::phoneme`'s doc comment asserted that its
+`VOICELESS` list matched the trainer's symbol for symbol: true when written, unverified after.
+
+**`training/tests/test_host_contract.py` is that assertion executable, and it is the thing to keep
+alive.** Rules that follow from it:
+
+* It reads the Rust as *text*, never runs it — `uv run pytest` must not need a Rust toolchain and
+  `cargo test` must not need Python. So every check is a parser, and a parser that quietly stops
+  matching is a test that quietly stops testing: each one asserts its parse found something, and
+  the array parsers check the count against the length Rust declares in the type. Renaming a
+  constant or restructuring a table on the Rust side means fixing a parser on the Python side.
+* A failure is a **decision**, not an edit to whichever file the assertion named. Either the
+  export moved on and the host must learn to read it — which is what raising `FORMAT_VERSION` on
+  *both* sides declares — or the host is right and the export is wrong.
+* The CI job has no path filter on purpose. The change that breaks the contract is as likely to be
+  in `crates/auris-vocal` as in `training/`.
+
+PyTorch is deliberately not pinned to a CUDA index: `uv pip install -e '.[dev,export]'
+--torch-backend=auto` reads the driver and picks. There is no `uv.lock`, for the same reason — it
+would hand one machine's answer to every other.
 
 ## The project folder
 
@@ -194,6 +227,13 @@ cargo clippy --workspace --all-targets      # lints
 cargo doc --workspace --no-deps --open      # the API documentation
 cargo run -p auris-compose --example measure   # symbolic design metrics per preset
 uv run tools/eval/aesthetics.py --preset all   # learned aesthetic scores (see docs/evaluation.md)
+
+# The voice trainer, from `training/` and its own environment. `--torch-backend=auto` reads the
+# machine's driver: the CUDA wheels where there is a card, the CPU ones where there is not.
+cd training && uv venv --python 3.11
+cd training && uv pip install -e '.[dev,export]' --torch-backend=auto
+cd training && uv run pytest -m "not slow"     # `not slow` skips the FCPE and dictionary fetches
+cd training && uv run ruff check .
 ```
 
 Before and after touching a writer or an audio constant, run the two measuring instruments —

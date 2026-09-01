@@ -1012,9 +1012,9 @@ pub mod singing {
     //!
     //! A [`SingerTrack`](auris_core::SingerTrack) is the frontend for a singing-voice
     //! synthesiser that renders offline. The notes carry lyrics, the lyrics become phonemes,
-    //! the frames become a waveform through a trained
-    //! [auris-singer](https://github.com/uthree/auris-singer) model, and what playback uses is
-    //! the [`SingerTake`](auris_core::SingerTake) that render produced.
+    //! the frames become a waveform through a trained voice model — exported by the trainer in
+    //! the repository's `training/` directory, which is Python and out of this workspace — and
+    //! what playback uses is the [`SingerTake`](auris_core::SingerTake) that render produced.
     //! [`Session::export_singer_frames`](crate::Session::export_singer_frames) still writes
     //! the raw frames, which is how a model is developed against real documents.
     //!

@@ -9,6 +9,24 @@ format rather than a convention: `## <version> — <date>`.
 
 ## Unreleased
 
+### The voice trainer moved in
+
+* **`training/` is now part of this repository.** The Python project that trains the singing
+  voices — PyTorch and Lightning, its own `uv` environment, its own documentation — was a
+  repository of its own (`uthree/auris-singer`) and is now a directory here, history and all. It
+  is not part of the Rust workspace, `cargo` never sees it, and no release archive carries it.
+* **The voice file format is checked across both languages.** An exported `.onnx` is a contract
+  between the trainer that writes it and `auris-singer` that reads it, and several halves of that
+  contract were written down twice — the metadata key, the format version, the reserved symbols,
+  the phoneme table down to which symbols are voiceless. Nothing could compare them while the two
+  lived apart, to the point where a comment in `auris-vocal` asserted that its voiceless list
+  matched the trainer's symbol for symbol: true when written and unverified ever after.
+  `training/tests/test_host_contract.py` is that comment executable, and CI runs it on every
+  change to either side.
+* **PyTorch is no longer pinned to a CUDA index.** The trainer named the CUDA 12.8 wheels
+  outright, which is right on a machine with a card and wrong on every other;
+  `uv pip install --torch-backend=auto` reads the driver and chooses.
+
 ### The words write the tune
 
 * **Singing synthesis can take the GPU.** Settings → General chooses where a voice model
@@ -102,8 +120,8 @@ format rather than a convention: `## <version> — <date>`.
 ### The singer gets a real voice
 
 * **Singing-voice synthesis works end to end.** A singer track can now be pointed at a trained
-  [auris-singer](https://github.com/uthree/auris-singer) voice model — one self-contained
-  `.onnx` file, chosen the way a SoundFont is and left where it lies — and asked to **sing**:
+  voice model — one self-contained `.onnx` file, chosen the way a SoundFont is and left where it
+  lies — and asked to **sing**:
   notes and lyrics become frames, the frames become a waveform, and the waveform lands in
   `Audio/` as the track's *take*, an ordinary audio source that plays, exports and reopens
   with everything else. Track → Choose Voice… and Track → Sing in the window (the render runs

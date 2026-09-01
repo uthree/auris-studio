@@ -42,6 +42,9 @@ anywhere Rust does, and CI covers all three.
   themselves when the chords under them change.
 * [Development](docs/development.md) — the workspace layout, building on each platform, and
   adding an instrument or an effect.
+* [Training a voice](https://github.com/uthree/auris-studio/tree/main/training) — `training/`
+  is the Python project that trains the singing voices the DAW plays, and exports each one as a
+  self-contained `.onnx`. It is not part of the Rust workspace and not part of a release.
 * [CHANGELOG](CHANGELOG.md) — what changed, and what it broke.
 
 The API documentation is `cargo doc --workspace --no-deps --open`. The workspace has no root

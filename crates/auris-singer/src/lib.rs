@@ -3,11 +3,16 @@
 //! This crate is the far end of the pipeline `auris-vocal` begins. That crate turns lyrics
 //! into phonemes and notes into [`SingerFrames`](auris_vocal::SingerFrames) — one phoneme, one
 //! pitch, one energy per hop; this one hands those frames to a trained voice and gets a
-//! waveform back. The model file is an ONNX export from
-//! [auris-singer](https://github.com/uthree/auris-singer), self-contained by that project's
-//! design: the phoneme table, the audio parameters and the presentational voice card all ride
-//! inside the one file ([`VoiceInfo`] reads them), so pointing at a `.onnx` is the whole
-//! installation, exactly the policy a SoundFont gets.
+//! waveform back. The model file is an ONNX export from the trainer in this repository's
+//! `training/` directory, self-contained by that project's design: the phoneme table, the audio
+//! parameters and the presentational voice card all ride inside the one file ([`VoiceInfo`]
+//! reads them), so pointing at a `.onnx` is the whole installation, exactly the policy a
+//! SoundFont gets.
+//!
+//! The two halves being one repository is what lets them be *checked* against each other:
+//! `training/tests/test_host_contract.py` reads the constants below out of this crate's source
+//! and fails when the exporter and this reader drift apart on the metadata key, the format
+//! version or the phoneme table.
 //!
 //! Three facts shape the API:
 //!

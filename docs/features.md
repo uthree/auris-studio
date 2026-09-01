@@ -244,8 +244,8 @@ are. **One click puts the voice on the selected singer track**, exactly as one c
 sound on an instrument track, and the search box finds voices by name like everything else.
 **Track → Choose Voice…** remains as the file dialog for a one-off file somewhere unusual;
 either way the track is pointed at a trained
-[auris-singer](https://github.com/uthree/auris-singer) voice model — one self-contained
-`.onnx` file, left where it lies — and from then on the track sings for real. The render is a **take**: an ordinary audio file in `Audio/` that
+voice model — one self-contained `.onnx` file, left where it lies, trained by the project in the
+repository's `training/` directory — and from then on the track sings for real. The render is a **take**: an ordinary audio file in `Audio/` that
 plays, exports and reopens with everything else, pinned by a seed so the same notes, lyrics,
 voice and seed sing the same performance again — and kept as audio in the project, so what
 was frozen is what every machine plays. **The window keeps the take abreast of

@@ -16,6 +16,8 @@ BACKEND — no UI dependency of any kind
   crates/auris-io       audio file import/export, project save/load
   crates/auris-gpu      optional wgpu compute for offline analysis
   crates/auris-compose  score-based automatic composition: a text spec in, notes out
+  crates/auris-vocal    singing: lyrics to IPA phonemes, notes to voice-model frames
+  crates/auris-singer   singing: those frames through an ONNX voice model, offline
   crates/auris-i18n     interface text in every language, and nothing else
   crates/auris-session  the document, the engine and every command a frontend needs
   crates/auris-toolbox  the commands as tools for a language model, shared by both model doors
@@ -25,6 +27,10 @@ FRONTEND
   crates/auris-cli      the command line tool    (binary: auris)
   crates/auris-mcp      the Model Context Protocol server (binary: auris-mcp)
   crates/auris-agent    the model client: Ollama / OpenAI-compatible (binary: auris-agent)
+
+NOT THE WORKSPACE
+  vendor/rustysynth     somebody else's crate, forked — see its own README
+  training/             Python: what trains the voice models auris-singer plays
 ```
 
 Dependencies run strictly downhill, and the boundary is enforced by what each crate is *allowed
@@ -43,6 +49,35 @@ It lives there because `auris-session` is the only crate depending on every othe
 place a link to each of them resolves — which is also why it does not live here. A second copy of
 it in this file would be wrong by the next crate anybody adds; the one line of this tree that had
 already gone stale while it sat in the README is how that goes.
+
+## The voice models
+
+`training/` is a Python project — PyTorch and Lightning — that trains the singing voices
+`auris-singer` plays, and exports each one as a self-contained `.onnx`. It has its own `uv`
+environment, its own `pyproject.toml` and its own `doc/`; `cargo` never sees it and it never
+imports a crate.
+
+It was a separate repository until it was not, and the reason for moving it is a test. A voice
+file is a contract between two languages, and several halves of that contract were written down
+twice — the metadata key, the format version, the reserved symbols, the phoneme table down to
+which symbols are voiceless. Across two checkouts nothing could compare them, to the point where
+`crates/auris-vocal/src/phoneme.rs` carried a comment asserting that its voiceless list matched
+the other repository's symbol for symbol: true when written and unverified ever after.
+`training/tests/test_host_contract.py` is that comment executable. It reads the Rust sources as
+text — a pytest run must not need a Rust toolchain, nor `cargo test` a Python one — and fails
+when the two sides drift.
+
+```bash
+cd training
+uv venv --python 3.11
+uv pip install -e '.[dev,export]' --torch-backend=auto
+uv run pytest -m "not slow"
+```
+
+`--torch-backend=auto` reads the machine's NVIDIA driver and takes the matching PyTorch wheels,
+so the one command serves the machine that trains and the machine that only runs the tests.
+Training itself wants a card; everything else here is content on the CPU.
+`training/doc/development.md` is the rest.
 
 ## Building on each platform
 
