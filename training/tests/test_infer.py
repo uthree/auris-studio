@@ -9,7 +9,7 @@ from auris_singer.text import SIL, is_voiceless
 
 
 def test_voiceless_classification_covers_the_japanese_core():
-    for symbol in ["k", "t", "p", "s", "ɕ", "tɕ", "ts", "ç", "ɸ", "h", "ʔ", "ḁ", SIL, "<pau>"]:
+    for symbol in ["k", "t", "p", "s", "ɕ", "tɕ", "ts", "ç", "ɸ", "h", "ʔ", "ḁ", SIL, "<pau>"]:
         assert is_voiceless(symbol), symbol
     for symbol in ["a", "i", "ɯ", "ɴ", "m", "n", "b", "d", "g", "z", "dʑ", "ɾ", "j", "w", "v"]:
         assert not is_voiceless(symbol), symbol

@@ -91,3 +91,24 @@ def test_japanese_frontend_produces_table_symbols():
     assert DEFAULT_PHONEME_TABLE.unknown_symbols(phonemes) == []
     # こんにちは -> k o N n i ch i w a
     assert phonemes[1:10] == ["k", "o", "ɴ", "n", "i", "tɕ", "i", "w", "a"]
+
+
+def test_every_voiceless_symbol_is_in_the_table_it_classifies():
+    """Two spellings of one glyph are two strings to a set. The devoiced /a/ is ``a`` +
+    U+0325 in the inventory and in what the front-end emits, and was the precomposed U+1E01
+    in ``VOICELESS`` — and, by the contract, in the host — so the one devoiced vowel the
+    data actually contains was never counted as voiceless on either side."""
+    from auris_singer.text.ipa import IPA_SYMBOLS, SPECIAL_SYMBOLS, VOICELESS, is_voiceless
+
+    table = set(IPA_SYMBOLS) | set(SPECIAL_SYMBOLS)
+    assert VOICELESS <= table, sorted(VOICELESS - table)
+    assert "a\u0325" in IPA_SYMBOLS and "\u1e01" not in IPA_SYMBOLS
+    assert is_voiceless("a\u0325") and not is_voiceless("\u1e01")
+
+
+def test_the_front_ends_devoiced_vowels_are_in_the_table():
+    from auris_singer.text.ipa import IPA_SYMBOLS
+    from auris_singer.text.japanese import openjtalk_to_ipa
+
+    for symbol in openjtalk_to_ipa(["A", "I", "U", "E", "O"]):
+        assert symbol in IPA_SYMBOLS, [hex(ord(c)) for c in symbol]

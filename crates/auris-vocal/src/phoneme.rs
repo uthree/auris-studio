@@ -38,7 +38,7 @@ pub fn is_syllabic(phoneme: &str) -> bool {
 /// matches the `VOICELESS` table in auris-singer's training pipeline symbol for symbol.
 pub const VOICELESS: [&str; 26] = [
     // Devoiced vowels — a vowel whispered between voiceless neighbours, as in きし.
-    "ḁ", "i̥", "ɯ̥", "e̥", "o̥", // Plosives, including the glottal stop the sokuon becomes.
+    "ḁ", "i̥", "ɯ̥", "e̥", "o̥", // Plosives, including the glottal stop the sokuon becomes.
     "p", "pʲ", "t", "tʲ", "k", "kʲ", "kʷ", "ʔ", // Affricates.
     "ts", "tɕ", "tʃ", // Fricatives.
     "ɸ", "ɸʲ", "f", "θ", "s", "ɕ", "ʃ", "ç", "x", "h",

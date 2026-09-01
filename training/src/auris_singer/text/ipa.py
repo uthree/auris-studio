@@ -67,7 +67,9 @@ VOICELESS: frozenset[str] = frozenset(
     SPECIAL_SYMBOLS
 ) | frozenset(
     {
-        "ḁ", "i̥", "ɯ̥", "e̥", "o̥",
+        # ḁ is `a` + U+0325, the spelling the inventory and the front-end use — the
+        # precomposed U+1E01 is another string to a set, and was here until a test looked
+        "ḁ", "i̥", "ɯ̥", "e̥", "o̥",
         "p", "pʲ", "t", "tʲ", "k", "kʲ", "kʷ", "ʔ",
         "ts", "tɕ", "tʃ",
         "ɸ", "ɸʲ", "f", "θ", "s", "ɕ", "ʃ", "ç", "x", "h",
