@@ -179,6 +179,50 @@ recording, the host's render, the reference render, the song and its frames, the
 reports — so any number in the table can be listened to. The final judge stays a pair of
 ears; the numbers say where to point them.
 
+## What the numbers have said so far
+
+The instrument was built to answer one complaint — the consonants of the JSUT-song `small`
+voice were not formed — and its first campaign (September 2026) ran every candidate fix
+through both runs. The recording itself scores PER 0.09 through the same listener, which is
+the floor; every voice below is 40k steps on the same corpus, measured on the labelled
+alignment with three takes averaged, host column.
+
+| voice | alignment | KL | corpus PER | consonant mel L1 | score PER |
+|---|---|---|---|---|---|
+| `small`, 4k steps | MAS | default | 0.635 | — | — |
+| `small` | MAS | default | 0.537 | 1.39 | 0.744 |
+| `small` | MAS | `kl_free_bits: 0.005` | 0.404 | 1.20 | 0.760 |
+| `small` | MAS | `kl: 2.0` | 0.380 | 1.39 | 0.574 |
+| `small` | labelled | default | 0.275 | 0.88 | 0.411 |
+| `small` | labelled | `kl_free_bits: 0.005` | 0.328 | — | 0.744 |
+| `small` | labelled | `kl: 2.0` | 0.409 | — | 0.814 |
+| `base` | labelled | default | **0.203** | **0.77** | **0.310** |
+
+What it came to:
+
+* **The alignment was the fault, not the decoder.** `scripts/compare_alignment.py` showed the
+  search giving ɕ two thirds of its labelled frames and ts under three fifths, and training
+  on the labels (`doc/preprocessing.md`, `duration_dir`) halved the corpus PER on its own.
+  Tightening the KL looked like a fix while the alignment was wrong and *hurts* once it is
+  right; those gains were compensation, not improvement. Leave the loss weights alone.
+* **Capacity is the next lever.** `base` on the same labels takes another quarter off both
+  runs; it costs a 164 MB voice file against 60 MB and RTF 0.11 against 0.05 on the CPU,
+  still nine times realtime.
+* **The score run had its own faults, all on the host's side of the line**, and none visible
+  to the corpus run: the flat energy envelope `auris-vocal` drew (fixed by the per-phoneme
+  level table, `doc/inference.md`), a rest of more than fifty frames inside one inference
+  silencing the line after it (fixed by `MAX_REST_FRAMES`, which makes every such rest a
+  chunk seam: PER 0.72 → 0.41 on the same voice), and the host spelling ざ行 and にゃ行 with
+  symbols the trainer never wrote. Every one of those was found by the `song − host` and
+  score columns disagreeing with the corpus column.
+* **What did not matter**, measured so nobody measures it again: the sampling temperature,
+  the chunk length up to a minute, the host's Irwin-Hall prior noise against PyTorch's
+  Gaussian, run-length merging of repeated phonemes, and the render level.
+* **What is left on the score path** is the melody itself: note-flat pitch where the corpus
+  glides (a 50 ms glide at note changes recovers a little in the ablation, and is a rule in
+  `auris-vocal` to decide on, not a training matter), and the gap to the corpus that only more
+  singing data closes.
+
 ## Limits
 
 * **Linux has no GPU provider.** The host reaches the GPU through the platform's own
