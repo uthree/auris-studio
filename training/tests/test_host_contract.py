@@ -344,3 +344,33 @@ def test_the_reference_render_sings_at_the_hosts_temperature():
         "the Python API's default temperature is the host's; a voice auditioned here and sung "
         "there should be the same voice"
     )
+
+
+# ----------------------------------------------------------------------------------------------
+# the host's front-ends speak the trainer's dialect
+# ----------------------------------------------------------------------------------------------
+def openjtalk_symbols() -> set[str]:
+    """Every IPA token the host's OpenJTalk map can emit."""
+    text = rust(OPENJTALK_RS)
+    symbols: set[str] = set()
+    for arm in re.finditer(r'"[^"]+"\s*=>\s*&\[([^\]]*)\]', text):
+        symbols |= set(re.findall(r'"([^"]*)"', arm.group(1)))
+    assert symbols, f"parsed no phoneme arms out of {OPENJTALK_RS}"
+    return symbols
+
+
+def test_the_hosts_front_ends_spell_every_sound_the_way_the_trainer_does():
+    """Being *in* the phoneme table is not enough. The table holds both ``z`` and ``dz``,
+    both ``nʲ`` and ``ɲ``; the trainer's front-end writes ざ as ``dz`` and にゃ as ``ɲ``, so
+    every voice is trained on those, and a host that wrote ``z`` sang ざ with an embedding
+    nothing had ever trained. Every symbol the kana table and the OpenJTalk map can emit
+    must be one the trainer's own map emits — the same sound, the same spelling."""
+    from auris_singer.text.japanese import OPENJTALK_TO_IPA
+
+    trainer = set(OPENJTALK_TO_IPA.values()) - set(SPECIAL_SYMBOLS)
+    for name, symbols in (("kana table", kana_symbols()), ("OpenJTalk map", openjtalk_symbols())):
+        strangers = sorted(symbols - trainer)
+        assert not strangers, (
+            f"the host's {name} emits {strangers}, which the trainer's front-end never writes; "
+            "a voice trained from OpenJTalk labels has never seen them"
+        )

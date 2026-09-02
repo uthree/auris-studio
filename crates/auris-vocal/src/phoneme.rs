@@ -96,14 +96,14 @@ mod tests {
     #[test]
     fn moras_break_after_each_syllabic_phoneme() {
         // こんにちは — the five notes a person would write it across.
-        let phonemes = strings(&["k", "o", "ɴ", "nʲ", "i", "tɕ", "i", "w", "a"]);
+        let phonemes = strings(&["k", "o", "ɴ", "n", "i", "tɕ", "i", "w", "a"]);
         let moras = phoneme_moras(&phonemes);
         assert_eq!(
             moras,
             vec![
                 strings(&["k", "o"]),
                 strings(&["ɴ"]),
-                strings(&["nʲ", "i"]),
+                strings(&["n", "i"]),
                 strings(&["tɕ", "i"]),
                 strings(&["w", "a"]),
             ]

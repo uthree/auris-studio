@@ -44,6 +44,12 @@ format rather than a convention: `## <version> — <date>`.
   frames, render against recording. It is the consonant-width study's measurement made a
   permanent column: a voice that tracks its pitch to the cent and hums through every /s/ now
   shows it as a number.
+* **The host spells ざ and にゃ the way the voices were trained.** Both of `auris-vocal`'s
+  front-ends — the kana table and the OpenJTalk map — wrote ざ行 as `z` and にゃ行 as `nʲ`,
+  while the trainer's own OpenJTalk map writes `dz` and `ɲ`, so every voice was trained on
+  those and the host sang ざ, ず, ぜ, ぞ, にゃ, にゅ, にょ through embeddings nothing had ever
+  trained. Both symbols were in the phoneme table, which is all the contract checked; it now
+  also checks that every symbol the host can emit is one the trainer's front-end writes.
 * **A corpus's labels align the training, where it has them.** Training recovered every
   phoneme-to-frame alignment by monotonic alignment search, labels or no labels, and
   measured against JSUT-song's labels the search gives ɕ two thirds of its frames and ts
