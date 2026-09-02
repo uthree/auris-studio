@@ -768,33 +768,39 @@ def evaluate_score(
         Path(spec).write_text(DEFAULT_SPEC, encoding="utf-8")
 
     project = host.compose(spec, workdir / "score.auris", seed=settings.seed)
-    frames = host.frames(project, workdir / "score.frames.json")
-    if abs(frames.hop_seconds - info.hop_seconds) > 1e-9:
-        # `sing` will set the track's hop to the voice's; the frames were written before it did.
-        raise ValueError(
-            f"the track's hop is {frames.hop_seconds} s and the voice's {info.hop_seconds} s; "
-            "sing the project once with the voice first so the document carries its clock"
-        )
-    tokens = frames.tokens()
-    f0 = np.asarray(frames.f0_hz, dtype=np.float32)
-    energy = np.asarray(frames.energy, dtype=np.float32) * scale
-    voiced = np.asarray(
-        [1.0 if (hz > 0 and t != SILENCE and not is_voiceless(t)) else 0.0 for hz, t in zip(f0, tokens)],
-        dtype=np.float32,
-    )
+    asked = None
+    tokens: list[str] = []
     analyst = Analyst(
         info.sample_rate, 2048, info.hop_length, 2048,
         n_mels=settings.n_mels, pitch=settings.pitch, device=settings.device,
         tolerance_cents=settings.tolerance_cents,
     )
-    asked = phonemes_of_frames(tokens)
     seeds = [settings.take_seed + at for at in range(max(1, settings.take_seeds))]
     takes: list[dict] = []
     wall = 0.0
     take = None
+    frames = None
     for seed in seeds:
         take = host.sing(project, info.path, seed)
         wall += host.last_wall_seconds
+        if frames is None:
+            # Only now: choosing the voice put its clock, its consonant widths and its levels
+            # into the document, and the frames the take was sung from are the ones the
+            # document writes *after* that. Written before, they would be another song's.
+            frames = host.frames(project, workdir / "score.frames.json")
+            if abs(frames.hop_seconds - info.hop_seconds) > 1e-9:
+                raise ValueError(
+                    f"the track's hop is {frames.hop_seconds} s and the voice's "
+                    f"{info.hop_seconds} s even after the voice was chosen"
+                )
+            tokens = frames.tokens()
+            f0 = np.asarray(frames.f0_hz, dtype=np.float32)
+            energy = np.asarray(frames.energy, dtype=np.float32) * scale
+            voiced = np.asarray(
+                [1.0 if (hz > 0 and t != SILENCE and not is_voiceless(t)) else 0.0 for hz, t in zip(f0, tokens)],
+                dtype=np.float32,
+            )
+            asked = phonemes_of_frames(tokens)
         sung = read_wav(take, info.sample_rate)
         measured = analyst.measure(sung, f0, energy, voiced)
         if listener is not None:
