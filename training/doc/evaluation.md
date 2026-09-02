@@ -204,7 +204,8 @@ alignment with three takes averaged, host column.
 | `small` | labelled | default | 0.275 | 0.88 | 0.411 |
 | `small` | labelled | `kl_free_bits: 0.005` | 0.328 | — | 0.744 |
 | `small` | labelled | `kl: 2.0` | 0.409 | — | 0.814 |
-| `base` | labelled | default | **0.203** | **0.77** | **0.310** |
+| `base` | labelled | default | 0.203 | 0.77 | 0.310 |
+| `base`, pre-trained on JSUT speech | labelled | default | **0.121** | **0.76** | **0.225** |
 
 What it came to:
 
@@ -238,8 +239,14 @@ What it came to:
   in 30 and as n 5, p right 0 in 12 and as t or k 7; ɕ, s and ts no longer appear in the
   worst dozen. A stop heard as a nasal is a closure the model never made and a burst it
   never released — the shortest events in the language, a few frames each, and the ones a
-  21-minute corpus holds fewest examples of. That is the case for pre-training on the same
-  speaker's read speech (`doc/training.md`, `--init-from`).
+  21-minute corpus holds fewest examples of. That was the case for pre-training on the same
+  speaker's read speech (`doc/training.md`, `--init-from`), and it held: 40k steps on JSUT
+  BASIC5000 (6.4 hours, 6,293 sentences) and then the same 40k on the song took the corpus
+  PER from 0.203 to 0.121 against the recording's 0.090, the score PER from 0.310 to 0.225,
+  and validation mel from 0.589 to 0.547. The tally says where: g heard right 18 times in 24
+  instead of 4, ɾ 20 in 30 instead of 13, p 6 in 12 instead of never. The vowels are now the
+  largest remaining loss by count, at a rate of one in seven, and the score path's residue
+  is k (heard as ɴ or s) and the two weak fricatives h and ɸ.
 * **What is left on the score path** is the melody itself — the composed line against the
   corpus's — and the gap to the corpus that only more singing data closes.
 

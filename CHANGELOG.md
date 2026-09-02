@@ -79,7 +79,10 @@ format rather than a convention: `## <version> — <date>`.
   state, no step count — so a voice can be pre-trained on a speaker's read speech and finished
   on their songs. `configs/preprocess/jsut.yml` prepares JSUT, the JSUT-song singer's 6.6 hours
   of prose, through the song's own preparation script; the consonants a 21-minute singing
-  corpus holds a few hundred of, the speech holds thousands.
+  corpus holds a few hundred of, the speech holds thousands. Measured on the `base` voice,
+  speech first and then the song took the corpus phoneme error rate from 0.20 to 0.12 against
+  the recording's own 0.09, and a composed verse's from 0.31 to 0.23 — the stops and the
+  flap, which the tally had named, most of all.
 * **The listener says which phonemes it lost.** The phoneme error rate was one number per
   column; the host evaluation now keeps the edit path behind it and tallies every phoneme
   asked for against what was heard, over every take of every utterance. The table ends with
