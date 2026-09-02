@@ -44,6 +44,13 @@ format rather than a convention: `## <version> — <date>`.
   frames, render against recording. It is the consonant-width study's measurement made a
   permanent column: a voice that tracks its pitch to the cent and hums through every /s/ now
   shows it as a number.
+* **A rest is a seam.** The singer cut a timeline into inferences only where twenty seconds
+  of frames forced it, so a four-line verse with two seconds of rest between the lines was
+  one inference — and a voice is trained on phrases cut at their pauses, so a rest longer
+  than a breath inside one inference is a place it has never been. Measured, the lines after
+  the rests came out with phoneme error rates of 0.47 and 0.67 sung whole, 0.10 and 0.23 sung
+  each in its own inference. Chunks now break at every rest longer than half a second as
+  well, which costs nothing audible since the cut was in silence anyway.
 * **A voice says how loud its consonants are, and the frames listen.** The energy a singer
   track's frames carried was the note's velocity on every phoneme, a plateau — and measured
   on JSUT-song a voiceless plosive or fricative sings twenty-odd decibels under the vowel

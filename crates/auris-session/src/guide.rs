@@ -1023,7 +1023,11 @@ pub mod singing {
     //! a WAV, with no document before or after. That is what lets the trainer measure a voice
     //! *through this host* rather than through PyTorch (`training/doc/evaluation.md`), and
     //! it answers with [`SungFrames`](crate::SungFrames), the render's own account of itself:
-    //! how many chunks, how long to open and to sing, which processor sang.
+    //! how many chunks, how long to open and to sing, which processor sang. Those chunks are
+    //! cut in silence — at the memory ceiling, and at every rest longer than a breath
+    //! ([`auris_singer::MAX_REST_FRAMES`]), because a voice trained on phrases has never sung
+    //! across two seconds of nothing, and measured through this door it loses the line after
+    //! such a rest when asked to.
     //!
     //! # The voice, and the take
     //!

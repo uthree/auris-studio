@@ -5,7 +5,10 @@
 //! three-minute piece asked for at once has taken a development machine down with it — so
 //! [`chunk_ranges`] cuts the timeline into stretches of at most [`MAX_CHUNK_FRAMES`] frames,
 //! cutting only where nothing is sung (or, for one unbroken phrase longer than the ceiling, at
-//! its quietest frame). **Arrangement**: [`arrange`] turns one chunk of frames into the score
+//! its quietest frame) — and at every rest longer than [`MAX_REST_FRAMES`] whether or not the
+//! ceiling asks, because a voice is trained on phrases and a rest of two seconds inside one
+//! inference is something it has never seen; measured, it cost the phrase after the rest half
+//! its words. **Arrangement**: [`arrange`] turns one chunk of frames into the score
 //! the model reads — phonemes run-length-encoded into tokens and durations, the curves copied
 //! through, and the voiced flag decided from the phoneme class, never from `f0 > 0`, which
 //! would hum through every /k/ and /s/.
@@ -28,6 +31,18 @@ pub(crate) const MODEL_UNKNOWN: &str = "<unk>";
 /// cut in silence, so the seams cost nothing audible.
 pub const MAX_CHUNK_FRAMES: usize = 2_000;
 
+/// The longest rest two phrases may share an inference across — half a second at the usual
+/// 10 ms hop.
+///
+/// A voice is trained on phrases cut at their pauses: nothing it saw held a rest longer than
+/// a breath inside one utterance, and a chunk that spans two seconds of silence between two
+/// lines asks the model to sing its way through something it has no idea of. Measured on a
+/// four-line verse, singing the whole in one inference against each line in its own put the
+/// phoneme error rate of the lines after the rests at 0.47 and 0.67 against 0.10 and 0.23. So
+/// a rest longer than this is a seam, cheap because it is cut in silence anyway; the pauses
+/// within a line, a breath long, still share.
+pub const MAX_REST_FRAMES: usize = 50;
+
 /// Silent frames kept around each chunk, where the timeline has them to give.
 ///
 /// A quarter second of lead-in: the model was trained on phrases that start from silence, and
@@ -45,9 +60,11 @@ pub const ENERGY_FULL_SCALE: f32 = 0.25;
 
 /// The stretches of the timeline worth singing, each at most `max` frames before padding.
 ///
-/// Cuts fall in silence wherever silence exists; an unbroken sung span longer than `max` is
-/// split at the quietest frame in the back half of each window, which is where a breath or a
-/// consonant is most likely sitting. Every range is then widened by up to
+/// Cuts fall in silence wherever silence exists — at every rest longer than
+/// [`MAX_REST_FRAMES`], and between closer phrases only where `max` asks; an unbroken sung
+/// span longer than `max` is split at the quietest frame in the back half of each window,
+/// which is where a breath or a consonant is most likely sitting. Every range is then widened
+/// by up to
 /// [`CHUNK_PAD_FRAMES`] of *silent* neighbours on each side — never into another chunk, and
 /// never over a sung frame. Ranges come back ascending and disjoint; frames outside every
 /// range are silence and are not worth an inference.
@@ -89,12 +106,18 @@ pub(crate) fn chunk_ranges(frames: &SingerFrames, max: usize) -> Vec<Range<usize
         pieces.push(start..span.end);
     }
 
-    // Neighbouring pieces share a chunk while they fit under the ceiling together — the
-    // silence between two close phrases is cheaper sung than seamed.
+    // Neighbouring pieces share a chunk while they fit under the ceiling together and the
+    // rest between them is no longer than a breath — the silence between two close phrases is
+    // cheaper sung than seamed, and the silence between two lines is neither: it is a place
+    // the voice has never been, and the seam costs nothing there.
     let mut groups: Vec<Range<usize>> = Vec::new();
     for piece in pieces {
         match groups.last_mut() {
-            Some(last) if piece.end - last.start <= max => last.end = piece.end,
+            Some(last)
+                if piece.end - last.start <= max && piece.start - last.end <= MAX_REST_FRAMES =>
+            {
+                last.end = piece.end
+            }
             _ => groups.push(piece),
         }
     }
@@ -255,6 +278,27 @@ mod tests {
         // ...but two phrases a breath apart can.
         let near = frames(1000, &[(0, 100, "a", 440.0), (150, 250, "a", 440.0)]);
         assert_eq!(chunk_ranges(&near, 500).len(), 1);
+    }
+
+    #[test]
+    fn a_rest_longer_than_a_breath_is_a_seam_even_under_the_ceiling() {
+        // Two lines two seconds apart fit one chunk with room to spare, and are still sung
+        // apart: the voice has never sung across such a rest. Exactly a breath apart, they
+        // share.
+        let lines = frames(1000, &[(0, 200, "a", 440.0), (400, 600, "a", 440.0)]);
+        let ranges = chunk_ranges(&lines, MAX_CHUNK_FRAMES);
+        assert_eq!(ranges.len(), 2, "{ranges:?}");
+        assert!(
+            ranges[0].end <= 200 + CHUNK_PAD_FRAMES && ranges[1].start >= 400 - CHUNK_PAD_FRAMES
+        );
+        let breath = frames(
+            1000,
+            &[
+                (0, 200, "a", 440.0),
+                (200 + MAX_REST_FRAMES, 500, "a", 440.0),
+            ],
+        );
+        assert_eq!(chunk_ranges(&breath, MAX_CHUNK_FRAMES).len(), 1);
     }
 
     #[test]

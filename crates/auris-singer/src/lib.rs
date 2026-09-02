@@ -39,7 +39,7 @@ mod score;
 
 pub use metadata::{FORMAT_VERSION, METADATA_KEY, VoiceCard, VoiceInfo};
 pub use model::{Acceleration, NOISE_SCALE, VoiceModel};
-pub use score::{ENERGY_FULL_SCALE, MAX_CHUNK_FRAMES};
+pub use score::{ENERGY_FULL_SCALE, MAX_CHUNK_FRAMES, MAX_REST_FRAMES};
 
 /// Why a voice could not be loaded, or frames could not be sung.
 #[derive(Debug, thiserror::Error)]
