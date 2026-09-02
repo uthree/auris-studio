@@ -46,6 +46,11 @@ pub struct VoiceInfo {
     /// width.
     #[serde(default)]
     pub phoneme_durations: Option<PhonemeDurations>,
+    /// How loud this model's training data sang each consonant against the vowel after it,
+    /// where the export carried the table. Newer exports do; older ones fall back to the
+    /// note's full level on every phoneme.
+    #[serde(default)]
+    pub phoneme_levels: Option<PhonemeLevels>,
     /// The presentational voice card, where the export carried one.
     #[serde(default)]
     pub voice: Option<VoiceCard>,
@@ -72,6 +77,28 @@ pub struct PhonemeDurations {
 
 fn seconds() -> String {
     "seconds".to_string()
+}
+
+/// The consonant-level table an export measures from its training data.
+///
+/// Decibels against the vowel that follows: a phoneme takes `db[phoneme]` where the table
+/// has it and `default` where it does not. Counts and provenance ride along for a person and
+/// are not read here, as with the widths.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PhonemeLevels {
+    /// What the numbers are measured in. This build reads `db` and refuses anything else —
+    /// a table of linear gains read as decibels would be a whisper.
+    #[serde(default = "db")]
+    pub unit: String,
+    /// Decibels for a consonant the table has no entry for.
+    pub default: f64,
+    /// Decibels per phoneme, keyed by the model's own symbols.
+    #[serde(default)]
+    pub db: BTreeMap<String, f64>,
+}
+
+fn db() -> String {
+    "db".to_string()
 }
 
 fn one() -> u32 {
@@ -142,6 +169,20 @@ impl VoiceInfo {
                 ));
             }
         }
+        if let Some(levels) = &info.phoneme_levels {
+            if levels.unit != "db" {
+                return Err(SingError::Metadata(format!(
+                    "phoneme levels in `{}` — this build reads db",
+                    levels.unit
+                )));
+            }
+            let broken = |db: &f64| !db.is_finite();
+            if broken(&levels.default) || levels.db.values().any(broken) {
+                return Err(SingError::Metadata(
+                    "a phoneme level that is not a number".into(),
+                ));
+            }
+        }
         Ok(info)
     }
 
@@ -155,6 +196,16 @@ impl VoiceInfo {
             .map(|durations| auris_core::ConsonantWidths {
                 default: durations.default,
                 seconds: durations.seconds.clone(),
+            })
+    }
+
+    /// The model's consonant levels in the shape the document stores, where it measured any.
+    pub fn consonant_levels(&self) -> Option<auris_core::ConsonantLevels> {
+        self.phoneme_levels
+            .as_ref()
+            .map(|levels| auris_core::ConsonantLevels {
+                default: levels.default,
+                db: levels.db.clone(),
             })
     }
 
@@ -259,5 +310,26 @@ mod tests {
         let raw = RITSU.replace("\"<sil>\", ", "");
         let error = VoiceInfo::parse(&raw).unwrap_err();
         assert!(error.to_string().contains("<sil>"), "{error}");
+    }
+
+    #[test]
+    fn the_level_table_rides_in_beside_the_widths_and_is_refused_in_the_wrong_unit() {
+        let raw = r#"{"format_version": 1, "sample_rate": 48000, "hop_length": 480,
+            "inter_channels": 192, "symbols": ["<pad>", "<unk>", "<sil>", "k", "a"],
+            "phoneme_levels": {"unit": "db", "default": -12.0, "db": {"k": -22.6}}}"#;
+        let info = VoiceInfo::parse(raw).expect("a level table in decibels loads");
+        let levels = info.consonant_levels().expect("the table was aboard");
+        assert_eq!(levels.db("k"), -22.6, "measured");
+        assert_eq!(levels.db("s"), -12.0, "unmeasured takes the default");
+        assert!(levels.measured("k") && !levels.measured("s"));
+
+        let linear = raw.replace("\"unit\": \"db\"", "\"unit\": \"gain\"");
+        let error = VoiceInfo::parse(&linear).expect_err("a table of gains is not decibels");
+        assert!(error.to_string().contains("gain"), "{error}");
+        let nan = raw.replace("-22.6", "null");
+        assert!(
+            VoiceInfo::parse(&nan).is_err(),
+            "a level that is not a number is refused"
+        );
     }
 }

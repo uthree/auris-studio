@@ -144,6 +144,46 @@ pub struct SingerVoice {
     /// back to its single fixed width.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consonants: Option<ConsonantWidths>,
+    /// How loud the model's training data sang each consonant against the vowel after it,
+    /// where its export carried the table.
+    ///
+    /// Copied in beside the widths for the same reason. `None` means the export predates the
+    /// table, and every consonant is given the note's full level — which is what the frames
+    /// always did, and is measurably wrong: a /k/ at the vowel's loudness is a /k/ the model
+    /// has never heard.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub levels: Option<ConsonantLevels>,
+}
+
+/// Per-phoneme consonant levels, in decibels against the vowel that follows, measured by a
+/// voice model from its training data.
+///
+/// A voiceless plosive or fricative sings twenty-odd decibels under the vowel after it, a
+/// voiced one six to nine, an approximant three. A frames writer that gives every phoneme
+/// the note's velocity asks the model for consonants it has never heard at that loudness and
+/// gets none; measured on JSUT-song, that plateau alone cost the phoneme error rate 0.25 →
+/// 0.56, and these medians recovered most of it. The application rule is
+/// [`ConsonantLevels::db`]: the table's entry, or `default` for a consonant it never
+/// measured — and no entry at all for a syllabic, which keeps the note's level.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ConsonantLevels {
+    /// Decibels for a consonant the table has no entry for.
+    pub default: f64,
+    /// Decibels per phoneme, keyed by the model's own symbols.
+    #[serde(default)]
+    pub db: std::collections::BTreeMap<String, f64>,
+}
+
+impl ConsonantLevels {
+    /// Decibels `phoneme` sings at, against its vowel: its measured level, or the default.
+    pub fn db(&self, phoneme: &str) -> f64 {
+        self.db.get(phoneme).copied().unwrap_or(self.default)
+    }
+
+    /// Whether the table measured `phoneme` itself.
+    pub fn measured(&self, phoneme: &str) -> bool {
+        self.db.contains_key(phoneme)
+    }
 }
 
 /// Per-phoneme consonant widths, in seconds, measured by a voice model from its training data.

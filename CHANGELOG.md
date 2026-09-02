@@ -44,6 +44,16 @@ format rather than a convention: `## <version> — <date>`.
   frames, render against recording. It is the consonant-width study's measurement made a
   permanent column: a voice that tracks its pitch to the cent and hums through every /s/ now
   shows it as a number.
+* **A voice says how loud its consonants are, and the frames listen.** The energy a singer
+  track's frames carried was the note's velocity on every phoneme, a plateau — and measured
+  on JSUT-song a voiceless plosive or fricative sings twenty-odd decibels under the vowel
+  after it, a voiced consonant six to nine, an approximant three. A /k/ at the vowel's level
+  is a /k/ the model has never heard, and on the labelled corpus that plateau alone cost the
+  phoneme error rate 0.25 → 0.56, more than the consonant widths and the note-flat pitch
+  together. An export now carries `phoneme_levels`, measured by
+  `training/scripts/measure_phoneme_levels.py` from a labelled dataset the way the widths are
+  measured from labels; choosing the voice copies the table into the document beside the
+  widths, and `auris-vocal` turns each consonant down by its measured decibels.
 * **The host spells ざ and にゃ the way the voices were trained.** Both of `auris-vocal`'s
   front-ends — the kana table and the OpenJTalk map — wrote ざ行 as `z` and にゃ行 as `nʲ`,
   while the trainer's own OpenJTalk map writes `dz` and `ɲ`, so every voice was trained on

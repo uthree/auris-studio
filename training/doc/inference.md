@@ -311,6 +311,69 @@ that the default is the better estimate. The exporter refuses a table naming
 symbols outside the checkpoint's phoneme table, which catches a table measured
 against a phoneme set that has since moved on.
 
+### Consonant levels
+
+The widths say how *long* a consonant is given; this table says how *loud*. A
+score front-end writes one energy per frame — the note's velocity, shaped by a
+short attack and release — and a plateau is wrong for the consonants: measured
+on JSUT-song, a voiceless plosive or fricative sits twenty-odd decibels below
+the vowel after it, a voiced one six to nine, an approximant three. A model
+asked for a /k/ at the vowel's level has never heard one. On the labelled
+corpus, putting the vowel's level on every consonant cost the phoneme error
+rate 0.25 → 0.56; putting these medians back recovered 0.35, and one number
+per class did as well as one per phoneme.
+
+The numbers are a property of the corpus, so they travel with the model under
+the optional `phoneme_levels` key, beside the widths:
+
+```json
+{
+  "phoneme_levels": {
+    "unit": "db",
+    "default": -11.5,
+    "db": {"p": -26.5, "k": -22.6, "s": -20.6, "ɕ": -11.0, "n": -5.9, "ɾ": -3.7},
+    "counts": {"p": 20, "k": 282, "s": 142, "ɕ": 71, "n": 261, "ɾ": 214},
+    "measured_from": "JSUT-song, HTS full-context labels, 27 songs"
+  }
+}
+```
+
+| field | meaning |
+| --- | --- |
+| `unit` | always `"db"`: decibels against the first vowel after the phoneme |
+| `default` | the level for a consonant not named in `db` — the pooled median, a consonant's level, never 0 dB |
+| `db` | IPA symbol → level, quietest first |
+| `counts` | how many occurrences each median came from |
+| `measured_from` | free text naming the corpus and label set |
+
+The rule for a consumer:
+
+```
+gain(phoneme) = 10 ** (db[phoneme] / 20)   if phoneme in db
+              = 10 ** (default / 20)       if phoneme is a consonant
+              = 1                          if phoneme is a syllabic (a vowel, ɴ, ʔ)
+```
+
+A syllabic keeps the note's level unless the table measured it — `ɴ` is, at
+−8 dB — and every energy the front-end writes for a consonant is multiplied by
+its gain. The block is optional; a model exported without one has no
+`phoneme_levels` key, and the consumer gives every phoneme the note's level as
+it always did.
+
+```bash
+uv run python scripts/measure_phoneme_levels.py --data data/processed/jsut_song_lab \
+    --measured-from 'JSUT-song, HTS full-context labels, 27 songs' \
+    --output data/raw/jsut_song_levels.json
+uv run python scripts/export_onnx.py --checkpoint last.ckpt --output voice.onnx \
+    --phoneme-durations data/raw/jsut_durations.json \
+    --phoneme-levels data/raw/jsut_song_levels.json
+```
+
+It is measured from a *preprocessed* dataset that stored labelled durations
+([preprocessing.md](preprocessing.md#input-layout)), since it needs the frame
+energies the preprocessor computed and the durations that say whose they are.
+A phoneme needs twenty occurrences before its median ships.
+
 ### Voice card
 
 Presentational metadata — what a host application shows to a person browsing

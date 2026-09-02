@@ -55,6 +55,12 @@ def main() -> None:
         help="JSON file from scripts/measure_phoneme_durations.py: how long each "
         "consonant should be given to this voice",
     )
+    parser.add_argument(
+        "--phoneme-levels",
+        type=Path,
+        help="JSON file from scripts/measure_phoneme_levels.py: how loud each consonant "
+        "is against its vowel, for this voice",
+    )
     args = parser.parse_args()
 
     module = AurisSingerModule.load_from_checkpoint(args.checkpoint, map_location="cpu")
@@ -74,6 +80,12 @@ def main() -> None:
         if not isinstance(durations, dict) or not isinstance(durations.get("seconds"), dict):
             raise SystemExit("--phoneme-durations must contain a JSON object with a 'seconds' map")
 
+    levels = None
+    if args.phoneme_levels:
+        levels = json.loads(args.phoneme_levels.read_text(encoding="utf-8"))
+        if not isinstance(levels, dict) or not isinstance(levels.get("db"), dict):
+            raise SystemExit("--phoneme-levels must contain a JSON object with a 'db' map")
+
     output = Path(args.output)
     export_onnx(
         module.model,
@@ -82,6 +94,7 @@ def main() -> None:
         opset=args.opset,
         voice=voice or None,
         phoneme_durations=durations,
+        phoneme_levels=levels,
     )
     size_mb = output.stat().st_size / 1e6
     print(f"wrote {output} ({size_mb:.1f} MB) and {output.with_suffix('.json').name}")

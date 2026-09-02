@@ -24,6 +24,7 @@ import torch.nn as nn
 
 from auris_singer.model import AurisSinger
 from auris_singer.phoneme_durations import METADATA_FIELD as DURATIONS_FIELD
+from auris_singer.phoneme_levels import METADATA_FIELD as LEVELS_FIELD
 from auris_singer.utils.masks import sequence_mask
 
 __all__ = [
@@ -258,6 +259,7 @@ def metadata_block(
     *,
     voice: dict[str, Any] | None = None,
     phoneme_durations: dict[str, Any] | None = None,
+    phoneme_levels: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The JSON block an export carries: what the model is, and what it needs.
 
@@ -282,6 +284,8 @@ def metadata_block(
         block["voice"] = voice
     if phoneme_durations:
         block[DURATIONS_FIELD] = phoneme_durations
+    if phoneme_levels:
+        block[LEVELS_FIELD] = phoneme_levels
     return block
 
 
@@ -292,6 +296,7 @@ def export_onnx(
     opset: int = 18,
     voice: dict[str, Any] | None = None,
     phoneme_durations: dict[str, Any] | None = None,
+    phoneme_levels: dict[str, Any] | None = None,
 ) -> None:
     """Export the inference path to ``path`` as ONNX.
 
@@ -318,18 +323,28 @@ def export_onnx(
     numbers are a property of the corpus the model was trained on, so they
     belong with the model rather than hard-coded in the front-end;
     ``doc/inference.md`` documents the format for consumers.
+
+    ``phoneme_levels`` is its companion from
+    :func:`auris_singer.phoneme_levels.summarize`: how loud each consonant is
+    against the vowel after it, in decibels, so a front-end that writes one
+    energy per note can turn the consonants down to where the voice sang them.
     """
     from torch.export import Dim
 
-    if phoneme_durations:
+    symbols = set((metadata or {}).get("symbols") or ())
+    for name, table, key in (
+        (DURATIONS_FIELD, phoneme_durations, "seconds"),
+        (LEVELS_FIELD, phoneme_levels, "db"),
+    ):
+        if not table:
+            continue
         # A table keyed by symbols this model cannot be given is dead weight,
         # and shipping one silently hides a phoneme table that has moved on
-        # since the durations were measured. Fail before the trace, not after.
-        symbols = set((metadata or {}).get("symbols") or ())
-        stray = sorted(set(phoneme_durations.get("seconds") or ()) - symbols)
+        # since it was measured. Fail before the trace, not after.
+        stray = sorted(set(table.get(key) or ()) - symbols)
         if symbols and stray:
             raise ValueError(
-                f"phoneme_durations names symbols outside the model's table: {stray}; "
+                f"{name} names symbols outside the model's table: {stray}; "
                 "re-measure them against this checkpoint's phoneme table"
             )
 
@@ -365,7 +380,9 @@ def export_onnx(
             dynamo=True,
         )
 
-    merged = metadata_block(model, metadata, voice=voice, phoneme_durations=phoneme_durations)
+    merged = metadata_block(
+        model, metadata, voice=voice, phoneme_durations=phoneme_durations, phoneme_levels=phoneme_levels
+    )
 
     import onnx
 

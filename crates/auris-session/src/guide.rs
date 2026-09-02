@@ -1106,7 +1106,10 @@ pub mod singing {
     //! data, [`Session::set_singer_voice`](crate::Session::set_singer_voice) copies them
     //! into the document as [`auris_core::ConsonantWidths`] beside the voice's name — same
     //! reason: the layout must not change with whether the model file is present — and the
-    //! layout falls back to a fixed sixty milliseconds where no table rode in.
+    //! layout falls back to a fixed sixty milliseconds where no table rode in. The voice's
+    //! consonant *levels* ride in the same way, as [`auris_core::ConsonantLevels`]: how far
+    //! under its vowel the training data sang each consonant, which the frames' energy is
+    //! turned down by — a /k/ at the vowel's loudness being a /k/ no voice has heard.
     //!
     //! # One vocabulary, two readers
     //!

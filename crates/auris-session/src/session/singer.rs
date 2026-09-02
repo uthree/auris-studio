@@ -567,7 +567,7 @@ impl Session {
         let chosen = match path {
             Some(file) => {
                 let model = self.voice_model_at(file)?;
-                let (name, hop, consonants) = {
+                let (name, hop, consonants, levels) = {
                     let model = model.lock().expect("no thread panics holding a voice");
                     let name = voice_name(&model, file);
                     // The consonant widths ride into the document beside the name, for the
@@ -577,6 +577,7 @@ impl Session {
                         name,
                         model.info().hop_seconds(),
                         model.info().consonant_widths(),
+                        model.info().consonant_levels(),
                     )
                 };
                 let reference = match self
@@ -586,7 +587,7 @@ impl Session {
                     Some(relative) => AssetPath::inside(relative),
                     None => AssetPath::external(file),
                 };
-                Some((reference, name, hop, consonants))
+                Some((reference, name, hop, consonants, levels))
             }
             None => None,
         };
@@ -597,11 +598,12 @@ impl Session {
             .and_then(|track| track.kind.as_singer_mut())
         {
             match chosen {
-                Some((path, name, hop, consonants)) => {
+                Some((path, name, hop, consonants, levels)) => {
                     singer.voice = Some(SingerVoice {
                         path,
                         name,
                         consonants,
+                        levels,
                     });
                     singer.frame_hop = hop;
                 }
@@ -1284,6 +1286,7 @@ mod tests {
                 path: AssetPath::external("/voices/test.onnx"),
                 name: "Test Voice".into(),
                 consonants: None,
+                levels: None,
             });
         }
     }
@@ -1518,6 +1521,18 @@ mod tests {
             session.singer_voice(track).unwrap().unwrap().consonants,
             measured,
             "the document carries what the model measured, no more and no less"
+        );
+        let levels = {
+            let model = session
+                .voice_model_at(std::path::Path::new(&model))
+                .unwrap();
+            let model = model.lock().unwrap();
+            model.info().consonant_levels()
+        };
+        assert_eq!(
+            session.singer_voice(track).unwrap().unwrap().levels,
+            levels,
+            "and the levels beside the widths"
         );
 
         let seconds = session.sing(track, None).unwrap();

@@ -34,7 +34,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from auris_singer import host, host_eval
+from auris_singer import host, host_eval, phoneme_levels
 from auris_singer.export import FORMAT_VERSION, METADATA_KEY, metadata_block
 from auris_singer.infer import Synthesizer
 from auris_singer.phoneme_durations import METADATA_FIELD, summarize
@@ -374,3 +374,22 @@ def test_the_hosts_front_ends_spell_every_sound_the_way_the_trainer_does():
             f"the host's {name} emits {strangers}, which the trainer's front-end never writes; "
             "a voice trained from OpenJTalk labels has never seen them"
         )
+
+
+def test_the_level_table_is_named_and_measured_as_the_host_expects():
+    """The consonant levels an export measures, as the host asks for them — the widths'
+    contract, once more for the second table."""
+    fields = rust_struct_fields(METADATA_RS, "VoiceInfo")
+    assert phoneme_levels.METADATA_FIELD in fields, (
+        f"an export ships its levels under {phoneme_levels.METADATA_FIELD!r} and `VoiceInfo` "
+        "has no such field"
+    )
+    block = phoneme_levels.summarize({}, measured_from="the contract test")
+    unit = re.search(r'levels\.unit != "([^"]*)"', rust(METADATA_RS))
+    assert unit, "the host's unit check has moved; this test cannot see what it accepts"
+    assert block["unit"] == unit.group(1), (
+        f"this project measures in {block['unit']!r} and the host reads {unit.group(1)!r}"
+    )
+    levels = rust_struct_fields(METADATA_RS, "PhonemeLevels")
+    required = {field for field, defaulted in levels.items() if not defaulted}
+    assert required <= set(block), sorted(required - set(block))

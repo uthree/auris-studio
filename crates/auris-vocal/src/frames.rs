@@ -21,8 +21,12 @@
 //!   f0 as a contour and decides voicing from the phoneme, not from a zero.
 //! * **Energy is the velocity, shaped.** A linear rise over [`ATTACK_SECONDS`], a linear fall
 //!   over the last [`RELEASE_SECONDS`], scaled by the expression pedal (controller 11) where
-//!   one is written. Outside every note the energy is zero, the pitch is zero, and the phoneme
-//!   is [`SILENCE`].
+//!   one is written — and, where the track's voice carries a table
+//!   ([`ConsonantLevels`]), scaled down on each consonant by how far under its vowel the
+//!   voice's training data sang it: twenty-odd decibels for a voiceless plosive, three for
+//!   an approximant. A consonant at the vowel's level is one the model has never heard, and
+//!   the plateau alone was measured to cost half the words. Outside every note the energy is
+//!   zero, the pitch is zero, and the phoneme is [`SILENCE`].
 //! * **A note with no phonemes sings `a`.** Losing the melody line over a missing word would
 //!   make every export of a half-written song useless; an open vowel keeps the contour intact
 //!   and is obviously a placeholder to the ear.
@@ -33,7 +37,8 @@ use auris_core::plugin::{CC_EXPRESSION, pitch_to_hz};
 use auris_core::project::{ClipCurve, CurvePoint, curve_at};
 use auris_core::time::{Seconds, TempoMap, Ticks};
 use auris_core::{
-    ConsonantWidths, Fall, Scoop, SingerTrack, Vibrato, default_frame_hop, loop_passes,
+    ConsonantLevels, ConsonantWidths, Fall, Scoop, SingerTrack, Vibrato, default_frame_hop,
+    loop_passes,
 };
 
 use crate::ornament::ornament_offset;
@@ -117,6 +122,8 @@ struct TimedNote<'a> {
     expression: &'a [CurvePoint],
     /// The track's voice's consonant widths, where its export carried a table.
     widths: Option<&'a ConsonantWidths>,
+    /// The track's voice's consonant levels, where its export carried a table.
+    levels: Option<&'a ConsonantLevels>,
 }
 
 /// Samples a singer track into the frames its voice model is fed.
@@ -186,7 +193,8 @@ pub fn render_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames 
             true => 1.0,
             false => curve_at(note.expression, tick - note.curve_base).clamp(0.0, 1.0),
         };
-        energy.push(note.velocity * expression * envelope(note, t));
+        energy
+            .push(note.velocity * expression * envelope(note, t) * level_gain(note.levels, token));
     }
 
     SingerFrames {
@@ -204,6 +212,7 @@ fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNot
         .voice
         .as_ref()
         .and_then(|voice| voice.consonants.as_ref());
+    let levels = track.voice.as_ref().and_then(|voice| voice.levels.as_ref());
     let mut placed: Vec<(Ticks, Ticks, TimedNote<'a>)> = Vec::new();
     for clip in &track.clips {
         if clip.muted {
@@ -239,6 +248,7 @@ fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNot
                         bend: &clip.bend,
                         expression,
                         widths,
+                        levels,
                     },
                 ));
             }
@@ -378,6 +388,18 @@ pub fn phoneme_layout(
         at += width;
     }
     out
+}
+
+/// How much of the note's level a phoneme is given: the voice's measured consonant level
+/// as a linear gain, the default for a consonant it never measured, and all of it for a
+/// syllabic — or for everything, on a voice with no table.
+pub fn level_gain(levels: Option<&ConsonantLevels>, phoneme: &str) -> f32 {
+    match levels {
+        Some(levels) if levels.measured(phoneme) || !is_syllabic(phoneme) => {
+            10f32.powf(levels.db(phoneme) as f32 / 20.0)
+        }
+        _ => 1.0,
+    }
 }
 
 /// The energy envelope at `t` seconds, for a note known to contain it.
@@ -587,6 +609,7 @@ mod tests {
         let plain = render_frames(&track(vec![note.clone()]), &map());
         let mut voiced = track(vec![note]);
         voiced.voice = Some(auris_core::SingerVoice {
+            levels: None,
             path: auris_core::AssetPath::external("/nowhere/voice.onnx"),
             name: "Measured".into(),
             consonants: Some(measured()),
@@ -699,5 +722,61 @@ mod tests {
         let text = serde_json::to_string(&frames).unwrap();
         let back: SingerFrames = serde_json::from_str(&text).unwrap();
         assert_eq!(back, frames);
+    }
+
+    #[test]
+    fn a_voice_s_own_levels_turn_the_consonants_down_and_leave_the_vowel_alone() {
+        // か on one long note at velocity 0.8: once on no voice, once on a voice whose export
+        // measured its /k/ at −20 dB. The frames move without any caller passing a table.
+        let note = sung(60, 0.0, 4.0, &["k", "a"]);
+        let plain = render_frames(&track(vec![note.clone()]), &map());
+        let mut levelled = track(vec![note]);
+        levelled.voice = Some(auris_core::SingerVoice {
+            path: auris_core::AssetPath::external("/nowhere/voice.onnx"),
+            name: "Measured".into(),
+            consonants: None,
+            levels: Some(ConsonantLevels {
+                default: -12.0,
+                db: [("k".to_string(), -20.0)].into_iter().collect(),
+            }),
+        });
+        let levelled = render_frames(&levelled, &map());
+        let token = |frames: &SingerFrames, at: usize| {
+            frames.inventory[frames.phonemes[at] as usize].clone()
+        };
+        // Well inside the consonant (60 ms at a 10 ms hop), and well inside the vowel.
+        let (k, a) = (3usize, 100usize);
+        assert_eq!(token(&plain, k), "k");
+        assert_eq!(token(&plain, a), "a");
+        assert!(
+            (levelled.energy[k] / plain.energy[k] - 0.1).abs() < 1e-3,
+            "−20 dB is a tenth: {} against {}",
+            levelled.energy[k],
+            plain.energy[k]
+        );
+        assert!(
+            (levelled.energy[a] - plain.energy[a]).abs() < 1e-6,
+            "the vowel keeps its level"
+        );
+
+        assert_eq!(level_gain(None, "k"), 1.0, "no table, no change");
+        let table = ConsonantLevels {
+            default: -6.0,
+            db: Default::default(),
+        };
+        assert!(
+            (level_gain(Some(&table), "s") - 0.501).abs() < 1e-3,
+            "an unmeasured consonant takes the default"
+        );
+        assert_eq!(
+            level_gain(Some(&table), "a"),
+            1.0,
+            "a vowel never takes the default"
+        );
+        assert_eq!(
+            level_gain(Some(&table), "ɴ"),
+            1.0,
+            "nor the moraic nasal, a syllabic"
+        );
     }
 }
