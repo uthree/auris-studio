@@ -136,6 +136,12 @@ def test_the_table_reads_every_column_it_is_given():
     report["summary"]["timing"]["asr_seconds"] = 3.0
     heard = format_report(report)
     assert "recording" in heard and "per" in heard and "listener took 3.00 s" in heard
+    # The tally prints under the table for the main column, worst phoneme first.
+    report["summary"]["confusions"] = {"host": [["a", "a", 5], ["ɕ", "s", 3], ["k", "", 1]]}
+    tallied = format_report(report)
+    lines = tallied.split("\n")
+    start = next(at for at, line in enumerate(lines) if line.startswith("what the listener heard, host column"))
+    assert [line.split()[0] for line in lines[start + 2 : start + 5]] == ["ɕ", "k", "a"], "sorted by errors"
 
     score = {
         "voice": {"path": "v.onnx", "name": ""},
@@ -227,6 +233,8 @@ def test_the_host_sings_the_corpus_and_every_column_is_measured(exported_voice, 
         for column in ("host", "reference", "song", "recording"):
             assert math.isfinite(row[column]["per"]) and row[column]["heard"] == "a i k o"
     assert 0 <= summary["recording"]["per"] < 1
+    assert set(summary["confusions"]) == {"host", "reference", "song", "recording"}
+    assert sum(n for _, _, n in summary["confusions"]["host"]) >= 2 * 2 * 4, "every take, every phoneme"
     assert summary["timing"]["asr_seconds"] >= 0
     assert summary["timing"]["song"]["seconds_of_frames"] > sum(r["seconds"] for r in report["utterances"])
     assert 0 < summary["timing"]["rtf"] < 1000
@@ -260,6 +268,7 @@ def test_the_host_sings_a_score_the_way_a_person_would(exported_voice, tmp_path)
     assert report["summary"]["timing"]["wall_seconds"] > 0
     assert listener.heard == 1 and math.isfinite(metrics["per"])
     assert report["asked"].startswith("s a k ɯ ɾ a"), "さくら, as the frames spelt it"
+    assert report["summary"]["confusions"]["score"][0][2] >= 1, "the tally rode along"
     assert "wall RTF" in format_report(report)
 
 

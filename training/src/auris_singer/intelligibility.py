@@ -168,6 +168,95 @@ def edit_distance(reference: list[str], hypothesis: list[str]) -> int:
     return previous[-1]
 
 
+def align(reference: list[str], hypothesis: list[str]) -> list[tuple[str, str]]:
+    """The edit path behind [`edit_distance`]: ``(asked, heard)`` pairs in order.
+
+    A match or a substitution pairs two phonemes; a deletion pairs the asked phoneme with
+    ``""`` and an insertion pairs ``""`` with the heard one. The path is one of the shortest;
+    where two are equally short a match is taken before a deletion, a deletion before an
+    insertion and either before a substitution, so that さくら heard as さくらあ reads as an
+    extra あ rather than a ら heard as あ — and the same tie every time, so counts from many
+    utterances add up on one convention.
+    """
+    rows = len(reference) + 1
+    cols = len(hypothesis) + 1
+    cost = [[0] * cols for _ in range(rows)]
+    for i in range(1, rows):
+        cost[i][0] = i
+    for j in range(1, cols):
+        cost[0][j] = j
+    for i in range(1, rows):
+        for j in range(1, cols):
+            cost[i][j] = min(
+                cost[i - 1][j - 1] + (reference[i - 1] != hypothesis[j - 1]),
+                cost[i - 1][j] + 1,
+                cost[i][j - 1] + 1,
+            )
+    pairs: list[tuple[str, str]] = []
+    i, j = len(reference), len(hypothesis)
+    while i > 0 or j > 0:
+        same = i > 0 and j > 0 and reference[i - 1] == hypothesis[j - 1]
+        if same and cost[i][j] == cost[i - 1][j - 1]:
+            pairs.append((reference[i - 1], hypothesis[j - 1]))
+            i, j = i - 1, j - 1
+        elif i > 0 and cost[i][j] == cost[i - 1][j] + 1:
+            pairs.append((reference[i - 1], ""))
+            i -= 1
+        elif j > 0 and cost[i][j] == cost[i][j - 1] + 1:
+            pairs.append(("", hypothesis[j - 1]))
+            j -= 1
+        else:
+            pairs.append((reference[i - 1], hypothesis[j - 1]))
+            i, j = i - 1, j - 1
+    pairs.reverse()
+    return pairs
+
+
+def tally_confusions(
+    reference: list[str], hypothesis: list[str], into: dict[tuple[str, str], int]
+) -> None:
+    """Adds every ``(asked, heard)`` pair of [`align`] to ``into``."""
+    for pair in align(reference, hypothesis):
+        into[pair] = into.get(pair, 0) + 1
+
+
+def confusion_rows(counts: dict[tuple[str, str], int]) -> list[list]:
+    """The tally as plain data — ``[asked, heard, count]`` rows, most frequent first."""
+    return [[asked, heard, n] for (asked, heard), n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+
+def confusion_table(counts: dict[tuple[str, str], int], limit: int = 12) -> str:
+    """Per phoneme asked: how often it was heard as itself, dropped, or heard as what.
+
+    Sorted by errors, the worst ``limit`` phonemes; below them the phonemes the listener
+    inserted that nobody asked for. Empty when nothing was tallied.
+    """
+    asked_for = sorted({asked for asked, _ in counts if asked})
+    rows = []
+    for asked in asked_for:
+        mine = {heard: n for (a, heard), n in counts.items() if a == asked}
+        total = sum(mine.values())
+        right = mine.get(asked, 0)
+        dropped = mine.get("", 0)
+        others = sorted(
+            ((n, heard) for heard, n in mine.items() if heard not in (asked, "")), reverse=True
+        )
+        rows.append((total - right, asked, total, right, dropped, others))
+    rows.sort(key=lambda row: (-row[0], row[1]))
+    if not rows:
+        return ""
+    lines = ["phoneme     asked   right dropped   rate  heard as"]
+    for _, asked, total, right, dropped, others in rows[:limit]:
+        heard_as = "  ".join(f"{heard}×{n}" for n, heard in others[:4])
+        lines.append(
+            f"{asked:8s} {total:8d} {right:7d} {dropped:7d}  {(total - right) / total:5.2f}  {heard_as}"
+        )
+    inserted = sorted(((n, heard) for (a, heard), n in counts.items() if not a), reverse=True)
+    if inserted:
+        lines.append("inserted: " + "  ".join(f"{heard}×{n}" for n, heard in inserted[:8]))
+    return "\n".join(lines)
+
+
 def phoneme_error_rate(reference: list[str], hypothesis: list[str]) -> float:
     """Edits per reference phoneme — substitutions, insertions and deletions together.
 

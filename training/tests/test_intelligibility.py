@@ -11,8 +11,13 @@ import torch
 from auris_singer.intelligibility import (
     CLASS_METRICS,
     SIBILANT_SPLIT_HZ,
+    align,
     class_spectral_metrics,
+    confusion_rows,
+    confusion_table,
+    edit_distance,
     frame_classes,
+    tally_confusions,
 )
 from auris_singer.text.ipa import (
     IPA_SYMBOLS,
@@ -132,3 +137,35 @@ def test_frames_and_tokens_must_agree():
         mel = mel_spectrogram(_tone(10), SR, N_FFT, HOP, WIN, 32)
         class_spectral_metrics(mel, mel[:, :5], mel, mel, ["a"] * 10, SR, N_FFT)
     assert np.asarray(frame_classes([])[0]).size == 0
+
+
+def test_the_alignment_is_a_shortest_path_and_reads_the_way_a_person_would():
+    asked = ["s", "a", "k", "ɯ", "ɾ", "a"]
+    assert align(asked, asked) == list(zip(asked, asked)), "heard as asked: every pair a match"
+    # A vowel heard wrong is a substitution, not a deletion beside an insertion.
+    assert align(["k", "a", "s", "a"], ["k", "a", "s", "o"])[-1] == ("a", "o")
+    # A dropped /s/ pairs with nothing; an extra あ is an insertion, and the ら stays a ら.
+    assert align(asked, asked[1:])[0] == ("s", "")
+    assert ("", "a") in align(asked, asked + ["a"])[-2:]
+    tail = align(asked, ["s", "a", "k", "ɯ", "r", "a", "a"])[4:]
+    assert sorted(tail) == [("", "a"), ("a", "a"), ("ɾ", "r")]
+    for heard in (asked[1:], asked + ["a"], ["k", "o"], []):
+        pairs = align(asked, heard)
+        assert sum(a != h for a, h in pairs) == edit_distance(asked, heard), "the path costs the distance"
+        assert [a for a, _ in pairs if a] == asked and [h for _, h in pairs if h] == heard
+
+
+def test_the_tally_adds_up_over_utterances_and_the_table_names_the_worst_first():
+    tally: dict[tuple[str, str], int] = {}
+    tally_confusions(["s", "a", "ɕ", "i"], ["a", "ɕ", "i"], tally)
+    tally_confusions(["s", "a", "ɕ", "i"], ["s", "a", "s", "i"], tally)
+    tally_confusions(["s", "a", "ɕ", "i"], ["s", "a", "s", "i", "i"], tally)
+    assert tally[("s", "")] == 1 and tally[("ɕ", "s")] == 2 and tally[("", "i")] == 1
+    rows = confusion_rows(tally)
+    assert rows[0][2] == 3 and ["ɕ", "s", 2] in rows, "most frequent pair first, as plain data"
+    table = confusion_table(tally)
+    lines = table.split("\n")
+    assert lines[1].startswith("ɕ") and "s×2" in lines[1], "ɕ lost twice, both times as s"
+    assert lines[2].startswith("s") and lines[2].split()[3] == "1", "s dropped once"
+    assert lines[-1] == "inserted: i×1"
+    assert confusion_table({}) == ""

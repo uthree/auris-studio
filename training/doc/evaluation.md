@@ -108,6 +108,14 @@ near word-perfect (`春が来た春が来た` for 春が来た春が来た) and 
 — a `per` near one, which is what the ear said. There is no recording in the score run,
 so its `per` stands alone, against the phonemes the frames spelled.
 
+The rate says how many phonemes were lost; the tally under the table says **which, and
+what they were heard as**. Every `(asked, heard)` pair of the edit path behind the rate is
+counted across every take of every utterance (`intelligibility.align`), and the report's
+`summary.confusions` holds the counts per column; the table prints the main column's worst
+phonemes — asked, heard right, dropped, heard as what — and the phonemes the listener
+inserted. It is the difference between "a fifth of the consonants are wrong" and "ɕ is
+heard as s and h is not heard at all", which are two different fixes.
+
 **Another language is one registration.** `asr.RECOGNISERS` maps a language code to a
 class with a `language` and a `transcribe(wav, sample_rate) -> str`; the front-end that
 turns its text into IPA is the one the trainer already has for that language in `text/`,
@@ -225,6 +233,13 @@ What it came to:
   (`runs/exp/glide_seeds.py`), the step scored PER 0.302 and the glide 0.293, with every
   other shape tried between 0.265 and 0.277 — all inside a take-to-take spread of 0.09. The
   line is drawn because the corpus draws it; the number says only that it costs nothing.
+* **What is lost now is the plosives and the flap, not the sibilants.** The tally on the
+  `base` voice's corpus run: g was heard right 4 times in 24 and as n 10 times, ɾ right 13
+  in 30 and as n 5, p right 0 in 12 and as t or k 7; ɕ, s and ts no longer appear in the
+  worst dozen. A stop heard as a nasal is a closure the model never made and a burst it
+  never released — the shortest events in the language, a few frames each, and the ones a
+  21-minute corpus holds fewest examples of. That is the case for pre-training on the same
+  speaker's read speech (`doc/training.md`, `--init-from`).
 * **What is left on the score path** is the melody itself — the composed line against the
   corpus's — and the gap to the corpus that only more singing data closes.
 

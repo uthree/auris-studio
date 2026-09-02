@@ -61,8 +61,11 @@ from auris_singer.infer import Synthesizer, frame_voicing
 from auris_singer.intelligibility import (
     CLASS_METRICS,
     class_spectral_metrics,
+    confusion_rows,
+    confusion_table,
     hearable,
     phoneme_error_rate,
+    tally_confusions,
 )
 from auris_singer.metrics import energy_metrics, pitch_metrics
 from auris_singer.text.ipa import PhonemeTable, is_voiceless
@@ -501,13 +504,26 @@ def make_listener(settings: Settings, listener: Any = None) -> Any:
     return Listener.for_language(settings.asr_language, **settings.asr_options)
 
 
-def listen(listener: Any, wav: np.ndarray, sample_rate: int, asked: list[str], into: dict) -> None:
-    """Hear ``wav`` and write the rate against ``asked`` into ``into``, with what was heard."""
+def listen(
+    listener: Any,
+    wav: np.ndarray,
+    sample_rate: int,
+    asked: list[str],
+    into: dict,
+    tally: dict[tuple[str, str], int] | None = None,
+) -> None:
+    """Hear ``wav`` and write the rate against ``asked`` into ``into``, with what was heard.
+
+    ``tally`` collects every ``(asked, heard)`` pair of the alignment across calls, so a run
+    can say which phonemes were lost and what they were heard as, not only how many.
+    """
     started = time.perf_counter()
     heard = listener.hear(wav, sample_rate)
     into["per"] = phoneme_error_rate(asked, heard.phonemes)
     into["heard"] = heard.text
     into["asr_seconds"] = time.perf_counter() - started
+    if tally is not None:
+        tally_confusions(asked, heard.phonemes, tally)
 
 
 def average_rows(rows: list[dict]) -> dict:
@@ -584,6 +600,7 @@ def evaluate(
     seeds = [settings.take_seed + at for at in range(max(1, settings.take_seeds))]
 
     utterances: list[Utterance] = []
+    tallies: dict[str, dict[tuple[str, str], int]] = {column: {} for column in COLUMNS}
     rows: list[dict] = []
     frames_list: list[HostFrames] = []
     for record in records:
@@ -621,7 +638,7 @@ def evaluate(
                 "timing": facts,
             }
             if listener is not None:
-                listen(listener, sung, info.sample_rate, asked, take["host"])
+                listen(listener, sung, info.sample_rate, asked, take["host"], tallies["host"])
             if settings.reference:
                 started = time.perf_counter()
                 reference = aligner.reference(utterance, seed)
@@ -631,7 +648,9 @@ def evaluate(
                     reference, f0, energy, utterance.voiced, reference=wav, tokens=utterance.tokens
                 )
                 if listener is not None:
-                    listen(listener, reference, info.sample_rate, asked, take["reference"])
+                    listen(
+                        listener, reference, info.sample_rate, asked, take["reference"], tallies["reference"]
+                    )
             takes.append(take)
         row: dict[str, Any] = {
             "id": record["id"],
@@ -648,7 +667,7 @@ def evaluate(
         if listener is not None:
             row["asked"] = " ".join(asked)
             row["recording"] = {}
-            listen(listener, wav, info.sample_rate, asked, row["recording"])
+            listen(listener, wav, info.sample_rate, asked, row["recording"], tallies["recording"])
         rows.append(row)
         logger.info("%s: %s", record["id"], _one_line(row["host"]))
 
@@ -675,7 +694,10 @@ def evaluate(
                     reference=utterance.wav, tokens=utterance.tokens,
                 )
                 if listener is not None:
-                    listen(listener, piece, info.sample_rate, hearable(utterance.phonemes), measured)
+                    listen(
+                        listener, piece, info.sample_rate, hearable(utterance.phonemes), measured,
+                        tallies["song"],
+                    )
                 per_row[at].append(measured)
         for row, measured in zip(rows, per_row):
             row["song"] = average_rows(measured)
@@ -710,6 +732,9 @@ def evaluate(
         summary["song"] = summarize([row["song"] for row in rows])
     if listener is not None:
         summary["recording"] = summarize([row["recording"] for row in rows])
+        summary["confusions"] = {
+            column: confusion_rows(tally) for column, tally in tallies.items() if tally
+        }
 
     return {
         "kind": "corpus",
@@ -777,6 +802,7 @@ def evaluate_score(
     )
     seeds = [settings.take_seed + at for at in range(max(1, settings.take_seeds))]
     takes: list[dict] = []
+    tally: dict[tuple[str, str], int] = {}
     wall = 0.0
     take = None
     frames = None
@@ -804,7 +830,7 @@ def evaluate_score(
         sung = read_wav(take, info.sample_rate)
         measured = analyst.measure(sung, f0, energy, voiced)
         if listener is not None:
-            listen(listener, sung, info.sample_rate, asked, measured)
+            listen(listener, sung, info.sample_rate, asked, measured, tally)
         takes.append(measured)
     metrics = average_rows(takes)
     seconds = frames.seconds * len(seeds)
@@ -828,7 +854,8 @@ def evaluate_score(
                 "wall_seconds": wall,
                 "wall_rtf": wall / seconds if seconds else math.nan,
             },
-        },
+        }
+        | ({"confusions": {"score": confusion_rows(tally)}} if tally else {}),
     }
 
 
@@ -918,4 +945,11 @@ def format_report(report: dict, baseline: dict | None = None) -> str:
             f"{timing['audio_seconds']:.1f} s of audio (session and model included) · "
             f"wall RTF {timing['wall_rtf']:.3f}"
         )
+    confusions = summary.get("confusions", {})
+    main = columns[0] if columns else None
+    if main in confusions:
+        table = confusion_table({(asked, heard): n for asked, heard, n in confusions[main]})
+        if table:
+            lines.append(f"what the listener heard, {main} column, worst phonemes first:")
+            lines.extend("  " + line for line in table.split("\n"))
     return "\n".join(lines)
