@@ -307,7 +307,12 @@ two contexts (`ɕ` is 112 ms against 110 ms), so the choice really only decides
 the plosives.
 
 A phoneme needs at least 90 occurrences before its median is shipped; below
-that the default is the better estimate. The exporter refuses a table naming
+that the default is the better estimate. That bar was set on the Ritsu corpus
+(4.4 hours); on JSUT-song (21 minutes) it leaves six phonemes in the table, and
+`--min-samples 10` puts twenty in. Measured on the labelled corpus, giving every
+consonant its median width instead of a flat 60 ms took the phoneme error rate
+from 0.40 back to 0.30 (0.26 with the labels themselves), so on a small corpus
+lower the bar rather than ship the default. The exporter refuses a table naming
 symbols outside the checkpoint's phoneme table, which catches a table measured
 against a phoneme set that has since moved on.
 
