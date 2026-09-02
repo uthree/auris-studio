@@ -1104,8 +1104,8 @@ pub mod singing {
     //! [`frame_hop`](auris_core::SingerTrack::frame_hop): one phoneme id, one pitch in Hz and
     //! one energy per hop, with the bend curve moving the pitch and controller 11 scaling the
     //! energy. The timing rules (consonants take their width at a note's edges, syllabics
-    //! stretch, one note sounds at a time) live in [`auris_vocal::frames`] beside the tests
-    //! that measure them. The consonant's width is the voice model's own: a newer
+    //! stretch, one note sounds at a time, the pitch travels between two notes that touch)
+    //! live in [`auris_vocal::frames`] beside the tests that measure them. The consonant's width is the voice model's own: a newer
     //! auris-singer export carries the per-phoneme durations it measured from its training
     //! data, [`Session::set_singer_voice`](crate::Session::set_singer_voice) copies them
     //! into the document as [`auris_core::ConsonantWidths`] beside the voice's name — same

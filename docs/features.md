@@ -265,8 +265,8 @@ before.
 
 While a singer clip is open, the piano roll draws the **sung pitch curve** over the notes:
 the contour the model is fed — pitch plus bend in fractional semitones, consonants riding
-their vowel's pitch, rests leaving a gap in the line — so a drawn portamento or vibrato
-reads exactly as it will sound. The **phoneme segmentation** is drawn from the same frames:
+their vowel's pitch, the pitch travelling across each boundary where two notes touch, rests
+leaving a gap in the line — so a drawn portamento or vibrato reads exactly as it will sound. The **phoneme segmentation** is drawn from the same frames:
 a faint divider inside the note at each cut and the IPA symbol above the note where its
 frames begin, so the milliseconds a consonant takes are the same milliseconds on screen
 however long the note holds. Zoomed far out the symbols step aside and the dividers stay.

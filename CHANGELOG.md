@@ -61,6 +61,19 @@ format rather than a convention: `## <version> — <date>`.
   `training/scripts/measure_phoneme_levels.py` from a labelled dataset the way the widths are
   measured from labels; choosing the voice copies the table into the document beside the
   widths, and `auris-vocal` turns each consonant down by its measured decibels.
+* **The pitch travels between notes that touch.** The frames a voice was fed held each
+  note's pitch to its last frame and jumped on the first frame of the next, and no singer
+  does that: measured on JSUT-song, across 1,568 note changes of a semitone or more, the pitch
+  takes a median 60 ms to cross from one note to the next, starting some 20 ms before the
+  next note's first phoneme and ending 50 ms after it. A model trained on that has never
+  seen a step. `auris-vocal` now draws an 80 ms straight line centred on every boundary where
+  one note ends exactly as the next begins, each half capped at a quarter of its note. It is
+  a note change, not a portamento: a rest between the notes leaves each on its own pitch, and
+  a fall or a scoop written on either note replaces it, since those are the slides somebody
+  meant. The roll's sung pitch curve draws the same line. Through the host over ten takes the
+  words came out at a phoneme error rate of 0.29 against the step's 0.30, inside the spread
+  between takes; the line is there because every voice was trained on one, not for that
+  number.
 * **The host spells ざ and にゃ the way the voices were trained.** Both of `auris-vocal`'s
   front-ends — the kana table and the OpenJTalk map — wrote ざ行 as `z` and にゃ行 as `nʲ`,
   while the trainer's own OpenJTalk map writes `dz` and `ɲ`, so every voice was trained on

@@ -14,11 +14,17 @@
 //!   model's own measurement where the track's voice carries a table
 //!   ([`ConsonantWidths`]) and [`CONSONANT_SECONDS`] where it
 //!   does not. Consonants scale down rather than swallow a short note, never past half of it.
-//! * **Pitch is the note plus its bend plus its ornaments, everywhere in the note.** No
-//!   portamento is invented between notes — the bend curve is where a slide is written, and a
-//!   scoop, fall or vibrato only where the note carries one ([`ornament_offset`] is the shape).
-//!   Consonant frames carry the same pitch as the vowel they lead into, because a model treats
-//!   f0 as a contour and decides voicing from the phoneme, not from a zero.
+//! * **Pitch is the note plus its bend plus its ornaments, everywhere in the note.** The bend
+//!   curve is where a slide is written, and a scoop, fall or vibrato sounds only where the
+//!   note carries one ([`ornament_offset`] is the shape). Consonant frames carry the same
+//!   pitch as the vowel they lead into, because a model treats f0 as a contour and decides
+//!   voicing from the phoneme, not from a zero.
+//! * **Where two notes touch, the pitch travels between them.** A singer's pitch takes time
+//!   to move, and a voice model trained on singers has never seen it jump: a straight line of
+//!   [`GLIDE_SECONDS`] centred on the boundary joins the two pitches, its halves capped at a
+//!   quarter of each note. It is the measured shape of a note change, not a portamento — a
+//!   fall on the earlier note or a scoop on the later one is a slide somebody wrote, and it
+//!   replaces the glide; a rest between the notes leaves each on its own pitch.
 //! * **Energy is the velocity, shaped.** A linear rise over [`ATTACK_SECONDS`], a linear fall
 //!   over the last [`RELEASE_SECONDS`], scaled by the expression pedal (controller 11) where
 //!   one is written — and, where the track's voice carries a table
@@ -54,6 +60,18 @@ use crate::phoneme::{SILENCE, is_syllabic};
 /// voice has one; this number is the fallback for the models — and the voiceless tracks — that
 /// do not.
 pub const CONSONANT_SECONDS: f64 = 0.060;
+
+/// Seconds the pitch takes to travel from one note to the next where they touch.
+///
+/// The JSUT-song corpus was measured (`training/runs/exp/glide_shape.py`): across 1,568 note
+/// changes of a semitone or more, the pitch spends a median 60 ms between a tenth and nine
+/// tenths of the way, and the travel straddles the boundary — it begins some 20 ms before the
+/// next note's first phoneme and ends 50 ms after it, inside the consonant where there is one.
+/// Eighty milliseconds of straight line centred on the boundary puts those two marks at −32
+/// and +32 ms, inside the corpus's quartiles either side. The straight line is a choice of
+/// plainness: the corpus rises slower than it falls, and neither shape is a curve the ear
+/// picks out at this length.
+pub const GLIDE_SECONDS: f64 = 0.080;
 
 /// Seconds the energy takes to rise from silence at a note's start.
 pub const ATTACK_SECONDS: f64 = 0.015;
@@ -187,7 +205,13 @@ pub fn render_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames 
             t - note.start,
             note.end - note.start,
         );
-        f0_hz.push(pitch_to_hz(note.pitch + bend + ornament));
+        let glide = glide_offset(
+            walker.checked_sub(1).and_then(|at| notes.get(at)),
+            note,
+            notes.get(walker + 1),
+            t,
+        );
+        f0_hz.push(pitch_to_hz(note.pitch + glide + bend + ornament));
 
         let expression = match note.expression.is_empty() {
             true => 1.0,
@@ -400,6 +424,40 @@ pub fn level_gain(levels: Option<&ConsonantLevels>, phoneme: &str) -> f32 {
         }
         _ => 1.0,
     }
+}
+
+/// Semitones the glide between touching notes moves the pitch at `t`, for a frame in `note`.
+///
+/// Where `prev` ends exactly where `note` begins, the last half-glide of `prev` and the first
+/// half-glide of `note` carry a straight line from the one pitch to the other, and the same
+/// where `note` ends exactly where `next` begins; each half is capped at a quarter of its own
+/// note so a short note keeps its pitch for the half in the middle. A fall written on the
+/// earlier note or a scoop on the later one is a slide somebody meant, and switches the glide
+/// off at that boundary. Anything but touching — a rest, however short — gets nothing: a note
+/// after silence starts on its pitch.
+fn glide_offset(
+    prev: Option<&TimedNote<'_>>,
+    note: &TimedNote<'_>,
+    next: Option<&TimedNote<'_>>,
+    t: f64,
+) -> f32 {
+    let touching = |earlier: &TimedNote<'_>, later: &TimedNote<'_>| {
+        (later.start - earlier.end).abs() < 1e-9 && earlier.fall.is_none() && later.scoop.is_none()
+    };
+    let half = |note: &TimedNote<'_>| (GLIDE_SECONDS / 2.0).min((note.end - note.start) / 4.0);
+    let progress =
+        |from: f64, to: f64| ((t - from) / (to - from).max(f64::EPSILON)).clamp(0.0, 1.0);
+
+    let mut offset = 0.0f64;
+    if let Some(prev) = prev.filter(|prev| touching(prev, note)) {
+        let travelled = progress(note.start - half(prev), note.start + half(note));
+        offset += f64::from(prev.pitch - note.pitch) * (1.0 - travelled);
+    }
+    if let Some(next) = next.filter(|next| touching(note, next)) {
+        let travelled = progress(note.end - half(note), note.end + half(next));
+        offset += f64::from(next.pitch - note.pitch) * travelled;
+    }
+    offset as f32
 }
 
 /// The energy envelope at `t` seconds, for a note known to contain it.
@@ -674,6 +732,68 @@ mod tests {
         assert!((frames.f0_hz[45] - pitch_to_hz(60.0)).abs() < 1e-3);
         assert!((frames.f0_hz[55] - pitch_to_hz(64.0)).abs() < 1e-3);
         assert_eq!(frames.inventory, [SILENCE, "a", "i"]);
+    }
+
+    #[test]
+    fn touching_notes_glide_into_each_other() {
+        // C4 then E4, two beats each: the boundary is at 1.0 s, frame 100.
+        let frames = render_frames(
+            &track(vec![sung(60, 0.0, 2.0, &["a"]), sung(64, 2.0, 2.0, &["i"])]),
+            &map(),
+        );
+        // Forty milliseconds either side is the glide; outside it each note holds its pitch.
+        assert!((frames.f0_hz[95] - pitch_to_hz(60.0)).abs() < 1e-3);
+        assert!((frames.f0_hz[105] - pitch_to_hz(64.0)).abs() < 1e-3);
+        // A straight line: a quarter of the way at 0.98 s, halfway on the boundary itself.
+        assert!((frames.f0_hz[98] - pitch_to_hz(61.0)).abs() < 1e-2);
+        assert!((frames.f0_hz[100] - pitch_to_hz(62.0)).abs() < 1e-2);
+        assert!((frames.f0_hz[102] - pitch_to_hz(63.0)).abs() < 1e-2);
+        // The phoneme changes on the boundary, not with the pitch.
+        assert_eq!(frames.phonemes[99], 1);
+        assert_eq!(frames.phonemes[100], 2);
+    }
+
+    #[test]
+    fn a_rest_or_a_written_slide_leaves_the_step_alone() {
+        // A sixteenth of rest between the notes: each starts and ends on its own pitch.
+        let frames = render_frames(
+            &track(vec![
+                sung(60, 0.0, 1.75, &["a"]),
+                sung(64, 2.0, 2.0, &["i"]),
+            ]),
+            &map(),
+        );
+        assert!((frames.f0_hz[86] - pitch_to_hz(60.0)).abs() < 1e-3);
+        assert!((frames.f0_hz[100] - pitch_to_hz(64.0)).abs() < 1e-3);
+
+        // A scoop on the second note is the written way in; the first note holds to its end.
+        let mut singer = track(vec![sung(60, 0.0, 2.0, &["a"]), sung(64, 2.0, 2.0, &["i"])]);
+        singer.clips[0].notes[1].scoop = Some(Scoop {
+            depth: 2.0,
+            seconds: 0.1,
+        });
+        let frames = render_frames(&singer, &map());
+        assert!((frames.f0_hz[99] - pitch_to_hz(60.0)).abs() < 1e-3);
+        assert!((frames.f0_hz[100] - pitch_to_hz(62.0)).abs() < 1e-2);
+    }
+
+    #[test]
+    fn a_short_note_keeps_its_pitch_for_its_middle_half() {
+        // Sixteenths at 120 BPM: 125 ms each, so each half-glide is capped at 31.25 ms.
+        let frames = render_frames(
+            &track(vec![
+                sung(60, 0.0, 0.25, &["a"]),
+                sung(64, 0.25, 0.25, &["i"]),
+                sung(60, 0.5, 0.25, &["a"]),
+            ]),
+            &map(),
+        );
+        // 0.19 s is 60 ms into the middle note, past its entry and before its exit.
+        assert!((frames.f0_hz[19] - pitch_to_hz(64.0)).abs() < 1e-3);
+        // Frame 12 is 5 ms short of the first boundary: on the line, and short of halfway.
+        assert!(frames.f0_hz[12] > pitch_to_hz(61.0) && frames.f0_hz[12] < pitch_to_hz(62.0));
+        // Frame 25 is the second boundary itself: halfway back down.
+        assert!((frames.f0_hz[25] - pitch_to_hz(62.0)).abs() < 1e-2);
     }
 
     #[test]

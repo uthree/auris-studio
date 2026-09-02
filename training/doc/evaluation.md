@@ -218,10 +218,15 @@ What it came to:
 * **What did not matter**, measured so nobody measures it again: the sampling temperature,
   the chunk length up to a minute, the host's Irwin-Hall prior noise against PyTorch's
   Gaussian, run-length merging of repeated phonemes, and the render level.
-* **What is left on the score path** is the melody itself: note-flat pitch where the corpus
-  glides (a 50 ms glide at note changes recovers a little in the ablation, and is a rule in
-  `auris-vocal` to decide on, not a training matter), and the gap to the corpus that only more
-  singing data closes.
+* **The pitch between notes was the host's last step.** `auris-vocal` held each note's pitch
+  to its final frame; the corpus never does (`runs/exp/glide_shape.py`: a median 60 ms of
+  travel straddling the boundary), and the ablation had shown a glide worth a little. The
+  host now draws one, measured from the same corpus. Through the host, ten takes each
+  (`runs/exp/glide_seeds.py`), the step scored PER 0.302 and the glide 0.293, with every
+  other shape tried between 0.265 and 0.277 — all inside a take-to-take spread of 0.09. The
+  line is drawn because the corpus draws it; the number says only that it costs nothing.
+* **What is left on the score path** is the melody itself — the composed line against the
+  corpus's — and the gap to the corpus that only more singing data closes.
 
 ## Limits
 
