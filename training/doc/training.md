@@ -363,6 +363,27 @@ Two cautions when reading these numbers on a mixed corpus:
 `save_top_k` best plus `last.ckpt`. Checkpoints embed the phoneme table and the
 speaker map, so inference needs nothing but the `.ckpt` file.
 
+## Starting from another run: speech before song
+
+A singing corpus is small — JSUT-song is 21 minutes — and consonants are what a small corpus
+lacks most: a few hundred of each, in a few dozen contexts. The same speaker's read speech
+(JSUT, BASIC5000, 6.6 hours) has thousands. `--init-from` starts a run from another run's
+generator and discriminator weights and nothing else — no optimizer state, no step count, no
+schedule — so a voice can be trained on the speech first and finished on the song:
+
+```bash
+uv run python scripts/preprocess.py --config configs/preprocess/jsut.yml
+uv run python scripts/train.py --config configs/train/base.yml \
+    data.root=data/processed/jsut run_name=jsut-speech trainer.max_steps=40000
+uv run python scripts/train.py --config configs/train/base.yml \
+    data.root=data/processed/jsut_song_lab run_name=jsut-song-from-speech \
+    --init-from runs/jsut-speech/checkpoints/last.ckpt
+```
+
+Both runs must use the same preset and the same phoneme table; a mismatch is refused with
+the tensor named. `--resume` is the other thing — the same run carrying on, optimizer and
+all — and the two do not combine.
+
 ## Multi-GPU
 
 ```bash

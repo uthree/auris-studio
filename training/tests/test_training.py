@@ -141,6 +141,40 @@ def test_checkpoint_roundtrip_synthesizes_audio(module, datamodule, tmp_path):
     assert wav.dtype.name == "float32"
 
 
+def test_a_run_can_start_from_another_runs_weights(module, datamodule, tmp_path, tiny_model_config, tiny_discriminator_config):
+    trainer = L.Trainer(
+        max_steps=1, accelerator="cpu", devices=1, logger=False, enable_checkpointing=False,
+        enable_progress_bar=False, num_sanity_val_steps=0, limit_val_batches=0,
+        use_distributed_sampler=False,
+    )
+    trainer.fit(module, datamodule=datamodule)
+    checkpoint = tmp_path / "pretrained.ckpt"
+    trainer.save_checkpoint(checkpoint)
+
+    torch.manual_seed(1)
+    fresh = AurisSingerModule(
+        model=tiny_model_config, discriminator=tiny_discriminator_config, audio=AUDIO, loss=LOSS,
+        optimizer={"learning_rate": 1e-4},
+        metadata={"symbols": DEFAULT_PHONEME_TABLE.symbols, "speaker_to_id": {"carol": 0, "dave": 1}},
+    )
+    name, before = next(iter(fresh.model.state_dict().items()))
+    assert not torch.equal(before, module.model.state_dict()[name]), "a different draw"
+    fresh.load_weights(checkpoint)
+    for key, value in module.model.state_dict().items():
+        assert torch.equal(fresh.model.state_dict()[key], value), key
+    for key, value in module.discriminator.state_dict().items():
+        assert torch.equal(fresh.discriminator.state_dict()[key], value), key
+    assert fresh.hparams["metadata"]["speaker_to_id"] == {"carol": 0, "dave": 1}, "the new corpus's speakers"
+
+    # A different shape is refused outright, naming the tensor.
+    other = AurisSingerModule(
+        model={**tiny_model_config, "inter_channels": tiny_model_config["inter_channels"] + 4},
+        discriminator=tiny_discriminator_config, audio=AUDIO, loss=LOSS,
+    )
+    with pytest.raises(ValueError, match="is .* here"):
+        other.load_weights(checkpoint)
+
+
 class _FakeExperiment:
     def __init__(self):
         self.calls: list[str] = []

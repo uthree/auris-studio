@@ -7,6 +7,7 @@ with ``automatic_optimization = False``.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import lightning as L
@@ -132,6 +133,36 @@ class AurisSingerModule(L.LightningModule):
         self._logged_reference_audio: set[int] = set()
 
     # ------------------------------------------------------------------
+    def load_weights(self, path: str | Path) -> None:
+        """Starts this module from another run's weights: the generator and the
+        discriminator out of the checkpoint at ``path``, and nothing else.
+
+        This is how a voice is pre-trained on speech and finished on song: the optimizer
+        state, the step count and the schedule are left behind so the new run begins at
+        step zero with the loss weights its own config asks for, and the speaker table is
+        the new dataset's. The networks must have the same shape — a different preset or
+        phoneme table is refused with the mismatch named, never loaded partly.
+        """
+        checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+        state = checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+        weights = {
+            key: value
+            for key, value in state.items()
+            if key.startswith("model.") or key.startswith("discriminator.")
+        }
+        own = self.state_dict()
+        for key, value in weights.items():
+            if key in own and own[key].shape != value.shape:
+                raise ValueError(
+                    f"{key} is {tuple(value.shape)} in {path} and {tuple(own[key].shape)} here"
+                )
+        missing, unexpected = self.load_state_dict(weights, strict=False)
+        missing = [key for key in missing if key.startswith(("model.", "discriminator."))]
+        if missing or unexpected:
+            raise ValueError(
+                f"{path} does not hold this model: missing {missing[:5]}, unexpected {unexpected[:5]}"
+            )
+
     def configure_optimizers(self):
         opt_g = torch.optim.AdamW(
             self.model.parameters(),

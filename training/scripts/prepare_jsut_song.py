@@ -29,6 +29,11 @@ Example:
         --wav-dir data/raw/jsut-song_ver1/child_song/wav \
         --label-dir data/raw/todai_child \
         --output data/raw/jsut_song
+
+The same script prepares JSUT itself — the read-speech corpus of the same speaker — from
+jsut-label's HTS full-context labels, one sentence per recording; a sentence longer than
+``--max-seconds`` is cut at its pauses like a song. ``configs/preprocess/jsut.yml`` has the
+invocation.
 """
 
 from __future__ import annotations

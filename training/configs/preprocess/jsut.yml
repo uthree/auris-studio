@@ -1,0 +1,46 @@
+# Preprocessing for JSUT (BASIC5000: read speech, the JSUT-song singer, 48 kHz, ~6.6 hours).
+#
+# The same speaker as JSUT-song, in prose: every consonant of the language in thousands of
+# contexts where the 21 minutes of song hold a few hundred. A voice pre-trained here and
+# fine-tuned on the song learns its consonants from the speech — see doc/training.md.
+#
+# jsut-label (https://github.com/sarulab-speech/jsut-label) has the HTS full-context labels
+# with Julius timings for BASIC5000, so the song's preparation script applies unchanged:
+#
+#   uv run python scripts/prepare_jsut_song.py \
+#       --wav-dir data/raw/jsut/jsut_ver1.1/basic5000/wav \
+#       --label-dir data/raw/jsut/jsut-label/labels/basic5000 \
+#       --output data/raw/jsut
+#
+#   uv run python scripts/preprocess.py --config configs/preprocess/jsut.yml
+
+audio:
+  sample_rate: 48000
+  n_fft: 2048
+  hop_length: 480
+  win_length: 2048
+  # The preparation script normalized each recording — one sentence — as a whole.
+  peak_normalize: false
+  min_seconds: 0.5
+  max_seconds: 10.0
+
+f0:
+  device: cuda
+  f0_min: 60.0
+  f0_max: 1200.0
+  threshold: 0.006
+  decoder_mode: local_argmax
+
+text:
+  language: ipa
+  phoneme_table: null
+
+dataset:
+  output_dir: data/processed/jsut
+  sources:
+    - name: jsut
+      wav_dir: data/raw/jsut/wav
+      text_dir: data/raw/jsut/text
+      duration_dir: data/raw/jsut/dur
+
+num_workers: 8

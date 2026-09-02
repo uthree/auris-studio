@@ -74,6 +74,17 @@ format rather than a convention: `## <version> — <date>`.
   words came out at a phoneme error rate of 0.29 against the step's 0.30, inside the spread
   between takes; the line is there because every voice was trained on one, not for that
   number.
+* **A voice can start from another run's weights.** `training/scripts/train.py --init-from`
+  takes the generator and discriminator out of a checkpoint and nothing else — no optimizer
+  state, no step count — so a voice can be pre-trained on a speaker's read speech and finished
+  on their songs. `configs/preprocess/jsut.yml` prepares JSUT, the JSUT-song singer's 6.6 hours
+  of prose, through the song's own preparation script; the consonants a 21-minute singing
+  corpus holds a few hundred of, the speech holds thousands.
+* **The listener says which phonemes it lost.** The phoneme error rate was one number per
+  column; the host evaluation now keeps the edit path behind it and tallies every phoneme
+  asked for against what was heard, over every take of every utterance. The table ends with
+  the worst phonemes — asked, heard right, dropped, heard as what — and the phonemes the
+  listener inserted, and the report carries the counts per column.
 * **The host spells ざ and にゃ the way the voices were trained.** Both of `auris-vocal`'s
   front-ends — the kana table and the OpenJTalk map — wrote ざ行 as `z` and にゃ行 as `nʲ`,
   while the trainer's own OpenJTalk map writes `dz` and `ɲ`, so every voice was trained on

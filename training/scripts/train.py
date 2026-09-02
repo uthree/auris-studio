@@ -57,6 +57,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, help="training YAML config")
     parser.add_argument("--resume", default=None, help="checkpoint path to resume from")
+    parser.add_argument(
+        "--init-from",
+        default=None,
+        help="checkpoint whose weights start the run — a pre-training on another corpus; "
+        "its optimizer state and step count are left behind",
+    )
     parser.add_argument("overrides", nargs="*", help="dotlist config overrides")
     args = parser.parse_args()
 
@@ -65,6 +71,9 @@ def main() -> None:
     L.seed_everything(int(config.get("seed", 1234)), workers=True)
 
     datamodule, module = build(config)
+    if args.init_from:
+        module.load_weights(args.init_from)
+        logging.info("weights loaded from %s", args.init_from)
     n_params = sum(p.numel() for p in module.model.parameters())
     logging.info(
         "generator %.1fM params | %d phonemes | %d speakers | %d train / %d val utterances",
