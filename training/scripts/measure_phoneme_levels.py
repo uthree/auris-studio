@@ -40,9 +40,10 @@ def main() -> None:
         sys.exit(f"{args.data} holds no labelled durations; preprocess with a duration_dir first")
     block = summarize(levels, args.measured_from, min_samples=args.min_samples)
     write(block, args.output)
-    print(f"{len(block['db'])} phonemes measured, default {block['default']:+.1f} dB:")
-    for symbol, db in block["db"].items():
-        print(f"  {symbol:4s} {db:+6.1f} dB  n={block['counts'][symbol]:4d}  {phoneme_class(symbol)}")
+    for speaker, table in block["speakers"].items():
+        print(f"{speaker}: {len(table['db'])} phonemes measured, default {table['default']:+.1f} dB:")
+        for symbol, db in table["db"].items():
+            print(f"  {symbol:4s} {db:+6.1f} dB  n={table['counts'][symbol]:4d}  {phoneme_class(symbol)}")
     print(f"wrote {args.output}")
 
 

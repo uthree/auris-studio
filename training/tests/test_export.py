@@ -117,10 +117,8 @@ def test_onnx_export_runs_and_matches_pytorch(model, tmp_path):
         voice={"name": "Test Singer", "description": "a demo voice", "credits": ["someone"]},
         phoneme_durations={
             "unit": "seconds",
-            "default": 0.06,
-            "seconds": {"s": 0.104},
-            "counts": {"s": 1907},
             "measured_from": "unit test",
+            "speakers": {"x": {"default": 0.06, "seconds": {"s": 0.104}, "counts": {"s": 1907}}},
         },
     )
 
@@ -137,8 +135,8 @@ def test_onnx_export_runs_and_matches_pytorch(model, tmp_path):
     assert stored["hop_length"] == HOP
     assert stored["inter_channels"] == model.inter_channels
     assert stored["voice"]["name"] == "Test Singer"
-    assert stored["phoneme_durations"]["seconds"] == {"s": 0.104}
-    assert stored["phoneme_durations"]["default"] == 0.06
+    assert stored["phoneme_durations"]["speakers"]["x"]["seconds"] == {"s": 0.104}
+    assert stored["phoneme_durations"]["speakers"]["x"]["default"] == 0.06
     sidecar = json.loads((tmp_path / "tiny.json").read_text(encoding="utf-8"))
     assert sidecar == stored
 
@@ -157,7 +155,7 @@ def test_phoneme_durations_outside_the_symbol_table_are_refused(model, tmp_path)
             model,
             tmp_path / "tiny.onnx",
             metadata={"symbols": ["<pad>", "a"]},
-            phoneme_durations={"seconds": {"s": 0.104, "ts": 0.119}},
+            phoneme_durations={"speakers": {"x": {"seconds": {"s": 0.104, "ts": 0.119}}}},
         )
     assert not (tmp_path / "tiny.onnx").exists(), "refused before tracing anything"
 

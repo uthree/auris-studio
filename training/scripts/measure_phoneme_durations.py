@@ -45,6 +45,7 @@ from auris_singer.phoneme_durations import (  # noqa: E402
     DEFAULT_SECONDS,
     MIN_SAMPLES,
     measure,
+    measure_dataset,
     summarize,
 )
 from auris_singer.text.ipa import DEFAULT_PHONEME_TABLE  # noqa: E402
@@ -86,7 +87,12 @@ def to_ipa(utterance: list[tuple[float, float, str]]) -> list[tuple[float, float
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--label-dir", required=True, type=Path, help="searched recursively")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument(
+        "--data", type=Path, help="a preprocessed dataset with labelled durations: every speaker at once"
+    )
+    source.add_argument("--label-dir", type=Path, help="label files, searched recursively: one speaker")
+    parser.add_argument("--speaker", help="the speaker the label files belong to, as the model names it")
     parser.add_argument("--output", required=True, type=Path, help="output .json path")
     parser.add_argument(
         "--measured-from",
@@ -97,35 +103,38 @@ def main() -> None:
     parser.add_argument("--default-seconds", type=float, default=DEFAULT_SECONDS)
     args = parser.parse_args()
 
-    paths = sorted(args.label_dir.rglob("*.lab"))
-    if not paths:
-        raise SystemExit(f"no .lab files under {args.label_dir}")
-
-    utterances = [to_ipa(read_timed_phonemes(path)) for path in paths]
-    raw = measure(utterances)
-
-    unknown = sorted(set(raw) - set(DEFAULT_PHONEME_TABLE.symbols))
-    if unknown:
-        print(f"warning: symbols outside the phoneme table, not shipped: {unknown}")
-    raw = {k: v for k, v in raw.items() if k in DEFAULT_PHONEME_TABLE}
-
+    if args.data is not None:
+        by_speaker = measure_dataset(args.data)
+        if not by_speaker:
+            raise SystemExit(f"{args.data} holds no labelled durations; preprocess with a duration_dir first")
+        measured_from = args.measured_from or f"the labelled durations under {args.data}"
+    else:
+        if not args.speaker:
+            parser.error("--label-dir needs --speaker: whose consonants these are")
+        paths = sorted(args.label_dir.rglob("*.lab"))
+        if not paths:
+            raise SystemExit(f"no .lab files under {args.label_dir}")
+        by_speaker = {args.speaker: measure(to_ipa(read_timed_phonemes(path)) for path in paths)}
+        measured_from = args.measured_from or f"{len(paths)} label files under {args.label_dir}"
+    for speaker, raw in by_speaker.items():
+        unknown = sorted(set(raw) - set(DEFAULT_PHONEME_TABLE.symbols))
+        if unknown:
+            print(f"warning: {speaker}: symbols outside the phoneme table, not shipped: {unknown}")
+        by_speaker[speaker] = {k: v for k, v in raw.items() if k in DEFAULT_PHONEME_TABLE}
     block = summarize(
-        raw,
-        measured_from=args.measured_from or f"{len(paths)} label files under {args.label_dir}",
+        by_speaker,
+        measured_from=measured_from,
         min_samples=args.min_samples,
         default=args.default_seconds,
     )
-
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(block, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-
-    counted = sum(len(v) for v in raw.values())
-    print(f"read {len(paths)} label files, {counted} medial consonants")
-    print(f"{len(block['seconds'])} phonemes above the {args.default_seconds * 1000:.0f} ms default:")
-    for symbol, seconds in block["seconds"].items():
-        print(f"  {symbol:<4} {seconds * 1000:5.0f} ms   (n={block['counts'][symbol]})")
+    for speaker, table in block["speakers"].items():
+        print(f"{speaker}: {len(table['seconds'])} phonemes shipped, default {table['default'] * 1000:.0f} ms:")
+        for symbol, seconds in table["seconds"].items():
+            print(f"  {symbol:4s} {seconds * 1000:5.0f} ms  n={table['counts'][symbol]:5d}")
     print(f"wrote {args.output}")
 
 

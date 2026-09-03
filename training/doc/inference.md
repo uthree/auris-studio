@@ -149,7 +149,7 @@ the `.json` sidecar:
 
 ```json
 {
-  "format_version": 1,
+  "format_version": 2,
   "sample_rate": 48000,
   "hop_length": 480,
   "inter_channels": 192,
@@ -200,18 +200,23 @@ information has to guess.
 A single flat guess is measurably wrong, and wrong in a way that costs
 intelligibility. Consonant length in sung Japanese spans a factor of three by
 phoneme class, so any one constant is far too short for the sibilants and too
-long for the liquids. Because the numbers are a property of the corpus a voice
-was trained on rather than of the architecture, they travel **with the model**,
-under the optional `phoneme_durations` key of the same metadata JSON:
+long for the liquids. Because the numbers are a property of the singer and the
+corpus a voice was trained on rather than of the architecture, they travel
+**with the model**, one table per speaker, under the optional
+`phoneme_durations` key of the same metadata JSON:
 
 ```json
 {
   "phoneme_durations": {
     "unit": "seconds",
-    "default": 0.060,
-    "seconds": {"ts": 0.119, "tɕ": 0.113, "ɕ": 0.110, "s": 0.104, "k": 0.091},
-    "counts": {"ts": 679, "tɕ": 357, "ɕ": 1231, "s": 1907, "k": 4859},
-    "measured_from": "Namine Ritsu singing DB Ver2.0.2, mono labels, 110 songs"
+    "measured_from": "Namine Ritsu singing DB Ver2.0.2, mono labels, 110 songs",
+    "speakers": {
+      "namine_ritsu": {
+        "default": 0.060,
+        "seconds": {"ts": 0.119, "tɕ": 0.113, "ɕ": 0.110, "s": 0.104, "k": 0.091},
+        "counts": {"ts": 679, "tɕ": 357, "ɕ": 1231, "s": 1907, "k": 4859}
+      }
+    }
   }
 }
 ```
@@ -219,15 +224,17 @@ under the optional `phoneme_durations` key of the same metadata JSON:
 | field | meaning |
 | --- | --- |
 | `unit` | always `"seconds"`; frames are `round(seconds * sample_rate / hop_length)` — 100 per second at the shipped 48 kHz / hop 480 |
-| `default` | the width to use for any phoneme not named in `seconds` |
-| `seconds` | IPA symbol → width, longest first |
-| `counts` | how many occurrences each median came from, so a consumer can apply a stricter threshold without re-measuring |
 | `measured_from` | free text naming the corpus and label set |
+| `speakers` | one table per speaker, keyed by the name `speaker_to_id` gives the speaker; a speaker with no labelled data has no entry |
+| `speakers.*.default` | the width to use for any phoneme not named in `seconds` |
+| `speakers.*.seconds` | IPA symbol → width, longest first |
+| `speakers.*.counts` | how many occurrences each median came from, so a consumer can apply a stricter threshold without re-measuring |
 
 #### The rule for a consumer
 
 ```
-width(phoneme) = seconds[phoneme] if present else default
+table = speakers[name of the speaker who sings]      absent → no table, the consumer's own default
+width(phoneme) = table.seconds[phoneme] if present else table.default
 ```
 
 That is the whole contract. Three things follow from it that are worth stating
@@ -286,12 +293,23 @@ deliberately alongside adopting the table, not discovered afterwards.
 #### Producing the block
 
 Needs a corpus that ships phoneme alignments — mono labels as in the Namine
-Ritsu database, or HTS full-context labels as in JSUT-song. Training itself
-does not use them; this is the one thing they are read for.
+Ritsu database, or HTS full-context labels as in JSUT-song. The usual way is
+the preprocessed dataset that stored them as labelled durations, which names
+every speaker at once:
+
+```bash
+uv run python scripts/measure_phoneme_durations.py --data data/processed/jsut_song_lab \
+    --measured-from 'JSUT-song, HTS full-context labels, 27 songs' \
+    --output data/raw/jsut_durations.json
+```
+
+Label files can be measured directly for one speaker at a time, named as the
+model names them:
 
 ```bash
 uv run python scripts/measure_phoneme_durations.py \
     --label-dir 'data/raw/namine_ritsu_v2/「波音リツ」歌声データベースVer2.0.2/DATABASE' \
+    --speaker namine_ritsu \
     --measured-from 'Namine Ritsu singing DB Ver2.0.2, mono labels, 110 songs' \
     --output data/raw/namine_ritsu_durations.json
 ```
@@ -331,17 +349,22 @@ corpus, putting the vowel's level on every consonant cost the phoneme error
 rate 0.25 → 0.56; putting these medians back recovered 0.35, and one number
 per class did as well as one per phoneme.
 
-The numbers are a property of the corpus, so they travel with the model under
-the optional `phoneme_levels` key, beside the widths:
+The numbers are a property of the singer and the corpus, so they travel with
+the model under the optional `phoneme_levels` key, one table per speaker like
+the widths:
 
 ```json
 {
   "phoneme_levels": {
     "unit": "db",
-    "default": -11.5,
-    "db": {"p": -26.5, "k": -22.6, "s": -20.6, "ɕ": -11.0, "n": -5.9, "ɾ": -3.7},
-    "counts": {"p": 20, "k": 282, "s": 142, "ɕ": 71, "n": 261, "ɾ": 214},
-    "measured_from": "JSUT-song, HTS full-context labels, 27 songs"
+    "measured_from": "JSUT-song, HTS full-context labels, 27 songs",
+    "speakers": {
+      "jsut_song": {
+        "default": -11.5,
+        "db": {"p": -26.5, "k": -22.6, "s": -20.6, "ɕ": -11.0, "n": -5.9, "ɾ": -3.7},
+        "counts": {"p": 20, "k": 282, "s": 142, "ɕ": 71, "n": 261, "ɾ": 214}
+      }
+    }
   }
 }
 ```
@@ -349,12 +372,13 @@ the optional `phoneme_levels` key, beside the widths:
 | field | meaning |
 | --- | --- |
 | `unit` | always `"db"`: decibels against the first vowel after the phoneme |
-| `default` | the level for a consonant not named in `db` — the pooled median, a consonant's level, never 0 dB |
-| `db` | IPA symbol → level, quietest first |
-| `counts` | how many occurrences each median came from |
 | `measured_from` | free text naming the corpus and label set |
+| `speakers` | one table per speaker, keyed by the name `speaker_to_id` gives the speaker |
+| `speakers.*.default` | the level for a consonant not named in `db` — the pooled median, a consonant's level, never 0 dB |
+| `speakers.*.db` | IPA symbol → level, quietest first |
+| `speakers.*.counts` | how many occurrences each median came from |
 
-The rule for a consumer:
+The rule for a consumer, on the table of the speaker who sings:
 
 ```
 gain(phoneme) = 10 ** (db[phoneme] / 20)   if phoneme in db

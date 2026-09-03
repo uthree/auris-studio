@@ -16,7 +16,7 @@ JSON, exactly as the consonant widths do:
 
 .. code-block:: json
 
-    {"phoneme_levels": {"unit": "db", "default": -12.0,
+    {"phoneme_levels": {"unit": "db", "speakers": {"<speaker>": {"default": -12.0,
                         "db": {"k": -22.6, "s": -20.6, "n": -5.9},
                         "counts": {"k": 282, "s": 142, "n": 200},
                         "measured_from": "JSUT-song, HTS labels, 27 songs"}}
@@ -102,34 +102,49 @@ def measure(
     return out
 
 
-def measure_dataset(root: str | Path) -> dict[str, list[float]]:
-    """:func:`measure` over a preprocessed dataset that stored labelled durations."""
+def measure_dataset(root: str | Path) -> dict[str, dict[str, list[float]]]:
+    """:func:`measure` over a preprocessed dataset that stored labelled durations, one
+    mapping per speaker — the shape :func:`summarize` takes."""
     from auris_singer.data.dataset import read_metadata
     from auris_singer.text.ipa import PhonemeTable
 
     root = Path(root)
     table = PhonemeTable.load(root / "phonemes.json")
-
-    def utterances():
-        for record in read_metadata(root):
-            if not record.get("has_durations"):
-                continue
-            with np.load(root / record["path"]) as data:
-                yield (
+    by_speaker: dict[str, list[tuple[list[str], list[int], np.ndarray]]] = {}
+    for record in read_metadata(root):
+        if not record.get("has_durations"):
+            continue
+        with np.load(root / record["path"]) as data:
+            by_speaker.setdefault(str(record["speaker"]), []).append(
+                (
                     table.decode(data["phonemes"].astype(np.int64).tolist()),
                     data["durations"].astype(np.int64).tolist(),
                     data["energy"].astype(np.float32),
                 )
-
-    return measure(utterances())
+            )
+    return {speaker: measure(utterances) for speaker, utterances in by_speaker.items()}
 
 
 def summarize(
-    levels: dict[str, list[float]],
+    by_speaker: dict[str, dict[str, list[float]]],
     measured_from: str,
     min_samples: int = MIN_SAMPLES,
 ) -> dict[str, object]:
-    """Turn raw per-phoneme levels into the block the exporter ships.
+    """The block the exporter ships: one table per speaker, under ``speakers``, keyed by
+    the speaker's name as the model's speaker map carries it — the widths' shape, for the
+    same reason: how far under the vowel a singer puts a consonant is the singer's."""
+    return {
+        "unit": "db",
+        "measured_from": measured_from,
+        "speakers": {
+            speaker: summarize_speaker(levels, min_samples=min_samples)
+            for speaker, levels in sorted(by_speaker.items())
+        },
+    }
+
+
+def summarize_speaker(levels: dict[str, list[float]], min_samples: int = MIN_SAMPLES) -> dict[str, object]:
+    """Turn one speaker's raw per-phoneme levels into their table.
 
     A phoneme earns an entry when it was seen at least ``min_samples`` times; ``default`` is
     the median over every measured reading, which is what a consonant the table does not
@@ -144,11 +159,9 @@ def summarize(
     pooled = [v for values in levels.values() for v in values]
     default = float(round(float(np.median(pooled)), 1)) if pooled else 0.0
     return {
-        "unit": "db",
         "default": default,
         "db": dict(sorted(shipped.items(), key=lambda item: item[1])),
         "counts": {symbol: len(levels[symbol]) for symbol in shipped},
-        "measured_from": measured_from,
     }
 
 

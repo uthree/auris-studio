@@ -305,6 +305,12 @@ def test_the_duration_table_is_named_and_measured_as_the_host_expects():
     durations = rust_struct_fields(METADATA_RS, "PhonemeDurations")
     required = {field for field, defaulted in durations.items() if not defaulted}
     assert required <= set(block), sorted(required - set(block))
+    # One table per speaker, and the host reads each through its own struct.
+    assert "speakers" in durations, "the host reads the widths per speaker, under `speakers`"
+    table = summarize({"x": {}}, measured_from="the contract test")["speakers"]["x"]
+    per_speaker = rust_struct_fields(METADATA_RS, "SpeakerWidths")
+    required = {field for field, defaulted in per_speaker.items() if not defaulted}
+    assert required <= set(table), sorted(required - set(table))
 
 
 def test_the_ipa_table_holds_no_duplicates():
@@ -393,3 +399,8 @@ def test_the_level_table_is_named_and_measured_as_the_host_expects():
     levels = rust_struct_fields(METADATA_RS, "PhonemeLevels")
     required = {field for field, defaulted in levels.items() if not defaulted}
     assert required <= set(block), sorted(required - set(block))
+    assert "speakers" in levels, "the host reads the levels per speaker, under `speakers`"
+    table = phoneme_levels.summarize({"x": {}}, measured_from="the contract test")["speakers"]["x"]
+    per_speaker = rust_struct_fields(METADATA_RS, "SpeakerLevels")
+    required = {field for field, defaulted in per_speaker.items() if not defaulted}
+    assert required <= set(table), sorted(required - set(table))

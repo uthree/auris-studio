@@ -72,31 +72,39 @@ def test_zero_length_spans_are_ignored():
 def test_summarize_keeps_only_lengthenings_with_enough_samples():
     block = summarize(
         {
-            "s": [0.104] * 100,      # long enough, sampled enough
-            "ɾ": [0.036] * 100,      # sampled enough but shorter than the default
-            "ts": [0.119] * 10,      # long enough but barely sampled
+            "x": {
+                "s": [0.104] * 100,      # long enough, sampled enough
+                "ɾ": [0.036] * 100,      # sampled enough but shorter than the default
+                "ts": [0.119] * 10,      # long enough but barely sampled
+            }
         },
         measured_from="unit test",
         min_samples=90,
     )
-    assert set(block["seconds"]) == {"s"}
-    assert block["seconds"]["s"] == pytest.approx(0.104)
-    assert block["counts"]["s"] == 100
-    assert block["default"] == DEFAULT_SECONDS
+    table = block["speakers"]["x"]
+    assert set(table["seconds"]) == {"s"}
+    assert table["seconds"]["s"] == pytest.approx(0.104)
+    assert table["counts"]["s"] == 100
+    assert table["default"] == DEFAULT_SECONDS
     assert block["unit"] == "seconds"
     assert block["measured_from"] == "unit test"
 
 
-def test_summarize_orders_longest_first():
+def test_summarize_orders_longest_first_and_keeps_every_speaker_apart():
     block = summarize(
-        {"s": [0.104] * 100, "ts": [0.119] * 100, "k": [0.091] * 100},
+        {
+            "x": {"s": [0.104] * 100, "ts": [0.119] * 100, "k": [0.091] * 100},
+            "y": {"s": [0.080] * 100},
+        },
         measured_from="unit test",
     )
-    assert list(block["seconds"]) == ["ts", "s", "k"]
+    assert list(block["speakers"]["x"]["seconds"]) == ["ts", "s", "k"]
+    assert block["speakers"]["y"]["seconds"] == {"s": pytest.approx(0.080)}, "y's own, not x's"
+    assert list(block["speakers"]) == ["x", "y"]
 
 
 def test_summarize_is_json_round_trippable():
-    block = summarize({"s": [0.104] * 100}, measured_from="unit test")
+    block = summarize({"x": {"s": [0.104] * 100}}, measured_from="unit test")
     assert json.loads(json.dumps(block, ensure_ascii=False)) == block
 
 
@@ -153,15 +161,15 @@ def test_script_end_to_end_writes_the_block(tmp_path, capsys):
     out = tmp_path / "durations.json"
     sys.argv = [
         "measure_phoneme_durations.py",
-        "--label-dir", str(labels),
+        "--label-dir", str(labels), "--speaker", "x",
         "--output", str(out),
         "--measured-from", "synthetic",
     ]
     script.main()
 
     block = json.loads(out.read_text(encoding="utf-8"))
-    assert block["seconds"] == {"s": pytest.approx(0.104)}
-    assert block["counts"] == {"s": 100}
+    assert block["speakers"]["x"]["seconds"] == {"s": pytest.approx(0.104)}
+    assert block["speakers"]["x"]["counts"] == {"s": 100}
     assert block["measured_from"] == "synthetic"
     assert "104 ms" in capsys.readouterr().out
 
@@ -176,8 +184,8 @@ def test_script_reports_symbols_outside_the_phoneme_table(tmp_path, capsys):
     out = tmp_path / "durations.json"
     sys.argv = [
         "measure_phoneme_durations.py",
-        "--label-dir", str(labels), "--output", str(out),
+        "--label-dir", str(labels), "--speaker", "x", "--output", str(out),
     ]
     script.main()
     assert "zzz" in capsys.readouterr().out
-    assert json.loads(out.read_text(encoding="utf-8"))["seconds"] == {}
+    assert json.loads(out.read_text(encoding="utf-8"))["speakers"]["x"]["seconds"] == {}

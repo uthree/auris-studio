@@ -44,11 +44,18 @@ METADATA_KEY = "auris_singer"
 
 #: The version stamped on every export's metadata block.
 #:
-#: A host refuses a file whose number is higher than the one it was built to
-#: read, rather than half-understanding it, so this rises only when a change
-#: would make an older reader wrong — a renamed or repurposed field, not a new
-#: optional one, which an older reader simply ignores.
-FORMAT_VERSION = 1
+#: A host reads exactly one number and refuses the rest rather than
+#: half-understanding a file, so this rises only when a change would make a
+#: reader of the old number wrong — a renamed or repurposed field, not a new
+#: optional one. What it is, and why:
+#:
+#: * **1** — the first export: audio parameters, the phoneme table, the
+#:   speakers, the card, and later one consonant-width table and one
+#:   consonant-level table for the whole model.
+#: * **2** — the two tables are measured per speaker, under ``speakers``. A
+#:   version-1 table has no ``speakers`` and would read as no table at all,
+#:   which is why this is a bump and not a default.
+FORMAT_VERSION = 2
 
 #: Image types a voice-card portrait may use.
 PORTRAIT_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -332,21 +339,34 @@ def export_onnx(
     from torch.export import Dim
 
     symbols = set((metadata or {}).get("symbols") or ())
+    speakers = set((metadata or {}).get("speaker_to_id") or ())
     for name, table, key in (
         (DURATIONS_FIELD, phoneme_durations, "seconds"),
         (LEVELS_FIELD, phoneme_levels, "db"),
     ):
         if not table:
             continue
-        # A table keyed by symbols this model cannot be given is dead weight,
-        # and shipping one silently hides a phoneme table that has moved on
-        # since it was measured. Fail before the trace, not after.
-        stray = sorted(set(table.get(key) or ()) - symbols)
-        if symbols and stray:
+        if "speakers" not in table:
             raise ValueError(
-                f"{name} names symbols outside the model's table: {stray}; "
-                "re-measure them against this checkpoint's phoneme table"
+                f"{name} is a format-1 table, one for the whole model; format {FORMAT_VERSION} "
+                "measures one per speaker — re-measure it with the current script"
             )
+        # A table for a speaker this model has not, or keyed by symbols it cannot be given,
+        # is somebody else's, and shipping one silently hides a phoneme table or a speaker
+        # map that has moved on since it was measured. Fail before the trace, not after.
+        strangers = sorted(set(table["speakers"]) - speakers)
+        if speakers and strangers:
+            raise ValueError(
+                f"{name} names speakers the model has not: {strangers}; the model's are "
+                f"{sorted(speakers)}"
+            )
+        for speaker, own in table["speakers"].items():
+            stray = sorted(set(own.get(key) or ()) - symbols)
+            if symbols and stray:
+                raise ValueError(
+                    f"{name} for {speaker} names symbols outside the model's table: {stray}; "
+                    "re-measure them against this checkpoint's phoneme table"
+                )
 
     model = model.eval()
     model.remove_weight_norm()

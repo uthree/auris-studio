@@ -83,6 +83,13 @@ format rather than a convention: `## <version> — <date>`.
   speech first and then the song took the corpus phoneme error rate from 0.20 to 0.12 against
   the recording's own 0.09, and a composed verse's from 0.31 to 0.23 — the stops and the
   flap, which the tally had named, most of all.
+* **The consonant tables are the speaker's.** A voice's consonant widths and levels were one
+  table for the whole model; a model trained on several corpora now carries one of each per
+  speaker, and choosing a speaker copies that speaker's into the document. The metadata format
+  is **2** for it — a version-1 table has no speakers and would read as no table at all, so
+  the host refuses a version-1 voice with a line saying to re-export it, and the exporter
+  refuses a version-1 table. `measure_phoneme_durations.py --data` measures every speaker of
+  a labelled dataset at once, as the level script always did.
 * **A voice's speakers can be chosen.** A voice trained on several corpora carries one
   speaker per source, and the host always sang the first. A singer track now names the
   speaker who sings, saved with the document and part of what pins a take; **Track → Next

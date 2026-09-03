@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import statistics
 from collections.abc import Iterable, Sequence
+from pathlib import Path
 
 from auris_singer.text.ipa import PAU, SIL
 
@@ -46,7 +47,9 @@ __all__ = [
     "METADATA_FIELD",
     "STRETCHED",
     "measure",
+    "measure_dataset",
     "summarize",
+    "summarize_speaker",
 ]
 
 #: Width for a consonant the table does not name.
@@ -117,13 +120,68 @@ def measure(
     return out
 
 
+def measure_dataset(root: str | Path) -> dict[str, dict[str, list[float]]]:
+    """:func:`measure` over a preprocessed dataset that stored labelled durations, one
+    mapping per speaker — the shape :func:`summarize` takes.
+
+    The frames the preprocessor stored are read back as seconds at the dataset's hop, so
+    a width is quantised to the hop; a median of hundreds of them is not.
+    """
+    import json
+
+    import numpy as np
+
+    from auris_singer.data.dataset import read_metadata
+    from auris_singer.text.ipa import PhonemeTable
+
+    root = Path(root)
+    table = PhonemeTable.load(root / "phonemes.json")
+    audio = json.loads((root / "audio_config.json").read_text(encoding="utf-8"))
+    hop = float(audio["hop_length"]) / float(audio["sample_rate"])
+    by_speaker: dict[str, list[list[tuple[float, float, str]]]] = {}
+    for record in read_metadata(root):
+        if not record.get("has_durations"):
+            continue
+        with np.load(root / record["path"]) as data:
+            symbols = table.decode(data["phonemes"].astype(np.int64).tolist())
+            frames = data["durations"].astype(np.int64).tolist()
+        timed, at = [], 0.0
+        for symbol, count in zip(symbols, frames):
+            timed.append((at, at + count * hop, symbol))
+            at += count * hop
+        by_speaker.setdefault(str(record["speaker"]), []).append(timed)
+    return {speaker: measure(utterances) for speaker, utterances in by_speaker.items()}
+
+
 def summarize(
-    durations: dict[str, list[float]],
+    by_speaker: dict[str, dict[str, list[float]]],
     measured_from: str,
     min_samples: int = MIN_SAMPLES,
     default: float = DEFAULT_SECONDS,
 ) -> dict[str, object]:
-    """Turn raw per-phoneme durations into the block the exporter ships.
+    """The block the exporter ships: one table per speaker, under ``speakers``.
+
+    Consonant length is the singer's, so a model trained on several corpora carries one
+    table for each, keyed by the speaker's name — the name the preprocessing config gave
+    the source, which is the name the model's speaker map carries. The host copies the
+    chosen speaker's table into the document. Each table is :func:`summarize_speaker`'s.
+    """
+    return {
+        "unit": "seconds",
+        "measured_from": measured_from,
+        "speakers": {
+            speaker: summarize_speaker(durations, min_samples=min_samples, default=default)
+            for speaker, durations in sorted(by_speaker.items())
+        },
+    }
+
+
+def summarize_speaker(
+    durations: dict[str, list[float]],
+    min_samples: int = MIN_SAMPLES,
+    default: float = DEFAULT_SECONDS,
+) -> dict[str, object]:
+    """Turn one speaker's raw per-phoneme durations into their table.
 
     A phoneme earns an entry when it was seen at least ``min_samples`` times
     **and** its median exceeds ``default``. The second condition is the
@@ -138,13 +196,11 @@ def summarize(
 
     Args:
         durations: the mapping :func:`measure` returns.
-        measured_from: a human-readable note on the corpus and the label set,
-            stored verbatim so a reader can tell whose voice the numbers are.
         min_samples: fewest occurrences before a median is trusted.
         default: the width a consumer uses for anything not named.
 
     Returns:
-        The metadata block. ``seconds`` is the table proper; ``counts`` carries
+        The speaker's table. ``seconds`` is the table proper; ``counts`` carries
         the sample size behind each entry so a consumer can apply a stricter
         threshold than this one without re-measuring.
     """
@@ -161,9 +217,7 @@ def summarize(
 
     order = sorted(seconds, key=lambda s: (-seconds[s], s))
     return {
-        "unit": "seconds",
         "default": default,
         "seconds": {s: seconds[s] for s in order},
         "counts": {s: counts[s] for s in order},
-        "measured_from": measured_from,
     }

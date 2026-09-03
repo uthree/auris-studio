@@ -579,8 +579,9 @@ impl Session {
                     (
                         name,
                         model.info().hop_seconds(),
-                        model.info().consonant_widths(),
-                        model.info().consonant_levels(),
+                        // The first speaker's, until one is chosen.
+                        model.info().consonant_widths(0),
+                        model.info().consonant_levels(0),
                     )
                 };
                 let reference = match self
@@ -632,16 +633,28 @@ impl Session {
         track: TrackId,
         speaker: Option<&str>,
     ) -> Result<(), SessionError> {
-        let offered = self.singer_speakers(track)?;
-        let chosen = match speaker {
-            Some(name) if !offered.iter().any(|known| known == name) => {
-                return Err(SessionError::NoSuchSpeaker {
-                    name: name.to_string(),
-                    offered,
-                });
-            }
-            Some(name) => Some(name.to_string()),
-            None => None,
+        let model = self.singer_voice_model(track)?;
+        let (chosen, consonants, levels) = {
+            let model = model.lock().expect("no thread panics holding a voice");
+            let offered = model.info().speakers();
+            let id = match speaker {
+                Some(name) => offered
+                    .iter()
+                    .position(|known| known == name)
+                    .ok_or_else(|| SessionError::NoSuchSpeaker {
+                        name: name.to_string(),
+                        offered: offered.clone(),
+                    })? as u32,
+                None => 0,
+            };
+            // The tables are the speaker's, and ride into the document with the choice for
+            // the reason they ride in with the voice: the layout must not change with
+            // whether the model file is present.
+            (
+                speaker.map(str::to_string),
+                model.info().consonant_widths(id),
+                model.info().consonant_levels(id),
+            )
         };
         self.record(Edit::SetSingerSpeaker);
         if let Some(voice) = self
@@ -651,6 +664,8 @@ impl Session {
             .and_then(|singer| singer.voice.as_mut())
         {
             voice.speaker = chosen;
+            voice.consonants = consonants;
+            voice.levels = levels;
         }
         Ok(())
     }
@@ -1688,7 +1703,7 @@ mod tests {
                 .voice_model_at(std::path::Path::new(&model))
                 .unwrap();
             let model = model.lock().unwrap();
-            model.info().consonant_widths()
+            model.info().consonant_widths(0)
         };
         assert_eq!(
             session.singer_voice(track).unwrap().unwrap().consonants,
@@ -1700,7 +1715,7 @@ mod tests {
                 .voice_model_at(std::path::Path::new(&model))
                 .unwrap();
             let model = model.lock().unwrap();
-            model.info().consonant_levels()
+            model.info().consonant_levels(0)
         };
         assert_eq!(
             session.singer_voice(track).unwrap().unwrap().levels,

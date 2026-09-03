@@ -1116,8 +1116,9 @@ pub mod singing {
     //! turned down by — a /k/ at the vowel's loudness being a /k/ no voice has heard — except
     //! for its last twenty milliseconds, the release, which come back up to the vowel: a /k/
     //! held at its closure's level to the end is a /k/ that never bursts. A voice trained on
-    //! several corpora has one *speaker* per source, and the track names the one that sings
-    //! ([`auris_core::SingerVoice::speaker`], `None` being the model's first);
+    //! several corpora has one *speaker* per source, each with widths and levels of their
+    //! own, and the track names the one that sings ([`auris_core::SingerVoice::speaker`],
+    //! `None` being the model's first) and carries that speaker's two tables;
     //! [`Session::set_singer_speaker`](crate::Session::set_singer_speaker) checks the name
     //! against the model before recording it, and every path that sings — the take, the
     //! audition, a frames file — resolves it through one rule, so a stale name is refused

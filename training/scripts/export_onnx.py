@@ -77,14 +77,14 @@ def main() -> None:
     durations = None
     if args.phoneme_durations:
         durations = json.loads(args.phoneme_durations.read_text(encoding="utf-8"))
-        if not isinstance(durations, dict) or not isinstance(durations.get("seconds"), dict):
-            raise SystemExit("--phoneme-durations must contain a JSON object with a 'seconds' map")
+        if not isinstance(durations, dict) or not isinstance(durations.get("speakers"), dict):
+            raise SystemExit("--phoneme-durations must contain a JSON object with a 'speakers' map (format 2)")
 
     levels = None
     if args.phoneme_levels:
         levels = json.loads(args.phoneme_levels.read_text(encoding="utf-8"))
-        if not isinstance(levels, dict) or not isinstance(levels.get("db"), dict):
-            raise SystemExit("--phoneme-levels must contain a JSON object with a 'db' map")
+        if not isinstance(levels, dict) or not isinstance(levels.get("speakers"), dict):
+            raise SystemExit("--phoneme-levels must contain a JSON object with a 'speakers' map (format 2)")
 
     output = Path(args.output)
     export_onnx(
