@@ -182,6 +182,10 @@ the columns together, never one alone:
   the stitching leaves audible. `timing` says how many chunks the song took.
 * Both near zero and the numbers still bad is the model, and the training log already said so.
 
+On a multi-speaker voice the corpus run sings each utterance as the speaker the corpus says
+it belongs to, and the score run as the model's first speaker; `--speaker <name>` makes
+either run sing everything as that one.
+
 `--workdir` keeps every file that crossed the boundary — each utterance's frames, the
 recording, the host's render, the reference render, the song and its frames, the host's
 reports — so any number in the table can be listened to. The final judge stays a pair of

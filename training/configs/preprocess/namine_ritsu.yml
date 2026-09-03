@@ -1,12 +1,22 @@
-# Preprocessing for the Namine Ritsu singing database Ver2 (107 songs, one
-# singer, 44.1 kHz -> resampled to 48 kHz, ~4.4 h voiced).
+# Preprocessing for the Namine Ritsu singing databases: Ver2.0.2 (107 songs sung strongly,
+# ~4.4 h voiced), Normal (50 songs in her plain voice, ~2.1 h) and Soft (50 songs in a weak
+# voice, ~2.1 h) — one singer, three styles, 44.1 kHz resampled to 48 kHz. Each style is a
+# speaker of the model, so a track chooses the style by name and each carries the consonant
+# tables measured from its own labels.
 #
-# Run scripts/prepare_namine_ritsu.py first: it splits the songs into phrases
-# at labeled pauses and writes IPA transcripts from the mono labels.
+# Run scripts/prepare_namine_ritsu.py once per database: it splits the songs into phrases at
+# labelled pauses, writes IPA transcripts from the mono labels, and writes the labels out as
+# seconds per phoneme for `duration_dir`.
 #
 #   uv run python scripts/prepare_namine_ritsu.py \
 #       --db-dir 'data/raw/namine_ritsu_v2/「波音リツ」歌声データベースVer2.0.2/DATABASE' \
-#       --output data/raw/namine_ritsu
+#       --output data/raw/namine_ritsu/strong
+#   uv run python scripts/prepare_namine_ritsu.py \
+#       --db-dir 'data/raw/namine_ritsu_v2/「波音リツ Normal」歌声データベース/DATABASE_normal' \
+#       --output data/raw/namine_ritsu/normal
+#   uv run python scripts/prepare_namine_ritsu.py \
+#       --db-dir 'data/raw/namine_ritsu_v2/「波音リツ Soft」歌声データベース/DATABASE_soft' \
+#       --output data/raw/namine_ritsu/soft
 #
 #   uv run python scripts/preprocess.py --config configs/preprocess/namine_ritsu.yml
 
@@ -37,11 +47,19 @@ text:
 dataset:
   output_dir: data/processed/namine_ritsu
   sources:
+    # The hand-corrected mono labels, as seconds per phoneme from the preparation script;
+    # training expands the phonemes by them instead of by alignment search.
     - name: namine_ritsu
-      wav_dir: data/raw/namine_ritsu/wav
-      text_dir: data/raw/namine_ritsu/text
-      # The hand-corrected mono labels, as seconds per phoneme from the preparation
-      # script; training expands the phonemes by them instead of by alignment search.
-      duration_dir: data/raw/namine_ritsu/dur
+      wav_dir: data/raw/namine_ritsu/strong/wav
+      text_dir: data/raw/namine_ritsu/strong/text
+      duration_dir: data/raw/namine_ritsu/strong/dur
+    - name: namine_ritsu_normal
+      wav_dir: data/raw/namine_ritsu/normal/wav
+      text_dir: data/raw/namine_ritsu/normal/text
+      duration_dir: data/raw/namine_ritsu/normal/dur
+    - name: namine_ritsu_soft
+      wav_dir: data/raw/namine_ritsu/soft/wav
+      text_dir: data/raw/namine_ritsu/soft/text
+      duration_dir: data/raw/namine_ritsu/soft/dur
 
 num_workers: 8

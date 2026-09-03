@@ -625,13 +625,16 @@ def evaluate(
         sf.write(str(workdir / f"{stem}.real.wav"), wav, corpus.sample_rate)
 
         asked = hearable(phonemes)
+        # Each utterance is sung by its own speaker — the corpus says whose it is — unless the
+        # run asks for one speaker throughout.
+        speaker = settings.speaker or record.get("speaker")
         takes: list[dict] = []
         for seed in seeds:
             suffix = "" if len(seeds) == 1 else f".s{seed}"
             rendered = workdir / f"{stem}{suffix}.host.wav"
             facts = host.sing_frames(
                 frames_path, info.path, rendered, seed=seed, acceleration=settings.acceleration,
-                speaker=settings.speaker,
+                speaker=speaker,
             )
             sung = read_wav(rendered, info.sample_rate)
             take: dict[str, Any] = {
@@ -657,6 +660,7 @@ def evaluate(
             takes.append(take)
         row: dict[str, Any] = {
             "id": record["id"],
+            "speaker": record.get("speaker"),
             "speaker_id": int(record["speaker_id"]),
             "n_frames": utterance.n_frames,
             "seconds": utterance.n_frames * info.hop_seconds,
@@ -687,7 +691,7 @@ def evaluate(
             song_takes.append(
                 host.sing_frames(
                     frames_path, info.path, rendered, seed=seed, acceleration=settings.acceleration,
-                    speaker=settings.speaker,
+                    speaker=settings.speaker or rows[0].get("speaker"),
                 )
             )
             sung = read_wav(rendered, info.sample_rate)
