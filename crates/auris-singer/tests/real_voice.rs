@@ -54,7 +54,7 @@ fn the_real_voice_sings_a_note_reproducibly() {
     let hop = voice.info().hop_length as usize;
 
     let frames = ka();
-    let first = voice.sing(&frames, 7).expect("a second of か renders");
+    let first = voice.sing(&frames, 0, 7).expect("a second of か renders");
     assert_eq!(first.len(), frames.len() * hop);
     let sung = &first[40 * hop..110 * hop];
     let rms = (sung.iter().map(|s| s * s).sum::<f32>() / sung.len() as f32).sqrt();
@@ -69,9 +69,11 @@ fn the_real_voice_sings_a_note_reproducibly() {
     );
 
     // Same seed, same take; another seed, another take.
-    let again = voice.sing(&frames, 7).expect("the same take renders again");
+    let again = voice
+        .sing(&frames, 0, 7)
+        .expect("the same take renders again");
     assert_eq!(first, again, "a seed names a take");
-    let other = voice.sing(&frames, 8).expect("another take renders");
+    let other = voice.sing(&frames, 0, 8).expect("another take renders");
     assert_ne!(first, other, "a different seed is a different take");
 }
 
@@ -106,8 +108,8 @@ fn two_vowels_are_two_sounds() {
         return;
     };
     let mut voice = VoiceModel::load(&path, Acceleration::Auto).expect("the named model loads");
-    let a = voice.sing(&vowel("a"), 7).expect("あ renders");
-    let i = voice.sing(&vowel("i"), 7).expect("い renders");
+    let a = voice.sing(&vowel("a"), 0, 7).expect("あ renders");
+    let i = voice.sing(&vowel("i"), 0, 7).expect("い renders");
     let difference: f32 = a
         .iter()
         .zip(&i)
@@ -129,7 +131,24 @@ fn a_cancelled_render_stops_between_chunks() {
     };
     let mut voice = VoiceModel::load(&path, Acceleration::Auto).expect("the named model loads");
     let error = voice
-        .sing_with(&ka(), 0, |_, _| false)
+        .sing_with(&ka(), 0, 0, |_, _| false)
         .expect_err("refusing the first chunk cancels the render");
     assert!(matches!(error, auris_singer::SingError::Cancelled));
+}
+
+#[test]
+fn a_speaker_the_model_never_heard_of_is_refused_before_any_work() {
+    let Some(path) = model_path() else { return };
+    let mut voice = VoiceModel::load(&path, Acceleration::Cpu).expect("the model opens");
+    let count = voice.info().n_speakers;
+    assert_eq!(
+        voice.info().speakers().len() as u32,
+        count,
+        "one name per id"
+    );
+    let refused = voice.sing(&ka(), count, 7);
+    assert!(
+        matches!(refused, Err(auris_singer::SingError::NoSuchSpeaker { speaker, .. }) if speaker == count),
+        "{refused:?}"
+    );
 }

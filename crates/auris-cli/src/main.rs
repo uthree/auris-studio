@@ -552,11 +552,26 @@ fn sing(args: &[String]) -> Result<(), String> {
     let source = PathBuf::from(source);
     let mut track_name: Option<String> = None;
     let mut voice: Option<PathBuf> = None;
+    let mut speaker: Option<String> = None;
     let mut seed: Option<u64> = None;
 
     let mut index = 2;
     while index < args.len() {
         match args[index].as_str() {
+            "--speaker" => {
+                index += 1;
+                speaker = Some(
+                    args.get(index)
+                        .ok_or_else(|| {
+                            messages::option_needs_value(
+                                LANGUAGE,
+                                "--speaker",
+                                Key::CliNeedsValue.get(LANGUAGE),
+                            )
+                        })?
+                        .clone(),
+                );
+            }
             "--track" => {
                 index += 1;
                 track_name = Some(
@@ -615,10 +630,18 @@ fn sing(args: &[String]) -> Result<(), String> {
             .set_singer_voice(target, Some(voice))
             .map_err(|error| error.to_string())?;
     }
+    if speaker.is_some() {
+        session
+            .set_singer_speaker(target, speaker.as_deref())
+            .map_err(|error| error.to_string())?;
+    }
     let name = session
         .singer_voice(target)
         .map_err(|error| error.to_string())?
-        .map(|voice| voice.name.clone())
+        .map(|voice| match &voice.speaker {
+            Some(speaker) => format!("{} · {speaker}", voice.name),
+            None => voice.name.clone(),
+        })
         .unwrap_or_default();
 
     let seconds = session
@@ -742,6 +765,7 @@ fn sing_frames(args: &[String]) -> Result<(), String> {
         .ok_or_else(|| Key::CliExpectedFramesPath.get(LANGUAGE).to_string())?;
     let source = PathBuf::from(source);
     let mut voice: Option<PathBuf> = None;
+    let mut speaker: Option<String> = None;
     let mut seed: u64 = 0;
     let mut acceleration = auris_session::Acceleration::Auto;
     let mut output: Option<PathBuf> = None;
@@ -797,6 +821,20 @@ fn sing_frames(args: &[String]) -> Result<(), String> {
                     )
                 })?));
             }
+            "--speaker" => {
+                index += 1;
+                speaker = Some(
+                    args.get(index)
+                        .ok_or_else(|| {
+                            messages::option_needs_value(
+                                LANGUAGE,
+                                "--speaker",
+                                Key::CliNeedsValue.get(LANGUAGE),
+                            )
+                        })?
+                        .clone(),
+                );
+            }
             "--report" => {
                 index += 1;
                 report = Some(PathBuf::from(args.get(index).ok_or_else(|| {
@@ -822,7 +860,7 @@ fn sing_frames(args: &[String]) -> Result<(), String> {
     session.set_singer_acceleration(acceleration);
     let output = output.unwrap_or_else(|| source.with_extension("wav"));
     let sung = session
-        .sing_frames(&voice, &frames, seed, &output)
+        .sing_frames(&voice, &frames, speaker.as_deref(), seed, &output)
         .map_err(|error| error.to_string())?;
     if let Some(report) = report {
         let text = serde_json::to_string_pretty(&sung).map_err(|error| error.to_string())?;

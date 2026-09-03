@@ -158,6 +158,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::ResetOrnaments => Key::EditResetOrnaments,
         Edit::SetFrameHop => Key::EditSetFrameHop,
         Edit::SetSingerVoice => Key::EditSetSingerVoice,
+        Edit::SetSingerSpeaker => Key::EditSetSingerSpeaker,
         Edit::Sing => Key::EditSing,
         Edit::AddEffect => Key::EditAddEffect,
         Edit::RemoveEffect => Key::EditRemoveEffect,
@@ -235,6 +236,8 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::Vocal(inner) => with(Key::ErrorLyric, inner.to_string()),
         SessionError::Sing(inner) => with(Key::ErrorSing, inner.to_string()),
         SessionError::NoVoice(_) => Key::ErrorNoVoice.get(language).to_string(),
+        // The names it offers are the model's own and read the same in every language.
+        SessionError::NoSuchSpeaker { .. } => with(Key::ErrorSing, error.to_string()),
         SessionError::SingingNeedsFolder => Key::ErrorSingingNeedsFolder.get(language).to_string(),
         SessionError::NothingToSing(_) => Key::ErrorNothingToSing.get(language).to_string(),
         SessionError::NoLyrics => Key::ErrorNoLyrics.get(language).to_string(),

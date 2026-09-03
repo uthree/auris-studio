@@ -150,6 +150,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_export_midi))
             .on_action(cx.listener(Self::on_export_singer_frames))
             .on_action(cx.listener(Self::on_choose_singer_voice))
+            .on_action(cx.listener(Self::on_next_singer_speaker))
             .on_action(cx.listener(Self::on_sing))
             .on_action(cx.listener(Self::on_collect_assets))
             .on_action(cx.listener(Self::on_export_audio))
@@ -1679,6 +1680,16 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.choose_singer_voice(cx);
+    }
+
+    fn on_next_singer_speaker(
+        &mut self,
+        _: &actions::NextSingerSpeaker,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.next_singer_speaker();
+        cx.notify();
     }
 
     fn on_sing(&mut self, _: &actions::Sing, _window: &mut Window, cx: &mut Context<Self>) {

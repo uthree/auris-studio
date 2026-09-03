@@ -697,6 +697,7 @@ mod tests {
             path: auris_core::AssetPath::external("/nowhere/voice.onnx"),
             name: "Measured".into(),
             consonants: Some(measured()),
+            speaker: None,
         });
         let voiced = render_frames(&voiced, &map());
 
@@ -885,6 +886,7 @@ mod tests {
                 default: -12.0,
                 db: [("k".to_string(), -20.0)].into_iter().collect(),
             }),
+            speaker: None,
         });
         let levelled = render_frames(&levelled, &map());
         let token = |frames: &SingerFrames, at: usize| {

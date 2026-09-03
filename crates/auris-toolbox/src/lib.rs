@@ -2272,6 +2272,11 @@ pub mod sing {
         /// An absolute path to a voice model (`.onnx`) to choose before singing. The track
         /// keeps the voice, so later takes need not name it again.
         pub voice: Option<String>,
+        /// Which of the voice's speakers sings, by name, for a model trained on several. The
+        /// track keeps the choice. Left out, the track's current speaker sings — the model's
+        /// first, until one is chosen. An unknown name is refused, naming the ones the voice
+        /// has.
+        pub speaker: Option<String>,
         /// The take's seed. The previous take's seed — or 0 — when left out, so singing again
         /// after an edit keeps the same take.
         pub seed: Option<u64>,
@@ -2317,10 +2322,18 @@ pub mod sing {
                 .set_singer_voice(target, Some(Path::new(voice)))
                 .map_err(|error| error.to_string())?;
         }
+        if args.speaker.is_some() {
+            session
+                .set_singer_speaker(target, args.speaker.as_deref())
+                .map_err(|error| error.to_string())?;
+        }
         let name = session
             .singer_voice(target)
             .map_err(|error| error.to_string())?
-            .map(|voice| voice.name.clone())
+            .map(|voice| match &voice.speaker {
+                Some(speaker) => format!("{} · {speaker}", voice.name),
+                None => voice.name.clone(),
+            })
             .unwrap_or_default();
         let seconds = session
             .sing(target, args.seed)
@@ -3489,6 +3502,7 @@ mod tests {
                 project: path.clone(),
                 track: track.map(String::from),
                 voice,
+                speaker: None,
                 seed: None,
             })
         };

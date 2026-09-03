@@ -214,6 +214,31 @@ impl VoiceInfo {
         f64::from(self.hop_length) / f64::from(self.sample_rate)
     }
 
+    /// The speakers the model can sing as, in id order — one name per id.
+    ///
+    /// A single-speaker export carries one; a model trained on several corpora carries each
+    /// source's name. An id the table does not name — a `speaker_to_id` shorter than
+    /// `n_speakers` — is listed as its number, so every id has a name to be chosen by.
+    pub fn speakers(&self) -> Vec<String> {
+        (0..self.n_speakers)
+            .map(|id| {
+                self.speaker_to_id
+                    .iter()
+                    .find(|(_, at)| **at == id)
+                    .map(|(name, _)| name.clone())
+                    .unwrap_or_else(|| id.to_string())
+            })
+            .collect()
+    }
+
+    /// The id behind a speaker's name, or `None` for a name the model never heard of.
+    pub fn speaker_id(&self, name: &str) -> Option<u32> {
+        self.speakers()
+            .iter()
+            .position(|known| known == name)
+            .map(|at| at as u32)
+    }
+
     /// The voice's display name: the card's, or empty where no card was embedded.
     pub fn display_name(&self) -> &str {
         self.voice
@@ -249,6 +274,9 @@ mod tests {
         assert_eq!(info.hop_seconds(), 0.010);
         assert_eq!(info.display_name(), "波音リツ");
         assert_eq!(info.speaker_to_id.get("namine_ritsu"), Some(&0));
+        assert_eq!(info.speakers(), ["namine_ritsu"]);
+        assert_eq!(info.speaker_id("namine_ritsu"), Some(0));
+        assert_eq!(info.speaker_id("nobody"), None);
         // Fields this build does not know — f0_min, audio — pass through without complaint.
     }
 
@@ -331,5 +359,27 @@ mod tests {
             VoiceInfo::parse(&nan).is_err(),
             "a level that is not a number is refused"
         );
+    }
+}
+
+#[cfg(test)]
+mod speaker_tests {
+    use super::*;
+
+    #[test]
+    fn every_id_gets_a_name_and_the_names_keep_id_order() {
+        let info: VoiceInfo = serde_json::from_value(serde_json::json!({
+            "format_version": 1, "sample_rate": 48000, "hop_length": 480, "inter_channels": 192,
+            "n_speakers": 3, "symbols": ["<pad>", "<unk>", "<sil>", "a"],
+            "speaker_to_id": {"zoe": 1, "abe": 0}
+        }))
+        .expect("a three-speaker model with one id unnamed");
+        assert_eq!(
+            info.speakers(),
+            ["abe", "zoe", "2"],
+            "id order, and a number for the unnamed"
+        );
+        assert_eq!(info.speaker_id("zoe"), Some(1));
+        assert_eq!(info.speaker_id("2"), Some(2));
     }
 }

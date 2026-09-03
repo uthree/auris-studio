@@ -166,6 +166,17 @@ def test_a_run_can_start_from_another_runs_weights(module, datamodule, tmp_path,
         assert torch.equal(fresh.discriminator.state_dict()[key], value), key
     assert fresh.hparams["metadata"]["speaker_to_id"] == {"carol": 0, "dave": 1}, "the new corpus's speakers"
 
+    # Another number of speakers is not a refusal: the speaker tensors start afresh and the
+    # rest still loads.
+    more = AurisSingerModule(
+        model={**tiny_model_config, "n_speakers": 5}, discriminator={**tiny_discriminator_config, "n_speakers": 5},
+        audio=AUDIO, loss=LOSS,
+    )
+    more.load_weights(checkpoint)
+    for key, value in module.model.state_dict().items():
+        if "speaker" not in key:
+            assert torch.equal(more.model.state_dict()[key], value), key
+
     # A different shape is refused outright, naming the tensor.
     other = AurisSingerModule(
         model={**tiny_model_config, "inter_channels": tiny_model_config["inter_channels"] + 4},

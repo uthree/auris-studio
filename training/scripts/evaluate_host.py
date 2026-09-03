@@ -65,6 +65,7 @@ def main() -> None:
     parser.add_argument("--take-seed", type=int, default=0, help="the render's seed (default: 0)")
     parser.add_argument("--take-seeds", type=int, default=1, help="how many takes to average, seeds --take-seed onwards (default: 1)")
     parser.add_argument("--acceleration", choices=["auto", "gpu", "cpu"], default="auto")
+    parser.add_argument("--speaker", help="which of the voice's speakers sings (default: its first)")
     parser.add_argument("--no-song", action="store_true", help="skip the concatenated render")
     parser.add_argument("--no-reference", action="store_true", help="skip the PyTorch render")
     parser.add_argument("--no-pitch", action="store_true", help="skip FCPE, and so the pitch metrics")
@@ -96,6 +97,7 @@ def main() -> None:
         take_seed=args.take_seed,
         take_seeds=args.take_seeds,
         acceleration=args.acceleration,
+        speaker=args.speaker,
         song=not args.no_song,
         reference=not args.no_reference,
         pitch=not args.no_pitch,

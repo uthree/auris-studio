@@ -484,6 +484,8 @@ class Settings:
     #: is one draw of the prior, and on a small voice a draw can put a phrase an octave out;
     #: the mean over several is the voice, one is the throw.
     take_seeds: int = 1
+    #: Which of the voice's speakers sings, by name; ``None`` is the model's first.
+    speaker: str | None = None
     #: Whether to run the listener: the phoneme error rate, and the recording's ceiling.
     asr: bool = False
     #: The language the listener listens in — the recogniser and the front-end behind it.
@@ -628,7 +630,8 @@ def evaluate(
             suffix = "" if len(seeds) == 1 else f".s{seed}"
             rendered = workdir / f"{stem}{suffix}.host.wav"
             facts = host.sing_frames(
-                frames_path, info.path, rendered, seed=seed, acceleration=settings.acceleration
+                frames_path, info.path, rendered, seed=seed, acceleration=settings.acceleration,
+                speaker=settings.speaker,
             )
             sung = read_wav(rendered, info.sample_rate)
             take: dict[str, Any] = {
@@ -683,7 +686,8 @@ def evaluate(
             rendered = workdir / f"song{suffix}.host.wav"
             song_takes.append(
                 host.sing_frames(
-                    frames_path, info.path, rendered, seed=seed, acceleration=settings.acceleration
+                    frames_path, info.path, rendered, seed=seed, acceleration=settings.acceleration,
+                    speaker=settings.speaker,
                 )
             )
             sung = read_wav(rendered, info.sample_rate)
@@ -807,7 +811,7 @@ def evaluate_score(
     take = None
     frames = None
     for seed in seeds:
-        take = host.sing(project, info.path, seed)
+        take = host.sing(project, info.path, seed, speaker=settings.speaker)
         wall += host.last_wall_seconds
         if frames is None:
             # Only now: choosing the voice put its clock, its consonant widths and its levels

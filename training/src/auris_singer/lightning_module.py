@@ -34,6 +34,12 @@ logger = logging.getLogger(__name__)
 __all__ = ["AurisSingerModule"]
 
 
+def _is_speaker_tensor(key: str) -> bool:
+    """Whether a state-dict key is sized by the number of speakers: the generator's
+    speaker embedding, or a discriminator's speaker projection."""
+    return "speaker" in key or ".projection." in key
+
+
 class AurisSingerModule(L.LightningModule):
     """Training wrapper.
 
@@ -141,7 +147,9 @@ class AurisSingerModule(L.LightningModule):
         state, the step count and the schedule are left behind so the new run begins at
         step zero with the loss weights its own config asks for, and the speaker table is
         the new dataset's. The networks must have the same shape — a different preset or
-        phoneme table is refused with the mismatch named, never loaded partly.
+        phoneme table is refused with the mismatch named, never loaded partly — except for
+        the speaker tensors: a run on a different number of speakers keeps its own, freshly
+        initialised, since a speaker id means nothing across corpora anyway.
         """
         checkpoint = torch.load(path, map_location="cpu", weights_only=False)
         state = checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
@@ -151,13 +159,20 @@ class AurisSingerModule(L.LightningModule):
             if key.startswith("model.") or key.startswith("discriminator.")
         }
         own = self.state_dict()
-        for key, value in weights.items():
+        for key, value in list(weights.items()):
             if key in own and own[key].shape != value.shape:
+                if _is_speaker_tensor(key):
+                    del weights[key]
+                    continue
                 raise ValueError(
                     f"{key} is {tuple(value.shape)} in {path} and {tuple(own[key].shape)} here"
                 )
         missing, unexpected = self.load_state_dict(weights, strict=False)
-        missing = [key for key in missing if key.startswith(("model.", "discriminator."))]
+        missing = [
+            key
+            for key in missing
+            if key.startswith(("model.", "discriminator.")) and not _is_speaker_tensor(key)
+        ]
         if missing or unexpected:
             raise ValueError(
                 f"{path} does not hold this model: missing {missing[:5]}, unexpected {unexpected[:5]}"

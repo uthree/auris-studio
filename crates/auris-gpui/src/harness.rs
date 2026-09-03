@@ -608,6 +608,28 @@ mod tests {
         });
     }
 
+    /// The speaker row refuses the same way singing does on a track with no voice, from
+    /// the menu row to the status bar, with no model file involved.
+    #[gpui::test]
+    fn the_next_speaker_needs_a_voice_first(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, cx| {
+            this.session.add_singer_track("Voice");
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.dispatch_action(actions::NextSingerSpeaker);
+        cx.run_until_parked();
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.status
+                    .contains(auris_i18n::Key::ErrorNoVoice.get(this.language())),
+                "the status must say to choose a voice, said: {}",
+                this.status
+            );
+        });
+    }
+
     /// Sing without a voice refuses with the line naming the cure, and costs no undo step —
     /// the whole refusal path from the menu row to the status bar, no model file involved.
     #[gpui::test]

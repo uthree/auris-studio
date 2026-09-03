@@ -183,8 +183,13 @@ impl VoiceModel {
     /// The waveform covers the whole timeline the frames cover — `frames.len()` hops of
     /// samples, silence where nothing is sung — so the caller places it at time zero and it
     /// lines up by construction. Same frames, same seed, same voice: same samples.
-    pub fn sing(&mut self, frames: &SingerFrames, seed: u64) -> Result<Vec<f32>, SingError> {
-        self.sing_with(frames, seed, |_, _| true)
+    pub fn sing(
+        &mut self,
+        frames: &SingerFrames,
+        speaker: u32,
+        seed: u64,
+    ) -> Result<Vec<f32>, SingError> {
+        self.sing_with(frames, speaker, seed, |_, _| true)
     }
 
     /// [`sing`](Self::sing), reporting each chunk to `progress` as `(done, total)`.
@@ -195,9 +200,16 @@ impl VoiceModel {
     pub fn sing_with(
         &mut self,
         frames: &SingerFrames,
+        speaker: u32,
         seed: u64,
         mut progress: impl FnMut(usize, usize) -> bool,
     ) -> Result<Vec<f32>, SingError> {
+        if speaker >= self.info.n_speakers {
+            return Err(SingError::NoSuchSpeaker {
+                speaker,
+                count: self.info.n_speakers,
+            });
+        }
         let model_hop = self.info.hop_seconds();
         if (frames.hop_seconds - model_hop).abs() > model_hop * 1e-6 {
             return Err(SingError::HopMismatch {
@@ -214,7 +226,7 @@ impl VoiceModel {
             if !progress(at, total) {
                 return Err(SingError::Cancelled);
             }
-            let sung = match self.sing_chunk(frames, range.clone(), seed, at) {
+            let sung = match self.sing_chunk(frames, range.clone(), speaker, seed, at) {
                 Ok(sung) => sung,
                 // A GPU provider can take the session and still refuse its shapes at
                 // inference — DirectML does exactly that to this model family today. Auto
@@ -227,7 +239,7 @@ impl VoiceModel {
                     let (session, _) = open_session(&self.path, Acceleration::Cpu)?;
                     self.session = session;
                     self.on_gpu = false;
-                    self.sing_chunk(frames, range.clone(), seed, at)?
+                    self.sing_chunk(frames, range.clone(), speaker, seed, at)?
                 }
                 Err(error) => return Err(error),
             };
@@ -245,6 +257,7 @@ impl VoiceModel {
         &mut self,
         frames: &SingerFrames,
         range: std::ops::Range<usize>,
+        speaker: u32,
         seed: u64,
         chunk: usize,
     ) -> Result<Vec<f32>, SingError> {
@@ -282,7 +295,7 @@ impl VoiceModel {
             "f0" => Tensor::from_array(([1, count], score.f0))?,
             "energy" => Tensor::from_array(([1, count], score.energy))?,
             "voiced" => Tensor::from_array(([1, count], score.voiced))?,
-            "speaker_ids" => Tensor::from_array(([1], vec![0i64]))?,
+            "speaker_ids" => Tensor::from_array(([1], vec![i64::from(speaker)]))?,
             "noise_scale" => Tensor::from_array(((), vec![NOISE_SCALE]))?,
             "z_noise" => Tensor::from_array(([1, inter, count], z_noise))?,
             "source_noise" => Tensor::from_array(([1, 1, count * hop], source_noise))?,

@@ -177,6 +177,8 @@ pub enum Edit {
     SetFrameHop,
     /// A singer track was pointed at a voice model, or its voice was taken away.
     SetSingerVoice,
+    /// A singer track was told which of its voice's speakers sings.
+    SetSingerSpeaker,
     /// A singer track's take was rendered by its voice model.
     Sing,
     /// An effect was added to a chain.

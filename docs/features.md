@@ -242,8 +242,12 @@ directory (`AURIS_VOICES` overrides the search), or in any folder registered fro
 section's own *Add Voice Folder…* row, remembered and never copied, the way plugin folders
 are. **One click puts the voice on the selected singer track**, exactly as one click puts a
 sound on an instrument track, and the search box finds voices by name like everything else.
-**Track → Choose Voice…** remains as the file dialog for a one-off file somewhere unusual;
-either way the track is pointed at a trained
+**Track → Choose Voice…** remains as the file dialog for a one-off file somewhere unusual.
+A voice trained on several corpora carries one **speaker** per source, and **Track → Next
+Speaker** moves the track round that list, the status line saying who sings now and where
+they stand in it; a single-speaker voice says so and stays. The choice is the track's, saved
+with the document, and a take is pinned by the speaker the way it is by the seed. Either way
+the track is pointed at a trained
 voice model — one self-contained `.onnx` file, left where it lies, trained by the project in the
 repository's `training/` directory — and from then on the track sings for real. The render is a **take**: an ordinary audio file in `Audio/` that
 plays, exports and reopens with everything else, pinned by a seed so the same notes, lyrics,

@@ -512,6 +512,7 @@ impl Session {
         &mut self,
         voice: &Path,
         frames: &SingerFrames,
+        speaker: Option<&str>,
         seed: u64,
         path: &Path,
     ) -> Result<SungFrames, SessionError> {
@@ -524,9 +525,10 @@ impl Session {
         };
         let (samples, sung) = {
             let mut model = model.lock().expect("no thread panics holding a voice");
+            let speaker = speaker_id(model.info(), speaker)?;
             let mut chunks = 0;
             let singing = Instant::now();
-            let samples = model.sing_with(frames, seed, |_, total| {
+            let samples = model.sing_with(frames, speaker, seed, |_, total| {
                 chunks = total;
                 true
             })?;
@@ -534,6 +536,7 @@ impl Session {
             let sample_rate = model.info().sample_rate;
             let sung = SungFrames {
                 voice: voice_name(&model, voice),
+                speaker: model.info().speakers()[speaker as usize].clone(),
                 seconds: samples.len() as f64 / f64::from(sample_rate),
                 sample_rate,
                 frames: frames.len(),
@@ -604,6 +607,7 @@ impl Session {
                         name,
                         consonants,
                         levels,
+                        speaker: None,
                     });
                     singer.frame_hop = hop;
                 }
@@ -616,6 +620,64 @@ impl Session {
     /// The voice a singer track is sung by, when one has been chosen.
     pub fn singer_voice(&self, track: TrackId) -> Result<Option<&SingerVoice>, SessionError> {
         Ok(self.require_singer(track)?.voice.as_ref())
+    }
+
+    /// Tells a singer track which of its voice's speakers sings: a name from
+    /// [`Session::singer_speakers`], or `None` for the model's first.
+    ///
+    /// The name is checked against the model before anything is recorded, so a speaker the
+    /// voice does not have is refused here — naming what it does have — and costs no undo step.
+    pub fn set_singer_speaker(
+        &mut self,
+        track: TrackId,
+        speaker: Option<&str>,
+    ) -> Result<(), SessionError> {
+        let offered = self.singer_speakers(track)?;
+        let chosen = match speaker {
+            Some(name) if !offered.iter().any(|known| known == name) => {
+                return Err(SessionError::NoSuchSpeaker {
+                    name: name.to_string(),
+                    offered,
+                });
+            }
+            Some(name) => Some(name.to_string()),
+            None => None,
+        };
+        self.record(Edit::SetSingerSpeaker);
+        if let Some(voice) = self
+            .project
+            .track_mut(track)
+            .and_then(|track| track.kind.as_singer_mut())
+            .and_then(|singer| singer.voice.as_mut())
+        {
+            voice.speaker = chosen;
+        }
+        Ok(())
+    }
+
+    /// The speakers a singer track's voice can sing as, in the model's id order.
+    ///
+    /// Opens the model, so it costs what choosing the voice cost; a track with no voice
+    /// refuses the way singing does.
+    pub fn singer_speakers(&mut self, track: TrackId) -> Result<Vec<String>, SessionError> {
+        let model = self.singer_voice_model(track)?;
+        let model = model.lock().expect("no thread panics holding a voice");
+        Ok(model.info().speakers())
+    }
+
+    /// The id the track's chosen speaker has in its voice model, for a caller's own render.
+    ///
+    /// The audition half of the speaker rule, the way [`Session::singer_voice_model`] is of
+    /// the voice: resolved against the model so a stale name fails here and not mid-render.
+    pub fn singer_speaker(&mut self, track: TrackId) -> Result<u32, SessionError> {
+        let chosen = self
+            .require_singer(track)?
+            .voice
+            .as_ref()
+            .and_then(|voice| voice.speaker.clone());
+        let model = self.singer_voice_model(track)?;
+        let model = model.lock().expect("no thread panics holding a voice");
+        speaker_id(model.info(), chosen.as_deref())
     }
 
     /// Renders a singer track through its voice model and keeps the result as its take.
@@ -631,7 +693,7 @@ impl Session {
         let model = self.voice_model_at(&plan.voice)?;
         let samples = {
             let mut model = model.lock().expect("no thread panics holding a voice");
-            model.sing(&plan.frames, plan.seed)?
+            model.sing(&plan.frames, plan.speaker, plan.seed)?
         };
         self.land_singer_take(&plan, &samples)
     }
@@ -662,16 +724,20 @@ impl Session {
             .path
             .resolve(Some(folder))
             .ok_or(SessionError::NoVoice(track.0))?;
-        let fingerprint = take_fingerprint(&frames, &voice.path, seed);
+        let fingerprint = take_fingerprint(&frames, &voice.path, voice.speaker.as_deref(), seed);
         let model = self.voice_model_at(&resolved)?;
-        let sample_rate = {
+        let (speaker, sample_rate) = {
             let model = model.lock().expect("no thread panics holding a voice");
-            model.info().sample_rate
+            (
+                speaker_id(model.info(), voice.speaker.as_deref())?,
+                model.info().sample_rate,
+            )
         };
         Ok(SingPlan {
             track,
             frames,
             voice: resolved,
+            speaker,
             seed,
             fingerprint,
             sample_rate,
@@ -906,7 +972,9 @@ impl Session {
             return Ok(SingerTakeState::Behind);
         };
         let frames = render_frames(singer, &self.project.tempo_map);
-        match take_fingerprint(&frames, &voice.path, take.seed) == take.fingerprint {
+        match take_fingerprint(&frames, &voice.path, voice.speaker.as_deref(), take.seed)
+            == take.fingerprint
+        {
             true => Ok(SingerTakeState::Current),
             false => Ok(SingerTakeState::Behind),
         }
@@ -955,6 +1023,8 @@ pub struct SingPlan {
     pub frames: SingerFrames,
     /// The resolved path of the model file.
     pub voice: PathBuf,
+    /// The id of the speaker who sings, in the model's own numbering.
+    pub speaker: u32,
     /// The seed pinning the render's random choices.
     pub seed: u64,
     /// What [`take_fingerprint`] said of exactly these inputs, stored into the landed take.
@@ -972,6 +1042,8 @@ pub struct SingPlan {
 pub struct SungFrames {
     /// The voice's display name, from its card, or the file's stem where the card has none.
     pub voice: String,
+    /// The speaker who sang, by the name the model gives the id.
+    pub speaker: String,
     /// Seconds of audio the file holds.
     pub seconds: f64,
     /// The rate the file was written at — the model's own.
@@ -997,6 +1069,22 @@ fn voice_name(model: &VoiceModel, file: &Path) -> String {
             .map(|stem| stem.to_string_lossy().to_string())
             .unwrap_or_else(|| "Voice".to_string()),
         false => card.to_string(),
+    }
+}
+
+/// The id a speaker's name has in a model, `None` being the first speaker.
+///
+/// One rule for every path that sings — the take, the audition, a frames file — so a name
+/// the model does not know is refused the same way at each, naming what it does know.
+fn speaker_id(info: &auris_singer::VoiceInfo, name: Option<&str>) -> Result<u32, SessionError> {
+    match name {
+        None => Ok(0),
+        Some(name) => info
+            .speaker_id(name)
+            .ok_or_else(|| SessionError::NoSuchSpeaker {
+                name: name.to_string(),
+                offered: info.speakers(),
+            }),
     }
 }
 
@@ -1037,7 +1125,12 @@ fn ornament_seconds(seconds: f64) -> Result<f64, SessionError> {
 /// is stored in project files, so it has to mean the same thing next year, and std's hashers
 /// promise no such thing. Each variable-length part is preceded by its length so two adjacent
 /// parts cannot trade bytes and hash the same.
-pub fn take_fingerprint(frames: &SingerFrames, voice: &AssetPath, seed: u64) -> u64 {
+pub fn take_fingerprint(
+    frames: &SingerFrames,
+    voice: &AssetPath,
+    speaker: Option<&str>,
+    seed: u64,
+) -> u64 {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
     let mut hash = OFFSET;
@@ -1048,6 +1141,9 @@ pub fn take_fingerprint(frames: &SingerFrames, voice: &AssetPath, seed: u64) -> 
         }
     };
     eat(&seed.to_le_bytes());
+    let speaker = speaker.unwrap_or("");
+    eat(&(speaker.len() as u64).to_le_bytes());
+    eat(speaker.as_bytes());
     let stored = voice.as_stored().to_string_lossy();
     eat(&(stored.len() as u64).to_le_bytes());
     eat(stored.as_bytes());
@@ -1287,6 +1383,7 @@ mod tests {
                 name: "Test Voice".into(),
                 consonants: None,
                 levels: None,
+                speaker: None,
             });
         }
     }
@@ -1303,6 +1400,77 @@ mod tests {
             Some(crate::history::Edit::AddNote),
             "the refusal must cost no undo step"
         );
+    }
+
+    #[test]
+    fn a_speaker_cannot_be_chosen_before_a_voice() {
+        let (mut session, track, _) = sung(0);
+        assert!(matches!(
+            session.set_singer_speaker(track, Some("alto")),
+            Err(SessionError::NoVoice(_))
+        ));
+        assert!(matches!(
+            session.singer_speakers(track),
+            Err(SessionError::NoVoice(_))
+        ));
+        assert_ne!(
+            session.undo(),
+            Some(crate::history::Edit::SetSingerSpeaker),
+            "a refusal costs no undo step"
+        );
+    }
+
+    /// A real voice names its speakers, refuses a stranger by name — listing its own — and
+    /// treats a chosen speaker as part of the take.
+    #[test]
+    fn a_real_voice_s_speakers_are_named_checked_and_part_of_the_take() {
+        let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") else {
+            return;
+        };
+        let (mut session, track, clip) = sung(0);
+        session
+            .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        session
+            .set_singer_voice(track, Some(std::path::Path::new(&model)))
+            .unwrap();
+        let speakers = session.singer_speakers(track).unwrap();
+        assert!(!speakers.is_empty(), "every model has a first speaker");
+        let refused = session
+            .set_singer_speaker(track, Some("nobody-the-model-knows"))
+            .unwrap_err();
+        match refused {
+            SessionError::NoSuchSpeaker { name, offered } => {
+                assert_eq!(name, "nobody-the-model-knows");
+                assert_eq!(offered, speakers, "the refusal names what it does have");
+            }
+            other => panic!("{other}"),
+        }
+        assert_eq!(
+            session.undo(),
+            Some(crate::history::Edit::SetSingerVoice),
+            "the refusal cost no undo step"
+        );
+        session.redo();
+
+        session
+            .set_singer_speaker(track, Some(&speakers[0]))
+            .unwrap();
+        assert_eq!(
+            session
+                .singer_voice(track)
+                .unwrap()
+                .unwrap()
+                .speaker
+                .as_deref(),
+            Some(speakers[0].as_str())
+        );
+        assert_eq!(
+            session.singer_speaker(track).unwrap(),
+            0,
+            "the first name is id 0"
+        );
+        assert_eq!(session.undo(), Some(crate::history::Edit::SetSingerSpeaker));
     }
 
     #[test]
@@ -1332,27 +1500,32 @@ mod tests {
         let voice = AssetPath::external("/voices/test.onnx");
         let frames = session.singer_frames(track).unwrap();
         assert_eq!(
-            take_fingerprint(&frames, &voice, 3),
-            take_fingerprint(&frames, &voice, 3),
+            take_fingerprint(&frames, &voice, None, 3),
+            take_fingerprint(&frames, &voice, None, 3),
             "the same inputs are the same number, today and next year"
         );
         assert_ne!(
-            take_fingerprint(&frames, &voice, 3),
-            take_fingerprint(&frames, &voice, 4),
+            take_fingerprint(&frames, &voice, None, 3),
+            take_fingerprint(&frames, &voice, None, 4),
             "another seed is another take"
         );
         assert_ne!(
-            take_fingerprint(&frames, &voice, 3),
-            take_fingerprint(&frames, &AssetPath::external("/voices/other.onnx"), 3),
+            take_fingerprint(&frames, &voice, None, 3),
+            take_fingerprint(&frames, &AssetPath::external("/voices/other.onnx"), None, 3),
             "another voice is another take"
+        );
+        assert_ne!(
+            take_fingerprint(&frames, &voice, None, 3),
+            take_fingerprint(&frames, &voice, Some("alto"), 3),
+            "another speaker is another take"
         );
         session
             .add_note(clip, Note::new(64, Ticks::QUARTER, Ticks::QUARTER))
             .unwrap();
         let edited = session.singer_frames(track).unwrap();
         assert_ne!(
-            take_fingerprint(&frames, &voice, 3),
-            take_fingerprint(&edited, &voice, 3),
+            take_fingerprint(&frames, &voice, None, 3),
+            take_fingerprint(&edited, &voice, None, 3),
             "an edited score is another take"
         );
     }
@@ -1368,7 +1541,7 @@ mod tests {
         put_voice(&mut session, track);
         let frames = session.singer_frames(track).unwrap();
         let voice = AssetPath::external("/voices/test.onnx");
-        let fingerprint = take_fingerprint(&frames, &voice, 0);
+        let fingerprint = take_fingerprint(&frames, &voice, None, 0);
         if let Some(singer) = session
             .project
             .track_mut(track)
@@ -1757,7 +1930,13 @@ mod tests {
         let scratch = crate::session::fixtures::Scratch::new("frames-no-voice");
         let output = scratch.join("take.wav");
         let error = session
-            .sing_frames(Path::new("nowhere/no-such-voice.onnx"), &frames, 0, &output)
+            .sing_frames(
+                Path::new("nowhere/no-such-voice.onnx"),
+                &frames,
+                None,
+                0,
+                &output,
+            )
             .expect_err("a voice that is not there cannot sing");
         assert!(matches!(error, SessionError::Sing(_)), "{error}");
         assert!(
@@ -1783,7 +1962,9 @@ mod tests {
         let frames = crate::Session::read_singer_frames(&frames_path).unwrap();
 
         let output = scratch.join("take.wav");
-        let sung = session.sing_frames(&voice, &frames, 7, &output).unwrap();
+        let sung = session
+            .sing_frames(&voice, &frames, None, 7, &output)
+            .unwrap();
         assert!(output.is_file(), "the waveform is where it was asked for");
         assert_eq!(sung.frames, frames.len());
         assert!(
@@ -1808,7 +1989,9 @@ mod tests {
 
         // The second call finds the voice open, and the same seed is the same take to the byte.
         let again = scratch.join("again.wav");
-        let second = session.sing_frames(&voice, &frames, 7, &again).unwrap();
+        let second = session
+            .sing_frames(&voice, &frames, None, 7, &again)
+            .unwrap();
         assert_eq!(second.load_seconds, 0.0, "the voice was already open");
         assert_eq!(
             std::fs::read(&output).unwrap(),

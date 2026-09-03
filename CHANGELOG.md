@@ -83,6 +83,14 @@ format rather than a convention: `## <version> — <date>`.
   speech first and then the song took the corpus phoneme error rate from 0.20 to 0.12 against
   the recording's own 0.09, and a composed verse's from 0.31 to 0.23 — the stops and the
   flap, which the tally had named, most of all.
+* **A voice's speakers can be chosen.** A voice trained on several corpora carries one
+  speaker per source, and the host always sang the first. A singer track now names the
+  speaker who sings, saved with the document and part of what pins a take; **Track → Next
+  Speaker** moves round the voice's list, `auris sing --speaker` and `auris sing-frames
+  --speaker` take the name, the `sing` tool has a `speaker` argument, and
+  `evaluate_host.py --speaker` measures one. A name the voice does not have is refused with
+  the ones it does, at the command and never mid-render. `train.py --init-from` lets the
+  speaker tensors start afresh, so a multi-speaker base can finish as a single voice.
 * **A consonant releases into its vowel.** The level table turns each consonant down by
   its measured decibels, and the frames held that level to the consonant's last frame — a
   stop at its closure's level to the end, which is a stop that never bursts. Measured on the

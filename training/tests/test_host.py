@@ -169,6 +169,9 @@ def test_paths_reach_the_host_absolute_whatever_they_were_given_as(tmp_path, mon
     for arg in seen[0]:
         if arg.endswith((".json", ".onnx", ".wav")):
             assert arg.startswith(str(tmp_path)), arg
+    assert "--speaker" not in seen[0], "no speaker asked for, none named: the model's first sings"
+    host.sing_frames("in.json", "v.onnx", "out/take.wav", speaker="bob")
+    assert seen[-1][-2:] == ["--speaker", "bob"]
 
 
 @pytest.mark.parametrize("nested", [True, False])

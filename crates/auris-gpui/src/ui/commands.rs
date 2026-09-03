@@ -924,6 +924,59 @@ impl AurisApp {
         .detach();
     }
 
+    /// Moves the selected singer track to the next of its voice's speakers, round the list.
+    ///
+    /// A voice trained on several corpora carries one speaker per source; a single-speaker
+    /// voice says so and stays. The list is the model's own, so the track's voice has to be
+    /// loadable here — which choosing it already proved.
+    pub(crate) fn next_singer_speaker(&mut self) {
+        let Some(track) = self.singer_target() else {
+            self.set_failed_status(self.t(Key::ErrorNoSingerTrack).to_string());
+            return;
+        };
+        let speakers = match self.session.singer_speakers(track) {
+            Ok(speakers) => speakers,
+            Err(error) => {
+                let line = self.failure(Key::CmdNextSpeaker, &error);
+                self.set_failed_status(line);
+                return;
+            }
+        };
+        if speakers.len() < 2 {
+            self.set_failed_status(self.t(Key::ErrorOneSpeaker).to_string());
+            return;
+        }
+        let current = self
+            .session
+            .singer_voice(track)
+            .ok()
+            .flatten()
+            .and_then(|voice| voice.speaker.clone())
+            .and_then(|name| speakers.iter().position(|known| *known == name))
+            .unwrap_or(0);
+        let next = (current + 1) % speakers.len();
+        match self
+            .session
+            .set_singer_speaker(track, Some(&speakers[next]))
+        {
+            Ok(()) => {
+                // Renders of the old speaker must not answer for the new one.
+                self.sung_previews.clear();
+                let language = self.language();
+                self.set_status(messages::speaker_chosen(
+                    language,
+                    &speakers[next],
+                    next + 1,
+                    speakers.len(),
+                ));
+            }
+            Err(error) => {
+                let line = self.failure(Key::CmdNextSpeaker, &error);
+                self.set_failed_status(line);
+            }
+        }
+    }
+
     /// Points a singer track at a voice file and says what happened — the shared tail of
     /// the file picker above and the library's voice rows.
     pub(crate) fn apply_singer_voice(&mut self, track: TrackId, path: &std::path::Path) {
@@ -1066,7 +1119,7 @@ impl AurisApp {
                 .spawn(async move {
                     let mut model = model.lock().expect("no thread panics holding a voice");
                     model
-                        .sing_with(&plan.frames, plan.seed, |done, total| {
+                        .sing_with(&plan.frames, plan.speaker, plan.seed, |done, total| {
                             let fraction = done as f32 / total.max(1) as f32;
                             progress.store(fraction.to_bits(), Ordering::Relaxed);
                             !cancel.load(Ordering::Relaxed)
@@ -1243,7 +1296,7 @@ impl AurisApp {
                 .spawn(async move {
                     let mut model = model.lock().expect("no thread panics holding a voice");
                     model
-                        .sing_with(&plan.frames, plan.seed, |_, _| {
+                        .sing_with(&plan.frames, plan.speaker, plan.seed, |_, _| {
                             !cancel.load(Ordering::Relaxed)
                         })
                         .map(|samples| (plan, samples))
@@ -1295,6 +1348,13 @@ impl AurisApp {
         };
         let track = wish.track;
         let key = wish.key.clone();
+        let speaker = match self.session.singer_speaker(track) {
+            Ok(speaker) => speaker,
+            Err(_) => {
+                self.sung_preview_wish = None;
+                return;
+            }
+        };
         let model = match self.session.singer_voice_model(track) {
             Ok(model) => model,
             Err(_) => {
@@ -1317,7 +1377,9 @@ impl AurisApp {
                 .spawn(async move {
                     let mut model = model.lock().expect("no thread panics holding a voice");
                     let rate = f64::from(model.info().sample_rate);
-                    model.sing(&frames, seed).map(|samples| (samples, rate))
+                    model
+                        .sing(&frames, speaker, seed)
+                        .map(|samples| (samples, rate))
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {

@@ -67,6 +67,14 @@ pub enum SingError {
     /// The GPU was insisted on, on a platform with no GPU provider to insist on.
     #[error("this platform has no GPU provider for singing — choose Auto or CPU")]
     NoGpu,
+    /// A speaker id the model was not trained with.
+    #[error("this voice has {count} speaker(s), none numbered {speaker}")]
+    NoSuchSpeaker {
+        /// The id asked for.
+        speaker: u32,
+        /// How many the model has, numbered from zero.
+        count: u32,
+    },
     /// The runtime refused an inference mid-render.
     #[error("the voice model refused the score: {0}")]
     Inference(String),

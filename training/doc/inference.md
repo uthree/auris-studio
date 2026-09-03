@@ -41,7 +41,10 @@ Rules:
   /k/ and /s/ under the contour and swallow the consonants.
 * `energy` is linear RMS, on the same scale the preprocessing pipeline
   produced (roughly `0.0`–`0.5` for peak-normalized audio).
-* `speaker` may be a name from the training set or an integer id.
+* `speaker` may be a name from the training set or an integer id. The host reads the same
+  table: a track names the speaker it sings as, `auris sing --speaker` and
+  `auris sing-frames --speaker` take the name, and a name the model does not have is
+  refused with the ones it does.
 
 ## Python API
 

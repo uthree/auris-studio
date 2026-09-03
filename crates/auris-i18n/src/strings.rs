@@ -824,6 +824,8 @@ strings! {
     FilterVoiceModel { en: "auris-singer voice model", ja: "auris-singer 声モデル" }
     DialogChooseVoice { en: "Choose a voice model", ja: "声のモデルを選択" }
     CmdChooseVoice { en: "Choose Voice…", ja: "声を選ぶ…" }
+    CmdNextSpeaker { en: "Next Speaker", ja: "次の話者" }
+    ErrorOneSpeaker { en: "this voice has only one speaker", ja: "この声には話者が 1 人しかいません" }
     CmdSing { en: "Sing", ja: "歌わせる" }
     SingCancelled { en: "Singing stopped; the previous take stands", ja: "歌唱を中止しました。前のテイクのままです" }
     TakeBehind { en: "behind the notes", ja: "テイクが楽譜より古い" }
@@ -939,6 +941,7 @@ strings! {
     EditResetOrnaments { en: "resetting pitch ornaments", ja: "ピッチ装飾のリセット" }
     EditSetFrameHop { en: "changing the frame hop", ja: "フレーム間隔の変更" }
     EditSetSingerVoice { en: "choosing a voice", ja: "声の選択" }
+    EditSetSingerSpeaker { en: "choosing a speaker", ja: "話者の選択" }
     EditSing { en: "the sung take", ja: "歌唱テイク" }
     EditAddEffect { en: "adding an effect", ja: "エフェクトの追加" }
     EditRemoveEffect { en: "removing an effect", ja: "エフェクトの削除" }
@@ -1152,6 +1155,7 @@ RENDER OPTIONS
 SING OPTIONS
         --track <name>            Which singer track (default: the project's only one)
         --voice <model.onnx>      Choose the voice model first, and remember it
+        --speaker <name>          Which of the voice's speakers sings, and remember it
         --seed <n>                Pin the take's random choices (default: the current take's)
 
 FRAMES OPTIONS
@@ -1160,6 +1164,7 @@ FRAMES OPTIONS
 
 SING-FRAMES OPTIONS
         --voice <model.onnx>      The voice to sing with (required)
+        --speaker <name>          Which of the voice's speakers sings (default: its first)
         --seed <n>                Pin the take's random choices (default: 0)
         --acceleration <auto|gpu|cpu>
                                   Where the model runs its inference (default: auto)
@@ -1218,6 +1223,7 @@ render のオプション
 sing のオプション
         --track <name>            歌わせるシンガートラック（既定: プロジェクト唯一の 1 本）
         --voice <model.onnx>      先に声のモデルを選んで記憶させる
+        --speaker <name>          声のどの話者が歌うかを選んで記憶させる
         --seed <n>                テイクの乱数を固定（既定: 現在のテイクのシード）
 
 frames のオプション
@@ -1226,6 +1232,7 @@ frames のオプション
 
 sing-frames のオプション
         --voice <model.onnx>      歌わせる声のモデル（必須）
+        --speaker <name>          声のどの話者が歌うか（既定: 最初の話者）
         --seed <n>                テイクの乱数を固定（既定: 0）
         --acceleration <auto|gpu|cpu>
                                   モデルの推論を走らせる場所（既定: auto）

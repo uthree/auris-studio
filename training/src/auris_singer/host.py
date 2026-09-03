@@ -316,8 +316,12 @@ class Host:
         output: str | Path,
         seed: int = 0,
         acceleration: str = "auto",
+        speaker: str | None = None,
     ) -> dict:
         """``auris sing-frames``: the frames file through the voice into ``output``.
+
+        ``speaker`` names one of a multi-speaker voice's speakers; ``None`` is the model's
+        first, and a name the voice does not have is the host's refusal, listing its own.
 
         Returns the host's own report of the render — seconds, sample rate, chunks, load and
         render time, whether the GPU sang — with ``wall_seconds`` added for the whole process,
@@ -339,6 +343,7 @@ class Host:
             str(output),
             "--report",
             str(report),
+            *(["--speaker", speaker] if speaker is not None else []),
         )
         facts = json.loads(report.read_text(encoding="utf-8"))
         facts["wall_seconds"] = self.last_wall_seconds
@@ -370,7 +375,14 @@ class Host:
                 return project
         raise HostError(f"compose reported success but {output.name} is in neither place it could be")
 
-    def sing(self, project: str | Path, voice: str | Path, seed: int, track: str | None = None) -> Path:
+    def sing(
+        self,
+        project: str | Path,
+        voice: str | Path,
+        seed: int,
+        track: str | None = None,
+        speaker: str | None = None,
+    ) -> Path:
         """``auris sing``: the whole path a person walks, answering with the take's WAV.
 
         The take lands in the project's ``Audio/`` folder under the track's name; a project
@@ -381,6 +393,8 @@ class Host:
         args = ["sing", str(project), "--voice", str(Path(voice).resolve()), "--seed", str(seed)]
         if track is not None:
             args += ["--track", track]
+        if speaker is not None:
+            args += ["--speaker", speaker]
         before = set((project.parent / "Audio").glob("*.wav"))
         self.run(*args)
         after = set((project.parent / "Audio").glob("*.wav")) - before

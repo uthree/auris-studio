@@ -138,6 +138,15 @@ pub enum SessionError {
     #[error("track {0} names no voice model; choose one first")]
     NoVoice(u64),
 
+    /// A speaker was named that the track's voice model does not have.
+    #[error("the voice has no speaker called {name}; it offers {}", offered.join(", "))]
+    NoSuchSpeaker {
+        /// The name that was asked for.
+        name: String,
+        /// The names the model does have, in id order.
+        offered: Vec<String>,
+    },
+
     /// Singing was asked for on a project that has no folder to keep the take in.
     ///
     /// The same shape as [`Self::RecordingNeedsFolder`], for the same reason: the remedy is a

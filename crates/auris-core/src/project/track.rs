@@ -153,6 +153,13 @@ pub struct SingerVoice {
     /// has never heard.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub levels: Option<ConsonantLevels>,
+    /// Which of the model's speakers sings, by the name its export gives the speaker.
+    ///
+    /// `None` is the model's first speaker — the only one a single-speaker model has, so a
+    /// document never has to name what it never chose. A name the model does not know is
+    /// refused when the voice is asked to sing, never guessed at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
 }
 
 /// Per-phoneme consonant levels, in decibels against the vowel that follows, measured by a

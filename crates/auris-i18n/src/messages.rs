@@ -287,6 +287,13 @@ messages! {
         ja: "このトラックは {name} が歌います"
     }
 
+    /// Confirmation that a speaker of the track's voice was chosen, and where it stands in
+    /// the voice's list.
+    fn speaker_chosen(name: &str, index: usize, count: usize) {
+        en: "{name} will sing this track (speaker {index} of {count})",
+        ja: "このトラックは {name} が歌います（{count} 人中 {index} 人目）"
+    }
+
     /// Confirmation that a take was rendered, sung by the named voice.
     fn take_sung(name: &str, seconds: f64) {
         en: "{name} sang {seconds:.1} s",

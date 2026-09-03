@@ -250,6 +250,30 @@ def test_the_host_sings_the_corpus_and_every_column_is_measured(exported_voice, 
 
 @needs_host
 @pytest.mark.slow
+def test_the_host_sings_the_speaker_it_is_asked_for_and_refuses_a_stranger(exported_voice, tmp_path):
+    """The tiny voice is trained on alice and bob; the host sings either by name, and a name
+    it does not have is refused by the host itself, naming the two it has."""
+    from auris_singer.host import HostError, HostFrames
+
+    voice, _ = exported_voice
+    info = voice_info(voice)
+    frames = HostFrames(
+        hop_seconds=info.hop_seconds, inventory=["sil", "a"], phonemes=[0] * 5 + [1] * 40 + [0] * 5,
+        f0_hz=[0.0] * 5 + [220.0] * 40 + [0.0] * 5, energy=[0.0] * 5 + [0.5] * 40 + [0.0] * 5,
+    )
+    path = frames.write(tmp_path / "a.frames.json")
+    host = Host.find()
+    alice = host.sing_frames(path, voice, tmp_path / "alice.wav", speaker="alice")
+    bob = host.sing_frames(path, voice, tmp_path / "bob.wav", speaker="bob")
+    assert alice["speaker"] == "alice" and bob["speaker"] == "bob"
+    first = host.sing_frames(path, voice, tmp_path / "first.wav")
+    assert first["speaker"] == "alice", "unnamed, the model's first speaker sings"
+    with pytest.raises(HostError, match="alice, bob"):
+        host.sing_frames(path, voice, tmp_path / "nobody.wav", speaker="carol")
+
+
+@needs_host
+@pytest.mark.slow
 def test_the_host_sings_a_score_the_way_a_person_would(exported_voice, tmp_path):
     voice, _ = exported_voice
     settings = Settings(pitch=False)

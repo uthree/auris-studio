@@ -381,8 +381,10 @@ uv run python scripts/train.py --config configs/train/base.yml \
 ```
 
 Both runs must use the same preset and the same phoneme table; a mismatch is refused with
-the tensor named. `--resume` is the other thing — the same run carrying on, optimizer and
-all — and the two do not combine.
+the tensor named. The one exception is the number of speakers: the speaker embedding and
+the discriminator's speaker projection start afresh when it differs, so a multi-speaker
+base can finish as a single voice. `--resume` is the other thing — the same run carrying
+on, optimizer and all — and the two do not combine.
 
 ## Multi-GPU
 
