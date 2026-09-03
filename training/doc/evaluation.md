@@ -279,6 +279,11 @@ What it came to:
   where a voice trained high fails. What the male speakers change is timbre and level, which
   these numbers do not hear; a low-register *word* test would need a corpus that sings words
   low.
+* **The recipe carried to another singer.** Namine Ritsu's three databases — Ver2.0.2 sung
+  strongly, Normal, Soft; 8,225 labelled phrases, 9.3 hours — as three speakers of one
+  voice, `base` from the JSUT speech pre-training: corpus PER 0.145 against the recording's
+  0.074 (each utterance sung as its own style), the composed verse 0.237 / 0.240 / 0.186 by
+  style over ten takes. The tally is the same in every style: ɸ heard as k, s as dz.
 * **What is left on the score path** is the melody itself — the composed line against the
   corpus's — and the gap to the corpus that only more singing data closes.
 
