@@ -6,6 +6,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "prepare_namine_ritsu.py"
 _spec = importlib.util.spec_from_file_location("prepare_namine_ritsu", SCRIPT)
 prepare = importlib.util.module_from_spec(_spec)
@@ -61,3 +63,32 @@ def test_every_ritsu_label_symbol_is_mapped():
     for symbol in inventory:
         normalized = prepare.ENUNU_TO_OPENJTALK.get(symbol, symbol)
         assert normalized in OPENJTALK_TO_IPA, symbol
+
+
+def test_the_script_writes_labels_beside_every_phrase(tmp_path, monkeypatch):
+    """A phrase's ``dur/`` line has one number per transcript token and sums to the clip."""
+    import sys
+
+    import numpy as np
+    import soundfile as sf
+
+    song = tmp_path / "DATABASE" / "song1"
+    song.mkdir(parents=True)
+    sr = 44_100
+    # pau a k a pau, three seconds, at 100 ns label units.
+    labels = [(0, 5_000_000, "pau"), (5_000_000, 12_000_000, "a"), (12_000_000, 13_000_000, "k"),
+              (13_000_000, 25_000_000, "a"), (25_000_000, 30_000_000, "pau")]
+    (song / "song1.lab").write_text("\n".join(f"{a} {b} {p}" for a, b, p in labels) + "\n")
+    t = np.arange(int(3.0 * sr)) / sr
+    sf.write(song / "song1.wav", (0.3 * np.sin(2 * np.pi * 220 * t)).astype(np.float32), sr)
+    out = tmp_path / "out"
+    monkeypatch.setattr(sys, "argv", ["prepare_namine_ritsu.py", "--db-dir", str(song.parent), "--output", str(out), "--min-seconds", "1", "--min-clip-seconds", "0.5"])
+    prepare.main()
+    names = sorted(p.stem for p in (out / "wav").glob("*.wav"))
+    assert names, "one phrase at least"
+    for name in names:
+        tokens = (out / "text" / f"{name}.txt").read_text(encoding="utf-8").split()
+        seconds = [float(x) for x in (out / "dur" / f"{name}.txt").read_text(encoding="utf-8").split()]
+        assert len(seconds) == len(tokens), (tokens, seconds)
+        clip = sf.info(out / "wav" / f"{name}.wav").duration
+        assert sum(seconds) == pytest.approx(clip, abs=0.002)

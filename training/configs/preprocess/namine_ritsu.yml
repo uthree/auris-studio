@@ -40,5 +40,8 @@ dataset:
     - name: namine_ritsu
       wav_dir: data/raw/namine_ritsu/wav
       text_dir: data/raw/namine_ritsu/text
+      # The hand-corrected mono labels, as seconds per phoneme from the preparation
+      # script; training expands the phonemes by them instead of by alignment search.
+      duration_dir: data/raw/namine_ritsu/dur
 
 num_workers: 8

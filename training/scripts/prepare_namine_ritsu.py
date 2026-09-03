@@ -7,7 +7,10 @@ ships one folder per song under ``DATABASE/``, each holding ``song.wav``
 ``start end phoneme`` per line in 100 ns units, Sinsy phonemes plus a few
 ENUNU extensions. As with JSUT-song, the songs are split into phrases at
 labeled pauses and the transcripts are written as IPA for
-``text.language: ipa``; label timings are used only to find the boundaries.
+``text.language: ipa``; the label timings find the boundaries and are also
+written out as seconds per phoneme (``dur/``), so that training expands the
+phonemes by the hand-corrected labels instead of by alignment search — name
+the folder as ``duration_dir`` in the preprocessing config.
 
 The ENUNU extensions are normalized to their nearest Sinsy/OpenJTalk symbol
 before conversion:
@@ -37,6 +40,7 @@ from prepare_jsut_song import (  # noqa: E402
     Phoneme,
     enforce_max_length,
     split_into_phrases,
+    to_durations,
     to_ipa_line,
     trim_edges,
 )
@@ -79,8 +83,10 @@ def main() -> None:
 
     wav_out = args.output / "wav"
     text_out = args.output / "text"
+    dur_out = args.output / "dur"
     wav_out.mkdir(parents=True, exist_ok=True)
     text_out.mkdir(parents=True, exist_ok=True)
+    dur_out.mkdir(parents=True, exist_ok=True)
 
     n_phrases = 0
     total_seconds = 0.0
@@ -131,6 +137,10 @@ def main() -> None:
                 name = f"{wav_path.stem}_{index:03d}"
                 sf.write(wav_out / f"{name}.wav", wav[begin:finish], sample_rate)
                 (text_out / f"{name}.txt").write_text(transcript, encoding="utf-8")
+                durations = to_durations(phrase, begin / sample_rate, finish / sample_rate)
+                (dur_out / f"{name}.txt").write_text(
+                    " ".join(f"{d:.4f}" for d in durations), encoding="utf-8"
+                )
                 n_phrases += 1
                 total_seconds += (finish - begin) / sample_rate
 
