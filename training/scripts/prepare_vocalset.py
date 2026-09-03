@@ -181,6 +181,25 @@ def gain_to_match(clips: list[np.ndarray], target_dbfs: float, ceiling: float) -
     return min(gain, ceiling / peak) if peak > 0.0 else gain
 
 
+def durations(
+    padded_start: int, start: int, end: int, padded_end: int, sample_rate: int
+) -> list[float]:
+    """Seconds per transcript token, the way the song corpora's labels give them.
+
+    A clip is silence, one vowel, silence — the silence detection that cut it *is* its
+    alignment, exact to a frame, so the preprocessor can store these as labelled durations
+    and the clip joins the labelled batches instead of sending them to the search. Written
+    in the order :func:`transcript` writes the tokens, and only for the edges it declares.
+    """
+    out = []
+    if padded_start < start:
+        out.append((start - padded_start) / sample_rate)
+    out.append((end - start) / sample_rate)
+    if padded_end > end:
+        out.append((padded_end - end) / sample_rate)
+    return out
+
+
 def transcript(vowel: str, pad_start: bool, pad_end: bool) -> str:
     """The IPA line for a single-vowel clip.
 
@@ -223,6 +242,7 @@ def main() -> None:
     for speaker in args.speakers:
         names: list[str] = []
         lines: list[str] = []
+        timings: list[list[float]] = []
         clips: list[np.ndarray] = []
 
         for _, vowel, path in [r for r in recordings if r[0] == speaker]:
@@ -243,6 +263,7 @@ def main() -> None:
                     continue
                 names.append(f"{path.stem.replace(' ', '')}_{index:02d}")
                 lines.append(transcript(vowel, padded_start < start, padded_end > end))
+                timings.append(durations(padded_start, start, end, padded_end, args.sample_rate))
                 clips.append(clip)
 
         if not clips:
@@ -252,11 +273,16 @@ def main() -> None:
         gain = gain_to_match(clips, args.target_dbfs, args.peak_ceiling)
         wav_dir = args.output / speaker / "wav"
         text_dir = args.output / speaker / "text"
+        dur_dir = args.output / speaker / "dur"
         wav_dir.mkdir(parents=True, exist_ok=True)
         text_dir.mkdir(parents=True, exist_ok=True)
-        for name, line, clip in zip(names, lines, clips):
+        dur_dir.mkdir(parents=True, exist_ok=True)
+        for name, line, timing, clip in zip(names, lines, timings, clips):
             sf.write(wav_dir / f"{name}.wav", clip * gain, args.sample_rate, subtype="PCM_16")
             (text_dir / f"{name}.txt").write_text(line + "\n", encoding="utf-8")
+            (dur_dir / f"{name}.txt").write_text(
+                " ".join(f"{d:.4f}" for d in timing) + "\n", encoding="utf-8"
+            )
 
         seconds = sum(len(clip) for clip in clips) / args.sample_rate
         print(f"  {speaker:<8} {len(clips):4d} clips  {seconds / 60:5.1f} min  gain {gain:5.2f}x")

@@ -139,3 +139,20 @@ def test_a_batch_carries_durations_only_when_every_item_does(processed_dataset):
     assert batch["durations"].shape == (2, max(a["phonemes"].numel(), b["phonemes"].numel()))
     assert batch["durations"][0, : a["phonemes"].numel()].tolist() == [3] * a["phonemes"].numel()
     assert batch["durations"][1, b["phonemes"].numel() :].tolist() == [0] * (batch["durations"].shape[1] - b["phonemes"].numel())
+
+
+def test_a_batch_is_all_labelled_or_all_searched(processed_dataset):
+    """One unlabelled member sends a whole batch to the search, so the sampler never
+    seats a labelled utterance beside an unlabelled one."""
+    dataset = SingingDataset(processed_dataset)
+    dataset.labelled = [i % 3 == 0 for i in range(len(dataset))]
+    sampler = DistributedBucketSampler(dataset, batch_size=2, boundaries=[0, 200])
+    sampler.set_epoch(0)
+    batches = list(sampler)
+    assert batches
+    seen = set()
+    for batch in batches:
+        kinds = {dataset.labelled[i] for i in batch}
+        assert len(kinds) == 1, batch
+        seen |= kinds
+    assert seen == {True, False}, "both kinds are still trained on"

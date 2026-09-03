@@ -83,6 +83,12 @@ format rather than a convention: `## <version> — <date>`.
   speech first and then the song took the corpus phoneme error rate from 0.20 to 0.12 against
   the recording's own 0.09, and a composed verse's from 0.31 to 0.23 — the stops and the
   flap, which the tally had named, most of all.
+* **A batch is all-labelled or all-searched.** Training takes the labelled durations only
+  when every utterance in a batch has them, so a corpus mixing a labelled source with an
+  unlabelled one — JSUT-song beside VocalSet — quietly sent most of the song's batches back
+  to alignment search. The bucket sampler now keeps the two apart. VocalSet's clips carry
+  labels of their own besides: a clip is silence, one vowel, silence, and the silence
+  detection that cut it is its alignment.
 * **The consonant tables are the speaker's.** A voice's consonant widths and levels were one
   table for the whole model; a model trained on several corpora now carries one of each per
   speaker, and choosing a speaker copies that speaker's into the document. The metadata format

@@ -47,20 +47,28 @@ text:
 dataset:
   output_dir: data/processed/jsut_song_vocalset
   sources:
+    # Every source is labelled: the song by its HTS labels, VocalSet by the silence
+    # detection that cut each clip, which is exact for a clip of one vowel. Batches are
+    # kept all-labelled or all-searched by the sampler either way.
     - name: jsut_song
       wav_dir: data/raw/jsut_song/wav
       text_dir: data/raw/jsut_song/text
+      duration_dir: data/raw/jsut_song/dur
     - name: vocalset_male1
       wav_dir: data/raw/vocalset/male1/wav
       text_dir: data/raw/vocalset/male1/text
+      duration_dir: data/raw/vocalset/male1/dur
     - name: vocalset_male3
       wav_dir: data/raw/vocalset/male3/wav
       text_dir: data/raw/vocalset/male3/text
+      duration_dir: data/raw/vocalset/male3/dur
     - name: vocalset_male8
       wav_dir: data/raw/vocalset/male8/wav
       text_dir: data/raw/vocalset/male8/text
+      duration_dir: data/raw/vocalset/male8/dur
     - name: vocalset_male11
       wav_dir: data/raw/vocalset/male11/wav
       text_dir: data/raw/vocalset/male11/text
+      duration_dir: data/raw/vocalset/male11/dur
 
 num_workers: 8

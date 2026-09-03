@@ -99,3 +99,14 @@ def test_gain_is_shared_across_clips_so_dynamics_survive():
     gain = prepare_vocalset.gain_to_match(clips, target_dbfs=-20.0, ceiling=0.95)
     loud, quiet = (np.abs(c * gain).max() for c in clips)
     assert loud / quiet == pytest.approx(10.0, rel=1e-3)
+
+
+def test_durations_line_up_with_the_transcript_and_sum_to_the_clip():
+    sr = 48_000
+    both = prepare_vocalset.durations(0, 4_800, 52_800, 57_600, sr)
+    assert both == pytest.approx([0.1, 1.0, 0.1])
+    assert len(both) == len(prepare_vocalset.transcript("a", True, True).split())
+    left_only = prepare_vocalset.durations(0, 4_800, 52_800, 52_800, sr)
+    assert left_only == pytest.approx([0.1, 1.0])
+    assert len(left_only) == len(prepare_vocalset.transcript("a", True, False).split())
+    assert sum(prepare_vocalset.durations(100, 100, 400, 400, sr)) == pytest.approx(300 / sr)

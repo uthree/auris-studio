@@ -68,6 +68,12 @@ class SingingDataset(Dataset):
                 f"{max_frames} frames"
             )
         self.lengths = [int(r["n_frames"]) for r in self.records]
+        #: Whether each utterance hands training its labelled durations — the sampler keeps
+        #: a batch all-labelled or all-searched, since one unlabelled member would send the
+        #: whole batch to the search (see :func:`collate_batch`).
+        self.labelled = [
+            bool(self.use_durations and r.get("has_durations")) for r in self.records
+        ]
 
     def __len__(self) -> int:
         return len(self.records)
@@ -176,6 +182,13 @@ class DistributedBucketSampler(DistributedSampler):
     stays small.  It subclasses :class:`DistributedSampler`, so it also works
     unchanged with a single process.
 
+    A bucket is also split by whether its utterances carry labelled durations:
+    :func:`collate_batch` hands training the labels only when every member has
+    them, so on a corpus that mixes a labelled source with an unlabelled one —
+    JSUT-song with its HTS labels beside VocalSet's bare vowels — a mixed batch
+    would quietly send the labelled half back to alignment search. Kept apart,
+    each batch is all-labelled or all-searched.
+
     Args:
         dataset: a :class:`SingingDataset` (needs a ``lengths`` attribute).
         batch_size: utterances per batch per replica.
@@ -200,6 +213,7 @@ class DistributedBucketSampler(DistributedSampler):
         super().__init__(dataset, num_replicas=num_replicas, rank=rank, shuffle=shuffle)
         self.batch_size = batch_size
         self.lengths = list(dataset.lengths)
+        self.labelled = list(getattr(dataset, "labelled", [False] * len(self.lengths)))
         self.boundaries = boundaries or [0, 100, 200, 300, 400, 600, 800, 1200, 1600]
         self.buckets, self.num_samples_per_bucket = self._create_buckets()
         self.total_size = sum(self.num_samples_per_bucket)
@@ -212,11 +226,12 @@ class DistributedBucketSampler(DistributedSampler):
         return -1
 
     def _create_buckets(self) -> tuple[list[list[int]], list[int]]:
-        buckets: list[list[int]] = [[] for _ in range(len(self.boundaries) - 1)]
-        for index, length in enumerate(self.lengths):
+        # Two rows per length bucket: the labelled utterances and the searched ones.
+        buckets: list[list[int]] = [[] for _ in range(2 * (len(self.boundaries) - 1))]
+        for index, (length, labelled) in enumerate(zip(self.lengths, self.labelled)):
             bucket = self._bucket_of(length)
             if bucket >= 0:
-                buckets[bucket].append(index)
+                buckets[2 * bucket + int(labelled)].append(index)
 
         # Drop empty buckets, then pad each so it divides evenly across replicas.
         kept = [b for b in buckets if b]

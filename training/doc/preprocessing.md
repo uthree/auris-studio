@@ -232,6 +232,12 @@ What the recipe does, and why:
   `trillo` are dropped. Their glottal behaviour is aperiodic or absent, so a
   pitch tracker's output is unreliable and an impulse train is the wrong source
   model for them.
+* **Every clip is labelled.** A clip is silence, one vowel, silence, and the silence
+  detection that cut it is its alignment, exact to a frame; the script writes those seconds
+  to `dur/` and the config names them, so the vowels train by their labels beside the
+  song's. The sampler keeps every batch all-labelled or all-searched in any case — one
+  unlabelled member would send a whole batch back to the search — so a labelled source
+  never loses its labels to an unlabelled neighbour.
 * **One gain per speaker, not per clip.** VocalSet sits 8–14 dB below
   JSUT-song. Frame energy is a conditioning input, so leaving that gap in would
   teach the model that the low-pitched speakers are also the quiet ones — and
