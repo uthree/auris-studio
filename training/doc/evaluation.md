@@ -262,6 +262,19 @@ What it came to:
   at the vowel's level, its body at the table's. Through the whole path — `auris compose`,
   `auris sing`, ten takes — the verse went from 0.225 to **0.128**, k heard right 37 times in
   40; what is left there is ɸ (heard as k), j (as n) and s (as dz).
+* **Five speakers in one voice cost the soprano little and gave the bass line less than
+  expected.** JSUT-song with four VocalSet males (`configs/preprocess/jsut_song_vocalset.yml`,
+  every source labelled, batches kept all-labelled), `base` from the speech pre-training
+  with the speaker tensors afresh, 40k steps: as `jsut_song` the corpus PER is 0.135 against
+  the single voice's 0.121 and the score's 0.194 against 0.116 (three takes, inside the
+  take-to-take spread), with a better mel distance (0.600 against 0.642). The VocalSet
+  speakers, who sang no consonant, hear none (score PER 0.83–0.92) and hold the verse's
+  pitch to 6 cent. On a sustained A2–D3–A3 line through the host (`runs/exp/low_pitch_speakers.py`)
+  every speaker of the five holds 110 Hz to 4.2–4.5 cent — and so does the single soprano
+  voice, at 6.2: the pitch reaches the decoder through the excitation, so a low note is not
+  where a voice trained high fails. What the male speakers change is timbre and level, which
+  these numbers do not hear; a low-register *word* test would need a corpus that sings words
+  low.
 * **What is left on the score path** is the melody itself — the composed line against the
   corpus's — and the gap to the corpus that only more singing data closes.
 
