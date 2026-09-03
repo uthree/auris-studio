@@ -83,6 +83,14 @@ format rather than a convention: `## <version> — <date>`.
   speech first and then the song took the corpus phoneme error rate from 0.20 to 0.12 against
   the recording's own 0.09, and a composed verse's from 0.31 to 0.23 — the stops and the
   flap, which the tally had named, most of all.
+* **A consonant releases into its vowel.** The level table turns each consonant down by
+  its measured decibels, and the frames held that level to the consonant's last frame — a
+  stop at its closure's level to the end, which is a stop that never bursts. Measured on the
+  labels, a voiceless plosive sits 25 dB under its vowel through the closure and 8 dB under
+  it over its last 20 ms, and every consonant class rises the same way. The last twenty
+  milliseconds of a consonant are now sung at the vowel's level. Through the host over ten
+  takes of the composed verse, /k/ was heard as /k/ 37 times in 40 instead of 25 and the
+  phoneme error rate went 0.23 → 0.13.
 * **The listener says which phonemes it lost.** The phoneme error rate was one number per
   column; the host evaluation now keeps the edit path behind it and tallies every phoneme
   asked for against what was heard, over every take of every utterance. The table ends with

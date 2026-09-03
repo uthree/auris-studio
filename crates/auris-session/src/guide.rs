@@ -1113,7 +1113,9 @@ pub mod singing {
     //! layout falls back to a fixed sixty milliseconds where no table rode in. The voice's
     //! consonant *levels* ride in the same way, as [`auris_core::ConsonantLevels`]: how far
     //! under its vowel the training data sang each consonant, which the frames' energy is
-    //! turned down by — a /k/ at the vowel's loudness being a /k/ no voice has heard.
+    //! turned down by — a /k/ at the vowel's loudness being a /k/ no voice has heard — except
+    //! for its last twenty milliseconds, the release, which come back up to the vowel: a /k/
+    //! held at its closure's level to the end is a /k/ that never bursts.
     //!
     //! # One vocabulary, two readers
     //!

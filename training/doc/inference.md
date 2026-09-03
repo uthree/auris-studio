@@ -361,9 +361,16 @@ gain(phoneme) = 10 ** (db[phoneme] / 20)   if phoneme in db
 
 A syllabic keeps the note's level unless the table measured it — `ɴ` is, at
 −8 dB — and every energy the front-end writes for a consonant is multiplied by
-its gain. The block is optional; a model exported without one has no
-`phoneme_levels` key, and the consumer gives every phoneme the note's level as
-it always did.
+its gain, **except the consonant's last 20 ms**, which the consumer sings at the
+vowel's level (gain 1). The table's number is the consonant's body — the
+closure of a stop, the noise of a fricative — and the corpus does not hold it
+to the end: a voiceless plosive sits 25 dB under its vowel through its closure
+and 8 dB under it over its last 20 ms, and every class rises the same way. Held
+at the closure's level to the last frame, a /k/ never bursts, and through the
+host it was heard as /k/ 25 times in 40 against 35 with the release; the
+composed verse's phoneme error rate went 0.23 → 0.14 over ten takes. The block
+is optional; a model exported without one has no `phoneme_levels` key, and the
+consumer gives every phoneme the note's level as it always did.
 
 ```bash
 uv run python scripts/measure_phoneme_levels.py --data data/processed/jsut_song_lab \

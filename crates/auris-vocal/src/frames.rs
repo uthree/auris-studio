@@ -31,8 +31,12 @@
 //!   ([`ConsonantLevels`]), scaled down on each consonant by how far under its vowel the
 //!   voice's training data sang it: twenty-odd decibels for a voiceless plosive, three for
 //!   an approximant. A consonant at the vowel's level is one the model has never heard, and
-//!   the plateau alone was measured to cost half the words. Outside every note the energy is
-//!   zero, the pitch is zero, and the phoneme is [`SILENCE`].
+//!   the plateau alone was measured to cost half the words. The last
+//!   [`CONSONANT_RELEASE_SECONDS`] of a consonant are the exception and come back up to the
+//!   vowel's level: that is the release — a plosive's burst, a fricative's run into the
+//!   vowel — and a /k/ held at its closure's level to the end is a /k/ that never opens.
+//!   Outside every note the energy is zero, the pitch is zero, and the phoneme is
+//!   [`SILENCE`].
 //! * **A note with no phonemes sings `a`.** Losing the melody line over a missing word would
 //!   make every export of a half-written song useless; an open vowel keeps the contour intact
 //!   and is obviously a placeholder to the ear.
@@ -72,6 +76,18 @@ pub const CONSONANT_SECONDS: f64 = 0.060;
 /// plainness: the corpus rises slower than it falls, and neither shape is a curve the ear
 /// picks out at this length.
 pub const GLIDE_SECONDS: f64 = 0.080;
+
+/// Seconds at the end of a consonant that are sung at the vowel's level: its release.
+///
+/// Measured on JSUT-song from the labels (`training/runs/exp/plosive_shape.py`), a voiceless
+/// plosive sits 25 dB under its vowel for its closure and 8 dB under it over its last 20 ms,
+/// and every consonant class rises the same way into the vowel. A level table carries the
+/// closure's number, and held to the last frame it is a stop that never bursts: sung through
+/// the host, the composed verse's /k/ was heard right 25 times in 40 with the flat level and
+/// 35 with these two frames at the vowel's level, /t/ 22 in 30 against 28, and the phoneme
+/// error rate went 0.23 → 0.14 over ten takes. Twenty milliseconds, capped at half the
+/// consonant, is the measured window; making it thirty changed nothing.
+pub const CONSONANT_RELEASE_SECONDS: f64 = 0.020;
 
 /// Seconds the energy takes to rise from silence at a note's start.
 pub const ATTACK_SECONDS: f64 = 0.015;
@@ -186,7 +202,7 @@ pub fn render_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames 
             continue;
         };
 
-        let token = phoneme_at(note, t);
+        let (token, release) = phoneme_at(note, t);
         let id = match inventory.iter().position(|entry| entry == token) {
             Some(id) => id,
             None => {
@@ -217,8 +233,13 @@ pub fn render_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames 
             true => 1.0,
             false => curve_at(note.expression, tick - note.curve_base).clamp(0.0, 1.0),
         };
-        energy
-            .push(note.velocity * expression * envelope(note, t) * level_gain(note.levels, token));
+        // The release of a consonant comes back up to the vowel; the rest keeps its level.
+        let gain = if release {
+            1.0
+        } else {
+            level_gain(note.levels, token)
+        };
+        energy.push(note.velocity * expression * envelope(note, t) * gain);
     }
 
     SingerFrames {
@@ -302,16 +323,21 @@ fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNot
         .collect()
 }
 
-/// Which phoneme is sounding `t` seconds into the timeline, for a note known to contain `t`.
-fn phoneme_at<'a>(note: &'a TimedNote<'a>, t: f64) -> &'a str {
+/// Which phoneme is sounding `t` seconds into the timeline, for a note known to contain `t`,
+/// and whether that moment is inside a consonant's release — its last
+/// [`CONSONANT_RELEASE_SECONDS`], capped at half of it.
+fn phoneme_at<'a>(note: &'a TimedNote<'a>, t: f64) -> (&'a str, bool) {
     let segments = segment(note);
     let into = t - note.start;
-    segments
+    let Some((from, to, token)) = segments
         .iter()
         .find(|(from, to, _)| into >= *from && into < *to)
         .or(segments.last())
-        .map(|(_, _, token)| token.as_str())
-        .unwrap_or(SILENCE)
+    else {
+        return (SILENCE, false);
+    };
+    let release = CONSONANT_RELEASE_SECONDS.min((to - from) / 2.0);
+    (token.as_str(), !is_syllabic(token) && to - into <= release)
 }
 
 /// The note's phonemes laid across its length: `(from, to, token)` in seconds from its start.
@@ -877,6 +903,21 @@ mod tests {
         assert!(
             (levelled.energy[a] - plain.energy[a]).abs() < 1e-6,
             "the vowel keeps its level"
+        );
+        // The consonant's last 20 ms — frames 4 and 5 of a 60 ms /k/ — are its release, and
+        // come back up to the vowel's level; the frame before them is still the closure.
+        assert_eq!(token(&plain, 5), "k");
+        assert!(
+            (levelled.energy[5] - plain.energy[5]).abs() < 1e-6,
+            "the burst"
+        );
+        assert!(
+            (levelled.energy[4] - plain.energy[4]).abs() < 1e-6,
+            "the burst"
+        );
+        assert!(
+            (levelled.energy[3] / plain.energy[3] - 0.1).abs() < 1e-3,
+            "still closed"
         );
 
         assert_eq!(level_gain(None, "k"), 1.0, "no table, no change");

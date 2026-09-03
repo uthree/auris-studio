@@ -247,6 +247,21 @@ What it came to:
   instead of 4, ɾ 20 in 30 instead of 13, p 6 in 12 instead of never. The vowels are now the
   largest remaining loss by count, at a rate of one in seven, and the score path's residue
   is k (heard as ɴ or s) and the two weak fricatives h and ɸ.
+* **The tally then found the score path's own fault: the stops never burst.** With the
+  speech-trained voice the corpus run sits a hair above the recording's own rate (0.218
+  against 0.207 over 48 utterances, and half its remaining errors are ones the listener makes
+  on the recording too), while the composed verse still lost k as ɴ or s and h and ɸ
+  outright. The level table gives a consonant one number, its median, and measured from the
+  labels (`runs/exp/plosive_shape.py`) a voiceless plosive sits 25 dB under its vowel through
+  its closure and 8 dB under it over its last 20 ms. Reshaping the frames by hand
+  (`runs/exp/burst_seeds2.py`, ten takes each through `auris sing-frames`): the flat table
+  level 0.230; the same with the last two frames of every stop at the vowel's level 0.140;
+  stops and fricatives 0.105; k heard right 25 times in 40 against 35, dz 2 in 10 against 8.
+  A deep closure (−30 dB) helped the voiceless stops and broke the voiced ones (g 9 in 10 →
+  3), so the rule `auris-vocal` now carries is the release alone: a consonant's last 20 ms
+  at the vowel's level, its body at the table's. Through the whole path — `auris compose`,
+  `auris sing`, ten takes — the verse went from 0.225 to **0.128**, k heard right 37 times in
+  40; what is left there is ɸ (heard as k), j (as n) and s (as dz).
 * **What is left on the score path** is the melody itself — the composed line against the
   corpus's — and the gap to the corpus that only more singing data closes.
 
