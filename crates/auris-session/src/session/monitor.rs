@@ -107,7 +107,15 @@ impl Session {
             self.open_input()?;
             self.monitored.push(track);
         } else {
+            let removed = self.monitored.iter().position(|held| *held == track);
             self.monitored.retain(|held| *held != track);
+            if let (Some(capture), Some(first)) = (self.input.as_ref(), removed) {
+                for slot in first..Self::MAX_MONITORS {
+                    if let Some(ring) = capture.monitor(slot) {
+                        ring.set_enabled(false);
+                    }
+                }
+            }
         }
         self.publish_monitors();
         // The taps live in the graph, and the graph is what has to be told which tracks.

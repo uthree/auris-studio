@@ -40,7 +40,15 @@ impl<'a> RegionPair<'a> {
                 .filter_map(|modulator| modulator.contribution(key, velocity))
                 .sum()
         };
-        self.gs(i) as f32 + from(&self.preset.modulators) + from(&self.instrument.modulators)
+        let value =
+            self.gs(i) as f32 + from(&self.preset.modulators) + from(&self.instrument.modulators);
+        if i == GeneratorType::INITIAL_FILTER_CUTOFF_FREQUENCY as usize {
+            value.clamp(1_500.0, 13_500.0)
+        } else if i == GeneratorType::MODULATION_ENVELOPE_TO_FILTER_CUTOFF_FREQUENCY as usize {
+            value.clamp(-12_000.0, 12_000.0)
+        } else {
+            value
+        }
     }
 
     pub(crate) fn get_sample_start(&self) -> i32 {

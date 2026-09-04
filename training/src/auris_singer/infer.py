@@ -77,6 +77,8 @@ class Synthesizer:
         """Map a speaker name (or index) to a speaker id."""
         if speaker is None:
             return 0
+        if isinstance(speaker, bool):
+            raise TypeError("speaker must be a name or integer id, not bool")
         if isinstance(speaker, int):
             return speaker
         if speaker not in self.speaker_to_id:

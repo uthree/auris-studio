@@ -125,7 +125,23 @@ impl Session {
         let (in_at, out) = self.punch_frames_at(self.engine.sample_rate())?;
         // The engine's own playhead rather than a tick reading, because that is the clock the
         // take's start was stamped against and the two must be compared in the same units.
-        let playhead = self.engine.playhead_frames();
+        let playhead = if self.audio_status().running {
+            self.engine.playhead_frames()
+        } else {
+            // A silent fallback has no output callback to advance the engine's playhead. The
+            // capture clock still advances, so project it onto the engine rate from the frame at
+            // which the first input block arrived.
+            self.input.as_ref().map_or_else(
+                || self.engine.playhead_frames(),
+                |capture| {
+                    let elapsed = capture.frames() as f64 / capture.sample_rate().max(1.0);
+                    capture
+                        .started_at()
+                        .unwrap_or_else(|| self.engine.playhead_frames())
+                        .saturating_add((elapsed * self.engine.sample_rate()).round() as u64)
+                },
+            )
+        };
         let take = self.take.as_mut()?;
         if (in_at..out).contains(&playhead) {
             take.entered_punch = true;

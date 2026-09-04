@@ -35,6 +35,10 @@ pub enum IoError {
     #[error("failed to read MIDI file: {0}")]
     MidiParse(String),
 
+    /// A project contains a MIDI value the Standard MIDI File representation cannot hold.
+    #[error("failed to write MIDI file: {0}")]
+    MidiWrite(String),
+
     /// The file counts time in SMPTE frames rather than in beats.
     ///
     /// Not a defect in the file — it is a legal division — but a different kind of thing. Frames

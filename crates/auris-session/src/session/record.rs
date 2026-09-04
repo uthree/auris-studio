@@ -542,6 +542,7 @@ impl Session {
                 Err(error) => {
                     log::warn!("could not reopen the input device: {error}");
                     self.monitored.clear();
+                    self.rebuild_graph();
                 }
             }
         }
@@ -1223,13 +1224,13 @@ fn finish_all(streams: Vec<TakeStream>) -> Result<u64, IoError> {
 pub(crate) fn take_file_name(folder: &std::path::Path, track_name: &str) -> String {
     let stem = sanitised(track_name);
     let audio = folder.join(auris_io::AUDIO_DIR);
-    for attempt in 1..=9_999 {
+    for attempt in 1u64.. {
         let candidate = format!("{stem} {attempt}.wav");
         if !audio.join(&candidate).exists() {
             return candidate;
         }
     }
-    format!("{stem}.wav")
+    unreachable!("the take counter is exhausted")
 }
 
 /// A track name with everything a file name cannot hold taken out.

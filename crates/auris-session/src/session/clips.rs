@@ -309,8 +309,19 @@ impl Session {
         name: impl Into<String>,
     ) -> Result<(), SessionError> {
         self.require_clip(clip)?;
-        self.record(Edit::RenameClip);
         let name = name.into();
+        let unchanged = self
+            .project
+            .midi_clip(clip)
+            .is_some_and(|(_, midi)| midi.name == name)
+            || self
+                .project
+                .audio_clip(clip)
+                .is_some_and(|audio| audio.name == name);
+        if unchanged {
+            return Ok(());
+        }
+        self.record(Edit::RenameClip);
         if let Some(midi) = self.project.midi_clip_mut(clip) {
             midi.name = name;
         } else if let Some(audio) = self.project.audio_clip_mut(clip) {
@@ -391,10 +402,16 @@ impl Session {
         let Some(earliest) = present.iter().map(|(_, start)| *start).min() else {
             return;
         };
-        let delta = delta.max(-earliest);
+        let delta = delta.max(Ticks(earliest.raw().saturating_neg()));
+        if present
+            .iter()
+            .all(|(_, start)| start.raw().saturating_add(delta.raw()).max(0) == start.raw())
+        {
+            return;
+        }
         self.record_repeating(Edit::MoveClip);
         for (clip, start) in present {
-            let start = (start + delta).max_zero();
+            let start = Ticks(start.raw().saturating_add(delta.raw())).max_zero();
             if let Some(midi) = self.project.midi_clip_mut(clip) {
                 midi.start = start;
             } else if let Some(audio) = self.project.audio_clip_mut(clip) {
@@ -503,7 +520,7 @@ impl Session {
         // Without this, dragging the edge of a following clip put it at twice the distance the
         // pointer had travelled.
         let stretch = audio.stretch_in(&tempo);
-        let asked = ((end_seconds - start_seconds).max(0.0) * sample_rate / stretch) as u64;
+        let asked = ((end_seconds - start_seconds).max(0.0) * sample_rate / stretch).round() as u64;
         let length = asked.clamp(1, available.max(1));
         if length == audio.length_frames {
             // A drag that has run out of material still moves the pointer, and every frame of it
@@ -542,7 +559,7 @@ impl Session {
     /// it.
     pub fn trim_clip_start(&mut self, clip: ClipId, start: Ticks) -> Result<(), SessionError> {
         self.require_clip(clip)?;
-        let grid = self.project.grid;
+        let grid = Ticks(self.project.grid.raw().max(1));
 
         if let Some((was, length, recipe)) = self
             .project

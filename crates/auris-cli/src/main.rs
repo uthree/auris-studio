@@ -240,7 +240,7 @@ fn list_progressions() -> Result<(), String> {
             writeln!(out)?;
             writeln!(out, "{}", Key::CliKeptProgressions.get(LANGUAGE))?;
             for entry in book.entries() {
-                writeln!(out, "  {:<15} {}", entry.name, entry.chart)?;
+                writeln!(out, "  {} {}", pad(&entry.name, 15), entry.chart)?;
             }
         }
         Ok(())
@@ -360,10 +360,21 @@ fn compose(args: &[String]) -> Result<(), String> {
         .get(1)
         .filter(|arg| !arg.starts_with('-'))
         .map(PathBuf::from);
-    let named = args
-        .iter()
-        .position(|arg| arg == "--preset")
-        .and_then(|at| args.get(at + 1));
+    let preset_at = args.iter().position(|arg| arg == "--preset");
+    let named = match preset_at {
+        Some(at) => Some(
+            args.get(at + 1)
+                .filter(|value| !value.starts_with('-'))
+                .ok_or_else(|| {
+                    messages::option_needs_value(
+                        LANGUAGE,
+                        "--preset",
+                        Key::CliNeedsValue.get(LANGUAGE),
+                    )
+                })?,
+        ),
+        None => None,
+    };
     if source.is_none() && named.is_none() {
         return Err(Key::CliExpectedSpecPath.get(LANGUAGE).to_string());
     }
@@ -860,10 +871,6 @@ fn sing_frames(args: &[String]) -> Result<(), String> {
     let sung = session
         .sing_frames(&voice, &frames, speaker.as_deref(), seed, &output)
         .map_err(|error| error.to_string())?;
-    if let Some(report) = report {
-        let text = serde_json::to_string_pretty(&sung).map_err(|error| error.to_string())?;
-        std::fs::write(&report, text).map_err(|error| format!("{}: {error}", report.display()))?;
-    }
     printed(writeln!(
         std::io::stdout(),
         "{}",
@@ -874,6 +881,17 @@ fn sing_frames(args: &[String]) -> Result<(), String> {
             &output.display().to_string()
         )
     ))?;
+    if let Some(report) = report {
+        match serde_json::to_string_pretty(&sung)
+            .map_err(|error| error.to_string())
+            .and_then(|text| {
+                std::fs::write(&report, text)
+                    .map_err(|error| format!("{}: {error}", report.display()))
+            }) {
+            Ok(()) => {}
+            Err(error) => warned(error),
+        }
+    }
     Ok(())
 }
 
@@ -1213,6 +1231,7 @@ fn new_project(args: &[String]) -> Result<(), String> {
                 bpm = args
                     .get(index)
                     .and_then(|value| value.parse().ok())
+                    .filter(|bpm: &f64| bpm.is_finite() && *bpm > 0.0)
                     .ok_or_else(|| {
                         messages::option_needs_value(
                             LANGUAGE,

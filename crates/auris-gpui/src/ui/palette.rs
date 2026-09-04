@@ -333,7 +333,7 @@ impl AurisApp {
         self.close_palette();
         match command {
             PaletteCommand::Action(action) => window.dispatch_action(action.action(), cx),
-            PaletteCommand::Scheme(scheme) => self.apply_scheme(scheme.id),
+            PaletteCommand::Scheme(scheme) => self.apply_scheme(scheme.id, cx),
             PaletteCommand::Grid(ticks) => self.session.set_grid(ticks),
             // The stretch the playhead is in, which is what the transport's own field shows and
             // what its list turns. Writing a change somewhere else needs a bar to aim at, and the

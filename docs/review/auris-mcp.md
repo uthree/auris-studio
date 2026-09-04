@@ -6,9 +6,9 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-277 | low | `crates/auris-mcp/src/main.rs:220` | list_progressions does a blocking std::fs::read_to_string directly on the tokio runtime instead of via the crate's spawn_blocking-based `blocking()` helper. |
+| ✅ F-277 | low | `crates/auris-mcp/src/main.rs:220` | list_progressions does a blocking std::fs::read_to_string directly on the tokio runtime instead of via the crate's spawn_blocking-based `blocking()` helper. |
 
-### F-277 · low · list_progressions does a blocking std::fs::read_to_string directly on the tokio runtime instead of via the crate's spawn_blocking-based `blocking()` helper.
+### ✅ F-277 · low · list_progressions does a blocking std::fs::read_to_string directly on the tokio runtime instead of via the crate's spawn_blocking-based `blocking()` helper.
 
 `crates/auris-mcp/src/main.rs:220` · concurrency · confirmed (executed reproduction; reported independently 1×)
 

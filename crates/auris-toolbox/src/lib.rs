@@ -24,9 +24,10 @@
 //!
 //! # Shape
 //!
-//! One public module per tool, each with the same four items: [`compose::NAME`],
-//! [`compose::DESCRIPTION`], [`compose::Args`] and [`compose::run`] — so a frontend can bind
-//! the whole set with one pattern and a new tool added here appears at every door.
+//! One public module per tool. Tools that take arguments expose [`compose::NAME`],
+//! [`compose::DESCRIPTION`], [`compose::Args`] and [`compose::run`]. The four argument-less
+//! catalogue tools expose `NAME`, `DESCRIPTION`, and `run() -> String`; frontends bind that small
+//! group separately.
 
 #![warn(missing_docs)]
 
@@ -328,9 +329,20 @@ pub mod render {
             let folder = std::path::absolute(&folder).unwrap_or(folder);
             protect_project_assets(&session, &folder, true)?;
             std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-            let written = job
-                .render_stems(&folder, &settings, &options, &mut RenderProgress::default())
-                .map_err(|error| error.to_string())?;
+            let written = match job.render_stems_with_partial(
+                &folder,
+                &settings,
+                &options,
+                &mut RenderProgress::default(),
+            ) {
+                Ok(written) => written,
+                Err(failure) => {
+                    for stem in &failure.written {
+                        text.push_str(&wrote_line(&stem.path, &stem.summary, &settings));
+                    }
+                    return Err(format!("{text}Stem export stopped: {}", failure.error));
+                }
+            };
             for stem in &written {
                 text.push_str(&wrote_line(&stem.path, &stem.summary, &settings));
             }
@@ -585,7 +597,7 @@ pub mod mixer {
         pan: f32,
         mute: bool,
         solo: bool,
-        sends: Vec<(String, f32, bool)>,
+        sends: Vec<(SendId, String, f32, bool)>,
         effects: Vec<(EffectSlotId, String)>,
     }
 
@@ -613,7 +625,7 @@ pub mod mixer {
                     sends: track
                         .sends
                         .iter()
-                        .map(|send| (name_of(send.target), send.level_db, send.pre_fader))
+                        .map(|send| (send.id, name_of(send.target), send.level_db, send.pre_fader))
                         .collect(),
                     effects: track
                         .mixer
@@ -668,9 +680,13 @@ pub mod mixer {
                 "{:<16} {:+.1} dB, pan {:+.2}{flags}\n",
                 row.name, row.gain_db, row.pan
             ));
-            for (target, level, pre) in &row.sends {
+            for (send, target, level, pre) in &row.sends {
                 let tap = if *pre { " (pre-fader)" } else { "" };
-                text.push_str(&format!("  => {target} {level:+.1} dB{tap}\n"));
+                let automated = row.track.is_some_and(|track| {
+                    session.is_automated(ParamTarget::Send { track, send: *send })
+                });
+                let automated = if automated { "  [automated]" } else { "" };
+                text.push_str(&format!("  => {target} {level:+.1} dB{tap}{automated}\n"));
             }
             for (position, (slot, effect_id)) in row.effects.iter().enumerate() {
                 text.push_str(&format!("  fx [{}] {effect_id}:\n", position + 1));
@@ -776,6 +792,12 @@ pub mod set_level {
             if !(-1.0..=1.0).contains(&pan) {
                 return Err(format!("pan runs -1 to +1; {pan} is outside that"));
             }
+            if session.is_automated(pan_target) {
+                notes.push_str(
+                    "\nNote: a lane is driving this pan, so the stored position is not what \
+                     plays until the lane is cleared.",
+                );
+            }
             session.set_param(pan_target, pan);
         }
         session.save_in_place().map_err(|error| error.to_string())?;
@@ -865,14 +887,25 @@ pub mod set_send {
                 })?;
             (track.id, found)
         };
+        let automated = session.is_automated(ParamTarget::Send {
+            track: track_id,
+            send: send_id,
+        });
         session
             .set_send_level(track_id, send_id, args.level_db)
             .map_err(|error| error.to_string())?;
         session.save_in_place().map_err(|error| error.to_string())?;
-        Ok(format!(
+        let mut text = format!(
             "{} => {} at {:+.1} dB. Saved.",
             args.track, args.to, args.level_db
-        ))
+        );
+        if automated {
+            text.push_str(
+                "\nNote: a lane is driving this send, so the stored level is not what plays \
+                 until the lane is cleared.",
+            );
+        }
+        Ok(text)
     }
 }
 
@@ -937,10 +970,25 @@ pub mod set_effect {
                     .join(", ")
             };
             match (args.slot, &args.effect) {
-                (Some(number), _) => slots
-                    .get(number.wrapping_sub(1))
-                    .cloned()
-                    .ok_or_else(|| format!("'{}' has {}: no [{number}]", args.track, listed()))?,
+                (Some(number), named) => {
+                    let found = slots.get(number.wrapping_sub(1)).cloned().ok_or_else(|| {
+                        format!("'{}' has {}: no [{number}]", args.track, listed())
+                    })?;
+                    if let Some(name) = named
+                        && !found.1.eq_ignore_ascii_case(name)
+                        && !found
+                            .1
+                            .rsplit('.')
+                            .next()
+                            .is_some_and(|last| last.eq_ignore_ascii_case(name))
+                    {
+                        return Err(format!(
+                            "slot [{number}] on '{}' is {}, not '{name}'",
+                            args.track, found.1
+                        ));
+                    }
+                    found
+                }
                 (None, Some(name)) => {
                     let matches: Vec<&(EffectSlotId, String)> = slots
                         .iter()
@@ -1250,15 +1298,15 @@ pub mod teach_progression {
                 return Err(format!("mode is \"major\" or \"minor\", not \"{other}\""));
             }
         };
-        let mut book = auris_session::progressions::ProgressionBook::load();
-        if !book.keep(&args.name, &chart, mode) {
+        if !auris_session::progressions::ProgressionBook::keep_saved(&args.name, &chart, mode)
+            .map_err(|error| error.to_string())?
+        {
             return Err(format!(
                 "'{}' cannot be kept under that name — it is empty, or the built-in catalogue \
                  already uses it",
                 args.name
             ));
         }
-        book.save().map_err(|error| error.to_string())?;
         Ok(format!(
             "Kept '{}' — {chart}. It now shows in `list_progressions` on this machine; a \
              specification still writes the chords out in full, which is what keeps a document \
@@ -1284,11 +1332,11 @@ pub mod forget_progression {
 
     /// Drops the entry and saves the book.
     pub fn run(args: &Args) -> Result<String, String> {
-        let mut book = auris_session::progressions::ProgressionBook::load();
-        if !book.forget(&args.name) {
+        if !auris_session::progressions::ProgressionBook::forget_saved(&args.name)
+            .map_err(|error| error.to_string())?
+        {
             return Err(format!("nothing is kept under '{}'", args.name));
         }
-        book.save().map_err(|error| error.to_string())?;
         Ok(format!("Forgot '{}'.", args.name))
     }
 }
@@ -1415,6 +1463,9 @@ pub mod add_track {
 
     /// Adds the track, voices it, and saves.
     pub fn run(args: &Args) -> Result<String, String> {
+        if args.name.trim().is_empty() {
+            return Err("the track needs a name — a blank one no tool can address again".into());
+        }
         let mut session = opened(&args.project)?;
         let kind = args.kind.as_deref().unwrap_or("instrument");
         let voiced = match kind {
@@ -2838,6 +2889,11 @@ fn regenerate(args: &RegenerateArgs, take: Take) -> Result<String, String> {
         return Err(
             "write_again keeps the clip's own seed — use another_take with `seed` to choose one"
                 .to_string(),
+        );
+    }
+    if matches!(take, Take::Another) && args.seed.is_some() && chosen.len() > 1 {
+        return Err(
+            "a chosen seed belongs to one clip — pass `clip` when setting `seed`".to_string(),
         );
     }
 

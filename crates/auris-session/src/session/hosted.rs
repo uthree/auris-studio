@@ -510,7 +510,9 @@ impl HostedSlot {
             return Ok(());
         };
         match wanted {
-            true => plugin.open_gui(parent),
+            // SAFETY: frontends obtain this handle from their live application window. The
+            // session owns every plugin editor and closes them before that window is released.
+            true => unsafe { plugin.open_gui(parent) },
             false => {
                 plugin.close_gui();
                 Ok(())

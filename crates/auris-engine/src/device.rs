@@ -1,8 +1,9 @@
 //! Opening the audio hardware and driving the renderer from its callback.
 //!
 //! The callback thread owns exactly one [`RenderGraph`] and one [`Transport`]. It talks to the
-//! UI through two bounded queues and nothing else: commands come down one, retired graphs go
-//! back up the other so that plugin instances and sample buffers are freed on the UI thread.
+//! UI through two bounded queues and shared atomics: commands come down one queue, retired graphs
+//! go back up the other so that plugin instances and sample buffers are freed on the UI thread,
+//! while playhead, count-in, play state, latency status and meters are published atomically.
 //! Inside the callback there is no allocation, no lock, no logging and no I/O.
 
 use std::sync::Arc;
@@ -28,6 +29,23 @@ const DEFAULT_MAX_BLOCK: usize = 2_048;
 
 /// Smallest command queue that still absorbs one UI frame's worth of fader moves.
 const MIN_COMMAND_CAPACITY: usize = 16;
+
+/// Conventional rates worth offering when a backend reports one continuous range.
+const STANDARD_SAMPLE_RATES: [u32; 8] = [
+    8_000, 22_050, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000,
+];
+
+pub(crate) fn add_sample_rate_range(rates: &mut Vec<u32>, min: u32, max: u32) {
+    for rate in [min, max].into_iter().chain(
+        STANDARD_SAMPLE_RATES
+            .into_iter()
+            .filter(|rate| (min..=max).contains(rate)),
+    ) {
+        if !rates.contains(&rate) {
+            rates.push(rate);
+        }
+    }
+}
 
 /// What to ask the audio backend for.
 #[derive(Clone, Debug, PartialEq)]
@@ -98,11 +116,11 @@ pub fn output_devices() -> Vec<AudioDeviceInfo> {
             if let Ok(configs) = device.supported_output_configs() {
                 for config in configs {
                     max_channels = max_channels.max(config.channels());
-                    for rate in [config.min_sample_rate(), config.max_sample_rate()] {
-                        if !sample_rates.contains(&rate) {
-                            sample_rates.push(rate);
-                        }
-                    }
+                    add_sample_rate_range(
+                        &mut sample_rates,
+                        config.min_sample_rate(),
+                        config.max_sample_rate(),
+                    );
                 }
             }
             sample_rates.sort_unstable();
@@ -603,6 +621,8 @@ pub(crate) struct AudioEngine {
     /// again to send it — an allocation on the audio thread, which is exactly what this whole
     /// mechanism exists to avoid.
     retired: Vec<Retired>,
+    /// One ownership-carrying command deferred while the return path is full.
+    deferred_retiring: Option<EngineCommand>,
     playhead: Arc<AtomicU64>,
     /// Frames of count-in left, published beside the playhead and read by the same stranger.
     ///
@@ -634,7 +654,7 @@ pub(crate) struct AudioEngine {
 }
 
 impl AudioEngine {
-    // Nine arguments, all of them shared state the callback needs; grouping them into a struct
+    // Ten arguments, all of them shared state the callback needs; grouping them into a struct
     // would only move the same list one level down.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -658,6 +678,7 @@ impl AudioEngine {
             commands,
             returned_graphs,
             retired: Vec::with_capacity(RETIRED_GRAPH_SLOTS),
+            deferred_retiring: None,
             playhead,
             count_in,
             counting_in: false,
@@ -756,10 +777,19 @@ impl AudioEngine {
 
     fn poll_commands(&mut self) {
         self.flush_retired();
-        while self.retired.len() < RETIRED_GRAPH_SLOTS {
+        if self.retired.len() < RETIRED_GRAPH_SLOTS
+            && let Some(command) = self.deferred_retiring.take()
+        {
+            self.apply(command);
+        }
+        while self.deferred_retiring.is_none() {
             let Ok(command) = self.commands.try_recv() else {
                 break;
             };
+            if self.retired.len() == RETIRED_GRAPH_SLOTS && command_may_retire(&command) {
+                self.deferred_retiring = Some(command);
+                break;
+            }
             self.apply(command);
         }
     }
@@ -945,6 +975,15 @@ impl AudioEngine {
     }
 }
 
+fn command_may_retire(command: &EngineCommand) -> bool {
+    matches!(
+        command,
+        EngineCommand::SetGraph(_)
+            | EngineCommand::SetSoloResolution(_)
+            | EngineCommand::PlayOneShot { .. }
+    )
+}
+
 /// Writes the planar mix bus into an interleaved device buffer.
 fn interleave<T>(source: &AudioBuffer, data: &mut [T], channels: usize)
 where
@@ -960,6 +999,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn continuous_device_ranges_include_standard_sample_rates() {
+        let mut rates = Vec::new();
+        add_sample_rate_range(&mut rates, 8_000, 192_000);
+        rates.sort_unstable();
+        for expected in [44_100, 48_000, 88_200, 96_000] {
+            assert!(rates.contains(&expected), "missing {expected} Hz");
+        }
+    }
     use crate::testkit::{self, TONE_AMPLITUDE};
     use crate::transport::CountIn;
     use auris_core::ParamId;
@@ -1577,6 +1626,39 @@ mod tests {
             sent - 1,
             "a retired graph was dropped or stranded"
         );
+    }
+
+    #[test]
+    fn a_full_retirement_stash_does_not_block_transport_commands() {
+        let (command_tx, command_rx) = crossbeam_channel::bounded(16);
+        let (return_tx, return_rx) = crossbeam_channel::bounded(1);
+        return_tx
+            .send(Retired::SoloResolution(Vec::new().into_boxed_slice()))
+            .unwrap();
+        let mut engine = AudioEngine::new(
+            command_rx,
+            return_tx,
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(MeterBank::new(0)),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+            SAMPLE_RATE,
+            2,
+            128,
+        );
+        for _ in 0..RETIRED_GRAPH_SLOTS {
+            engine
+                .retired
+                .push(Retired::SoloResolution(Vec::new().into_boxed_slice()));
+        }
+        command_tx.send(EngineCommand::Play).unwrap();
+
+        engine.poll_commands();
+
+        assert!(engine.transport.playing);
+        assert_eq!(engine.retired.len(), RETIRED_GRAPH_SLOTS);
+        drop(return_rx);
     }
 
     #[test]

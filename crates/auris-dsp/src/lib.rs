@@ -87,3 +87,18 @@ pub use pack::DspPack;
 pub use reverb::Reverb;
 pub use smooth::{SmoothedValue, one_pole_coefficient};
 pub use spectrum::{SILENCE_DB, SpectrumAnalyzer, bands_from_bins, fft};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settled_flushes_denormals_at_the_documented_floor() {
+        assert_eq!(settled(1.0e-32), 0.0);
+        assert_eq!(settled(-1.0e-32), 0.0);
+        assert_eq!(settled(DENORMAL_FLOOR), DENORMAL_FLOOR);
+        assert_eq!(settled(1.0e-25), 1.0e-25);
+        assert_eq!(settled(f32::NAN), 0.0);
+        assert_eq!(settled(f32::INFINITY), 0.0);
+    }
+}

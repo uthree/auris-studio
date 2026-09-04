@@ -6,7 +6,7 @@
 //! one edit path forgets to record its inverse.
 
 use auris_core::Project;
-use auris_core::project::{ClipCurve, ClipId};
+use auris_core::project::{ClipCurve, ClipId, SourceId};
 use auris_core::time::Ticks;
 
 use crate::param::ParamTarget;
@@ -301,6 +301,13 @@ impl Default for History {
 }
 
 impl History {
+    pub(crate) fn references_source(&self, id: SourceId) -> bool {
+        self.past
+            .iter()
+            .chain(&self.future)
+            .any(|snapshot| snapshot.project.audio_sources.contains_key(&id))
+    }
+
     /// A history holding at most `limit` undo steps.
     pub fn new(limit: usize) -> Self {
         Self {

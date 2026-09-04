@@ -870,7 +870,7 @@ pub const METER_FLOOR_DB: f32 = -60.0;
 /// uses the scale broadcast meters use: the top 12 dB gets half the travel, and the range
 /// bottoms out at [`METER_FLOOR_DB`].
 pub fn db_to_meter_position(db: f32) -> f32 {
-    if !db.is_finite() || db <= METER_FLOOR_DB {
+    if db.is_nan() || db == f32::NEG_INFINITY || db <= METER_FLOOR_DB {
         return 0.0;
     }
     let db = db.min(6.0);
@@ -895,6 +895,7 @@ mod tests {
         assert!((db_to_meter_position(-12.0) - 0.5).abs() < 1e-6);
         assert!((db_to_meter_position(0.0) - 0.833).abs() < 1e-3);
         assert_eq!(db_to_meter_position(f32::NEG_INFINITY), 0.0);
+        assert_eq!(db_to_meter_position(f32::INFINITY), 1.0);
     }
 
     #[test]

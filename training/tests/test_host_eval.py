@@ -83,6 +83,24 @@ def test_a_joined_song_is_only_rendered_for_one_speaker():
     assert _song_speaker(mixed, "bob") == (True, "bob"), "an explicit one-voice render"
 
 
+def test_voice_info_reads_the_exported_analysis_settings(tmp_path):
+    voice = tmp_path / "voice.onnx"
+    voice.with_suffix(".json").write_text(
+        json.dumps(
+            {
+                "sample_rate": 44_100,
+                "hop_length": 441,
+                "symbols": ["<pad>", "<sil>"],
+                "f0_min": 80.0,
+                "audio": {"n_fft": 1024, "win_length": 960},
+            }
+        ),
+        encoding="utf-8",
+    )
+    info = voice_info(voice)
+    assert (info.n_fft, info.win_length, info.f0_min) == (1024, 960, 80.0)
+
+
 def test_the_analyst_measures_a_render_against_its_curves():
     sr, hop, n_fft, win = 48_000, 480, 2048, 2048
     n_frames = 50

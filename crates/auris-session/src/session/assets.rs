@@ -251,6 +251,23 @@ impl Session {
         self.waveforms.clear();
         self.fonts.clear();
     }
+
+    /// Drops decoded sources that neither the current document nor undo/redo can restore.
+    pub(super) fn prune_sources(&mut self) {
+        let stale: Vec<SourceId> = self
+            .waveforms
+            .keys()
+            .copied()
+            .filter(|id| {
+                !self.project.audio_sources.contains_key(id) && !self.history.references_source(*id)
+            })
+            .collect();
+        for id in stale {
+            self.bank.remove(id);
+            self.render_bank.remove(id);
+            self.waveforms.remove(&id);
+        }
+    }
 }
 
 /// Where an asset's file actually is.

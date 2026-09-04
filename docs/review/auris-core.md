@@ -32,12 +32,12 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-377 | medium | `crates/auris-core/src/project/clip.rs:1035` | split_clip's unchecked `clip.offset_frames + frames` at clip.rs:1035 can panic or silently wrap on a corrupted/hand-edited project file, corrupting the split […] |
 | ✅ F-397 | medium | `crates/auris-core/src/time.rs:785` | TempoMap::from_points keeps the first of two same-tick points while TempoMap::set_point keeps the last, an unstated and inconsistent collision policy reachable […] |
 | ✅ F-418 | medium | `crates/auris-core/src/project/track.rs:548` | Project::duplicate_track reissues ids for effects/sends/clips but never rekeys or copies the original track's automation lanes, so a duplicated track's […] |
-| F-238 | low | `crates/auris-core/src/project/clip.rs:1024` | split_clip and resize_clip floor seconds->frames with a bare `as u64` cast while trim_clip_start rounds the same quantity, causing sub-frame (≤1 frame) […] |
-| F-265 | low | `crates/auris-core/src/theory/numeral.rs:574` | diatonic_quality's "fewer than seven degrees" fallback arm at numeral.rs:575-576 is dead code with a now-inaccurate comment, no behavioral effect today. |
-| F-286 | low | `crates/auris-core/src/theory/numeral.rs:386` | Numeral::name_in does unclamped u8 arithmetic on secondary-numeral degree, panicking on out-of-range input that every sibling helper in the file already clamps […] |
-| F-296 | low | `crates/auris-core/src/rng.rs:152` | Rng::weighted excludes NaN weights from `total` but not from the selection loop, so a NaN weight silently forces the last index instead of being treated as […] |
-| F-430 | low | `crates/auris-core/src/time.rs:219` | TimeSignature::COMMON doc claims the full meter menu is 400 rows; it's actually 32x5=160. |
-| F-453 | low | `crates/auris-core/src/project/clip.rs:628` | AudioClip::fade_gain_at has no guard against overlapping fade_in/fade_out, so any producer besides set_clip_fades can trigger a silent mid-clip gain dip. |
+| ✅ F-238 | low | `crates/auris-core/src/project/clip.rs:1024` | split_clip and resize_clip floor seconds->frames with a bare `as u64` cast while trim_clip_start rounds the same quantity, causing sub-frame (≤1 frame) […] |
+| ✅ F-265 | low | `crates/auris-core/src/theory/numeral.rs:574` | diatonic_quality's "fewer than seven degrees" fallback arm at numeral.rs:575-576 is dead code with a now-inaccurate comment, no behavioral effect today. |
+| ✅ F-286 | low | `crates/auris-core/src/theory/numeral.rs:386` | Numeral::name_in does unclamped u8 arithmetic on secondary-numeral degree, panicking on out-of-range input that every sibling helper in the file already clamps […] |
+| ✅ F-296 | low | `crates/auris-core/src/rng.rs:152` | Rng::weighted excludes NaN weights from `total` but not from the selection loop, so a NaN weight silently forces the last index instead of being treated as […] |
+| ✅ F-430 | low | `crates/auris-core/src/time.rs:219` | TimeSignature::COMMON doc claims the full meter menu is 400 rows; it's actually 32x5=160. |
+| ✅ F-453 | low | `crates/auris-core/src/project/clip.rs:628` | AudioClip::fade_gain_at has no guard against overlapping fade_in/fade_out, so any producer besides set_clip_fades can trigger a silent mid-clip gain dip. |
 
 ### ✅ F-014 · critical · CurvePoint lacks the finite-value guard AutomationLane and set_param already enforce, so a NaN bend/controller value round-trips to JSON `null` and makes the whole project file unreadable.
 
@@ -457,7 +457,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** // Its automation leaves with it. A lane left behind names a track that is not there, and ids are handed out again — so it would come back to life driving a parameter on whichever track was created next. (comment on `remove_track` in the same file, showing the codebase's own stated expectation that automation stays in sync with track lifecycle)
 
-### F-238 · low · split_clip and resize_clip floor seconds->frames with a bare `as u64` cast while trim_clip_start rounds the same quantity, causing sub-frame (≤1 frame) inconsistency between edit gestures.
+### ✅ F-238 · low · split_clip and resize_clip floor seconds->frames with a bare `as u64` cast while trim_clip_start rounds the same quantity, causing sub-frame (≤1 frame) inconsistency between edit gestures.
 
 `crates/auris-core/src/project/clip.rs:1024` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -471,7 +471,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Fix direction.** Change `(seconds * self.sample_rate / stretch) as u64` in `split_clip` (clip.rs:1024) and the analogous line in `resize_clip` (clips.rs:496) to `.round() as u64`, matching the pattern `trim_clip_start` already uses (clips.rs:598-600) for the same seconds-to-source-frames conversion.
 
-### F-265 · low · diatonic_quality's "fewer than seven degrees" fallback arm at numeral.rs:575-576 is dead code with a now-inaccurate comment, no behavioral effect today.
+### ✅ F-265 · low · diatonic_quality's "fewer than seven degrees" fallback arm at numeral.rs:575-576 is dead code with a now-inaccurate comment, no behavioral effect today.
 
 `crates/auris-core/src/theory/numeral.rs:574` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -485,7 +485,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Fix direction.** Either delete the unreachable fallback arm (replacing the match with one that panics or documents that all ScaleId values are covered, since harmonic_key guarantees a 7-degree scale) or, if defensive coverage against a future ScaleId variant is wanted, keep a single catch-all arm but drop the now-inaccurate "fewer than seven degrees" comment and note that it exists purely as a safety net for scales not yet normalized by harmonic_key.
 
-### F-286 · low · Numeral::name_in does unclamped u8 arithmetic on secondary-numeral degree, panicking on out-of-range input that every sibling helper in the file already clamps against.
+### ✅ F-286 · low · Numeral::name_in does unclamped u8 arithmetic on secondary-numeral degree, panicking on out-of-range input that every sibling helper in the file already clamps against.
 
 `crates/auris-core/src/theory/numeral.rs:386` · correctness · confirmed (traced through the code; reported independently 1×)
 
@@ -499,7 +499,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Fix direction.** Clamp the same way every sibling helper in the file already does: replace `target + self.degree - 1` with clamped arithmetic, e.g. `target.clamp(1, 7) + self.degree.clamp(1, 7) - 1` (or route through the existing clamp-aware helper) so name_in can never panic on a malformed Numeral, matching write_symbol/degree_class/spell_on_degree.
 
-### F-296 · low · Rng::weighted excludes NaN weights from `total` but not from the selection loop, so a NaN weight silently forces the last index instead of being treated as zero.
+### ✅ F-296 · low · Rng::weighted excludes NaN weights from `total` but not from the selection loop, so a NaN weight silently forces the last index instead of being treated as zero.
 
 `crates/auris-core/src/rng.rs:152` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -515,7 +515,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** /// Non-positive weights are treated as zero. Returns `0` when every weight is zero, so a caller never has to handle an empty draw.
 
-### F-430 · low · TimeSignature::COMMON doc claims the full meter menu is 400 rows; it's actually 32x5=160.
+### ✅ F-430 · low · TimeSignature::COMMON doc claims the full meter menu is 400 rows; it's actually 32x5=160.
 
 `crates/auris-core/src/time.rs:219` · other · confirmed (traced through the code; reported independently 1×)
 
@@ -531,7 +531,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** CI builds the docs with warnings denied ... Anything about the system as a whole belongs there (CLAUDE.md conventions section requires clean, accurate doc builds)
 
-### F-453 · low · AudioClip::fade_gain_at has no guard against overlapping fade_in/fade_out, so any producer besides set_clip_fades can trigger a silent mid-clip gain dip.
+### ✅ F-453 · low · AudioClip::fade_gain_at has no guard against overlapping fade_in/fade_out, so any producer besides set_clip_fades can trigger a silent mid-clip gain dip.
 
 `crates/auris-core/src/project/clip.rs:628` · correctness · confirmed (executed reproduction; reported independently 1×)
 

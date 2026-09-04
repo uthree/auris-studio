@@ -46,8 +46,12 @@ def parse_ipa(text: str) -> list[str]:
 class IpaFrontend:
     """Pass-through front-end for inputs that are already IPA."""
 
+    def __init__(self, add_boundary_silence: bool = False):
+        self.add_boundary_silence = add_boundary_silence
+
     def g2p(self, text: str) -> list[str]:
-        return parse_ipa(text)
+        phonemes = parse_ipa(text)
+        return [SIL, *phonemes, SIL] if self.add_boundary_silence and phonemes else phonemes
 
     def __call__(self, text: str) -> list[str]:
         return self.g2p(text)
@@ -64,7 +68,7 @@ def get_frontend(language: str, **kwargs):
     if language in {"ja", "jp", "japanese"}:
         return JapaneseFrontend(**kwargs)
     if language in {"ipa", "none", "raw"}:
-        return IpaFrontend()
+        return IpaFrontend(**kwargs)
     raise ValueError(
         f"unsupported language {language!r}; use 'ja' for Japanese text or "
         "'ipa' to supply phonemes directly"

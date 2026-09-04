@@ -386,7 +386,7 @@ impl Effect for Reverb {
                 input += line.read(pre_delay_samples);
                 line.write(sample);
             }
-            input *= FIXED_GAIN;
+            input *= FIXED_GAIN / channel_count as f32;
 
             for (channel, network) in self.channels.iter_mut().take(channel_count).enumerate() {
                 self.wet[channel] = network.process(input, feedback, damp);

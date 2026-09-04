@@ -74,12 +74,12 @@ impl Session {
         self.history.clear();
         self.path = None;
         self.dirty = false;
-        self.mark_saved();
         // History is cleared, so nothing can bring the old document's audio back; keeping the
         // decoded buffers would hold them for the rest of the process.
         self.clear_sources();
         self.replace_project(project);
         self.install_shipped_fonts();
+        self.mark_saved();
     }
 
     /// Reads a Standard MIDI File as a new document.
@@ -236,6 +236,7 @@ impl Session {
         self.path = Some(path.to_path_buf());
         self.dirty = false;
         self.mark_saved();
+        self.saved_project = project.clone();
         // Hosted plugins belong to the document that named them: their slot ids come from it,
         // and this document reusing an id would inherit the old plugin. The loaded *files* are
         // kept — a `.clap` is the same code whichever project is open.

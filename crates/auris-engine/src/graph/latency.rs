@@ -10,6 +10,10 @@ use auris_core::AudioBuffer;
 use super::strip::RenderStrip;
 use super::track::{RenderSource, RenderTrack};
 
+/// Ten seconds at the highest supported project rate. Larger plugin claims are corrupt metadata,
+/// not useful compensation, and must never size an unbounded delay-line allocation.
+const MAX_COMPENSATED_LATENCY_FRAMES: usize = 10 * 192_000;
+
 /// A fixed whole-frame delay, used to line the tracks up with each other.
 ///
 /// An effect that looks ahead — the limiter is the one that ships — can only do so by handing
@@ -163,13 +167,17 @@ pub(super) fn plan_latency(
     order: &[usize],
     master_latency: usize,
 ) -> LatencyPlan {
-    let through = longest_paths(
+    let master_latency = master_latency.min(MAX_COMPENSATED_LATENCY_FRAMES);
+    let mut through = longest_paths(
         tracks,
         bus_tracks,
         order,
-        RenderStrip::latency_frames,
+        |strip| strip.latency_frames().min(MAX_COMPENSATED_LATENCY_FRAMES),
         master_latency,
     );
+    for frames in &mut through {
+        *frames = (*frames).min(MAX_COMPENSATED_LATENCY_FRAMES);
+    }
 
     let mut edges = Vec::with_capacity(tracks.len());
     let mut costs = Vec::new();
@@ -226,6 +234,22 @@ mod tests {
         );
         assert_eq!(graph.latency_frames(), testkit::LOOKAHEAD_FRAMES);
         assert!(!graph.latency_is_stale());
+    }
+
+    #[test]
+    fn a_corrupt_plugin_latency_is_bounded_before_allocating_compensation() {
+        let mut project = Project::new("bounded PDC", 48_000.0);
+        let late = project.add_instrument_track("Late", testkit::TONE_ID);
+        project.add_instrument_track("Plain", testkit::TONE_ID);
+        project.add_effect(Some(late), testkit::HUGE_LATENCY_ID);
+
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        assert_eq!(graph.latency_frames(), MAX_COMPENSATED_LATENCY_FRAMES);
+        assert_eq!(
+            graph.tracks()[1].compensation_frames(),
+            MAX_COMPENSATED_LATENCY_FRAMES
+        );
     }
 
     #[test]

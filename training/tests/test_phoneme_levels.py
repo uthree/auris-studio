@@ -48,7 +48,7 @@ def test_the_block_ships_the_medians_that_earned_it_and_a_consonant_default():
     assert block["measured_from"] == "a test corpus"
     assert list(table["db"]) == ["k", "s"], "quietest first"
     assert block["speakers"]["y"]["db"] == {"k": -6.0}, "y's own, not x's"
-    assert summarize({"x": {}}, "nothing")["speakers"]["x"]["default"] == 0.0
+    assert summarize({"x": {}}, "nothing")["speakers"]["x"]["default"] < 0.0
 
 
 def test_the_export_carries_the_table_and_refuses_a_stranger(tiny_model_config, tmp_path):

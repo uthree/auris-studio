@@ -41,6 +41,13 @@ def test_one_hop_clip_uses_safe_edge_padding():
     assert frame_energy(wav, N_FFT, HOP, WIN).shape == (1, 1)
 
 
+def test_odd_fft_hop_difference_keeps_the_frame_count():
+    hop = 441
+    wav = torch.randn(2, hop * 10) * 0.1
+    assert spectrogram(wav, N_FFT, hop, WIN).shape[-1] == 10
+    assert frame_energy(wav, N_FFT, hop, WIN).shape[-1] == 10
+
+
 def test_spectrogram_peaks_at_the_tone_frequency():
     freq = 1000.0
     t = torch.arange(HOP * 40, dtype=torch.float32) / SAMPLE_RATE

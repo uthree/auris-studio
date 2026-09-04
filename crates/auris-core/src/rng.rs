@@ -149,7 +149,7 @@ impl Rng {
         }
         let mut target = self.unit() * total;
         for (index, weight) in weights.iter().enumerate() {
-            if *weight <= 0.0 {
+            if weight.is_nan() || *weight <= 0.0 {
                 continue;
             }
             target -= weight;
@@ -190,6 +190,17 @@ mod tests {
         let c = Rng::stream(2, &[Key::Word("melody")]).next_u64();
         assert_ne!(a, b);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn weighted_treats_nan_as_zero() {
+        for seed in 0..32 {
+            let chosen = Rng::stream(seed, &[]).weighted(&[f32::NAN, 1.0, 1.0]);
+            assert!(
+                matches!(chosen, 1 | 2),
+                "selected the NaN slot for seed {seed}"
+            );
+        }
     }
 
     #[test]

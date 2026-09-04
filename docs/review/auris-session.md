@@ -40,40 +40,40 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-166 | medium | `crates/auris-session/src/progressions.rs:150` | ProgressionBook::keep checks only literal CATALOG names, not catalog()'s alias table, so localized/alias names like "丸サ" bypass the built-in collision guard. |
 | ✅ F-180 | medium | `crates/auris-session/src/session/clips.rs:497` | resize_clip's `available.max(1)` clamp forces length_frames=1 on an audio clip whose source has zero frames left, unlike trim_clip_start's explicit zero-length […] |
 | ✅ F-183 | medium | `crates/auris-session/src/session/transport.rs:85` | Loop/punch/grid toggles live on Project but skip record(), so an unrelated Undo silently reverts them via the whole-project snapshot swap. |
-| F-186 | medium | `crates/auris-session/src/session/mixer.rs:107` | move_effect records a phantom undo step and marks the project dirty even when moving an effect at a chain boundary is a no-op. |
-| F-187 | medium | `crates/auris-session/src/session/harmony.rs:147` | clear_harmony records an undo step and dirties the document even when from==to and nothing is cleared, unlike its sibling commands in the same file. |
-| F-188 | medium | `crates/auris-session/src/guide.rs:88` | guide.rs (lines ~88 and 638) wrongly claims frontend binaries call default_registry; only Session::new does, contradicting the guide's own later architecture […] |
-| F-207 | medium | `crates/auris-session/src/session/notes.rs:304` | move_notes/move_clips record a MoveNotes/MoveClip history step even when Ticks::ZERO-clamping makes the nudge a true no-op, losing the redo stack for nothing. |
-| F-215 | medium | `crates/auris-session/src/library.rs:229` | installed_voices_in dedups on the case-sensitive filename while extension matching is case-insensitive, so same-stem files differing only in extension case […] |
-| F-222 | medium | `crates/auris-session/src/session/singer.rs:260` | MIN_PHONEME_SECONDS is fixed to the default 10ms hop, so pins can round to zero frames when frame_hop is widened via set_frame_hop. |
-| F-223 | medium | `crates/auris-session/src/session/generated.rs:196` | set_clip_recipe's rewrite() only patches a Humanize seed, never rebuilding the transform stack for the new preset on a preset switch. |
-| F-340 | medium | `crates/auris-session/src/session/clips.rs:387` | A clip with start=i64::MIN, only reachable via a hand-edited/corrupt .auris file since load_project never validates clip starts, panics on drag via unchecked […] |
-| F-362 | medium | `crates/auris-session/src/session/singer.rs:867` | Session::voice_model_at caches VoiceModel by path only, so a re-exported .onnx at the same path is silently ignored until acceleration is toggled or the app […] |
-| F-371 | medium | `crates/auris-session/src/session/singer.rs:943` | Re-singing a singer track leaks the discarded take's decoded audio in Session::bank/render_bank/waveforms forever, unbounded by History's own 64-step cap. |
-| F-373 | medium | `crates/auris-session/src/guide.rs:1238` | guide.rs:1238 wrongly claims an old build would silently misread a post-AssetPath path as absolute; it actually hard-fails to deserialize the whole file. |
-| F-392 | medium | `crates/auris-session/src/session/monitor.rs:165` | publish_monitors reassigns ring slots by Vec position without re-seating, so un-monitoring a middle track bleeds ~32ms of its old audio into the next track's […] |
-| F-399 | medium | `crates/auris-session/src/session/clips.rs:550` | trim_clip_start's own-end floor assumes grid > 0; a project file with grid <= 0 makes it emit a negative-length Ticks clip. |
-| F-404 | medium | `crates/auris-session/src/session/mixer.rs:230` | `envelope_of` calls the unguarded `param_descriptors`, permanently caching an empty list and blanking the ADSR envelope for any hosted CLAP plugin. |
-| F-406 | medium | `crates/auris-session/src/session/singer.rs:587` | Case-mismatched paths on Windows make set_singer_voice store an in-folder voice model as External, breaking it when the project folder is moved or archived. |
-| F-410 | medium | `crates/auris-session/src/session/autosave.rs:143` | FAT32's 2s mtime resolution can make externally_modified() miss a concurrent writer, letting autosave silently overwrite their save. |
-| F-416 | medium | `crates/auris-session/src/session/mixer.rs:424` | Session::set_param's Effect arm sends a post-edit slot index over EngineCommand::SetEffectParam without checking needs_rebuild, so mid-transaction it can hit […] |
-| F-126 | low | `crates/auris-session/src/settings.rs:435` | home() in settings.rs:435 picks USERPROFILE-vs-HOME order via #[cfg(windows)] instead of cfg!, so the non-native arm can't compile or be tested off-platform. |
-| F-196 | low | `crates/auris-session/src/session/generated.rs:189` | Session::rewrite() records an undo step even when regenerating a clip produces identical notes, unlike its sibling note-edit commands. |
-| F-249 | low | `crates/auris-session/src/session/mod.rs:906` | undo/redo unconditionally set dirty=true even when they land exactly back on the last-saved project state, misreporting is_dirty(). |
-| F-259 | low | `crates/auris-session/src/session/harmony.rs:159` | stamp_progression records an undo step and clears redo/dirty state even when bars == 0 writes nothing, violating record()'s own validate-before-recording rule. |
-| F-281 | low | `crates/auris-session/src/session/tracks.rs:283` | set_track_mute/set_track_solo push an undo step and dirty the document even when the new value equals the current one, unlike the sibling set_track_color which […] |
-| F-285 | low | `crates/auris-session/src/guide.rs:638` | guide.rs:638 wrongly claims frontends call default_registry directly, duplicating the same misattribution already at line 89-90. |
-| F-293 | low | `crates/auris-session/src/settings.rs:440` | home() returns Some("") for an empty USERPROFILE/HOME instead of treating it as unset like the rest of config_dir's resolution does. |
-| F-299 | low | `crates/auris-session/src/session/compose.rs:245` | compose() copies a missing instrument's state.params onto its substitute fallback instrument instead of gating the copy on has_instrument, contradicting its […] |
-| F-311 | low | `crates/auris-session/src/session/mod.rs:490` | AudioPreferences.sample_rate lacks the .max(...) floor that sibling field block_frames gets, letting a hand-edited settings.json with sample_rate:0 reach the […] |
-| F-412 | low | `crates/auris-session/src/session/mod.rs:951` | forget_history() lacks the open-transaction guard every sibling (undo/redo/cancel/revert_transaction) has, but the path is unreachable from any current […] |
-| F-427 | low | `crates/auris-session/src/progressions.rs:166` | `ProgressionBook::forget()` fails to trim its `name` argument, so untrimmed whitespace makes deletion silently no-op against a trimmed stored entry. |
-| F-431 | low | `crates/auris-session/src/session/clips.rs:305` | rename_clip pushes an undo step and dirties the project even when the new name equals the old one, unlike its sibling setters which all guard against no-op […] |
-| F-433 | low | `crates/auris-session/src/session/record.rs:1230` | take_file_name's 9,999-attempt exhaustion fallback returns "{stem}.wav" without an existence check, letting WavRecorder::create silently overwrite an existing […] |
-| F-438 | low | `crates/auris-session/src/settings.rs:207` | Settings::load() returns `recent` unclamped, so an oversized list in settings.json bypasses the documented RECENT cap. |
-| F-442 | low | `crates/auris-session/src/session/singer.rs:926` | A failed singing-take render leaves an orphaned, unreferenced partial .wav permanently in Audio/, a minor disk-space leak shared with the live-recording path. |
-| F-449 | low | `crates/auris-session/src/session/record.rs:543` | restart_input's Err branch clears self.monitored without rebuilding the graph, leaving stale (but inert) monitor taps wired in until an unrelated rebuild. |
-| F-456 | low | `crates/auris-session/src/session/punch.rs:127` | finish_punch's punch-out auto-stop never fires when the engine runs silently (no output device), because it reads a playhead Arc that start_silent leaves […] |
+| ✅ F-186 | medium | `crates/auris-session/src/session/mixer.rs:107` | move_effect records a phantom undo step and marks the project dirty even when moving an effect at a chain boundary is a no-op. |
+| ✅ F-187 | medium | `crates/auris-session/src/session/harmony.rs:147` | clear_harmony records an undo step and dirties the document even when from==to and nothing is cleared, unlike its sibling commands in the same file. |
+| ✅ F-188 | medium | `crates/auris-session/src/guide.rs:88` | guide.rs (lines ~88 and 638) wrongly claims frontend binaries call default_registry; only Session::new does, contradicting the guide's own later architecture […] |
+| ✅ F-207 | medium | `crates/auris-session/src/session/notes.rs:304` | move_notes/move_clips record a MoveNotes/MoveClip history step even when Ticks::ZERO-clamping makes the nudge a true no-op, losing the redo stack for nothing. |
+| ✅ F-215 | medium | `crates/auris-session/src/library.rs:229` | installed_voices_in dedups on the case-sensitive filename while extension matching is case-insensitive, so same-stem files differing only in extension case […] |
+| ✅ F-222 | medium | `crates/auris-session/src/session/singer.rs:260` | MIN_PHONEME_SECONDS is fixed to the default 10ms hop, so pins can round to zero frames when frame_hop is widened via set_frame_hop. |
+| ✅ F-223 | medium | `crates/auris-session/src/session/generated.rs:196` | set_clip_recipe's rewrite() only patches a Humanize seed, never rebuilding the transform stack for the new preset on a preset switch. |
+| ✅ F-340 | medium | `crates/auris-session/src/session/clips.rs:387` | A clip with start=i64::MIN, only reachable via a hand-edited/corrupt .auris file since load_project never validates clip starts, panics on drag via unchecked […] |
+| ✅ F-362 | medium | `crates/auris-session/src/session/singer.rs:867` | Session::voice_model_at caches VoiceModel by path only, so a re-exported .onnx at the same path is silently ignored until acceleration is toggled or the app […] |
+| ✅ F-371 | medium | `crates/auris-session/src/session/singer.rs:943` | Re-singing a singer track leaks the discarded take's decoded audio in Session::bank/render_bank/waveforms forever, unbounded by History's own 64-step cap. |
+| ✅ F-373 | medium | `crates/auris-session/src/guide.rs:1238` | guide.rs:1238 wrongly claims an old build would silently misread a post-AssetPath path as absolute; it actually hard-fails to deserialize the whole file. |
+| ✅ F-392 | medium | `crates/auris-session/src/session/monitor.rs:165` | publish_monitors reassigns ring slots by Vec position without re-seating, so un-monitoring a middle track bleeds ~32ms of its old audio into the next track's […] |
+| ✅ F-399 | medium | `crates/auris-session/src/session/clips.rs:550` | trim_clip_start's own-end floor assumes grid > 0; a project file with grid <= 0 makes it emit a negative-length Ticks clip. |
+| ✅ F-404 | medium | `crates/auris-session/src/session/mixer.rs:230` | `envelope_of` calls the unguarded `param_descriptors`, permanently caching an empty list and blanking the ADSR envelope for any hosted CLAP plugin. |
+| ✅ F-406 | medium | `crates/auris-session/src/session/singer.rs:587` | Case-mismatched paths on Windows make set_singer_voice store an in-folder voice model as External, breaking it when the project folder is moved or archived. |
+| ✅ F-410 | medium | `crates/auris-session/src/session/autosave.rs:143` | FAT32's 2s mtime resolution can make externally_modified() miss a concurrent writer, letting autosave silently overwrite their save. |
+| ✅ F-416 | medium | `crates/auris-session/src/session/mixer.rs:424` | Session::set_param's Effect arm sends a post-edit slot index over EngineCommand::SetEffectParam without checking needs_rebuild, so mid-transaction it can hit […] |
+| ✅ F-126 | low | `crates/auris-session/src/settings.rs:435` | home() in settings.rs:435 picks USERPROFILE-vs-HOME order via #[cfg(windows)] instead of cfg!, so the non-native arm can't compile or be tested off-platform. |
+| ✅ F-196 | low | `crates/auris-session/src/session/generated.rs:189` | Session::rewrite() records an undo step even when regenerating a clip produces identical notes, unlike its sibling note-edit commands. |
+| ✅ F-249 | low | `crates/auris-session/src/session/mod.rs:906` | undo/redo unconditionally set dirty=true even when they land exactly back on the last-saved project state, misreporting is_dirty(). |
+| ✅ F-259 | low | `crates/auris-session/src/session/harmony.rs:159` | stamp_progression records an undo step and clears redo/dirty state even when bars == 0 writes nothing, violating record()'s own validate-before-recording rule. |
+| ✅ F-281 | low | `crates/auris-session/src/session/tracks.rs:283` | set_track_mute/set_track_solo push an undo step and dirty the document even when the new value equals the current one, unlike the sibling set_track_color which […] |
+| ✅ F-285 | low | `crates/auris-session/src/guide.rs:638` | guide.rs:638 wrongly claims frontends call default_registry directly, duplicating the same misattribution already at line 89-90. |
+| ✅ F-293 | low | `crates/auris-session/src/settings.rs:440` | home() returns Some("") for an empty USERPROFILE/HOME instead of treating it as unset like the rest of config_dir's resolution does. |
+| ✅ F-299 | low | `crates/auris-session/src/session/compose.rs:245` | compose() copies a missing instrument's state.params onto its substitute fallback instrument instead of gating the copy on has_instrument, contradicting its […] |
+| ✅ F-311 | low | `crates/auris-session/src/session/mod.rs:490` | AudioPreferences.sample_rate lacks the .max(...) floor that sibling field block_frames gets, letting a hand-edited settings.json with sample_rate:0 reach the […] |
+| ✅ F-412 | low | `crates/auris-session/src/session/mod.rs:951` | forget_history() lacks the open-transaction guard every sibling (undo/redo/cancel/revert_transaction) has, but the path is unreachable from any current […] |
+| ✅ F-427 | low | `crates/auris-session/src/progressions.rs:166` | `ProgressionBook::forget()` fails to trim its `name` argument, so untrimmed whitespace makes deletion silently no-op against a trimmed stored entry. |
+| ✅ F-431 | low | `crates/auris-session/src/session/clips.rs:305` | rename_clip pushes an undo step and dirties the project even when the new name equals the old one, unlike its sibling setters which all guard against no-op […] |
+| ✅ F-433 | low | `crates/auris-session/src/session/record.rs:1230` | take_file_name's 9,999-attempt exhaustion fallback returns "{stem}.wav" without an existence check, letting WavRecorder::create silently overwrite an existing […] |
+| ✅ F-438 | low | `crates/auris-session/src/settings.rs:207` | Settings::load() returns `recent` unclamped, so an oversized list in settings.json bypasses the documented RECENT cap. |
+| ✅ F-442 | low | `crates/auris-session/src/session/singer.rs:926` | A failed singing-take render leaves an orphaned, unreferenced partial .wav permanently in Audio/, a minor disk-space leak shared with the live-recording path. |
+| ✅ F-449 | low | `crates/auris-session/src/session/record.rs:543` | restart_input's Err branch clears self.monitored without rebuilding the graph, leaving stale (but inert) monitor taps wired in until an unrelated rebuild. |
+| ✅ F-456 | low | `crates/auris-session/src/session/punch.rs:127` | finish_punch's punch-out auto-stop never fires when the engine runs silently (no output device), because it reads a playhead Arc that start_silent leaves […] |
 
 ### ✅ F-024 · critical · HostedSlot::incoming silently force-loads stale document state onto a reused plugin instance when reclaim has already moved the live instance into spare, discarding unsaved live plugin edits.
 
@@ -619,7 +619,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Deliberately not recorded. Cycling is how a user listens, not something they write: a loop-and-listen pass would otherwise fill the undo stack with toggles and push the edits the pass was checking off the end of it.
 
-### F-186 · medium · move_effect records a phantom undo step and marks the project dirty even when moving an effect at a chain boundary is a no-op.
+### ✅ F-186 · medium · move_effect records a phantom undo step and marks the project dirty even when moving an effect at a chain boundary is a no-op.
 
 `crates/auris-session/src/session/mixer.rs:107` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -635,7 +635,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Validate *before* calling this. Pushing a step clears the redo stack and marks the document dirty, so a command that records first and refuses after has already cost the user both — a phantom step that undoes nothing, and a redo branch that is simply gone. (doc comment on `Session::record`, crates/auris-session/src/session/mod.rs)
 
-### F-187 · medium · clear_harmony records an undo step and dirties the document even when from==to and nothing is cleared, unlike its sibling commands in the same file.
+### ✅ F-187 · medium · clear_harmony records an undo step and dirties the document even when from==to and nothing is cleared, unlike its sibling commands in the same file.
 
 `crates/auris-session/src/session/harmony.rs:147` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -651,7 +651,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Validate *before* calling this. Pushing a step clears the redo stack and marks the document dirty, so a command that records first and refuses after has already cost the user both — a phantom step that undoes nothing, and a redo branch that is simply gone. (doc comment on `Session::record`, crates/auris-session/src/session/mod.rs)
 
-### F-188 · medium · guide.rs (lines ~88 and 638) wrongly claims frontend binaries call default_registry; only Session::new does, contradicting the guide's own later architecture section.
+### ✅ F-188 · medium · guide.rs (lines ~88 and 638) wrongly claims frontend binaries call default_registry; only Session::new does, contradicting the guide's own later architecture section.
 
 `crates/auris-session/src/guide.rs:88` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -667,7 +667,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** "the account — why each boundary is where it is ... is auris_session::guide, and that is where it gets edited first: when the two disagree, the guide is right and this is stale." (CLAUDE.md, Layout section) — here the guide's own text disagrees with the guide's own later section and with the actual call graph.
 
-### F-207 · medium · move_notes/move_clips record a MoveNotes/MoveClip history step even when Ticks::ZERO-clamping makes the nudge a true no-op, losing the redo stack for nothing.
+### ✅ F-207 · medium · move_notes/move_clips record a MoveNotes/MoveClip history step even when Ticks::ZERO-clamping makes the nudge a true no-op, losing the redo stack for nothing.
 
 `crates/auris-session/src/session/notes.rs:304` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -683,7 +683,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Validate *before* calling this. Pushing a step clears the redo stack and marks the document dirty, so a command that records first and refuses after has already cost the user both — a phantom step that undoes nothing, and a redo branch that is simply gone. (doc comment on Session::record, crates/auris-session/src/session/mod.rs)
 
-### F-215 · medium · installed_voices_in dedups on the case-sensitive filename while extension matching is case-insensitive, so same-stem files differing only in extension case both appear under the identical displayed name.
+### ✅ F-215 · medium · installed_voices_in dedups on the case-sensitive filename while extension matching is case-insensitive, so same-stem files differing only in extension case both appear under the identical displayed name.
 
 `crates/auris-session/src/library.rs:229` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -699,7 +699,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** every `.onnx` in every root, named by its file stem, first root to name a file winning the way the font search wins
 
-### F-222 · medium · MIN_PHONEME_SECONDS is fixed to the default 10ms hop, so pins can round to zero frames when frame_hop is widened via set_frame_hop.
+### ✅ F-222 · medium · MIN_PHONEME_SECONDS is fixed to the default 10ms hop, so pins can round to zero frames when frame_hop is widened via set_frame_hop.
 
 `crates/auris-session/src/session/singer.rs:260` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -715,7 +715,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** One frame at the default hop: any narrower and the pin rounds to no frames at all, which reads as the drag refusing to work.
 
-### F-223 · medium · set_clip_recipe's rewrite() only patches a Humanize seed, never rebuilding the transform stack for the new preset on a preset switch.
+### ✅ F-223 · medium · set_clip_recipe's rewrite() only patches a Humanize seed, never rebuilding the transform stack for the new preset on a preset switch.
 
 `crates/auris-session/src/session/generated.rs:196` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -731,7 +731,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** The feel the preset starts with -- the lean and the wander a recipe used to bake into the notes arrive as the performance stack instead (generated.rs doc comment on generate_clip); test "a_generated_clip_carries_its_feel_instead_of_baking_it" asserts the kick keeps the time.
 
-### F-340 · medium · A clip with start=i64::MIN, only reachable via a hand-edited/corrupt .auris file since load_project never validates clip starts, panics on drag via unchecked negation in move_clips.
+### ✅ F-340 · medium · A clip with start=i64::MIN, only reachable via a hand-edited/corrupt .auris file since load_project never validates clip starts, panics on drag via unchecked negation in move_clips.
 
 `crates/auris-session/src/session/clips.rs:387` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -747,7 +747,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Missing assets are reported, never fatal: the project opens with that one track silent. (CLAUDE.md, "The project folder" — the project's own policy that a malformed/missing element degrades a track rather than crashing the app)
 
-### F-362 · medium · Session::voice_model_at caches VoiceModel by path only, so a re-exported .onnx at the same path is silently ignored until acceleration is toggled or the app restarts.
+### ✅ F-362 · medium · Session::voice_model_at caches VoiceModel by path only, so a re-exported .onnx at the same path is silently ignored until acceleration is toggled or the app restarts.
 
 `crates/auris-session/src/session/singer.rs:867` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -761,7 +761,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Key the cache (or validate each hit) on file path plus a cheap freshness signal such as mtime and size (or a content hash) captured at load time; on a cache hit, stat the file and reload if it has changed. Alternatively, expose an explicit "reload voice" command/button in the UI rather than relying on process restart or an unrelated acceleration toggle.
 
-### F-371 · medium · Re-singing a singer track leaks the discarded take's decoded audio in Session::bank/render_bank/waveforms forever, unbounded by History's own 64-step cap.
+### ✅ F-371 · medium · Re-singing a singer track leaks the discarded take's decoded audio in Session::bank/render_bank/waveforms forever, unbounded by History's own 64-step cap.
 
 `crates/auris-session/src/session/singer.rs:943` · lifecycle · confirmed (traced through the code; reported independently 1×)
 
@@ -778,7 +778,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Written rule it breaks.** a Project clone is cheap "because it holds ids, numbers and note lists — never audio samples" (history.rs comment) — the session-side audio caches (bank/render_bank/waveforms) are exactly the samples that assumption relies on being discardable via history eviction, but they are never pruned in lockstep with Project::audio_sources</parameter>
 </invoke>
 
-### F-373 · medium · guide.rs:1238 wrongly claims an old build would silently misread a post-AssetPath path as absolute; it actually hard-fails to deserialize the whole file.
+### ✅ F-373 · medium · guide.rs:1238 wrongly claims an old build would silently misread a post-AssetPath path as absolute; it actually hard-fails to deserialize the whole file.
 
 `crates/auris-session/src/guide.rs:1238` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -796,7 +796,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** guide.rs's documents module (around line 1238) should say that an old build reading a post-AssetPath file would hit a serde type mismatch (an object where the old `path: PathBuf` field expects a string) and fail to deserialize the whole `Project` — the same hard "give up on the whole file" failure it correctly attributes to versions 4, 6, 7, 9, 17, and 19 — rather than silently resolving a relative path as absolute and losing the audio.
 
-### F-392 · medium · publish_monitors reassigns ring slots by Vec position without re-seating, so un-monitoring a middle track bleeds ~32ms of its old audio into the next track's monitor.
+### ✅ F-392 · medium · publish_monitors reassigns ring slots by Vec position without re-seating, so un-monitoring a middle track bleeds ~32ms of its old audio into the next track's monitor.
 
 `crates/auris-session/src/session/monitor.rs:165` · realtime · confirmed (executed reproduction; reported independently 1×)
 
@@ -812,7 +812,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Switching one on re-seats its reader at the live edge rather than resuming, which is what stops a monitor turned off for a minute coming back a minute behind.
 
-### F-399 · medium · trim_clip_start's own-end floor assumes grid > 0; a project file with grid <= 0 makes it emit a negative-length Ticks clip.
+### ✅ F-399 · medium · trim_clip_start's own-end floor assumes grid > 0; a project file with grid <= 0 makes it emit a negative-length Ticks clip.
 
 `crates/auris-session/src/session/clips.rs:550` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -828,7 +828,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Both ends are bounded by what there is. … neither kind may be dragged past its own end. (doc comment on trim_clip_start, clips.rs)
 
-### F-404 · medium · `envelope_of` calls the unguarded `param_descriptors`, permanently caching an empty list and blanking the ADSR envelope for any hosted CLAP plugin.
+### ✅ F-404 · medium · `envelope_of` calls the unguarded `param_descriptors`, permanently caching an empty list and blanking the ADSR envelope for any hosted CLAP plugin.
 
 `crates/auris-session/src/session/mixer.rs:230` · correctness · confirmed (traced through the code; reported independently 1×)
 
@@ -844,7 +844,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** Right in substance and mechanism (mixer.rs:215-233's unconditional cache write is exactly as described, and hosted.rs:943/978's guarded fallthrough is exactly as described). One correction/addition: the claim names only `plugin_window.rs:490`'s `switch_is_on` as the unguarded caller; `envelope.rs:196`'s `envelope_of` (also called unconditionally, every frame, from the same `render_plugin_window`) is a second, equally-affected unguarded call site with a more visible consequence — a hosted plugin's ADSR envelope graph silently and permanently failing to render once poisoned, versus […]
 
-### F-406 · medium · Case-mismatched paths on Windows make set_singer_voice store an in-folder voice model as External, breaking it when the project folder is moved or archived.
+### ✅ F-406 · medium · Case-mismatched paths on Windows make set_singer_voice store an in-folder voice model as External, breaking it when the project folder is moved or archived.
 
 `crates/auris-session/src/session/singer.rs:587` · platform · confirmed (executed reproduction; reported independently 1×)
 
@@ -860,7 +860,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Inside is relative to the folder so the folder can be moved; External is absolute because nothing else would find it. ... The invariant that makes the whole thing work is one folder, one project.
 
-### F-410 · medium · FAT32's 2s mtime resolution can make externally_modified() miss a concurrent writer, letting autosave silently overwrite their save.
+### ✅ F-410 · medium · FAT32's 2s mtime resolution can make externally_modified() miss a concurrent writer, letting autosave silently overwrite their save.
 
 `crates/auris-session/src/session/autosave.rs:143` · persistence · confirmed (executed reproduction; reported independently 1×)
 
@@ -878,7 +878,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** Substance and mechanism are correct as claimed (mtime-only equality check at autosave.rs:143 with no other corroboration, real risk on FAT32's 2s write-time resolution). The one overstatement is the "trigger" section's assertion that the project "explicitly supports" FAT32/USB/SD-card project folders on Windows — no such statement exists anywhere in the repo; Windows support is real (per CLAUDE.md) but nothing calls out removable/FAT32 media specifically.
 
-### F-416 · medium · Session::set_param's Effect arm sends a post-edit slot index over EngineCommand::SetEffectParam without checking needs_rebuild, so mid-transaction it can hit the wrong effect on the still pre-edit live graph.
+### ✅ F-416 · medium · Session::set_param's Effect arm sends a post-edit slot index over EngineCommand::SetEffectParam without checking needs_rebuild, so mid-transaction it can hit the wrong effect on the still pre-edit live graph.
 
 `crates/auris-session/src/session/mixer.rs:424` · correctness · confirmed (traced through the code; reported independently 1×)
 
@@ -896,7 +896,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** In Session::set_param's Effect arm (mixer.rs:411-439), the position-based EngineCommand::SetEffectParam is sent immediately (line 434) using a slot_index computed from the post-edit self.project (line 424), with no check of self.needs_rebuild -- so if a caller opens a transaction, performs a structural effect-chain edit (move_effect/remove_effect/set_effect_sidechain, which defer their rebuild via invalidate_graph per mod.rs:1008-1013), and then calls set_param(ParamTarget::Effect{..}) before end_transaction, the SetEffectParam command is misdirected against the still pre-edit live graph […]
 
-### F-126 · low · home() in settings.rs:435 picks USERPROFILE-vs-HOME order via #[cfg(windows)] instead of cfg!, so the non-native arm can't compile or be tested off-platform.
+### ✅ F-126 · low · home() in settings.rs:435 picks USERPROFILE-vs-HOME order via #[cfg(windows)] instead of cfg!, so the non-native arm can't compile or be tested off-platform.
 
 `crates/auris-session/src/settings.rs:435` · platform · confirmed (traced through the code; reported independently 4×)
 
@@ -912,7 +912,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Decide with `cfg!`, not `#[cfg]`, wherever it is a choice rather than an API that only exists on one platform. Both arms then compile and their tests run everywhere, which is the only reason the Windows menu bar can be checked from a Mac.
 
-### F-196 · low · Session::rewrite() records an undo step even when regenerating a clip produces identical notes, unlike its sibling note-edit commands.
+### ✅ F-196 · low · Session::rewrite() records an undo step even when regenerating a clip produces identical notes, unlike its sibling note-edit commands.
 
 `crates/auris-session/src/session/generated.rs:189` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -928,7 +928,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** set_note_velocities, transpose_notes, and quantize_notes all explicitly compute whether the change is a no-op and return Ok(()) before calling record() — an established in-crate pattern that rewrite() breaks by recording unconditionally
 
-### F-249 · low · undo/redo unconditionally set dirty=true even when they land exactly back on the last-saved project state, misreporting is_dirty().
+### ✅ F-249 · low · undo/redo unconditionally set dirty=true even when they land exactly back on the last-saved project state, misreporting is_dirty().
 
 `crates/auris-session/src/session/mod.rs:906` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -944,7 +944,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** is_dirty doc comment: true when there are unsaved changes
 
-### F-259 · low · stamp_progression records an undo step and clears redo/dirty state even when bars == 0 writes nothing, violating record()'s own validate-before-recording rule.
+### ✅ F-259 · low · stamp_progression records an undo step and clears redo/dirty state even when bars == 0 writes nothing, violating record()'s own validate-before-recording rule.
 
 `crates/auris-session/src/session/harmony.rs:159` · correctness · confirmed (executed reproduction; reported independently 2×)
 
@@ -960,7 +960,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Validate *before* calling this. Pushing a step clears the redo stack and marks the document dirty, so a command that records first and refuses after has already cost the user both — a phantom step that undoes nothing, and a redo branch that is simply gone.
 
-### F-281 · low · set_track_mute/set_track_solo push an undo step and dirty the document even when the new value equals the current one, unlike the sibling set_track_color which guards against no-ops.
+### ✅ F-281 · low · set_track_mute/set_track_solo push an undo step and dirty the document even when the new value equals the current one, unlike the sibling set_track_color which guards against no-ops.
 
 `crates/auris-session/src/session/tracks.rs:283` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -976,7 +976,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Validate *before* calling this. Pushing a step clears the redo stack and marks the document dirty, so a command that records first and refuses after has already cost the user both (doc comment on Session::record, crates/auris-session/src/session/mod.rs)
 
-### F-285 · low · guide.rs:638 wrongly claims frontends call default_registry directly, duplicating the same misattribution already at line 89-90.
+### ✅ F-285 · low · guide.rs:638 wrongly claims frontends call default_registry directly, duplicating the same misattribution already at line 89-90.
 
 `crates/auris-session/src/guide.rs:638` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -992,7 +992,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** The workspace has no root crate, so the account of how the crates fit together is auris_session::guide. ... Anything about the system as a whole belongs there.
 
-### F-293 · low · home() returns Some("") for an empty USERPROFILE/HOME instead of treating it as unset like the rest of config_dir's resolution does.
+### ✅ F-293 · low · home() returns Some("") for an empty USERPROFILE/HOME instead of treating it as unset like the rest of config_dir's resolution does.
 
 `crates/auris-session/src/settings.rs:440` · platform · confirmed (executed reproduction; reported independently 1×)
 
@@ -1008,7 +1008,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** resolve_config_dir doc comment (settings.rs:341-342): "An empty variable counts as unset. A shell that exports `XDG_CONFIG_HOME=` would otherwise put the configuration in `/auris-studio`." — the same principle is not applied to home(), which resolve_config_dir depends on.
 
-### F-299 · low · compose() copies a missing instrument's state.params onto its substitute fallback instrument instead of gating the copy on has_instrument, contradicting its own comment.
+### ✅ F-299 · low · compose() copies a missing instrument's state.params onto its substitute fallback instrument instead of gating the copy on has_instrument, contradicting its own comment.
 
 `crates/auris-session/src/session/compose.rs:245` · correctness · plausible (executed reproduction; reported independently 1×)
 
@@ -1026,7 +1026,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** At compose.rs:245-256, the branch that copies `track.state` onto the newly created track is gated on `sound.zip(general_midi).is_none()`, which is true both when the track kept its named instrument and when it fell back to `fallback` because the named instrument was missing from the registry — contradicting the block's own comment, which says the copy should apply "only where the part stayed on the plugin it named." This is a real latent defect: the guard does not encode the distinction it claims to rely on. However, it is not currently reachable in Auris Studio as shipped: the only […]
 
-### F-311 · low · AudioPreferences.sample_rate lacks the .max(...) floor that sibling field block_frames gets, letting a hand-edited settings.json with sample_rate:0 reach the engine unclamped.
+### ✅ F-311 · low · AudioPreferences.sample_rate lacks the .max(...) floor that sibling field block_frames gets, letting a hand-edited settings.json with sample_rate:0 reach the engine unclamped.
 
 `crates/auris-session/src/session/mod.rs:490` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -1040,7 +1040,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** In Session::new (crates/auris-session/src/session/mod.rs:~490) and in set_audio_preferences (~line 638), apply the same floor pattern used for block_frames to sample_rate — e.g. `audio.sample_rate.map(|sr| sr.max(1)).or_else(...)` — so a stored or supplied Some(0) cannot survive to reach AudioSettings unclamped.
 
-### F-412 · low · forget_history() lacks the open-transaction guard every sibling (undo/redo/cancel/revert_transaction) has, but the path is unreachable from any current frontend or test.
+### ✅ F-412 · low · forget_history() lacks the open-transaction guard every sibling (undo/redo/cancel/revert_transaction) has, but the path is unreachable from any current frontend or test.
 
 `crates/auris-session/src/session/mod.rs:951` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -1058,7 +1058,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** forget_history() (crates/auris-session/src/session/mod.rs:951-956) is missing the same open-transaction guard its siblings all have: unlike undo/redo (which refuse while self.transaction.is_some()) and cancel_transaction/revert_transaction (which flush needs_rebuild, and revert_transaction additionally restores transaction.before and dirty_before), forget_history unconditionally clears self.transaction without reverting or flushing, and forces dirty = false regardless of live project state. If a host ever called forget_history() between begin_transaction() and […]
 
-### F-427 · low · `ProgressionBook::forget()` fails to trim its `name` argument, so untrimmed whitespace makes deletion silently no-op against a trimmed stored entry.
+### ✅ F-427 · low · `ProgressionBook::forget()` fails to trim its `name` argument, so untrimmed whitespace makes deletion silently no-op against a trimmed stored entry.
 
 `crates/auris-session/src/progressions.rs:166` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -1072,7 +1072,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Add `let name = name.trim();` at the top of `forget` (and, for consistency, `chart`) in crates/auris-session/src/progressions.rs, mirroring the same line already in `keep`, so all three lookups compare against the same normalized key.
 
-### F-431 · low · rename_clip pushes an undo step and dirties the project even when the new name equals the old one, unlike its sibling setters which all guard against no-op edits.
+### ✅ F-431 · low · rename_clip pushes an undo step and dirties the project even when the new name equals the old one, unlike its sibling setters which all guard against no-op edits.
 
 `crates/auris-session/src/session/clips.rs:305` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -1088,7 +1088,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** end_transaction's doc comment (session/mod.rs:838-841): "A transaction that made no difference records no undo step" — the same no-op-means-no-undo-step principle rename_clip's siblings already implement but rename_clip itself omits.
 
-### F-433 · low · take_file_name's 9,999-attempt exhaustion fallback returns "{stem}.wav" without an existence check, letting WavRecorder::create silently overwrite an existing file.
+### ✅ F-433 · low · take_file_name's 9,999-attempt exhaustion fallback returns "{stem}.wav" without an existence check, letting WavRecorder::create silently overwrite an existing file.
 
 `crates/auris-session/src/session/record.rs:1230` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -1104,7 +1104,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** take_file_name's own doc comment: "A file name for a take on `track`, not already taken inside `folder`." The fallback path returns a name with no existence check, breaking that guarantee.
 
-### F-438 · low · Settings::load() returns `recent` unclamped, so an oversized list in settings.json bypasses the documented RECENT cap.
+### ✅ F-438 · low · Settings::load() returns `recent` unclamped, so an oversized list in settings.json bypasses the documented RECENT cap.
 
 `crates/auris-session/src/settings.rs:207` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -1120,7 +1120,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** /// Projects opened lately, most recent first. /// Capped at [`Settings::RECENT`].
 
-### F-442 · low · A failed singing-take render leaves an orphaned, unreferenced partial .wav permanently in Audio/, a minor disk-space leak shared with the live-recording path.
+### ✅ F-442 · low · A failed singing-take render leaves an orphaned, unreferenced partial .wav permanently in Audio/, a minor disk-space leak shared with the live-recording path.
 
 `crates/auris-session/src/session/singer.rs:926` · persistence · confirmed (executed reproduction; reported independently 1×)
 
@@ -1138,7 +1138,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** A failed take render in `land_singer_take` (singer.rs:926-928) can leave a partially-written, document-unreferenced `.wav` permanently in `Audio/` if `WavRecorder::write`/`finish` fails after `create` succeeds (e.g. mid-write disk-full) — confirmed mechanically and by direct reproduction against `auris-io`. This is a genuine, low-severity disk-space leak, but it is not a departure from project convention: the live-recording path in `crates/auris-session/src/session/record.rs` has the identical gap — `stop_recording`'s `result?` (~line 780) and `finish_all` (~1146-1210) both propagate a […]
 
-### F-449 · low · restart_input's Err branch clears self.monitored without rebuilding the graph, leaving stale (but inert) monitor taps wired in until an unrelated rebuild.
+### ✅ F-449 · low · restart_input's Err branch clears self.monitored without rebuilding the graph, leaving stale (but inert) monitor taps wired in until an unrelated rebuild.
 
 `crates/auris-session/src/session/record.rs:543` · correctness · confirmed (traced through the code; reported independently 1×)
 
@@ -1154,7 +1154,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** "the graph is holding the old device's [rings], which is why a rebuild follows" (record.rs comment on the Ok arm of restart_input, describing a rule the Err arm silently breaks)
 
-### F-456 · low · finish_punch's punch-out auto-stop never fires when the engine runs silently (no output device), because it reads a playhead Arc that start_silent leaves frozen at 0.
+### ✅ F-456 · low · finish_punch's punch-out auto-stop never fires when the engine runs silently (no output device), because it reads a playhead Arc that start_silent leaves frozen at 0.
 
 `crates/auris-session/src/session/punch.rs:127` · correctness · confirmed (executed reproduction; reported independently 1×)
 

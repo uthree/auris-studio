@@ -7,7 +7,7 @@ import random
 from pathlib import Path
 
 import lightning as L
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, DistributedSampler
 
 from auris_singer.data.dataset import (
     DistributedBucketSampler,
@@ -116,10 +116,23 @@ class SingingDataModule(L.LightningDataModule):
 
     def val_dataloader(self) -> DataLoader:
         assert self.val_dataset is not None, "call setup() first"
+        trainer = getattr(self, "_trainer", None)
+        world_size = trainer.world_size if trainer is not None else 1
+        sampler = (
+            DistributedSampler(
+                self.val_dataset,
+                num_replicas=world_size,
+                rank=trainer.global_rank,
+                shuffle=False,
+            )
+            if world_size > 1
+            else None
+        )
         return DataLoader(
             self.val_dataset,
             batch_size=1,
             shuffle=False,
+            sampler=sampler,
             num_workers=min(self.num_workers, 2),
             collate_fn=collate_batch,
             pin_memory=self.pin_memory,

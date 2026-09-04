@@ -111,7 +111,7 @@ def collect_wavs(paths: list[str]) -> list[Path]:
         path = Path(text)
         if path.is_dir():
             out.extend(sorted(path.rglob("*.wav")))
-        elif path.suffix.lower() == ".wav":
+        elif path.suffix.lower() == ".wav" and path.is_file():
             out.append(path)
         else:
             sys.exit(f"not a wav or a folder of them: {path}")

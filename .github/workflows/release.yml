@@ -14,10 +14,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-# `gh release create` writes to the repository.
-permissions:
-  contents: write
-
 # Deliberately uncached, unlike CI. This runs a handful of times a year and produces the files
 # other people download; a cold build is worth the twenty minutes.
 jobs:
@@ -191,6 +187,9 @@ jobs:
           if-no-files-found: error
 
   publish:
+    # Only `gh release create` writes to the repository; build jobs remain read-only.
+    permissions:
+      contents: write
     name: Publish the release
     needs: [macos, windows, linux]
     # Only from a tag. A dispatched run builds all three and stops here, which is the point of

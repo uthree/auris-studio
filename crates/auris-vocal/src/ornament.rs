@@ -43,7 +43,7 @@ pub fn ornament_offset(
     }
     let mut offset = 0.0f64;
 
-    if let Some(scoop) = scoop {
+    if let Some(scoop) = scoop.filter(|scoop| scoop.depth.is_finite()) {
         let seconds = ornament_reach(scoop.seconds, length);
         if t < seconds {
             let ease = (1.0 + (PI * t / seconds).cos()) / 2.0;
@@ -51,7 +51,7 @@ pub fn ornament_offset(
         }
     }
 
-    if let Some(fall) = fall {
+    if let Some(fall) = fall.filter(|fall| fall.depth.is_finite()) {
         let seconds = ornament_reach(fall.seconds, length);
         let from = length - seconds;
         if seconds > 0.0 && t >= from {
@@ -60,7 +60,7 @@ pub fn ornament_offset(
         }
     }
 
-    if let Some(vibrato) = vibrato {
+    if let Some(vibrato) = vibrato.filter(|vibrato| vibrato.depth.is_finite()) {
         let delay = vibrato.delay.max(0.0);
         if t >= delay && vibrato.rate.is_finite() && vibrato.rate > 0.0 {
             let grown = match vibrato.fade_in.is_finite() && vibrato.fade_in > 0.0 {

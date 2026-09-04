@@ -244,7 +244,7 @@ fn fill(
     if beats == 0 {
         return;
     }
-    let from = steps.saturating_sub(beats * per_beat).max(1);
+    let from = steps.saturating_sub(beats * per_beat);
     let bar_start = grid.bar_ticks() * bar as i64;
 
     // Drawn from the section's own stream, like every other choice a bar makes: a repeat of the

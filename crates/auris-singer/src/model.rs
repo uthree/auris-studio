@@ -117,8 +117,14 @@ fn open_session(path: &Path, acceleration: Acceleration) -> Result<(Session, boo
             .and_then(|builder| builder.with_memory_pattern(false))
             .map_err(refused)?;
     }
-    let session = builder.commit_from_file(path).map_err(refused)?;
-    Ok((session, engaged))
+    match builder.commit_from_file(path) {
+        Ok(session) => Ok((session, engaged)),
+        Err(error) if engaged && acceleration == Acceleration::Auto => {
+            log::warn!("the GPU refused the voice model ({error}); loading it on the CPU instead");
+            open_session(path, Acceleration::Cpu)
+        }
+        Err(error) => Err(refused(error)),
+    }
 }
 
 impl VoiceModel {

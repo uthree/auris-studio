@@ -430,10 +430,12 @@ def _verification_inputs(
     model: AurisSinger, batch: int, s: int, t: int, voiced: bool, seed: int
 ) -> dict[str, torch.Tensor]:
     torch.manual_seed(seed)
+    durations = torch.full((batch, s), t // s, dtype=torch.long)
+    durations[:, : t % s] += 1
     return {
         "phonemes": torch.randint(1, model.n_vocab, (batch, s)),
         "phoneme_lengths": torch.full((batch,), s, dtype=torch.long),
-        "durations": torch.full((batch, s), max(1, t // s), dtype=torch.long),
+        "durations": durations,
         "f0": torch.full((batch, t), 220.0 if voiced else 0.0),
         "energy": torch.full((batch, t), 0.1),
         "voiced": torch.full((batch, t), 1.0 if voiced else 0.0),

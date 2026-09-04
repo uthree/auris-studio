@@ -65,7 +65,11 @@ def read_mono_label(path: Path) -> list[Phoneme]:
         if len(parts) != 3:
             continue
         symbol = ENUNU_TO_OPENJTALK.get(parts[2], parts[2])
-        phonemes.append(Phoneme(int(parts[0]) * TIME_UNIT, int(parts[1]) * TIME_UNIT, symbol))
+        try:
+            start, end = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        phonemes.append(Phoneme(start * TIME_UNIT, end * TIME_UNIT, symbol))
     return phonemes
 
 

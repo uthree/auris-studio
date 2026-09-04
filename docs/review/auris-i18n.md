@@ -7,11 +7,11 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
 | ✅ F-033 | high | `crates/auris-i18n/src/strings.rs:57` | English Compose-from-Lyrics hint shows the raw internal token "secondary-Return" instead of a real keystroke like Ctrl/⌘-Return. |
-| F-130 | low | `crates/auris-i18n/src/strings.rs:845` | NoCycleToExport's Japanese string hardcodes Mac-only "option" instead of branching by platform like PointerGesture::OptionClick.label() does. |
-| F-148 | low | `crates/auris-i18n/src/strings.rs:1340` | SamplerEnvelopeOn warning string still says 15-note polyphony after SLOTS shrank to 14 in commit 1f41ec7. |
-| F-268 | low | `crates/auris-i18n/src/audio.rs:83` | is_known's doc comment cites "dB" as a same-in-both-languages table entry, but no table in audio.rs contains any dB key — only Q rows exist. |
-| F-289 | low | `crates/auris-i18n/src/lib.rs:97` | from_environment lets an unsupported LC_ALL value fall through to LC_MESSAGES/LANG instead of taking priority as its own doc comment says. |
-| F-448 | low | `crates/auris-i18n/src/controller.rs:18` | NOTABLE's doc comment groups its 8 controllers into 4 named categories that only cover 7, leaving Pan (CC 10) uncategorized. |
+| ✅ F-130 | low | `crates/auris-i18n/src/strings.rs:845` | NoCycleToExport's Japanese string hardcodes Mac-only "option" instead of branching by platform like PointerGesture::OptionClick.label() does. |
+| ✅ F-148 | low | `crates/auris-i18n/src/strings.rs:1340` | SamplerEnvelopeOn warning string still says 15-note polyphony after SLOTS shrank to 14 in commit 1f41ec7. |
+| ✅ F-268 | low | `crates/auris-i18n/src/audio.rs:83` | is_known's doc comment cites "dB" as a same-in-both-languages table entry, but no table in audio.rs contains any dB key — only Q rows exist. |
+| ✅ F-289 | low | `crates/auris-i18n/src/lib.rs:97` | from_environment lets an unsupported LC_ALL value fall through to LC_MESSAGES/LANG instead of taking priority as its own doc comment says. |
+| ✅ F-448 | low | `crates/auris-i18n/src/controller.rs:18` | NOTABLE's doc comment groups its 8 controllers into 4 named categories that only cover 7, leaving Pan (CC 10) uncategorized. |
 
 ### ✅ F-033 · high · English Compose-from-Lyrics hint shows the raw internal token "secondary-Return" instead of a real keystroke like Ctrl/⌘-Return.
 
@@ -29,7 +29,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** The keystroke a user sees is not the keystroke that is stored. `secondary-s` is stored; `actions::normalise_keystroke` turns it into what the keyboard reports, for comparing, and `actions::menu_keystroke` into ⌘S or Ctrl+S, for reading.
 
-### F-130 · low · NoCycleToExport's Japanese string hardcodes Mac-only "option" instead of branching by platform like PointerGesture::OptionClick.label() does.
+### ✅ F-130 · low · NoCycleToExport's Japanese string hardcodes Mac-only "option" instead of branching by platform like PointerGesture::OptionClick.label() does.
 
 `crates/auris-i18n/src/strings.rs:845` · spec-mismatch · confirmed (executed reproduction; reported independently 2×)
 
@@ -47,7 +47,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** No correction needed; the claim's location, mechanism, trigger, and consequence all check out as described.
 
-### F-148 · low · SamplerEnvelopeOn warning string still says 15-note polyphony after SLOTS shrank to 14 in commit 1f41ec7.
+### ✅ F-148 · low · SamplerEnvelopeOn warning string still says 15-note polyphony after SLOTS shrank to 14 in commit 1f41ec7.
 
 `crates/auris-i18n/src/strings.rs:1340` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -63,7 +63,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Shaped polyphony drops from fifteen to fourteen, the price of a channel that is never spoken over. (commit 1f41ec7 message, and the doc comment above `SLOTS`: "Fourteen notes is thin next to the 128 voices the library will hold")
 
-### F-268 · low · is_known's doc comment cites "dB" as a same-in-both-languages table entry, but no table in audio.rs contains any dB key — only Q rows exist.
+### ✅ F-268 · low · is_known's doc comment cites "dB" as a same-in-both-languages table entry, but no table in audio.rs contains any dB key — only Q rows exist.
 
 `crates/auris-i18n/src/audio.rs:83` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -81,7 +81,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** No correction needed; the claim is accurate as stated.
 
-### F-289 · low · from_environment lets an unsupported LC_ALL value fall through to LC_MESSAGES/LANG instead of taking priority as its own doc comment says.
+### ✅ F-289 · low · from_environment lets an unsupported LC_ALL value fall through to LC_MESSAGES/LANG instead of taking priority as its own doc comment says.
 
 `crates/auris-i18n/src/lib.rs:97` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -97,7 +97,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** /// `LC_ALL` outranks `LC_MESSAGES`, which outranks `LANG`, which is the order POSIX gives them
 
-### F-448 · low · NOTABLE's doc comment groups its 8 controllers into 4 named categories that only cover 7, leaving Pan (CC 10) uncategorized.
+### ✅ F-448 · low · NOTABLE's doc comment groups its 8 controllers into 4 named categories that only cover 7, leaving Pan (CC 10) uncategorized.
 
 `crates/auris-i18n/src/controller.rs:18` · other · confirmed (traced through the code; reported independently 1×)
 

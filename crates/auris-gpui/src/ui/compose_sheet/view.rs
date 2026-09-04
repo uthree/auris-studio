@@ -852,7 +852,11 @@ impl AurisApp {
             return;
         };
         let text = song_spec(dials).to_toml();
-        let name = format!("{}.{}", dials.title, auris_session::SPEC_EXTENSION);
+        let name = format!(
+            "{}.{}",
+            safe_file_stem(&dials.title),
+            auris_session::SPEC_EXTENSION
+        );
         let language = self.language();
         cx.spawn(async move |this, cx| {
             let handle = rfd::AsyncFileDialog::new()
@@ -891,6 +895,24 @@ fn this_word(app: &AurisApp, name: &str) -> String {
     app.t(mood_key(name)).to_string()
 }
 
+/// A title safe to offer as one file name on every supported desktop platform.
+fn safe_file_stem(title: &str) -> String {
+    let stem: String = title
+        .chars()
+        .map(|ch| match ch {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            ch if ch.is_control() => '_',
+            ch => ch,
+        })
+        .collect();
+    let stem = stem.trim().trim_end_matches(['.', ' ']);
+    if stem.is_empty() {
+        "Untitled".to_string()
+    } else {
+        stem.to_string()
+    }
+}
+
 #[cfg(test)]
 mod window_tests {
     use gpui::TestAppContext;
@@ -898,6 +920,12 @@ mod window_tests {
     use auris_session::prelude::*;
 
     use crate::harness::{open, paint};
+
+    #[test]
+    fn specification_file_names_do_not_treat_titles_as_paths() {
+        assert_eq!(super::safe_file_stem("A/B: C?"), "A_B_ C_");
+        assert_eq!(super::safe_file_stem(" .. "), "Untitled");
+    }
 
     /// The meter row's menu lists eight; this is the path to the other three hundred and
     /// ninety-two, made as a hand makes it: the field comes up, the meter is typed, Return.

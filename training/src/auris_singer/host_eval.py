@@ -128,6 +128,10 @@ class VoiceInfo:
     path: Path
     sample_rate: int
     hop_length: int
+    n_fft: int
+    win_length: int
+    f0_min: float
+    f0_max: float
     symbols: list[str]
     name: str = ""
 
@@ -154,10 +158,15 @@ def voice_info(path: str | Path) -> VoiceInfo:
         if METADATA_KEY not in props:
             raise ValueError(f"{path} carries no {METADATA_KEY!r} metadata; it is not an exported voice")
         block = json.loads(props[METADATA_KEY])
+    audio = block.get("audio") or {}
     return VoiceInfo(
         path=path,
         sample_rate=int(block["sample_rate"]),
         hop_length=int(block["hop_length"]),
+        n_fft=int(audio.get("n_fft", 2048)),
+        win_length=int(audio.get("win_length", 2048)),
+        f0_min=float(block.get("f0_min", 40.0)),
+        f0_max=float(block.get("f0_max", 1600.0)),
         symbols=list(block["symbols"]),
         name=str((block.get("voice") or {}).get("name", "")),
     )
@@ -484,7 +493,8 @@ class Settings:
     #: is one draw of the prior, and on a small voice a draw can put a phrase an octave out;
     #: the mean over several is the voice, one is the throw.
     take_seeds: int = 1
-    #: Which of the voice's speakers sings, by name; ``None`` is the model's first.
+    #: Which speaker sings. ``None`` uses each corpus utterance's speaker, or the
+    #: model's first speaker in score mode.
     speaker: str | None = None
     #: Whether to run the listener: the phoneme error rate, and the recording's ceiling.
     asr: bool = False
@@ -593,6 +603,8 @@ def evaluate(
         n_mels=settings.n_mels,
         pitch=settings.pitch,
         device=settings.device,
+        f0_min=info.f0_min,
+        f0_max=info.f0_max,
         tolerance_cents=settings.tolerance_cents,
     )
 
@@ -824,8 +836,9 @@ def evaluate_score(
     asked = None
     tokens: list[str] = []
     analyst = Analyst(
-        info.sample_rate, 2048, info.hop_length, 2048,
+        info.sample_rate, info.n_fft, info.hop_length, info.win_length,
         n_mels=settings.n_mels, pitch=settings.pitch, device=settings.device,
+        f0_min=info.f0_min, f0_max=info.f0_max,
         tolerance_cents=settings.tolerance_cents,
     )
     seeds = [settings.take_seed + at for at in range(max(1, settings.take_seeds))]

@@ -53,6 +53,12 @@ pub mod render;
 pub mod session;
 pub mod settings;
 
+/// Workspace-owned error variants exposed for frontend localisation.
+pub use auris_core::CoreError;
+/// Workspace-owned engine error variants exposed for frontend localisation.
+pub use auris_engine::EngineError;
+/// Workspace-owned file error variants exposed for frontend localisation.
+pub use auris_io::IoError;
 pub use error::SessionError;
 pub use history::{Edit, History};
 pub use library::{
@@ -61,7 +67,7 @@ pub use library::{
 };
 pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
-pub use render::{ExportSummary, RenderJob, StemSummary, stem_tracks};
+pub use render::{ExportSummary, RenderJob, StemRenderFailure, StemSummary, stem_tracks};
 pub use session::{
     AccompanyReport, Arm, AudioStatus, BalanceReport, CEILING_DB, Clipboard, ComposeReport,
     CopiedClip, CopiedContent, DEFAULT_LYRIC_PROGRESSION, DEFAULT_OCTAVE, DEFAULT_PARTS,
@@ -214,7 +220,7 @@ pub mod prelude {
         CopiedContent, DEFAULT_LYRIC_PROGRESSION, DEFAULT_PARTS, Edit, ExportPreferences,
         ExportSummary, InputChannels, LoadedFont, LyricSongReport, MusicalTyping, ParamTarget,
         Quantize, RecordingReport, RecordingStatus, RenderJob, SaveReport, Session, SessionError,
-        SessionOptions, Settings, StemSummary, TakeReport, decode_audio, input_level_of,
-        read_soundfont,
+        SessionOptions, Settings, StemRenderFailure, StemSummary, TakeReport, decode_audio,
+        input_level_of, read_soundfont,
     };
 }

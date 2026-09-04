@@ -86,6 +86,13 @@ pub const GUI_ID: u32 = 4345;
 /// should do while nothing is keying the slot.
 pub const KEY_ID: u32 = 4346;
 
+static FIXTURE_DESTROYS: AtomicU32 = AtomicU32::new(0);
+
+/// How many times the gain fixture's GUI has been destroyed in this process.
+pub fn fixture_destroy_count() -> u32 {
+    FIXTURE_DESTROYS.load(Ordering::Relaxed)
+}
+
 /// What a host can have done to the fixture's window, one bit each.
 ///
 /// The fixture opens no real window — a test runner has no window server to open one on, and what
@@ -215,6 +222,7 @@ impl PluginGuiImpl for MainThread<'_> {
     }
 
     fn destroy(&mut self) {
+        FIXTURE_DESTROYS.fetch_add(1, Ordering::Relaxed);
         self.gui_did(gui_step::DESTROYED);
     }
 

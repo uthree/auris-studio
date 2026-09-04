@@ -383,7 +383,7 @@ impl Numeral {
         let degree = match self.secondary_of {
             // The applied chord's own degree, counted from the degree it was applied to: a
             // dominant stands four degrees above what it resolves to, a `ii/V` one degree above.
-            Some((target, _)) => target + self.degree - 1,
+            Some((target, _)) => target.clamp(1, 7) + self.degree.clamp(1, 7) - 1,
             None => self.degree,
         };
         let Some(root) = spell_on_degree(key, degree, chord.root) else {
@@ -571,7 +571,7 @@ pub fn diatonic_quality(key: Key, degree: u8) -> Quality {
         (4, 8) => Quality::Augmented,
         (2, 7) => Quality::Sus2,
         (5, 7) => Quality::Sus4,
-        // A scale with fewer than seven degrees, or an exotic one: the third decides.
+        // Defensive fallback for a future scale that `harmonic_key` does not normalize.
         (third, _) if third <= 3 => Quality::Minor,
         _ => Quality::Major,
     }
@@ -863,6 +863,18 @@ mod tests {
         assert_eq!(name("V7/V"), "D7");
         assert_eq!(name("ii/V"), "Am");
         assert_eq!(name("vii/V"), "F#dim");
+    }
+
+    #[test]
+    fn malformed_secondary_degrees_do_not_overflow_when_named() {
+        let mut numeral = Numeral::parse("V/V").unwrap();
+        numeral.degree = 200;
+        numeral.secondary_of = Some((200, 0));
+        let _ = numeral.name_in(key("C major"));
+
+        numeral.degree = 0;
+        numeral.secondary_of = Some((0, 0));
+        let _ = numeral.name_in(key("C major"));
     }
 
     #[test]

@@ -147,6 +147,7 @@ fn ghosted(clips: &[(ClipId, Ticks, Ticks)], editing: ClipId, view: (Ticks, Tick
 
 /// How near a press must land to a phoneme boundary to take hold of it, in pixels.
 const PHONEME_GRAB: f32 = 5.0;
+const PHONEME_GRAB_HALF: f32 = PHONEME_GRAB / 2.0;
 
 /// Which phoneme boundary of `note` a press `at` seconds along the timeline takes hold of.
 ///
@@ -172,7 +173,12 @@ fn grabbed_phoneme_boundary(
         .take(layout.len().saturating_sub(1))
         .enumerate()
         .filter(|(_, (_, to))| *to > 0.0 && *to < length)
-        .find(|(_, (_, to))| (start_seconds + to - at_seconds).abs() <= slack_seconds)
+        .filter(|(_, (_, to))| (start_seconds + to - at_seconds).abs() <= slack_seconds)
+        .min_by(|(_, (_, a)), (_, (_, b))| {
+            (start_seconds + a - at_seconds)
+                .abs()
+                .total_cmp(&(start_seconds + b - at_seconds).abs())
+        })
         .map(|(index, (from, _))| (index, start_seconds + from))
 }
 
@@ -313,6 +319,10 @@ fn paint_phoneme_spans(
 
 /// How near a press must land to an ornament handle to take hold of it, in pixels.
 const ORNAMENT_GRAB: f32 = 6.0;
+
+fn within_ornament_handle(dx: f32, dy: f32) -> bool {
+    dx.abs() <= ORNAMENT_GRAB / 2.0 && dy.abs() <= ORNAMENT_GRAB / 2.0
+}
 
 /// Where a note's ornament handles sit: `(handle, seconds into the note, semitones off it)`.
 ///
@@ -1144,7 +1154,7 @@ impl AurisApp {
                         origins,
                         pressed_at: Some(event.position),
                     });
-                    self.audition(pitch);
+                    self.audition_note(index, pitch);
                 }
             }
             None => match empty_press(self.pointer, event) {
@@ -1172,7 +1182,7 @@ impl AurisApp {
                     });
                     self.selected_notes.clear();
                     self.selected_notes.insert(index);
-                    self.audition(pitch);
+                    self.audition_note(index, pitch);
                 }
                 // A drag on empty grid sweeps a selection; a press that never moves ends up
                 // selecting nothing, which is the deselect it looks like.
@@ -1197,7 +1207,9 @@ impl AurisApp {
         modifiers: gpui::Modifiers,
     ) {
         if modifiers.shift {
-            self.selected_notes.insert(index);
+            if !self.selected_notes.remove(&index) {
+                self.selected_notes.insert(index);
+            }
         } else if !self.selected_notes.contains(&index) {
             self.selected_notes.clear();
             self.selected_notes.insert(index);
@@ -1206,6 +1218,9 @@ impl AurisApp {
         let Some(target) = self.session.midi_clip(clip) else {
             return;
         };
+        if self.selected_notes.is_empty() {
+            return;
+        }
         let origins: Vec<(usize, u8)> = self
             .selected_notes
             .iter()
@@ -1230,7 +1245,7 @@ impl AurisApp {
         // Heard at the level it is written at, so the drag starts from something the ear has a
         // reference for rather than from a number.
         if let Some((pitch, velocity)) = struck {
-            self.audition_at(pitch, velocity);
+            self.audition_note_at(index, pitch, velocity);
         }
     }
 
@@ -1317,7 +1332,7 @@ impl AurisApp {
                 let x = self.timeline.tick_to_x(tick);
                 zones.push(Bounds {
                     origin: point(
-                        x - px(PHONEME_GRAB / 2.0),
+                        x - px(PHONEME_GRAB_HALF),
                         self.pitch.pitch_to_y(note.pitch) + px(1.0),
                     ),
                     size: size(px(PHONEME_GRAB), (row - px(2.0)).max(px(2.0))),
@@ -1360,9 +1375,7 @@ impl AurisApp {
                     .timeline
                     .tick_to_x(tempo.seconds_to_ticks(Seconds(start + t)));
                 let y = centre - semis * self.pitch.row_height;
-                if f32::from(position.x - x).abs() <= ORNAMENT_GRAB
-                    && (f32::from(position.y) - y).abs() <= ORNAMENT_GRAB
-                {
+                if within_ornament_handle(f32::from(position.x - x), f32::from(position.y) - y) {
                     return Some((index, handle));
                 }
             }
@@ -1384,7 +1397,7 @@ impl AurisApp {
         let end = tempo.ticks_to_seconds(clip_start + note.end()).0;
         let at = tempo.ticks_to_seconds(self.timeline.x_to_tick(x)).0;
         let slack = (tempo
-            .ticks_to_seconds(self.timeline.x_to_tick(x + px(PHONEME_GRAB)))
+            .ticks_to_seconds(self.timeline.x_to_tick(x + px(PHONEME_GRAB_HALF)))
             .0
             - at)
             .abs();
@@ -2091,9 +2104,15 @@ fn curve_grab_radius(view: &TimelineView) -> Ticks {
 ///
 /// In ticks rather than pixels so the answer does not change with the zoom in a way the caller has
 /// to compensate for; the caller turns its pixels into ticks, which it has to do anyway.
-pub fn curve_point_at(points: &[CurvePoint], at: Ticks, radius: Ticks) -> Option<Ticks> {
+pub fn curve_point_at(
+    points: &[CurvePoint],
+    clip_length: Ticks,
+    at: Ticks,
+    radius: Ticks,
+) -> Option<Ticks> {
     points
         .iter()
+        .filter(|point| point.at <= clip_length)
         .map(|point| (point.at, (point.at - at).raw().abs()))
         .filter(|(_, distance)| *distance <= radius.raw().abs())
         .min_by_key(|(_, distance)| *distance)
@@ -2171,19 +2190,23 @@ fn paint_curve(
         theme.text_faint,
     );
 
-    if !points.is_empty() {
+    let visible: Vec<&CurvePoint> = points
+        .iter()
+        .filter(|point| point.at <= clip_length)
+        .collect();
+    if !visible.is_empty() {
         // Held flat outside the points, which is what `curve_at` says and therefore what is heard.
         // A curve drawn only between its ends would show a slide starting somewhere it does not.
-        let mut drawn: Vec<Point<Pixels>> = Vec::with_capacity(points.len() + 2);
-        let first = points[0];
-        let last = points[points.len() - 1];
+        let mut drawn: Vec<Point<Pixels>> = Vec::with_capacity(visible.len() + 2);
+        let first = visible[0];
+        let last = visible[visible.len() - 1];
         drawn.push(at(Ticks::ZERO, first.value));
-        drawn.extend(points.iter().map(|point| at(point.at, point.value)));
+        drawn.extend(visible.iter().map(|point| at(point.at, point.value)));
         if last.at < clip_length {
             drawn.push(at(clip_length, last.value));
         }
         paint::polyline(window, &drawn, px(1.5), theme.accent);
-        for held in points {
+        for held in visible {
             let centre = at(held.at, held.value);
             paint::rounded_rect(
                 window,
@@ -2228,11 +2251,13 @@ impl AurisApp {
         let Some(held) = self.session.midi_clip(clip) else {
             return;
         };
-        let (clip_start, points) = (held.start, held.curve(which).to_vec());
+        let (clip_start, clip_length, points) =
+            (held.start, held.length, held.curve(which).to_vec());
         let raw = self.timeline.x_to_tick(event.position.x - bounds.origin.x);
         let at = (self.snap_unless_held(raw, event.modifiers) - clip_start).max_zero();
         let grabbed = curve_point_at(
             &points,
+            clip_length,
             (raw - clip_start).max_zero(),
             curve_grab_radius(&self.timeline),
         );
@@ -2304,6 +2329,18 @@ mod tests {
     }
 
     #[test]
+    fn ornament_hit_testing_matches_the_drawn_square() {
+        assert!(within_ornament_handle(3.0, -3.0));
+        assert!(!within_ornament_handle(3.1, 0.0));
+        assert!(!within_ornament_handle(0.0, -3.1));
+    }
+
+    #[test]
+    fn phoneme_hit_slack_is_the_drawn_half_width() {
+        assert_eq!(PHONEME_GRAB_HALF * 2.0, PHONEME_GRAB);
+    }
+
+    #[test]
     fn a_boundary_grab_answers_the_phoneme_and_ignores_the_edges() {
         let mut note = Note::new(60, Ticks::ZERO, Ticks::from_beats(1.0));
         note.phonemes = vec!["k".to_string(), "a".to_string()];
@@ -2342,6 +2379,14 @@ mod tests {
         assert_eq!(
             grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.2, 0.01, None),
             Some((0, 1.0))
+        );
+        // When generous pointer slack reaches two cuts, the cut nearest the pointer wins rather
+        // than whichever phoneme happened to come first in the note.
+        note.phonemes = vec!["k".to_string(), "a".to_string(), "i".to_string()];
+        note.phoneme_seconds = vec![0.1, 0.1, 0.0];
+        assert_eq!(
+            grabbed_phoneme_boundary(&note, 1.0, 1.5, 1.19, 0.1, None),
+            Some((1, 1.1))
         );
         // One phoneme has no cut to move.
         note.phonemes = vec!["a".to_string()];
@@ -2722,26 +2767,31 @@ mod curve_tests {
         ];
         let radius = Ticks(40);
         assert_eq!(
-            curve_point_at(&points, Ticks(480), radius),
+            curve_point_at(&points, Ticks(2_000), Ticks(480), radius),
             Some(Ticks(480))
         );
         assert_eq!(
-            curve_point_at(&points, Ticks(500), radius),
+            curve_point_at(&points, Ticks(2_000), Ticks(500), radius),
             Some(Ticks(480)),
             "just inside the zone"
         );
         assert_eq!(
-            curve_point_at(&points, Ticks(600), radius),
+            curve_point_at(&points, Ticks(2_000), Ticks(600), radius),
             None,
             "the line between two points belongs to neither"
         );
         // Nearest rather than first, so two points dragged close together still resolve to the
         // one under the pointer.
         assert_eq!(
-            curve_point_at(&points, Ticks(700), Ticks(400)),
+            curve_point_at(&points, Ticks(2_000), Ticks(700), Ticks(400)),
             Some(Ticks(480))
         );
-        assert_eq!(curve_point_at(&[], Ticks(0), radius), None);
+        assert_eq!(curve_point_at(&[], Ticks(2_000), Ticks(0), radius), None);
+        assert_eq!(
+            curve_point_at(&points, Ticks(700), Ticks(960), radius),
+            None,
+            "a point past a shortened clip is not interactive"
+        );
     }
 
     #[test]
@@ -2780,12 +2830,12 @@ mod curve_tests {
         }];
         let radius = curve_grab_radius(&five_bars_in);
         assert_eq!(
-            curve_point_at(&points, Ticks::ZERO, radius),
+            curve_point_at(&points, Ticks::QUARTER, Ticks::ZERO, radius),
             Some(Ticks::ZERO),
             "a press on the point itself still takes hold of it",
         );
         assert_eq!(
-            curve_point_at(&points, Ticks(TICKS_PER_QUARTER), radius),
+            curve_point_at(&points, Ticks::QUARTER, Ticks(TICKS_PER_QUARTER), radius,),
             None,
             "a beat away is empty strip, and a press there writes a point of its own",
         );

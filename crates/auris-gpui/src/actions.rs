@@ -51,8 +51,6 @@ actions!(
         ShowAbout,
         /// Start or stop playback.
         TogglePlay,
-        /// Stop playback and return to the start.
-        StopPlayback,
         /// Move the playhead to the beginning.
         ReturnToZero,
         /// Move the playhead one grid division earlier.

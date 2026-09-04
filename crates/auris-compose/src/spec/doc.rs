@@ -245,7 +245,13 @@ where
     Ok(match Option::<Either>::deserialize(deserializer)? {
         None => None,
         Some(Either::List(list)) => Some(list),
-        Some(Either::Words(words)) => Some(words.split_whitespace().map(str::to_string).collect()),
+        Some(Either::Words(words)) => Some(
+            words
+                .split(|character: char| character.is_whitespace() || character == ',')
+                .filter(|word| !word.is_empty())
+                .map(str::to_string)
+                .collect(),
+        ),
     })
 }
 
@@ -311,6 +317,12 @@ struct SongDoc {
         skip_serializing_if = "Option::is_none"
     )]
     form: Option<Vec<String>>,
+    #[serde(
+        default,
+        deserialize_with = "words_or_list",
+        skip_serializing_if = "Option::is_none"
+    )]
+    chart_order: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     harmony: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -568,6 +580,12 @@ impl SongDoc {
             }
         }
         for (name, text) in &self.harmony {
+            if name == "main" && self.chords.is_some() {
+                errors.push(SpecError::about(
+                    "`chords` and `harmony.main` both define the `main` chart",
+                ));
+                continue;
+            }
             match read_chart(text) {
                 Some(chart) => {
                     spec.charts.insert(name.clone(), chart);
@@ -581,6 +599,7 @@ impl SongDoc {
         // A document that declares any section or part replaces the defaults entirely rather
         // than adding to them: a roster half inherited from a default is impossible to reason
         // about.
+        let declared_sections: Vec<String> = self.section.keys().cloned().collect();
         if !self.section.is_empty() {
             spec.sections = self
                 .section
@@ -616,6 +635,28 @@ impl SongDoc {
                 .entry(name.clone())
                 .or_insert_with(|| SectionSpec::named(name));
         }
+        for name in declared_sections {
+            if !spec.form.contains(&name) {
+                errors.push(SpecError::about(format!(
+                    "section `{name}` is described but is not named in the form"
+                )));
+            }
+        }
+        let requested_order = self.chart_order.unwrap_or_default();
+        let mut chart_order = Vec::new();
+        if spec.charts.contains_key("main") {
+            chart_order.push("main".to_string());
+        }
+        for name in requested_order.iter().chain(spec.charts.keys()) {
+            if !spec.charts.contains_key(name) {
+                errors.push(SpecError::about(format!(
+                    "chart_order names `{name}`, which is not a chart"
+                )));
+            } else if !chart_order.contains(name) {
+                chart_order.push(name.clone());
+            }
+        }
+        spec.chart_order = chart_order;
         if spec.form.is_empty() {
             errors.push(SpecError::about(
                 "the form is empty, so there is nothing to write",
@@ -656,10 +697,15 @@ impl SongDoc {
                     continue;
                 };
                 if tweak.note.is_some() && played.role.drum_voice().is_none() {
+                    let source = if played.role == Role::Riser {
+                        "whose pitch is fixed"
+                    } else {
+                        "whose notes come from the harmony"
+                    };
                     errors.push(SpecError::about(format!(
-                        "section `{name}`, part `{part}` plays {}, whose notes come from the \
-                         harmony; `note` is for a drum part, which strikes one",
-                        played.role.name()
+                        "section `{name}`, part `{part}` plays {}, {source}; `note` is for a drum \
+                         part, which strikes one",
+                        played.role.name(),
                     )));
                 }
             }
@@ -841,10 +887,14 @@ impl PartDoc {
                 // Not a warning to be ignored: a pitched part draws its notes from the harmony,
                 // so a `note` on one is an instruction that would have been silently dropped —
                 // and the person who wrote it would go looking for why the melody ignored them.
+                let source = if part.role == Role::Riser {
+                    "whose pitch is fixed"
+                } else {
+                    "whose notes come from the harmony"
+                };
                 errors.push(SpecError::about(format!(
-                    "part `{name}` plays {}, whose notes come from the harmony; `note` is for a \
-                     drum part, which strikes one",
-                    part.role.name()
+                    "part `{name}` plays {}, {source}; `note` is for a drum part, which strikes one",
+                    part.role.name(),
                 )));
             } else {
                 part.note = Some(note);
@@ -893,6 +943,7 @@ impl From<&SongSpec> for SongDoc {
             // Written under `[harmony]`, which can hold all of them rather than only `main`.
             chords: None,
             form: (spec.form != plain.form).then(|| spec.form.clone()),
+            chart_order: (spec.chart_order != plain.chart_order).then(|| spec.chart_order.clone()),
             harmony: spec
                 .charts
                 .iter()

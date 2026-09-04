@@ -632,13 +632,19 @@ impl AudioClip {
                 .fade_in_curve
                 .gain_in(position as f32 / self.fade_in_frames as f32);
         }
-        if self.fade_out_frames > 0 {
-            let fade_start = self.length_frames.saturating_sub(self.fade_out_frames);
+        // Project files and external callers can construct clips without going through the
+        // session mutator that keeps the two fades disjoint. Enforce that invariant where the
+        // curves are evaluated so crossed fades never multiply into an unintended dip.
+        let fade_out_frames = self
+            .fade_out_frames
+            .min(self.length_frames.saturating_sub(self.fade_in_frames));
+        if fade_out_frames > 0 {
+            let fade_start = self.length_frames.saturating_sub(fade_out_frames);
             if position >= fade_start {
                 let into_fade = position - fade_start;
                 gain *= self
                     .fade_out_curve
-                    .gain_out(into_fade as f32 / self.fade_out_frames as f32);
+                    .gain_out(into_fade as f32 / fade_out_frames as f32);
             }
         }
         gain
@@ -768,6 +774,15 @@ mod fade_tests {
         let clip = faded(0, 0, FadeCurve::EqualPower);
         assert_eq!(clip.fade_gain_at(0), 1.0);
         assert_eq!(clip.fade_gain_at(99), 1.0);
+    }
+
+    #[test]
+    fn overlapping_fades_are_clamped_before_they_are_evaluated() {
+        let clip = faded(80, 80, FadeCurve::Linear);
+
+        assert!((clip.fade_gain_at(50) - 0.625).abs() < 1e-6);
+        assert_eq!(clip.fade_gain_at(80), 1.0);
+        assert!((clip.fade_gain_at(90) - 0.5).abs() < 1e-6);
     }
 }
 
@@ -1038,8 +1053,8 @@ impl Project {
         let seconds =
             self.tempo_map.ticks_to_seconds(at).0 - self.tempo_map.ticks_to_seconds(clip.start).0;
         let stretch = clip.stretch_in(&self.tempo_map);
-        let frames =
-            ((seconds * self.sample_rate / stretch) as u64).clamp(1, clip.length_frames - 1);
+        let frames = ((seconds * self.sample_rate / stretch).round() as u64)
+            .clamp(1, clip.length_frames - 1);
 
         let mut right = clip.clone();
         right.id = ClipId(self.allocate_id());

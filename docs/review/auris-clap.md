@@ -12,10 +12,10 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-100 | high | `crates/auris-clap/src/bridge.rs:244` | A parameter write's `changed` flag is cleared via mem::take before delivery is confirmed, so it is lost forever if `ensure_processing_started()` fails that […] |
 | ✅ F-106 | high | `crates/auris-clap/src/ports.rs:110` | Unbounded plugin-reported port/channel/parameter counts size Vec allocations with no cap, letting a buggy or malicious CLAP plugin crash the whole DAW via an […] |
 | ✅ F-330 | high | `crates/auris-clap/src/plugin.rs:796` | Hosted CLAP stepped/enum parameters get ParamUnit::Choice with an empty `choices` list, so their picker menu renders with zero selectable options. |
-| F-122 | medium | `crates/auris-clap/src/window/cocoa.rs:123` | `ClapPlugin::open_gui` is a safe fn that lets any caller trigger UB in `owning_window`'s unchecked NSView pointer deref via an arbitrary RawWindowHandle. |
-| F-177 | medium | `crates/auris-clap/src/tests.rs:246` | `dropping_a_plugin_closes_the_window_it_left_open` has no assertion after `drop(plugin)`, so it cannot detect a regression in window teardown. |
-| F-242 | low | `crates/auris-clap/src/bridge.rs:281` | Hosted CLAP plugin output events (e.g. generated notes) are collected in bridge.rs then discarded, but auris-core's Effect/Instrument::process has no channel […] |
-| F-308 | low | `crates/auris-clap/src/plugin.rs:327` | open_gui's `.expect("a plan implies the extension")` can panic and crash the app if a CLAP plugin answers get_extension("clap.gui") inconsistently across three […] |
+| ✅ F-122 | medium | `crates/auris-clap/src/window/cocoa.rs:123` | `ClapPlugin::open_gui` is a safe fn that lets any caller trigger UB in `owning_window`'s unchecked NSView pointer deref via an arbitrary RawWindowHandle. |
+| ✅ F-177 | medium | `crates/auris-clap/src/tests.rs:246` | `dropping_a_plugin_closes_the_window_it_left_open` has no assertion after `drop(plugin)`, so it cannot detect a regression in window teardown. |
+| ✅ F-242 | low | `crates/auris-clap/src/bridge.rs:281` | Hosted CLAP plugin output events (e.g. generated notes) are collected in bridge.rs then discarded, but auris-core's Effect/Instrument::process has no channel […] |
+| ✅ F-308 | low | `crates/auris-clap/src/plugin.rs:327` | open_gui's `.expect("a plan implies the extension")` can panic and crash the app if a CLAP plugin answers get_extension("clap.gui") inconsistently across three […] |
 
 ### ✅ F-005 · critical · Offline export activates hosted CLAP plugins at the live 512-frame block size while the offline renderer defaults to 1024-frame blocks, silently leaving roughly half of every exported block unprocessed.
 
@@ -113,7 +113,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** /// Labels for a [`ParamUnit::Choice`] parameter, in value order. (crates/auris-core/src/param.rs:106) — every other producer of ParamUnit::Choice (`ParamDescriptor::with_choices`) keeps `choices.len() == steps`; auris-clap's `describe()` is the only Choice producer that sets `unit: Choice` without populating `choices`.
 
-### F-122 · medium · `ClapPlugin::open_gui` is a safe fn that lets any caller trigger UB in `owning_window`'s unchecked NSView pointer deref via an arbitrary RawWindowHandle.
+### ✅ F-122 · medium · `ClapPlugin::open_gui` is a safe fn that lets any caller trigger UB in `owning_window`'s unchecked NSView pointer deref via an arbitrary RawWindowHandle.
 
 `crates/auris-clap/src/window/cocoa.rs:123` · security · confirmed (traced through the code; reported independently 1×)
 
@@ -129,7 +129,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** unsafe fn` is how this crate marks a caller-must-uphold-invariant boundary elsewhere in the same crate (`ClapLibrary::load`, library.rs:77), but `open_gui`'s own doc block titled "# Safety of the parent handle" (plugin.rs:293-299) documents only the outgoing handle, never the incoming `parent`'s validity — leaving the actual precondition unstated and unenforced by the type system.
 
-### F-177 · medium · `dropping_a_plugin_closes_the_window_it_left_open` has no assertion after `drop(plugin)`, so it cannot detect a regression in window teardown.
+### ✅ F-177 · medium · `dropping_a_plugin_closes_the_window_it_left_open` has no assertion after `drop(plugin)`, so it cannot detect a regression in window teardown.
 
 `crates/auris-clap/src/tests.rs:246` · test-quality · confirmed (executed reproduction; reported independently 1×)
 
@@ -151,7 +151,7 @@ There is no `assert` of any kind. The name promises the window is closed, but th
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
 
-### F-242 · low · Hosted CLAP plugin output events (e.g. generated notes) are collected in bridge.rs then discarded, but auris-core's Effect/Instrument::process has no channel to carry them onward regardless.
+### ✅ F-242 · low · Hosted CLAP plugin output events (e.g. generated notes) are collected in bridge.rs then discarded, but auris-core's Effect/Instrument::process has no channel to carry them onward regardless.
 
 `crates/auris-clap/src/bridge.rs:281` · architecture · confirmed (traced through the code; reported independently 1×)
 
@@ -165,7 +165,7 @@ There is no `assert` of any kind. The name promises the window is closed, but th
 
 **Fix direction.** Add a note-output channel to auris_core::plugin::Effect/Instrument (process() would need to return or append generated NoteEvents somewhere the engine can route onward) before bridge.rs's replies buffer becomes useful; reading replies in isolation in auris-clap cannot fix anything because there is nowhere in the workspace for those events to go. If note-output support is out of scope for now, the right small fix is just a doc comment on `replies`/`event_replies` in bridge.rs noting plugin-generated output events are intentionally discarded pending a note-output path in auris-core, so the gap is documented rather than silently assumed handled.
 
-### F-308 · low · open_gui's `.expect("a plan implies the extension")` can panic and crash the app if a CLAP plugin answers get_extension("clap.gui") inconsistently across three uncached queries.
+### ✅ F-308 · low · open_gui's `.expect("a plan implies the extension")` can panic and crash the app if a CLAP plugin answers get_extension("clap.gui") inconsistently across three uncached queries.
 
 `crates/auris-clap/src/plugin.rs:327` · correctness · confirmed (executed reproduction; reported independently 1×)
 

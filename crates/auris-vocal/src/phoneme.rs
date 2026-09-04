@@ -13,11 +13,14 @@
 /// exactly such a pipeline.
 pub const SILENCE: &str = "sil";
 
-/// The vowels of the vocabulary's Japanese core.
+/// The vowels reserved by the shared multilingual IPA vocabulary.
 ///
 /// [`is_syllabic`] is the query everything asks; this list is public only so a test can say
 /// "every vowel" without copying it.
-pub const VOWELS: [&str; 5] = ["a", "i", "ɯ", "e", "o"];
+pub const VOWELS: [&str; 20] = [
+    "a", "i", "ɯ", "e", "o", "u", "ɨ", "ə", "ɛ", "ɔ", "æ", "ʌ", "ɑ", "ɒ", "ʊ", "ɪ", "y", "ø", "œ",
+    "ɐ",
+];
 
 /// `true` for a phoneme that can be stretched to fill a note.
 ///

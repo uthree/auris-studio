@@ -398,6 +398,7 @@ impl AurisApp {
                                         event.position.x - origin.x,
                                         event.position.y - origin.y,
                                     ),
+                                    pressed_at: Some(event.position),
                                 });
                             }),
                         )
@@ -405,6 +406,7 @@ impl AurisApp {
                             gpui::SharedString::from(format!("{}-bypass", subject.id_prefix())),
                             name,
                             enabled,
+                            matches!(subject, PluginSubject::Insert { .. }),
                             self.t(if enabled { Key::ValueOn } else { Key::ValueOff }),
                             &theme,
                             cx.listener(move |this, _, _, cx| {

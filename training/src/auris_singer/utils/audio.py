@@ -1,8 +1,8 @@
 """Spectrogram / mel / energy front-end.
 
 All framing follows the VITS convention: the waveform is reflection-padded by
-``(n_fft - hop_length) // 2`` on both sides and analysed with ``center=False``,
-so a waveform of ``L`` samples yields exactly ``L // hop_length`` frames.  This
+``n_fft - hop_length`` samples in total and analysed with ``center=False``, so
+a waveform of ``L`` samples yields exactly ``L // hop_length`` frames. This
 keeps spectrograms, f0 and energy on a single shared frame grid.
 """
 
@@ -62,11 +62,13 @@ def _mel_basis(
 
 
 def _pad_for_stft(wav: torch.Tensor, n_fft: int, hop_length: int) -> torch.Tensor:
-    pad = (n_fft - hop_length) // 2
+    total_pad = n_fft - hop_length
+    left = total_pad // 2
+    right = total_pad - left
     # Reflection requires the input to be strictly longer than either pad.  A one-frame clip is
     # still a valid feature input, so extend its edge instead of aborting the whole preprocess.
-    mode = "reflect" if wav.shape[-1] > pad else "replicate"
-    return torch.nn.functional.pad(wav.unsqueeze(1), (pad, pad), mode=mode).squeeze(1)
+    mode = "reflect" if wav.shape[-1] > max(left, right) else "replicate"
+    return torch.nn.functional.pad(wav.unsqueeze(1), (left, right), mode=mode).squeeze(1)
 
 
 def spectrogram(

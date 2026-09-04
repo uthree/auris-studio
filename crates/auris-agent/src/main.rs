@@ -24,6 +24,7 @@
 #![warn(missing_docs)]
 
 use std::io::{BufRead, Write};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use auris_toolbox as toolbox;
@@ -495,6 +496,7 @@ const MODEL_LIST_PATIENCE: std::time::Duration = std::time::Duration::from_secs(
 /// desktop panel still needs a stalled provider to become an error rather than a permanent
 /// spinner.
 const CONVERSATION_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+const MODEL_DETAIL_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The work behind `auris-agent models`: ask the provider what it serves, answer as one
 /// JSON line — `{"models": [{"name", "context_length"}, …]}`.
@@ -536,6 +538,7 @@ async fn list_models(options: &Options) -> Result<String, String> {
                 .and_then(|models| models.as_array())
                 .ok_or("no models in Ollama's answer")?;
             let mut models = Vec::new();
+            let mut details = tokio::task::JoinSet::new();
             for entry in listed {
                 let Some(name) = entry.get("name").and_then(|name| name.as_str()) else {
                     continue;
@@ -543,26 +546,58 @@ async fn list_models(options: &Options) -> Result<String, String> {
                 // Newer servers put the window in the tags themselves; for the rest it is in
                 // `/api/show`, under the architecture's own key — found by suffix, because the
                 // prefix is the architecture's name.
-                let mut window = entry
+                let window = entry
                     .get("details")
                     .and_then(|details| details.get("context_length"))
                     .and_then(|window| window.as_u64());
-                if window.is_none()
-                    && let Ok(shown) = ask(http
-                        .post(format!("{base}/api/show"))
-                        .json(&serde_json::json!({ "model": name })))
-                    .await
-                {
-                    window = shown
-                        .get("model_info")
-                        .and_then(|info| info.as_object())
-                        .and_then(|info| {
-                            info.iter()
-                                .find(|(key, _)| key.ends_with(".context_length"))
-                                .and_then(|(_, value)| value.as_u64())
-                        });
+                if window.is_none() {
+                    let http = http.clone();
+                    let base = base.to_string();
+                    let key = key.clone();
+                    let name = name.to_string();
+                    details.spawn(async move {
+                        let request = http
+                            .post(format!("{base}/api/show"))
+                            .json(&serde_json::json!({ "model": name }));
+                        let request = if key.is_empty() {
+                            request
+                        } else {
+                            request.bearer_auth(key)
+                        };
+                        let shown = tokio::time::timeout(MODEL_DETAIL_PATIENCE, async {
+                            request
+                                .send()
+                                .await
+                                .map_err(|error| error.to_string())?
+                                .json::<serde_json::Value>()
+                                .await
+                                .map_err(|error| error.to_string())
+                        })
+                        .await
+                        .ok()
+                        .and_then(Result::ok);
+                        let window = shown
+                            .as_ref()
+                            .and_then(|shown| shown.get("model_info"))
+                            .and_then(|info| info.as_object())
+                            .and_then(|info| {
+                                info.iter()
+                                    .find(|(key, _)| key.ends_with(".context_length"))
+                                    .and_then(|(_, value)| value.as_u64())
+                            });
+                        (name, window)
+                    });
                 }
                 models.push(serde_json::json!({ "name": name, "context_length": window }));
+            }
+            while let Some(Ok((name, window))) = details.join_next().await {
+                if let Some(window) = window
+                    && let Some(model) = models.iter_mut().find(|model| {
+                        model.get("name").and_then(|value| value.as_str()) == Some(&name)
+                    })
+                {
+                    model["context_length"] = serde_json::json!(window);
+                }
             }
             models
         }
@@ -598,6 +633,49 @@ async fn list_models(options: &Options) -> Result<String, String> {
 /// belongs to the model's words alone.
 struct Narrator;
 
+/// Resolves the nearest existing ancestor so a new output cannot escape through `..` or through
+/// a symlink that already exists below the working directory.
+fn confined_to_working_directory(path: &Path) -> bool {
+    let Ok(root) = std::env::current_dir().and_then(std::fs::canonicalize) else {
+        return false;
+    };
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    };
+    let mut existing = candidate.as_path();
+    while !existing.exists() {
+        let Some(parent) = existing.parent() else {
+            return false;
+        };
+        existing = parent;
+    }
+    std::fs::canonicalize(existing).is_ok_and(|ancestor| ancestor.starts_with(&root))
+}
+
+/// Refuses model-selected write destinations outside the directory the user launched the agent
+/// in. Project contents are untrusted context; they must not be able to turn an inspection into
+/// an arbitrary filesystem write.
+fn write_destination(tool: &str, args: &str) -> Result<(), String> {
+    if !toolbox::WRITES_PROJECTS.contains(&tool) {
+        return Ok(());
+    }
+    let parsed: serde_json::Value = serde_json::from_str(args)
+        .map_err(|_| "the tool arguments were not valid JSON".to_string())?;
+    for field in ["project", "output", "stems"] {
+        let Some(path) = parsed.get(field).and_then(|value| value.as_str()) else {
+            continue;
+        };
+        if !confined_to_working_directory(&PathBuf::from(path)) {
+            return Err(format!(
+                "refused `{field}` outside the agent's working directory: {path}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The first line of a tool's answer, for the narration.
 fn first_line(output: &ToolOutput) -> Option<&str> {
     output
@@ -620,7 +698,10 @@ impl AgentHook for Narrator {
             ""
         };
         eprintln!("→ {} {args}{ellipsis}", event.tool_name);
-        ToolCallAction::Run
+        match write_destination(event.tool_name, event.args) {
+            Ok(()) => ToolCallAction::Run,
+            Err(reason) => ToolCallAction::Skip(reason),
+        }
     }
 
     async fn on_tool_result(
@@ -798,7 +879,10 @@ impl AgentHook for Reporter {
         emit(serde_json::json!({
             "event": "call", "tool": event.tool_name, "args": event.args,
         }));
-        ToolCallAction::Run
+        match write_destination(event.tool_name, event.args) {
+            Ok(()) => ToolCallAction::Run,
+            Err(reason) => ToolCallAction::Skip(reason),
+        }
     }
 
     async fn on_tool_result(

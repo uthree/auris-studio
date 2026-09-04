@@ -374,7 +374,7 @@ the widths:
 | `unit` | always `"db"`: decibels against the first vowel after the phoneme |
 | `measured_from` | free text naming the corpus and label set |
 | `speakers` | one table per speaker, keyed by the name `speaker_to_id` gives the speaker |
-| `speakers.*.default` | the level for a consonant not named in `db` — the pooled median, a consonant's level, never 0 dB |
+| `speakers.*.default` | the level for a consonant not named in `db` — the pooled median, or −12 dB when the corpus has no measurable consonants; never 0 dB |
 | `speakers.*.db` | IPA symbol → level, quietest first |
 | `speakers.*.counts` | how many occurrences each median came from |
 
@@ -431,7 +431,6 @@ UI can rely on:
 {
   "name": "波音リツ",
   "description": "Strong low-range female voice. 107 songs, 4.4 h.",
-  "author": "...",
   "version": "1.0",
   "license": "Namine Ritsu singing DB terms; fine-tuning to other voices prohibited",
   "credits": ["波音リツ", "カノン"],

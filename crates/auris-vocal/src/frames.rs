@@ -314,7 +314,10 @@ fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNot
         .enumerate()
         .map(|(at, (_, end, _))| match placed.get(at + 1) {
             // The later note cuts the earlier one off at its own start: one voice, one note.
-            Some((next_start, _, _)) => (*end).min(*next_start),
+            Some((next_start, _, _)) if *next_start > placed[at].0 => (*end).min(*next_start),
+            // Simultaneous starts are a tie, not a "later" note. Keep both timed notes; their
+            // end ordering makes the shorter one sound first and hand over to the longer one.
+            Some(_) => *end,
             None => *end,
         })
         .collect();

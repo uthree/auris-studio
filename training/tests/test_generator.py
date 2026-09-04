@@ -61,6 +61,11 @@ def test_upsample_rates_must_multiply_to_hop_length():
         build(upsample_rates=(6, 5, 4), upsample_kernel_sizes=(12, 10, 8))
 
 
+def test_stride_one_rejects_an_invalid_output_padding():
+    with pytest.raises(ValueError, match="output_padding"):
+        build(hop_length=1, upsample_rates=(1,), upsample_kernel_sizes=(2,))
+
+
 def test_f0_changes_the_output():
     """f0 reaches the decoder only through the source signal, so it must matter."""
     torch.manual_seed(0)

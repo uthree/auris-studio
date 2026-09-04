@@ -144,8 +144,11 @@ impl Session {
     /// What sounded at `to` still sounds there: clearing the middle of a song does not silence
     /// the end of it.
     pub fn clear_harmony(&mut self, from: Ticks, to: Ticks) {
-        self.record(Edit::ClearHarmony);
         let (from, to) = (self.snap_harmony(from), self.snap_harmony(to));
+        if from >= to {
+            return;
+        }
+        self.record(Edit::ClearHarmony);
         self.project.harmony.clear(from, to);
     }
 
@@ -156,6 +159,9 @@ impl Session {
     /// are three lots of 1280 ticks, which is not a grid position and must not be rounded to one.
     /// A stamp is a division of a bar; a drag is an edit on the grid.
     pub fn stamp_progression(&mut self, chart: &Chart, from: Ticks, bars: usize) -> usize {
+        if bars == 0 {
+            return 0;
+        }
         self.record(Edit::StampProgression);
         let from = self.snap_harmony(from);
         // The meter the chart begins in: a progression was written in bars of one meter, and a

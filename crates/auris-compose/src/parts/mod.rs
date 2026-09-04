@@ -187,7 +187,8 @@ pub fn write_parts(settings: &ScoreSettings, roster: &[PartSpec], frame: &Frame)
                 };
                 draft.notes.extend(notes);
             }
-            shorten(&played, &mut draft.notes);
+            let coda: Vec<bool> = frame.sections.iter().map(|section| section.coda).collect();
+            shorten(&played, &coda, &mut draft.notes);
             swing(settings, frame, &played, &mut draft.notes);
             draft
                 .notes
@@ -216,12 +217,13 @@ const MIN_GATE: f32 = 0.05;
 ///
 /// `played` is the part as each section plays it, so a gate a section patches reaches the notes of
 /// that section and no others.
-fn shorten(played: &[PartSpec], notes: &mut [Draft]) {
+fn shorten(played: &[PartSpec], coda: &[bool], notes: &mut [Draft]) {
     for note in notes.iter_mut() {
         let Some(part) = played.get(note.section) else {
             continue;
         };
-        if part.role.is_drum() || part.role == Role::Riser {
+        if part.role.is_drum() || part.role == Role::Riser || coda.get(note.section) == Some(&true)
+        {
             continue;
         }
         let gate = part.gate.clamp(MIN_GATE, 1.0);
@@ -921,7 +923,7 @@ mod tests {
             length: Ticks(1_920),
         }];
 
-        shorten(&[part], &mut notes);
+        shorten(&[part], &[false], &mut notes);
 
         assert_eq!(notes[0].start + notes[0].length, Ticks(1_920));
     }

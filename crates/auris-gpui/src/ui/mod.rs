@@ -1,8 +1,8 @@
 //! Views that make up the DAW window.
 //!
-//! Every module here adds `impl` blocks to [`crate::app::AurisApp`] rather than defining its own
-//! gpui entity: the panels all read the same project, selection and engine handle, and one owner
-//! of that state is simpler than synchronising several.
+//! The panel modules add `impl` blocks to [`crate::app::AurisApp`] rather than defining their own
+//! gpui entities: one owner is simpler than synchronising the shared project and engine state.
+//! [`tooltip`] is the intentional standalone view needed by gpui's tooltip API.
 
 pub mod agent_chat;
 pub mod analyser;

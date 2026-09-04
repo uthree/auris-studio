@@ -97,6 +97,16 @@ impl Render for AurisApp {
 
         let theme = self.theme.clone();
         let menu_bar = self.render_menu_bar(window, cx);
+        let menu_bar_dismissal = self.menu_bar.is_some().then(|| {
+            div().absolute().inset_0().occlude().on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
+                    this.close_menu_bar();
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            )
+        });
         let transport = self.render_transport(window, cx);
         let arrangement = self.render_arrangement(window, cx);
         let plugin_window = self.render_plugin_window(window.viewport_size(), cx);
@@ -143,7 +153,6 @@ impl Render for AurisApp {
             .font(crate::theme::ui_font())
             .text_sm()
             .on_action(cx.listener(Self::on_toggle_play))
-            .on_action(cx.listener(Self::on_stop))
             .on_action(cx.listener(Self::on_return_to_zero))
             .on_action(cx.listener(Self::on_toggle_loop))
             .on_action(cx.listener(Self::on_toggle_metronome))
@@ -238,18 +247,6 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_open_menu_bar))
             .on_action(cx.listener(Self::on_focus_next_pane))
             .on_action(cx.listener(Self::on_focus_previous_pane))
-            // A click anywhere else dismisses an open menu-bar menu, the way a native menu bar
-            // behaves. Capture phase, so it is seen even where a panel stops the event before it
-            // reaches the root — but not over the bar itself, which decides for itself whether a
-            // click is opening a menu or toggling one shut and needs the state this would clear.
-            .capture_any_mouse_down(cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
-                if event.position.y <= crate::ui::menu_bar::HEIGHT {
-                    return;
-                }
-                if this.close_menu_bar() {
-                    cx.notify();
-                }
-            }))
             // Drags are tracked on the root so they keep working after the pointer leaves the
             // control that started them, which is what makes a fader usable.
             .on_mouse_move(cx.listener(Self::on_mouse_move))
@@ -261,6 +258,7 @@ impl Render for AurisApp {
             .on_mouse_up_out(gpui::MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_key_up(cx.listener(Self::on_key_up))
+            .children(menu_bar_dismissal)
             .children(menu_bar)
             .child(transport)
             .child(
@@ -751,7 +749,7 @@ impl AurisApp {
                 grab_offset,
                 ref origins,
                 ref origin_lanes,
-                grab_lane,
+                grab_track,
                 pressed_at,
             } => {
                 // A press that has not travelled is a selection, not a move. Without this a
@@ -783,7 +781,7 @@ impl AurisApp {
                 // selection shifts, so a pair of clips on adjacent tracks stays a pair.
                 let lanes = origin_lanes.clone();
                 if let Some((under, _)) = self.track_at_y(self.lane_y(event.position.y)) {
-                    self.move_clips_by_lane(&lanes, grab_lane, under);
+                    self.move_clips_by_lane(&lanes, grab_track, under);
                 }
             }
             Drag::ClipResize { clip, edge } => {
@@ -845,7 +843,19 @@ impl AurisApp {
                     let _ = self.session.move_track(track, to);
                 }
             }
-            Drag::ClipFade { clip, edge } => {
+            Drag::ClipFade {
+                clip,
+                edge,
+                pressed_at,
+            } => {
+                if let Some(from) = pressed_at {
+                    if !past_drag_threshold(from, event.position) {
+                        return;
+                    }
+                    if let Some(Drag::ClipFade { pressed_at, .. }) = &mut self.drag {
+                        *pressed_at = None;
+                    }
+                }
                 // Unsnapped on purpose: a fade is shaped by ear against the waveform, and no
                 // grid position has anything to do with where a breath ends.
                 let x = event.position.x - self.lanes_origin().x;
@@ -1081,7 +1091,18 @@ impl AurisApp {
                 let delta = f64::from(f32::from(event.position.x - start_x)) * 0.25;
                 self.session.set_tempo_at(at, start_bpm + delta);
             }
-            Drag::MovePluginWindow { grab_offset } => {
+            Drag::MovePluginWindow {
+                grab_offset,
+                pressed_at,
+            } => {
+                if let Some(from) = pressed_at {
+                    if !past_drag_threshold(from, event.position) {
+                        return;
+                    }
+                    if let Some(Drag::MovePluginWindow { pressed_at, .. }) = &mut self.drag {
+                        *pressed_at = None;
+                    }
+                }
                 if let Some(window) = self.plugin_window.as_mut() {
                     window.anchor = gpui::point(
                         event.position.x - grab_offset.x,
@@ -1164,9 +1185,9 @@ impl AurisApp {
             || self.lyrics_key(event, cx)
             || self.menu_key(event, window, cx)
             || self.menu_bar_key(event, window, cx)
-            // Last, because everything above it is in front of the browser on the screen and
-            // has to answer for a key first.
             || self.library_search_key(event)
+            // Last, because everything above it is in front of the agent field on the screen and
+            // has to answer for a key first.
             || self.agent_key(event)
         {
             cx.stop_propagation();
@@ -1423,11 +1444,6 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.toggle_play();
-        cx.notify();
-    }
-
-    fn on_stop(&mut self, _: &actions::StopPlayback, _window: &mut Window, cx: &mut Context<Self>) {
-        self.session.stop();
         cx.notify();
     }
 

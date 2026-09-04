@@ -20,17 +20,17 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-141 | medium | `crates/auris-compose/src/spec/mod.rs:171` | PartSpec::range() can return bounds outside 0..127 for a legal octave, causing notes near the register extreme to silently collapse onto MIDI pitch 127 or 0. |
 | ✅ F-153 | medium | `crates/auris-compose/src/spec/doc.rs:110` | SongSpec::to_toml() writes every top-level field unconditionally, contradicting its own "only what differs from a default" doc comment. |
 | ✅ F-164 | medium | `crates/auris-compose/src/parts/mod.rs:219` | Setting `gate` on a riser part lets `shorten()` cut the swell's note-off before the join tick, undoing `riser()`'s exact-timing guarantee. |
-| F-209 | medium | `crates/auris-compose/src/render.rs:312` | clips_of silently drops swing-delayed notes past a section boundary instead of clamping them, contradicting its own adjacent comment. |
-| F-230 | medium | `crates/auris-compose/src/spec/doc.rs:838` | Riser's `note` rejection error wrongly claims its pitch "comes from the harmony," though Riser's pitch is a hardcoded constant, not harmony-derived. |
-| F-231 | medium | `crates/auris-compose/src/parts/arp.rs:110` | arp()'s procedural path drops all notes for a chord event shorter than one arp step (count==0), unlike bass/comp's guaranteed onset-0 guard. |
-| F-357 | medium | `crates/auris-compose/src/spec/mod.rs:373` | SectionSpec::named matches section names case-sensitively, unlike every sibling vocabulary parser, so `[section.Chorus]` silently falls back to the generic […] |
-| F-378 | medium | `crates/auris-compose/src/spec/doc.rs:248` | A misspelled or comma-mangled `form` entry silently auto-vivifies a phantom section and orphans the real configured section, with no `SpecError` raised. |
-| F-379 | medium | `crates/auris-compose/src/parts/coda.rs:118` | coda()'s "held" ending note is silently re-shortened by shorten() to the part's gate fraction whenever gate < 1.0, cutting the final chord off early. |
-| F-387 | medium | `crates/auris-compose/src/parts/comp.rs:321` | A pushed Held-figure chord is struck at 0.9x velocity instead of the intended 0.7x held multiplier, an unintended ~29% loudness jump. |
-| F-400 | medium | `crates/auris-compose/src/spec/doc.rs:564` | Top-level `chords` and a `[harmony].main` entry silently collide (last-write-wins) in SongDoc::into_spec, contradicting the doc comment's "keeps both" claim, […] |
-| F-263 | low | `crates/auris-compose/src/frame.rs:597` | `is_stable` in crates/auris-compose/src/frame.rs:597 is defined but never called anywhere in the crate or workspace. |
-| F-292 | low | `crates/auris-compose/src/parts/drums.rs:247` | `.max(1)` in drums.rs:247 drops the first step of a full-bar snare fill when beats*per_beat exactly equals steps (e.g. 2/4 meter, fill=1.0, intensity=1.0). |
-| F-304 | low | `crates/auris-compose/src/frame.rs:169` | frame.rs:169's comment claims harmony, fill, and crash all gate joins the same way, but only harmony and crash share the intensity-comparison arrival test — […] |
+| ✅ F-209 | medium | `crates/auris-compose/src/render.rs:312` | clips_of silently drops swing-delayed notes past a section boundary instead of clamping them, contradicting its own adjacent comment. |
+| ✅ F-230 | medium | `crates/auris-compose/src/spec/doc.rs:838` | Riser's `note` rejection error wrongly claims its pitch "comes from the harmony," though Riser's pitch is a hardcoded constant, not harmony-derived. |
+| ✅ F-231 | medium | `crates/auris-compose/src/parts/arp.rs:110` | arp()'s procedural path drops all notes for a chord event shorter than one arp step (count==0), unlike bass/comp's guaranteed onset-0 guard. |
+| ✅ F-357 | medium | `crates/auris-compose/src/spec/mod.rs:373` | SectionSpec::named matches section names case-sensitively, unlike every sibling vocabulary parser, so `[section.Chorus]` silently falls back to the generic […] |
+| ✅ F-378 | medium | `crates/auris-compose/src/spec/doc.rs:248` | A misspelled or comma-mangled `form` entry silently auto-vivifies a phantom section and orphans the real configured section, with no `SpecError` raised. |
+| ✅ F-379 | medium | `crates/auris-compose/src/parts/coda.rs:118` | coda()'s "held" ending note is silently re-shortened by shorten() to the part's gate fraction whenever gate < 1.0, cutting the final chord off early. |
+| ✅ F-387 | medium | `crates/auris-compose/src/parts/comp.rs:321` | A pushed Held-figure chord is struck at 0.9x velocity instead of the intended 0.7x held multiplier, an unintended ~29% loudness jump. |
+| ✅ F-400 | medium | `crates/auris-compose/src/spec/doc.rs:564` | Top-level `chords` and a `[harmony].main` entry silently collide (last-write-wins) in SongDoc::into_spec, contradicting the doc comment's "keeps both" claim, […] |
+| ✅ F-263 | low | `crates/auris-compose/src/frame.rs:597` | `is_stable` in crates/auris-compose/src/frame.rs:597 is defined but never called anywhere in the crate or workspace. |
+| ✅ F-292 | low | `crates/auris-compose/src/parts/drums.rs:247` | `.max(1)` in drums.rs:247 drops the first step of a full-bar snare fill when beats*per_beat exactly equals steps (e.g. 2/4 meter, fill=1.0, intensity=1.0). |
+| ✅ F-304 | low | `crates/auris-compose/src/frame.rs:169` | frame.rs:169's comment claims harmony, fill, and crash all gate joins the same way, but only harmony and crash share the intensity-comparison arrival test — […] |
 
 ### ✅ F-029 · high · swing_offset returns a negative (early) shift for percent < 50, rushing offbeats instead of delaying them as documented and tested.
 
@@ -273,7 +273,7 @@ octave = 9`  — parses cleanly (octave 9 passes the -1..=9 check) into a `SongS
 
 **Written rule it breaks.** Held to the join exactly. The peak is the last thing in the sample, and a note-off before it would cut the swell at the moment it exists for.
 
-### F-209 · medium · clips_of silently drops swing-delayed notes past a section boundary instead of clamping them, contradicting its own adjacent comment.
+### ✅ F-209 · medium · clips_of silently drops swing-delayed notes past a section boundary instead of clamping them, contradicting its own adjacent comment.
 
 `crates/auris-compose/src/render.rs:312` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -289,7 +289,7 @@ octave = 9`  — parses cleanly (octave 9 passes the -1..=9 check) into a `SongS
 
 **Written rule it breaks.** A note the swing delayed over a section boundary is clamped back rather than deleted — dropping one took the downbeat out of sections back when the baked wander could nudge a note either way. (crates/auris-compose/src/render.rs:308-310)
 
-### F-230 · medium · Riser's `note` rejection error wrongly claims its pitch "comes from the harmony," though Riser's pitch is a hardcoded constant, not harmony-derived.
+### ✅ F-230 · medium · Riser's `note` rejection error wrongly claims its pitch "comes from the harmony," though Riser's pitch is a hardcoded constant, not harmony-derived.
 
 `crates/auris-compose/src/spec/doc.rs:838` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -309,7 +309,7 @@ note = 64`  — rejected with the harmony-derived-notes message.
 
 **Written rule it breaks.** One pitch, honestly: the note is the playback rate of a recording, the writer places the recorded speed, and a range would be promising a register the part does not have. (role.rs:293-296, doc comment on Role::Riser)
 
-### F-231 · medium · arp()'s procedural path drops all notes for a chord event shorter than one arp step (count==0), unlike bass/comp's guaranteed onset-0 guard.
+### ✅ F-231 · medium · arp()'s procedural path drops all notes for a chord event shorter than one arp step (count==0), unlike bass/comp's guaranteed onset-0 guard.
 
 `crates/auris-compose/src/parts/arp.rs:110` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -325,7 +325,7 @@ note = 64`  — rejected with the harmony-derived-notes message.
 
 **Written rule it breaks.** arp.rs's own module doc: "its density is a *rate* — how fast the figure climbs — rather than how many of its notes survive, because an arpeggio with holes punched in it is not a sparser arpeggio, it is a broken one."
 
-### F-357 · medium · SectionSpec::named matches section names case-sensitively, unlike every sibling vocabulary parser, so `[section.Chorus]` silently falls back to the generic 0.60 intensity instead of 0.90.
+### ✅ F-357 · medium · SectionSpec::named matches section names case-sensitively, unlike every sibling vocabulary parser, so `[section.Chorus]` silently falls back to the generic 0.60 intensity instead of 0.90.
 
 `crates/auris-compose/src/spec/mod.rs:373` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -339,7 +339,7 @@ note = 64`  — rejected with the harmony-derived-notes message.
 
 **Fix direction.** In `SectionSpec::named` (crates/auris-compose/src/spec/mod.rs:373), match on `name.trim().to_ascii_lowercase().as_str()` instead of `name.as_str()`, mirroring `LeadIn::parse`, `Ending::parse`, `Role::parse`, and `Mood::named`, while still storing the original `name` verbatim in `self.name`.
 
-### F-378 · medium · A misspelled or comma-mangled `form` entry silently auto-vivifies a phantom section and orphans the real configured section, with no `SpecError` raised.
+### ✅ F-378 · medium · A misspelled or comma-mangled `form` entry silently auto-vivifies a phantom section and orphans the real configured section, with no `SpecError` raised.
 
 `crates/auris-compose/src/spec/doc.rs:248` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -355,7 +355,7 @@ note = 64`  — rejected with the harmony-derived-notes message.
 
 **Written rule it breaks.** doc.rs comment at 605-607: "A section named in the form but never described still has to exist, or the form would silently skip it" — the code guarantees a referenced section exists but gives no equivalent guarantee that a section the author explicitly described is actually referenced.
 
-### F-379 · medium · coda()'s "held" ending note is silently re-shortened by shorten() to the part's gate fraction whenever gate < 1.0, cutting the final chord off early.
+### ✅ F-379 · medium · coda()'s "held" ending note is silently re-shortened by shorten() to the part's gate fraction whenever gate < 1.0, cutting the final chord off early.
 
 `crates/auris-compose/src/parts/coda.rs:118` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -371,7 +371,7 @@ note = 64`  — rejected with the harmony-derived-notes message.
 
 **Written rule it breaks.** The coda.rs module doc comment: "What a band actually does on the last bar is land — the chord held, the root under it, the kick and the cymbal once."
 
-### F-387 · medium · A pushed Held-figure chord is struck at 0.9x velocity instead of the intended 0.7x held multiplier, an unintended ~29% loudness jump.
+### ✅ F-387 · medium · A pushed Held-figure chord is struck at 0.9x velocity instead of the intended 0.7x held multiplier, an unintended ~29% loudness jump.
 
 `crates/auris-compose/src/parts/comp.rs:321` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -387,7 +387,7 @@ note = 64`  — rejected with the harmony-derived-notes message.
 
 **Written rule it breaks.** CLAUDE.md: "Composed audio is calibrated by measurement" — render and measure before touching a level constant; here two paths meant to encode the same "held chords are struck softer" rule silently disagree, which is exactly the kind of unmeasured, accidental level discrepancy that principle is meant to prevent.
 
-### F-400 · medium · Top-level `chords` and a `[harmony].main` entry silently collide (last-write-wins) in SongDoc::into_spec, contradicting the doc comment's "keeps both" claim, with no test pinning the winner.
+### ✅ F-400 · medium · Top-level `chords` and a `[harmony].main` entry silently collide (last-write-wins) in SongDoc::into_spec, contradicting the doc comment's "keeps both" claim, with no test pinning the winner.
 
 `crates/auris-compose/src/spec/doc.rs:564` · spec-mismatch · confirmed (executed reproduction; reported independently 2×)
 
@@ -403,7 +403,7 @@ note = 64`  — rejected with the harmony-derived-notes message.
 
 **Written rule it breaks.** Both are merged into the defaults rather than replacing them, so a document with one of each keeps both.
 
-### F-263 · low · `is_stable` in crates/auris-compose/src/frame.rs:597 is defined but never called anywhere in the crate or workspace.
+### ✅ F-263 · low · `is_stable` in crates/auris-compose/src/frame.rs:597 is defined but never called anywhere in the crate or workspace.
 
 `crates/auris-compose/src/frame.rs:597` · other · confirmed (traced through the code; reported independently 1×)
 
@@ -417,7 +417,7 @@ note = 64`  — rejected with the harmony-derived-notes message.
 
 **Fix direction.** Either wire it into the cadence logic it was clearly written for (e.g. have `turn_around` check the landing chord's quality via `is_stable` instead of comparing roots alone) or delete the function; if kept only for future/external use, add `#[allow(dead_code)]` with a comment explaining why, though outright removal is preferable per the project's "no release yet, break things freely" stance.
 
-### F-292 · low · `.max(1)` in drums.rs:247 drops the first step of a full-bar snare fill when beats*per_beat exactly equals steps (e.g. 2/4 meter, fill=1.0, intensity=1.0).
+### ✅ F-292 · low · `.max(1)` in drums.rs:247 drops the first step of a full-bar snare fill when beats*per_beat exactly equals steps (e.g. 2/4 meter, fill=1.0, intensity=1.0).
 
 `crates/auris-compose/src/parts/drums.rs:247` · theory · confirmed (executed reproduction; reported independently 1×)
 
@@ -433,7 +433,7 @@ note = 64`  — rejected with the harmony-derived-notes message.
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
 
-### F-304 · low · frame.rs:169's comment claims harmony, fill, and crash all gate joins the same way, but only harmony and crash share the intensity-comparison arrival test — the fill fires unconditionally on every join.
+### ✅ F-304 · low · frame.rs:169's comment claims harmony, fill, and crash all gate joins the same way, but only harmony and crash share the intensity-comparison arrival test — the fill fires unconditionally on every join.
 
 `crates/auris-compose/src/frame.rs:169` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 

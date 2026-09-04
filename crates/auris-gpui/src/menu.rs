@@ -973,8 +973,8 @@ mod binding_tests {
     /// that has been renamed or mistyped shows a row with no key beside it — which looks exactly
     /// like a command that was never given one. Both are silent, and only one is a mistake.
     ///
-    /// An empty id is the deliberate case: Open Recent and About have no keystroke, because the
-    /// list one opens is the point and every letter worth spending is spent.
+    /// Open Recent and About have empty default keystrokes, but their menu rows still carry real
+    /// binding ids so a user-defined binding can appear here.
     #[test]
     fn every_binding_a_menu_row_names_is_one_the_table_has() {
         for language in Language::ALL {

@@ -41,7 +41,7 @@ def test_enunu_extensions_are_normalized(tmp_path):
 
 def test_malformed_lines_are_skipped(tmp_path):
     path = tmp_path / "song.lab"
-    path.write_text("garbage\n0 1000000 a\n1 2\n", encoding="utf-8")
+    path.write_text("garbage\nstart 1000000 i\n0 1000000 a\n1 2\n", encoding="utf-8")
     assert [p.symbol for p in prepare.read_mono_label(path)] == ["a"]
 
 

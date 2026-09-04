@@ -40,6 +40,11 @@ impl ZoneInfo {
         }
 
         for i in 0..(count - 1) {
+            if zones[i + 1].generator_index < zones[i].generator_index
+                || zones[i + 1].modulator_index < zones[i].modulator_index
+            {
+                return Err(SoundFontError::InvalidZoneList);
+            }
             zones[i].generator_count = zones[i + 1].generator_index - zones[i].generator_index;
             zones[i].modulator_count = zones[i + 1].modulator_index - zones[i].modulator_index;
         }

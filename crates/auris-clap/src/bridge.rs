@@ -46,6 +46,9 @@ pub(crate) struct Bridge {
     values: Vec<f32>,
     changed: Vec<bool>,
     outgoing: EventBuffer,
+    // CLAP output events are intentionally discarded for now: auris-core's Effect/Instrument
+    // process contract has no event-output channel to route generated notes downstream. Keep the
+    // buffer because plugins are still entitled to a valid output-events sink.
     replies: EventBuffer,
     input_ports: AudioPorts,
     output_ports: AudioPorts,

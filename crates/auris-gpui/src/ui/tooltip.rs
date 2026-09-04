@@ -15,8 +15,9 @@
 //!
 //! gpui builds a tooltip from a callback returning an [`AnyView`], and calls it when the pointer
 //! has rested. The view is built outside the tree that styles everything else, so it inherits no
-//! font, no size and no colour and has to name all three. That is also why the theme is carried
-//! into it: there is no ancestor to ask.
+//! font, no size and no colour and has to name all three. It reads the application-global theme
+//! on every render because there is no ancestor to ask, and because gpui keeps an already-open
+//! tooltip view across repaints.
 
 use gpui::{AnyView, App, Context, IntoElement, Render, SharedString, Window, div, prelude::*};
 
@@ -30,13 +31,11 @@ pub struct Tooltip {
     /// key. Empty is common and is not a hole: most of what wears a tooltip here has no keystroke
     /// and never needed one.
     keystroke: SharedString,
-    /// Carried in because a tooltip has no ancestor to inherit colours from.
-    theme: Theme,
 }
 
 impl Render for Tooltip {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = &self.theme;
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.global::<Theme>();
         div()
             .flex()
             .items_center()
@@ -92,16 +91,14 @@ impl crate::app::AurisApp {
 pub fn keyed_tip(
     label: impl Into<SharedString>,
     keystroke: impl Into<SharedString>,
-    theme: &Theme,
+    _theme: &Theme,
 ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
     let label = label.into();
     let keystroke = keystroke.into();
-    let theme = theme.clone();
     move |_window, cx| {
         let tooltip = Tooltip {
             label: label.clone(),
             keystroke: keystroke.clone(),
-            theme: theme.clone(),
         };
         cx.new(|_| tooltip).into()
     }

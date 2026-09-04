@@ -41,7 +41,8 @@ export = [
 # is published from its repository rather than PyPI; the k2 package rides on sherpa-onnx,
 # whose wheel it does not itself require, so both are named here.
 asr = [
-    "reazonspeech-k2-asr @ git+https://github.com/reazon-research/ReazonSpeech#subdirectory=pkg/k2-asr",
+    # Pinned to an immutable upstream revision; review and update deliberately.
+    "reazonspeech-k2-asr @ git+https://github.com/reazon-research/ReazonSpeech@2d4d4762e7ee294ac8e47a177ac2e9b0e8d0d43f#subdirectory=pkg/k2-asr",
     "sherpa-onnx>=1.10",
 ]
 

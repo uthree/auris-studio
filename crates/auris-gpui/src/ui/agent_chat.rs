@@ -28,6 +28,9 @@ use crate::ui::scrollbars::ScrollPanel;
 use crate::ui::text_field::TextField;
 use crate::ui::widgets::{ButtonStyle, button};
 
+/// Maximum transcript rows retained in the panel.
+const CHAT_CAPACITY: usize = 500;
+
 /// One line of the conversation, as the panel shows it.
 #[derive(Debug, PartialEq)]
 pub(crate) enum ChatEntry {
@@ -297,6 +300,8 @@ pub(crate) struct AgentChat {
     pub(crate) context_window: Option<u64>,
     /// The transcript rows clicked open to their full text.
     pub(crate) expanded: std::collections::BTreeSet<usize>,
+    /// Running tool rows by wire name, so a result never scans the transcript.
+    open_tools: std::collections::BTreeMap<String, usize>,
     /// The wire a model listing comes back on.
     models_rx: Option<Receiver<Result<Vec<ModelOption>, String>>>,
     /// Which field holds the keyboard, if any.
@@ -337,6 +342,7 @@ impl Default for AgentChat {
             tokens_out: 0,
             context_window: None,
             expanded: std::collections::BTreeSet::new(),
+            open_tools: std::collections::BTreeMap::new(),
             models_rx: None,
             focused: None,
             configuring: false,
@@ -351,6 +357,29 @@ impl Default for AgentChat {
 }
 
 impl AgentChat {
+    /// Appends one transcript row, keeping indexes coherent and the newest row visible.
+    fn push_entry(&mut self, entry: ChatEntry) -> usize {
+        if self.entries.len() >= CHAT_CAPACITY {
+            self.entries.remove(0);
+            self.expanded = self
+                .expanded
+                .iter()
+                .filter_map(|index| index.checked_sub(1))
+                .collect();
+            self.open_tools.retain(|_, index| {
+                let Some(shifted) = index.checked_sub(1) else {
+                    return false;
+                };
+                *index = shifted;
+                true
+            });
+        }
+        let index = self.entries.len();
+        self.entries.push(entry);
+        self.scroll.scroll_to_bottom();
+        index
+    }
+
     /// Whether one of this panel's fields is being typed into.
     pub(crate) fn typing(&self) -> bool {
         self.focused.is_some()
@@ -424,12 +453,13 @@ impl AgentChat {
                 self.model_label = model;
             }
             AgentEvent::Call { tool } => {
-                self.entries.push(ChatEntry::Tool {
-                    name: tool,
+                let index = self.push_entry(ChatEntry::Tool {
+                    name: tool.clone(),
                     ok: true,
                     line: String::new(),
                     detail: String::new(),
                 });
+                self.open_tools.insert(tool, index);
             }
             AgentEvent::Result {
                 tool,
@@ -440,10 +470,15 @@ impl AgentChat {
                 // The call pushed a running row; this fills it in. A result with no matching
                 // call — a build mismatch, a dropped line — becomes its own row rather than
                 // being lost.
-                let open_row = self.entries.iter_mut().rev().find(|entry| {
-                    matches!(entry, ChatEntry::Tool { name, line, .. }
-                        if *name == tool && line.is_empty())
-                });
+                let line = if line.is_empty() {
+                    "done".to_string()
+                } else {
+                    line
+                };
+                let open_row = self
+                    .open_tools
+                    .remove(&tool)
+                    .and_then(|index| self.entries.get_mut(index));
                 match open_row {
                     Some(ChatEntry::Tool {
                         ok: row_ok,
@@ -452,19 +487,18 @@ impl AgentChat {
                         ..
                     }) => {
                         *row_ok = ok;
-                        *row_line = if line.is_empty() {
-                            "done".to_string()
-                        } else {
-                            line
-                        };
+                        *row_line = line;
                         *row_detail = detail;
+                        self.scroll.scroll_to_bottom();
                     }
-                    _ => self.entries.push(ChatEntry::Tool {
-                        name: tool,
-                        ok,
-                        line,
-                        detail,
-                    }),
+                    _ => {
+                        self.push_entry(ChatEntry::Tool {
+                            name: tool,
+                            ok,
+                            line,
+                            detail,
+                        });
+                    }
                 }
             }
             AgentEvent::Changed { project } => {
@@ -473,9 +507,9 @@ impl AgentChat {
                 {
                     if dirty {
                         self.pending_reload = Some(project);
-                        self.entries.push(ChatEntry::Note(Key::AgentReloadOffer));
+                        self.push_entry(ChatEntry::Note(Key::AgentReloadOffer));
                     } else {
-                        self.entries.push(ChatEntry::Note(Key::AgentReloaded));
+                        self.push_entry(ChatEntry::Note(Key::AgentReloaded));
                         return Absorbed::Reload(project);
                     }
                 }
@@ -492,16 +526,16 @@ impl AgentChat {
                     self.tokens_in = input_tokens;
                 }
                 self.tokens_out += output_tokens;
-                self.entries.push(ChatEntry::Agent(text));
+                self.push_entry(ChatEntry::Agent(text));
             }
             AgentEvent::Error { message } => {
                 self.busy = false;
-                self.entries.push(ChatEntry::Error(message));
+                self.push_entry(ChatEntry::Error(message));
             }
             AgentEvent::Ended => {
                 self.busy = false;
                 self.link = None;
-                self.entries.push(ChatEntry::Note(Key::AgentEnded));
+                self.push_entry(ChatEntry::Note(Key::AgentEnded));
             }
         }
         Absorbed::Nothing
@@ -512,15 +546,26 @@ impl AgentChat {
 ///
 /// The release archive ships them together, and a development build puts both in the same
 /// target directory — the one layout rule the whole feature leans on.
-fn agent_binary() -> PathBuf {
+fn agent_binary() -> Result<PathBuf, String> {
     let name = match cfg!(windows) {
         true => "auris-agent.exe",
         false => "auris-agent",
     };
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
-        .unwrap_or_else(|| PathBuf::from(name))
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("could not locate the running executable: {error}"))?;
+    let directory = executable
+        .parent()
+        .ok_or_else(|| "the running executable has no parent directory".to_string())?;
+    let candidate = directory.join(name);
+    candidate
+        .is_file()
+        .then_some(candidate.clone())
+        .ok_or_else(|| {
+            format!(
+                "the bundled agent binary was not found at {}",
+                candidate.display()
+            )
+        })
 }
 
 /// Starts the agent in its JSON mode and wires both ends.
@@ -530,7 +575,8 @@ fn agent_binary() -> PathBuf {
 /// window only through the channel; the window polls that channel on its repaint tick, the
 /// same way it reads everything else another thread writes.
 fn spawn_link(folder: Option<&Path>) -> Result<AgentLink, String> {
-    let mut command = Command::new(agent_binary());
+    let binary = agent_binary()?;
+    let mut command = Command::new(&binary);
     command
         .arg("--json")
         .stdin(Stdio::piped())
@@ -549,7 +595,7 @@ fn spawn_link(folder: Option<&Path>) -> Result<AgentLink, String> {
     }
     let mut child = command
         .spawn()
-        .map_err(|error| format!("could not start {}: {error}", agent_binary().display()))?;
+        .map_err(|error| format!("could not start {}: {error}", binary.display()))?;
     let to_child = child.stdin.take().ok_or("the child has no stdin")?;
     let stdout = child.stdout.take().ok_or("the child has no stdout")?;
     let stderr = child.stderr.take().ok_or("the child has no stderr")?;
@@ -607,7 +653,15 @@ fn forward_agent_stderr(reader: impl BufRead, sender: &Sender<AgentEvent>) {
 /// and puts the verdict on the channel, and the repaint tick picks it up — the same wire shape
 /// as the conversation itself.
 fn spawn_model_listing(prefs: &AgentPreferences) -> Receiver<Result<Vec<ModelOption>, String>> {
-    let mut command = Command::new(agent_binary());
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let binary = match agent_binary() {
+        Ok(binary) => binary,
+        Err(error) => {
+            let _ = sender.send(Err(error));
+            return receiver;
+        }
+    };
+    let mut command = Command::new(&binary);
     command
         .arg("models")
         .arg("--provider")
@@ -630,11 +684,10 @@ fn spawn_model_listing(prefs: &AgentPreferences) -> Receiver<Result<Vec<ModelOpt
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
-    let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let answer = command
             .output()
-            .map_err(|error| format!("could not run {}: {error}", agent_binary().display()))
+            .map_err(|error| format!("could not run {}: {error}", binary.display()))
             .and_then(|output| {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 parse_model_list(stdout.lines().next().unwrap_or_default())
@@ -675,8 +728,7 @@ impl AurisApp {
                 Some(ChatEntry::Note(Key::AgentNotConfigured))
             ) {
                 self.agent_chat
-                    .entries
-                    .push(ChatEntry::Note(Key::AgentNotConfigured));
+                    .push_entry(ChatEntry::Note(Key::AgentNotConfigured));
             }
             return;
         }
@@ -685,8 +737,7 @@ impl AurisApp {
             && let Err(error) = self.session.save_in_place()
         {
             self.agent_chat
-                .entries
-                .push(ChatEntry::Error(error.to_string()));
+                .push_entry(ChatEntry::Error(error.to_string()));
             return;
         }
 
@@ -699,7 +750,7 @@ impl AurisApp {
             match spawn_link(folder.as_deref()) {
                 Ok(link) => self.agent_chat.link = Some(link),
                 Err(error) => {
-                    self.agent_chat.entries.push(ChatEntry::Error(error));
+                    self.agent_chat.push_entry(ChatEntry::Error(error));
                     return;
                 }
             }
@@ -711,12 +762,11 @@ impl AurisApp {
             && let Err(error) = writeln!(link.to_child, "{wire}")
         {
             self.agent_chat
-                .entries
-                .push(ChatEntry::Error(error.to_string()));
+                .push_entry(ChatEntry::Error(error.to_string()));
             self.agent_chat.link = None;
             return;
         }
-        self.agent_chat.entries.push(ChatEntry::You(text));
+        self.agent_chat.push_entry(ChatEntry::You(text));
         self.agent_chat.busy = true;
         self.agent_chat.input = TextField::new(String::new());
     }
@@ -1262,6 +1312,8 @@ impl AurisApp {
                         if let Some(option) = this.agent_chat.models.get(chosen) {
                             this.agent_chat.chosen_model = option.name.clone();
                             this.agent_chat.context_window = option.context_length;
+                            this.agent_chat.tokens_in = 0;
+                            this.agent_chat.tokens_out = 0;
                         }
                         this.agent_chat.model_menu = false;
                         // The pick counts the moment it is made — no Apply between the
@@ -1610,6 +1662,57 @@ mod tests {
             chat.entries.last(),
             Some(ChatEntry::Tool { ok: true, line, detail, .. })
                 if line == "Wrote X" && detail.contains("summary")
+        ));
+    }
+
+    #[test]
+    fn unmatched_empty_results_are_finished_rows() {
+        let mut chat = AgentChat::default();
+        chat.absorb(
+            AgentEvent::Result {
+                tool: "compose".to_string(),
+                ok: false,
+                line: String::new(),
+                detail: String::new(),
+            },
+            None,
+            false,
+        );
+
+        assert!(matches!(
+            chat.entries.last(),
+            Some(ChatEntry::Tool { ok: false, line, .. }) if line == "done"
+        ));
+    }
+
+    #[test]
+    fn the_transcript_is_bounded_and_tool_indexes_survive_eviction() {
+        let mut chat = AgentChat::default();
+        for index in 0..CHAT_CAPACITY {
+            chat.push_entry(ChatEntry::Agent(index.to_string()));
+        }
+        chat.absorb(
+            AgentEvent::Call {
+                tool: "compose".to_string(),
+            },
+            None,
+            false,
+        );
+        chat.absorb(
+            AgentEvent::Result {
+                tool: "compose".to_string(),
+                ok: true,
+                line: "written".to_string(),
+                detail: "written".to_string(),
+            },
+            None,
+            false,
+        );
+
+        assert_eq!(chat.entries.len(), CHAT_CAPACITY);
+        assert!(matches!(
+            chat.entries.last(),
+            Some(ChatEntry::Tool { line, .. }) if line == "written"
         ));
     }
 

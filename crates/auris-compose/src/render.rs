@@ -304,14 +304,11 @@ fn clips_of(
             .notes
             .iter()
             .filter(|note| note.section == index)
-            .filter_map(|note| {
+            .map(|note| {
                 // Rebase onto the clip. A note the swing delayed over a section boundary is
                 // clamped back rather than deleted — dropping one took the downbeat out of
                 // sections back when the baked wander could nudge a note either way.
                 let offset = note.start - section.start;
-                if offset >= section.length {
-                    return None;
-                }
                 let start = offset.max_zero().min(section.length - Ticks(1));
                 // Truncate rather than let a note overhang: the scheduler would drop it
                 // silently, and `fit_length_to_notes` would grow the clip if it did not.
@@ -322,10 +319,10 @@ fn clips_of(
                 // pitch is struck again, and a note lengthened here would land back over it.
                 let ends = (offset + note.length).min(section.length);
                 let length = (ends - start).max(Ticks(1));
-                Some(Note {
+                Note {
                     velocity: note.velocity.clamp(0.0, 1.0),
                     ..Note::new(note.pitch.min(127), start, length)
-                })
+                }
             })
             .collect();
 

@@ -101,16 +101,20 @@ impl Session {
         let found = self
             .strip(track)
             .and_then(|strip| strip.effects.iter().position(|s| s.id == slot));
-        if found.is_none() {
+        let Some(index) = found else {
+            return;
+        };
+        let len = self.strip(track).map_or(0, |strip| strip.effects.len());
+        let target = (index as isize + delta).clamp(0, len.saturating_sub(1) as isize) as usize;
+        if target == index {
             return;
         }
         self.record(Edit::ReorderEffects);
         if let Some(strip) = self.strip_mut(track)
             && let Some(index) = strip.effects.iter().position(|s| s.id == slot)
         {
-            let target = (index as isize + delta).clamp(0, strip.effects.len() as isize - 1);
             let effect = strip.effects.remove(index);
-            strip.effects.insert(target as usize, effect);
+            strip.effects.insert(target, effect);
         }
         self.invalidate_graph();
     }
@@ -227,8 +231,12 @@ impl Session {
             })
             .unwrap_or_default();
         let descriptors = Arc::new(descriptors);
-        self.param_cache
-            .insert(plugin_id.to_string(), Arc::clone(&descriptors));
+        // A registry miss may be a hosted plugin that has not finished loading yet. Never make
+        // that transient empty answer permanent; a later query can then see the live instance.
+        if !descriptors.is_empty() {
+            self.param_cache
+                .insert(plugin_id.to_string(), Arc::clone(&descriptors));
+        }
         descriptors
     }
 
@@ -391,6 +399,9 @@ impl Session {
                 let _ = self.set_send_level(track, send, value);
             }
             ParamTarget::Instrument { track, param } => {
+                if self.needs_rebuild {
+                    self.rebuild_graph();
+                }
                 let Ok(index) = self.require_track(track) else {
                     return;
                 };
@@ -411,6 +422,9 @@ impl Session {
                 });
             }
             ParamTarget::Effect { track, slot, param } => {
+                if self.needs_rebuild {
+                    self.rebuild_graph();
+                }
                 let Some(key) = self.param_key(target) else {
                     return;
                 };

@@ -187,6 +187,7 @@ pub fn plugin_header<I, N, L, F>(
     id: I,
     name: N,
     enabled: bool,
+    show_toggle: bool,
     state_label: L,
     theme: &Theme,
     on_toggle: F,
@@ -212,15 +213,17 @@ where
                 })
                 .child(name.into()),
         )
-        .child(div().w(px(46.0)).child(button(
-            id,
-            state_label,
-            ButtonStyle::Normal,
-            enabled,
-            theme.accent,
-            theme,
-            on_toggle,
-        )))
+        .children(show_toggle.then(|| {
+            div().w(px(46.0)).child(button(
+                id,
+                state_label,
+                ButtonStyle::Normal,
+                enabled,
+                theme.accent,
+                theme,
+                on_toggle,
+            ))
+        }))
 }
 
 #[cfg(test)]

@@ -119,7 +119,7 @@ impl Panel {
     /// The bindable command that shows and hides it, as an id in [`crate::actions::BINDABLE`].
     ///
     /// So the status bar's switch can say which key also works. The switch is a mark and nothing
-    /// else — the panel it opens is a thing learned by clicking all five — and the key is exactly
+    /// else — the panel it opens is a thing learned by clicking — and the key is exactly
     /// what somebody who has just learned it would rather not have to click for again.
     pub fn command(self) -> &'static str {
         match self {
@@ -332,6 +332,8 @@ impl PanelLayout {
     pub const MAX_SIDE: Pixels = px(520.0);
     /// Shortest the bottom dock may be dragged.
     pub const MIN_BOTTOM: Pixels = px(120.0);
+    /// Tallest a saved bottom dock may request before the viewport applies its tighter limit.
+    pub const MAX_BOTTOM: Pixels = px(720.0);
     /// Narrowest the track header column may be dragged.
     pub const MIN_HEADERS: Pixels = px(140.0);
     /// Widest the track header column may be dragged.
@@ -467,9 +469,6 @@ impl PanelLayout {
         if total <= room {
             return asked;
         }
-        if total <= px(0.0) {
-            return (px(0.0), px(0.0));
-        }
         // Shared out by flooring the first and giving the remainder to the second, so the two
         // always add up to exactly the room there is rather than to a pixel more.
         let left = px((f32::from(room) * f32::from(asked.0) / f32::from(total)).floor());
@@ -508,7 +507,7 @@ impl PanelLayout {
     fn clamped(dock: Dock, size: Pixels) -> Pixels {
         let ceiling = match dock.is_side() {
             true => Self::MAX_SIDE,
-            false => px(f32::MAX),
+            false => Self::MAX_BOTTOM,
         };
         size.max(Self::smallest(dock)).min(ceiling)
     }
@@ -1010,12 +1009,17 @@ mod tests {
 
     #[test]
     fn a_file_asking_for_an_impossible_size_is_brought_back_inside_the_limits() {
-        let stored: StoredLayout =
-            serde_json::from_str(r#"{"sizes":{"left":9000.0,"bottom":1.0},"header_width":9000.0}"#)
-                .unwrap();
+        let stored: StoredLayout = serde_json::from_str(
+            r#"{"sizes":{"left":9000.0,"bottom":9000.0},"header_width":9000.0}"#,
+        )
+        .unwrap();
         let layout = PanelLayout::from(stored);
         assert_eq!(layout.size(Dock::Left), PanelLayout::MAX_SIDE);
-        assert_eq!(layout.size(Dock::Bottom), PanelLayout::MIN_BOTTOM);
+        assert_eq!(layout.size(Dock::Bottom), PanelLayout::MAX_BOTTOM);
+        assert_eq!(
+            PanelLayout::clamped(Dock::Bottom, px(1.0)),
+            PanelLayout::MIN_BOTTOM
+        );
         assert_eq!(layout.header_width, PanelLayout::MAX_HEADERS);
     }
 }

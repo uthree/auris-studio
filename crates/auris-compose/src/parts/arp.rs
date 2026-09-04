@@ -107,7 +107,9 @@ pub(super) fn arp(
             continue;
         }
 
-        let count = (event.length.raw() / step_length.raw().max(1)) as usize;
+        // Even a chord shorter than the chosen rate needs an onset: otherwise a coarse
+        // arpeggio silently skips dense harmony changes altogether.
+        let count = (event.length.raw() / step_length.raw().max(1)).max(1) as usize;
         for position in 0..count {
             let at = event.start + step_length * position as i64;
             let pitch = voicing[position % voicing.len()];

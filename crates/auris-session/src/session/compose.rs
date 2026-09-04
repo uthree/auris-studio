@@ -217,6 +217,8 @@ impl Session {
 
         for track in &composition.tracks {
             let sound = general_midi.and(track.sound);
+            let kept_instrument =
+                sound.is_none() && self.registry.has_instrument(&track.instrument);
             let instrument = match &sound {
                 // Choosing a sound is choosing the instrument that makes it, exactly as it is in
                 // `set_track_preset`.
@@ -242,7 +244,8 @@ impl Session {
                         },
                     );
                 }
-            } else if !track.state.params.is_empty()
+            } else if kept_instrument
+                && !track.state.params.is_empty()
                 && let Some(inner) = project
                     .track_mut(track_id)
                     .and_then(|entry| entry.kind.as_instrument_mut())

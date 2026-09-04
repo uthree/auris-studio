@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from auris_singer.infer import frame_voicing
+from auris_singer.infer import Synthesizer, frame_voicing
 from auris_singer.text import SIL, is_voiceless
 
 
@@ -34,3 +35,10 @@ def test_frame_voicing_clears_frames_with_no_pitch():
     voiced = frame_voicing(["a"], [4], [220.0, 220.0, 0.0, 220.0])
     assert voiced.tolist() == [1, 1, 0, 1]
     assert voiced.dtype == np.float32
+
+
+def test_a_boolean_is_not_a_speaker_id():
+    synthesizer = object.__new__(Synthesizer)
+    synthesizer.speaker_to_id = {"alice": 0, "bob": 1}
+    with pytest.raises(TypeError, match="not bool"):
+        synthesizer.resolve_speaker(True)

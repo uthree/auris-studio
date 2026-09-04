@@ -250,6 +250,9 @@ class AurisSingerModule(L.LightningModule):
         wav_real = slice_segments(
             batch["wav"], out["slice_ids"] * self.hop_length, segment_samples
         )
+        # Lightning's manual-optimization global_step advances once per optimizer
+        # step. Capture the batch's scale before the discriminator increments it.
+        kl_scale = self.kl_scale()
 
         # --- discriminator ------------------------------------------------
         real_out, _ = self.discriminator(wav_real, speaker_ids)
@@ -288,8 +291,6 @@ class AurisSingerModule(L.LightningModule):
             out["logs_p0_frame"],
             out["y_mask"],
         )
-
-        kl_scale = self.kl_scale()
 
         loss_gen = (
             self.weights["adversarial"] * loss_adv
@@ -497,6 +498,11 @@ class AurisSingerModule(L.LightningModule):
     def _log_audio(
         self, index: int, wav_hat: torch.Tensor, wav_real: torch.Tensor
     ) -> None:
+        # Lightning's public trainer property raises while the module is unattached,
+        # which is also how this helper is exercised in focused tests.
+        trainer = getattr(self, "_trainer", None)
+        if trainer is not None and not trainer.is_global_zero:
+            return
         logger = self.logger
         experiment = getattr(logger, "experiment", None)
         if experiment is None or not hasattr(experiment, "add_audio"):

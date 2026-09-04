@@ -209,32 +209,32 @@ Each of these findings was judged to contradict a rule stated in `CLAUDE.md`, `a
 - ✅ F-096 (high, [auris-engine](auris-engine.md)): Windows output devices whose default WASAPI mix format is I24/I32/I64/F64/U8 (e.g. a common "24-bit" device default) silently fall back to a fully […]
 - ✅ F-103 (high, [auris-synth](auris-synth.md)): Chiptune::note_on stores the new note's target pitch into last_frequency instead of the previous voice's live gliding frequency, so rapid portamento […]
 - ✅ F-116 (high, [auris-toolbox](auris-toolbox.md)): auris-toolbox's `sing` tool result splices unsanitized voice-card name/speaker text from an untrusted .onnx file verbatim into agent-facing output — […]
-- F-326 (high, [auris-toolbox](auris-toolbox.md)): track_by_name in auris-toolbox silently resolves to the first of two same-named tracks, so by-name tools can act on the wrong one.
-- F-339 (high, [auris-dsp](auris-dsp.md)): Limiter::prepare has no upper bound on sample_rate, so a corrupted .auris file's sample_rate can abort the render/export process via a multi-GB […]
-- F-127 (medium, [training](training.md)): architecture.md's loss table lists KL (auxiliary) default as 1.0, but code, training.md, and the doc's own later prose all agree the default is 0.2.
-- F-146 (medium, [repo/ci/docs](repo-ci-docs.md)): docs/features.md:1270 says 29 tools; auris-toolbox declares 30 pub mod tool modules, confirmed by both frontends' own count-assertion tests.
-- F-154 (medium, [auris-session](auris-session.md)): record.rs's module doc still describes the pre-f0c836e single shared monitor ring, contradicting the current per-track monitor rings in monitor.rs […]
-- F-157 (medium, [training](training.md)): EnvelopeLoss divides by the configured kernel count instead of the count actually used, silently underweighting the loss when a kernel exceeds the […]
-- F-158 (medium, [auris-session](auris-session.md)): guide.rs and README.md claim 13 workspace crates and omit auris-singer from the architecture diagram; there are 18 crates.
-- F-167 (medium, [auris-cli](auris-cli.md)): CLI `compose` silently drops --preset when a spec file is also given, unlike auris-toolbox's resolve_spec which rejects the combination outright.
-- F-168 (medium, [auris-gpu](auris-gpu.md)): auris-gpu's crate/module docs still claim no shipped code reports the true peak, but Session::analyze has surfaced it via the MCP analyze tool since […]
-- F-180 (medium, [auris-session](auris-session.md)): resize_clip's `available.max(1)` clamp forces length_frames=1 on an audio clip whose source has zero frames left, unlike trim_clip_start's explicit […]
-- F-188 (medium, [auris-session](auris-session.md)): guide.rs (lines ~88 and 638) wrongly claims frontend binaries call default_registry; only Session::new does, contradicting the guide's own later […]
-- F-205 (medium, [vendor/rustysynth](vendor-rustysynth.md)): rustysynth fork README's closed list of touched files (README.md:22-23) omits src/error.rs, which adds the InvalidModulatorList variant actually […]
-- F-220 (medium, [training](training.md)): host.py's own MODEL_SILENCE = "<sil>" literal is a third, untested copy alongside ipa.SIL and Rust's score.rs constant.
-- F-236 (medium, [repo/ci/docs](repo-ci-docs.md)): aesthetics.py keys per-file scores by bare filename stem, so same-named WAVs in different subdirectories silently overwrite each other in the […]
-- F-340 (medium, [auris-session](auris-session.md)): A clip with start=i64::MIN, only reachable via a hand-edited/corrupt .auris file since load_project never validates clip starts, panics on drag via […]
-- F-361 (medium, [auris-gpu](auris-gpu.md)): auris-gpu's crate and module docs falsely claim compute_peaks reruns on every zoom/scroll, when it actually runs once per source and is cached in […]
-- F-367 (medium, [auris-toolbox](auris-toolbox.md)): mixer/set_send in auris-toolbox never report send automation, unlike the parallel gain/pan/effect handling.
-- F-373 (medium, [auris-session](auris-session.md)): guide.rs:1238 wrongly claims an old build would silently misread a post-AssetPath path as absolute; it actually hard-fails to deserialize the whole […]
-- F-387 (medium, [auris-compose](auris-compose.md)): A pushed Held-figure chord is struck at 0.9x velocity instead of the intended 0.7x held multiplier, an unintended ~29% loudness jump.
-- F-135 (low, [repo/ci/docs](repo-ci-docs.md)): release.yml grants contents:write to all four jobs via workflow-root permissions, though only publish's release-creation step needs it.
-- F-264 (low, [auris-gpui](auris-gpui.md)): Panel::command's doc comment says "all five" panels but Panel::ALL has held six since the Agent panel shipped.
-- F-266 (low, [vendor/rustysynth](vendor-rustysynth.md)): PresetRegion::get_initial_filter_cutoff_frequency returns a raw multiplying factor instead of Hz, but the method is dead code never called on any […]
-- F-285 (low, [auris-session](auris-session.md)): guide.rs:638 wrongly claims frontends call default_registry directly, duplicating the same misattribution already at line 89-90.
-- F-430 (low, [auris-core](auris-core.md)): TimeSignature::COMMON doc claims the full meter menu is 400 rows; it's actually 32x5=160.
-- F-443 (low, [vendor/rustysynth](vendor-rustysynth.md)): A malformed SF2 bag with non-monotonic generator_index silently empties a zone instead of raising a parse error.
-- F-454 (low, [auris-gpui](auris-gpui.md)): stepped()'s unwrap_or(0) fallback can jump menu keyboard highlight to the wrong row if a row's enabled state changes while the menu is open.
+- ✅ F-326 (high, [auris-toolbox](auris-toolbox.md)): track_by_name in auris-toolbox silently resolves to the first of two same-named tracks, so by-name tools can act on the wrong one.
+- ✅ F-339 (high, [auris-dsp](auris-dsp.md)): Limiter::prepare has no upper bound on sample_rate, so a corrupted .auris file's sample_rate can abort the render/export process via a multi-GB […]
+- ✅ F-127 (medium, [training](training.md)): architecture.md's loss table lists KL (auxiliary) default as 1.0, but code, training.md, and the doc's own later prose all agree the default is 0.2.
+- ✅ F-146 (medium, [repo/ci/docs](repo-ci-docs.md)): docs/features.md:1270 says 29 tools; auris-toolbox declares 30 pub mod tool modules, confirmed by both frontends' own count-assertion tests.
+- ✅ F-154 (medium, [auris-session](auris-session.md)): record.rs's module doc still describes the pre-f0c836e single shared monitor ring, contradicting the current per-track monitor rings in monitor.rs […]
+- ✅ F-157 (medium, [training](training.md)): EnvelopeLoss divides by the configured kernel count instead of the count actually used, silently underweighting the loss when a kernel exceeds the […]
+- ✅ F-158 (medium, [auris-session](auris-session.md)): guide.rs and README.md claim 13 workspace crates and omit auris-singer from the architecture diagram; there are 18 crates.
+- ✅ F-167 (medium, [auris-cli](auris-cli.md)): CLI `compose` silently drops --preset when a spec file is also given, unlike auris-toolbox's resolve_spec which rejects the combination outright.
+- ✅ F-168 (medium, [auris-gpu](auris-gpu.md)): auris-gpu's crate/module docs still claim no shipped code reports the true peak, but Session::analyze has surfaced it via the MCP analyze tool since […]
+- ✅ F-180 (medium, [auris-session](auris-session.md)): resize_clip's `available.max(1)` clamp forces length_frames=1 on an audio clip whose source has zero frames left, unlike trim_clip_start's explicit […]
+- ✅ F-188 (medium, [auris-session](auris-session.md)): guide.rs (lines ~88 and 638) wrongly claims frontend binaries call default_registry; only Session::new does, contradicting the guide's own later […]
+- ✅ F-205 (medium, [vendor/rustysynth](vendor-rustysynth.md)): rustysynth fork README's closed list of touched files (README.md:22-23) omits src/error.rs, which adds the InvalidModulatorList variant actually […]
+- ✅ F-220 (medium, [training](training.md)): host.py's own MODEL_SILENCE = "<sil>" literal is a third, untested copy alongside ipa.SIL and Rust's score.rs constant.
+- ✅ F-236 (medium, [repo/ci/docs](repo-ci-docs.md)): aesthetics.py keys per-file scores by bare filename stem, so same-named WAVs in different subdirectories silently overwrite each other in the […]
+- ✅ F-340 (medium, [auris-session](auris-session.md)): A clip with start=i64::MIN, only reachable via a hand-edited/corrupt .auris file since load_project never validates clip starts, panics on drag via […]
+- ✅ F-361 (medium, [auris-gpu](auris-gpu.md)): auris-gpu's crate and module docs falsely claim compute_peaks reruns on every zoom/scroll, when it actually runs once per source and is cached in […]
+- ✅ F-367 (medium, [auris-toolbox](auris-toolbox.md)): mixer/set_send in auris-toolbox never report send automation, unlike the parallel gain/pan/effect handling.
+- ✅ F-373 (medium, [auris-session](auris-session.md)): guide.rs:1238 wrongly claims an old build would silently misread a post-AssetPath path as absolute; it actually hard-fails to deserialize the whole […]
+- ✅ F-387 (medium, [auris-compose](auris-compose.md)): A pushed Held-figure chord is struck at 0.9x velocity instead of the intended 0.7x held multiplier, an unintended ~29% loudness jump.
+- ✅ F-135 (low, [repo/ci/docs](repo-ci-docs.md)): release.yml grants contents:write to all four jobs via workflow-root permissions, though only publish's release-creation step needs it.
+- ✅ F-264 (low, [auris-gpui](auris-gpui.md)): Panel::command's doc comment says "all five" panels but Panel::ALL has held six since the Agent panel shipped.
+- ✅ F-266 (low, [vendor/rustysynth](vendor-rustysynth.md)): PresetRegion::get_initial_filter_cutoff_frequency returns a raw multiplying factor instead of Hz, but the method is dead code never called on any […]
+- ✅ F-285 (low, [auris-session](auris-session.md)): guide.rs:638 wrongly claims frontends call default_registry directly, duplicating the same misattribution already at line 89-90.
+- ✅ F-430 (low, [auris-core](auris-core.md)): TimeSignature::COMMON doc claims the full meter menu is 400 rows; it's actually 32x5=160.
+- ✅ F-443 (low, [vendor/rustysynth](vendor-rustysynth.md)): A malformed SF2 bag with non-monotonic generator_index silently empties a zone instead of raising a parse error.
+- ✅ F-454 (low, [auris-gpui](auris-gpui.md)): stepped()'s unwrap_or(0) fallback can jump menu keyboard highlight to the wrong row if a row's enabled state changes while the menu is open.
 
 ## Reading a finding
 

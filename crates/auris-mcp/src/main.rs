@@ -218,7 +218,7 @@ impl AurisMcp {
     /// one plays.
     #[tool]
     async fn list_progressions(&self) -> Result<CallToolResult, ErrorData> {
-        finished(Ok(toolbox::list_progressions::run()))
+        blocking(move || Ok(toolbox::list_progressions::run())).await
     }
 
     /// Lists the whole songs a specification can start from, with each one's key, tempo

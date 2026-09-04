@@ -61,6 +61,7 @@ impl MeterBank {
     ///
     /// Safe to call from the audio callback: it neither allocates nor locks.
     pub fn report_track(&self, index: usize, peak: f32, frames: usize, sample_rate: f64) {
+        let peak = Self::sanitized_peak(peak);
         if let Some(slot) = self.tracks.get(index) {
             Self::report(slot, peak, frames, sample_rate);
         }
@@ -73,6 +74,7 @@ impl MeterBank {
 
     /// Records a master bus channel's peak for a block of `frames`.
     pub fn report_master(&self, channel: usize, peak: f32, frames: usize, sample_rate: f64) {
+        let peak = Self::sanitized_peak(peak);
         if let Some(slot) = self.master.get(channel) {
             Self::report(slot, peak, frames, sample_rate);
         }
@@ -176,10 +178,13 @@ impl MeterBank {
     }
 
     fn report(slot: &AtomicU32, peak: f32, frames: usize, sample_rate: f64) {
-        let peak = if peak.is_finite() { peak.abs() } else { 0.0 };
         let previous = f32::from_bits(slot.load(Ordering::Relaxed));
         let held = previous * Self::decay(frames, sample_rate);
         slot.store(peak.max(held).to_bits(), Ordering::Relaxed);
+    }
+
+    fn sanitized_peak(peak: f32) -> f32 {
+        if peak.is_finite() { peak.abs() } else { 0.0 }
     }
 }
 
@@ -192,6 +197,17 @@ impl Default for MeterBank {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_non_finite_peak_is_silence_for_both_meter_and_clip_latch() {
+        let bank = MeterBank::new(1);
+        bank.report_track(0, f32::INFINITY, 512, 48_000.0);
+        bank.report_master(0, f32::NAN, 512, 48_000.0);
+        assert_eq!(bank.track_peak(0), 0.0);
+        assert_eq!(bank.master_channel_peak(0), 0.0);
+        assert!(!bank.track_clipped(0));
+        assert!(!bank.master_clipped());
+    }
 
     #[test]
     fn a_peak_is_held_then_falls_at_the_documented_rate() {

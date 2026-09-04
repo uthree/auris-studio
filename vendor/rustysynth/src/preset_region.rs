@@ -148,7 +148,7 @@ impl PresetRegion {
     }
 
     pub fn get_initial_filter_cutoff_frequency(&self) -> f32 {
-        SoundFontMath::cents_to_multiplying_factor(
+        SoundFontMath::cents_to_hertz(
             self.gs[GeneratorType::INITIAL_FILTER_CUTOFF_FREQUENCY as usize] as f32,
         )
     }

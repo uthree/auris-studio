@@ -34,8 +34,6 @@ auris-engine = { path = "crates/auris-engine", version = "0.4.0" }
 auris-session = { path = "crates/auris-session", version = "0.4.0" }
 auris-toolbox = { path = "crates/auris-toolbox", version = "0.4.0" }
 
-anyhow = "1.0"
-arc-swap = "1.7"
 # A hosted plugin's state is an opaque byte stream, and the project file is JSON. Already in the
 # lock file by way of other dependencies, so naming it here adds nothing to the build.
 base64 = "0.22"

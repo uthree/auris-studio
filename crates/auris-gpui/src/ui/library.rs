@@ -497,7 +497,8 @@ impl AurisApp {
         rows.push(divider(&theme).into_any_element());
         rows.extend(self.effect_rows(cx));
         rows.push(divider(&theme).into_any_element());
-        rows.extend(self.installed_plugin_rows(cx));
+        let plugin_row_offset = rows.len();
+        rows.extend(self.installed_plugin_rows(plugin_row_offset, cx));
         rows
     }
 
@@ -623,6 +624,7 @@ impl AurisApp {
                             this.leave_library_search();
                             this.library.set_open(Branch::Plugins, true);
                             this.library.set_open(branch, true);
+                            this.library_reveal = Some(branch);
                             cx.notify();
                         }),
                     )
@@ -833,7 +835,11 @@ impl AurisApp {
     /// Two levels rather than the categories the built-ins get, because the grouping that matters
     /// here is the *file*: it is what the document stores, what has to still be installed for the
     /// project to open, and the only thing known about a plugin before it is loaded.
-    fn installed_plugin_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
+    fn installed_plugin_rows(
+        &mut self,
+        row_offset: usize,
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<AnyElement> {
         let files = self.clap_files().to_vec();
 
         let mut rows = vec![self.section_row(
@@ -860,6 +866,10 @@ impl AurisApp {
 
         for (index, file) in files.iter().enumerate() {
             let branch = Branch::PluginFile(index);
+            if self.library_reveal == Some(branch) {
+                self.library_scroll.scroll_to_item(row_offset + rows.len());
+                self.library_reveal = None;
+            }
             let open = self.library.is_open(branch);
             let name = file
                 .file_stem()

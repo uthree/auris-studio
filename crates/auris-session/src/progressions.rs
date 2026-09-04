@@ -91,6 +91,29 @@ pub struct ProgressionBook {
 }
 
 impl ProgressionBook {
+    fn lock() -> Result<std::fs::File, SessionError> {
+        let path = Self::path().with_extension("lock");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| SessionError::SettingsWrite {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|source| SessionError::SettingsWrite {
+                path: path.clone(),
+                source,
+            })?;
+        file.lock()
+            .map_err(|source| SessionError::SettingsWrite { path, source })?;
+        Ok(file)
+    }
+
     /// Where the book lives.
     pub fn path() -> PathBuf {
         config_dir().join("progressions.json")
@@ -162,11 +185,38 @@ impl ProgressionBook {
         true
     }
 
+    /// Reloads, keeps one entry, and saves while holding a cross-process file lock.
+    pub fn keep_saved(
+        name: &str,
+        chart: &Chart,
+        mode: Option<ChartMode>,
+    ) -> Result<bool, SessionError> {
+        let _lock = Self::lock()?;
+        let mut book = Self::load();
+        let kept = book.keep(name, chart, mode);
+        if kept {
+            book.save()?;
+        }
+        Ok(kept)
+    }
+
     /// Forgets the entry called `name`, reporting whether there was one.
     pub fn forget(&mut self, name: &str) -> bool {
+        let name = name.trim();
         let before = self.entries.len();
         self.entries.retain(|entry| entry.name != name);
         self.entries.len() != before
+    }
+
+    /// Reloads, removes one entry, and saves while holding a cross-process file lock.
+    pub fn forget_saved(name: &str) -> Result<bool, SessionError> {
+        let _lock = Self::lock()?;
+        let mut book = Self::load();
+        let forgotten = book.forget(name);
+        if forgotten {
+            book.save()?;
+        }
+        Ok(forgotten)
     }
 }
 
@@ -234,6 +284,14 @@ mod tests {
         assert!(book.forget("mine"));
         assert!(!book.forget("mine"));
         assert!(book.chart("mine").is_none());
+    }
+
+    #[test]
+    fn forgetting_uses_the_same_trimmed_name_as_keeping() {
+        let mut book = ProgressionBook::default();
+        assert!(book.keep(" mine ", &chart("| I | V |"), None));
+        assert!(book.forget("  mine  "));
+        assert!(book.entries().is_empty());
     }
 
     #[test]

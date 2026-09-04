@@ -145,13 +145,15 @@ class EnvelopeLoss(nn.Module):
             real, fake: ``(B, 1, L)`` waveforms.
         """
         total = torch.zeros((), device=fake.device, dtype=torch.float32)
+        used = 0
         for kernel_size in self.kernel_sizes:
             if real.size(-1) < kernel_size:
                 continue
             r_up, r_low = self._envelopes(real.float(), kernel_size)
             f_up, f_low = self._envelopes(fake.float(), kernel_size)
             total = total + F.l1_loss(f_up, r_up) + F.l1_loss(f_low, r_low)
-        return total / max(len(self.kernel_sizes), 1)
+            used += 1
+        return total / max(used, 1)
 
 
 class MultiParamMelLoss(nn.Module):

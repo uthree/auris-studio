@@ -86,8 +86,8 @@ pub mod architecture {
     //! **[`auris_engine`] does not depend on [`auris_dsp`] or [`auris_synth`].** It drives plugins
     //! purely through the `auris-core` traits. That is what keeps the plugin system honest: if the
     //! engine could reach for a concrete effect it would eventually do so, and the traits would
-    //! quietly stop being sufficient for anyone else's. The binary is what installs those packs
-    //! into the registry — see [`crate::default_registry`].
+    //! quietly stop being sufficient for anyone else's. [`crate::Session::new`] installs those
+    //! packs into the registry through [`crate::default_registry`].
     //!
     //! **A frontend depends on [`crate::Session`], on its own toolkit, and on the presentation
     //! crate for its reader — and on nothing else in the workspace.** There are two presentation
@@ -636,7 +636,7 @@ pub mod plugins {
     //! A [`PluginPack`](auris_core::registry::PluginPack) installs a whole family at once —
     //! [`auris_dsp::DspPack`] and [`auris_synth::SynthPack`] are the two that ship — so an
     //! application writes `registry.install::<DspPack>()` rather than one line per plugin.
-    //! [`crate::default_registry`] is what the frontends actually call.
+    //! [`crate::Session::new`] calls [`crate::default_registry`] on behalf of every frontend.
     //!
     //! # A plugin that needs something a factory cannot carry
     //!
@@ -1235,8 +1235,8 @@ pub mod documents {
     //!
     //! The version moves when an older build could *misread* a newer file, not merely when the
     //! schema grows. A field an old build has never heard of is skipped and everything else opens;
-    //! `AssetPath` bumped the version because it changed how an *existing* field was to be read,
-    //! and an old build would have resolved a relative path as an absolute one and lost the audio.
+    //! `AssetPath` bumped the version because it changed an *existing* field from a path string
+    //! to a tagged object, which an old build would fail to deserialize.
     //! [`harmony`](auris_core::harmony) did not, because nothing already in the file changed
     //! meaning.
 }

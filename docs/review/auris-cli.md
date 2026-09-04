@@ -8,10 +8,10 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 |---|---|---|---|
 | ✅ F-145 | medium | `crates/auris-cli/src/main.rs:538` | In auris-cli/src/main.rs, `sing`'s doc comment is fused with `collect`'s, so `sing`'s rendered docs open by describing SoundFont collection, not singing. |
 | ✅ F-167 | medium | `crates/auris-cli/src/main.rs:425` | CLI `compose` silently drops --preset when a spec file is also given, unlike auris-toolbox's resolve_spec which rejects the combination outright. |
-| F-181 | low | `crates/auris-cli/src/main.rs:243` | crates/auris-cli/src/main.rs:243 pads a kept progression's name with `{:<15}` instead of the file's own CJK-width-aware `pad()`, misaligning the table for […] |
-| F-422 | low | `crates/auris-cli/src/main.rs:366` | `auris compose --preset --force` (flag right after --preset) is parsed as preset name "--force", producing a confusing unknown-preset error instead of enabling […] |
-| F-429 | low | `crates/auris-cli/src/main.rs:1212` | auris-cli's --bpm parser lacks the finite/positive filter that the --sample-rate parser right beside it applies, so bad --bpm values are silently […] |
-| F-444 | low | `crates/auris-cli/src/main.rs:867` | sing-frames prints a failure and skips the success line if the optional --report write fails, even though the WAV was already fully rendered and saved. |
+| ✅ F-181 | low | `crates/auris-cli/src/main.rs:243` | crates/auris-cli/src/main.rs:243 pads a kept progression's name with `{:<15}` instead of the file's own CJK-width-aware `pad()`, misaligning the table for […] |
+| ✅ F-422 | low | `crates/auris-cli/src/main.rs:366` | `auris compose --preset --force` (flag right after --preset) is parsed as preset name "--force", producing a confusing unknown-preset error instead of enabling […] |
+| ✅ F-429 | low | `crates/auris-cli/src/main.rs:1212` | auris-cli's --bpm parser lacks the finite/positive filter that the --sample-rate parser right beside it applies, so bad --bpm values are silently […] |
+| ✅ F-444 | low | `crates/auris-cli/src/main.rs:867` | sing-frames prints a failure and skips the success line if the optional --report write fails, even though the WAV was already fully rendered and saved. |
 
 ### ✅ F-145 · medium · In auris-cli/src/main.rs, `sing`'s doc comment is fused with `collect`'s, so `sing`'s rendered docs open by describing SoundFont collection, not singing.
 
@@ -45,7 +45,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** auris-mcp and auris-agent both take the toolbox, which is what keeps the tool called `compose` identical at both doors (CLAUDE.md, Layout section); and the doc comment at main.rs:355-357: "The specification is a file, or — with `--preset` and no file — one of the styles the composer ships with."
 
-### F-181 · low · crates/auris-cli/src/main.rs:243 pads a kept progression's name with `{:<15}` instead of the file's own CJK-width-aware `pad()`, misaligning the table for wide-character names.
+### ✅ F-181 · low · crates/auris-cli/src/main.rs:243 pads a kept progression's name with `{:<15}` instead of the file's own CJK-width-aware `pad()`, misaligning the table for wide-character names.
 
 `crates/auris-cli/src/main.rs:243` · ui · confirmed (traced through the code; reported independently 1×)
 
@@ -61,7 +61,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** `display_width`'s own doc comment: "`{:<12}` pads by counting *characters*, which lines a table up in English and ruins it the moment a column holds anything wider."
 
-### F-422 · low · `auris compose --preset --force` (flag right after --preset) is parsed as preset name "--force", producing a confusing unknown-preset error instead of enabling --force.
+### ✅ F-422 · low · `auris compose --preset --force` (flag right after --preset) is parsed as preset name "--force", producing a confusing unknown-preset error instead of enabling --force.
 
 `crates/auris-cli/src/main.rs:366` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -75,7 +75,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** In the `named` computation, filter the token after `--preset` with the same `!arg.starts_with('-')` guard used for `source`, and if it's absent or starts with `-`, raise the existing "option needs value" error instead of accepting an arbitrary flag as the preset name.
 
-### F-429 · low · auris-cli's --bpm parser lacks the finite/positive filter that the --sample-rate parser right beside it applies, so bad --bpm values are silently clamped/defaulted instead of rejected.
+### ✅ F-429 · low · auris-cli's --bpm parser lacks the finite/positive filter that the --sample-rate parser right beside it applies, so bad --bpm values are silently clamped/defaulted instead of rejected.
 
 `crates/auris-cli/src/main.rs:1212` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -89,7 +89,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Add the same `.filter(|bpm: &f64| bpm.is_finite() && *bpm > 0.0)` (or reuse TempoMap::MIN_BPM/MAX_BPM bounds) to the --bpm parsing arm at crates/auris-cli/src/main.rs:1208-1220 that --sample-rate already applies 13 lines below, so bad --bpm values hit the existing `.ok_or_else` error path instead of silently reaching Session::set_bpm's clamp_bpm substitution.
 
-### F-444 · low · sing-frames prints a failure and skips the success line if the optional --report write fails, even though the WAV was already fully rendered and saved.
+### ✅ F-444 · low · sing-frames prints a failure and skips the success line if the optional --report write fails, even though the WAV was already fully rendered and saved.
 
 `crates/auris-cli/src/main.rs:867` · correctness · confirmed (executed reproduction; reported independently 1×)
 

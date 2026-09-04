@@ -85,6 +85,10 @@ pub struct MonitorRing {
     input_rate: f64,
     /// Whether anybody is listening. One relaxed load is what monitoring costs when it is off.
     enabled: AtomicBool,
+    /// Reseat requests from the UI. Only the reader still writes `read` and `phase`.
+    generation: AtomicU64,
+    /// Last reseat generation observed by the reader.
+    reader_generation: AtomicU64,
     /// Times the reader had to re-seat itself: the writer stalled, or lapped it, or drift closed
     /// the gap. Each one is a short silence somebody heard.
     rebuffers: AtomicU64,
@@ -104,6 +108,8 @@ impl MonitorRing {
             phase: AtomicU32::new(0),
             input_rate: input_rate.max(1.0),
             enabled: AtomicBool::new(false),
+            generation: AtomicU64::new(0),
+            reader_generation: AtomicU64::new(0),
             rebuffers: AtomicU64::new(0),
             source: AtomicU64::new(2_u64 << 32),
         }
@@ -147,7 +153,7 @@ impl MonitorRing {
     /// that never stopped is a gap somebody hears for no reason at all.
     pub fn set_enabled(&self, enabled: bool) {
         if enabled {
-            self.read.store(NOT_STARTED, Ordering::Relaxed);
+            self.generation.fetch_add(1, Ordering::Relaxed);
         }
         self.enabled.store(enabled, Ordering::Relaxed);
     }
@@ -218,6 +224,12 @@ impl MonitorRing {
         if frames == 0 {
             return;
         }
+        let generation = self.generation.load(Ordering::Relaxed);
+        if self.reader_generation.load(Ordering::Relaxed) != generation {
+            self.read.store(NOT_STARTED, Ordering::Relaxed);
+            self.phase.store(0, Ordering::Relaxed);
+            self.reader_generation.store(generation, Ordering::Relaxed);
+        }
         let step = self.input_rate / out_rate.max(1.0);
         // The block's worth of input, plus the one frame past the end that the interpolation of
         // the last output frame reads.
@@ -259,11 +271,15 @@ impl MonitorRing {
 
         position += step * frames as f64;
         let frame = position as u64;
-        self.read.store(frame, Ordering::Relaxed);
-        self.phase.store(
-            ((position - frame as f64) as f32).to_bits(),
-            Ordering::Relaxed,
-        );
+        // A toggle that arrived during this read wins. The next callback will observe its new
+        // generation and re-seat; this in-flight callback must not overwrite that request.
+        if self.generation.load(Ordering::Relaxed) == generation {
+            self.read.store(frame, Ordering::Relaxed);
+            self.phase.store(
+                ((position - frame as f64) as f32).to_bits(),
+                Ordering::Relaxed,
+            );
+        }
     }
 
     /// One sample out of the ring, wrapping.
@@ -475,6 +491,28 @@ mod tests {
             "the monitor resumed into the backlog instead of at the live edge"
         );
         assert_eq!(ring.rebuffers(), 0, "a restart is not a dropout");
+    }
+
+    #[test]
+    fn reseat_requests_are_applied_by_the_reader_generation() {
+        let ring = ring(48_000.0);
+        ramp(&ring, 0, 4_096);
+        ring.read_into(&mut out(64), 48_000.0);
+        let before = ring.read.load(Ordering::Relaxed);
+
+        ring.set_enabled(false);
+        ring.set_enabled(true);
+        assert_eq!(ring.read.load(Ordering::Relaxed), before);
+        assert_ne!(
+            ring.generation.load(Ordering::Relaxed),
+            ring.reader_generation.load(Ordering::Relaxed)
+        );
+
+        ring.read_into(&mut out(64), 48_000.0);
+        assert_eq!(
+            ring.generation.load(Ordering::Relaxed),
+            ring.reader_generation.load(Ordering::Relaxed)
+        );
     }
 
     #[test]

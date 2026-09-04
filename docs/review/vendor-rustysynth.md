@@ -8,13 +8,13 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 |---|---|---|---|
 | ✅ F-018 | critical | `vendor/rustysynth/src/instrument.rs:33` | A crafted/corrupt SF2 file's zone-index fields cause an unchecked out-of-bounds slice panic in vendor/rustysynth's Instrument/Preset construction, crashing the […] |
 | ✅ F-004 | high | `vendor/rustysynth/src/zone.rs:25` | Zone::new panics on out-of-range slice index when a SoundFont's bag/generator chunk counts disagree, crashing Auris Studio instead of rejecting the broken file. |
-| F-205 | medium | `vendor/rustysynth/README.md:22` | rustysynth fork README's closed list of touched files (README.md:22-23) omits src/error.rs, which adds the InvalidModulatorList variant actually returned by […] |
-| F-240 | medium | `vendor/rustysynth/src/voice.rs:235` | Unclamped modulator-sum cents can overflow to inf/NaN in voice.rs's filter-cutoff math, permanently and silently bypassing the lowpass filter for that voice. |
-| F-241 | medium | `vendor/rustysynth/src/region_pair.rs:35` | Unbounded modulator summation in region_pair.rs can overflow filter cutoff to Infinity, silently disabling the low-pass filter on a crafted SoundFont. |
-| F-393 | medium | `vendor/rustysynth/src/modulator.rs:104` | SOURCE_NONE (No Controller) in the vendored rustysynth modulator feeds raw=127 through the decreasing/curve/bipolar pipeline instead of returning a fixed 1.0, […] |
-| F-266 | low | `vendor/rustysynth/src/preset_region.rs:151` | PresetRegion::get_initial_filter_cutoff_frequency returns a raw multiplying factor instead of Hz, but the method is dead code never called on any real […] |
-| F-295 | low | `vendor/rustysynth/src/synthesizer.rs:258` | note_off_all(true)/note_off_all_channel(_, true) don't clear the pre-rendered block tail, leaving up to ~0.7ms of stale audio after an "immediate" stop […] |
-| F-443 | low | `vendor/rustysynth/src/zone_info.rs:43` | A malformed SF2 bag with non-monotonic generator_index silently empties a zone instead of raising a parse error. |
+| ✅ F-205 | medium | `vendor/rustysynth/README.md:22` | rustysynth fork README's closed list of touched files (README.md:22-23) omits src/error.rs, which adds the InvalidModulatorList variant actually returned by […] |
+| ✅ F-240 | medium | `vendor/rustysynth/src/voice.rs:235` | Unclamped modulator-sum cents can overflow to inf/NaN in voice.rs's filter-cutoff math, permanently and silently bypassing the lowpass filter for that voice. |
+| ✅ F-241 | medium | `vendor/rustysynth/src/region_pair.rs:35` | Unbounded modulator summation in region_pair.rs can overflow filter cutoff to Infinity, silently disabling the low-pass filter on a crafted SoundFont. |
+| ✅ F-393 | medium | `vendor/rustysynth/src/modulator.rs:104` | SOURCE_NONE (No Controller) in the vendored rustysynth modulator feeds raw=127 through the decreasing/curve/bipolar pipeline instead of returning a fixed 1.0, […] |
+| ✅ F-266 | low | `vendor/rustysynth/src/preset_region.rs:151` | PresetRegion::get_initial_filter_cutoff_frequency returns a raw multiplying factor instead of Hz, but the method is dead code never called on any real […] |
+| ✅ F-295 | low | `vendor/rustysynth/src/synthesizer.rs:258` | note_off_all(true)/note_off_all_channel(_, true) don't clear the pre-rendered block tail, leaving up to ~0.7ms of stale audio after an "immediate" stop […] |
+| ✅ F-443 | low | `vendor/rustysynth/src/zone_info.rs:43` | A malformed SF2 bag with non-monotonic generator_index silently empties a zone instead of raising a parse error. |
 
 ### ✅ F-018 · critical · A crafted/corrupt SF2 file's zone-index fields cause an unchecked out-of-bounds slice panic in vendor/rustysynth's Instrument/Preset construction, crashing the whole app instead of returning an error.
 
@@ -48,7 +48,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** A bag may name more modulators than the chunk holds, which is a broken file rather than a reason to refuse one: what is there is taken and the rest is left alone. (comment in vendor/rustysynth/src/zone.rs, applied to the modulator loop but not the identical-hazard generator loop above it)
 
-### F-205 · medium · rustysynth fork README's closed list of touched files (README.md:22-23) omits src/error.rs, which adds the InvalidModulatorList variant actually returned by modulator.rs.
+### ✅ F-205 · medium · rustysynth fork README's closed list of touched files (README.md:22-23) omits src/error.rs, which adds the InvalidModulatorList variant actually returned by modulator.rs.
 
 `vendor/rustysynth/README.md:22` · other · confirmed (traced through the code; reported independently 1×)
 
@@ -64,7 +64,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** vendor/rustysynth/README.md is the account: what was added, what was deliberately left out, and the measurement.
 
-### F-240 · medium · Unclamped modulator-sum cents can overflow to inf/NaN in voice.rs's filter-cutoff math, permanently and silently bypassing the lowpass filter for that voice.
+### ✅ F-240 · medium · Unclamped modulator-sum cents can overflow to inf/NaN in voice.rs's filter-cutoff math, permanently and silently bypassing the lowpass filter for that voice.
 
 `vendor/rustysynth/src/voice.rs:235` · dsp · confirmed (executed reproduction; reported independently 1×)
 
@@ -82,7 +82,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** Mechanism, trigger, and consequence are all as claimed and reproduce exactly (verified by standalone execution of the actual formulas). One number in the mechanism text is imprecise: cents_to_hertz's f32 result underflows to exactly 0.0 at -180000 cents, not "roughly -179,640" — at -179640 the result is a nonzero subnormal (~1.1e-44), which multiplied by +inf gives +inf (then clamped, not NaN'd). The claim's own suggested trigger (~6 modulators at max negative amount, summing to -196608 or -196600-ish) already clears the real -180000 threshold, so the trigger recipe and every other part of […]
 
-### F-241 · medium · Unbounded modulator summation in region_pair.rs can overflow filter cutoff to Infinity, silently disabling the low-pass filter on a crafted SoundFont.
+### ✅ F-241 · medium · Unbounded modulator summation in region_pair.rs can overflow filter cutoff to Infinity, silently disabling the low-pass filter on a crafted SoundFont.
 
 `vendor/rustysynth/src/region_pair.rs:35` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -98,7 +98,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
 
-### F-393 · medium · SOURCE_NONE (No Controller) in the vendored rustysynth modulator feeds raw=127 through the decreasing/curve/bipolar pipeline instead of returning a fixed 1.0, so a font's constant modulator silently zeros or inverts when the decreasing/bipolar bits are set alongside it.
+### ✅ F-393 · medium · SOURCE_NONE (No Controller) in the vendored rustysynth modulator feeds raw=127 through the decreasing/curve/bipolar pipeline instead of returning a fixed 1.0, so a font's constant modulator silently zeros or inverts when the decreasing/bipolar bits are set alongside it.
 
 `vendor/rustysynth/src/modulator.rs:104` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -114,7 +114,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
 
-### F-266 · low · PresetRegion::get_initial_filter_cutoff_frequency returns a raw multiplying factor instead of Hz, but the method is dead code never called on any real synthesis path.
+### ✅ F-266 · low · PresetRegion::get_initial_filter_cutoff_frequency returns a raw multiplying factor instead of Hz, but the method is dead code never called on any real synthesis path.
 
 `vendor/rustysynth/src/preset_region.rs:151` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -132,7 +132,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** The claim's numeric estimate of "roughly 2477" for the multiplying-factor value at 13500 cents is slightly off; the precise value is ~2435.5 (still the same order of magnitude and same qualitative bug). Everything else in the claim — mechanism, location, trigger, and consequence — is accurate as stated.
 
-### F-295 · low · note_off_all(true)/note_off_all_channel(_, true) don't clear the pre-rendered block tail, leaving up to ~0.7ms of stale audio after an "immediate" stop (32-sample blocks at 44.1/48kHz in this codebase's only caller).
+### ✅ F-295 · low · note_off_all(true)/note_off_all_channel(_, true) don't clear the pre-rendered block tail, leaving up to ~0.7ms of stale audio after an "immediate" stop (32-sample blocks at 44.1/48kHz in this codebase's only caller).
 
 `vendor/rustysynth/src/synthesizer.rs:258` · realtime · confirmed (executed reproduction; reported independently 1×)
 
@@ -150,7 +150,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** The mechanism, trigger and consequence are correct as described. Two minor corrections: (1) the `self.voices.clear()` call the claim anchors to is at line 258, but the enclosing `note_off_all` function itself starts at line 256, not 258 (line 258 is accurate for the specific mutating statement, so this is not really an error). (2) In the one real caller in this codebase (`auris_sampler::Sampler::stop_everything`), `block_size` is fixed at `INTERNAL_BLOCK = 32`, not the claim's illustrative worst-case 1024 — so the actual leak in this project's current usage is bounded to at most 32 samples […]
 
-### F-443 · low · A malformed SF2 bag with non-monotonic generator_index silently empties a zone instead of raising a parse error.
+### ✅ F-443 · low · A malformed SF2 bag with non-monotonic generator_index silently empties a zone instead of raising a parse error.
 
 `vendor/rustysynth/src/zone_info.rs:43` · correctness · confirmed (executed reproduction; reported independently 1×)
 

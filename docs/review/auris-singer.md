@@ -8,7 +8,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 |---|---|---|---|
 | ✅ F-011 | high | `crates/auris-singer/src/metadata.rs:284` | VoiceInfo::parse trusts n_speakers:u32 from voice metadata unchecked and calls speakers(), letting a crafted/corrupt value drive a multi-gigabyte Vec<String> […] |
 | ✅ F-078 | high | `crates/auris-singer/src/score.rs:206` | SingerFrames.f0_hz/energy are indexed without bounds checks in chunk_ranges/arrange, panicking on a hand-edited or externally-written file whose curve arrays […] |
-| F-217 | medium | `crates/auris-singer/src/model.rs:137` | VoiceModel::load's doc promises a CPU fallback on GPU session-build failure under Acceleration::Auto, but open_session has no such retry — only the later […] |
+| ✅ F-217 | medium | `crates/auris-singer/src/model.rs:137` | VoiceModel::load's doc promises a CPU fallback on GPU session-build failure under Acceleration::Auto, but open_session has no such retry — only the later […] |
 
 ### ✅ F-011 · high · VoiceInfo::parse trusts n_speakers:u32 from voice metadata unchecked and calls speakers(), letting a crafted/corrupt value drive a multi-gigabyte Vec<String> allocation that aborts the process on load.
 
@@ -42,7 +42,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** arrange()'s own doc comment: "A file edited by hand can hold an index past its own inventory; sing it as unknown rather than panicking over it." (crates/auris-singer/src/score.rs, above `arrange`)
 
-### F-217 · medium · VoiceModel::load's doc promises a CPU fallback on GPU session-build failure under Acceleration::Auto, but open_session has no such retry — only the later mid-render demotion in sing_with is implemented.
+### ✅ F-217 · medium · VoiceModel::load's doc promises a CPU fallback on GPU session-build failure under Acceleration::Auto, but open_session has no such retry — only the later mid-render demotion in sing_with is implemented.
 
 `crates/auris-singer/src/model.rs:137` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 

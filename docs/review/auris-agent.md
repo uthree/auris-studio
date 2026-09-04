@@ -7,8 +7,8 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
 | ✅ F-093 | high | `crates/auris-agent/src/main.rs:839` | converse() in auris-agent has no request timeout, so a black-holed LLM host hangs the agent process (and the panel's parked thread) forever, unlike list_models […] |
-| F-252 | medium | `crates/auris-agent/src/main.rs:794` | auris-agent's Reporter/Narrator hooks always return ToolCallAction::Run and compose's `output` path is unconfined, so project-embedded text can steer […] |
-| F-386 | medium | `crates/auris-agent/src/main.rs:984` | Ollama's `list_models` discards all already-fetched model entries on a 20s timeout because the accumulator lives inside the future `tokio::time::timeout` drops. |
+| ✅ F-252 | medium | `crates/auris-agent/src/main.rs:794` | auris-agent's Reporter/Narrator hooks always return ToolCallAction::Run and compose's `output` path is unconfined, so project-embedded text can steer […] |
+| ✅ F-386 | medium | `crates/auris-agent/src/main.rs:984` | Ollama's `list_models` discards all already-fetched model entries on a 20s timeout because the accumulator lives inside the future `tokio::time::timeout` drops. |
 
 ### ✅ F-093 · high · converse() in auris-agent has no request timeout, so a black-holed LLM host hangs the agent process (and the panel's parked thread) forever, unlike list_models which is explicitly bounded for exactly this reason.
 
@@ -26,7 +26,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** // Bounded, because the caller is a panel with a spinner: a host that black-holes the connection would otherwise hang this process — and the thread the panel parked on it — forever. (doc comment on MODEL_LIST_PATIENCE, crates/auris-agent/src/main.rs:482-484)
 
-### F-252 · medium · auris-agent's Reporter/Narrator hooks always return ToolCallAction::Run and compose's `output` path is unconfined, so project-embedded text can steer autonomous writes anywhere the OS user can write, with no confirmation.
+### ✅ F-252 · medium · auris-agent's Reporter/Narrator hooks always return ToolCallAction::Run and compose's `output` path is unconfined, so project-embedded text can steer autonomous writes anywhere the OS user can write, with no confirmation.
 
 `crates/auris-agent/src/main.rs:794` · security · confirmed (traced through the code; reported independently 1×)
 
@@ -40,7 +40,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Give AgentHook::on_tool_call a real decision point: before returning ToolCallAction::Run for any tool in auris_toolbox::WRITES_PROJECTS, either prompt the user (Narrator: a stdin y/n; Reporter/JSON: emit a "confirm" event and block for the host's reply) or confine resolve_project/compose's output argument to the current project directory (canonicalize and reject any path that escapes it) unless an explicit --allow-outside-project flag was passed at startup.
 
-### F-386 · medium · Ollama's `list_models` discards all already-fetched model entries on a 20s timeout because the accumulator lives inside the future `tokio::time::timeout` drops.
+### ✅ F-386 · medium · Ollama's `list_models` discards all already-fetched model entries on a 20s timeout because the accumulator lives inside the future `tokio::time::timeout` drops.
 
 `crates/auris-agent/src/main.rs:984` · correctness · confirmed (executed reproduction; reported independently 1×)
 

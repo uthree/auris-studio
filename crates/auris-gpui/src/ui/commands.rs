@@ -320,6 +320,9 @@ impl AurisApp {
         };
         if self.session.remove_track(id).is_ok() {
             self.selected_track = self.project().tracks.first().map(|track| track.id);
+            if let Some(track) = self.selected_track {
+                self.reveal_track(track);
+            }
             self.select_clip(None);
             self.selected_notes.clear();
         }
@@ -341,16 +344,13 @@ impl AurisApp {
             }
             // Which of the two kinds refused says which sentence is true: an audio track has
             // clips and they arrive by import, and a bus has none at all.
-            Err(_) => {
-                let is_bus = self
-                    .project()
-                    .track(track)
-                    .is_some_and(|track| track.kind.is_bus());
-                self.set_status(self.t(match is_bus {
-                    true => Key::BusHoldsNoClips,
-                    false => Key::AudioClipsComeFromImport,
-                }));
+            Err(SessionError::WrongTrackKind { actual: "Bus", .. }) => {
+                self.set_status(self.t(Key::BusHoldsNoClips));
             }
+            Err(SessionError::WrongTrackKind { .. }) => {
+                self.set_status(self.t(Key::AudioClipsComeFromImport));
+            }
+            Err(error) => self.set_failed_status(error_text(&error, self.language())),
         }
     }
 
@@ -388,11 +388,14 @@ impl AurisApp {
     /// meant, and the timeline move that came with it still stands.
     pub(crate) fn move_clips_by_lane(
         &mut self,
-        origin_lanes: &[(ClipId, usize)],
-        grab_lane: usize,
+        origin_lanes: &[(ClipId, TrackId)],
+        grab_track: TrackId,
         under_pointer: TrackId,
     ) {
         let Some(target_lane) = self.project().track_index(under_pointer) else {
+            return;
+        };
+        let Some(grab_lane) = self.project().track_index(grab_track) else {
             return;
         };
         let delta = target_lane as isize - grab_lane as isize;
@@ -401,7 +404,10 @@ impl AurisApp {
         }
 
         let mut moves = Vec::with_capacity(origin_lanes.len());
-        for (clip, lane) in origin_lanes {
+        for (clip, track) in origin_lanes {
+            let Some(lane) = self.project().track_index(*track) else {
+                return;
+            };
             let Some(destination) = lane
                 .checked_add_signed(delta)
                 .and_then(|lane| self.project().tracks.get(lane))
@@ -445,7 +451,7 @@ impl AurisApp {
             }
         }
         self.session.end_transaction();
-        self.set_status(self.t(match looped > 0 {
+        self.set_status(self.t(match looped * 2 >= chosen.len() {
             true => Key::ClipLooped,
             false => Key::ClipUnlooped,
         }));
@@ -1076,7 +1082,10 @@ impl AurisApp {
     /// checked up front, so every refusal a person can act on arrives before any work is spent;
     /// the landing happens back on this thread, where the session is.
     pub(crate) fn sing_track(&mut self, cx: &mut Context<Self>) {
-        if self.choosing_export || self.export.as_ref().is_some_and(|e| e.result.is_none()) {
+        if self.auto_sing.is_some()
+            || self.choosing_export
+            || self.export.as_ref().is_some_and(|e| e.result.is_none())
+        {
             self.set_status(self.t(Key::ExportAlreadyRunning));
             return;
         }
@@ -1230,7 +1239,10 @@ impl AurisApp {
         if self.auto_sing_refused == Some(revision) {
             return;
         }
-        if self.choosing_export || self.export.as_ref().is_some_and(|e| e.result.is_none()) {
+        if self.auto_sing.is_some()
+            || self.choosing_export
+            || self.export.as_ref().is_some_and(|e| e.result.is_none())
+        {
             return;
         }
 
@@ -1421,7 +1433,6 @@ impl AurisApp {
         .detach();
     }
 
-    /// Prompts for a destination and writes the document out as a MIDI file.
     /// Writes the singer track's frame features — phonemes, pitch, energy — to a JSON file.
     pub(crate) fn export_singer_frames(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(track) = self.singer_target() else {
@@ -1467,6 +1478,7 @@ impl AurisApp {
             .detach();
     }
 
+    /// Prompts for a destination and writes the document out as a MIDI file.
     pub(crate) fn export_midi(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.project().name.clone();
         let language = self.language();
@@ -2076,7 +2088,10 @@ impl AurisApp {
     /// rather than a checkbox on the export sheet because it answers a different question: an
     /// export is a piece to listen to, and stems are a session for somebody else to open.
     pub(crate) fn start_export_stems(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.choosing_export || self.export.as_ref().is_some_and(|e| e.result.is_none()) {
+        if self.auto_sing.is_some()
+            || self.choosing_export
+            || self.export.as_ref().is_some_and(|e| e.result.is_none())
+        {
             self.set_status(self.t(Key::ExportAlreadyRunning));
             return;
         }

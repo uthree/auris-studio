@@ -18,7 +18,7 @@ use auris_session::prelude::*;
 pub const BARS: std::ops::RangeInclusive<usize> = 4..=32;
 
 /// The tempo range the specification accepts, which is what the dial has to cover.
-pub const TEMPO: std::ops::RangeInclusive<f64> = 40.0..=220.0;
+pub const TEMPO: std::ops::RangeInclusive<f64> = 20.0..=400.0;
 
 /// Straight to as far as a swing dial goes, in the percentage a shuffle is written in.
 pub const SWING: std::ops::RangeInclusive<u8> = 50..=75;
@@ -194,6 +194,7 @@ pub fn song_spec(dials: &SongDials) -> SongSpec {
         ending: dials.ending,
         motif: dials.motif.clone(),
         charts: dials.charts.iter().cloned().collect(),
+        chart_order: dials.charts.iter().map(|(name, _)| name.clone()).collect(),
         sections: dials
             .sections
             .iter()
@@ -241,12 +242,14 @@ pub fn song_dials(spec: &SongSpec) -> SongDials {
     if let Some(main) = spec.charts.get(MAIN_CHART) {
         charts.push((MAIN_CHART.to_string(), main.clone()));
     }
-    charts.extend(
-        spec.charts
-            .iter()
-            .filter(|(name, _)| name.as_str() != MAIN_CHART)
-            .map(|(name, chart)| (name.clone(), chart.clone())),
-    );
+    for name in spec.chart_order.iter().chain(spec.charts.keys()) {
+        if name == MAIN_CHART || charts.iter().any(|(seen, _)| seen == name) {
+            continue;
+        }
+        if let Some(chart) = spec.charts.get(name) {
+            charts.push((name.clone(), chart.clone()));
+        }
+    }
 
     let mut sections: Vec<SectionSpec> = Vec::new();
     let mut seen: Vec<&str> = Vec::new();
@@ -1076,6 +1079,30 @@ mod tests {
             spec.charts["marusa"].bar_count(),
             4,
             "丸サ進行 is four bars"
+        );
+    }
+
+    #[test]
+    fn chart_order_survives_writing_and_reopening_the_sheet() {
+        let mut dials = SongDials::default();
+        dials.charts.push((
+            "marusa".to_string(),
+            chart_named("marusa").expect("catalogue chart"),
+        ));
+        dials.charts.push((
+            "junjo".to_string(),
+            chart_named("junjo").expect("catalogue chart"),
+        ));
+
+        let written = song_spec(&dials).to_toml();
+        let reopened = song_dials(&SongSpec::parse(&written).expect("written spec parses"));
+        assert_eq!(
+            reopened
+                .charts
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            ["main", "marusa", "junjo"]
         );
     }
 

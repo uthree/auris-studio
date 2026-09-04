@@ -718,11 +718,15 @@ impl AurisApp {
         )
         .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
             let notches = f32::from(event.delta.pixel_delta(px(16.0)).y) / 16.0;
+            let steps = accumulated_scroll_steps(&mut this.signature_scroll_remainder, notches);
+            if steps == 0 {
+                return;
+            }
             let at = this.playhead_ticks();
             let current = this.session.signature_at(at);
             // Clamped rather than wrapped: rolling past the end of the range should stop at
             // the last meter there is, not come back round at one beat to the bar.
-            let beats = (current.numerator as i64 + notches.round() as i64).clamp(
+            let beats = (current.numerator as i64 + steps).clamp(
                 *TimeSignature::NUMERATORS.start() as i64,
                 *TimeSignature::NUMERATORS.end() as i64,
             );
@@ -1022,14 +1026,24 @@ impl AurisApp {
 
     /// Steps the editing grid to the next finer division, wrapping at the end.
     pub(crate) fn cycle_grid(&mut self) {
-        let current = self.project().grid.raw();
-        let index = GRID_CHOICES
-            .iter()
-            .position(|(_, ticks)| *ticks == current)
-            .unwrap_or(2);
-        let (_, ticks) = GRID_CHOICES[(index + 1) % GRID_CHOICES.len()];
-        self.session.set_grid(Ticks(ticks));
+        self.session
+            .set_grid(Ticks(next_grid(self.project().grid.raw())));
     }
+}
+
+fn next_grid(current: i64) -> i64 {
+    let index = GRID_CHOICES
+        .iter()
+        .position(|(_, ticks)| *ticks == current)
+        .unwrap_or(2);
+    GRID_CHOICES[(index + 1) % GRID_CHOICES.len()].1
+}
+
+fn accumulated_scroll_steps(remainder: &mut f32, notches: f32) -> i64 {
+    *remainder += notches;
+    let steps = remainder.trunc() as i64;
+    *remainder -= steps as f32;
+    steps
 }
 
 impl AurisApp {
@@ -1037,18 +1051,31 @@ impl AurisApp {
     ///
     /// The fractions are notation rather than words, so only the fallback needs translating.
     pub(crate) fn grid_label(&self) -> &'static str {
-        GRID_CHOICES
-            .iter()
-            .find(|(_, ticks)| *ticks == self.project().grid.raw())
-            .map(|(label, _)| *label)
-            .filter(|label| *label != GRID_OFF_LABEL)
-            .unwrap_or_else(|| self.t(Key::GridFree))
+        grid_label_for(self.project().grid.raw(), self.t(Key::GridFree))
     }
+}
+
+fn grid_label_for(current: i64, free: &'static str) -> &'static str {
+    GRID_CHOICES
+        .iter()
+        .find(|(_, ticks)| *ticks == current)
+        .map(|(label, _)| *label)
+        .filter(|label| *label != GRID_OFF_LABEL)
+        .unwrap_or(free)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn precise_signature_scroll_carries_fractional_notches_between_events() {
+        let mut remainder = 0.0;
+        assert_eq!(accumulated_scroll_steps(&mut remainder, 0.4), 0);
+        assert_eq!(accumulated_scroll_steps(&mut remainder, 0.4), 0);
+        assert_eq!(accumulated_scroll_steps(&mut remainder, 0.4), 1);
+        assert!((remainder - 0.2).abs() < f32::EPSILON * 2.0);
+    }
 
     #[test]
     fn changing_one_monitor_keeps_the_open_devices_dropout_high_water_mark() {
@@ -1337,13 +1364,28 @@ mod tests {
 
     #[test]
     fn the_grid_can_be_cycled_all_the_way_off_and_round_again() {
-        // `Key::GridFree` has labelled this state since the button was written, for a value the
-        // cycle could not produce: nothing a user placed could sit off the beat.
-        let ticks: Vec<i64> = GRID_CHOICES.iter().map(|(_, ticks)| *ticks).collect();
-        assert!(
-            ticks.contains(&1),
-            "one tick is as fine as the document gets"
+        let start = GRID_CHOICES[0].1;
+        let mut current = start;
+        let mut visited = Vec::new();
+        for _ in 0..GRID_CHOICES.len() {
+            current = next_grid(current);
+            visited.push(current);
+        }
+
+        assert_eq!(current, start, "the last choice wraps to the first");
+        assert_eq!(
+            visited,
+            GRID_CHOICES
+                .iter()
+                .cycle()
+                .skip(1)
+                .take(GRID_CHOICES.len())
+                .map(|(_, ticks)| *ticks)
+                .collect::<Vec<_>>()
         );
+        assert!(visited.contains(&1), "the cycle reaches the free/off grid");
+        assert_eq!(grid_label_for(1, "Free"), "Free");
+        assert_eq!(next_grid(i64::MAX), GRID_CHOICES[3].1);
     }
 
     fn running_take() -> RecordingStatus {

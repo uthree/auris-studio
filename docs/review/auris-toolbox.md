@@ -14,14 +14,14 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-314 | high | `crates/auris-toolbox/src/lib.rs:1558` | `add_part`'s unbounded `bars` argument lets one MCP/CLI call drive billions of generated notes, OOM-crashing the shared toolbox process. |
 | ✅ F-326 | high | `crates/auris-toolbox/src/lib.rs:2416` | track_by_name in auris-toolbox silently resolves to the first of two same-named tracks, so by-name tools can act on the wrong one. |
 | ✅ F-328 | high | `crates/auris-toolbox/src/lib.rs:1933` | edit_notes validates a new note's start against the clip but not its end, letting a long `beats` value silently grow the clip via fit_length_to_notes with no […] |
-| F-210 | medium | `crates/auris-toolbox/src/lib.rs:773` | set_level's pan branch skips the is_automated warning that its own gain branch three lines above gives, so a pan set on an automated track saves silently with […] |
-| F-214 | medium | `crates/auris-toolbox/src/lib.rs:1398` | add_track (crates/auris-toolbox/src/lib.rs:1399) accepts empty/whitespace names that rename_track explicitly rejects, creating unaddressable tracks. |
-| F-219 | medium | `crates/auris-toolbox/src/lib.rs:937` | set_effect's slot/effect match discards `effect` whenever `slot` is given, silently applying a value to the wrong effect if the two disagree. |
-| F-367 | medium | `crates/auris-toolbox/src/lib.rs:669` | mixer/set_send in auris-toolbox never report send automation, unlike the parallel gain/pan/effect handling. |
-| F-376 | medium | `crates/auris-toolbox/src/lib.rs:2723` | another_take(clip: None, seed: Some(N)) stamps the same seed onto every generated clip on the track, discarding each clip's own seed, with no guard analogous […] |
-| F-385 | medium | `crates/auris-toolbox/src/lib.rs:1251` | teach_progression/forget_progression race on ProgressionBook's unlocked load/save, silently dropping whichever edit saves first. |
-| F-388 | medium | `crates/auris-toolbox/src/lib.rs:330` | render::run's stems path drops already-written stem info via `?` on a mid-loop write failure, hiding partial success from the caller. |
-| F-267 | low | `crates/auris-toolbox/src/lib.rs:27` | auris-toolbox's crate doc claims a uniform four-item module shape for all 30 tools, but 4 argument-less info tools have only three items and a different run() […] |
+| ✅ F-210 | medium | `crates/auris-toolbox/src/lib.rs:773` | set_level's pan branch skips the is_automated warning that its own gain branch three lines above gives, so a pan set on an automated track saves silently with […] |
+| ✅ F-214 | medium | `crates/auris-toolbox/src/lib.rs:1398` | add_track (crates/auris-toolbox/src/lib.rs:1399) accepts empty/whitespace names that rename_track explicitly rejects, creating unaddressable tracks. |
+| ✅ F-219 | medium | `crates/auris-toolbox/src/lib.rs:937` | set_effect's slot/effect match discards `effect` whenever `slot` is given, silently applying a value to the wrong effect if the two disagree. |
+| ✅ F-367 | medium | `crates/auris-toolbox/src/lib.rs:669` | mixer/set_send in auris-toolbox never report send automation, unlike the parallel gain/pan/effect handling. |
+| ✅ F-376 | medium | `crates/auris-toolbox/src/lib.rs:2723` | another_take(clip: None, seed: Some(N)) stamps the same seed onto every generated clip on the track, discarding each clip's own seed, with no guard analogous […] |
+| ✅ F-385 | medium | `crates/auris-toolbox/src/lib.rs:1251` | teach_progression/forget_progression race on ProgressionBook's unlocked load/save, silently dropping whichever edit saves first. |
+| ✅ F-388 | medium | `crates/auris-toolbox/src/lib.rs:330` | render::run's stems path drops already-written stem info via `?` on a mid-loop write failure, hiding partial success from the caller. |
+| ✅ F-267 | low | `crates/auris-toolbox/src/lib.rs:27` | auris-toolbox's crate doc claims a uniform four-item module shape for all 30 tools, but 4 argument-less info tools have only three items and a different run() […] |
 
 ### ✅ F-017 · critical · edit_notes' `beats`/`beat` fields have no upper bound, letting a single tool call overflow Ticks arithmetic in fit_length_to_notes and crash or corrupt the session.
 
@@ -145,7 +145,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** "Refused rather than clamped, like every other bounded number at this door: the session would quietly pull it into range, and a success that placed a different velocity than the one asked for is a lie of omission." (crates/auris-toolbox/src/lib.rs, comment directly above the velocity check in the same function)
 
-### F-210 · medium · set_level's pan branch skips the is_automated warning that its own gain branch three lines above gives, so a pan set on an automated track saves silently with no indication the value is overridden by a lane.
+### ✅ F-210 · medium · set_level's pan branch skips the is_automated warning that its own gain branch three lines above gives, so a pan set on an automated track saves silently with no indication the value is overridden by a lane.
 
 `crates/auris-toolbox/src/lib.rs:773` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -159,7 +159,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** In the `if let Some(pan) = args.pan` branch of `set_level::run` (crates/auris-toolbox/src/lib.rs, right after the range check and before `session.set_param(pan_target, pan)`), add the same `if session.is_automated(pan_target) { notes.push_str(...) }` check the gain branch already does, with wording adapted to pan (e.g. "a lane is driving this pan, so the stored position is not what plays — `section_gain` with clear: true removes the lane" — or whatever the correct pan-automation-clearing tool is).
 
-### F-214 · medium · add_track (crates/auris-toolbox/src/lib.rs:1399) accepts empty/whitespace names that rename_track explicitly rejects, creating unaddressable tracks.
+### ✅ F-214 · medium · add_track (crates/auris-toolbox/src/lib.rs:1399) accepts empty/whitespace names that rename_track explicitly rejects, creating unaddressable tracks.
 
 `crates/auris-toolbox/src/lib.rs:1398` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -175,7 +175,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** if args.name.trim().is_empty() { return Err("the new name is empty — a track no tool can address again".into()); } (rename_track::run, crates/auris-toolbox/src/lib.rs:1684-1687) — the identical hazard is guarded there but not in add_track.
 
-### F-219 · medium · set_effect's slot/effect match discards `effect` whenever `slot` is given, silently applying a value to the wrong effect if the two disagree.
+### ✅ F-219 · medium · set_effect's slot/effect match discards `effect` whenever `slot` is given, silently applying a value to the wrong effect if the two disagree.
 
 `crates/auris-toolbox/src/lib.rs:937` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -191,7 +191,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** /// The effect's id as `mixer` lists it — the full `auris.fx.limiter` or just `limiter`. Leave out when addressing by `slot`.
 
-### F-367 · medium · mixer/set_send in auris-toolbox never report send automation, unlike the parallel gain/pan/effect handling.
+### ✅ F-367 · medium · mixer/set_send in auris-toolbox never report send automation, unlike the parallel gain/pan/effect handling.
 
 `crates/auris-toolbox/src/lib.rs:669` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -207,7 +207,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** CLAUDE.md's toolbox description: auris-toolbox is "every word said to a model — tool names, descriptions, schemas and the work behind them" — an inconsistent automation surface across otherwise-parallel tools (gain/pan/effects vs sends) misleads that model-facing account. The codebase's own test `every_parameter_on_a_track_can_be_automated_and_nothing_on_the_master_can` treats `ParamTarget::Send` […]
 
-### F-376 · medium · another_take(clip: None, seed: Some(N)) stamps the same seed onto every generated clip on the track, discarding each clip's own seed, with no guard analogous to the existing write_again+seed check.
+### ✅ F-376 · medium · another_take(clip: None, seed: Some(N)) stamps the same seed onto every generated clip on the track, discarding each clip's own seed, with no guard analogous to the existing write_again+seed check.
 
 `crates/auris-toolbox/src/lib.rs:2723` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -221,7 +221,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** In `regenerate` (crates/auris-toolbox/src/lib.rs), reject `Take::Another` with `args.seed.is_some()` when `args.clip` is `None` and more than one clip is chosen — the same way the existing guard already refuses `write_again` with a seed — with an error telling the caller to target one clip at a time when picking a specific seed.
 
-### F-385 · medium · teach_progression/forget_progression race on ProgressionBook's unlocked load/save, silently dropping whichever edit saves first.
+### ✅ F-385 · medium · teach_progression/forget_progression race on ProgressionBook's unlocked load/save, silently dropping whichever edit saves first.
 
 `crates/auris-toolbox/src/lib.rs:1251` · concurrency · confirmed (executed reproduction; reported independently 1×)
 
@@ -235,7 +235,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Serialize access to the progression book: take a cross-process advisory file lock (e.g. via fs4/fs2) around the load-modify-save cycle in teach_progression::run and forget_progression::run, or add a version/mtime check in ProgressionBook::save that fails instead of overwriting on a stale read, and write the file atomically (write-to-temp then rename) to avoid partial/torn writes.
 
-### F-388 · medium · render::run's stems path drops already-written stem info via `?` on a mid-loop write failure, hiding partial success from the caller.
+### ✅ F-388 · medium · render::run's stems path drops already-written stem info via `?` on a mid-loop write failure, hiding partial success from the caller.
 
 `crates/auris-toolbox/src/lib.rs:330` · persistence · confirmed (executed reproduction; reported independently 1×)
 
@@ -249,7 +249,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Have `RenderJob::render_stems` return the partial `Vec<StemSummary>` alongside the error on a mid-loop failure (e.g. via a richer error type or an `Err((SessionError, Vec<StemSummary>))`), and have `render::run` in crates/auris-toolbox/src/lib.rs report the stems already written (using the existing `wrote_line` formatting) before surfacing the error, instead of letting `.map_err(...)?` on line 330 discard everything accumulated so far.
 
-### F-267 · low · auris-toolbox's crate doc claims a uniform four-item module shape for all 30 tools, but 4 argument-less info tools have only three items and a different run() signature.
+### ✅ F-267 · low · auris-toolbox's crate doc claims a uniform four-item module shape for all 30 tools, but 4 argument-less info tools have only three items and a different run() signature.
 
 `crates/auris-toolbox/src/lib.rs:27` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 

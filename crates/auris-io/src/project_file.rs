@@ -103,7 +103,9 @@ const CASE_INSENSITIVE_PATHS: bool = cfg!(any(target_os = "windows", target_os =
 /// stays quiet as well, and renaming `roughmix` to `RoughMix` writes a whole second project, audio
 /// and all, one level down inside the first.
 fn folder_is_named(folder: &OsStr, stem: &OsStr, case_insensitive: bool) -> bool {
-    folder == stem || (case_insensitive && folder.eq_ignore_ascii_case(stem))
+    folder == stem
+        || (case_insensitive
+            && folder.to_string_lossy().to_lowercase() == stem.to_string_lossy().to_lowercase())
 }
 
 /// Just enough of the schema to read the version before committing to a full parse.

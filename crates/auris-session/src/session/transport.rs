@@ -103,7 +103,7 @@ impl Session {
         } else {
             (start, end)
         };
-        self.project.loop_region = Some((start.max_zero(), end.max_zero()));
+        self.project.loop_region = (end > start).then_some((start.max_zero(), end.max_zero()));
         self.publish_loop();
     }
 
@@ -354,6 +354,15 @@ mod tests {
     use super::*;
     use crate::session::fixtures::{BAR, session, undo_depth};
     use auris_core::Note;
+
+    #[test]
+    fn a_zero_length_loop_region_clears_the_cycle() {
+        let mut session = session();
+        session.set_loop_region(Ticks::ZERO, BAR);
+        assert!(session.project().loop_region.is_some());
+        session.set_loop_region(BAR, BAR);
+        assert_eq!(session.project().loop_region, None);
+    }
 
     #[test]
     fn undo_does_not_revert_unrecorded_loop_punch_or_grid_choices() {

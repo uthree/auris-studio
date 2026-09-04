@@ -49,13 +49,16 @@ class SingingDataset(Dataset):
         self.use_durations = use_durations
         audio_config = json.loads((self.root / "audio_config.json").read_text())
         self.sample_rate = int(audio_config["sample_rate"])
-        self.n_fft = int(n_fft if n_fft is not None else audio_config["n_fft"])
-        self.hop_length = int(
-            hop_length if hop_length is not None else audio_config["hop_length"]
-        )
-        self.win_length = int(
-            win_length if win_length is not None else audio_config["win_length"]
-        )
+        overrides = {"n_fft": n_fft, "hop_length": hop_length, "win_length": win_length}
+        for name, value in overrides.items():
+            if value is not None and int(value) != int(audio_config[name]):
+                raise ValueError(
+                    f"{name}={value} disagrees with the preprocessed dataset's "
+                    f"{name}={audio_config[name]}"
+                )
+        self.n_fft = int(audio_config["n_fft"])
+        self.hop_length = int(audio_config["hop_length"])
+        self.win_length = int(audio_config["win_length"])
 
         if records is None:
             records = read_metadata(self.root)
@@ -95,6 +98,9 @@ class SingingDataset(Dataset):
         n_frames = min(wav.numel() // self.hop_length, f0.numel())
         wav = wav[: n_frames * self.hop_length]
         spec = spectrogram(wav, self.n_fft, self.hop_length, self.win_length)
+        n_frames = min(n_frames, spec.size(-1), energy.numel(), voiced.numel())
+        wav = wav[: n_frames * self.hop_length]
+        spec = spec[..., :n_frames]
 
         item = {
             "phonemes": phonemes,
@@ -235,8 +241,12 @@ class DistributedBucketSampler(DistributedSampler):
         buckets: list[list[int]] = [[] for _ in range(2 * (len(self.boundaries) - 1))]
         for index, (length, labelled) in enumerate(zip(self.lengths, self.labelled)):
             bucket = self._bucket_of(length)
-            if bucket >= 0:
-                buckets[2 * bucket + int(labelled)].append(index)
+            if bucket < 0:
+                raise ValueError(
+                    f"utterance {index} has {length} frames outside sampler boundaries "
+                    f"({self.boundaries[0]}, {self.boundaries[-1]}]"
+                )
+            buckets[2 * bucket + int(labelled)].append(index)
 
         # Drop empty buckets, then pad each so it divides evenly across replicas.
         kept = [b for b in buckets if b]

@@ -3,7 +3,8 @@
 //! Free functions rather than methods, and a file of their own for what that costs: a paint
 //! closure captures `'static`, so nothing here can reach the document. What is drawn arrives as
 //! the snapshot `super::lanes` took while `self` was still borrowable, and these two functions
-//! are the whole of what the arrangement puts on a canvas below the ruler.
+//! paint the per-row clip and automation content. `super::lanes` also paints the canvas
+//! background, time grid, loop and punch regions, playhead, and selection band.
 //!
 //! The clip metrics come out of `super::geometry`, which is also where the hit tests read them,
 //! because the edges a pointer is offered have to be the edges that were drawn.

@@ -222,7 +222,7 @@ impl TimeSignature {
     ///
     /// Simple, compound and the odd ones people actually write in, in the order a musician would
     /// think of them. Not exhaustive — [`FromStr`](std::str::FromStr) takes anything inside the
-    /// bounds above — but a menu of every meter in the range would be four hundred rows.
+    /// bounds above — but a menu of every meter in the range would be a hundred and sixty rows.
     pub const COMMON: [Self; 8] = [
         Self {
             numerator: 4,

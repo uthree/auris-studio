@@ -14,8 +14,8 @@ use crate::Language;
 
 /// The controllers a lane can be opened on from the menu, in the order it lists them.
 ///
-/// The performance controls a keyboard actually has, roughly in the order they sit under a hand:
-/// the two wheels, the pedals a foot reaches, the two levels, and the filter. Anything else a
+/// The familiar performance controls, roughly in the order they sit under a hand: modulation,
+/// breath, foot control, volume, pan, expression, sustain, and filter brightness. Anything else a
 /// piece uses arrives by way of a MIDI file, and the menu offers those too — beside these, and
 /// marked, because a lane the file already wrote on is the one somebody is looking for.
 pub const NOTABLE: [u8; 8] = [1, 2, 4, 7, 10, 11, 64, 74];

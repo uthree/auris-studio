@@ -464,8 +464,6 @@ impl RenderGraph {
                 audition: Vec::with_capacity(AUDITION_HEADROOM),
                 one_shot: None,
                 continued_from: None,
-                chase_counts: [0; PITCH_COUNT],
-                chase_velocity: [0.0; PITCH_COUNT],
                 peak: 0.0,
                 // Filled in below, once every strip in the project has been asked what it is
                 // listening to.

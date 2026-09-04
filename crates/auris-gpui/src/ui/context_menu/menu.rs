@@ -36,11 +36,21 @@ const MARK_WIDTH: f32 = 18.0;
 const MIN_WIDTH: f32 = 168.0;
 /// Widest a menu may be.
 const MAX_WIDTH: f32 = 300.0;
-/// Rough advance width of one character at the menu's text size.
+/// Rough advance width of one Latin character at the menu's text size.
 ///
 /// Only used to pick a width — the labels themselves are truncated, so an over- or
 /// under-estimate costs a little whitespace rather than a clipped word.
 const CHARACTER_WIDTH: f32 = 6.6;
+
+fn estimated_label_width(label: &str) -> f32 {
+    label
+        .chars()
+        .map(|character| match character.is_ascii() {
+            true => CHARACTER_WIDTH,
+            false => CHARACTER_WIDTH * 2.0,
+        })
+        .sum()
+}
 
 /// One row in a menu.
 #[derive(Clone, Debug, PartialEq)]
@@ -135,7 +145,7 @@ impl ContextMenu {
         let at = choosable
             .iter()
             .position(|index| *index == current)
-            .unwrap_or(0) as isize;
+            .map_or(-1, |position| position as isize);
         let count = choosable.len() as isize;
         let next = (at + delta).rem_euclid(count) as usize;
         self.highlighted = Some(choosable[next]);
@@ -299,13 +309,12 @@ impl ContextMenu {
             .entries
             .iter()
             .filter_map(|entry| match entry {
-                MenuEntry::Item(item) => Some(item.label.chars().count()),
+                MenuEntry::Item(item) => Some(estimated_label_width(&item.label)),
                 MenuEntry::Separator => None,
             })
-            .max()
-            .unwrap_or(0);
-        let width =
-            (widest as f32 * CHARACTER_WIDTH + MARK_WIDTH + 24.0).clamp(MIN_WIDTH, MAX_WIDTH);
+            .reduce(f32::max)
+            .unwrap_or(0.0);
+        let width = (widest + MARK_WIDTH + 24.0).clamp(MIN_WIDTH, MAX_WIDTH);
         let height = self.entries.iter().fold(
             TITLE_HEIGHT + PADDING * 2.0 + BORDER * 2.0,
             |total, entry| {
@@ -620,6 +629,27 @@ mod tests {
         assert_eq!(menu.highlighted, Some(0), "and wraps round the end");
         menu.step(-1);
         assert_eq!(menu.highlighted, Some(2), "and back the other way");
+    }
+
+    #[test]
+    fn a_stale_highlight_steps_to_the_first_row() {
+        let mut menu = menu(gpui::point(px(0.0), px(0.0)), 3);
+        menu.highlighted = Some(usize::MAX);
+        menu.step(1);
+        assert_eq!(menu.highlighted, Some(0));
+    }
+
+    #[test]
+    fn japanese_labels_are_measured_as_full_width_text() {
+        assert_eq!(estimated_label_width("保存"), estimated_label_width("save"));
+        let japanese = ContextMenu::new(point(px(0.0), px(0.0)), "Menu")
+            .item("長い日本語メニュー項目", MenuCommand::NewAudioTrack);
+        let latin = ContextMenu::new(point(px(0.0), px(0.0)), "Menu")
+            .item("xxxxxxxxxxxxxxxxxxxxxx", MenuCommand::NewAudioTrack);
+        assert!(
+            f32::from(japanese.size().width - latin.size().width).abs() < 0.001,
+            "equivalent full- and half-width labels receive the same menu width"
+        );
     }
 
     #[test]

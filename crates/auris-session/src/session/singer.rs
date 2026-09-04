@@ -255,9 +255,10 @@ impl Session {
         {
             return Err(SessionError::NotFinite(seconds));
         }
+        let frame_hop = self.frame_hop_for_clip(clip);
         // Clamped rather than refused, unlike most bounded numbers at this door, because the
         // number arrives from a drag: the hand at the edge of the range wants the edge.
-        let seconds = seconds.map(|seconds| seconds.clamp(MIN_PHONEME_SECONDS, 10.0));
+        let seconds = seconds.map(|seconds| seconds.clamp(frame_hop, 10.0));
         self.record_repeating(Edit::SetPhonemeDuration(clip, note, phoneme));
         if let Some(target) = self
             .project
@@ -313,10 +314,11 @@ impl Session {
         scoop: Option<Scoop>,
     ) -> Result<(), SessionError> {
         self.require_note(clip, note)?;
+        let frame_hop = self.frame_hop_for_clip(clip);
         let scoop = match scoop {
             Some(scoop) => Some(Scoop {
                 depth: ornament_depth(scoop.depth)?,
-                seconds: ornament_seconds(scoop.seconds)?,
+                seconds: ornament_seconds(scoop.seconds, frame_hop)?,
             }),
             None => None,
         };
@@ -341,10 +343,11 @@ impl Session {
         fall: Option<Fall>,
     ) -> Result<(), SessionError> {
         self.require_note(clip, note)?;
+        let frame_hop = self.frame_hop_for_clip(clip);
         let fall = match fall {
             Some(fall) => Some(Fall {
                 depth: ornament_depth(fall.depth)?,
-                seconds: ornament_seconds(fall.seconds)?,
+                seconds: ornament_seconds(fall.seconds, frame_hop)?,
             }),
             None => None,
         };
@@ -357,6 +360,17 @@ impl Session {
             target.fall = fall;
         }
         Ok(())
+    }
+
+    fn frame_hop_for_clip(&self, clip: ClipId) -> f64 {
+        self.project
+            .tracks
+            .iter()
+            .filter_map(|track| track.kind.as_singer())
+            .find(|singer| singer.clips.iter().any(|candidate| candidate.id == clip))
+            .map_or(MIN_PHONEME_SECONDS, |singer| {
+                singer.frame_hop.max(MIN_PHONEME_SECONDS)
+            })
     }
 
     /// Puts a vibrato on one note — a sway around its pitch — adjusts it, or takes it off.
@@ -586,10 +600,21 @@ impl Session {
                         model.info().consonant_levels(0),
                     )
                 };
-                let reference = match self
-                    .project_folder()
-                    .and_then(|folder| file.strip_prefix(folder).ok())
-                {
+                let relative = self.project_folder().and_then(|folder| {
+                    file.strip_prefix(folder)
+                        .ok()
+                        .map(Path::to_path_buf)
+                        .or_else(|| {
+                            if cfg!(target_os = "windows") {
+                                let file = std::fs::canonicalize(file).ok()?;
+                                let folder = std::fs::canonicalize(folder).ok()?;
+                                file.strip_prefix(folder).ok().map(Path::to_path_buf)
+                            } else {
+                                None
+                            }
+                        })
+                });
+                let reference = match relative {
                     Some(relative) => AssetPath::inside(relative),
                     None => AssetPath::external(file),
                 };
@@ -867,11 +892,17 @@ impl Session {
 
     /// The loaded model behind a plan's voice, for rendering on a caller's thread.
     pub fn voice_model_at(&mut self, file: &Path) -> Result<Arc<Mutex<VoiceModel>>, SessionError> {
-        if let Some(loaded) = self.voices.get(file) {
+        let stamp = voice_stamp(file);
+        if let Some((cached_stamp, loaded)) = self.voices.get(file)
+            && stamp.as_ref() == Some(cached_stamp)
+        {
             return Ok(Arc::clone(loaded));
         }
         let model = Arc::new(Mutex::new(VoiceModel::load(file, self.acceleration)?));
-        self.voices.insert(file.to_path_buf(), Arc::clone(&model));
+        if let Some(stamp) = stamp {
+            self.voices
+                .insert(file.to_path_buf(), (stamp, Arc::clone(&model)));
+        }
         Ok(model)
     }
 
@@ -926,8 +957,12 @@ impl Session {
         let inside = PathBuf::from(auris_io::AUDIO_DIR).join(&file_name);
         let path = folder.join(&inside);
         let mut recorder = auris_io::WavRecorder::create(&path, f64::from(plan.sample_rate), 1)?;
-        recorder.write(samples)?;
-        recorder.finish()?;
+        if let Err(error) = recorder.write(samples).and_then(|_| recorder.finish()) {
+            // This file is not in the document yet. A failed write must not reserve a take name
+            // forever with an orphaned, partial WAV.
+            let _ = std::fs::remove_file(&path);
+            return Err(error.into());
+        }
 
         // Read back through the importer rather than kept from memory, exactly as a recorded
         // take is: the engine renders every source at the project's rate, and the model sings
@@ -968,6 +1003,7 @@ impl Session {
             });
         }
         self.install_source(source, std::sync::Arc::new(buffer));
+        self.prune_sources();
         self.invalidate_graph();
         Ok(seconds)
     }
@@ -1129,9 +1165,9 @@ fn ornament_depth(depth: f32) -> Result<f32, SessionError> {
 /// The floor is [`MIN_PHONEME_SECONDS`] for the pin's reason — narrower rounds to no frames
 /// and reads as the drag refusing to work — and past two seconds the gesture is a slide the
 /// bend curve draws better.
-fn ornament_seconds(seconds: f64) -> Result<f64, SessionError> {
+fn ornament_seconds(seconds: f64, frame_hop: f64) -> Result<f64, SessionError> {
     match seconds.is_finite() {
-        true => Ok(seconds.clamp(MIN_PHONEME_SECONDS, 2.0)),
+        true => Ok(seconds.clamp(frame_hop, 2.0)),
         false => Err(SessionError::NotFinite(seconds)),
     }
 }
@@ -1262,6 +1298,21 @@ mod tests {
         session.clear_phoneme_timing(clip, 0).unwrap();
         let note = &session.midi_clip(clip).unwrap().notes[0];
         assert!(note.phoneme_seconds.is_empty());
+    }
+
+    #[test]
+    fn a_phoneme_pin_is_at_least_one_frame_at_the_tracks_hop() {
+        let (mut session, track, clip) = sung(1);
+        session.set_note_lyric(clip, 0, "か").unwrap();
+        session.set_frame_hop(track, 0.05).unwrap();
+        session
+            .set_phoneme_duration(clip, 0, 0, Some(0.001))
+            .unwrap();
+
+        assert_eq!(
+            session.midi_clip(clip).unwrap().notes[0].phoneme_seconds[0],
+            0.05
+        );
     }
 
     #[test]
@@ -2050,4 +2101,17 @@ mod tests {
         assert_eq!(singer.instrument_id, auris_synth::Vocal::ID);
         assert_eq!(singer.frame_hop, default_frame_hop());
     }
+}
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(super) struct VoiceStamp {
+    modified: Option<std::time::SystemTime>,
+    len: u64,
+}
+
+fn voice_stamp(file: &Path) -> Option<VoiceStamp> {
+    let metadata = std::fs::metadata(file).ok()?;
+    Some(VoiceStamp {
+        modified: metadata.modified().ok(),
+        len: metadata.len(),
+    })
 }

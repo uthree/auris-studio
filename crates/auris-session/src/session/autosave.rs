@@ -23,8 +23,16 @@
 //! halfway through a change nobody has finished making.
 
 use std::time::{Duration, Instant};
+use std::{hash::DefaultHasher, hash::Hasher};
 
 use super::Session;
+
+fn file_fingerprint(path: &std::path::Path) -> Option<u64> {
+    let bytes = std::fs::read(path).ok()?;
+    let mut hasher = DefaultHasher::new();
+    hasher.write(&bytes);
+    Some(hasher.finish())
+}
 use crate::error::SessionError;
 
 /// How long after the last write the document is written again, if it has changed.
@@ -122,11 +130,13 @@ impl Session {
     /// another writer — see [`Session::externally_modified`].
     pub(super) fn mark_saved(&mut self) {
         self.last_save = Instant::now();
+        self.saved_project = self.project.clone();
         self.disk_stamp = self
             .path
             .as_deref()
             .and_then(|path| std::fs::metadata(path).ok())
             .and_then(|meta| meta.modified().ok());
+        self.disk_fingerprint = self.path.as_deref().and_then(file_fingerprint);
     }
 
     /// Whether the file on disk is no longer the one this session last read or wrote.
@@ -140,7 +150,13 @@ impl Session {
             return false;
         };
         match std::fs::metadata(path).and_then(|meta| meta.modified()) {
-            Ok(now) => now != stamp,
+            Ok(now) => {
+                now != stamp
+                    || self
+                        .disk_fingerprint
+                        .zip(file_fingerprint(path))
+                        .is_some_and(|(saved, current)| saved != current)
+            }
             Err(_) => false,
         }
     }
@@ -260,6 +276,31 @@ mod tests {
         session.save_in_place().unwrap();
         assert!(!session.externally_modified(), "ours again");
 
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn another_writer_is_noticed_when_the_timestamp_does_not_move() {
+        let root =
+            std::env::temp_dir().join(format!("auris-session-same-stamp-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut session =
+            crate::Session::new(crate::SessionOptions::headless()).expect("a headless session");
+        session.save_as(&root.join("Watched.auris")).unwrap();
+        let document = session.path().unwrap().to_path_buf();
+        let stamp = session.disk_stamp.unwrap();
+        let mut bytes = std::fs::read(&document).unwrap();
+        let index = bytes.iter().position(|byte| *byte == b' ').unwrap_or(0);
+        bytes[index] = if bytes[index] == b' ' { b'\t' } else { b' ' };
+        std::fs::write(&document, bytes).unwrap();
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&document)
+            .unwrap();
+        file.set_modified(stamp).unwrap();
+        drop(file);
+
+        assert!(session.externally_modified());
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

@@ -747,6 +747,7 @@ strings! {
     Cancel { en: "Cancel", ja: "キャンセル" }
     Rename { en: "Rename", ja: "変更" }
     NameCannotBeEmpty { en: "Name cannot be empty", ja: "名前を空にはできません" }
+    NameAlreadyUsed { en: "Name is already in use", ja: "その名前はすでに使われています" }
     // What each sheet is asking for, shown under the field before anything goes wrong. The chord
     // one carries the rule nothing else on screen states: case is what says major or minor, and
     // a user who has not been told that has no way to guess it from an empty box.
@@ -842,7 +843,7 @@ strings! {
     ExportCancelling { en: "Stopping…", ja: "中止しています…" }
     NoCycleToExport {
         en: "There is no cycle region to export — alt-drag the ruler to mark one",
-        ja: "書き出すサイクル範囲がありません — ルーラーを option ドラッグして設定してください"
+        ja: "書き出すサイクル範囲がありません — ルーラーを Alt（option）ドラッグして設定してください"
     }
     AudioClipsComeFromImport {
         en: "Audio clips come from Import Audio, not from an empty lane",
@@ -1341,8 +1342,8 @@ new のオプション
     // Shown while the sampler's envelope is switched on, because switching it on costs something
     // a user cannot otherwise see: a shaped note needs a MIDI channel to itself.
     SamplerEnvelopeOn {
-        en: "Envelope on: 15-note polyphony, and drum choke groups stop working.",
-        ja: "エンベロープ有効：同時発音は15音まで。ドラムのチョークグループも無効になります。"
+        en: "Envelope on: 14-note polyphony, and drum choke groups stop working.",
+        ja: "エンベロープ有効：同時発音は14音まで。ドラムのチョークグループも無効になります。"
     }
 
 }

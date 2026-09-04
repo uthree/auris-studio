@@ -409,7 +409,7 @@ impl TextField {
     pub fn byte_offset(&self, offset: usize) -> usize {
         let mut utf16 = 0;
         for (index, ch) in self.content.char_indices() {
-            if utf16 >= offset {
+            if utf16 + ch.len_utf16() > offset {
                 return index;
             }
             utf16 += ch.len_utf16();
@@ -492,7 +492,7 @@ macro_rules! entity_input_handler {
                 _window: &mut ::gpui::Window,
                 _cx: &mut ::gpui::Context<Self>,
             ) -> Option<String> {
-                let field = $crate::ui::text_field::HasTextField::field(self)?;
+                let field = $crate::ui::text_field::HasTextField::readable_field(self)?;
                 let range = field.byte_range(&range_utf16);
                 *adjusted_range = Some(field.utf16_range(&range));
                 Some(field.content()[range].to_string())
@@ -504,7 +504,7 @@ macro_rules! entity_input_handler {
                 _window: &mut ::gpui::Window,
                 _cx: &mut ::gpui::Context<Self>,
             ) -> Option<::gpui::UTF16Selection> {
-                let field = $crate::ui::text_field::HasTextField::field(self)?;
+                let field = $crate::ui::text_field::HasTextField::readable_field(self)?;
                 Some(::gpui::UTF16Selection {
                     range: field.utf16_range(&field.selection()),
                     reversed: field.is_reversed(),
@@ -680,6 +680,14 @@ mod tests {
         assert_eq!(field.byte_range(&(1..2)), 1..4);
         // An inverted range from the platform must not panic or produce one back.
         assert_eq!(field.byte_range(&inverted(9, 1)), 5..5);
+
+        let astral = TextField::new("a😀b");
+        assert_eq!(
+            astral.byte_offset(2),
+            1,
+            "an offset inside a surrogate pair rounds down"
+        );
+        assert_eq!(astral.byte_offset(3), 5);
     }
 
     #[test]

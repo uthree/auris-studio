@@ -11,7 +11,6 @@ use auris_core::plugin::{Instrument, NoteEvent};
 use auris_core::project::TrackId;
 use auris_core::{AudioBuffer, ParamId};
 
-use super::PITCH_COUNT;
 use super::latency::LatencyDelay;
 use super::schedule::{RenderAudioClip, ScheduledEvent};
 use super::strip::{RenderStrip, SmoothedGain};
@@ -123,10 +122,6 @@ pub struct RenderTrack {
     /// the playhead jumped — a seek, a loop wrap or a fresh start — and the notes that should be
     /// sounding there have to be chased.
     pub(crate) continued_from: Option<u64>,
-    /// How many times each pitch is on at the chase position.
-    pub(crate) chase_counts: [u8; PITCH_COUNT],
-    /// Velocity each pitch was last struck with, so a chased note comes back at its own level.
-    pub(crate) chase_velocity: [f32; PITCH_COUNT],
     /// Post-fader peak of the last block, published to the meters by the engine.
     pub(crate) peak: f32,
     /// Which of the graph's sidechain taps this track's output is copied into, if any chain in

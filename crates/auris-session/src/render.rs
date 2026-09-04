@@ -234,6 +234,15 @@ pub struct StemSummary {
     pub summary: ExportSummary,
 }
 
+/// A stem export that stopped after writing one or more complete files.
+#[derive(Debug)]
+pub struct StemRenderFailure {
+    /// The error that stopped the export.
+    pub error: SessionError,
+    /// Complete stem files written before the error.
+    pub written: Vec<StemSummary>,
+}
+
 /// The tracks a stem export would write a file for, in project order.
 ///
 /// **Tracks that make a sound of their own**, which is every kind but a bus. What comes out of a
@@ -326,9 +335,24 @@ impl RenderJob {
         options: &OfflineOptions,
         progress: &mut RenderProgress<'_>,
     ) -> Result<Vec<StemSummary>, SessionError> {
+        self.render_stems_with_partial(folder, settings, options, progress)
+            .map_err(|failure| failure.error)
+    }
+
+    /// Like [`Self::render_stems`], retaining summaries for complete files when a later stem fails.
+    pub fn render_stems_with_partial(
+        &mut self,
+        folder: &Path,
+        settings: &WavExportSettings,
+        options: &OfflineOptions,
+        progress: &mut RenderProgress<'_>,
+    ) -> Result<Vec<StemSummary>, StemRenderFailure> {
         let tracks = stem_tracks(&self.project);
         if tracks.is_empty() {
-            return Err(SessionError::NothingToStem);
+            return Err(StemRenderFailure {
+                error: SessionError::NothingToStem,
+                written: Vec::new(),
+            });
         }
         let rate = options.sample_rate.unwrap_or(self.project.sample_rate);
         let mut bank = bank_at_rate(&self.bank, rate);
@@ -341,7 +365,11 @@ impl RenderJob {
             &mut self.placed,
             &mut self.instruments,
             options,
-        )?;
+        )
+        .map_err(|error| StemRenderFailure {
+            error: error.into(),
+            written: Vec::new(),
+        })?;
         let settings = WavExportSettings {
             sample_rate: render.sample_rate().round().max(1.0) as u32,
             ..*settings
@@ -352,11 +380,21 @@ impl RenderJob {
         let mut stems = Vec::with_capacity(tracks.len());
         for (index, (track, name)) in tracks.into_iter().enumerate() {
             render.set_audible(&self.project.soloed_alone(track));
-            progress.within(index as f32 * span, span, |progress| {
+            if let Err(error) = progress.within(index as f32 * span, span, |progress| {
                 render.render(&mut out, progress)
-            })?;
+            }) {
+                return Err(StemRenderFailure {
+                    error: error.into(),
+                    written: stems,
+                });
+            }
             let path = folder.join(stem_file_name(&name, &mut taken));
-            write_wav(&path, &out, &settings)?;
+            if let Err(error) = write_wav(&path, &out, &settings) {
+                return Err(StemRenderFailure {
+                    error: error.into(),
+                    written: stems,
+                });
+            }
             stems.push(StemSummary {
                 track,
                 name,

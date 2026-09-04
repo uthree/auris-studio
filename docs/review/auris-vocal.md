@@ -11,10 +11,10 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-036 | high | `crates/auris-vocal/src/frames.rs:340` | phoneme_at's segments.last() fallback keeps release=true forever past the last segment, forcing full gain on a pinned-short trailing consonant. |
 | ✅ F-058 | high | `crates/auris-vocal/src/openjtalk.rs:14` | openjtalk_phoneme has no arms for OpenJTalk's uppercase devoiced-vowel labels A/I/U/E/O, so ordinary Japanese text (です, ます, し...) fails g2p with an […] |
 | ✅ F-097 | high | `crates/auris-vocal/src/openjtalk.rs:23` | `openjtalk_phoneme` has no `kw`/`gw` arms, so any lyric OpenJTalk analyzes with a labialized velar mora hard-errors the whole line instead of singing it. |
-| F-163 | medium | `crates/auris-vocal/src/frames.rs:303` | Two vocal notes sharing an identical start tick cause the shorter one to be silently dropped from the rendered performance with no warning. |
-| F-216 | medium | `crates/auris-vocal/src/frames.rs:165` | render_frames only checks frame_hop is finite and positive, so a project file with a near-zero hop bypasses the session's documented [1ms,100ms] clamp and can […] |
-| F-237 | medium | `crates/auris-vocal/src/phoneme.rs:20` | is_syllabic only recognizes the 5 Japanese-core vowels, so any hand-edited non-Japanese IPA vowel is timed and gained as a consonant instead of stretching to […] |
-| F-391 | medium | `crates/auris-vocal/src/ornament.rs:41` | ornament_offset validates t/length/seconds/rate for finiteness but uses scoop/fall/vibrato depth raw, letting a corrupted project file's Infinity depth flood […] |
+| ✅ F-163 | medium | `crates/auris-vocal/src/frames.rs:303` | Two vocal notes sharing an identical start tick cause the shorter one to be silently dropped from the rendered performance with no warning. |
+| ✅ F-216 | medium | `crates/auris-vocal/src/frames.rs:165` | render_frames only checks frame_hop is finite and positive, so a project file with a near-zero hop bypasses the session's documented [1ms,100ms] clamp and can […] |
+| ✅ F-237 | medium | `crates/auris-vocal/src/phoneme.rs:20` | is_syllabic only recognizes the 5 Japanese-core vowels, so any hand-edited non-Japanese IPA vowel is timed and gained as a consonant instead of stretching to […] |
+| ✅ F-391 | medium | `crates/auris-vocal/src/ornament.rs:41` | ornament_offset validates t/length/seconds/rate for finiteness but uses scoop/fall/vibrato depth raw, letting a corrupted project file's Infinity depth flood […] |
 
 ### ✅ F-009 · critical · JapaneseDictionary::phonemes() misparses jpreprocess's NJD output as HTS labels, so any kanji lyric errors instead of singing on the live singer.rs render path.
 
@@ -96,7 +96,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** A voice file is a contract between two languages, and several halves of it were written down twice — the `metadata_props` key, the format version, the reserved `<sil>` and `<unk>`, and the phoneme table down to which symbols are voiceless. ... `training/tests/test_host_contract.py` is that assertion executable, and it is the thing to keep alive.
 
-### F-163 · medium · Two vocal notes sharing an identical start tick cause the shorter one to be silently dropped from the rendered performance with no warning.
+### ✅ F-163 · medium · Two vocal notes sharing an identical start tick cause the shorter one to be silently dropped from the rendered performance with no warning.
 
 `crates/auris-vocal/src/frames.rs:303` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -112,7 +112,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** A singer sings one note at a time. Where notes overlap, the later-starting note cuts the earlier one off at its own start.
 
-### F-216 · medium · render_frames only checks frame_hop is finite and positive, so a project file with a near-zero hop bypasses the session's documented [1ms,100ms] clamp and can allocate huge Vecs, hanging or crashing the app.
+### ✅ F-216 · medium · render_frames only checks frame_hop is finite and positive, so a project file with a near-zero hop bypasses the session's documented [1ms,100ms] clamp and can allocate huge Vecs, hanging or crashing the app.
 
 `crates/auris-vocal/src/frames.rs:165` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -128,7 +128,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Session::set_frame_hop doc comment: "Clamped into 1–100 ms rather than refused: every value in that range is a hop some model somewhere uses, and outside it is either a frame per sample or a frame per phrase, neither of which anybody means."
 
-### F-237 · medium · is_syllabic only recognizes the 5 Japanese-core vowels, so any hand-edited non-Japanese IPA vowel is timed and gained as a consonant instead of stretching to fill its note.
+### ✅ F-237 · medium · is_syllabic only recognizes the 5 Japanese-core vowels, so any hand-edited non-Japanese IPA vowel is timed and gained as a consonant instead of stretching to fill its note.
 
 `crates/auris-vocal/src/phoneme.rs:20` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -146,7 +146,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** `is_syllabic` in crates/auris-vocal/src/phoneme.rs (VOWELS at line 20, is_syllabic lines 28-30) recognizes only the 5 Japanese-core vowels, not the ~15 additional vowels (ɛ, ɪ, ʊ, y, ø, œ, ɐ, etc.) that the shared trainer-side IPA table (training/src/auris_singer/text/ipa.py's IPA_SYMBOLS/PHONEME_CLASSES["vowel"]) and STRETCHED set (training/src/auris_singer/phoneme_durations.py) already reserve and treat as syllabic for exactly this purpose — supporting future non-Japanese language front-ends without changing the shared phoneme table. This contradicts the project's own documented design […]
 
-### F-391 · medium · ornament_offset validates t/length/seconds/rate for finiteness but uses scoop/fall/vibrato depth raw, letting a corrupted project file's Infinity depth flood the f0 curve.
+### ✅ F-391 · medium · ornament_offset validates t/length/seconds/rate for finiteness but uses scoop/fall/vibrato depth raw, letting a corrupted project file's Infinity depth flood the f0 curve.
 
 `crates/auris-vocal/src/ornament.rs:41` · dsp · confirmed (executed reproduction; reported independently 1×)
 

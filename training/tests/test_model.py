@@ -96,6 +96,17 @@ def test_infer_defaults_to_the_first_speaker(model):
     assert wav.shape == (1, 1, 9 * HOP)
 
 
+def test_infer_rejects_control_curves_that_do_not_fit_durations(model):
+    with pytest.raises(ValueError, match="f0 has 8 frames but durations require 9"):
+        model.infer(
+            phonemes=torch.randint(1, 30, (1, 3)),
+            phoneme_lengths=torch.tensor([3]),
+            durations=torch.tensor([[3, 3, 3]]),
+            f0=torch.full((1, 8), 220.0),
+            energy=torch.full((1, 8), 0.1),
+        )
+
+
 def test_f0_and_energy_change_the_synthesized_waveform(model):
     durations = torch.tensor([[4, 4, 4]])
     common = dict(

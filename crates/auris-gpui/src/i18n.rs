@@ -8,7 +8,7 @@
 
 use auris_i18n::{Key, Language, audio, messages};
 use auris_session::prelude::*;
-use auris_session::{Edit, SessionError};
+use auris_session::{CoreError, Edit, EngineError, IoError, SessionError};
 
 use crate::app::AurisApp;
 
@@ -209,18 +209,17 @@ pub fn track_kind_key(kind: &TrackKind) -> Key {
 
 /// A session error, in the user's language.
 ///
-/// The variants that wrap another crate's error keep that error's own text: a decoder or a
-/// device driver speaks English and translating its message would mean paraphrasing something we
-/// did not write. The half we own — which operation failed, and on what — is translated.
+/// Workspace-owned errors are translated variant by variant. Details supplied by a decoder,
+/// device driver, parser, or the operating system keep their original text.
 pub fn error_text(error: &SessionError, language: Language) -> String {
     let with = |key: Key, detail: String| messages::detailed(language, key.get(language), &detail);
     match error {
-        SessionError::Io(inner) => with(Key::ErrorFile, inner.to_string()),
-        SessionError::Engine(inner) => with(Key::ErrorEngine, inner.to_string()),
+        SessionError::Io(inner) => with(Key::ErrorFile, io_error_text(inner, language)),
+        SessionError::Engine(inner) => with(Key::ErrorEngine, engine_error_text(inner, language)),
         // The plugin's own words: it names a file, an id or a refusal that came from somebody
         // else's binary, and paraphrasing that would lose the only part worth reading.
         SessionError::Clap(inner) => with(Key::ErrorPlugin, inner.to_string()),
-        SessionError::Core(inner) => with(Key::ErrorDocument, inner.to_string()),
+        SessionError::Core(inner) => with(Key::ErrorDocument, core_error_text(inner, language)),
         SessionError::UnknownPlugin(id) => messages::unknown_plugin(language, id),
         SessionError::UnknownTrack(_) => Key::ErrorUnknownTrack.get(language).to_string(),
         SessionError::UnknownClip(_) => Key::ErrorUnknownClip.get(language).to_string(),
@@ -288,6 +287,164 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
     }
 }
 
+fn translated(language: Language, english: String, japanese: String) -> String {
+    match language {
+        Language::English => english,
+        Language::Japanese => japanese,
+    }
+}
+
+fn core_error_text(error: &CoreError, language: Language) -> String {
+    let (english, japanese) = match error {
+        CoreError::RaggedChannels {
+            channel,
+            found,
+            expected,
+        } => (
+            format!("channel {channel} has {found} frames but the buffer has {expected}"),
+            format!("チャンネル{channel}は{found}フレームですが、バッファは{expected}フレームです"),
+        ),
+        CoreError::NoChannels => (
+            "audio buffer must have at least one channel".to_string(),
+            "オーディオバッファには1つ以上のチャンネルが必要です".to_string(),
+        ),
+        CoreError::LayoutMismatch(detail) => (
+            format!("buffer layout mismatch: {detail}"),
+            format!("バッファのレイアウトが一致しません: {detail}"),
+        ),
+        CoreError::UnknownPlugin(id) => (
+            format!("unknown plugin id `{id}`"),
+            format!("不明なプラグインIDです: `{id}`"),
+        ),
+        CoreError::UnknownId { kind, id } => (
+            format!("unknown {kind} id {id}"),
+            format!("不明な{kind} IDです: {id}"),
+        ),
+        CoreError::InvalidTempoMap(detail) => (
+            format!("invalid tempo map: {detail}"),
+            format!("テンポマップが不正です: {detail}"),
+        ),
+        CoreError::InvalidTimeSignature(value) => (
+            format!("`{value}` is not a time signature like 4/4"),
+            format!("`{value}`は4/4のような拍子記号ではありません"),
+        ),
+        CoreError::InvalidAutomationLane(detail) => (
+            format!("invalid automation lane: {detail}"),
+            format!("オートメーションレーンが不正です: {detail}"),
+        ),
+    };
+    translated(language, english, japanese)
+}
+
+fn engine_error_text(error: &EngineError, language: Language) -> String {
+    let (english, japanese) = match error {
+        EngineError::NoOutputDevice => (
+            "no default audio output device is available".to_string(),
+            "既定のオーディオ出力デバイスがありません".to_string(),
+        ),
+        EngineError::NoInputDevice => (
+            "no audio input device is available".to_string(),
+            "オーディオ入力デバイスがありません".to_string(),
+        ),
+        EngineError::UnsupportedSampleFormat(format) => (
+            format!("unsupported sample format `{format}`"),
+            format!("未対応のサンプル形式です: `{format}`"),
+        ),
+        EngineError::Backend(detail) => (
+            format!("audio backend error: {detail}"),
+            format!("オーディオバックエンドのエラー: {detail}"),
+        ),
+        EngineError::Core(inner) => return core_error_text(inner, language),
+        EngineError::InvalidRange { start, end } => (
+            format!("invalid render range: start {start} is past end {end}"),
+            format!("レンダー範囲が不正です: 開始{start}が終了{end}を超えています"),
+        ),
+        EngineError::InvalidSampleRate(rate) => (
+            format!("invalid sample rate {rate}"),
+            format!("サンプルレートが不正です: {rate}"),
+        ),
+        EngineError::RenderTooLong { frames, limit } => (
+            format!("render span of {frames} frames exceeds the {limit} frame limit"),
+            format!("{frames}フレームのレンダー範囲が上限{limit}フレームを超えています"),
+        ),
+        EngineError::CommandQueueFull => (
+            "the engine command queue is full".to_string(),
+            "エンジンのコマンドキューがいっぱいです".to_string(),
+        ),
+        EngineError::NotRunning => (
+            "the audio engine is not running".to_string(),
+            "オーディオエンジンが動作していません".to_string(),
+        ),
+        EngineError::RenderCancelled => (
+            "the render was cancelled".to_string(),
+            "レンダーはキャンセルされました".to_string(),
+        ),
+    };
+    translated(language, english, japanese)
+}
+
+fn io_error_text(error: &IoError, language: Language) -> String {
+    let (english, japanese) = match error {
+        IoError::FileNotFound(path) => (
+            format!("file not found: {}", path.display()),
+            format!("ファイルが見つかりません: {}", path.display()),
+        ),
+        IoError::UnsupportedFormat(detail) => (
+            format!("unsupported audio format: {detail}"),
+            format!("未対応のオーディオ形式です: {detail}"),
+        ),
+        IoError::Decode(detail) => (
+            format!("failed to decode audio: {detail}"),
+            format!("オーディオをデコードできませんでした: {detail}"),
+        ),
+        IoError::Resample(detail) => (
+            format!("failed to resample audio: {detail}"),
+            format!("オーディオをリサンプルできませんでした: {detail}"),
+        ),
+        IoError::WavWrite(detail) => (
+            format!("failed to write WAV file: {detail}"),
+            format!("WAVファイルを書き込めませんでした: {detail}"),
+        ),
+        IoError::MidiParse(detail) => (
+            format!("failed to read MIDI file: {detail}"),
+            format!("MIDIファイルを読み込めませんでした: {detail}"),
+        ),
+        IoError::MidiWrite(detail) => (
+            format!("failed to write MIDI file: {detail}"),
+            format!("MIDIファイルを書き込めませんでした: {detail}"),
+        ),
+        IoError::MidiTimecode { fps, subframe } => (
+            format!(
+                "this MIDI file counts time in SMPTE frames ({fps} fps, {subframe} subframes) rather than in beats, so it has no musical positions to import"
+            ),
+            format!(
+                "このMIDIファイルは拍ではなくSMPTEフレーム（{fps} fps、{subframe}サブフレーム）で時間を数えるため、読み込める音楽的位置がありません"
+            ),
+        ),
+        IoError::Json(detail) => (
+            format!("project JSON error: {detail}"),
+            format!("プロジェクトJSONのエラー: {detail}"),
+        ),
+        IoError::ProjectVersionMismatch { found, supported } => (
+            format!(
+                "project format version {found} is newer than the supported version {supported}; update Auris Studio to open this project"
+            ),
+            format!(
+                "プロジェクト形式のバージョン{found}は対応上限{supported}より新しいため、Auris Studioを更新してください"
+            ),
+        ),
+        IoError::ProjectIdsExhausted => (
+            "project object ids have exhausted their supported range".to_string(),
+            "プロジェクトのオブジェクトIDが対応範囲を使い切りました".to_string(),
+        ),
+        IoError::Filesystem { path, source } => (
+            format!("I/O error on {}: {source}", path.display()),
+            format!("{}でI/Oエラーが発生しました: {source}", path.display()),
+        ),
+    };
+    translated(language, english, japanese)
+}
+
 /// Which of the two names a plugin gets — an insert's or a track's, the rule is the same.
 ///
 /// The hosted one wins whenever there is one. A free function because the alternative is a rule
@@ -305,6 +462,27 @@ mod tests {
     use super::*;
     use auris_i18n::audio;
     use auris_session::plugin_catalogue;
+
+    #[test]
+    fn workspace_owned_error_details_are_japanese() {
+        for (error, english) in [
+            (
+                SessionError::Engine(EngineError::NoOutputDevice),
+                "no default audio output device",
+            ),
+            (
+                SessionError::Core(CoreError::NoChannels),
+                "audio buffer must have",
+            ),
+            (
+                SessionError::Io(IoError::FileNotFound("lost.wav".into())),
+                "file not found",
+            ),
+        ] {
+            let japanese = error_text(&error, Language::Japanese);
+            assert!(!japanese.contains(english), "{japanese}");
+        }
+    }
 
     #[test]
     fn a_hosted_plugin_is_named_by_itself_and_not_by_its_id() {

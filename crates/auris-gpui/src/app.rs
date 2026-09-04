@@ -304,9 +304,9 @@ pub enum Drag {
         /// Lane each selected clip started on, so the selection keeps its shape as it crosses
         /// tracks: every clip moves by the same number of lanes rather than collapsing onto the
         /// one under the pointer.
-        origin_lanes: Vec<(ClipId, usize)>,
-        /// Lane the grabbed clip started on, which the pointer's lane is measured against.
-        grab_lane: usize,
+        origin_lanes: Vec<(ClipId, TrackId)>,
+        /// Track the grabbed clip started on, resolved to a live lane while dragging.
+        grab_track: TrackId,
         /// Where the button went down, until the pointer has travelled far enough to mean it.
         ///
         /// A clip's start is snapped to the grid as it moves, so a clip that is *not* on the grid
@@ -371,6 +371,8 @@ pub enum Drag {
         clip: ClipId,
         /// Which end of the clip the fade belongs to.
         edge: FadeEdge,
+        /// Where the button went down, until the movement is intentional.
+        pressed_at: Option<Point<Pixels>>,
     },
     /// Dragging a point along an automation lane.
     AutomationPoint {
@@ -613,12 +615,16 @@ pub enum Drag {
         base_notes: BTreeSet<usize>,
         /// Clips selected before the sweep started.
         base_clips: BTreeSet<ClipId>,
+        /// Primary clip before the sweep started; it must not drift with intermediate results.
+        primary_clip: Option<ClipId>,
     },
     /// Moving the floating plugin editor by its title bar.
     MovePluginWindow {
         /// Distance from the window's own origin to the point that was grabbed, so it does not
         /// jump under the pointer.
         grab_offset: Point<Pixels>,
+        /// Where the button went down until the pointer has moved far enough to be a drag.
+        pressed_at: Option<Point<Pixels>>,
     },
     /// Moving the drawn typing keyboard by its title bar.
     MoveTypingPanel {
@@ -754,8 +760,8 @@ mod tests {
             clip: ClipId(1),
             grab_offset: Ticks::ZERO,
             origins: vec![(ClipId(1), Ticks::ZERO)],
-            origin_lanes: vec![(ClipId(1), 0)],
-            grab_lane: 0,
+            origin_lanes: vec![(ClipId(1), TrackId(1))],
+            grab_track: TrackId(1),
             pressed_at,
         };
         assert!(
@@ -1164,6 +1170,8 @@ pub struct AurisApp {
 
     pub(crate) theme: Theme,
     pub(crate) timeline: TimelineView,
+    /// Fractional time-signature wheel notches carried between precise-scroll events.
+    pub(crate) signature_scroll_remainder: f32,
     pub(crate) pitch: PitchView,
     pub(crate) selected_track: Option<TrackId>,
     /// Monitor dropouts already reported, so the frame loop says something once per new gap
@@ -1278,6 +1286,8 @@ pub struct AurisApp {
     pub(crate) plugin_window: Option<crate::ui::plugin_window::PluginWindow>,
     /// Which branches of the library are open.
     pub(crate) library: crate::ui::library::LibraryTree,
+    /// A tree row that should be brought into view after search expands it.
+    pub(crate) library_reveal: Option<crate::ui::library::Branch>,
     /// The `.clap` files found on this machine, scanned once and kept.
     ///
     /// `None` until the plugins section is first drawn: walking three directory trees is not a
@@ -1414,6 +1424,8 @@ impl AurisApp {
         let input = InputSettings::load();
         let keymap = input.keys.clone();
         keymap.apply(cx);
+        let theme = Appearance::load().theme();
+        cx.set_global(theme.clone());
 
         let mut session =
             Session::new(session_options(&settings)).expect("a session opens even without audio");
@@ -1499,8 +1511,9 @@ impl AurisApp {
 
         Self {
             session,
-            theme: Appearance::load().theme(),
+            theme,
             timeline: TimelineView::default(),
+            signature_scroll_remainder: 0.0,
             pitch: PitchView::default(),
             selected_track,
             monitor_gaps: 0,
@@ -1543,6 +1556,7 @@ impl AurisApp {
             palette: None,
             plugin_window: None,
             library: crate::ui::library::LibraryTree::default(),
+            library_reveal: None,
             clap_files: None,
             voices: None,
             clap_contents: std::collections::HashMap::new(),
@@ -1994,6 +2008,11 @@ impl AurisApp {
         self.audition_at(pitch, NOTE_VELOCITY);
     }
 
+    /// Sounds one specifically grabbed piano-roll note at the ordinary audition level.
+    pub(crate) fn audition_note(&mut self, index: usize, pitch: u8) {
+        self.audition_note_at(index, pitch, NOTE_VELOCITY);
+    }
+
     /// Sounds one note as hard as it is written, which is what the velocity tool wants to hear.
     ///
     /// Struck once, when the note is taken hold of, and not again as the drag runs: what the
@@ -2003,7 +2022,15 @@ impl AurisApp {
         let Some(track) = self.selected_track else {
             return;
         };
-        self.sound(track, vec![pitch], velocity);
+        self.sound(track, vec![pitch], velocity, None);
+    }
+
+    /// Sounds the note a piano-roll gesture actually grabbed.
+    pub(crate) fn audition_note_at(&mut self, index: usize, pitch: u8, velocity: f32) {
+        let Some(track) = self.selected_track else {
+            return;
+        };
+        self.sound(track, vec![pitch], velocity, Some(index));
     }
 
     /// Sounds the chord in force at `tick`, and says so when nothing can play it.
@@ -2025,14 +2052,20 @@ impl AurisApp {
             Audition::Silence => self.stop_audition(),
             Audition::Hold => {}
             Audition::Strike => match self.session.audition_track(self.selected_track) {
-                Some(track) => self.sound(track, pitches, CHORD_VELOCITY),
+                Some(track) => self.sound(track, pitches, CHORD_VELOCITY, None),
                 None => self.set_status(self.t(Key::NoInstrumentToHearItOn)),
             },
         }
     }
 
     /// Sounds a set of notes, replacing anything already sounding.
-    fn sound(&mut self, track: TrackId, pitches: Vec<u8>, velocity: f32) {
+    fn sound(
+        &mut self,
+        track: TrackId,
+        pitches: Vec<u8>,
+        velocity: f32,
+        note_index: Option<usize>,
+    ) {
         self.stop_audition();
         // A voiced singer track auditions through its own voice: the grabbed note is sung
         // by the model off the main thread and played back as audio, so what a drag sounds
@@ -2040,7 +2073,7 @@ impl AurisApp {
         // voice yet, and chords stay on the instrument path — nothing polyphonic has a
         // syllable.
         match pitches.as_slice() {
-            &[pitch] if self.wish_sung_preview(track, pitch) => {}
+            &[pitch] if self.wish_sung_preview(track, pitch, note_index) => {}
             _ => self.session.notes_on(track, &pitches, velocity),
         }
         self.auditioning = Some((track, pitches));
@@ -2052,7 +2085,7 @@ impl AurisApp {
     /// that is not a singer, and a singer with no voice chosen. A cached render plays at
     /// once; anything else waits — at most a frame — for the repaint poll, which is the
     /// nearest thing to an executor a pointer press has.
-    fn wish_sung_preview(&mut self, track: TrackId, pitch: u8) -> bool {
+    fn wish_sung_preview(&mut self, track: TrackId, pitch: u8, note_index: Option<usize>) -> bool {
         let Some(singer) = self
             .project()
             .track(track)
@@ -2068,7 +2101,7 @@ impl AurisApp {
             voice.name.clone(),
             seed,
             pitch,
-            self.selected_phonemes(track),
+            self.selected_phonemes(track, note_index),
         );
         if let Some(buffer) = self.sung_previews.get(&key) {
             let buffer = Arc::clone(buffer);
@@ -2080,11 +2113,11 @@ impl AurisApp {
         true
     }
 
-    /// The syllable the grabbed note carries, read off the primary selection.
+    /// The syllable the grabbed note carries.
     ///
     /// Empty when nothing selected sits on this track — the keyboard strip at the left edge
     /// has no words to offer — and the pipeline sings that as its placeholder vowel.
-    fn selected_phonemes(&self, track: TrackId) -> Vec<String> {
+    fn selected_phonemes(&self, track: TrackId, note_index: Option<usize>) -> Vec<String> {
         let Some(clip) = self.selected_clip else {
             return Vec::new();
         };
@@ -2094,10 +2127,8 @@ impl AurisApp {
         if owner != track {
             return Vec::new();
         }
-        self.selected_notes
-            .iter()
-            .next()
-            .and_then(|index| clip.notes.get(*index))
+        audition_note_index(note_index, &self.selected_notes)
+            .and_then(|index| clip.notes.get(index))
             .map(|note| note.phonemes.clone())
             .unwrap_or_default()
     }
@@ -2155,7 +2186,6 @@ impl AurisApp {
             ExternalChange::Nothing => {}
             ExternalChange::Withdraw => {
                 self.external_change = None;
-                self.set_status(String::new());
                 cx.notify();
             }
             ExternalChange::Reload => {
@@ -2247,17 +2277,26 @@ impl AurisApp {
         };
         cx.set_menus(crate::menu::menus(self.language, &self.panels, state));
         self.native_menu_snapshot = Some((self.language, self.panels.clone(), state));
+        if let Some(handle) = self.settings_window {
+            let theme = self.theme.clone();
+            let _ = handle.update(cx, move |settings, _, cx| {
+                settings.sync_appearance(theme, preference);
+                cx.notify();
+            });
+        }
         let name = self.language.endonym();
         self.set_status(messages::language_changed(self.language, name));
     }
 
     /// Repaints the window in another colour scheme, and remembers the choice.
     ///
-    /// Everything visual reads [`Self::theme`] on the next frame, so there is nothing to
-    /// invalidate. The floating plugin editor and the settings window each hold their own copy;
-    /// the first is re-read every frame, and the second updates itself where it makes the change.
-    pub(crate) fn apply_scheme(&mut self, id: &str) {
+    /// Everything visual reads the current theme on the next frame, so there is nothing to
+    /// invalidate. Tooltips read the matching gpui global because they live outside this view;
+    /// the floating plugin editor re-reads this field every frame, and the settings window
+    /// updates its own copy where it makes the change.
+    pub(crate) fn apply_scheme(&mut self, id: &str, cx: &mut App) {
         self.theme = Theme::named(id);
+        cx.set_global(self.theme.clone());
         let appearance = Appearance {
             scheme: self.theme.scheme.to_string(),
         };
@@ -2265,6 +2304,14 @@ impl AurisApp {
         // not undo a change the user can already see.
         if let Err(error) = appearance.save() {
             log::warn!("could not save the colour scheme: {error}");
+        }
+        if let Some(handle) = self.settings_window {
+            let theme = self.theme.clone();
+            let language = self.settings.language;
+            let _ = handle.update(cx, move |settings, _, cx| {
+                settings.sync_appearance(theme, language);
+                cx.notify();
+            });
         }
         let name = crate::theme::scheme_or_default(id).name;
         self.set_status(messages::scheme_changed(self.language(), name));
@@ -2580,6 +2627,22 @@ impl AurisApp {
             },
             |bounds| bounds.origin,
         )
+    }
+}
+
+fn audition_note_index(grabbed: Option<usize>, selected: &BTreeSet<usize>) -> Option<usize> {
+    grabbed.or_else(|| selected.iter().next().copied())
+}
+
+#[cfg(test)]
+mod audition_selection_tests {
+    use super::*;
+
+    #[test]
+    fn a_grabbed_note_wins_over_the_lowest_selected_index() {
+        let selected = [1, 4].into_iter().collect();
+        assert_eq!(audition_note_index(Some(4), &selected), Some(4));
+        assert_eq!(audition_note_index(None, &selected), Some(1));
     }
 }
 

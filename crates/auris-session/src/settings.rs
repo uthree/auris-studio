@@ -296,8 +296,13 @@ impl Settings {
         let Ok(text) = std::fs::read_to_string(&path) else {
             return Self::default();
         };
-        match serde_json::from_str(&text) {
-            Ok(settings) => settings,
+        match serde_json::from_str::<Self>(&text) {
+            Ok(mut settings) => {
+                settings.recent.truncate(Self::RECENT);
+                settings.audio.sample_rate = settings.audio.sample_rate.map(|rate| rate.max(8_000));
+                settings.audio.block_frames = settings.audio.block_frames.max(1);
+                settings
+            }
             Err(error) => {
                 log::warn!("ignoring malformed {}: {error}", path.display());
                 Self::default()
@@ -432,14 +437,15 @@ fn migrate_config(from: &Path, to: &Path) -> Vec<PathBuf> {
 /// shell has been installed — and where this is only reached at all when `APPDATA` is missing,
 /// which is already a strange enough machine to be worth landing somewhere sensible on.
 fn home() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    let names: [&str; 2] = ["USERPROFILE", "HOME"];
-    #[cfg(not(target_os = "windows"))]
-    let names: [&str; 1] = ["HOME"];
+    let names: &[&str] = if cfg!(target_os = "windows") {
+        &["USERPROFILE", "HOME"]
+    } else {
+        &["HOME"]
+    };
 
     names
-        .into_iter()
-        .find_map(std::env::var_os)
+        .iter()
+        .find_map(|name| std::env::var_os(name).filter(|value| !value.is_empty()))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
 }

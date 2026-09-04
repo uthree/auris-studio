@@ -90,6 +90,12 @@ def test_missing_wav_dir_is_reported(tmp_path):
         collect_utterances([{"name": "x", "wav_dir": str(tmp_path / "nope")}])
 
 
+def test_source_name_cannot_escape_the_output_directory(tmp_path):
+    wav_dir, _ = write_corpus(tmp_path, n_utterances=1)
+    with pytest.raises(ValueError, match="one path component"):
+        collect_utterances([{"name": "../outside", "wav_dir": str(wav_dir)}])
+
+
 @pytest.mark.slow
 def test_pipeline_writes_a_loadable_dataset(tmp_path):
     write_corpus(tmp_path)
@@ -197,6 +203,24 @@ def test_audio_too_short_for_reflect_padding_is_skipped(tmp_path, monkeypatch):
 
     summary = run_preprocess(config)
 
+    assert summary["processed"] == 1
+    assert summary["too short"] == 1
+
+
+def test_zero_length_audio_is_skipped(tmp_path, monkeypatch):
+    wav_dir, text_dir = write_corpus(tmp_path, n_utterances=2, source_rate=SAMPLE_RATE)
+    sf.write(wav_dir / "utt1.wav", np.zeros(0, dtype=np.float32), SAMPLE_RATE)
+    (text_dir / "utt1.txt").write_text("a", encoding="utf-8")
+
+    class FakeExtractor:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __call__(self, _wav, _sample_rate, n_frames):
+            return torch.zeros(n_frames), torch.zeros(n_frames, dtype=torch.bool)
+
+    monkeypatch.setattr("auris_singer.preprocess.pipeline.FcpeExtractor", FakeExtractor)
+    summary = run_preprocess(build_config(tmp_path, tmp_path / "processed"))
     assert summary["processed"] == 1
     assert summary["too short"] == 1
 

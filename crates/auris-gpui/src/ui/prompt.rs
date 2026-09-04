@@ -845,11 +845,15 @@ impl AurisApp {
             // A part's name is what the composer keys its material by, so two of one name would
             // be two parts writing the same notes — and the format refuses it outright.
             PromptTarget::SongPartName(index) => {
+                if text.trim().is_empty() {
+                    self.set_failed_status(self.t(Key::NameCannotBeEmpty).to_string());
+                    return;
+                }
                 let renamed = self.song_sheet.as_mut().is_some_and(|dials| {
                     crate::ui::compose_sheet::rename_part(dials, index, &text)
                 });
                 if !renamed {
-                    self.set_failed_status(self.t(Key::NameCannotBeEmpty).to_string());
+                    self.set_failed_status(self.t(Key::NameAlreadyUsed).to_string());
                     return;
                 }
                 Ok(())
@@ -906,9 +910,13 @@ impl AurisApp {
                     Some(chart.clone())
                 });
                 let Some(chart) = held else { return };
+                if text.trim().is_empty() {
+                    self.set_failed_status(self.t(Key::NameCannotBeEmpty).to_string());
+                    return;
+                }
                 if !self.progressions.keep(&text, &chart, chart.mode) {
                     // A name the built-in catalogue already uses, or none at all.
-                    self.set_failed_status(self.t(Key::NameCannotBeEmpty).to_string());
+                    self.set_failed_status(self.t(Key::NameAlreadyUsed).to_string());
                     return;
                 }
                 if let Err(error) = self.progressions.save() {

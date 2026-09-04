@@ -370,7 +370,7 @@ impl SectionSpec {
     /// A section with the defaults its name implies.
     pub fn named(name: impl Into<String>) -> Self {
         let name = name.into();
-        let intensity = match name.as_str() {
+        let intensity = match name.trim().to_ascii_lowercase().as_str() {
             "intro" => 0.30,
             "verse" => 0.55,
             "pre" => 0.70,
@@ -461,6 +461,11 @@ pub struct SongSpec {
     pub ending: Ending,
     /// The charts, by name. `main` is the one a section gets when it does not say.
     pub charts: BTreeMap<String, Chart>,
+    /// Chart names in the order a person arranged them.
+    ///
+    /// Kept separately from [`Self::charts`] because a map deliberately has no editable row
+    /// order. Older documents omit this and are normalised when read.
+    pub chart_order: Vec<String>,
     /// The sections, by name.
     pub sections: BTreeMap<String, SectionSpec>,
     /// The order the sections play in.
@@ -498,6 +503,7 @@ impl Default for SongSpec {
             motif: Vec::new(),
             ending: Ending::default(),
             charts,
+            chart_order: vec!["main".to_string()],
             sections,
             form: ["intro", "verse", "chorus", "verse", "chorus", "outro"]
                 .iter()

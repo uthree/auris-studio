@@ -35,6 +35,7 @@ impl AurisApp {
         &mut self,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
+        self.prune_invalid_automation_lanes();
         let theme = self.theme.clone();
         let view = self.timeline.clone();
         // The bar lines, as stretches of one meter each. Both painters walk them, and a song that
@@ -304,6 +305,21 @@ impl AurisApp {
             )
     }
 
+    /// Removes open rows whose parameter disappeared with a plugin or track edit.
+    fn prune_invalid_automation_lanes(&mut self) {
+        let open: Vec<(TrackId, ParamTarget)> = self
+            .automation_lanes
+            .iter()
+            .map(|(track, target)| (*track, *target))
+            .collect();
+        let invalid = invalid_automation_tracks(&open, |target| {
+            self.session.descriptor_for(target).is_some()
+        });
+        for track in invalid {
+            self.automation_lanes.remove(&track);
+        }
+    }
+
     /// Where the pointer would take hold of a clip's edge, relative to the lanes canvas.
     ///
     /// The cursor and the press have to agree about this. An arrow promising a grab the button
@@ -462,6 +478,15 @@ impl AurisApp {
     }
 }
 
+fn invalid_automation_tracks(
+    open: &[(TrackId, ParamTarget)],
+    mut valid: impl FnMut(ParamTarget) -> bool,
+) -> Vec<TrackId> {
+    open.iter()
+        .filter_map(|(track, target)| (!valid(*target)).then_some(*track))
+        .collect()
+}
+
 /// What one lane draws.
 pub(super) struct LanePaint {
     /// Top of the row in the lane column's own coordinates, from [`AurisApp::lane_rows`].
@@ -536,4 +561,23 @@ pub(super) enum ClipContent {
         fade_in_curve: FadeCurve,
         fade_out_curve: FadeCurve,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_automation_rows_are_identified_for_pruning() {
+        let first = TrackId(1);
+        let second = TrackId(2);
+        let open = [
+            (first, ParamTarget::TrackGain(first)),
+            (second, ParamTarget::TrackGain(second)),
+        ];
+        assert_eq!(
+            invalid_automation_tracks(&open, |target| target == ParamTarget::TrackGain(first)),
+            [second]
+        );
+    }
 }

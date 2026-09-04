@@ -295,6 +295,8 @@ pub struct Session {
 
     path: Option<PathBuf>,
     dirty: bool,
+    /// The exact document state most recently read from or written to disk.
+    saved_project: Project,
     /// Whether the document is written back over itself as it changes. See [`should_autosave`].
     autosave: bool,
     /// When the document was last written, by any means. The autosave clock runs from here.
@@ -302,6 +304,8 @@ pub struct Session {
     /// The file's modification time as of this session's last read or write of it — what
     /// [`Session::externally_modified`] compares against to notice another writer.
     disk_stamp: Option<std::time::SystemTime>,
+    /// Hash of the exact file bytes at [`Self::disk_stamp`].
+    disk_fingerprint: Option<u64>,
 
     /// Where a spectrum display reads its samples.
     ///
@@ -377,7 +381,7 @@ pub struct Session {
     /// couple of hundred megabytes that takes a third of a second to load — worth doing once a
     /// session, not once a song. Behind `Arc<Mutex<_>>` because a frontend renders takes on a
     /// worker thread while the session keeps answering commands; see [`singer`].
-    voices: HashMap<PathBuf, Arc<Mutex<auris_singer::VoiceModel>>>,
+    voices: HashMap<PathBuf, (singer::VoiceStamp, Arc<Mutex<auris_singer::VoiceModel>>)>,
     /// Where those models run their inference — the settings' choice, applied to every load.
     ///
     /// Kept beside the cache it governs: changing it empties [`Self::voices`], which is what
@@ -510,6 +514,7 @@ impl Session {
 
         let render_bank_rate = engine.sample_rate();
         let mut session = Self {
+            saved_project: project.clone(),
             project,
             bank: AudioSourceBank::new(),
             render_bank: AudioSourceBank::new(),
@@ -535,6 +540,7 @@ impl Session {
             autosave: options.autosave,
             last_save: Instant::now(),
             disk_stamp: None,
+            disk_fingerprint: None,
             scope: Arc::new(auris_engine::Scope::new()),
             analyzer: auris_dsp::SpectrumAnalyzer::new(auris_engine::SCOPE_WINDOW),
             param_cache: HashMap::new(),
@@ -907,7 +913,7 @@ impl Session {
         let edit = self.history.undo_edit()?;
         let project = self.history.undo(&self.project)?;
         self.replace_project(project);
-        self.dirty = true;
+        self.dirty = self.project != self.saved_project;
         Some(edit)
     }
 
@@ -921,7 +927,7 @@ impl Session {
         let edit = self.history.redo_edit()?;
         let project = self.history.redo(&self.project)?;
         self.replace_project(project);
-        self.dirty = true;
+        self.dirty = self.project != self.saved_project;
         Some(edit)
     }
 
@@ -953,10 +959,13 @@ impl Session {
     /// For scaffolding a host writes itself — a demo project, a template — which should not be
     /// undoable and should not make a freshly opened document look edited.
     pub fn forget_history(&mut self) {
+        if self.transaction.is_some() {
+            return;
+        }
         self.history.clear();
-        self.transaction = None;
         self.last_record = None;
         self.dirty = false;
+        self.saved_project = self.project.clone();
     }
 
     /// Records an undo step for the edit about to be made.
@@ -1240,6 +1249,31 @@ mod tests {
     }
 
     #[test]
+    fn a_clamped_or_identical_edit_leaves_no_step_and_no_dirt() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        session
+            .add_note(clip, Note::new(0, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        session.forget_history();
+
+        session.move_clips(&[(clip, Ticks::ZERO)], -Ticks::QUARTER);
+        session
+            .move_notes(clip, &[(0, Ticks::ZERO, 0)], -Ticks::QUARTER, -100)
+            .unwrap();
+        session.rename_clip(clip, "Riff").unwrap();
+        session.set_track_mute(track, false).unwrap();
+        session.set_track_solo(track, false).unwrap();
+        session.clear_harmony(Ticks::ZERO, Ticks::ZERO);
+
+        assert!(!session.can_undo());
+        assert!(!session.is_dirty());
+    }
+
+    #[test]
     fn a_headless_session_opens_without_audio() {
         let session = session();
         let status = session.audio_status();
@@ -1261,6 +1295,21 @@ mod tests {
         assert_eq!(session.can_undo(), steps_before);
         // The no-op transaction must not have discarded anything either.
         assert!(session.undo().is_some());
+    }
+
+    #[test]
+    fn history_cannot_be_forgotten_halfway_through_a_transaction() {
+        let mut session = session();
+        session.add_default_instrument_track("Lead").unwrap();
+        session.begin_transaction(Edit::MoveClip);
+        session.forget_history();
+
+        assert!(!session.can_undo(), "the open transaction hides history");
+        session.end_transaction();
+        assert!(
+            session.can_undo(),
+            "forget_history must not erase an open edit"
+        );
     }
 
     #[test]
@@ -1335,6 +1384,20 @@ mod tests {
         assert_eq!(session.project().tracks.len(), 1);
         assert_eq!(session.redo(), Some(Edit::AddInstrumentTrack));
         assert_eq!(session.project().tracks.len(), 2);
+    }
+
+    #[test]
+    fn undo_back_to_the_saved_document_clears_dirty() {
+        let mut session = session();
+        session.add_default_instrument_track("Saved").unwrap();
+        session.forget_history();
+        session.add_default_instrument_track("Later").unwrap();
+        assert!(session.is_dirty());
+
+        session.undo();
+        assert!(!session.is_dirty());
+        session.redo();
+        assert!(session.is_dirty());
     }
 
     #[test]

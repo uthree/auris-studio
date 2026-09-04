@@ -168,7 +168,7 @@ pub(super) fn edge_zone_rows(
     if !fade_band {
         return row(top, bottom).into_iter().collect();
     }
-    let band = top + TITLE_HEIGHT;
+    let band = (top + TITLE_HEIGHT).min(bottom);
     [row(top, band), row(band + FADE_BAND, bottom)]
         .into_iter()
         .flatten()
@@ -255,11 +255,15 @@ pub(super) fn clip_grab_at(
     loop_x: Pixels,
     x: Pixels,
     y_in_clip: Pixels,
+    has_fade_band: bool,
 ) -> Option<ClipGrab> {
     let grab = resize_grab(end_x - start_x);
     let within = |edge: Pixels| f32::from(edge - x).abs() <= grab;
     if y_in_clip < TITLE_HEIGHT && within(loop_x) {
         return Some(ClipGrab::Loop);
+    }
+    if has_fade_band && y_in_clip >= TITLE_HEIGHT && y_in_clip <= TITLE_HEIGHT + FADE_BAND {
+        return None;
     }
     if x <= end_x && f32::from(end_x - x) <= grab {
         return Some(ClipGrab::Resize(ClipEdge::End));
@@ -329,41 +333,56 @@ mod tests {
         let below = TITLE_HEIGHT + px(4.0);
 
         assert_eq!(
-            clip_grab_at(start, end, end, end, px(2.0)),
+            clip_grab_at(start, end, end, end, px(2.0), false),
             Some(ClipGrab::Loop)
         );
         assert_eq!(
-            clip_grab_at(start, end, end, end, below),
+            clip_grab_at(start, end, end, end, below, false),
             Some(ClipGrab::Resize(ClipEdge::End))
         );
         // The far edge of a clip that *is* looped is the loop's, and the clip's own end — now in
         // the middle of the block — is still the resize edge.
         let looped = px(700.0);
         assert_eq!(
-            clip_grab_at(start, end, looped, looped, px(2.0)),
+            clip_grab_at(start, end, looped, looped, px(2.0), false),
             Some(ClipGrab::Loop)
         );
         assert_eq!(
-            clip_grab_at(start, end, looped, end, below),
+            clip_grab_at(start, end, looped, end, below, false),
             Some(ClipGrab::Resize(ClipEdge::End))
         );
         assert_eq!(
-            clip_grab_at(start, end, looped, end + px(1.0), below),
+            clip_grab_at(start, end, looped, end + px(1.0), below, false),
             None,
             "a press beyond the raw end has no resize cursor and must not resize"
         );
         // Only the *loop* is confined to the name bar. The clip's own end answers at every
         // height, including inside the strip, because that is the edge people reach for.
         assert_eq!(
-            clip_grab_at(start, end, looped, end, px(2.0)),
+            clip_grab_at(start, end, looped, end, px(2.0), false),
             Some(ClipGrab::Resize(ClipEdge::End))
         );
         // The front trims, and the middle is neither — that is where a move begins.
         assert_eq!(
-            clip_grab_at(start, end, looped, start, below),
+            clip_grab_at(start, end, looped, start, below, false),
             Some(ClipGrab::Resize(ClipEdge::Start))
         );
-        assert_eq!(clip_grab_at(start, end, looped, px(200.0), below), None);
+        assert_eq!(
+            clip_grab_at(start, end, looped, px(200.0), below, false),
+            None
+        );
+    }
+
+    #[test]
+    fn the_fade_band_never_silently_resizes_a_clip() {
+        let (start, end) = (px(100.0), px(300.0));
+        let in_fade_band = TITLE_HEIGHT + FADE_BAND / 2.0;
+
+        assert_eq!(
+            clip_grab_at(start, end, end, end, in_fade_band, true),
+            None,
+            "only the visible fade handle may answer inside its band"
+        );
     }
 
     #[test]

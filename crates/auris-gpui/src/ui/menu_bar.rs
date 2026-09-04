@@ -122,7 +122,7 @@ pub fn stepped(rows: &[MenuRow], from: Option<usize>, delta: isize) -> Option<us
     let at = choosable
         .iter()
         .position(|index| *index == current)
-        .unwrap_or(0) as isize;
+        .map_or(-1, |position| position as isize);
     let count = choosable.len() as isize;
     Some(choosable[(at + delta).rem_euclid(count) as usize])
 }
@@ -448,6 +448,16 @@ mod tests {
     }
 
     #[test]
+    fn a_stale_highlight_steps_from_before_the_first_choosable_row() {
+        let rows = rows_with_a_rule();
+        let first = rows
+            .iter()
+            .position(|row| matches!(row, MenuRow::Command { enabled: true, .. }))
+            .expect("a choosable row");
+        assert_eq!(stepped(&rows, Some(usize::MAX), 1), Some(first));
+    }
+
+    #[test]
     fn the_highlight_steps_over_the_rules_and_wraps() {
         let rows = rows_with_a_rule();
         let commands: Vec<usize> = rows
@@ -682,6 +692,24 @@ mod window_tests {
             );
         });
         assert_eq!(open_menu(&app, cx), None, "and the menu shut behind it");
+    }
+
+    #[gpui::test]
+    fn clicking_a_disabled_row_leaves_its_menu_open(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        if !crate::app::AurisApp::wants_menu_bar() {
+            return;
+        }
+        let (section, index) = row_of(&app, cx, crate::actions::Undo.name());
+        paint(&app, cx);
+        let title: &'static str = Box::leak(format!("menu-title-{section}").into_boxed_str());
+        click(title, cx);
+        paint(&app, cx);
+        let row: &'static str =
+            Box::leak(format!("menu-bar-item-{section}-{index}").into_boxed_str());
+        click(row, cx);
+
+        assert_eq!(open_menu(&app, cx), Some(section));
     }
 
     /// A switch in the menu reads back the state it set, which is the whole job of the tick

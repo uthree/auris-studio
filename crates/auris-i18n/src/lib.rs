@@ -97,8 +97,8 @@ impl Language {
     pub fn from_environment() -> Language {
         ["LC_ALL", "LC_MESSAGES", "LANG"]
             .into_iter()
-            .filter_map(|name| std::env::var(name).ok())
-            .find_map(|value| Language::from_locale(&value))
+            .find_map(|name| std::env::var(name).ok())
+            .and_then(|value| Language::from_locale(&value))
             .or_else(Language::from_system_locale)
             .unwrap_or_default()
     }

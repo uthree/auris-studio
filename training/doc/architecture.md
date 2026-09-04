@@ -145,7 +145,7 @@ even and odd `kernel - rate`; the output is therefore always exactly
 | Multi-parameter mel | 45.0 | mel L1 at 3–4 STFT parameterizations |
 | Envelope | 10.0 | RefineGAN upper/lower max-pool envelopes at 4 window sizes |
 | KL | 1.0 | against the refined prior |
-| KL (auxiliary) | 1.0 | against the expanded phoneme-level prior; the MAS objective |
+| KL (auxiliary) | 0.2 | against the expanded phoneme-level prior; the MAS objective |
 
 The **envelope loss** matches `max_pool(x)` and `-max_pool(-x)` between real and
 generated waveforms at several window sizes. A mel loss is largely blind to a

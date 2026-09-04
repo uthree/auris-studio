@@ -9,11 +9,11 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-146 | medium | `docs/features.md:1270` | docs/features.md:1270 says 29 tools; auris-toolbox declares 30 pub mod tool modules, confirmed by both frontends' own count-assertion tests. |
 | ✅ F-176 | medium | `.github/workflows/release.yml:230` | Release notes and README list only 2 of the 4 binaries (missing auris-mcp/auris-agent) actually packaged into every Windows and macOS release archive. |
 | ✅ F-236 | medium | `tools/eval/aesthetics.py:129` | aesthetics.py keys per-file scores by bare filename stem, so same-named WAVs in different subdirectories silently overwrite each other in the […] |
-| F-135 | low | `.github/workflows/release.yml:18` | release.yml grants contents:write to all four jobs via workflow-root permissions, though only publish's release-creation step needs it. |
-| F-272 | low | `Cargo.toml:38` | anyhow and arc-swap are declared in [workspace.dependencies] (Cargo.toml:37-38) but unused by any crate since the first commit. |
-| F-275 | low | `tools/fetch-soundfonts.sh:60` | curl calls in tools/fetch-soundfonts.sh and tools/fetch-dictionary.sh lack --max-time/--connect-timeout, so a stalled peer can hang the release CI job for up […] |
-| F-290 | low | `tools/fetch-soundfonts.sh:47` | tools/fetch-soundfonts.sh:47 writes the license notice straight to its final path with no temp-file staging, unlike the font download three lines later. |
-| F-426 | low | `tools/eval/aesthetics.py:113` | A typo'd .wav path bypasses collect_wavs's existence check, crashing aesthetics.py with a raw soundfile traceback and losing the run's persisted --json scores […] |
+| ✅ F-135 | low | `.github/workflows/release.yml:18` | release.yml grants contents:write to all four jobs via workflow-root permissions, though only publish's release-creation step needs it. |
+| ✅ F-272 | low | `Cargo.toml:38` | anyhow and arc-swap are declared in [workspace.dependencies] (Cargo.toml:37-38) but unused by any crate since the first commit. |
+| ✅ F-275 | low | `tools/fetch-soundfonts.sh:60` | curl calls in tools/fetch-soundfonts.sh and tools/fetch-dictionary.sh lack --max-time/--connect-timeout, so a stalled peer can hang the release CI job for up […] |
+| ✅ F-290 | low | `tools/fetch-soundfonts.sh:47` | tools/fetch-soundfonts.sh:47 writes the license notice straight to its final path with no temp-file staging, unlike the font download three lines later. |
+| ✅ F-426 | low | `tools/eval/aesthetics.py:113` | A typo'd .wav path bypasses collect_wavs's existence check, crashing aesthetics.py with a raw soundfile traceback and losing the run's persisted --json scores […] |
 
 ### ✅ F-146 · medium · docs/features.md:1270 says 29 tools; auris-toolbox declares 30 pub mod tool modules, confirmed by both frontends' own count-assertion tests.
 
@@ -61,7 +61,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** CLAUDE.md: "Before and after touching a writer or an audio constant, run the two measuring instruments ... They are dev tooling only" — implying the measuring tool's numbers are trusted for regression detection; this defect makes those numbers silently wrong on directory input with duplicate basenames.
 
-### F-135 · low · release.yml grants contents:write to all four jobs via workflow-root permissions, though only publish's release-creation step needs it.
+### ✅ F-135 · low · release.yml grants contents:write to all four jobs via workflow-root permissions, though only publish's release-creation step needs it.
 
 `.github/workflows/release.yml:18` · security · confirmed (traced through the code; reported independently 2×)
 
@@ -77,7 +77,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** None in CLAUDE.md directly, but the workflow's own comment states the rationale narrowly: "`gh release create` writes to the repository." (release.yml:17) — the grant is scoped in intent to one step but applied workflow-wide, violating least-privilege/defense-in-depth practice implied by that comment.
 
-### F-272 · low · anyhow and arc-swap are declared in [workspace.dependencies] (Cargo.toml:37-38) but unused by any crate since the first commit.
+### ✅ F-272 · low · anyhow and arc-swap are declared in [workspace.dependencies] (Cargo.toml:37-38) but unused by any crate since the first commit.
 
 `Cargo.toml:38` · other · confirmed (traced through the code; reported independently 1×)
 
@@ -91,7 +91,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Remove the `anyhow = \"1.0\"` and `arc-swap = \"1.7\"` lines from `[workspace.dependencies]` in Cargo.toml (lines 37-38), or add a short comment explaining an intended future use if one is planned; re-run `cargo build` to confirm Cargo.lock updates cleanly.
 
-### F-275 · low · curl calls in tools/fetch-soundfonts.sh and tools/fetch-dictionary.sh lack --max-time/--connect-timeout, so a stalled peer can hang the release CI job for up to 360 minutes.
+### ✅ F-275 · low · curl calls in tools/fetch-soundfonts.sh and tools/fetch-dictionary.sh lack --max-time/--connect-timeout, so a stalled peer can hang the release CI job for up to 360 minutes.
 
 `tools/fetch-soundfonts.sh:60` · other · confirmed (executed reproduction; reported independently 1×)
 
@@ -105,7 +105,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Add `--max-time <n> --connect-timeout <n>` (and optionally `--retry`) to the four curl invocations in tools/fetch-soundfonts.sh and tools/fetch-dictionary.sh, and/or set `timeout-minutes` on the release.yml jobs as a second line of defense.
 
-### F-290 · low · tools/fetch-soundfonts.sh:47 writes the license notice straight to its final path with no temp-file staging, unlike the font download three lines later.
+### ✅ F-290 · low · tools/fetch-soundfonts.sh:47 writes the license notice straight to its final path with no temp-file staging, unlike the font download three lines later.
 
 `tools/fetch-soundfonts.sh:47` · persistence · confirmed (traced through the code; reported independently 1×)
 
@@ -121,7 +121,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** A half-finished download left where the application looks would be found, loaded and refused by the parser, and the error would name a corrupt file rather than an interrupted one. (comment at tools/fetch-soundfonts.sh:56-58, describing the discipline applied to the font but not the license file)
 
-### F-426 · low · A typo'd .wav path bypasses collect_wavs's existence check, crashing aesthetics.py with a raw soundfile traceback and losing the run's persisted --json scores instead of a clean error.
+### ✅ F-426 · low · A typo'd .wav path bypasses collect_wavs's existence check, crashing aesthetics.py with a raw soundfile traceback and losing the run's persisted --json scores instead of a clean error.
 
 `tools/eval/aesthetics.py:113` · correctness · confirmed (traced through the code; reported independently 1×)
 

@@ -285,7 +285,15 @@ class AurisSinger(nn.Module):
 
         durations = durations.to(torch.long) * x_mask.squeeze(1).long()
         y_lengths = durations.sum(dim=1).clamp(min=1)
-        y_max = int(min(y_lengths.max().item(), f0.size(-1)))
+        y_max = int(y_lengths.max().item())
+        curves = {"f0": f0, "energy": energy}
+        if voiced is not None:
+            curves["voiced"] = voiced
+        for name, curve in curves.items():
+            if curve.size(-1) != y_max:
+                raise ValueError(
+                    f"{name} has {curve.size(-1)} frames but durations require {y_max}"
+                )
         y_mask = sequence_mask(y_lengths, y_max).unsqueeze(1).to(x.dtype)
 
         attn = self._path_from_durations(durations, x_mask, y_mask)

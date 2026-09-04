@@ -8,9 +8,9 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 |---|---|---|---|
 | ✅ F-022 | critical | `crates/auris-io/src/soundfont.rs:104` | check_chunk's LIST-descent doesn't clamp to the enclosing LIST's end, and its generic leaf handler mis-tracks ifil/iver's true byte length, letting a crafted […] |
 | ✅ F-313 | critical | `crates/auris-io/src/soundfont.rs:62` | load_soundfont has no catch_unwind around SoundFont::new, so a malformed .sf2 with honest chunk sizes but bad pdta indices panics rustysynth and crashes the […] |
-| F-105 | medium | `crates/auris-io/src/midi.rs:467` | MIDI export silently masks (not errors on) tick deltas over 2^28-1, corrupting event positions past ~38.8 hours with no warning, contradicting auris-io's […] |
-| F-229 | medium | `crates/auris-io/src/midi.rs:272` | A TrackName meta event placed after a channel's last MIDI event is silently dropped, so the imported part falls back to "Channel N" instead of its real name. |
-| F-302 | low | `crates/auris-io/src/project_file.rs:106` | folder_is_named's ASCII-only case fold misses non-ASCII cased letters, so renaming a project folder by accented-letter case alone nests a duplicate copy […] |
+| ✅ F-105 | medium | `crates/auris-io/src/midi.rs:467` | MIDI export silently masks (not errors on) tick deltas over 2^28-1, corrupting event positions past ~38.8 hours with no warning, contradicting auris-io's […] |
+| ✅ F-229 | medium | `crates/auris-io/src/midi.rs:272` | A TrackName meta event placed after a channel's last MIDI event is silently dropped, so the imported part falls back to "Channel N" instead of its real name. |
+| ✅ F-302 | low | `crates/auris-io/src/project_file.rs:106` | folder_is_named's ASCII-only case fold misses non-ASCII cased letters, so renaming a project folder by accented-letter case alone nests a duplicate copy […] |
 
 ### ✅ F-022 · critical · check_chunk's LIST-descent doesn't clamp to the enclosing LIST's end, and its generic leaf handler mis-tracks ifil/iver's true byte length, letting a crafted .sf2 desync the pre-parse validator and reach the smpl overflow it exists to block.
 
@@ -44,7 +44,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** The whole file is read first and its chunk tree walked before the parser is allowed to believe it — see `check_chunks` below for what the parser would otherwise do with a size field that lies.
 
-### F-105 · medium · MIDI export silently masks (not errors on) tick deltas over 2^28-1, corrupting event positions past ~38.8 hours with no warning, contradicting auris-io's no-silent-truncation policy.
+### ✅ F-105 · medium · MIDI export silently masks (not errors on) tick deltas over 2^28-1, corrupting event positions past ~38.8 hours with no warning, contradicting auris-io's no-silent-truncation policy.
 
 `crates/auris-io/src/midi.rs:467` · persistence · confirmed (executed reproduction; reported independently 1×)
 
@@ -62,7 +62,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** Substance and mechanism are exactly right; only a cosmetic detail is off. With the claim's own trigger value of Ticks(300_000_000), the actual round-tripped position is 31,564,544 (confirmed by execution and by the masking arithmetic 300_000_000 & 0x0FFF_FFFF), which is about 9.5x too early, not "around 8.6x too early" as stated in the claim's consequence field.
 
-### F-229 · medium · A TrackName meta event placed after a channel's last MIDI event is silently dropped, so the imported part falls back to "Channel N" instead of its real name.
+### ✅ F-229 · medium · A TrackName meta event placed after a channel's last MIDI event is silently dropped, so the imported part falls back to "Channel N" instead of its real name.
 
 `crates/auris-io/src/midi.rs:272` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -76,7 +76,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Attach the pending track name to every part on that track index once the track finishes (fallback for any (index, channel) key not yet named), instead of relying on happening to see another Midi event on the same channel after the TrackName meta event. E.g. after the per-event loop, iterate `order` for the current track index and call `part.name.get_or_insert_with(...)` for each part still unnamed.
 
-### F-302 · low · folder_is_named's ASCII-only case fold misses non-ASCII cased letters, so renaming a project folder by accented-letter case alone nests a duplicate copy instead of saving in place.
+### ✅ F-302 · low · folder_is_named's ASCII-only case fold misses non-ASCII cased letters, so renaming a project folder by accented-letter case alone nests a duplicate copy instead of saving in place.
 
 `crates/auris-io/src/project_file.rs:106` · platform · confirmed (executed reproduction; reported independently 1×)
 

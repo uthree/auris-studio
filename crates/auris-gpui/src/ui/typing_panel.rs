@@ -604,10 +604,10 @@ impl AurisApp {
     /// slide that took the next one without putting the last one down would leave a note sounding
     /// with nothing left that knows about it — which is the whole of the bug this guards.
     fn press_typed_key(&mut self, key: &'static str) {
+        self.release_typed_key();
         let Some(track) = self.session.audition_track(self.selected_track) else {
             return;
         };
-        self.release_typed_key();
         self.clicked_key = Some(key);
         self.session.typing_press(track, key);
     }

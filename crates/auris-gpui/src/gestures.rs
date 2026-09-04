@@ -119,7 +119,10 @@ impl PointerGesture {
             // A modified double-click belongs to whichever modifier gesture claims it, so that a
             // ⌘-double-click on empty space creates once rather than also deleting.
             PointerGesture::DoubleClick => {
-                event.click_count >= 2 && !event.modifiers.secondary() && !event.modifiers.alt
+                event.click_count >= 2
+                    && !event.modifiers.secondary()
+                    && !event.modifiers.alt
+                    && !event.modifiers.shift
             }
         }
     }
@@ -320,6 +323,7 @@ mod tests {
 
         assert!(PointerGesture::DoubleClick.matches(&double));
         assert!(!PointerGesture::DoubleClick.matches(&plain));
+        assert!(!PointerGesture::DoubleClick.matches(&click(Modifiers::shift(), 2)));
     }
 
     #[test]
@@ -443,13 +447,13 @@ mod tests {
         // shell claims before an application sees it. Reading it directly would leave note
         // editing dead off a Mac, with nothing in the log to say why.
         assert!(PointerGesture::CommandClick.matches(&click(Modifiers::secondary_key(), 1)));
-        #[cfg(not(target_os = "macos"))]
-        {
+        if !cfg!(target_os = "macos") {
             assert!(PointerGesture::CommandClick.matches(&click(Modifiers::control(), 1)));
             assert!(!PointerGesture::CommandClick.matches(&click(Modifiers::windows(), 1)));
         }
-        #[cfg(target_os = "macos")]
-        assert!(PointerGesture::CommandClick.matches(&click(Modifiers::command(), 1)));
+        if cfg!(target_os = "macos") {
+            assert!(PointerGesture::CommandClick.matches(&click(Modifiers::command(), 1)));
+        }
     }
 
     #[test]

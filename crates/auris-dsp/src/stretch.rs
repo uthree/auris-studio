@@ -129,7 +129,7 @@ pub fn time_stretch(input: &AudioBuffer, ratio: f64) -> AudioBuffer {
 /// A window length in samples, at least [`MIN_WINDOW`] and always even.
 fn window_frames(sample_rate: f64) -> usize {
     let rate = sample_rate.max(1.0);
-    ((WINDOW_SECONDS * rate).round() as usize).max(MIN_WINDOW)
+    ((WINDOW_SECONDS * rate).round() as usize).max(MIN_WINDOW) & !1
 }
 
 /// `input` cut or padded to `frames`, for material too short to splice.
@@ -257,6 +257,13 @@ fn similarity(signal: &[f32], target: usize, candidate: usize, overlap: usize) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn analysis_windows_are_always_even() {
+        assert_eq!(window_frames(44_100.0), 2_204);
+        assert_eq!(window_frames(22_050.0) % 2, 0);
+        assert!(window_frames(1.0) >= MIN_WINDOW);
+    }
 
     const RATE: f64 = 48_000.0;
 

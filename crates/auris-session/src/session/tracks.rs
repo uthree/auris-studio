@@ -287,6 +287,9 @@ impl Session {
     /// Silences or unsilences a track.
     pub fn set_track_mute(&mut self, id: TrackId, mute: bool) -> Result<(), SessionError> {
         let index = self.require_track(id)?;
+        if self.project.tracks[index].mixer.mute == mute {
+            return Ok(());
+        }
         self.record(Edit::MuteTrack);
         self.project.tracks[index].mixer.mute = mute;
         self.send(EngineCommand::SetTrackMute { index, mute });
@@ -295,7 +298,10 @@ impl Session {
 
     /// Solos or unsolos a track.
     pub fn set_track_solo(&mut self, id: TrackId, solo: bool) -> Result<(), SessionError> {
-        self.require_track(id)?;
+        let index = self.require_track(id)?;
+        if self.project.tracks[index].mixer.solo == solo {
+            return Ok(());
+        }
         self.record(Edit::SoloTrack);
         if let Some(track) = self.project.track_mut(id) {
             track.mixer.solo = solo;

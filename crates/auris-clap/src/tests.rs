@@ -13,7 +13,8 @@ use crate::library::ClapLibrary;
 use crate::notes::NoteLanguage;
 use crate::plugin::ClapPlugin;
 use crate::testkit::{
-    FIXTURE_ID, INPUT_PORTS, TONE_ID, fixture_library, gui_step, instrument_library,
+    FIXTURE_ID, INPUT_PORTS, TONE_ID, fixture_destroy_count, fixture_library, gui_step,
+    instrument_library,
 };
 
 fn library() -> ClapLibrary {
@@ -127,7 +128,8 @@ fn opening_a_window_makes_the_four_calls_in_the_order_clap_asks_for() {
     let parent = RawWindowHandle::Win32(Win32WindowHandle::new(
         std::num::NonZeroIsize::new(1).unwrap(),
     ));
-    plugin.open_gui(Some(parent)).expect("the fixture opens");
+    // SAFETY: the fixture records the handle but never dereferences it.
+    unsafe { plugin.open_gui(Some(parent)) }.expect("the fixture opens");
     assert!(plugin.gui_is_open());
 
     let calls = window_calls(&mut plugin);
@@ -174,7 +176,8 @@ fn a_plugin_that_will_only_embed_is_lent_a_window_to_draw_in() {
         "a plugin that will only embed still has a window, given one to embed in"
     );
 
-    match plugin.open_gui(None) {
+    // SAFETY: no parent handle is supplied.
+    match unsafe { plugin.open_gui(None) } {
         Ok(()) => {
             let calls = plugin.value(ParamId(3)).expect("the window call report") as u32;
             assert_eq!(calls & gui_step::CREATED, gui_step::CREATED);
@@ -203,10 +206,10 @@ fn a_window_is_opened_and_closed_once_however_often_it_is_asked_for() {
     // `create` and `destroy` are a pair CLAP leaves the host to balance, and calling either twice
     // is undefined. So the caller is allowed to be sloppy and this is not.
     let mut plugin = hosted();
-    plugin.open_gui(None).expect("open");
-    plugin
-        .open_gui(None)
-        .expect("opening again is not an error");
+    // SAFETY: no parent handle is supplied.
+    unsafe { plugin.open_gui(None) }.expect("open");
+    // SAFETY: no parent handle is supplied.
+    unsafe { plugin.open_gui(None) }.expect("opening again is not an error");
     assert!(plugin.gui_is_open());
 
     plugin.close_gui();
@@ -222,7 +225,8 @@ fn a_window_the_plugin_closed_is_reported_and_not_hidden_on_the_way_out() {
     // else. Hiding it first is a call through a pointer the plugin has already freed, and that is
     // the crash this flag exists to avoid.
     let mut plugin = hosted();
-    plugin.open_gui(None).expect("open");
+    // SAFETY: no parent handle is supplied.
+    unsafe { plugin.open_gui(None) }.expect("open");
 
     plugin.pretend_the_window_closed(true);
     let requests = plugin.take_requests();
@@ -248,8 +252,14 @@ fn dropping_a_plugin_closes_the_window_it_left_open() {
     // tidy it up lives inside the library about to be unmapped. Deleting a track whose editor is
     // open takes exactly this path.
     let mut plugin = hosted();
-    plugin.open_gui(None).expect("open");
+    let before = fixture_destroy_count();
+    // SAFETY: no parent handle is supplied.
+    unsafe { plugin.open_gui(None) }.expect("open");
     drop(plugin);
+    assert!(
+        fixture_destroy_count() > before,
+        "dropping the host must destroy the plugin GUI"
+    );
 }
 
 #[test]
@@ -655,7 +665,8 @@ fn a_failed_embedded_show_is_destroyed_before_its_parent_window() {
     plugin
         .load_state(&(-1.0f32).to_bits().to_le_bytes())
         .expect("the negative fixture state asks show to fail");
-    assert!(plugin.open_gui(None).is_err());
+    // SAFETY: no parent handle is supplied.
+    assert!(unsafe { plugin.open_gui(None) }.is_err());
     assert!(!plugin.gui_is_open());
 
     let calls = plugin.value(ParamId(3)).expect("the window call report") as u32;

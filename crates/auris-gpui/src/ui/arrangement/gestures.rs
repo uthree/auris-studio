@@ -15,7 +15,9 @@ use gpui::{Bounds, MouseDownEvent, Pixels, point, px, size};
 use crate::app::{AurisApp, Drag, FadeEdge};
 use crate::ui::automation::{self, LaneRow};
 
-use super::geometry::{CLIP_INSET, ClipGrab, clip_grab_at, fade_handle_at, selection_without};
+use super::geometry::{
+    CLIP_INSET, ClipGrab, FADE_HANDLE_MIN_WIDTH, clip_grab_at, fade_handle_at, selection_without,
+};
 
 impl AurisApp {
     /// Where every selected clip starts, captured before a move begins.
@@ -27,13 +29,10 @@ impl AurisApp {
     }
 
     /// The lane each selected clip currently sits on.
-    fn selected_clip_lanes(&self) -> Vec<(ClipId, usize)> {
+    fn selected_clip_lanes(&self) -> Vec<(ClipId, TrackId)> {
         self.selected_clips
             .iter()
-            .filter_map(|id| {
-                let track = self.session.track_of_clip(*id)?;
-                Some((*id, self.project().track_index(track)?))
-            })
+            .filter_map(|id| Some((*id, self.session.track_of_clip(*id)?)))
             .collect()
     }
 
@@ -330,6 +329,7 @@ impl AurisApp {
             self.begin_drag(Drag::ClipFade {
                 clip: clip_id,
                 edge,
+                pressed_at: Some(event.position),
             });
             cx.notify();
             return;
@@ -354,12 +354,15 @@ impl AurisApp {
                             .clip_sounding_length(clip_id)
                             .unwrap_or(clip_length),
                 );
+                let has_fade_band = self.audio_clip(clip_id).is_some()
+                    && f32::from(clip_end_x - clip_start_x) > FADE_HANDLE_MIN_WIDTH;
                 match clip_grab_at(
                     clip_start_x,
                     clip_end_x,
                     loop_end_x,
                     local.x,
                     local.y - lane_top - CLIP_INSET,
+                    has_fade_band,
                 ) {
                     Some(ClipGrab::Loop) => self.begin_drag(Drag::ClipLoop { clip: clip_id }),
                     Some(ClipGrab::Resize(edge)) => self.begin_drag(Drag::ClipResize {
@@ -369,13 +372,12 @@ impl AurisApp {
                     None => {
                         let origins = self.selected_clip_origins();
                         let origin_lanes = self.selected_clip_lanes();
-                        let grab_lane = self.project().track_index(track_id).unwrap_or(0);
                         self.begin_drag(Drag::ClipMove {
                             clip: clip_id,
                             grab_offset: tick - clip_start,
                             origins,
                             origin_lanes,
-                            grab_lane,
+                            grab_track: track_id,
                             pressed_at: Some(event.position),
                         });
                     }
@@ -399,27 +401,40 @@ impl AurisApp {
         let local = point(event.position.x - origin.x, self.lane_y(event.position.y));
         let tick = self.timeline.x_to_tick(local.x);
 
-        let menu = match self.track_at_y(local.y) {
-            Some((track_id, _)) => {
-                let under_pointer = self.clip_at(track_id, tick);
-                self.select_track_for_press(track_id, under_pointer.map(|(id, _, _)| id));
-                match under_pointer {
-                    Some((clip_id, _, _)) => {
-                        // A right-click on a clip selects it, so Split at Playhead and the
-                        // inspector are talking about the clip the menu is titled after — but a
-                        // right-click *inside* a selection leaves that selection alone.
-                        if !self.selected_clips.contains(&clip_id) {
-                            self.select_clip(Some(clip_id));
-                        } else {
-                            self.selected_clip = Some(clip_id);
-                        }
-                        self.selected_notes.clear();
-                        self.clip_menu(event.position, clip_id)
-                    }
-                    None => self.lane_menu(event.position, track_id, self.snap(tick).max_zero()),
+        let menu = if let Some(row) = self.automation_row_at(local.y) {
+            let target = row.target().expect("an automation row has a target");
+            self.select_track_for_press(row.track, None);
+            match self.session.descriptor_for(target) {
+                Some(descriptor) => {
+                    self.param_menu(event.position, target, self.param_label(&descriptor.name))
                 }
+                None => self.lane_menu(event.position, row.track, self.snap(tick).max_zero()),
             }
-            None => self.arrangement_menu(event.position),
+        } else {
+            match self.track_at_y(local.y) {
+                Some((track_id, _)) => {
+                    let under_pointer = self.clip_at(track_id, tick);
+                    self.select_track_for_press(track_id, under_pointer.map(|(id, _, _)| id));
+                    match under_pointer {
+                        Some((clip_id, _, _)) => {
+                            // A right-click on a clip selects it, so Split at Playhead and the
+                            // inspector are talking about the clip the menu is titled after — but a
+                            // right-click *inside* a selection leaves that selection alone.
+                            if !self.selected_clips.contains(&clip_id) {
+                                self.select_clip(Some(clip_id));
+                            } else {
+                                self.selected_clip = Some(clip_id);
+                            }
+                            self.selected_notes.clear();
+                            self.clip_menu(event.position, clip_id)
+                        }
+                        None => {
+                            self.lane_menu(event.position, track_id, self.snap(tick).max_zero())
+                        }
+                    }
+                }
+                None => self.arrangement_menu(event.position),
+            }
         };
         self.open_menu(menu);
         cx.notify();

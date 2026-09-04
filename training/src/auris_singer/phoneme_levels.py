@@ -62,6 +62,9 @@ MIN_SAMPLES = 20
 #: Frames whose RMS is below this are not a reading of anything but the noise floor.
 ENERGY_FLOOR = 1e-4
 
+#: Conservative attenuation for a speaker with no measurable consonant at all.
+EMPTY_DEFAULT_DB = -12.0
+
 #: Whispered Japanese vowels occupy their own consonant-like timing slot.  They must neither be
 #: skipped as a vowel nor used as the loudness reference for the consonant before them.
 DEVOICED_VOWELS = frozenset({"a\u0325", "i̥", "ɯ̥", "e̥", "o̥"})
@@ -158,9 +161,9 @@ def summarize_speaker(levels: dict[str, list[float]], min_samples: int = MIN_SAM
     """Turn one speaker's raw per-phoneme levels into their table.
 
     A phoneme earns an entry when it was seen at least ``min_samples`` times; ``default`` is
-    the median over every measured reading, which is what a consonant the table does not
-    name should be assumed to be — a consonant, quieter than a vowel — rather than 0 dB,
-    which would be the plateau this table exists to correct.
+    the median over every measured reading, or a conservative attenuation when there are no
+    readings. It represents a consonant quieter than a vowel rather than the 0 dB plateau this
+    table exists to correct.
     """
     shipped = {
         symbol: float(round(float(np.median(values)), 1))
@@ -168,7 +171,7 @@ def summarize_speaker(levels: dict[str, list[float]], min_samples: int = MIN_SAM
         if len(values) >= min_samples
     }
     pooled = [v for values in levels.values() for v in values]
-    default = float(round(float(np.median(pooled)), 1)) if pooled else 0.0
+    default = float(round(float(np.median(pooled)), 1)) if pooled else EMPTY_DEFAULT_DB
     return {
         "default": default,
         "db": dict(sorted(shipped.items(), key=lambda item: item[1])),

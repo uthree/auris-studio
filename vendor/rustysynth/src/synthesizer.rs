@@ -256,6 +256,7 @@ impl Synthesizer {
     pub fn note_off_all(&mut self, immediate: bool) {
         if immediate {
             self.voices.clear();
+            self.block_read = self.block_size;
         } else {
             for voice in self.voices.get_active_voices().iter_mut() {
                 voice.end();
@@ -276,6 +277,7 @@ impl Synthesizer {
                     voice.kill();
                 }
             }
+            self.block_read = self.block_size;
         } else {
             for voice in self.voices.get_active_voices().iter_mut() {
                 if voice.channel() == channel {

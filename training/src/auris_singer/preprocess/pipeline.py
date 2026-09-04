@@ -67,6 +67,10 @@ def collect_utterances(sources) -> list[Utterance]:
     utterances: list[Utterance] = []
     for source in sources:
         speaker = str(source["name"])
+        if not speaker or speaker in {".", ".."} or Path(speaker).name != speaker:
+            raise ValueError(
+                f"dataset source name must be one path component, got {speaker!r}"
+            )
         wav_dir = Path(source["wav_dir"])
         text_dir = Path(source.get("text_dir") or wav_dir)
         text_suffix = str(source.get("text_suffix", ".txt"))
@@ -132,6 +136,8 @@ def _read_durations(path: Path) -> list[float]:
 def _load_audio(path: Path, sample_rate: int, peak_normalize: bool, peak: float):
     wav, sr = sf.read(str(path), dtype="float32", always_2d=True)
     wav = torch.from_numpy(wav.mean(axis=1))
+    if wav.numel() == 0:
+        return wav
     if sr != sample_rate:
         wav = torchaudio.functional.resample(wav, sr, sample_rate)
     if peak_normalize:
@@ -183,7 +189,7 @@ def run_preprocess(config: DictConfig) -> dict[str, int]:
     min_samples = int(float(audio_cfg.get("min_seconds", 0.0)) * sample_rate)
     # torch's reflect padding requires the input to be strictly longer than either pad.  The
     # shipped corpora set a larger minimum, but a custom corpus is allowed to omit it.
-    reflect_pad = max((n_fft - hop_length) // 2, 0)
+    reflect_pad = max((n_fft - hop_length + 1) // 2, 0)
     feature_min_samples = reflect_pad + 1
     max_samples = int(float(audio_cfg.get("max_seconds", 1e9)) * sample_rate)
     peak_normalize = bool(audio_cfg.get("peak_normalize", True))

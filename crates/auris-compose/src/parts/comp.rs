@@ -335,7 +335,7 @@ pub(super) fn comp(
                     section: index,
                     pitch: (*pitch).clamp(0, 127) as u8,
                     velocity: (velocity(weight, section.intensity, settings.dynamics)
-                        * 0.9
+                        * if held { 0.7 } else { 0.9 }
                         * phrase_shape(grid, section, event.start - pushed_by, settings.dynamics))
                     .clamp(0.05, 1.0),
                     start: boundary,

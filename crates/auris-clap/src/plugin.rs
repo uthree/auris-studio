@@ -205,7 +205,7 @@ impl ClapPlugin {
     }
 
     /// How this plugin's window will be put up, or `None` if it has none.
-    fn plan(&mut self) -> Option<GuiConfiguration<'static>> {
+    fn plan(&mut self) -> Option<(PluginGui, GuiConfiguration<'static>)> {
         let gui = self
             .instance
             .plugin_shared_handle()
@@ -227,6 +227,7 @@ impl ClapPlugin {
             // button on screen that does nothing.
             offers(false, &mut self.instance) && crate::window::CAN_LEND,
         )
+        .map(|plan| (gui, plan))
     }
 
     /// Which windowing this plugin says it can do on this platform: floating, embedded, and what
@@ -290,13 +291,12 @@ impl ClapPlugin {
     /// gives a window that behaves like any other top-level one — which on Windows means sinking
     /// behind the application the moment the application is clicked.
     ///
-    /// # Safety of the parent handle
+    /// # Safety
     ///
-    /// This is not an `unsafe` function, but it does hand out a window handle that is kept until
-    /// [`close_gui`](Self::close_gui). Destroying that window first leaves a stale one behind.
-    /// Nothing in Auris can reach that state: the window outlives the session, and dropping the
-    /// session closes every plugin window first.
-    pub fn open_gui(&mut self, parent: Option<RawWindowHandle>) -> Result<(), ClapError> {
+    /// When present, `parent` must name a live native window and must remain live until
+    /// [`close_gui`](Self::close_gui). Some platform implementations dereference the native
+    /// pointer while creating the plugin container, and destroying it early leaves a stale handle.
+    pub unsafe fn open_gui(&mut self, parent: Option<RawWindowHandle>) -> Result<(), ClapError> {
         if self.gui_open {
             return Ok(());
         }
@@ -310,7 +310,7 @@ impl ClapPlugin {
             reason: error.to_string(),
         };
 
-        let Some(plan) = self.plan() else {
+        let Some((gui, plan)) = self.plan() else {
             return Err(
                 match self
                     .instance
@@ -323,9 +323,6 @@ impl ClapPlugin {
                 },
             );
         };
-        // PANIC: a plan is only answered after the extension has been read to answer it.
-        let gui = self.gui().expect("a plan implies the extension");
-
         // Twice, because the two arrangements want it in two forms: a plugin managing its own
         // window is *suggested* a title through CLAP, which speaks C strings; a window this crate
         // makes is titled by the platform, which does not.
@@ -470,10 +467,7 @@ impl ClapPlugin {
 
     /// The GUI extension, but only when it can give a window on this platform.
     fn gui(&mut self) -> Option<PluginGui> {
-        self.plan()?;
-        self.instance
-            .plugin_shared_handle()
-            .get_extension::<PluginGui>()
+        self.plan().map(|(gui, _)| gui)
     }
 
     /// Activates the plugin and hands out the half that renders.

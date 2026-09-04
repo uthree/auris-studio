@@ -336,8 +336,6 @@ fn render_source(
         audition,
         one_shot,
         continued_from,
-        chase_counts,
-        chase_velocity,
         ..
     } = track;
 
@@ -349,7 +347,7 @@ fn render_source(
                 // A block that does not continue where the last one stopped means the playhead
                 // jumped, so re-issue the notes that are meant to be sounding here.
                 if *continued_from != Some(start) {
-                    chase_notes(events, start, chase_counts, chase_velocity, block_events);
+                    chase_notes(events, start, block_events);
                 }
                 *continued_from = Some(start + ctx.block_frames as u64);
             } else {
@@ -438,14 +436,9 @@ fn render_source(
 /// note would produce silence until the *next* note began, because the note-on that would have
 /// started it is in the past. The scan is linear in the number of events before `position`, but
 /// it only runs when the playhead jumps, never block to block.
-fn chase_notes(
-    events: &[ScheduledEvent],
-    position: u64,
-    counts: &mut [u8; PITCH_COUNT],
-    velocity: &mut [f32; PITCH_COUNT],
-    out: &mut Vec<NoteEvent>,
-) {
-    counts.fill(0);
+fn chase_notes(events: &[ScheduledEvent], position: u64, out: &mut Vec<NoteEvent>) {
+    // Keep the live note-ons themselves so overlapping voices at one pitch retain distinct
+    // velocities. `out` was reserved for the maximum sounding-note count during graph build.
     let upto = events.partition_point(|scheduled| scheduled.frame < position);
     for scheduled in &events[..upto] {
         match scheduled.event {
@@ -454,39 +447,28 @@ fn chase_notes(
                 velocity: struck,
                 ..
             } => {
-                if let Some(count) = counts.get_mut(pitch as usize) {
-                    *count = count.saturating_add(1);
-                    velocity[pitch as usize] = struck;
+                if (pitch as usize) < PITCH_COUNT && out.len() + 1 < out.capacity() {
+                    out.push(NoteEvent::NoteOn {
+                        frame: 0,
+                        pitch,
+                        velocity: struck,
+                    });
                 }
             }
             NoteEvent::NoteOff { pitch, .. } => {
-                if let Some(count) = counts.get_mut(pitch as usize) {
-                    *count = count.saturating_sub(1);
+                if let Some(index) = out.iter().position(
+                    |event| matches!(event, NoteEvent::NoteOn { pitch: held, .. } if *held == pitch),
+                ) {
+                    out.remove(index);
                 }
             }
-            NoteEvent::AllNotesOff { .. } | NoteEvent::AllSoundOff { .. } => counts.fill(0),
+            NoteEvent::AllNotesOff { .. } | NoteEvent::AllSoundOff { .. } => out.clear(),
             NoteEvent::PitchBend { .. } | NoteEvent::Controller { .. } => {}
         }
     }
 
     // Drop whatever the old position left sounding before restoring what belongs to the new one.
-    out.push(NoteEvent::AllNotesOff { frame: 0 });
-    for (pitch, count) in counts.iter().enumerate() {
-        // Once per sounding note rather than once per pitch: two overlapping notes on the same
-        // pitch need two voices, or the first of the two offs that follow would silence the
-        // pair. The buffer is sized for the densest chord the track ever holds, so the capacity
-        // check is a guard rather than something that trims a real arrangement.
-        for _ in 0..*count {
-            if out.len() == out.capacity() {
-                return;
-            }
-            out.push(NoteEvent::NoteOn {
-                frame: 0,
-                pitch: pitch as u8,
-                velocity: velocity[pitch],
-            });
-        }
-    }
+    out.insert(0, NoteEvent::AllNotesOff { frame: 0 });
 }
 
 /// Adds the part of `clip` that overlaps `[position, position + frames)` into `out`.
@@ -1583,6 +1565,46 @@ mod tests {
         // The inner note ends at beat 3 (frame 72 000) and the pedal at beat 4 (frame 96 000).
         assert!((rendered.channel(0)[24_100] - TONE_AMPLITUDE).abs() < 1e-5);
         assert_eq!(rendered.channel(0)[48_100], 0.0);
+    }
+
+    #[test]
+    fn chased_same_pitch_voices_keep_their_own_velocities() {
+        let events = [
+            ScheduledEvent {
+                frame: 10,
+                event: NoteEvent::NoteOn {
+                    frame: 0,
+                    pitch: 60,
+                    velocity: 0.25,
+                },
+            },
+            ScheduledEvent {
+                frame: 20,
+                event: NoteEvent::NoteOn {
+                    frame: 0,
+                    pitch: 60,
+                    velocity: 0.75,
+                },
+            },
+        ];
+        let mut chased = Vec::with_capacity(4);
+        chase_notes(&events, 30, &mut chased);
+        assert_eq!(
+            chased,
+            [
+                NoteEvent::AllNotesOff { frame: 0 },
+                NoteEvent::NoteOn {
+                    frame: 0,
+                    pitch: 60,
+                    velocity: 0.25,
+                },
+                NoteEvent::NoteOn {
+                    frame: 0,
+                    pitch: 60,
+                    velocity: 0.75,
+                },
+            ]
+        );
     }
 
     #[test]

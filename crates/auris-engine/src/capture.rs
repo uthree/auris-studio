@@ -57,7 +57,7 @@ use cpal::{
 };
 use crossbeam_channel::{Receiver, Sender};
 
-use crate::device::AudioDeviceInfo;
+use crate::device::{AudioDeviceInfo, add_sample_rate_range};
 use crate::error::EngineError;
 use crate::handle::EngineHandle;
 use crate::monitor::MonitorRing;
@@ -116,11 +116,11 @@ pub fn input_devices() -> Vec<AudioDeviceInfo> {
             if let Ok(configs) = device.supported_input_configs() {
                 for config in configs {
                     max_channels = max_channels.max(config.channels());
-                    for rate in [config.min_sample_rate(), config.max_sample_rate()] {
-                        if !sample_rates.contains(&rate) {
-                            sample_rates.push(rate);
-                        }
-                    }
+                    add_sample_rate_range(
+                        &mut sample_rates,
+                        config.min_sample_rate(),
+                        config.max_sample_rate(),
+                    );
                 }
             }
             sample_rates.sort_unstable();
@@ -589,7 +589,7 @@ impl CaptureSink {
         f32: FromSample<T>,
     {
         let channels = self.channels.max(1);
-        let mut peak = f32::from_bits(self.shared.peak.load(Ordering::Relaxed));
+        let mut peak = 0.0f32;
         let mut channel_peaks = [0.0f32; MAX_METERED_CHANNELS];
         for frame in block.chunks(channels) {
             for (channel, sample) in frame.iter().enumerate() {
@@ -604,7 +604,9 @@ impl CaptureSink {
                 }
             }
         }
-        self.shared.peak.store(peak.to_bits(), Ordering::Relaxed);
+        self.shared
+            .peak
+            .fetch_max(peak.to_bits(), Ordering::Relaxed);
         for (cell, level) in self
             .shared
             .channel_peaks
@@ -612,9 +614,7 @@ impl CaptureSink {
             .zip(channel_peaks)
             .take(channels)
         {
-            if level > f32::from_bits(cell.load(Ordering::Relaxed)) {
-                cell.store(level.to_bits(), Ordering::Relaxed);
-            }
+            cell.fetch_max(level.to_bits(), Ordering::Relaxed);
         }
     }
 }

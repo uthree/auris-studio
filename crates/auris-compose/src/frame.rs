@@ -165,8 +165,9 @@ pub fn plan(spec: &SongSpec) -> Frame {
 
         // The turnaround: the composer's own chart leans into an arrival. Only its own — a
         // quoted chart is played as written, which is the same trade `colour` makes — and only
-        // where the form actually arrives somewhere, which is the same question the cymbal asks:
-        // the harmony, the fill and the crash should all read one join the same way.
+        // where the form actually arrives somewhere, which is the same question the cymbal asks.
+        // Fills deliberately mark every join, including a drop, while harmony and crashes reserve
+        // this comparison for arrivals that hold or raise the intensity.
         if chart.origin == ChartOrigin::Generated
             && let Some(next) = played.get(place + 1)
             && spec.key.transposed(next.transpose) == key
@@ -590,14 +591,6 @@ pub fn groove_steps_per_beat(groove: &str) -> usize {
     crate::rhythm::groove(groove).map_or(crate::rhythm::GROOVE_STEPS_PER_BEAT, |groove| {
         groove.steps_per_beat
     })
-}
-
-/// Whether a chord is one a cadence would want to land on.
-pub fn is_stable(quality: Quality) -> bool {
-    matches!(
-        quality,
-        Quality::Major | Quality::Minor | Quality::Major7 | Quality::Major6 | Quality::Minor7
-    )
 }
 
 #[cfg(test)]

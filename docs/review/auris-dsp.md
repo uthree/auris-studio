@@ -20,10 +20,10 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-358 | medium | `crates/auris-dsp/src/eq.rs:223` | EQ band frequency ParamDescriptor advertises a static 20 Hz-20 kHz range that biquad::design silently re-clamps below ~40 kHz sample rates, with no UI signal. |
 | ✅ F-359 | medium | `crates/auris-dsp/src/envelope.rs:17` | EnvelopeFollower's doc claims a universal 63%-after-`time` settling, but in Rms mode the exposed envelope (sqrt of the smoothed power) actually reaches ~79.5%, […] |
 | ✅ F-417 | medium | `crates/auris-dsp/src/loudness.rs:121` | block_powers's independently-rounded hop/block frame counts let per_block drift from 4 at non-standard sample rates, giving integrated_lufs (and the […] |
-| F-262 | low | `crates/auris-dsp/src/stretch.rs:129` | window_frames()'s doc claims the returned length is "always even" but the function never enforces it; only its sole caller's `& !1` mask makes that true today. |
-| F-276 | low | `crates/auris-dsp/src/gain.rs:148` | GainPan reads the width parameter once per block unsmoothed, causing an audible zipper-noise step on the side channel when width is automated, unlike gain and […] |
-| F-383 | low | `crates/auris-dsp/src/lib.rs:46` | settled()'s denormal-flush threshold (DENORMAL_FLOOR) has no direct unit test, so a future regression that weakens it would pass CI silently. |
-| F-401 | low | `crates/auris-dsp/src/reverb.rs:332` | Reverb::process sums all channels into one accumulator before a fixed gain, so wet level scales with channel count, but every production caller renders at a […] |
+| ✅ F-262 | low | `crates/auris-dsp/src/stretch.rs:129` | window_frames()'s doc claims the returned length is "always even" but the function never enforces it; only its sole caller's `& !1` mask makes that true today. |
+| ✅ F-276 | low | `crates/auris-dsp/src/gain.rs:148` | GainPan reads the width parameter once per block unsmoothed, causing an audible zipper-noise step on the side channel when width is automated, unlike gain and […] |
+| ✅ F-383 | low | `crates/auris-dsp/src/lib.rs:46` | settled()'s denormal-flush threshold (DENORMAL_FLOOR) has no direct unit test, so a future regression that weakens it would pass CI silently. |
+| ✅ F-401 | low | `crates/auris-dsp/src/reverb.rs:332` | Reverb::process sums all channels into one accumulator before a fixed gain, so wet level scales with channel count, but every production caller renders at a […] |
 
 ### ✅ F-057 · high · GainPan ramps gain/pan via SmoothedValue but applies phase-invert and width raw per-block, causing an audible step/pop on toggle.
 
@@ -253,7 +253,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
 
-### F-262 · low · window_frames()'s doc claims the returned length is "always even" but the function never enforces it; only its sole caller's `& !1` mask makes that true today.
+### ✅ F-262 · low · window_frames()'s doc claims the returned length is "always even" but the function never enforces it; only its sole caller's `& !1` mask makes that true today.
 
 `crates/auris-dsp/src/stretch.rs:129` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -269,7 +269,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** /// A window length in samples, at least [`MIN_WINDOW`] and always even.
 
-### F-276 · low · GainPan reads the width parameter once per block unsmoothed, causing an audible zipper-noise step on the side channel when width is automated, unlike gain and pan which ramp over SMOOTHING_SECONDS.
+### ✅ F-276 · low · GainPan reads the width parameter once per block unsmoothed, causing an audible zipper-noise step on the side channel when width is automated, unlike gain and pan which ramp over SMOOTHING_SECONDS.
 
 `crates/auris-dsp/src/gain.rs:148` · dsp · confirmed (traced through the code; reported independently 1×)
 
@@ -285,7 +285,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** // Ramp time for gain and pan moves. Long enough to remove the step discontinuity that causes zipper noise, short enough that a fader still feels immediate. (SMOOTHING_SECONDS doc comment, gain.rs:17-19); module doc comment (gain.rs:1) names "level, stereo position and stereo width" as peer controls of the same plugin.
 
-### F-383 · low · settled()'s denormal-flush threshold (DENORMAL_FLOOR) has no direct unit test, so a future regression that weakens it would pass CI silently.
+### ✅ F-383 · low · settled()'s denormal-flush threshold (DENORMAL_FLOOR) has no direct unit test, so a future regression that weakens it would pass CI silently.
 
 `crates/auris-dsp/src/lib.rs:46` · test-quality · confirmed (traced through the code; reported independently 1×)
 
@@ -301,7 +301,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
 
-### F-401 · low · Reverb::process sums all channels into one accumulator before a fixed gain, so wet level scales with channel count, but every production caller renders at a hardcoded stereo (2-channel) width, so it's currently latent.
+### ✅ F-401 · low · Reverb::process sums all channels into one accumulator before a fixed gain, so wet level scales with channel count, but every production caller renders at a hardcoded stereo (2-channel) width, so it's currently latent.
 
 `crates/auris-dsp/src/reverb.rs:332` · dsp · confirmed (executed reproduction; reported independently 1×)
 

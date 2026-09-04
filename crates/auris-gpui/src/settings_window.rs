@@ -108,6 +108,13 @@ impl Focusable for SettingsWindow {
 }
 
 impl SettingsWindow {
+    /// Refreshes appearance values changed from another application surface.
+    pub(crate) fn sync_appearance(&mut self, theme: Theme, language_preference: Option<Language>) {
+        self.theme = theme;
+        self.language_preference = language_preference;
+        self.language = Language::resolve(language_preference);
+    }
+
     /// Builds the window's view.
     ///
     /// The state is handed in rather than read back through `app`: this runs inside the main
@@ -234,7 +241,7 @@ impl SettingsWindow {
     /// window where it was made.
     fn apply_scheme(&mut self, id: &'static str, cx: &mut Context<Self>) {
         self.theme = Theme::named(id);
-        let _ = self.app.update(cx, |app, _| app.apply_scheme(id));
+        let _ = self.app.update(cx, |app, cx| app.apply_scheme(id, cx));
         self.status = messages::scheme_changed(self.language, scheme_or_default(id).name);
         cx.notify();
     }
@@ -916,12 +923,7 @@ impl SettingsWindow {
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 let audio = match slot {
-                    DeviceSlot::Output => AudioPreferences {
-                        device: device.clone(),
-                        // The old rate may not exist on the new device, so let it choose.
-                        sample_rate: None,
-                        ..this.audio.clone()
-                    },
+                    DeviceSlot::Output => output_device_preferences(&this.audio, device.clone()),
                     // The rate is left alone: it belongs to the output, and a take asks for the
                     // project's rate rather than for whatever is set here.
                     DeviceSlot::Input => AudioPreferences {
@@ -1252,12 +1254,18 @@ impl SettingsWindow {
                     .text_color(theme.text_faint)
                     .child(self.t(scope))
             }))
-            .children((!clashes.is_empty() && self.capturing.is_none()).then(|| {
-                div()
-                    .text_xs()
-                    .text_color(theme.mute)
-                    .child(messages::also_bound_to(self.language, &clashes.join(", ")))
-            }))
+            .children(
+                (!clashes.is_empty()
+                    && self
+                        .capturing
+                        .is_none_or(|capture| capture.command != command))
+                .then(|| {
+                    div()
+                        .text_xs()
+                        .text_color(theme.mute)
+                        .child(messages::also_bound_to(self.language, &clashes.join(", ")))
+                }),
+            )
             .children(chips)
             .children(placeholder)
             .children(adding.then(|| {
@@ -1415,6 +1423,21 @@ impl SettingsWindow {
             cx.notify();
         }
         claimed
+    }
+}
+
+fn output_device_preferences(
+    current: &AudioPreferences,
+    device: Option<String>,
+) -> AudioPreferences {
+    AudioPreferences {
+        // The old rate may not exist on a new device. Re-selecting the current device must keep
+        // it, though, so an inert click cannot restart the audio stream at a different rate.
+        sample_rate: (current.device == device)
+            .then_some(current.sample_rate)
+            .flatten(),
+        device,
+        ..current.clone()
     }
 }
 
@@ -1597,5 +1620,24 @@ mod tests {
                 "`{line}` leaks the storage spelling into something a person reads"
             );
         }
+    }
+
+    #[test]
+    fn reselecting_the_output_device_preserves_its_explicit_rate() {
+        let current = AudioPreferences {
+            device: Some("Studio Output".to_string()),
+            sample_rate: Some(96_000),
+            ..AudioPreferences::default()
+        };
+
+        assert_eq!(
+            output_device_preferences(&current, Some("Studio Output".to_string())).sample_rate,
+            Some(96_000)
+        );
+        assert_eq!(
+            output_device_preferences(&current, Some("Other Output".to_string())).sample_rate,
+            None,
+            "a different device must renegotiate its supported rate"
+        );
     }
 }

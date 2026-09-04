@@ -185,19 +185,18 @@ impl Session {
         let notes = self.phrase(start, length, &recipe);
         recipe.text_digest = auris_core::notes_digest(&notes);
         let written = notes.len();
+        let transforms = auris_compose::clip_performance(recipe.preset, recipe.seed);
+        if midi.notes == notes
+            && midi.recipe.as_ref() == Some(&recipe)
+            && midi.transforms == transforms
+        {
+            return Ok(written);
+        }
 
         self.record(Edit::GenerateClip);
         if let Some(midi) = self.project.midi_clip_mut(clip) {
             midi.notes = notes;
-            // The stack is the user's and survives a rewrite — all but the wander's seed, which
-            // follows the recipe's so that one number keeps naming both the take and its feel:
-            // another take re-draws the wobble the way it re-draws the figures, while a dial
-            // somebody turned stays exactly where they put it.
-            for transform in &mut midi.transforms {
-                if let auris_core::NoteTransform::Humanize { seed, .. } = transform {
-                    *seed = recipe.seed;
-                }
-            }
+            midi.transforms = transforms;
             midi.recipe = Some(recipe);
         }
         self.invalidate_graph();
@@ -311,8 +310,10 @@ mod tests {
         let first = session.project().midi_clip(clip).unwrap().1.notes.clone();
 
         // Nothing changed, so nothing should: this is what makes the button safe to press.
+        session.forget_history();
         session.regenerate_clip(clip).unwrap();
         assert_eq!(session.project().midi_clip(clip).unwrap().1.notes, first);
+        assert!(!session.can_undo(), "an identical rewrite recorded a step");
 
         // Now move the harmony underneath it. The part should follow.
         session
@@ -324,6 +325,25 @@ mod tests {
             first,
             "the chords changed and the part did not"
         );
+    }
+
+    #[test]
+    fn changing_a_generated_preset_replaces_its_performance_stack() {
+        let (mut session, track) = with_a_progression();
+        let clip = session
+            .generate_clip(
+                track,
+                Ticks::ZERO,
+                BAR * 4,
+                ClipRecipe::new(ClipPreset::Lead, 5),
+            )
+            .unwrap();
+        assert!(!session.midi_clip(clip).unwrap().transforms.is_empty());
+
+        session
+            .set_clip_recipe(clip, ClipRecipe::new(ClipPreset::Kick, 5))
+            .unwrap();
+        assert!(session.midi_clip(clip).unwrap().transforms.is_empty());
     }
 
     #[test]

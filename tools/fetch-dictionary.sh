@@ -45,8 +45,10 @@ while IFS=$'\t' read -r id folder bytes sha url license_url; do
   # The notice travels with the dictionary, always — including on the run that finds it
   # already there, because an archive assembled from a directory missing it would be the one
   # that ships.
-  curl --fail --location --show-error --silent \
-    --output "$destination/${folder}_License.md" "$license_url"
+  notice="$destination/${folder}_License.md"
+  curl --fail --location --show-error --silent --connect-timeout 15 --max-time 600 \
+    --retry 2 --output "$notice.part" "$license_url"
+  mv -f "$notice.part" "$notice"
 
   if [ -f "$target/metadata.json" ]; then
     echo "$id: already installed at $target"
@@ -57,7 +59,8 @@ while IFS=$'\t' read -r id folder bytes sha url license_url; do
   # Downloaded and verified before anything is extracted, so an interrupted download can
   # never leave a half-dictionary where the application looks for a whole one.
   archive="$destination/$folder.tar.gz.part"
-  curl --fail --location --show-error --silent --output "$archive" "$url"
+  curl --fail --location --show-error --silent --connect-timeout 15 --max-time 600 \
+    --retry 2 --output "$archive" "$url"
 
   actual="$(digest "$archive")"
   if [ "$actual" != "$sha" ]; then

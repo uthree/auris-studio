@@ -44,8 +44,10 @@ while IFS=$'\t' read -r id file bytes sha url license_url; do
 
   # The notice travels with the font, always — including on the run that finds the font already
   # there, because an archive assembled from a directory missing it would be the one that ships.
-  curl --fail --location --show-error --silent \
-    --output "$destination/${file%.*}_License.md" "$license_url"
+  notice="$destination/${file%.*}_License.md"
+  curl --fail --location --show-error --silent --connect-timeout 15 --max-time 600 \
+    --retry 2 --output "$notice.part" "$license_url"
+  mv -f "$notice.part" "$notice"
 
   if [ -f "$target" ] && [ "$(digest "$target")" = "$sha" ]; then
     echo "$id: already installed at $target"
@@ -57,7 +59,8 @@ while IFS=$'\t' read -r id file bytes sha url license_url; do
   # download left where the application looks would be found, loaded and refused by the parser,
   # and the error would name a corrupt file rather than an interrupted one.
   partial="$target.part"
-  curl --fail --location --show-error --silent --output "$partial" "$url"
+  curl --fail --location --show-error --silent --connect-timeout 15 --max-time 600 \
+    --retry 2 --output "$partial" "$url"
 
   actual="$(digest "$partial")"
   if [ "$actual" != "$sha" ]; then

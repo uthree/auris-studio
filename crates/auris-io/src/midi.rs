@@ -285,6 +285,13 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
                 }
             }
         }
+        if let Some(name) = track_name {
+            for key in order.iter().copied().filter(|(track, _)| *track == index) {
+                if let Some(part) = parts.get_mut(&key) {
+                    part.name.get_or_insert_with(|| name.clone());
+                }
+            }
+        }
     }
 
     let tracks = order
@@ -338,7 +345,7 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
 /// automation. A `.mid` is the notes and the clock, and saying so here is better than a reader
 /// discovering it by comparing two files.
 pub fn write_midi_file(path: &Path, project: &Project) -> Result<usize> {
-    let (smf_tracks, count) = build_tracks(project);
+    let (smf_tracks, count) = build_tracks(project)?;
     let smf = Smf {
         header: Header::new(
             Format::Parallel,
@@ -355,7 +362,7 @@ pub fn write_midi_file(path: &Path, project: &Project) -> Result<usize> {
 
 /// [`write_midi_file`] into memory, so a round trip can be tested without a filesystem.
 pub fn write_midi_bytes(project: &Project) -> Result<Vec<u8>> {
-    let (tracks, _) = build_tracks(project);
+    let (tracks, _) = build_tracks(project)?;
     let smf = Smf {
         header: Header::new(
             Format::Parallel,
@@ -370,8 +377,8 @@ pub fn write_midi_bytes(project: &Project) -> Result<Vec<u8>> {
 }
 
 /// The file's tracks, and how many notes went into them.
-fn build_tracks(project: &Project) -> (Vec<Vec<TrackEvent<'static>>>, usize) {
-    let mut tracks = vec![conductor_track(project)];
+fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usize)> {
+    let mut tracks = vec![conductor_track(project)?];
     let mut count = 0;
     for (index, track) in project.tracks.iter().enumerate() {
         let Some(instrument) = track.kind.as_instrument() else {
@@ -415,13 +422,13 @@ fn build_tracks(project: &Project) -> (Vec<Vec<TrackEvent<'static>>>, usize) {
         // Sorted by position, and at one position the releases go first: a note struck again at
         // the instant the last one ended must not have its release land on the new one.
         events.sort_by_key(|(at, kind)| (*at, !is_release(kind)));
-        tracks.push(delta_encode(track.name.clone(), events));
+        tracks.push(delta_encode(track.name.clone(), events)?);
     }
-    (tracks, count)
+    Ok((tracks, count))
 }
 
 /// The first track of a format 1 file: the clock, and nothing that makes a sound.
-fn conductor_track(project: &Project) -> Vec<TrackEvent<'static>> {
+fn conductor_track(project: &Project) -> Result<Vec<TrackEvent<'static>>> {
     let mut events: Vec<(Ticks, TrackEventKind<'static>)> = Vec::new();
     for point in project.tempo_map.points() {
         let micros = (60_000_000.0 / point.bpm).round().clamp(1.0, MAX_MICROS) as u32;
@@ -452,7 +459,7 @@ fn conductor_track(project: &Project) -> Vec<TrackEvent<'static>> {
 fn delta_encode(
     name: String,
     events: Vec<(Ticks, TrackEventKind<'static>)>,
-) -> Vec<TrackEvent<'static>> {
+) -> Result<Vec<TrackEvent<'static>>> {
     let mut out = Vec::with_capacity(events.len() + 2);
     out.push(TrackEvent {
         delta: u28::new(0),
@@ -465,6 +472,11 @@ fn delta_encode(
     let mut previous = Ticks::ZERO;
     for (at, kind) in events {
         let delta = (at - previous).raw().max(0) as u32;
+        if delta > 0x0fff_ffff {
+            return Err(IoError::MidiWrite(format!(
+                "event delta of {delta} ticks exceeds the Standard MIDI File limit"
+            )));
+        }
         previous = at;
         out.push(TrackEvent {
             delta: u28::new(delta),
@@ -475,7 +487,7 @@ fn delta_encode(
         delta: u28::new(0),
         kind: TrackEventKind::Meta(MetaMessage::EndOfTrack),
     });
-    out
+    Ok(out)
 }
 
 /// A note-on, or a note-off when the velocity is zero.

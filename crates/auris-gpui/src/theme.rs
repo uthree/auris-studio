@@ -382,6 +382,8 @@ pub struct Theme {
     pub velocity_loud: Hsla,
 }
 
+impl gpui::Global for Theme {}
+
 impl Default for Theme {
     fn default() -> Self {
         Self::dark()

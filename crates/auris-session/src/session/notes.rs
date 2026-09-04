@@ -306,12 +306,24 @@ impl Session {
         if self.project.midi_clip(clip).is_none() {
             return Err(SessionError::UnknownClip(clip.0));
         }
+        let changed = self.project.midi_clip(clip).is_some_and(|(_, target)| {
+            origins.iter().any(|(index, start, pitch)| {
+                target.notes.get(*index).is_some_and(|note| {
+                    let moved = Ticks(start.raw().saturating_add(delta_ticks.raw())).max_zero();
+                    let repitched = (*pitch as i32 + delta_pitch).clamp(0, 127) as u8;
+                    note.start != moved || note.pitch != repitched
+                })
+            })
+        });
+        if !changed {
+            return Ok(());
+        }
         self.record_repeating(Edit::MoveNotes);
         let grid = self.project.grid;
         if let Some(target) = self.project.midi_clip_mut(clip) {
             for (index, start, pitch) in origins {
                 if let Some(note) = target.notes.get_mut(*index) {
-                    note.start = (*start + delta_ticks).max_zero();
+                    note.start = Ticks(start.raw().saturating_add(delta_ticks.raw())).max_zero();
                     note.pitch = (*pitch as i32 + delta_pitch).clamp(0, 127) as u8;
                 }
             }

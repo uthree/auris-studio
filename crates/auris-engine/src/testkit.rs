@@ -80,6 +80,8 @@ pub(crate) const TAIL_ID: &str = "test.tail";
 pub(crate) const COUNTER_ID: &str = "test.counter";
 /// Registry id of [`HugeTail`].
 pub(crate) const HUGE_TAIL_ID: &str = "test.huge-tail";
+/// Registry id of [`HugeLatency`].
+pub(crate) const HUGE_LATENCY_ID: &str = "test.huge-latency";
 /// Registry id of [`Lookahead`].
 pub(crate) const LOOKAHEAD_ID: &str = "test.lookahead";
 /// Registry id of [`KeyedGain`].
@@ -102,6 +104,7 @@ pub(crate) fn registry() -> PluginRegistry {
     registry.register_effect(|| Box::new(RingingTail::new()));
     registry.register_effect(|| Box::new(BlockCounter));
     registry.register_effect(|| Box::new(HugeTail));
+    registry.register_effect(|| Box::new(HugeLatency));
     registry.register_effect(|| Box::new(Lookahead::new()));
     registry.register_effect(|| Box::new(KeyedGain));
     registry
@@ -454,8 +457,7 @@ impl Parameterized for Lookahead {
     fn set_param(&mut self, id: ParamId, value: f32) {
         if id.index() == 0 {
             self.frames = self.params[0].clamp(value) as usize;
-            // The ring is read modulo the new length, so start it from a position that is inside.
-            self.write = 0;
+            self.reset();
         }
     }
 }
@@ -545,5 +547,63 @@ impl Effect for HugeTail {
 
     fn tail_frames(&self) -> usize {
         usize::MAX
+    }
+}
+
+/// Passes audio through untouched and reports a corrupt latency value.
+pub(crate) struct HugeLatency;
+
+impl Parameterized for HugeLatency {
+    fn parameters(&self) -> &[ParamDescriptor] {
+        &[]
+    }
+    fn param(&self, _id: ParamId) -> f32 {
+        0.0
+    }
+    fn set_param(&mut self, _id: ParamId, _value: f32) {}
+}
+
+impl Effect for HugeLatency {
+    fn descriptor(&self) -> PluginDescriptor {
+        PluginDescriptor::effect(
+            HUGE_LATENCY_ID,
+            "Huge Latency",
+            "Declares an absurd latency without delaying audio",
+            PluginCategory::Utility,
+        )
+    }
+    fn prepare(&mut self, _ctx: &PrepareContext) {}
+    fn reset(&mut self) {}
+    fn process(&mut self, _buffer: &mut AudioBuffer, _ctx: &ProcessContext) {}
+    fn latency_frames(&self) -> usize {
+        usize::MAX
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn changing_lookahead_length_clears_its_ring() {
+        let mut effect = Lookahead::new();
+        effect.prepare(&PrepareContext {
+            sample_rate: 48_000.0,
+            channel_count: 1,
+            max_block_frames: LOOKAHEAD_FRAMES,
+            max_block_events: 0,
+        });
+        let ctx = ProcessContext::realtime(48_000.0, LOOKAHEAD_FRAMES, 0, 120.0, true);
+        let mut filled = AudioBuffer::new(1, LOOKAHEAD_FRAMES, 48_000.0);
+        filled.channel_mut(0).fill(1.0);
+        effect.process(&mut filled, &ctx);
+        effect.set_param(ParamId(0), 32.0);
+
+        let mut silent = AudioBuffer::new(1, 32, 48_000.0);
+        effect.process(
+            &mut silent,
+            &ProcessContext::realtime(48_000.0, 32, 0, 120.0, true),
+        );
+        assert_eq!(silent.peak(), 0.0);
     }
 }

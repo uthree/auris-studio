@@ -31,6 +31,7 @@ def test_read_label_parses_times_and_phonemes(tmp_path):
     path.write_text(
         "0 13500000 p@xx^xx-pau+d=e_xx%xx\n"
         "13500000 13950000 c@xx^pau-d+e=N_xx\n"
+        "start 13950000 c@xx^pau-k+e=N_xx\n"
         "not a label line\n",
         encoding="utf-8",
     )

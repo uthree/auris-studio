@@ -20,6 +20,9 @@ use crate::transport::Transport;
 /// export path from panicking in the allocator on a number it was handed rather than chose.
 const MAX_RENDER_FRAMES: u64 = 24 * 60 * 60 * 192_000;
 
+/// Largest block whose event offsets and scratch allocation remain practical and representable.
+const MAX_BLOCK_FRAMES: usize = 1_048_576;
+
 /// How much of a project to render, and how.
 #[derive(Clone, Debug, PartialEq)]
 pub struct OfflineOptions {
@@ -62,7 +65,7 @@ impl OfflineOptions {
 
     /// Sets the processing block size.
     pub fn with_block_frames(mut self, block_frames: usize) -> Self {
-        self.block_frames = block_frames.max(1);
+        self.block_frames = block_frames.clamp(1, MAX_BLOCK_FRAMES);
         self
     }
 }
@@ -243,7 +246,7 @@ impl OfflineRender {
         if !sample_rate.is_finite() || sample_rate <= 0.0 {
             return Err(EngineError::InvalidSampleRate(sample_rate));
         }
-        let block_frames = options.block_frames.max(1);
+        let block_frames = options.block_frames.clamp(1, MAX_BLOCK_FRAMES);
 
         let graph = RenderGraph::build_with(
             project,
@@ -403,6 +406,16 @@ impl OfflineRender {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oversized_blocks_are_clamped_before_event_offsets_are_narrowed() {
+        assert_eq!(
+            OfflineOptions::default()
+                .with_block_frames(usize::MAX)
+                .block_frames,
+            MAX_BLOCK_FRAMES
+        );
+    }
     use crate::testkit::{self, TAIL_FRAMES, TONE_AMPLITUDE};
     use auris_core::AudioBuffer;
     use auris_core::project::Note;

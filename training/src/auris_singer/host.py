@@ -32,6 +32,8 @@ from pathlib import Path
 
 import numpy as np
 
+from auris_singer.text.ipa import SIL as MODEL_SILENCE
+
 __all__ = [
     "REPO_ROOT",
     "SILENCE",
@@ -150,10 +152,6 @@ class HostFrames:
     def tokens(self) -> list[str]:
         """The phoneme symbol on every frame."""
         return [self.inventory[p] for p in self.phonemes]
-
-
-#: The model's own silence symbol, as it appears in a corpus's phoneme sequence.
-MODEL_SILENCE = "<sil>"
 
 
 def frames_from_curves(

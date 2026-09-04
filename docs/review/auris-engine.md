@@ -14,17 +14,17 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-104 | high | `crates/auris-engine/src/device.rs:423` | device.rs:423 leaves block_frames unclamped when SupportedBufferSize::Unknown, letting an oversized/corrupted value drive a huge eager allocation in […] |
 | ✅ F-121 | high | `crates/auris-engine/src/device.rs:703` | Session's field-order drop disconnects EngineHandle before the cpal stream stops, so retired graphs/buffers can be freed on the audio callback thread at […] |
 | ✅ F-351 | high | `crates/auris-engine/src/device.rs:190` | discard_pending can race the still-live CoreAudio callback thread and silently steal a queued engine command during a device disconnect. |
-| F-197 | medium | `crates/auris-engine/src/renderer.rs:457` | chase_notes re-triggers all overlapping same-pitch voices at the last note's velocity, losing each note's own dynamics on seek/loop/resume. |
-| F-227 | medium | `crates/auris-engine/src/renderer.rs:374` | renderer.rs:374 casts a note's in-block offset to u32 with no upper clamp on block_frames, so an oversized block (>= 2^32 frames) would silently misplace […] |
-| F-255 | medium | `crates/auris-engine/src/graph/mod.rs:535` | An unclamped, plugin-reported latency value sizes a real delay-line allocation in RenderGraph::build, letting a misbehaving plugin crash graph construction. |
-| F-374 | medium | `crates/auris-engine/src/device.rs:99` | device.rs's sample_rates loop keeps only a config range's min/max endpoints, so continuous-range devices lose all interior standard rates (44.1/48/88.2/96 kHz) […] |
-| F-228 | low | `crates/auris-engine/src/capture.rs:591` | note_peak's load-then-store on shared.peak races with take_peak/begin_take's reset, so a UI peak-meter reset can be silently undone by the audio callback […] |
-| F-261 | low | `crates/auris-engine/src/device.rs:566` | AudioEngine::new's doc comment says "Nine arguments" but the constructor actually takes ten parameters. |
-| F-288 | low | `crates/auris-engine/src/meter.rs:67` | meter.rs's clip latch tests the raw peak while report() sanitizes its own copy, so a non-finite block flags a clip but the meter shows silence. |
-| F-297 | low | `crates/auris-engine/src/monitor.rs:138` | MonitorRing::set_enabled's live-edge reset (monitor.rs:138) can be silently overwritten by a concurrent in-flight read_into's unconditional final store […] |
-| F-310 | low | `crates/auris-engine/src/device.rs:685` | poll_commands' unconditional while-gate on the retired-graph stash also stalls non-retiring commands (Play/Stop/Seek) once the stash is full, not just […] |
-| F-354 | low | `crates/auris-engine/src/device.rs:4` | device.rs's module doc claims only two queues cross to the UI thread, but the callback also publishes playhead/count-in/playing/meters via shared atomics. |
-| F-434 | low | `crates/auris-engine/src/testkit.rs:458` | Lookahead test-double's set_param resets the write cursor but not the ring buffers, so a live frames change leaks stale pre-resize samples for the next […] |
+| ✅ F-197 | medium | `crates/auris-engine/src/renderer.rs:457` | chase_notes re-triggers all overlapping same-pitch voices at the last note's velocity, losing each note's own dynamics on seek/loop/resume. |
+| ✅ F-227 | medium | `crates/auris-engine/src/renderer.rs:374` | renderer.rs:374 casts a note's in-block offset to u32 with no upper clamp on block_frames, so an oversized block (>= 2^32 frames) would silently misplace […] |
+| ✅ F-255 | medium | `crates/auris-engine/src/graph/mod.rs:535` | An unclamped, plugin-reported latency value sizes a real delay-line allocation in RenderGraph::build, letting a misbehaving plugin crash graph construction. |
+| ✅ F-374 | medium | `crates/auris-engine/src/device.rs:99` | device.rs's sample_rates loop keeps only a config range's min/max endpoints, so continuous-range devices lose all interior standard rates (44.1/48/88.2/96 kHz) […] |
+| ✅ F-228 | low | `crates/auris-engine/src/capture.rs:591` | note_peak's load-then-store on shared.peak races with take_peak/begin_take's reset, so a UI peak-meter reset can be silently undone by the audio callback […] |
+| ✅ F-261 | low | `crates/auris-engine/src/device.rs:566` | AudioEngine::new's doc comment says "Nine arguments" but the constructor actually takes ten parameters. |
+| ✅ F-288 | low | `crates/auris-engine/src/meter.rs:67` | meter.rs's clip latch tests the raw peak while report() sanitizes its own copy, so a non-finite block flags a clip but the meter shows silence. |
+| ✅ F-297 | low | `crates/auris-engine/src/monitor.rs:138` | MonitorRing::set_enabled's live-edge reset (monitor.rs:138) can be silently overwritten by a concurrent in-flight read_into's unconditional final store […] |
+| ✅ F-310 | low | `crates/auris-engine/src/device.rs:685` | poll_commands' unconditional while-gate on the retired-graph stash also stalls non-retiring commands (Play/Stop/Seek) once the stash is full, not just […] |
+| ✅ F-354 | low | `crates/auris-engine/src/device.rs:4` | device.rs's module doc claims only two queues cross to the UI thread, but the callback also publishes playhead/count-in/playing/meters via shared atomics. |
+| ✅ F-434 | low | `crates/auris-engine/src/testkit.rs:458` | Lookahead test-double's set_param resets the write cursor but not the ring buffers, so a live frames change leaks stale pre-resize samples for the next […] |
 
 ### ✅ F-077 · high · Automation writes to a hosted CLAP effect's parameter can change its reported latency without ever marking `latency_stale`, unlike the discrete SetEffectParam command path.
 
@@ -156,7 +156,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** "Treating those as fatal would clear `running` while the audio thread is still consuming the command queue, and `AudioDevice::discard_pending` would then start draining commands out from under it: two consumers on one queue, every later command landing on either at random." (doc comment above `stream_survives`, crates/auris-engine/src/device.rs)
 
-### F-197 · medium · chase_notes re-triggers all overlapping same-pitch voices at the last note's velocity, losing each note's own dynamics on seek/loop/resume.
+### ✅ F-197 · medium · chase_notes re-triggers all overlapping same-pitch voices at the last note's velocity, losing each note's own dynamics on seek/loop/resume.
 
 `crates/auris-engine/src/renderer.rs:457` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -172,7 +172,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
 
-### F-227 · medium · renderer.rs:374 casts a note's in-block offset to u32 with no upper clamp on block_frames, so an oversized block (>= 2^32 frames) would silently misplace notes, though no shipped frontend can reach it and the memory cost alone makes triggering it impractical.
+### ✅ F-227 · medium · renderer.rs:374 casts a note's in-block offset to u32 with no upper clamp on block_frames, so an oversized block (>= 2^32 frames) would silently misplace notes, though no shipped frontend can reach it and the memory cost alone makes triggering it impractical.
 
 `crates/auris-engine/src/renderer.rs:374` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -188,7 +188,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** offline.rs doc comment: "Frames per processing block. Larger blocks export faster; the output is identical." and the file's own stated philosophy for MAX_RENDER_FRAMES: "to keep the export path from panicking in the allocator on a number it was handed rather than chose" — the same guard was not extended to block_frames despite NoteEvent::frame being u32.
 
-### F-255 · medium · An unclamped, plugin-reported latency value sizes a real delay-line allocation in RenderGraph::build, letting a misbehaving plugin crash graph construction.
+### ✅ F-255 · medium · An unclamped, plugin-reported latency value sizes a real delay-line allocation in RenderGraph::build, letting a misbehaving plugin crash graph construction.
 
 `crates/auris-engine/src/graph/mod.rs:535` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -204,7 +204,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** graph/strip.rs's tail_frames() doc: "Saturating rather than wrapping, because the figures come from plugins: one that reports a nonsense tail should pad an export, not overflow the length it is added to" — the same untrusted-plugin-value discipline is not applied to the latency path that actually sizes a real allocation.
 
-### F-374 · medium · device.rs's sample_rates loop keeps only a config range's min/max endpoints, so continuous-range devices lose all interior standard rates (44.1/48/88.2/96 kHz) from the Settings picker.
+### ✅ F-374 · medium · device.rs's sample_rates loop keeps only a config range's min/max endpoints, so continuous-range devices lose all interior standard rates (44.1/48/88.2/96 kHz) from the Settings picker.
 
 `crates/auris-engine/src/device.rs:99` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -220,7 +220,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Sample rates the device advertises, ascending and deduplicated.
 
-### F-228 · low · note_peak's load-then-store on shared.peak races with take_peak/begin_take's reset, so a UI peak-meter reset can be silently undone by the audio callback thread.
+### ✅ F-228 · low · note_peak's load-then-store on shared.peak races with take_peak/begin_take's reset, so a UI peak-meter reset can be silently undone by the audio callback thread.
 
 `crates/auris-engine/src/capture.rs:591` · concurrency · confirmed (executed reproduction; reported independently 1×)
 
@@ -234,7 +234,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Replace the load-then-store in note_peak with a single atomic read-modify-write: since the meter stores abs() values (non-negative floats whose IEEE-754 bit patterns preserve numeric ordering), use self.shared.peak.fetch_max(level.to_bits(), Ordering::Relaxed) per sample or per block instead of loading into a local, scanning, and storing at the end; apply the same fix to the per-channel peak cells.
 
-### F-261 · low · AudioEngine::new's doc comment says "Nine arguments" but the constructor actually takes ten parameters.
+### ✅ F-261 · low · AudioEngine::new's doc comment says "Nine arguments" but the constructor actually takes ten parameters.
 
 `crates/auris-engine/src/device.rs:566` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -248,7 +248,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Update the comment at crates/auris-engine/src/device.rs:566 from "Nine arguments" to "Ten arguments" to match the actual parameter count (commands, returned_graphs, playhead, count_in, meters, playing, latency_stale, sample_rate, channels, max_block).
 
-### F-288 · low · meter.rs's clip latch tests the raw peak while report() sanitizes its own copy, so a non-finite block flags a clip but the meter shows silence.
+### ✅ F-288 · low · meter.rs's clip latch tests the raw peak while report() sanitizes its own copy, so a non-finite block flags a clip but the meter shows silence.
 
 `crates/auris-engine/src/meter.rs:67` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -262,7 +262,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Sanitize `peak` once at the top of `report_track`/`report_master` (the same `if peak.is_finite() { peak.abs() } else { 0.0 }` logic already inside `report`) and use that single sanitized value for both the decaying display store and the `>= FULL_SCALE` clip-latch check, instead of letting `report` compute its own local copy while the caller tests the raw argument.
 
-### F-297 · low · MonitorRing::set_enabled's live-edge reset (monitor.rs:138) can be silently overwritten by a concurrent in-flight read_into's unconditional final store (monitor.rs:247), causing at most a minor position skew rather than the claimed stale-backlog resume.
+### ✅ F-297 · low · MonitorRing::set_enabled's live-edge reset (monitor.rs:138) can be silently overwritten by a concurrent in-flight read_into's unconditional final store (monitor.rs:247), causing at most a minor position skew rather than the claimed stale-backlog resume.
 
 `crates/auris-engine/src/monitor.rs:138` · concurrency · confirmed (executed reproduction; reported independently 1×)
 
@@ -278,7 +278,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Switching on re-seats the reader rather than resuming where it stopped, because what is in the ring is however many seconds old the pause was.
 
-### F-310 · low · poll_commands' unconditional while-gate on the retired-graph stash also stalls non-retiring commands (Play/Stop/Seek) once the stash is full, not just SetGraph/PlayOneShot.
+### ✅ F-310 · low · poll_commands' unconditional while-gate on the retired-graph stash also stalls non-retiring commands (Play/Stop/Seek) once the stash is full, not just SetGraph/PlayOneShot.
 
 `crates/auris-engine/src/device.rs:685` · realtime · confirmed (executed reproduction; reported independently 1×)
 
@@ -292,7 +292,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Give poll_commands visibility into whether the next queued command actually retires a graph, so non-retiring commands (Play/Stop/Seek/parameter changes) are always applied even when the retired stash is full — e.g. peek/classify before dispatch, or split retiring commands onto a separate bounded channel from the rest so the two can be gated independently. Keep the existing len()<RETIRED_GRAPH_SLOTS guard only around the retiring path, since it exists to cap unbounded allocation growth in `retired` on the audio thread.
 
-### F-354 · low · device.rs's module doc claims only two queues cross to the UI thread, but the callback also publishes playhead/count-in/playing/meters via shared atomics.
+### ✅ F-354 · low · device.rs's module doc claims only two queues cross to the UI thread, but the callback also publishes playhead/count-in/playing/meters via shared atomics.
 
 `crates/auris-engine/src/device.rs:4` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -308,7 +308,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** "It talks to the UI through two bounded queues and nothing else: commands come down one, retired graphs go back up the other so that plugin instances and sample buffers are freed on the UI thread." (crates/auris-engine/src/device.rs:3-5)
 
-### F-434 · low · Lookahead test-double's set_param resets the write cursor but not the ring buffers, so a live frames change leaks stale pre-resize samples for the next `frames` outputs.
+### ✅ F-434 · low · Lookahead test-double's set_param resets the write cursor but not the ring buffers, so a live frames change leaks stale pre-resize samples for the next `frames` outputs.
 
 `crates/auris-engine/src/testkit.rs:458` · test-quality · confirmed (executed reproduction; reported independently 1×)
 

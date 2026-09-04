@@ -225,15 +225,16 @@ pub fn installed_voices_in(roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
                         .map(|name| name.to_string_lossy().to_string())
                 })
                 .flatten();
-            let Some(file) = named else { continue };
-            if seen.contains(&file) {
-                continue;
-            }
-            seen.push(file);
+            let Some(_file) = named else { continue };
             let name = path
                 .file_stem()
                 .map(|stem| stem.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Voice".to_string());
+            let identity = name.to_lowercase();
+            if seen.contains(&identity) {
+                continue;
+            }
+            seen.push(identity);
             voices.push((name, path));
         }
     }
@@ -519,7 +520,7 @@ mod tests {
         std::fs::create_dir_all(&second).unwrap();
         std::fs::write(first.join("Ritsu.onnx"), b"x").unwrap();
         std::fs::write(first.join("notes.txt"), b"x").unwrap();
-        std::fs::write(second.join("Ritsu.onnx"), b"y").unwrap();
+        std::fs::write(second.join("Ritsu.ONNX"), b"y").unwrap();
         std::fs::write(second.join("Alto.ONNX"), b"y").unwrap();
 
         let voices = installed_voices_in(&[first.clone(), second]);

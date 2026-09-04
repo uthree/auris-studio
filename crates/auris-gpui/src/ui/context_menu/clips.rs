@@ -16,6 +16,10 @@ use crate::ui::prompt::{Prompt, PromptTarget};
 
 use super::{ContextMenu, MenuCommand};
 
+fn prompt_number(value: impl std::fmt::Display) -> String {
+    value.to_string()
+}
+
 /// What the row that sets a clip's recorded tempo says.
 ///
 /// A number where there is one, and plainly *not set* where there is not — the row is what tells
@@ -254,7 +258,7 @@ impl AurisApp {
             return;
         };
         let title = self.t(Key::SetClipGainTitle);
-        let current = format!("{gain_db:.1}");
+        let current = prompt_number(gain_db);
         self.open_prompt(Prompt::new(title, PromptTarget::ClipGain(clip), current));
     }
 
@@ -276,7 +280,7 @@ impl AurisApp {
         self.open_prompt(Prompt::new(
             title,
             PromptTarget::ClipSourceTempo(clip),
-            format!("{current:.1}"),
+            prompt_number(current),
         ));
     }
 
@@ -828,5 +832,13 @@ mod tests {
     fn a_clip_with_no_length_can_never_be_split() {
         let at = Ticks(960);
         assert!(!splittable(at, at, at));
+    }
+
+    #[test]
+    fn numeric_prompts_preserve_the_stored_precision() {
+        let gain = -3.125_678_f32;
+        let tempo = 128.375_f64;
+        assert_eq!(prompt_number(gain).parse::<f32>(), Ok(gain));
+        assert_eq!(prompt_number(tempo).parse::<f64>(), Ok(tempo));
     }
 }

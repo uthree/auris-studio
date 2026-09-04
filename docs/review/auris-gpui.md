@@ -44,66 +44,66 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-156 | medium | `crates/auris-gpui/src/ui/text_field.rs:320` | apply_key returns KeyEffect::Changed for Backspace/Delete even when the caret is at a boundary and nothing was deleted, wrongly resetting palette selection / […] |
 | ✅ F-169 | medium | `crates/auris-gpui/src/app.rs:1807` | select_clips's doc says primary joins the clip selection when absent from it, but the code discards primary in exactly that case instead of inserting it. |
 | ✅ F-171 | medium | `crates/auris-gpui/src/ui/prompt.rs:1852` | every_target()'s doc comment falsely claims exhaustiveness is enforced; it's a plain Vec literal already missing 6 of 26 PromptTarget variants. |
-| F-174 | medium | `crates/auris-gpui/src/ui/transport_bar.rs:1319` | Test named for cycling the grid only asserts a static fact about GRID_CHOICES and never calls cycle_grid or grid_label. |
-| F-189 | medium | `crates/auris-gpui/src/settings_window.rs:922` | Re-clicking the already-selected output device row zeroes sample_rate and forces an unwanted audio restart. |
-| F-190 | medium | `crates/auris-gpui/src/settings_window.rs:65` | An open Settings window keeps showing the old language/colour scheme when it is changed elsewhere (e.g. the command palette), until closed and reopened. |
-| F-191 | medium | `crates/auris-gpui/src/ui/compose_sheet/dials.rs:244` | song_dials rebuilds SongDials::charts via BTreeMap::iter(), so reopening a project resorts extra charts alphabetically instead of preserving the order they […] |
+| ✅ F-174 | medium | `crates/auris-gpui/src/ui/transport_bar.rs:1319` | Test named for cycling the grid only asserts a static fact about GRID_CHOICES and never calls cycle_grid or grid_label. |
+| ✅ F-189 | medium | `crates/auris-gpui/src/settings_window.rs:922` | Re-clicking the already-selected output device row zeroes sample_rate and forces an unwanted audio restart. |
+| ✅ F-190 | medium | `crates/auris-gpui/src/settings_window.rs:65` | An open Settings window keeps showing the old language/colour scheme when it is changed elsewhere (e.g. the command palette), until closed and reopened. |
+| ✅ F-191 | medium | `crates/auris-gpui/src/ui/compose_sheet/dials.rs:244` | song_dials rebuilds SongDials::charts via BTreeMap::iter(), so reopening a project resorts extra charts alphabetically instead of preserving the order they […] |
 | ✅ F-199 | medium | `crates/auris-gpui/src/gestures.rs:117` | Holding both the create and delete modifiers on empty piano-roll grid always creates a note because CommandClick/OptionClick::matches ignore each other's flag. |
 | ✅ F-203 | medium | `crates/auris-gpui/src/main.rs:197` | opening_window_bounds checks only cx.primary_display(), so a window remembered on a secondary monitor is always recentred instead of restored, even though […] |
-| F-204 | medium | `crates/auris-gpui/src/gestures.rs:433` | gestures.rs:433 uses `#[cfg(not(target_os = "macos"))]` instead of `cfg!`, so the non-macOS modifier assertions never compile on a macOS `cargo test` run, […] |
-| F-211 | medium | `crates/auris-gpui/src/app.rs:2049` | selected_phonemes doc-comments "the grabbed note" but reads the lowest-indexed note in a BTreeSet, mismatching pitch and lyric during multi-note shift-click […] |
-| F-212 | medium | `crates/auris-gpui/src/ui/compose_sheet/dials.rs:21` | TEMPO dial doc claims to cover the spec's accepted tempo range (20..400) but only covers 40..220, silently clamping/discarding legal out-of-range tempos on […] |
-| F-224 | medium | `crates/auris-gpui/src/ui/piano_roll.rs:1381` | Phoneme-divider click acceptance (grabbed_boundary_at, piano_roll.rs:1381) uses a full PHONEME_GRAB radius while the drawn cursor hitbox […] |
-| F-232 | medium | `crates/auris-gpui/src/ui/arrangement/geometry.rs:257` | A press in the fade band beyond ~6px of the actual (moved) fade handle silently resizes the clip with no hover cursor ever shown there. |
-| F-233 | medium | `crates/auris-gpui/src/ui/agent_chat.rs:939` | Agent transcript panel never auto-scrolls on new entries, so users must manually scroll down after every turn to see the latest message. |
-| F-246 | medium | `crates/auris-gpui/src/ui/agent_chat.rs:271` | AgentChat::entries (agent_chat.rs:271) is never capped or evicted and AgentEvent::Result rescans it with iter_mut().rev().find(), so a long or misbehaving […] |
-| F-247 | medium | `crates/auris-gpui/src/ui/agent_chat.rs:448` | A tool-result event with no matching open call is pushed with a raw empty `line`, so chat_row's `line.is_empty()` check renders it as permanently "running" […] |
-| F-251 | medium | `crates/auris-gpui/src/ui/context_menu/menu.rs:302` | ContextMenu::size() counts CJK characters at their half-width Latin cost, so the widest Japanese menu row is silently truncated by the label's .truncate(), […] |
-| F-258 | medium | `crates/auris-gpui/src/ui/agent_chat.rs:501` | agent_binary() falls back to an unqualified filename when current_exe() fails, letting Command::new() resolve the agent binary via CWD/PATH search instead of […] |
-| F-318 | medium | `crates/auris-gpui/src/i18n.rs:219` | error_text leaves EngineError/IoError/CoreError text untranslated even though those enums are hand-authored in this workspace, not another crate's. |
-| F-323 | medium | `crates/auris-gpui/src/ui/arrangement/lanes.rs:367` | An automation lane whose ParamTarget is invalidated (e.g. plugin removed) keeps reserving a blank ROW_HEIGHT band forever instead of collapsing or being pruned. |
-| F-353 | medium | `crates/auris-gpui/src/ui/arrangement/lane_paint.rs:6` | lane_paint.rs's doc comment falsely claims paint_automation/paint_lane are the whole of what's painted on the lanes canvas, when lanes.rs also paints […] |
-| F-360 | medium | `crates/auris-gpui/src/ui/menu_bar.rs:323` | Clicking a disabled menu-bar row closes the dropdown instead of leaving it open, contradicting the code's own comment that disabled rows are a no-op. |
-| F-363 | medium | `crates/auris-gpui/src/ui/piano_roll.rs:1357` | Ornament-handle hit test uses full ORNAMENT_GRAB (12x12px) while the painted handle is only 6x6px, so clicks well outside the visible square still grab it. |
-| F-368 | medium | `crates/auris-gpui/src/ui/context_menu/clips.rs:257` | Confirming Clip Gain/Source Tempo prompts without editing silently rounds gain_db/source_bpm to one decimal, corrupting recorded-take tempo precision and […] |
-| F-382 | medium | `crates/auris-gpui/src/dock.rs:511` | PanelLayout::clamped never ceiling-clamps the bottom dock (px(f32::MAX)), letting a hand-edited layout.json store an oversized height that skews the piano […] |
-| F-389 | medium | `crates/auris-gpui/src/ui/selection.rs:114` | Rubber-band's "primary" clip is re-read from the previous frame's own output each pointer-move, so it drifts with the sweep path instead of the pre-drag […] |
-| F-390 | medium | `crates/auris-gpui/src/ui/tooltip.rs:99` | An open tooltip keeps the old theme's colours after a scheme change until re-hovered, breaking apply_scheme's documented next-frame invariant. |
-| F-396 | medium | `crates/auris-gpui/src/ui/arrangement/gestures.rs:121` | Drag::ClipFade skips the past_drag_threshold guard its sibling drags use, so a bare click on a fade handle can commit a spurious fade edit. |
-| F-402 | medium | `crates/auris-gpui/src/ui/commands.rs:396` | move_clips_by_lane uses mouse-down-captured usize track indices as its stale base, so deleting a track mid-drag silently drops clips onto the wrong track […] |
-| F-129 | low | `crates/auris-gpui/src/ui/commands.rs:1413` | export_singer_frames's doc comment opens with export_midi's description, leaving export_midi undocumented and cargo doc showing a false claim. |
-| F-137 | low | `crates/auris-gpui/src/app.rs:2108` | Resolving an external-change conflict via Save shows "Saved to …" then blanks it within 500ms via watch_disk's unconditional Withdraw status clear […] |
-| F-155 | low | `crates/auris-gpui/src/actions.rs:55` | StopPlayback action is unreachable (no keymap/menu/palette row) and its doc comment claims a return-to-start seek that Session::stop never performs. |
-| F-170 | low | `crates/auris-gpui/src/ui/prompt.rs:849` | Duplicate part/progression names are rejected with the misleading "Name cannot be empty" message instead of a collision-specific one. |
-| F-173 | low | `crates/auris-gpui/src/ui/transport_bar.rs:719` | Time-signature scroll handler rounds each event's delta independently with no carried remainder, so precise-scroll (trackpad) input under 8px/event never […] |
-| F-213 | low | `crates/auris-gpui/src/ui/context_menu/timeline.rs:75` | Clearing the loop leaves loop_region as Some((0,0)) instead of None, so the menu still offers Punch From Cycle and arms a zero-length punch region. |
-| F-245 | low | `crates/auris-gpui/src/ui/widgets.rs:873` | db_to_meter_position collapses +Infinity dB to silence (0.0) instead of saturating to 1.0 like other above-range values, but no live UI path can currently feed […] |
-| F-248 | low | `crates/auris-gpui/src/ui/piano_roll.rs:170` | grabbed_phoneme_boundary picks the first in-slack boundary via .find() instead of the nearest via .min_by_key, unlike the sibling curve_point_at. |
-| F-250 | low | `crates/auris-gpui/src/ui/commands.rs:1072` | sing_track/begin_export/start_export_stems don't check self.auto_sing, so a manual render can briefly run concurrently with (or silently stall behind) an […] |
-| F-264 | low | `crates/auris-gpui/src/dock.rs:122` | Panel::command's doc comment says "all five" panels but Panel::ALL has held six since the Agent panel shipped. |
-| F-269 | low | `crates/auris-gpui/src/menu.rs:949` | Test doc comment in menu.rs wrongly claims Open Recent/About have an empty binding id; it's actually their default keystroke that's empty. |
-| F-270 | low | `crates/auris-gpui/src/ui/root.rs:1150` | Stale "Last, because..." comment sits above library_search_key though agent_key was appended after it as the true last disjunct in root.rs's on_key_down chain. |
-| F-274 | low | `crates/auris-gpui/src/ui/mod.rs:3` | crates/auris-gpui/src/ui/mod.rs:3 claims every ui submodule only extends AurisApp, but tooltip.rs defines its own Render entity (Tooltip), contradicting the […] |
-| F-278 | low | `crates/auris-gpui/src/dock.rs:470` | side_widths' zero-total guard at dock.rs:470 is unreachable dead code, since room's unconditional >=0 clamp forces total>0 whenever control reaches it. |
-| F-283 | low | `crates/auris-gpui/src/ui/commands.rs:440` | Loop toggle on a mixed clip selection can show "Clip looped" even when most clips end up unlooped, because the status is chosen by looped > 0 rather than by […] |
-| F-287 | low | `crates/auris-gpui/src/ui/plugin_window.rs:381` | Plugin window header drag lacks the pressed_at wobble guard every other pixel-based drag (ClipMove, TrackReorder, NoteMove, NoteResize) has, so a click on its […] |
-| F-291 | low | `crates/auris-gpui/src/gestures.rs:122` | Shift+double-click on a singer-clip note opens the lyric prompt and silently clears the multi-selection instead of extending it. |
-| F-300 | low | `crates/auris-gpui/src/ui/text_field.rs:490` | text_for_range/selected_text_range use the mutating field accessor, silently resetting an in-progress Tab-completion walk on a read-only IME query. |
-| F-301 | low | `crates/auris-gpui/src/ui/plugin_window.rs:399` | Instrument plugin window's bypass button always shows "on" and is inert — InstrumentTrack has no enabled field to toggle. |
-| F-306 | low | `crates/auris-gpui/src/ui/typing_panel.rs:607` | press_typed_key's audition_track guard returns before release_typed_key runs, so deleting the last instrument track mid-drag can leave a note stuck sounding. |
-| F-307 | low | `crates/auris-gpui/src/ui/context_menu/menu.rs:138` | ContextMenu::step's comment says the stale-highlight fallback lands "just before the next row" (position -1) but the code hardcodes position 0, skipping the […] |
-| F-381 | low | `crates/auris-gpui/src/ui/piano_roll.rs:2088` | Curve-lane points beyond a shortened clip's length remain drawn and draggable, though they have no audible effect. |
-| F-421 | low | `crates/auris-gpui/src/ui/agent_chat.rs:760` | Switching models updates context_window immediately but leaves stale tokens_in from the prior model, so the gauge briefly shows a wrong percentage until the […] |
-| F-424 | low | `crates/auris-gpui/src/ui/commands.rs:309` | delete_selected_track reassigns the fallback selection but never calls reveal_track, so the new selection can be scrolled off-screen. |
-| F-436 | low | `crates/auris-gpui/src/ui/commands.rs:337` | create_clip_at's error handler re-derives failure reason via project().track() instead of matching the actual SessionError, so a vanished track wrongly shows […] |
-| F-439 | low | `crates/auris-gpui/src/ui/library.rs:616` | Clicking a .clap search result expands its branch in the library tree but never scrolls it into view. |
-| F-440 | low | `crates/auris-gpui/src/settings_window.rs:1255` | Arming a key capture on one row hides the "also bound to" clash note on every row in the Keys settings list, not just that row. |
-| F-445 | low | `crates/auris-gpui/src/ui/piano_roll.rs:1193` | Velocity-tool shift-click on an already-selected note is a no-op that still starts a velocity drag, instead of deselecting like the pointer tool. |
-| F-446 | low | `crates/auris-gpui/src/ui/arrangement/geometry.rs:171` | edge_zone_rows's first fade-band row is never clamped to `bottom`, so a lane shorter than TITLE_HEIGHT (reachable only via a malformed/hand-edited project […] |
-| F-447 | low | `crates/auris-gpui/src/ui/arrangement/gestures.rs:401` | Right-click on an open automation row falls through to the empty-arrangement "add track" menu and skips track selection, instead of an automation-aware menu. |
-| F-452 | low | `crates/auris-gpui/src/ui/compose_sheet/view.rs:855` | compose_sheet's Save dialog seeds its default filename from the raw song title with no character sanitisation, matching an existing unsanitised pattern used […] |
-| F-454 | low | `crates/auris-gpui/src/ui/menu_bar.rs:125` | stepped()'s unwrap_or(0) fallback can jump menu keyboard highlight to the wrong row if a row's enabled state changes while the menu is open. |
-| F-457 | low | `crates/auris-gpui/src/ui/text_field.rs:407` | TextField::byte_offset rounds a mid-surrogate UTF-16 offset up to the next character's start instead of down, unlike floor_boundary's byte-offset handling. |
+| ✅ F-204 | medium | `crates/auris-gpui/src/gestures.rs:433` | gestures.rs:433 uses `#[cfg(not(target_os = "macos"))]` instead of `cfg!`, so the non-macOS modifier assertions never compile on a macOS `cargo test` run, […] |
+| ✅ F-211 | medium | `crates/auris-gpui/src/app.rs:2049` | selected_phonemes doc-comments "the grabbed note" but reads the lowest-indexed note in a BTreeSet, mismatching pitch and lyric during multi-note shift-click […] |
+| ✅ F-212 | medium | `crates/auris-gpui/src/ui/compose_sheet/dials.rs:21` | TEMPO dial doc claims to cover the spec's accepted tempo range (20..400) but only covers 40..220, silently clamping/discarding legal out-of-range tempos on […] |
+| ✅ F-224 | medium | `crates/auris-gpui/src/ui/piano_roll.rs:1381` | Phoneme-divider click acceptance (grabbed_boundary_at, piano_roll.rs:1381) uses a full PHONEME_GRAB radius while the drawn cursor hitbox […] |
+| ✅ F-232 | medium | `crates/auris-gpui/src/ui/arrangement/geometry.rs:257` | A press in the fade band beyond ~6px of the actual (moved) fade handle silently resizes the clip with no hover cursor ever shown there. |
+| ✅ F-233 | medium | `crates/auris-gpui/src/ui/agent_chat.rs:939` | Agent transcript panel never auto-scrolls on new entries, so users must manually scroll down after every turn to see the latest message. |
+| ✅ F-246 | medium | `crates/auris-gpui/src/ui/agent_chat.rs:271` | AgentChat::entries (agent_chat.rs:271) is never capped or evicted and AgentEvent::Result rescans it with iter_mut().rev().find(), so a long or misbehaving […] |
+| ✅ F-247 | medium | `crates/auris-gpui/src/ui/agent_chat.rs:448` | A tool-result event with no matching open call is pushed with a raw empty `line`, so chat_row's `line.is_empty()` check renders it as permanently "running" […] |
+| ✅ F-251 | medium | `crates/auris-gpui/src/ui/context_menu/menu.rs:302` | ContextMenu::size() counts CJK characters at their half-width Latin cost, so the widest Japanese menu row is silently truncated by the label's .truncate(), […] |
+| ✅ F-258 | medium | `crates/auris-gpui/src/ui/agent_chat.rs:501` | agent_binary() falls back to an unqualified filename when current_exe() fails, letting Command::new() resolve the agent binary via CWD/PATH search instead of […] |
+| ✅ F-318 | medium | `crates/auris-gpui/src/i18n.rs:219` | error_text leaves EngineError/IoError/CoreError text untranslated even though those enums are hand-authored in this workspace, not another crate's. |
+| ✅ F-323 | medium | `crates/auris-gpui/src/ui/arrangement/lanes.rs:367` | An automation lane whose ParamTarget is invalidated (e.g. plugin removed) keeps reserving a blank ROW_HEIGHT band forever instead of collapsing or being pruned. |
+| ✅ F-353 | medium | `crates/auris-gpui/src/ui/arrangement/lane_paint.rs:6` | lane_paint.rs's doc comment falsely claims paint_automation/paint_lane are the whole of what's painted on the lanes canvas, when lanes.rs also paints […] |
+| ✅ F-360 | medium | `crates/auris-gpui/src/ui/menu_bar.rs:323` | Clicking a disabled menu-bar row closes the dropdown instead of leaving it open, contradicting the code's own comment that disabled rows are a no-op. |
+| ✅ F-363 | medium | `crates/auris-gpui/src/ui/piano_roll.rs:1357` | Ornament-handle hit test uses full ORNAMENT_GRAB (12x12px) while the painted handle is only 6x6px, so clicks well outside the visible square still grab it. |
+| ✅ F-368 | medium | `crates/auris-gpui/src/ui/context_menu/clips.rs:257` | Confirming Clip Gain/Source Tempo prompts without editing silently rounds gain_db/source_bpm to one decimal, corrupting recorded-take tempo precision and […] |
+| ✅ F-382 | medium | `crates/auris-gpui/src/dock.rs:511` | PanelLayout::clamped never ceiling-clamps the bottom dock (px(f32::MAX)), letting a hand-edited layout.json store an oversized height that skews the piano […] |
+| ✅ F-389 | medium | `crates/auris-gpui/src/ui/selection.rs:114` | Rubber-band's "primary" clip is re-read from the previous frame's own output each pointer-move, so it drifts with the sweep path instead of the pre-drag […] |
+| ✅ F-390 | medium | `crates/auris-gpui/src/ui/tooltip.rs:99` | An open tooltip keeps the old theme's colours after a scheme change until re-hovered, breaking apply_scheme's documented next-frame invariant. |
+| ✅ F-396 | medium | `crates/auris-gpui/src/ui/arrangement/gestures.rs:121` | Drag::ClipFade skips the past_drag_threshold guard its sibling drags use, so a bare click on a fade handle can commit a spurious fade edit. |
+| ✅ F-402 | medium | `crates/auris-gpui/src/ui/commands.rs:396` | move_clips_by_lane uses mouse-down-captured usize track indices as its stale base, so deleting a track mid-drag silently drops clips onto the wrong track […] |
+| ✅ F-129 | low | `crates/auris-gpui/src/ui/commands.rs:1413` | export_singer_frames's doc comment opens with export_midi's description, leaving export_midi undocumented and cargo doc showing a false claim. |
+| ✅ F-137 | low | `crates/auris-gpui/src/app.rs:2108` | Resolving an external-change conflict via Save shows "Saved to …" then blanks it within 500ms via watch_disk's unconditional Withdraw status clear […] |
+| ✅ F-155 | low | `crates/auris-gpui/src/actions.rs:55` | StopPlayback action is unreachable (no keymap/menu/palette row) and its doc comment claims a return-to-start seek that Session::stop never performs. |
+| ✅ F-170 | low | `crates/auris-gpui/src/ui/prompt.rs:849` | Duplicate part/progression names are rejected with the misleading "Name cannot be empty" message instead of a collision-specific one. |
+| ✅ F-173 | low | `crates/auris-gpui/src/ui/transport_bar.rs:719` | Time-signature scroll handler rounds each event's delta independently with no carried remainder, so precise-scroll (trackpad) input under 8px/event never […] |
+| ✅ F-213 | low | `crates/auris-gpui/src/ui/context_menu/timeline.rs:75` | Clearing the loop leaves loop_region as Some((0,0)) instead of None, so the menu still offers Punch From Cycle and arms a zero-length punch region. |
+| ✅ F-245 | low | `crates/auris-gpui/src/ui/widgets.rs:873` | db_to_meter_position collapses +Infinity dB to silence (0.0) instead of saturating to 1.0 like other above-range values, but no live UI path can currently feed […] |
+| ✅ F-248 | low | `crates/auris-gpui/src/ui/piano_roll.rs:170` | grabbed_phoneme_boundary picks the first in-slack boundary via .find() instead of the nearest via .min_by_key, unlike the sibling curve_point_at. |
+| ✅ F-250 | low | `crates/auris-gpui/src/ui/commands.rs:1072` | sing_track/begin_export/start_export_stems don't check self.auto_sing, so a manual render can briefly run concurrently with (or silently stall behind) an […] |
+| ✅ F-264 | low | `crates/auris-gpui/src/dock.rs:122` | Panel::command's doc comment says "all five" panels but Panel::ALL has held six since the Agent panel shipped. |
+| ✅ F-269 | low | `crates/auris-gpui/src/menu.rs:949` | Test doc comment in menu.rs wrongly claims Open Recent/About have an empty binding id; it's actually their default keystroke that's empty. |
+| ✅ F-270 | low | `crates/auris-gpui/src/ui/root.rs:1150` | Stale "Last, because..." comment sits above library_search_key though agent_key was appended after it as the true last disjunct in root.rs's on_key_down chain. |
+| ✅ F-274 | low | `crates/auris-gpui/src/ui/mod.rs:3` | crates/auris-gpui/src/ui/mod.rs:3 claims every ui submodule only extends AurisApp, but tooltip.rs defines its own Render entity (Tooltip), contradicting the […] |
+| ✅ F-278 | low | `crates/auris-gpui/src/dock.rs:470` | side_widths' zero-total guard at dock.rs:470 is unreachable dead code, since room's unconditional >=0 clamp forces total>0 whenever control reaches it. |
+| ✅ F-283 | low | `crates/auris-gpui/src/ui/commands.rs:440` | Loop toggle on a mixed clip selection can show "Clip looped" even when most clips end up unlooped, because the status is chosen by looped > 0 rather than by […] |
+| ✅ F-287 | low | `crates/auris-gpui/src/ui/plugin_window.rs:381` | Plugin window header drag lacks the pressed_at wobble guard every other pixel-based drag (ClipMove, TrackReorder, NoteMove, NoteResize) has, so a click on its […] |
+| ✅ F-291 | low | `crates/auris-gpui/src/gestures.rs:122` | Shift+double-click on a singer-clip note opens the lyric prompt and silently clears the multi-selection instead of extending it. |
+| ✅ F-300 | low | `crates/auris-gpui/src/ui/text_field.rs:490` | text_for_range/selected_text_range use the mutating field accessor, silently resetting an in-progress Tab-completion walk on a read-only IME query. |
+| ✅ F-301 | low | `crates/auris-gpui/src/ui/plugin_window.rs:399` | Instrument plugin window's bypass button always shows "on" and is inert — InstrumentTrack has no enabled field to toggle. |
+| ✅ F-306 | low | `crates/auris-gpui/src/ui/typing_panel.rs:607` | press_typed_key's audition_track guard returns before release_typed_key runs, so deleting the last instrument track mid-drag can leave a note stuck sounding. |
+| ✅ F-307 | low | `crates/auris-gpui/src/ui/context_menu/menu.rs:138` | ContextMenu::step's comment says the stale-highlight fallback lands "just before the next row" (position -1) but the code hardcodes position 0, skipping the […] |
+| ✅ F-381 | low | `crates/auris-gpui/src/ui/piano_roll.rs:2088` | Curve-lane points beyond a shortened clip's length remain drawn and draggable, though they have no audible effect. |
+| ✅ F-421 | low | `crates/auris-gpui/src/ui/agent_chat.rs:760` | Switching models updates context_window immediately but leaves stale tokens_in from the prior model, so the gauge briefly shows a wrong percentage until the […] |
+| ✅ F-424 | low | `crates/auris-gpui/src/ui/commands.rs:309` | delete_selected_track reassigns the fallback selection but never calls reveal_track, so the new selection can be scrolled off-screen. |
+| ✅ F-436 | low | `crates/auris-gpui/src/ui/commands.rs:337` | create_clip_at's error handler re-derives failure reason via project().track() instead of matching the actual SessionError, so a vanished track wrongly shows […] |
+| ✅ F-439 | low | `crates/auris-gpui/src/ui/library.rs:616` | Clicking a .clap search result expands its branch in the library tree but never scrolls it into view. |
+| ✅ F-440 | low | `crates/auris-gpui/src/settings_window.rs:1255` | Arming a key capture on one row hides the "also bound to" clash note on every row in the Keys settings list, not just that row. |
+| ✅ F-445 | low | `crates/auris-gpui/src/ui/piano_roll.rs:1193` | Velocity-tool shift-click on an already-selected note is a no-op that still starts a velocity drag, instead of deselecting like the pointer tool. |
+| ✅ F-446 | low | `crates/auris-gpui/src/ui/arrangement/geometry.rs:171` | edge_zone_rows's first fade-band row is never clamped to `bottom`, so a lane shorter than TITLE_HEIGHT (reachable only via a malformed/hand-edited project […] |
+| ✅ F-447 | low | `crates/auris-gpui/src/ui/arrangement/gestures.rs:401` | Right-click on an open automation row falls through to the empty-arrangement "add track" menu and skips track selection, instead of an automation-aware menu. |
+| ✅ F-452 | low | `crates/auris-gpui/src/ui/compose_sheet/view.rs:855` | compose_sheet's Save dialog seeds its default filename from the raw song title with no character sanitisation, matching an existing unsanitised pattern used […] |
+| ✅ F-454 | low | `crates/auris-gpui/src/ui/menu_bar.rs:125` | stepped()'s unwrap_or(0) fallback can jump menu keyboard highlight to the wrong row if a row's enabled state changes while the menu is open. |
+| ✅ F-457 | low | `crates/auris-gpui/src/ui/text_field.rs:407` | TextField::byte_offset rounds a mid-surrogate UTF-16 offset up to the next character's start instead of down, unlike floor_boundary's byte-offset handling. |
 
 ### ✅ F-001 · critical · LyricsEdit stores a raw `dials.sections` index that any form edit (add/remove/move/retarget) silently reindexes via tidy_sections, silently dropping or misdirecting typed lyrics into the wrong section.
 
@@ -712,7 +712,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs". (general project ethos that tests should verify real coverage, not just look like they do — the doc comment here overstates what the test structurally guarantees)
 
-### F-174 · medium · Test named for cycling the grid only asserts a static fact about GRID_CHOICES and never calls cycle_grid or grid_label.
+### ✅ F-174 · medium · Test named for cycling the grid only asserts a static fact about GRID_CHOICES and never calls cycle_grid or grid_label.
 
 `crates/auris-gpui/src/ui/transport_bar.rs:1319` · test-quality · confirmed (executed reproduction; reported independently 1×)
 
@@ -728,7 +728,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** The window is testable. `auris_gpui::harness` opens the whole application ... and drives it from `cargo test` — real keymap, real view tree, real session. A gesture is made as a gesture (press, move, release) and the document is asked what happened.
 
-### F-189 · medium · Re-clicking the already-selected output device row zeroes sample_rate and forces an unwanted audio restart.
+### ✅ F-189 · medium · Re-clicking the already-selected output device row zeroes sample_rate and forces an unwanted audio restart.
 
 `crates/auris-gpui/src/settings_window.rs:922` · ui · confirmed (executed reproduction; reported independently 1×)
 
@@ -742,7 +742,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Fix direction.** In device_row's on_click closure for DeviceSlot::Output, don't unconditionally null out sample_rate: only clear it when the clicked device actually differs from this.audio.device (mirror the `selected` check already computed above the closure), otherwise keep this.audio.sample_rate so re-clicking the current device is a no-op.
 
-### F-190 · medium · An open Settings window keeps showing the old language/colour scheme when it is changed elsewhere (e.g. the command palette), until closed and reopened.
+### ✅ F-190 · medium · An open Settings window keeps showing the old language/colour scheme when it is changed elsewhere (e.g. the command palette), until closed and reopened.
 
 `crates/auris-gpui/src/settings_window.rs:65` · ui · confirmed (traced through the code; reported independently 1×)
 
@@ -758,7 +758,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** This window holds its own copy of the palette rather than reading the application's, so it has to be told as well — otherwise the change would be visible everywhere except in the window where it was made. (crates/auris-gpui/src/settings_window.rs, doc comment on `apply_scheme`)
 
-### F-191 · medium · song_dials rebuilds SongDials::charts via BTreeMap::iter(), so reopening a project resorts extra charts alphabetically instead of preserving the order they were added in.
+### ✅ F-191 · medium · song_dials rebuilds SongDials::charts via BTreeMap::iter(), so reopening a project resorts extra charts alphabetically instead of preserving the order they were added in.
 
 `crates/auris-gpui/src/ui/compose_sheet/dials.rs:244` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -804,7 +804,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Fix direction.** In `opening_window_bounds`, iterate `cx.displays()` and test `restorable` against each display's bounds (or the display whose bounds actually contain/overlap the remembered rectangle), falling back to the primary display recentre only if no connected display overlaps. `restorable` already takes a single `Option<Bounds<Pixels>>`, so the caller just needs to try multiple displays.
 
-### F-204 · medium · gestures.rs:433 uses `#[cfg(not(target_os = "macos"))]` instead of `cfg!`, so the non-macOS modifier assertions never compile on a macOS `cargo test` run, violating CLAUDE.md's explicit cfg!/#[cfg] rule.
+### ✅ F-204 · medium · gestures.rs:433 uses `#[cfg(not(target_os = "macos"))]` instead of `cfg!`, so the non-macOS modifier assertions never compile on a macOS `cargo test` run, violating CLAUDE.md's explicit cfg!/#[cfg] rule.
 
 `crates/auris-gpui/src/gestures.rs:433` · architecture · confirmed (executed reproduction; reported independently 1×)
 
@@ -820,7 +820,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** Decide with `cfg!`, not `#[cfg]`, wherever it is a choice rather than an API that only exists on one platform. Both arms then compile and their tests run everywhere, which is the only reason the Windows menu bar can be checked from a Mac.
 
-### F-211 · medium · selected_phonemes doc-comments "the grabbed note" but reads the lowest-indexed note in a BTreeSet, mismatching pitch and lyric during multi-note shift-click drags.
+### ✅ F-211 · medium · selected_phonemes doc-comments "the grabbed note" but reads the lowest-indexed note in a BTreeSet, mismatching pitch and lyric during multi-note shift-click drags.
 
 `crates/auris-gpui/src/app.rs:2049` · ui · confirmed (executed reproduction; reported independently 1×)
 
@@ -836,7 +836,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** /// The syllable the grabbed note carries, read off the primary selection.
 
-### F-212 · medium · TEMPO dial doc claims to cover the spec's accepted tempo range (20..400) but only covers 40..220, silently clamping/discarding legal out-of-range tempos on first drag.
+### ✅ F-212 · medium · TEMPO dial doc claims to cover the spec's accepted tempo range (20..400) but only covers 40..220, silently clamping/discarding legal out-of-range tempos on first drag.
 
 `crates/auris-gpui/src/ui/compose_sheet/dials.rs:21` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -854,7 +854,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Verifier's correction.** No correction needed; the claim's mechanism, location, and numeric comparison (dial covers 180 of the specification's 380-wide accepted range, i.e. less than half) are accurate as stated.
 
-### F-224 · medium · Phoneme-divider click acceptance (grabbed_boundary_at, piano_roll.rs:1381) uses a full PHONEME_GRAB radius while the drawn cursor hitbox (phoneme_divider_zones, lines 1309-1319) uses only half that, so presses 2.5-5px from a cut retime a phoneme with no cursor cue.
+### ✅ F-224 · medium · Phoneme-divider click acceptance (grabbed_boundary_at, piano_roll.rs:1381) uses a full PHONEME_GRAB radius while the drawn cursor hitbox (phoneme_divider_zones, lines 1309-1319) uses only half that, so presses 2.5-5px from a cut retime a phoneme with no cursor cue.
 
 `crates/auris-gpui/src/ui/piano_roll.rs:1381` · ui · confirmed (traced through the code; reported independently 1×)
 
@@ -870,7 +870,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** every pixel the arrow lights up has to be one where the press takes the resize branch... A zone that ran past the end would promise a grab on empty grid. (project's own stated rule for the analogous note-end resize handle, via note_end_zones' doc comment and the paired test the_resize_cursor_covers_what_a_press_would_actually_grab)
 
-### F-232 · medium · A press in the fade band beyond ~6px of the actual (moved) fade handle silently resizes the clip with no hover cursor ever shown there.
+### ✅ F-232 · medium · A press in the fade band beyond ~6px of the actual (moved) fade handle silently resizes the clip with no hover cursor ever shown there.
 
 `crates/auris-gpui/src/ui/arrangement/geometry.rs:257` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -886,7 +886,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** "The constants are shared rather than merely convenient. A hit test measured from one number and a painter from another is how a grab bar ends up a pixel to the left of the bar it is drawn on, which is a bug nobody sees and everybody feels." (geometry.rs file doc) — and edge_zone_rows's own comment claims "a press there falls past the fade check, which wants a `y` inside the band," which is false […]
 
-### F-233 · medium · Agent transcript panel never auto-scrolls on new entries, so users must manually scroll down after every turn to see the latest message.
+### ✅ F-233 · medium · Agent transcript panel never auto-scrolls on new entries, so users must manually scroll down after every turn to see the latest message.
 
 `crates/auris-gpui/src/ui/agent_chat.rs:939` · ui · confirmed (traced through the code; reported independently 1×)
 
@@ -900,7 +900,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Fix direction.** In AgentChat::absorb (and the direct entries.push in the send path), after appending a new entry call self.scroll.scroll_to_bottom() (gpui 0.2.2 exposes this on ScrollHandle) — or track whether the view was already at the bottom before the push and only call it then, to avoid yanking the view away from a user who scrolled up to read history.
 
-### F-246 · medium · AgentChat::entries (agent_chat.rs:271) is never capped or evicted and AgentEvent::Result rescans it with iter_mut().rev().find(), so a long or misbehaving agent session grows memory unboundedly and slows/stalls the UI thread, unlike the crate's own capped Logbook.
+### ✅ F-246 · medium · AgentChat::entries (agent_chat.rs:271) is never capped or evicted and AgentEvent::Result rescans it with iter_mut().rev().find(), so a long or misbehaving agent session grows memory unboundedly and slows/stalls the UI thread, unlike the crate's own capped Logbook.
 
 `crates/auris-gpui/src/ui/agent_chat.rs:271` · ui · confirmed (executed reproduction; reported independently 1×)
 
@@ -916,7 +916,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Verifier's correction.** Substantially accurate; one detail overstates it. `entries: Vec<ChatEntry>` (line 271) is indeed never capped or evicted anywhere in the crate (verified by grep, contrasted with `Logbook`'s explicit `CAPACITY`/`pop_front`), so unbounded memory growth over a long session is unconditionally correct. The `iter_mut().rev().find(...)` scan at line 429 is real, but it is *not* O(n) on every single `AgentEvent::Result` as stated — when a Result immediately follows its own matching Call (the ordinary single-tool-in-flight pattern), the match is the last-pushed element and the scan is O(1) (measured […]
 
-### F-247 · medium · A tool-result event with no matching open call is pushed with a raw empty `line`, so chat_row's `line.is_empty()` check renders it as permanently "running" instead of showing its known ok/fail state.
+### ✅ F-247 · medium · A tool-result event with no matching open call is pushed with a raw empty `line`, so chat_row's `line.is_empty()` check renders it as permanently "running" instead of showing its known ok/fail state.
 
 `crates/auris-gpui/src/ui/agent_chat.rs:448` · ui · confirmed (executed reproduction; reported independently 1×)
 
@@ -932,7 +932,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** // The call pushed a running row; this fills it in. A result with no matching call — a build mismatch, a dropped line — becomes its own row rather than being lost.
 
-### F-251 · medium · ContextMenu::size() counts CJK characters at their half-width Latin cost, so the widest Japanese menu row is silently truncated by the label's .truncate(), breaking the doc comment's own guarantee that a bad width estimate never clips a word.
+### ✅ F-251 · medium · ContextMenu::size() counts CJK characters at their half-width Latin cost, so the widest Japanese menu row is silently truncated by the label's .truncate(), breaking the doc comment's own guarantee that a bad width estimate never clips a word.
 
 `crates/auris-gpui/src/ui/context_menu/menu.rs:302` · ui · confirmed (traced through the code; reported independently 1×)
 
@@ -948,7 +948,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** // Only used to pick a width — the labels themselves are truncated, so an over- or under-estimate costs a little whitespace rather than a clipped word. (menu.rs:40-42)
 
-### F-258 · medium · agent_binary() falls back to an unqualified filename when current_exe() fails, letting Command::new() resolve the agent binary via CWD/PATH search instead of erroring.
+### ✅ F-258 · medium · agent_binary() falls back to an unqualified filename when current_exe() fails, letting Command::new() resolve the agent binary via CWD/PATH search instead of erroring.
 
 `crates/auris-gpui/src/ui/agent_chat.rs:501` · security · confirmed (executed reproduction; reported independently 1×)
 
@@ -962,7 +962,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Fix direction.** Make agent_binary() return a Result instead of silently degrading: when current_exe() or .parent() fails, surface a clear error to the caller (the same way spawn_link/spawn_model_listing already surface Command::spawn() failures) instead of returning a bare filename for Command::new to resolve via CWD/PATH search.
 
-### F-318 · medium · error_text leaves EngineError/IoError/CoreError text untranslated even though those enums are hand-authored in this workspace, not another crate's.
+### ✅ F-318 · medium · error_text leaves EngineError/IoError/CoreError text untranslated even though those enums are hand-authored in this workspace, not another crate's.
 
 `crates/auris-gpui/src/i18n.rs:219` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -978,7 +978,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** The variants that wrap another crate's error keep that error's own text: a decoder or a device driver speaks English and translating its message would mean paraphrasing something we did not write. The half we own — which operation failed, and on what — is translated.
 
-### F-323 · medium · An automation lane whose ParamTarget is invalidated (e.g. plugin removed) keeps reserving a blank ROW_HEIGHT band forever instead of collapsing or being pruned.
+### ✅ F-323 · medium · An automation lane whose ParamTarget is invalidated (e.g. plugin removed) keeps reserving a blank ROW_HEIGHT band forever instead of collapsing or being pruned.
 
 `crates/auris-gpui/src/ui/arrangement/lanes.rs:367` · ui · confirmed (traced through the code; reported independently 1×)
 
@@ -992,7 +992,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Fix direction.** Either have automation_paint_data return an "invalid" AutomationPaint variant that lane_rows-derived layout can render as a collapsed/zero-height placeholder, or (simpler) prune `self.automation_lanes` of any target whose descriptor_for is None at the point plugins are removed/session state changes, so lane_rows never reserves space for a dead target in the first place.
 
-### F-353 · medium · lane_paint.rs's doc comment falsely claims paint_automation/paint_lane are the whole of what's painted on the lanes canvas, when lanes.rs also paints background, grid, loop/punch, playhead, and selection band directly.
+### ✅ F-353 · medium · lane_paint.rs's doc comment falsely claims paint_automation/paint_lane are the whole of what's painted on the lanes canvas, when lanes.rs also paints background, grid, loop/punch, playhead, and selection band directly.
 
 `crates/auris-gpui/src/ui/arrangement/lane_paint.rs:6` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -1008,7 +1008,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** Every public item carries a doc comment (#![warn(missing_docs)] is on in each crate).
 
-### F-360 · medium · Clicking a disabled menu-bar row closes the dropdown instead of leaving it open, contradicting the code's own comment that disabled rows are a no-op.
+### ✅ F-360 · medium · Clicking a disabled menu-bar row closes the dropdown instead of leaving it open, contradicting the code's own comment that disabled rows are a no-op.
 
 `crates/auris-gpui/src/ui/menu_bar.rs:323` · ui · confirmed (executed reproduction; reported independently 1×)
 
@@ -1024,7 +1024,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** // No handler at all when it is disabled. The dropdown behind it already swallows the press, so the menu stays open and nothing happens — which is what every menu does with a dimmed row. (crates/auris-gpui/src/ui/menu_bar.rs:322-325)
 
-### F-363 · medium · Ornament-handle hit test uses full ORNAMENT_GRAB (12x12px) while the painted handle is only 6x6px, so clicks well outside the visible square still grab it.
+### ✅ F-363 · medium · Ornament-handle hit test uses full ORNAMENT_GRAB (12x12px) while the painted handle is only 6x6px, so clicks well outside the visible square still grab it.
 
 `crates/auris-gpui/src/ui/piano_roll.rs:1357` · ui · confirmed (traced through the code; reported independently 1×)
 
@@ -1038,7 +1038,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Fix direction.** Make `grabbed_ornament_at` use the same half-extent as `paint_ornament_handles`: compare `(position.x - x).abs() <= ORNAMENT_GRAB / 2.0` and likewise for y, so the hit box matches the drawn square. Apply the same fix to the analogous phoneme-divider check the same reviewer found in this file.
 
-### F-368 · medium · Confirming Clip Gain/Source Tempo prompts without editing silently rounds gain_db/source_bpm to one decimal, corrupting recorded-take tempo precision and logging a spurious undo step.
+### ✅ F-368 · medium · Confirming Clip Gain/Source Tempo prompts without editing silently rounds gain_db/source_bpm to one decimal, corrupting recorded-take tempo precision and logging a spurious undo step.
 
 `crates/auris-gpui/src/ui/context_menu/clips.rs:257` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -1052,7 +1052,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Fix direction.** Compare the parsed value against the original unrounded stored value (captured when the prompt opens) before calling set_clip_gain/set_clip_source_bpm, and skip the write (and undo push) when they match at the displayed precision; alternatively, format the pre-fill with enough precision to round-trip exactly so confirming an unedited field reproduces the stored value.
 
-### F-382 · medium · PanelLayout::clamped never ceiling-clamps the bottom dock (px(f32::MAX)), letting a hand-edited layout.json store an oversized height that skews the piano roll's pre-paint click origin.
+### ✅ F-382 · medium · PanelLayout::clamped never ceiling-clamps the bottom dock (px(f32::MAX)), letting a hand-edited layout.json store an oversized height that skews the piano roll's pre-paint click origin.
 
 `crates/auris-gpui/src/dock.rs:511` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -1068,7 +1068,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** `clamped`'s own doc comment: "`size` brought inside the range a drag could have produced."
 
-### F-389 · medium · Rubber-band's "primary" clip is re-read from the previous frame's own output each pointer-move, so it drifts with the sweep path instead of the pre-drag selection.
+### ✅ F-389 · medium · Rubber-band's "primary" clip is re-read from the previous frame's own output each pointer-move, so it drifts with the sweep path instead of the pre-drag selection.
 
 `crates/auris-gpui/src/ui/selection.rs:114` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -1082,7 +1082,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Fix direction.** Capture the pre-drag primary once, in `begin_rubber_band`, and store it in `Drag::RubberBand` (alongside `base_clips`/`base_notes`) instead of re-reading `self.selected_clip` on every `apply_rubber_band` call; use that captured value as the `primary` argument to `select_clips` in the `BandSurface::Lanes` arm so the result depends only on drag start and current band contents.
 
-### F-390 · medium · An open tooltip keeps the old theme's colours after a scheme change until re-hovered, breaking apply_scheme's documented next-frame invariant.
+### ✅ F-390 · medium · An open tooltip keeps the old theme's colours after a scheme change until re-hovered, breaking apply_scheme's documented next-frame invariant.
 
 `crates/auris-gpui/src/ui/tooltip.rs:99` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -1098,7 +1098,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** crates/auris-gpui/src/app.rs's doc comment on `apply_scheme`: "Everything visual reads `Self::theme` on the next frame, so there is nothing to invalidate. The floating plugin editor and the settings window each hold their own copy; the first is re-read every frame, and the second updates itself where it makes the change." Tooltip is an undocumented third place holding its own copy that does […]
 
-### F-396 · medium · Drag::ClipFade skips the past_drag_threshold guard its sibling drags use, so a bare click on a fade handle can commit a spurious fade edit.
+### ✅ F-396 · medium · Drag::ClipFade skips the past_drag_threshold guard its sibling drags use, so a bare click on a fade handle can commit a spurious fade edit.
 
 `crates/auris-gpui/src/ui/arrangement/gestures.rs:121` · correctness · confirmed (traced through the code; reported independently 1×)
 
@@ -1114,7 +1114,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** DRAG_THRESHOLD's own doc comment (gestures.rs): "Three pixels is about the wobble a firm click produces on a trackpad... Below it a gesture that snaps to the grid... would turn every selecting click into an edit."
 
-### F-402 · medium · move_clips_by_lane uses mouse-down-captured usize track indices as its stale base, so deleting a track mid-drag silently drops clips onto the wrong track instead of being refused.
+### ✅ F-402 · medium · move_clips_by_lane uses mouse-down-captured usize track indices as its stale base, so deleting a track mid-drag silently drops clips onto the wrong track instead of being refused.
 
 `crates/auris-gpui/src/ui/commands.rs:396` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -1130,7 +1130,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** A delta that would push any of them off either end of the track list, or onto a track of the wrong kind, is refused entirely — dropping half a selection somewhere is not what the gesture meant (doc comment on move_clips_by_lane, commands.rs)
 
-### F-129 · low · export_singer_frames's doc comment opens with export_midi's description, leaving export_midi undocumented and cargo doc showing a false claim.
+### ✅ F-129 · low · export_singer_frames's doc comment opens with export_midi's description, leaving export_midi undocumented and cargo doc showing a false claim.
 
 `crates/auris-gpui/src/ui/commands.rs:1413` · spec-mismatch · confirmed (traced through the code; reported independently 2×)
 
@@ -1150,7 +1150,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Written rule it breaks.** Every public item carries a doc comment (`#![warn(missing_docs)]` is on in each crate). CI builds the docs with warnings denied...
 
-### F-137 · low · Resolving an external-change conflict via Save shows "Saved to …" then blanks it within 500ms via watch_disk's unconditional Withdraw status clear (app.rs:2107-2108).
+### ✅ F-137 · low · Resolving an external-change conflict via Save shows "Saved to …" then blanks it within 500ms via watch_disk's unconditional Withdraw status clear (app.rs:2107-2108).
 
 `crates/auris-gpui/src/app.rs:2108` · ui · confirmed (executed reproduction; reported independently 2×)
 
@@ -1166,7 +1166,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Written rule it breaks.** watch_disk's doc comment: "withdraw the offer once the file is ours again (a manual save takes it back)" — implies transparent withdrawal, not overwriting the save's own confirmation message.
 
-### F-155 · low · StopPlayback action is unreachable (no keymap/menu/palette row) and its doc comment claims a return-to-start seek that Session::stop never performs.
+### ✅ F-155 · low · StopPlayback action is unreachable (no keymap/menu/palette row) and its doc comment claims a return-to-start seek that Session::stop never performs.
 
 `crates/auris-gpui/src/actions.rs:55` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -1182,7 +1182,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Written rule it breaks.** Every public item carries a doc comment (project doc-comment convention) — implicitly, the doc comment is expected to describe actual behavior, but StopPlayback's doc says "Stop playback and return to the start" while Session::stop is doc'd "Stops playback, leaving the playhead where it is."
 
-### F-170 · low · Duplicate part/progression names are rejected with the misleading "Name cannot be empty" message instead of a collision-specific one.
+### ✅ F-170 · low · Duplicate part/progression names are rejected with the misleading "Name cannot be empty" message instead of a collision-specific one.
 
 `crates/auris-gpui/src/ui/prompt.rs:849` · ui · confirmed (traced through the code; reported independently 1×)
 
@@ -1196,7 +1196,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Fix direction.** Add a distinct i18n string (e.g. Key::NameAlreadyUsed) for the collision case and branch on `taken` (SongPartName) and the collision-vs-empty cause inside ProgressionBook::keep's failure (KeepProgression) to show it instead of reusing NameCannotBeEmpty.
 
-### F-173 · low · Time-signature scroll handler rounds each event's delta independently with no carried remainder, so precise-scroll (trackpad) input under 8px/event never changes the numerator.
+### ✅ F-173 · low · Time-signature scroll handler rounds each event's delta independently with no carried remainder, so precise-scroll (trackpad) input under 8px/event never changes the numerator.
 
 `crates/auris-gpui/src/ui/transport_bar.rs:719` · ui · confirmed (executed reproduction; reported independently 1×)
 
@@ -1210,7 +1210,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Fix direction.** Carry a fractional remainder across events, the way the adjacent tempo control does with its unrounded f64 accumulation: add an `f32` accumulator field on `AurisApp` (e.g. `signature_scroll_remainder`), add each event's raw `notches` to it, apply `remainder.trunc()` whole notches to the numerator and clamp, then keep only `remainder.fract()` for the next event.
 
-### F-213 · low · Clearing the loop leaves loop_region as Some((0,0)) instead of None, so the menu still offers Punch From Cycle and arms a zero-length punch region.
+### ✅ F-213 · low · Clearing the loop leaves loop_region as Some((0,0)) instead of None, so the menu still offers Punch From Cycle and arms a zero-length punch region.
 
 `crates/auris-gpui/src/ui/context_menu/timeline.rs:75` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -1226,7 +1226,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Verifier's correction.** Same defect, correct line for the underlying mechanism; the gate line is 76, not 75 — `self.project().loop_region.is_some()` at timeline.rs:76 (the `MenuPunchFromCycle` item_if), one line below where the claim cites it. The identical gate for "Clear Cycle" itself is at timeline.rs:59.
 
-### F-245 · low · db_to_meter_position collapses +Infinity dB to silence (0.0) instead of saturating to 1.0 like other above-range values, but no live UI path can currently feed it +Infinity.
+### ✅ F-245 · low · db_to_meter_position collapses +Infinity dB to silence (0.0) instead of saturating to 1.0 like other above-range values, but no live UI path can currently feed it +Infinity.
 
 `crates/auris-gpui/src/ui/widgets.rs:873` · correctness · plausible (executed reproduction; reported independently 1×)
 
@@ -1244,7 +1244,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Verifier's correction.** `db_to_meter_position` (crates/auris-gpui/src/ui/widgets.rs:872-873) does collapse a directly-supplied `+Infinity` dB to 0.0 (silence) instead of saturating to 1.0 like other above-range values, which is inconsistent with the project's established convention elsewhere (compressor.rs `peak_at`) that an infinite sample should read as "as loud as a number gets," not as silence. However, this is not currently reachable from any real UI code path: every caller passes `db = gain_to_db(x)` where `x` comes from `MeterBank::track_peak`/`master_peak` (both go through `MeterBank::report`, which zeroes […]
 
-### F-248 · low · grabbed_phoneme_boundary picks the first in-slack boundary via .find() instead of the nearest via .min_by_key, unlike the sibling curve_point_at.
+### ✅ F-248 · low · grabbed_phoneme_boundary picks the first in-slack boundary via .find() instead of the nearest via .min_by_key, unlike the sibling curve_point_at.
 
 `crates/auris-gpui/src/ui/piano_roll.rs:170` · ui · confirmed (executed reproduction; reported independently 1×)
 
@@ -1258,7 +1258,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Fix direction.** Change the `.find()` to compute distance for each filtered candidate and select via `.min_by_key` on that distance, mirroring `curve_point_at`'s existing nearest-point pattern and its documented rationale ("Nearest rather than first, so two points dragged close together still resolve to the one under the pointer").
 
-### F-250 · low · sing_track/begin_export/start_export_stems don't check self.auto_sing, so a manual render can briefly run concurrently with (or silently stall behind) an in-flight auto-sing render, though the final progress(total,total) recheck in Model::sing_with prevents any stale take from landing.
+### ✅ F-250 · low · sing_track/begin_export/start_export_stems don't check self.auto_sing, so a manual render can briefly run concurrently with (or silently stall behind) an in-flight auto-sing render, though the final progress(total,total) recheck in Model::sing_with prevents any stale take from landing.
 
 `crates/auris-gpui/src/ui/commands.rs:1072` · concurrency · confirmed (executed reproduction; reported independently 1×)
 
@@ -1276,7 +1276,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Verifier's correction.** The core defect is real for `sing_track` (commands.rs:1068-1072): the guard never checks `self.auto_sing`, and `cancel_auto_sing()` only stores a flag without waiting, so a manual Sing on a *different* singer track than the one auto-sing is currently rendering can run its `Model::sing_with` genuinely concurrently with the still-running auto-sing render (different voice files → different `Arc<Mutex<VoiceModel>>`, no lock serializes them). When the manual Sing targets the *same* track/voice as the in-flight auto-sing render, the shared per-voice `Arc<Mutex<VoiceModel>>` cached in […]
 
-### F-264 · low · Panel::command's doc comment says "all five" panels but Panel::ALL has held six since the Agent panel shipped.
+### ✅ F-264 · low · Panel::command's doc comment says "all five" panels but Panel::ALL has held six since the Agent panel shipped.
 
 `crates/auris-gpui/src/dock.rs:122` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -1292,7 +1292,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Written rule it breaks.** Every public item carries a doc comment (`#![warn(missing_docs)]` is on in each crate) — implying doc comments are expected to stay accurate; CLAUDE.md also calls out guide-vs-code staleness (e.g. "when the two disagree, the guide is right and this is stale") as a class of problem the project tracks.
 
-### F-269 · low · Test doc comment in menu.rs wrongly claims Open Recent/About have an empty binding id; it's actually their default keystroke that's empty.
+### ✅ F-269 · low · Test doc comment in menu.rs wrongly claims Open Recent/About have an empty binding id; it's actually their default keystroke that's empty.
 
 `crates/auris-gpui/src/menu.rs:949` · test-quality · confirmed (executed reproduction; reported independently 1×)
 
@@ -1306,7 +1306,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Fix direction.** Rewrite the doc comment on `every_binding_a_menu_row_names_is_one_the_table_has` (menu.rs:944-950) to correctly say that Open Recent and About have no default keystroke (`Bindable::default` is empty in the BINDABLE table), not that their menu row `binding` id is empty; optionally note that the `binding.is_empty()` disjunct in the assertion is defensive/dead code today since no call site passes an empty id.
 
-### F-270 · low · Stale "Last, because..." comment sits above library_search_key though agent_key was appended after it as the true last disjunct in root.rs's on_key_down chain.
+### ✅ F-270 · low · Stale "Last, because..." comment sits above library_search_key though agent_key was appended after it as the true last disjunct in root.rs's on_key_down chain.
 
 `crates/auris-gpui/src/ui/root.rs:1150` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -1320,7 +1320,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Fix direction.** Move the "Last, because..." comment down to sit directly above `|| self.agent_key(event)` (the actual last disjunct), or reword it to describe library_search_key's actual position ("second-to-last") rather than claiming finality.
 
-### F-274 · low · crates/auris-gpui/src/ui/mod.rs:3 claims every ui submodule only extends AurisApp, but tooltip.rs defines its own Render entity (Tooltip), contradicting the doc.
+### ✅ F-274 · low · crates/auris-gpui/src/ui/mod.rs:3 claims every ui submodule only extends AurisApp, but tooltip.rs defines its own Render entity (Tooltip), contradicting the doc.
 
 `crates/auris-gpui/src/ui/mod.rs:3` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -1336,7 +1336,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Written rule it breaks.** Every public item carries a doc comment (`#![warn(missing_docs)]` is on in each crate) — implying doc comments are expected to be accurate; more directly, the doc text itself: "Every module here adds `impl` blocks to [`crate::app::AurisApp`] rather than defining its own gpui entity"
 
-### F-278 · low · side_widths' zero-total guard at dock.rs:470 is unreachable dead code, since room's unconditional >=0 clamp forces total>0 whenever control reaches it.
+### ✅ F-278 · low · side_widths' zero-total guard at dock.rs:470 is unreachable dead code, since room's unconditional >=0 clamp forces total>0 whenever control reaches it.
 
 `crates/auris-gpui/src/dock.rs:470` · other · confirmed (executed reproduction; reported independently 1×)
 
@@ -1350,7 +1350,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Fix direction.** Remove the unreachable `if total <= px(0.0) { return (px(0.0), px(0.0)); }` block, or replace it with a comment/debug_assert noting that total > 0 is guaranteed here (since room >= 0 and total > room at this point) so the subsequent division by `total` is always safe.
 
-### F-283 · low · Loop toggle on a mixed clip selection can show "Clip looped" even when most clips end up unlooped, because the status is chosen by looped > 0 rather than by net outcome.
+### ✅ F-283 · low · Loop toggle on a mixed clip selection can show "Clip looped" even when most clips end up unlooped, because the status is chosen by looped > 0 rather than by net outcome.
 
 `crates/auris-gpui/src/ui/commands.rs:440` · ui · confirmed (executed reproduction; reported independently 1×)
 
@@ -1364,7 +1364,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Fix direction.** In toggle_clip_loop, track both looped and total chosen.len() (or unlooped = chosen.len() - looped) and pick the status key by comparing looped vs unlooped (majority), or add a distinct mixed-outcome status message when neither is unanimous, rather than using looped > 0 as the sole test.
 
-### F-287 · low · Plugin window header drag lacks the pressed_at wobble guard every other pixel-based drag (ClipMove, TrackReorder, NoteMove, NoteResize) has, so a click on its header buttons visibly nudges the window before the click fires.
+### ✅ F-287 · low · Plugin window header drag lacks the pressed_at wobble guard every other pixel-based drag (ClipMove, TrackReorder, NoteMove, NoteResize) has, so a click on its header buttons visibly nudges the window before the click fires.
 
 `crates/auris-gpui/src/ui/plugin_window.rs:381` · ui · confirmed (executed reproduction; reported independently 1×)
 
@@ -1380,7 +1380,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Written rule it breaks.** The code's own adjacent comment: "The whole bar is the grab handle, so the window moves from anywhere that is not one of its two buttons." (plugin_window.rs:379-380) — not enforced, since the header's on_mouse_down fires unconditionally and gpui's on_click does not stop_propagation on mouse-down.
 
-### F-291 · low · Shift+double-click on a singer-clip note opens the lyric prompt and silently clears the multi-selection instead of extending it.
+### ✅ F-291 · low · Shift+double-click on a singer-clip note opens the lyric prompt and silently clears the multi-selection instead of extending it.
 
 `crates/auris-gpui/src/gestures.rs:122` · ui · confirmed (traced through the code; reported independently 1×)
 
@@ -1396,7 +1396,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Written rule it breaks.** // Every modifier is refused rather than only the two that name gestures. ⇧ is the extend-a-selection key everywhere in the application
 
-### F-300 · low · text_for_range/selected_text_range use the mutating field accessor, silently resetting an in-progress Tab-completion walk on a read-only IME query.
+### ✅ F-300 · low · text_for_range/selected_text_range use the mutating field accessor, silently resetting an in-progress Tab-completion walk on a read-only IME query.
 
 `crates/auris-gpui/src/ui/text_field.rs:490` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -1412,7 +1412,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Written rule it breaks.** Prompt::field_mut's own doc comment: the completing reset is meant for "the key handler and the platform's input handler both" changing text — i.e. paths that change the text, not pure reads.
 
-### F-301 · low · Instrument plugin window's bypass button always shows "on" and is inert — InstrumentTrack has no enabled field to toggle.
+### ✅ F-301 · low · Instrument plugin window's bypass button always shows "on" and is inert — InstrumentTrack has no enabled field to toggle.
 
 `crates/auris-gpui/src/ui/plugin_window.rs:399` · ui · confirmed (traced through the code; reported independently 1×)
 
@@ -1428,7 +1428,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Written rule it breaks.** Only for a plugin that has one. A button that did nothing on every built-in in the application would be a button nobody pressed on the one plugin where it works. (comment in plugin_window.rs, stating the project's own principle against dead buttons — applied to the "own window" button but the same reasoning applies here)
 
-### F-306 · low · press_typed_key's audition_track guard returns before release_typed_key runs, so deleting the last instrument track mid-drag can leave a note stuck sounding.
+### ✅ F-306 · low · press_typed_key's audition_track guard returns before release_typed_key runs, so deleting the last instrument track mid-drag can leave a note stuck sounding.
 
 `crates/auris-gpui/src/ui/typing_panel.rs:607` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -1446,7 +1446,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Verifier's correction.** The core defect is exactly as claimed: press_typed_key's `let Some(track) = self.session.audition_track(self.selected_track) else { return; }` guard (typing_panel.rs:607-609) precedes `self.release_typed_key()` (line 610), so a call that hits the early return skips releasing the key/note the pointer was already holding, contradicting the doc comment's "Whatever the pointer was holding is let go of first." However, the claim's example trigger is imprecise: `Session::audition_track` (auris-session/src/session/harmony.rs:340-353) falls back to any instrument track in the project when the […]
 
-### F-307 · low · ContextMenu::step's comment says the stale-highlight fallback lands "just before the next row" (position -1) but the code hardcodes position 0, skipping the first choosable row.
+### ✅ F-307 · low · ContextMenu::step's comment says the stale-highlight fallback lands "just before the next row" (position -1) but the code hardcodes position 0, skipping the first choosable row.
 
 `crates/auris-gpui/src/ui/context_menu/menu.rs:138` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -1464,7 +1464,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Verifier's correction.** None needed — the claim's location (line 138), mechanism, and consequence are accurate as stated.
 
-### F-381 · low · Curve-lane points beyond a shortened clip's length remain drawn and draggable, though they have no audible effect.
+### ✅ F-381 · low · Curve-lane points beyond a shortened clip's length remain drawn and draggable, though they have no audible effect.
 
 `crates/auris-gpui/src/ui/piano_roll.rs:2088` · ui · confirmed (executed reproduction; reported independently 1×)
 
@@ -1478,7 +1478,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Fix direction.** Filter `points` (and thus what `curve_point_at` searches and what `paint_curve`'s handle loop draws) to only those with `point.at <= clip_length` before use in both `press_curve_lane` and `paint_curve`, or add an explicit `clip_length` parameter to `curve_point_at` and skip points past it. Since curve data beyond the clip's playable length is inert by design (per `curve_at`), the fix is purely presentational/hit-testing, not a data-model change.
 
-### F-421 · low · Switching models updates context_window immediately but leaves stale tokens_in from the prior model, so the gauge briefly shows a wrong percentage until the next turn.
+### ✅ F-421 · low · Switching models updates context_window immediately but leaves stale tokens_in from the prior model, so the gauge briefly shows a wrong percentage until the next turn.
 
 `crates/auris-gpui/src/ui/agent_chat.rs:760` · ui · confirmed (executed reproduction; reported independently 1×)
 
@@ -1494,7 +1494,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Written rule it breaks.** Nothing is drawn before the first turn — a gauge reading zero over an empty transcript is furniture — and the bar itself only appears when the model's listing said how big the window is, because a bar with an invented ceiling would be a number wearing a lie.
 
-### F-424 · low · delete_selected_track reassigns the fallback selection but never calls reveal_track, so the new selection can be scrolled off-screen.
+### ✅ F-424 · low · delete_selected_track reassigns the fallback selection but never calls reveal_track, so the new selection can be scrolled off-screen.
 
 `crates/auris-gpui/src/ui/commands.rs:309` · ui · confirmed (traced through the code; reported independently 1×)
 
@@ -1510,7 +1510,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Written rule it breaks.** The header column scrolls independently of the selection, so stepping past the bottom of the panel would otherwise select a track nobody can see (comment on select_adjacent_track, crates/auris-gpui/src/ui/commands.rs)
 
-### F-436 · low · create_clip_at's error handler re-derives failure reason via project().track() instead of matching the actual SessionError, so a vanished track wrongly shows "audio clips come from import."
+### ✅ F-436 · low · create_clip_at's error handler re-derives failure reason via project().track() instead of matching the actual SessionError, so a vanished track wrongly shows "audio clips come from import."
 
 `crates/auris-gpui/src/ui/commands.rs:337` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -1526,7 +1526,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Written rule it breaks.** // Which of the two kinds refused says which sentence is true: an audio track has clips and they arrive by import, and a bus has none at all.
 
-### F-439 · low · Clicking a .clap search result expands its branch in the library tree but never scrolls it into view.
+### ✅ F-439 · low · Clicking a .clap search result expands its branch in the library tree but never scrolls it into view.
 
 `crates/auris-gpui/src/ui/library.rs:616` · ui · confirmed (traced through the code; reported independently 1×)
 
@@ -1542,7 +1542,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Verifier's correction.** Accurate as reported (mechanism, location, trigger and consequence all check out), with one nuance: this is not a departure from a "reveal-on-click pattern the panel otherwise aims for" specific to other search results — none of Found::Instrument, Found::Effect, or Found::Preset's click handlers scroll the library panel to reveal anything either. The missing scroll-into-view is a library-panel-wide gap (library_scroll is never used to programmatically move the scroll offset anywhere in library.rs), not a regression unique to Found::ClapFile relative to its sibling handlers.
 
-### F-440 · low · Arming a key capture on one row hides the "also bound to" clash note on every row in the Keys settings list, not just that row.
+### ✅ F-440 · low · Arming a key capture on one row hides the "also bound to" clash note on every row in the Keys settings list, not just that row.
 
 `crates/auris-gpui/src/settings_window.rs:1255` · ui · confirmed (traced through the code; reported independently 1×)
 
@@ -1556,7 +1556,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Fix direction.** Scope the gate to the row being captured instead of the whole window: change `self.capturing.is_none()` at line 1255 to something like `self.capturing.map_or(true, |c| c.command != command)`, mirroring the per-command/per-slot comparison already used at line 1179 (`self.capturing == Some(Capture { command, slot })`) for the armed-chip label a few lines above in the same function.
 
-### F-445 · low · Velocity-tool shift-click on an already-selected note is a no-op that still starts a velocity drag, instead of deselecting like the pointer tool.
+### ✅ F-445 · low · Velocity-tool shift-click on an already-selected note is a no-op that still starts a velocity drag, instead of deselecting like the pointer tool.
 
 `crates/auris-gpui/src/ui/piano_roll.rs:1193` · ui · confirmed (executed reproduction; reported independently 1×)
 
@@ -1570,7 +1570,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Fix direction.** In begin_velocity_drag, mirror the pointer tool's shift-click branch: when modifiers.shift is set and index is already in selected_notes, remove it, call cx.notify(), and return before reaching begin_drag; only fall through to starting a NoteVelocity drag when the click leaves the note selected.
 
-### F-446 · low · edge_zone_rows's first fade-band row is never clamped to `bottom`, so a lane shorter than TITLE_HEIGHT (reachable only via a malformed/hand-edited project file, since UI resize floors at 24px) gets a resize hitbox overrunning past its real bottom edge.
+### ✅ F-446 · low · edge_zone_rows's first fade-band row is never clamped to `bottom`, so a lane shorter than TITLE_HEIGHT (reachable only via a malformed/hand-edited project file, since UI resize floors at 24px) gets a resize hitbox overrunning past its real bottom edge.
 
 `crates/auris-gpui/src/ui/arrangement/geometry.rs:171` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -1584,7 +1584,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Fix direction.** In edge_zone_rows (geometry.rs:171), clamp `band` to `bottom` before building the first row: `let band = (top + TITLE_HEIGHT).min(bottom);` so the first row's `to` never exceeds the lane's real bottom, mirroring the check already applied to the second row via `row`'s `to > from` guard.
 
-### F-447 · low · Right-click on an open automation row falls through to the empty-arrangement "add track" menu and skips track selection, instead of an automation-aware menu.
+### ✅ F-447 · low · Right-click on an open automation row falls through to the empty-arrangement "add track" menu and skips track selection, instead of an automation-aware menu.
 
 `crates/auris-gpui/src/ui/arrangement/gestures.rs:401` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -1600,7 +1600,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Written rule it breaks.** An automation row answers `None`, because everything asking this — a clip drag, a clip menu, the lane a selection moves to — means the row clips live on. What is under the pointer in an automation row is [`Self::automation_row_at`]'s business.
 
-### F-452 · low · compose_sheet's Save dialog seeds its default filename from the raw song title with no character sanitisation, matching an existing unsanitised pattern used elsewhere in the codebase.
+### ✅ F-452 · low · compose_sheet's Save dialog seeds its default filename from the raw song title with no character sanitisation, matching an existing unsanitised pattern used elsewhere in the codebase.
 
 `crates/auris-gpui/src/ui/compose_sheet/view.rs:855` · ui · confirmed (executed reproduction; reported independently 1×)
 
@@ -1614,7 +1614,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Fix direction.** Add a small shared helper (e.g. in auris-session) that strips/replaces filesystem-illegal characters from a freeform title before it is used to build a default filename, and apply it at this call site as well as the existing identical sites in commands.rs (save_as_then, frame/MIDI export, WAV export) for consistency.
 
-### F-454 · low · stepped()'s unwrap_or(0) fallback can jump menu keyboard highlight to the wrong row if a row's enabled state changes while the menu is open.
+### ✅ F-454 · low · stepped()'s unwrap_or(0) fallback can jump menu keyboard highlight to the wrong row if a row's enabled state changes while the menu is open.
 
 `crates/auris-gpui/src/ui/menu_bar.rs:125` · ui · confirmed (executed reproduction; reported independently 1×)
 
@@ -1630,7 +1630,7 @@ The first line is false for this function (it writes a JSON frame-features file,
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs". (general project testing rigor; no rule in CLAUDE.md is specific to this exact case)
 
-### F-457 · low · TextField::byte_offset rounds a mid-surrogate UTF-16 offset up to the next character's start instead of down, unlike floor_boundary's byte-offset handling.
+### ✅ F-457 · low · TextField::byte_offset rounds a mid-surrogate UTF-16 offset up to the next character's start instead of down, unlike floor_boundary's byte-offset handling.
 
 `crates/auris-gpui/src/ui/text_field.rs:407` · correctness · confirmed (executed reproduction; reported independently 1×)
 

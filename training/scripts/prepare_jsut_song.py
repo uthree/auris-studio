@@ -86,9 +86,11 @@ def read_label(path: Path) -> list[Phoneme]:
         match = PHONEME_PATTERN.search(parts[2])
         if match is None:
             continue
-        phonemes.append(
-            Phoneme(int(parts[0]) * TIME_UNIT, int(parts[1]) * TIME_UNIT, match.group(1))
-        )
+        try:
+            start, end = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        phonemes.append(Phoneme(start * TIME_UNIT, end * TIME_UNIT, match.group(1)))
     return phonemes
 
 

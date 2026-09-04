@@ -71,6 +71,7 @@ impl AurisApp {
             current: anchor,
             base_notes,
             base_clips,
+            primary_clip: self.selected_clip,
         });
         self.apply_rubber_band();
     }
@@ -97,6 +98,7 @@ impl AurisApp {
             current,
             base_notes,
             base_clips,
+            primary_clip,
         }) = self.drag.clone()
         else {
             return;
@@ -111,8 +113,7 @@ impl AurisApp {
             BandSurface::Lanes => {
                 let mut selected = self.clips_under(band);
                 selected.extend(base_clips);
-                let primary = self.selected_clip;
-                self.select_clips(selected, primary);
+                self.select_clips(selected, primary_clip);
             }
         }
     }

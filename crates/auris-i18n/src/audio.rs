@@ -80,7 +80,7 @@ pub fn category(label: &str, language: Language) -> &str {
 
 /// Whether `term` appears in any table here.
 ///
-/// Distinct from "the translation differs": a handful of audio terms — `Q`, `dB` — are the same
+/// Distinct from "the translation differs": a handful of audio terms such as `Q` are the same
 /// word in Japanese, so a completeness check has to ask whether the term was *considered*, not
 /// whether it changed.
 pub fn is_known(term: &str) -> bool {

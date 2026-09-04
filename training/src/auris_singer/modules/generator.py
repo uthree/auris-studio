@@ -166,6 +166,11 @@ class NsfHifiGanGenerator(nn.Module):
             # its input length, for both even and odd `kernel - rate`.
             padding = (kernel - rate + 1) // 2
             output_padding = rate + 2 * padding - kernel
+            if output_padding >= rate:
+                raise ValueError(
+                    f"upsample kernel {kernel} and rate {rate} require invalid "
+                    f"output_padding={output_padding}; use rate > 1 or an odd kernel"
+                )
             self.ups.append(
                 weight_norm(
                     nn.ConvTranspose1d(

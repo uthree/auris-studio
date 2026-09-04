@@ -43,6 +43,11 @@ def test_empty_selection_raises(processed_dataset):
         SingingDataset(processed_dataset, min_frames=10_000, max_frames=20_000)
 
 
+def test_audio_analysis_overrides_must_match_preprocessing(processed_dataset):
+    with pytest.raises(ValueError, match="hop_length=240 disagrees"):
+        SingingDataset(processed_dataset, hop_length=240)
+
+
 def test_collate_pads_to_the_longest_item(processed_dataset):
     dataset = SingingDataset(processed_dataset)
     batch = collate_batch([dataset[i] for i in range(4)])
@@ -76,6 +81,12 @@ def test_bucket_sampler_groups_similar_lengths(processed_dataset):
         lengths = [dataset.lengths[i] for i in batch]
         # Both members must come from the same bucket.
         assert sampler._bucket_of(lengths[0]) == sampler._bucket_of(lengths[1])
+
+
+def test_bucket_sampler_rejects_records_outside_its_boundaries(processed_dataset):
+    dataset = SingingDataset(processed_dataset)
+    with pytest.raises(ValueError, match="outside sampler boundaries"):
+        DistributedBucketSampler(dataset, batch_size=2, boundaries=[0, 1])
 
 
 def test_bucket_sampler_shards_across_replicas(processed_dataset):

@@ -106,12 +106,16 @@ impl Modulator {
         if is_continuous_controller {
             return None;
         }
+        // The SoundFont "no controller" source is the constant 1.0; its shape flags do not
+        // turn it into a decreasing or bipolar controller because there is no controller value
+        // to transform.
+        if spec & 0x7F == SOURCE_NONE {
+            return Some(1.0);
+        }
         let decreasing = spec & 0x100 != 0;
         let bipolar = spec & 0x200 != 0;
         let curve = spec >> 10;
         let raw = match spec & 0x7F {
-            // No controller reads full scale forever, which is how a font writes a constant.
-            SOURCE_NONE => 127,
             SOURCE_VELOCITY => velocity,
             SOURCE_KEY => key,
             _ => return None,
