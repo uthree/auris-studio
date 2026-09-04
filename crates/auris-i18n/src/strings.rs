@@ -505,7 +505,7 @@ strings! {
     HidePanel { en: "Hide Panel", ja: "パネルを隠す" }
 
     // ------------------------------------------------------------------ context menus
-    MenuArrangement { en: "Arrangement", ja: "アレンジ" }
+    MenuNewTrack { en: "New Track", ja: "新規トラック" }
     MenuNote { en: "Note", ja: "ノート" }
     MenuCycleTitle { en: "Cycle", ja: "サイクル" }
     MenuDuplicateTrack { en: "Duplicate Track", ja: "トラックを複製" }

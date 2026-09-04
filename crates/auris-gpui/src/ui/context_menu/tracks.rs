@@ -210,7 +210,7 @@ impl AurisApp {
 
     /// The menu for the arrangement below the last track.
     pub(crate) fn arrangement_menu(&self, anchor: Point<Pixels>) -> ContextMenu {
-        ContextMenu::new(anchor, self.t(Key::MenuArrangement))
+        ContextMenu::new(anchor, self.t(Key::MenuNewTrack))
             .item(
                 self.t(Key::MenuNewInstrumentTrack),
                 MenuCommand::NewInstrumentTrack,

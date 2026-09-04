@@ -622,6 +622,12 @@ mod tests {
         let before = app.read_with(cx, |this, _| this.project().tracks.len());
 
         right_press(cx, empty);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.menu.as_ref().expect("the creation menu opened").title,
+                this.t(Key::MenuNewTrack)
+            );
+        });
         choose(&app, cx, &MenuCommand::NewAudioTrack);
 
         app.read_with(cx, |this, _| {
