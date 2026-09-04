@@ -6,7 +6,7 @@ members = ["crates/*"]
 # workspace on purpose: `--workspace` runs this project's tests, lints and doc build, and holding
 # a third party's code to house rules it was never written against would fail the build over
 # nothing. Its own tests are run from its own directory.
-exclude = ["vendor/rustysynth"]
+exclude = ["vendor/midir", "vendor/rustysynth"]
 default-members = ["crates/auris-gpui"]
 resolver = "3"
 
@@ -54,6 +54,9 @@ env_logger = "0.11"
 # Standard MIDI Files, read and written. `parallel` is off: it pulls in rayon to decode tracks
 # on a thread pool, and a MIDI file is kilobytes — the pool costs more to start than the parse.
 midly = { version = "0.5", default-features = false, features = ["std", "alloc"] }
+# Forked temporarily: gpui 0.2.2 pins core-foundation 0.10.0, while midir 0.11's
+# CoreMIDI dependency requires core-foundation 0.10.1 or newer. See vendor/midir/README-AURIS.md.
+midir = { path = "vendor/midir" }
 # A plugin that will only draw inside a window of the host's needs the host to have made one, and
 # neither platform's window API is reachable from anything portable. Both versions are the ones
 # gpui already resolved, so hosting a plugin adds no second copy of either.
