@@ -6,12 +6,12 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-103 | high | `crates/auris-synth/src/chiptune.rs:278` | Chiptune::note_on stores the new note's target pitch into last_frequency instead of the previous voice's live gliding frequency, so rapid portamento runs […] |
+| ✅ F-103 | high | `crates/auris-synth/src/chiptune.rs:278` | Chiptune::note_on stores the new note's target pitch into last_frequency instead of the previous voice's live gliding frequency, so rapid portamento runs […] |
 | F-098 | medium | `crates/auris-synth/src/fm2.rs:279` | Fm2's AllSoundOff handler silences the modulator envelope instantly instead of ramping it, but no shipped code path currently constructs AllSoundOff for FM2, […] |
 | F-239 | medium | `crates/auris-synth/src/chiptune.rs:486` | A huge-but-finite `--sample-rate` (e.g. 1e40) overflows to f32::INFINITY in Chiptune/FM2/NoiseDrum/Vocal `prepare`, zeroing the oscillator's phase increment […] |
 | F-407 | medium | `crates/auris-synth/src/noisedrum.rs:268` | NoiseDrum's AllSoundOff calls sweep.silence() instead of sweep.kill(), snapping the filter sweep by several octaves in one sample instead of de-clicking it — […] |
 
-### F-103 · high · Chiptune::note_on stores the new note's target pitch into last_frequency instead of the previous voice's live gliding frequency, so rapid portamento runs jump-start from an unsounded pitch.
+### ✅ F-103 · high · Chiptune::note_on stores the new note's target pitch into last_frequency instead of the previous voice's live gliding frequency, so rapid portamento runs jump-start from an unsounded pitch.
 
 `crates/auris-synth/src/chiptune.rs:278` · dsp · confirmed (executed reproduction; reported independently 1×)
 

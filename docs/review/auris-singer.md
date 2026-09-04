@@ -6,11 +6,11 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-011 | high | `crates/auris-singer/src/metadata.rs:284` | VoiceInfo::parse trusts n_speakers:u32 from voice metadata unchecked and calls speakers(), letting a crafted/corrupt value drive a multi-gigabyte Vec<String> […] |
-| F-078 | high | `crates/auris-singer/src/score.rs:206` | SingerFrames.f0_hz/energy are indexed without bounds checks in chunk_ranges/arrange, panicking on a hand-edited or externally-written file whose curve arrays […] |
+| ✅ F-011 | high | `crates/auris-singer/src/metadata.rs:284` | VoiceInfo::parse trusts n_speakers:u32 from voice metadata unchecked and calls speakers(), letting a crafted/corrupt value drive a multi-gigabyte Vec<String> […] |
+| ✅ F-078 | high | `crates/auris-singer/src/score.rs:206` | SingerFrames.f0_hz/energy are indexed without bounds checks in chunk_ranges/arrange, panicking on a hand-edited or externally-written file whose curve arrays […] |
 | F-217 | medium | `crates/auris-singer/src/model.rs:137` | VoiceModel::load's doc promises a CPU fallback on GPU session-build failure under Acceleration::Auto, but open_session has no such retry — only the later […] |
 
-### F-011 · high · VoiceInfo::parse trusts n_speakers:u32 from voice metadata unchecked and calls speakers(), letting a crafted/corrupt value drive a multi-gigabyte Vec<String> allocation that aborts the process on load.
+### ✅ F-011 · high · VoiceInfo::parse trusts n_speakers:u32 from voice metadata unchecked and calls speakers(), letting a crafted/corrupt value drive a multi-gigabyte Vec<String> allocation that aborts the process on load.
 
 `crates/auris-singer/src/metadata.rs:284` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -26,7 +26,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** /// Reads the metadata JSON and refuses anything a later `sing` would trip over.
 
-### F-078 · high · SingerFrames.f0_hz/energy are indexed without bounds checks in chunk_ranges/arrange, panicking on a hand-edited or externally-written file whose curve arrays are shorter than phonemes.
+### ✅ F-078 · high · SingerFrames.f0_hz/energy are indexed without bounds checks in chunk_ranges/arrange, panicking on a hand-edited or externally-written file whose curve arrays are shorter than phonemes.
 
 `crates/auris-singer/src/score.rs:206` · correctness · confirmed (executed reproduction; reported independently 1×)
 

@@ -6,15 +6,15 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-084 | high | `crates/auris-sampler/src/sampler.rs:676` | stop_everything(false) calls synth.note_off_all(false) immediately, starting the font's ~1ms release under the user's configured Release stage instead of […] |
-| F-343 | high | `crates/auris-sampler/src/sampler.rs:148` | is_reserved() only shields CC11/43 (expression), letting automation on CC0/6/0x64/0x65 silently hijack the sampler's own bank-select and pitch-bend-range RPN […] |
+| ✅ F-084 | high | `crates/auris-sampler/src/sampler.rs:676` | stop_everything(false) calls synth.note_off_all(false) immediately, starting the font's ~1ms release under the user's configured Release stage instead of […] |
+| ✅ F-343 | high | `crates/auris-sampler/src/sampler.rs:148` | is_reserved() only shields CC11/43 (expression), letting automation on CC0/6/0x64/0x65 silently hijack the sampler's own bank-select and pitch-bend-range RPN […] |
 | F-347 | high | `crates/auris-sampler/src/sampler.rs:510` | Turning ADSR shaping off on a held sampler note snaps channel expression to full before the font's own release begins, producing an audible gain-jump click. |
 | F-350 | high | `crates/auris-sampler/src/sampler.rs:658` | let_go() misattributes a stolen shaped note's slot-less state to "never shaped", letting its note-off silence an unrelated held note of the same pitch. |
-| F-195 | medium | `crates/auris-sampler/src/sampler.rs:668` | stop_everything's non-immediate branch clears Slot::key before the release finishes, letting claim() steal and cut off release tails after AllNotesOff. |
+| ✅ F-195 | medium | `crates/auris-sampler/src/sampler.rs:668` | stop_everything's non-immediate branch clears Slot::key before the release finishes, letting claim() steal and cut off release tails after AllNotesOff. |
 | F-206 | medium | `crates/auris-sampler/src/sampler.rs:692` | step_envelopes and push call into self.synth without checking `poisoned`, contradicting the documented invariant and risking an uncaught second panic/abort on […] |
 | F-226 | medium | `crates/auris-sampler/src/sampler.rs:532` | Sampler::push writes LEVEL straight into rustysynth's master_volume with no SmoothedValue ramp, unlike every other gain control in auris-dsp, causing an […] |
 
-### F-084 · high · stop_everything(false) calls synth.note_off_all(false) immediately, starting the font's ~1ms release under the user's configured Release stage instead of deferring it like let_go does.
+### ✅ F-084 · high · stop_everything(false) calls synth.note_off_all(false) immediately, starting the font's ~1ms release under the user's configured Release stage instead of deferring it like let_go does.
 
 `crates/auris-sampler/src/sampler.rs:676` · dsp · confirmed (executed reproduction; reported independently 1×)
 
@@ -30,7 +30,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** The font is not told yet: the envelope owns the fade, and telling the font now would start its own release underneath and cut the tail short. `step_envelopes` hands the note back when the level reaches silence.
 
-### F-343 · high · is_reserved() only shields CC11/43 (expression), letting automation on CC0/6/0x64/0x65 silently hijack the sampler's own bank-select and pitch-bend-range RPN state.
+### ✅ F-343 · high · is_reserved() only shields CC11/43 (expression), letting automation on CC0/6/0x64/0x65 silently hijack the sampler's own bank-select and pitch-bend-range RPN state.
 
 `crates/auris-sampler/src/sampler.rs:148` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -78,7 +78,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** comment at sampler.rs:655, "No slot holds it, so it is a note from before the envelope was turned on" — false once claim() has stolen and hand_back() has cleared a shaped slot for that pitch
 
-### F-195 · medium · stop_everything's non-immediate branch clears Slot::key before the release finishes, letting claim() steal and cut off release tails after AllNotesOff.
+### ✅ F-195 · medium · stop_everything's non-immediate branch clears Slot::key before the release finishes, letting claim() steal and cut off release tails after AllNotesOff.
 
 `crates/auris-sampler/src/sampler.rs:668` · correctness · confirmed (executed reproduction; reported independently 1×)
 

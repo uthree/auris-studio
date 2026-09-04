@@ -6,12 +6,12 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-013 | critical | `training/src/auris_singer/preprocess/pipeline.py:198` | A single corrupt WAV or non-UTF-8 transcript crashes preprocessing unhandled, discarding every already-computed .npz because the dataset manifest is written […] |
-| F-028 | high | `training/src/auris_singer/host_eval.py:694` | The song render in host_eval.py sings the whole concatenated song in rows[0]'s speaker, silently mismatching every other utterance's own voice. |
-| F-039 | high | `training/src/auris_singer/preprocess/pipeline.py:217` | The "too short" guard only enforces wav.numel() >= hop_length, not the (n_fft-hop_length) reflect-pad width frame_energy needs, so a short utterance can crash […] |
-| F-073 | high | `training/src/auris_singer/data/datamodule.py:110` | DistributedBucketSampler.epoch is set once at construction and never advanced, because use_distributed_sampler=False (train.py:103) disables Lightning's […] |
-| F-115 | high | `training/src/auris_singer/phoneme_levels.py:90` | phoneme_levels.py classes devoiced Japanese vowels as full vowels, so a whispered vowel becomes the loudness reference for the consonant before it, […] |
-| F-119 | high | `training/src/auris_singer/utils/audio.py:65` | A single too-short utterance (exactly one hop of samples) crashes `training`'s whole preprocessing run via an unhandled reflect-pad RuntimeError in […] |
+| ✅ F-013 | critical | `training/src/auris_singer/preprocess/pipeline.py:198` | A single corrupt WAV or non-UTF-8 transcript crashes preprocessing unhandled, discarding every already-computed .npz because the dataset manifest is written […] |
+| ✅ F-028 | high | `training/src/auris_singer/host_eval.py:694` | The song render in host_eval.py sings the whole concatenated song in rows[0]'s speaker, silently mismatching every other utterance's own voice. |
+| ✅ F-039 | high | `training/src/auris_singer/preprocess/pipeline.py:217` | The "too short" guard only enforces wav.numel() >= hop_length, not the (n_fft-hop_length) reflect-pad width frame_energy needs, so a short utterance can crash […] |
+| ✅ F-073 | high | `training/src/auris_singer/data/datamodule.py:110` | DistributedBucketSampler.epoch is set once at construction and never advanced, because use_distributed_sampler=False (train.py:103) disables Lightning's […] |
+| ✅ F-115 | high | `training/src/auris_singer/phoneme_levels.py:90` | phoneme_levels.py classes devoiced Japanese vowels as full vowels, so a whispered vowel becomes the loudness reference for the consonant before it, […] |
+| ✅ F-119 | high | `training/src/auris_singer/utils/audio.py:65` | A single too-short utterance (exactly one hop of samples) crashes `training`'s whole preprocessing run via an unhandled reflect-pad RuntimeError in […] |
 | F-320 | high | `training/src/auris_singer/lightning_module.py:154` | load_weights unpickles an unvalidated --init-from/--resume checkpoint via torch.load(weights_only=False), giving arbitrary code execution on a crafted file. |
 | F-127 | medium | `training/doc/architecture.md:148` | architecture.md's loss table lists KL (auxiliary) default as 1.0, but code, training.md, and the doc's own later prose all agree the default is 0.2. |
 | F-157 | medium | `training/src/auris_singer/losses.py:154` | EnvelopeLoss divides by the configured kernel count instead of the count actually used, silently underweighting the loss when a kernel exceeds the signal […] |
@@ -36,7 +36,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-423 | low | `training/src/auris_singer/lightning_module.py:292` | kl_scale() reads global_step after opt_d.step() has already advanced it, shifting the KL warm-up ramp by one optimizer step. |
 | F-435 | low | `training/src/auris_singer/host_eval.py:487` | --speaker's docstring/help claim an unconditional "model's first" default, but corpus mode defaults per-utterance to the corpus's own recorded speaker instead. |
 
-### F-013 · critical · A single corrupt WAV or non-UTF-8 transcript crashes preprocessing unhandled, discarding every already-computed .npz because the dataset manifest is written only after the loop completes without error.
+### ✅ F-013 · critical · A single corrupt WAV or non-UTF-8 transcript crashes preprocessing unhandled, discarding every already-computed .npz because the dataset manifest is written only after the loop completes without error.
 
 `training/src/auris_singer/preprocess/pipeline.py:198` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -52,7 +52,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** doc/preprocessing.md, "Skipped utterances": "An utterance is skipped when it has no transcript, produces no phonemes, is shorter than `min_seconds`, or has fewer frames than phonemes ... The run prints a summary of skip reasons at the end." — decode failures on audio/text are not routed through this skip mechanism and instead abort the run.
 
-### F-028 · high · The song render in host_eval.py sings the whole concatenated song in rows[0]'s speaker, silently mismatching every other utterance's own voice.
+### ✅ F-028 · high · The song render in host_eval.py sings the whole concatenated song in rows[0]'s speaker, silently mismatching every other utterance's own voice.
 
 `training/src/auris_singer/host_eval.py:694` · spec-mismatch · confirmed (traced through the code; reported independently 3×)
 
@@ -68,7 +68,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** training/doc/evaluation.md line 185 (added by commit a30fda1, "Sing each corpus utterance as its own speaker"): "the corpus run sings each utterance as the speaker the corpus says it belongs to."
 
-### F-039 · high · The "too short" guard only enforces wav.numel() >= hop_length, not the (n_fft-hop_length) reflect-pad width frame_energy needs, so a short utterance can crash the whole preprocessing run instead of being skipped.
+### ✅ F-039 · high · The "too short" guard only enforces wav.numel() >= hop_length, not the (n_fft-hop_length) reflect-pad width frame_energy needs, so a short utterance can crash the whole preprocessing run instead of being skipped.
 
 `training/src/auris_singer/preprocess/pipeline.py:217` · correctness · confirmed (executed reproduction; reported independently 2×)
 
@@ -82,7 +82,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** At training/src/auris_singer/preprocess/pipeline.py:217, size the guard from what frame_energy actually needs, not just hop_length: require wav.numel() > n_fft - hop_length (784 for the shipped n_fft/hop_length), i.e. `if wav.numel() < max(min_samples, hop_length, n_fft - hop_length + 1): skip(...)`, so an undersized waveform takes the existing skip("too short") path instead of raising. Consider also wrapping the per-utterance body in try/except to log-and-skip rather than abort the whole batch on any future exception.
 
-### F-073 · high · DistributedBucketSampler.epoch is set once at construction and never advanced, because use_distributed_sampler=False (train.py:103) disables Lightning's automatic set_epoch forwarding and nothing else calls it, so every training epoch reshuffles buckets with the identical seed.
+### ✅ F-073 · high · DistributedBucketSampler.epoch is set once at construction and never advanced, because use_distributed_sampler=False (train.py:103) disables Lightning's automatic set_epoch forwarding and nothing else calls it, so every training epoch reshuffles buckets with the identical seed.
 
 `training/src/auris_singer/data/datamodule.py:110` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -96,7 +96,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** In `SingingDataModule.train_dataloader()` (training/src/auris_singer/data/datamodule.py:101-115), since `use_distributed_sampler=False` is deliberate (per its own docstring at line 35) and Lightning's automatic epoch-forwarding is therefore never invoked, the code must call `.set_epoch()` itself: either implement a `on_train_epoch_start` hook (or pass a Lightning `Callback`) that calls `train_dataloader().batch_sampler.set_epoch(trainer.current_epoch)`, or store a reference to the sampler and increment `sampler.epoch` from the training loop each epoch, mirroring what `training/tests/test_dataset.py` already does manually (`sampler.set_epoch(0)`) for its own tests.
 
-### F-115 · high · phoneme_levels.py classes devoiced Japanese vowels as full vowels, so a whispered vowel becomes the loudness reference for the consonant before it, under-correcting exactly the sibilants/plosives the table exists to fix.
+### ✅ F-115 · high · phoneme_levels.py classes devoiced Japanese vowels as full vowels, so a whispered vowel becomes the loudness reference for the consonant before it, under-correcting exactly the sibilants/plosives the table exists to fix.
 
 `training/src/auris_singer/phoneme_levels.py:90` · dsp · confirmed (executed reproduction; reported independently 1×)
 
@@ -112,7 +112,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** training/src/auris_singer/phoneme_durations.py:76-78 (sibling module, same codebase): "The devoiced vowels are deliberately *not* here: they are whispered between voiceless neighbours and behave like consonants, taking a slot of their own." — phoneme_levels.py contradicts this by classing devoiced vowels as `"vowel"` and using them as the reference denominator.
 
-### F-119 · high · A single too-short utterance (exactly one hop of samples) crashes `training`'s whole preprocessing run via an unhandled reflect-pad RuntimeError in `frame_energy`/`_pad_for_stft`.
+### ✅ F-119 · high · A single too-short utterance (exactly one hop of samples) crashes `training`'s whole preprocessing run via an unhandled reflect-pad RuntimeError in `frame_energy`/`_pad_for_stft`.
 
 `training/src/auris_singer/utils/audio.py:65` · dsp · confirmed (executed reproduction; reported independently 1×)
 

@@ -6,18 +6,18 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-005 | critical | `crates/auris-clap/src/bridge.rs:214` | Offline export activates hosted CLAP plugins at the live 512-frame block size while the offline renderer defaults to 1024-frame blocks, silently leaving […] |
-| F-008 | critical | `crates/auris-clap/src/plugin.rs:378` | Embedded CLAP GUI: if show() fails after set_parent(), HostWindow's Drop destroys the plugin's child HWND before gui.destroy() is called, risking a […] |
-| F-090 | high | `crates/auris-clap/src/bridge.rs:306` | Bridge::render hard-codes `None` for CLAP's transport argument, so hosted plugins never see host tempo, playhead, or transport state. |
-| F-100 | high | `crates/auris-clap/src/bridge.rs:244` | A parameter write's `changed` flag is cleared via mem::take before delivery is confirmed, so it is lost forever if `ensure_processing_started()` fails that […] |
-| F-106 | high | `crates/auris-clap/src/ports.rs:110` | Unbounded plugin-reported port/channel/parameter counts size Vec allocations with no cap, letting a buggy or malicious CLAP plugin crash the whole DAW via an […] |
-| F-330 | high | `crates/auris-clap/src/plugin.rs:796` | Hosted CLAP stepped/enum parameters get ParamUnit::Choice with an empty `choices` list, so their picker menu renders with zero selectable options. |
+| ✅ F-005 | critical | `crates/auris-clap/src/bridge.rs:214` | Offline export activates hosted CLAP plugins at the live 512-frame block size while the offline renderer defaults to 1024-frame blocks, silently leaving […] |
+| ✅ F-008 | critical | `crates/auris-clap/src/plugin.rs:378` | Embedded CLAP GUI: if show() fails after set_parent(), HostWindow's Drop destroys the plugin's child HWND before gui.destroy() is called, risking a […] |
+| ✅ F-090 | high | `crates/auris-clap/src/bridge.rs:306` | Bridge::render hard-codes `None` for CLAP's transport argument, so hosted plugins never see host tempo, playhead, or transport state. |
+| ✅ F-100 | high | `crates/auris-clap/src/bridge.rs:244` | A parameter write's `changed` flag is cleared via mem::take before delivery is confirmed, so it is lost forever if `ensure_processing_started()` fails that […] |
+| ✅ F-106 | high | `crates/auris-clap/src/ports.rs:110` | Unbounded plugin-reported port/channel/parameter counts size Vec allocations with no cap, letting a buggy or malicious CLAP plugin crash the whole DAW via an […] |
+| ✅ F-330 | high | `crates/auris-clap/src/plugin.rs:796` | Hosted CLAP stepped/enum parameters get ParamUnit::Choice with an empty `choices` list, so their picker menu renders with zero selectable options. |
 | F-122 | medium | `crates/auris-clap/src/window/cocoa.rs:123` | `ClapPlugin::open_gui` is a safe fn that lets any caller trigger UB in `owning_window`'s unchecked NSView pointer deref via an arbitrary RawWindowHandle. |
 | F-177 | medium | `crates/auris-clap/src/tests.rs:246` | `dropping_a_plugin_closes_the_window_it_left_open` has no assertion after `drop(plugin)`, so it cannot detect a regression in window teardown. |
 | F-242 | low | `crates/auris-clap/src/bridge.rs:281` | Hosted CLAP plugin output events (e.g. generated notes) are collected in bridge.rs then discarded, but auris-core's Effect/Instrument::process has no channel […] |
 | F-308 | low | `crates/auris-clap/src/plugin.rs:327` | open_gui's `.expect("a plan implies the extension")` can panic and crash the app if a CLAP plugin answers get_extension("clap.gui") inconsistently across three […] |
 
-### F-005 · critical · Offline export activates hosted CLAP plugins at the live 512-frame block size while the offline renderer defaults to 1024-frame blocks, silently leaving roughly half of every exported block unprocessed.
+### ✅ F-005 · critical · Offline export activates hosted CLAP plugins at the live 512-frame block size while the offline renderer defaults to 1024-frame blocks, silently leaving roughly half of every exported block unprocessed.
 
 `crates/auris-clap/src/bridge.rs:214` · correctness · confirmed (executed reproduction; reported independently 2×)
 
@@ -33,7 +33,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** "A CLAP plugin sizes its buffers when it is *activated*, from a rate and block size it cannot then be told about again — changing either means deactivating and building it afresh, which only the main-thread half can do." (crates/auris-clap/src/effect.rs, ClapEffect::prepare doc comment) — job_for silently violates this by activating at the live block size while the offline renderer later drives […]
 
-### F-008 · critical · Embedded CLAP GUI: if show() fails after set_parent(), HostWindow's Drop destroys the plugin's child HWND before gui.destroy() is called, risking a use-after-free/double-free crash in-process.
+### ✅ F-008 · critical · Embedded CLAP GUI: if show() fails after set_parent(), HostWindow's Drop destroys the plugin's child HWND before gui.destroy() is called, risking a use-after-free/double-free crash in-process.
 
 `crates/auris-clap/src/plugin.rs:378` · security · confirmed (executed reproduction; reported independently 2×)
 
@@ -49,7 +49,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** // SAFETY: the window was made a few lines up and is owned by this value, which destroys the plugin's GUI before letting go of it. (crates/auris-clap/src/plugin.rs, comment immediately above the `set_parent` call at line ~375-376)
 
-### F-090 · high · Bridge::render hard-codes `None` for CLAP's transport argument, so hosted plugins never see host tempo, playhead, or transport state.
+### ✅ F-090 · high · Bridge::render hard-codes `None` for CLAP's transport argument, so hosted plugins never see host tempo, playhead, or transport state.
 
 `crates/auris-clap/src/bridge.rs:306` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -65,7 +65,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** A hosted CLAP plugin is two objects, because CLAP's main-thread/audio-thread split is the same one Auris already has ... the ClapEffect it hands out is Send, implements auris_core::Effect, and is the only half the graph ever sees.
 
-### F-100 · high · A parameter write's `changed` flag is cleared via mem::take before delivery is confirmed, so it is lost forever if `ensure_processing_started()` fails that block.
+### ✅ F-100 · high · A parameter write's `changed` flag is cleared via mem::take before delivery is confirmed, so it is lost forever if `ensure_processing_started()` fails that block.
 
 `crates/auris-clap/src/bridge.rs:244` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -81,7 +81,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** The engine communicates with the audio thread through a bounded command channel and hands over ownership of pre-built graphs; the audio thread returns replaced graphs down a second channel so they are dropped off the RT thread. (Realtime rules section — not directly quoted for this bug, but the code's own comment at the `frames == 0` branch establishes the intended invariant: pending state must […]
 
-### F-106 · high · Unbounded plugin-reported port/channel/parameter counts size Vec allocations with no cap, letting a buggy or malicious CLAP plugin crash the whole DAW via an OOM-abort or capacity-overflow panic on activation.
+### ✅ F-106 · high · Unbounded plugin-reported port/channel/parameter counts size Vec allocations with no cap, letting a buggy or malicious CLAP plugin crash the whole DAW via an OOM-abort or capacity-overflow panic on activation.
 
 `crates/auris-clap/src/ports.rs:110` · security · confirmed (executed reproduction; reported independently 1×)
 
@@ -97,7 +97,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** A host must hand a plugin exactly the ports it declared — not the ports the host happens to care about. ... Surge XT Effects is the plugin that taught this crate the lesson ... switching to it took the whole application down. (crates/auris-clap/src/ports.rs module doc)
 
-### F-330 · high · Hosted CLAP stepped/enum parameters get ParamUnit::Choice with an empty `choices` list, so their picker menu renders with zero selectable options.
+### ✅ F-330 · high · Hosted CLAP stepped/enum parameters get ParamUnit::Choice with an empty `choices` list, so their picker menu renders with zero selectable options.
 
 `crates/auris-clap/src/plugin.rs:796` · ui · confirmed (executed reproduction; reported independently 1×)
 

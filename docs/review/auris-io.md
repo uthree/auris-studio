@@ -6,13 +6,13 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-022 | critical | `crates/auris-io/src/soundfont.rs:104` | check_chunk's LIST-descent doesn't clamp to the enclosing LIST's end, and its generic leaf handler mis-tracks ifil/iver's true byte length, letting a crafted […] |
-| F-313 | critical | `crates/auris-io/src/soundfont.rs:62` | load_soundfont has no catch_unwind around SoundFont::new, so a malformed .sf2 with honest chunk sizes but bad pdta indices panics rustysynth and crashes the […] |
+| ✅ F-022 | critical | `crates/auris-io/src/soundfont.rs:104` | check_chunk's LIST-descent doesn't clamp to the enclosing LIST's end, and its generic leaf handler mis-tracks ifil/iver's true byte length, letting a crafted […] |
+| ✅ F-313 | critical | `crates/auris-io/src/soundfont.rs:62` | load_soundfont has no catch_unwind around SoundFont::new, so a malformed .sf2 with honest chunk sizes but bad pdta indices panics rustysynth and crashes the […] |
 | F-105 | medium | `crates/auris-io/src/midi.rs:467` | MIDI export silently masks (not errors on) tick deltas over 2^28-1, corrupting event positions past ~38.8 hours with no warning, contradicting auris-io's […] |
 | F-229 | medium | `crates/auris-io/src/midi.rs:272` | A TrackName meta event placed after a channel's last MIDI event is silently dropped, so the imported part falls back to "Channel N" instead of its real name. |
 | F-302 | low | `crates/auris-io/src/project_file.rs:106` | folder_is_named's ASCII-only case fold misses non-ASCII cased letters, so renaming a project folder by accented-letter case alone nests a duplicate copy […] |
 
-### F-022 · critical · check_chunk's LIST-descent doesn't clamp to the enclosing LIST's end, and its generic leaf handler mis-tracks ifil/iver's true byte length, letting a crafted .sf2 desync the pre-parse validator and reach the smpl overflow it exists to block.
+### ✅ F-022 · critical · check_chunk's LIST-descent doesn't clamp to the enclosing LIST's end, and its generic leaf handler mis-tracks ifil/iver's true byte length, letting a crafted .sf2 desync the pre-parse validator and reach the smpl overflow it exists to block.
 
 `crates/auris-io/src/soundfont.rs:104` · security · confirmed (executed reproduction; reported independently 1×)
 
@@ -28,7 +28,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** What must not reach it is a *plausible* file whose sizes lie. / stricter, and it would refuse fonts the parser plays; looser, and a lying size gets through.
 
-### F-313 · critical · load_soundfont has no catch_unwind around SoundFont::new, so a malformed .sf2 with honest chunk sizes but bad pdta indices panics rustysynth and crashes the whole app on project open.
+### ✅ F-313 · critical · load_soundfont has no catch_unwind around SoundFont::new, so a malformed .sf2 with honest chunk sizes but bad pdta indices panics rustysynth and crashes the whole app on project open.
 
 `crates/auris-io/src/soundfont.rs:62` · security · confirmed (executed reproduction; reported independently 1×)
 

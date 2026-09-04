@@ -6,25 +6,25 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-024 | critical | `crates/auris-session/src/session/hosted.rs:583` | HostedSlot::incoming silently force-loads stale document state onto a reused plugin instance when reclaim has already moved the live instance into spare, […] |
-| F-025 | critical | `crates/auris-session/src/session/record.rs:966` | Recording with a count-in while the output falls back to `start_silent` silently trims real captured audio, since the shared count-in atomic is never […] |
-| F-026 | critical | `crates/auris-session/src/session/mod.rs:269` | Session's field order drops the retired-graph channel before the live cpal stream, letting the audio callback free a RenderGraph on the realtime thread during […] |
-| F-002 | high | `crates/auris-session/src/session/hosted.rs:611` | `HostedSlot::reclaim` overwrites `self.spare` via plain `Option` assignment without checking if it still holds a live effect, permanently leaking that CLAP […] |
-| F-012 | high | `crates/auris-session/src/session/singer.rs:531` | `arrange()` in score.rs indexes `frames.f0_hz[at]`/`frames.energy[at]` unchecked, so a hand-edited SingerFrames JSON with mismatched array lengths panics […] |
-| F-032 | high | `crates/auris-session/src/session/tracks.rs:347` | set_track_instrument wipes instrument_state and file unconditionally, even when instrument_id is unchanged, losing user parameter values on a no-op call. |
-| F-042 | high | `crates/auris-session/src/session/typing.rs:421` | MusicalTyping::bend() is computed globally across all held keys but attributed to one TrackId at both press and release, misdirecting pitch-bend to the wrong […] |
-| F-046 | high | `crates/auris-session/src/session/generated.rs:47` | generate_clip's WrongTrackKind error hardcodes actual: "an audio track" even when the rejected track is actually a Singer or Bus track, unlike the sibling […] |
-| F-061 | high | `crates/auris-session/src/session/levels.rs:195` | balance_levels() uses cancel_transaction() on failure, leaving partially-written faders (already sent to the audio engine) applied and unrecorded instead of […] |
-| F-062 | high | `crates/auris-session/src/session/lyrics.rs:368` | measure_lyrics leaks a partially-unreadable line's mora counts into the totals even though that line itself reports as None. |
-| F-063 | high | `crates/auris-session/src/session/record.rs:1057` | Undoing a track-add (or any undo removing an armed track) leaves a stale entry in Session::armed that adopt_project never clears, so take_tracks() returns only […] |
-| F-064 | high | `crates/auris-session/src/session/monitor.rs:90` | remove_track never clears self.monitored, so deleting a monitored track permanently holds the input device open (only fixable by stop_monitoring(), which kills […] |
-| F-065 | high | `crates/auris-session/src/session/harmony.rs:227` | stamp_named_progression picks the respelling key from the caller's raw tick but writes at a separately re-snapped tick, so charts near a mode boundary can be […] |
-| F-091 | high | `crates/auris-session/src/session/monitor.rs:160` | publish_monitors drops InputChannels::count, so a mono-armed track's monitor always plays a stereo pair and bleeds in the next device channel. |
-| F-092 | high | `crates/auris-session/src/session/files.rs:342` | save_as_replacing repoints self.path before the disk write but leaves self.dirty unset on write failure, silently disarming autosave for the unsaved new […] |
-| F-102 | high | `crates/auris-session/src/session/clips.rs:51` | set_curve_point/move_curve_point clamp NaN-through instead of using the codebase's own finite_unit pattern, letting a NaN curve value get saved as JSON null […] |
-| F-108 | high | `crates/auris-session/src/session/assets.rs:154` | collect_assets copies arbitrary local files named by an untrusted .auris project's External asset paths into Audio/ without ever validating them as audio or […] |
-| F-118 | high | `crates/auris-session/src/session/mod.rs:830` | Re-entrant begin_transaction overwrites an open transaction, so its already-applied edit can become permanently unrecorded and unrendered. |
-| F-327 | high | `crates/auris-session/src/session/clips.rs:566` | trim_clip_start rebases MIDI notes on front-trim but leaves bend/controller CurvePoints at stale offsets, misaligning automation with the trimmed clip's notes. |
+| ✅ F-024 | critical | `crates/auris-session/src/session/hosted.rs:583` | HostedSlot::incoming silently force-loads stale document state onto a reused plugin instance when reclaim has already moved the live instance into spare, […] |
+| ✅ F-025 | critical | `crates/auris-session/src/session/record.rs:966` | Recording with a count-in while the output falls back to `start_silent` silently trims real captured audio, since the shared count-in atomic is never […] |
+| ✅ F-026 | critical | `crates/auris-session/src/session/mod.rs:269` | Session's field order drops the retired-graph channel before the live cpal stream, letting the audio callback free a RenderGraph on the realtime thread during […] |
+| ✅ F-002 | high | `crates/auris-session/src/session/hosted.rs:611` | `HostedSlot::reclaim` overwrites `self.spare` via plain `Option` assignment without checking if it still holds a live effect, permanently leaking that CLAP […] |
+| ✅ F-012 | high | `crates/auris-session/src/session/singer.rs:531` | `arrange()` in score.rs indexes `frames.f0_hz[at]`/`frames.energy[at]` unchecked, so a hand-edited SingerFrames JSON with mismatched array lengths panics […] |
+| ✅ F-032 | high | `crates/auris-session/src/session/tracks.rs:347` | set_track_instrument wipes instrument_state and file unconditionally, even when instrument_id is unchanged, losing user parameter values on a no-op call. |
+| ✅ F-042 | high | `crates/auris-session/src/session/typing.rs:421` | MusicalTyping::bend() is computed globally across all held keys but attributed to one TrackId at both press and release, misdirecting pitch-bend to the wrong […] |
+| ✅ F-046 | high | `crates/auris-session/src/session/generated.rs:47` | generate_clip's WrongTrackKind error hardcodes actual: "an audio track" even when the rejected track is actually a Singer or Bus track, unlike the sibling […] |
+| ✅ F-061 | high | `crates/auris-session/src/session/levels.rs:195` | balance_levels() uses cancel_transaction() on failure, leaving partially-written faders (already sent to the audio engine) applied and unrecorded instead of […] |
+| ✅ F-062 | high | `crates/auris-session/src/session/lyrics.rs:368` | measure_lyrics leaks a partially-unreadable line's mora counts into the totals even though that line itself reports as None. |
+| ✅ F-063 | high | `crates/auris-session/src/session/record.rs:1057` | Undoing a track-add (or any undo removing an armed track) leaves a stale entry in Session::armed that adopt_project never clears, so take_tracks() returns only […] |
+| ✅ F-064 | high | `crates/auris-session/src/session/monitor.rs:90` | remove_track never clears self.monitored, so deleting a monitored track permanently holds the input device open (only fixable by stop_monitoring(), which kills […] |
+| ✅ F-065 | high | `crates/auris-session/src/session/harmony.rs:227` | stamp_named_progression picks the respelling key from the caller's raw tick but writes at a separately re-snapped tick, so charts near a mode boundary can be […] |
+| ✅ F-091 | high | `crates/auris-session/src/session/monitor.rs:160` | publish_monitors drops InputChannels::count, so a mono-armed track's monitor always plays a stereo pair and bleeds in the next device channel. |
+| ✅ F-092 | high | `crates/auris-session/src/session/files.rs:342` | save_as_replacing repoints self.path before the disk write but leaves self.dirty unset on write failure, silently disarming autosave for the unsaved new […] |
+| ✅ F-102 | high | `crates/auris-session/src/session/clips.rs:51` | set_curve_point/move_curve_point clamp NaN-through instead of using the codebase's own finite_unit pattern, letting a NaN curve value get saved as JSON null […] |
+| ✅ F-108 | high | `crates/auris-session/src/session/assets.rs:154` | collect_assets copies arbitrary local files named by an untrusted .auris project's External asset paths into Audio/ without ever validating them as audio or […] |
+| ✅ F-118 | high | `crates/auris-session/src/session/mod.rs:830` | Re-entrant begin_transaction overwrites an open transaction, so its already-applied edit can become permanently unrecorded and unrendered. |
+| ✅ F-327 | high | `crates/auris-session/src/session/clips.rs:566` | trim_clip_start rebases MIDI notes on front-trim but leaves bend/controller CurvePoints at stale offsets, misaligning automation with the trimmed clip's notes. |
 | F-329 | high | `crates/auris-session/src/session/hosted.rs:853` | set_hosted_instrument swaps a CLAP plugin's id/state but skips remove_instrument_automation, leaving old-plugin automation lanes driving the new plugin's […] |
 | F-331 | high | `crates/auris-session/src/session/accompany.rs:165` | accompany() snaps the chord/key write and the generated clip's start through two different grids, so parts can be composed against the wrong harmony. |
 | F-341 | high | `crates/auris-session/src/session/mod.rs:1083` | Session::open clears self.hosted for id-reuse safety but never clears self.armed/self.monitored, so a new project can inherit stale arm/monitor state via […] |
@@ -75,7 +75,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-449 | low | `crates/auris-session/src/session/record.rs:543` | restart_input's Err branch clears self.monitored without rebuilding the graph, leaving stale (but inert) monitor taps wired in until an unrelated rebuild. |
 | F-456 | low | `crates/auris-session/src/session/punch.rs:127` | finish_punch's punch-out auto-stop never fires when the engine runs silently (no output device), because it reads a playhead Arc that start_silent leaves […] |
 
-### F-024 · critical · HostedSlot::incoming silently force-loads stale document state onto a reused plugin instance when reclaim has already moved the live instance into spare, discarding unsaved live plugin edits.
+### ✅ F-024 · critical · HostedSlot::incoming silently force-loads stale document state onto a reused plugin instance when reclaim has already moved the live instance into spare, discarding unsaved live plugin edits.
 
 `crates/auris-session/src/session/hosted.rs:583` · realtime · confirmed (executed reproduction; reported independently 1×)
 
@@ -91,7 +91,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** The score does not change; the performer does — "never rewrite a clip implicitly" and more directly the module's own doc comment on incoming: "Where the incoming instance's state comes from: the outgoing one if there is one, so a preset the user loaded inside the plugin survives a rebuild" — this intent is violated silently when reclaim has already moved the outgoing instance into `spare` before […]
 
-### F-025 · critical · Recording with a count-in while the output falls back to `start_silent` silently trims real captured audio, since the shared count-in atomic is never decremented and is read back at its full requested value.
+### ✅ F-025 · critical · Recording with a count-in while the output falls back to `start_silent` silently trims real captured audio, since the shared count-in atomic is never decremented and is read back at its full requested value.
 
 `crates/auris-session/src/session/record.rs:966` · concurrency · confirmed (traced through the code; reported independently 1×)
 
@@ -107,7 +107,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** The take-count-in comment (record.rs, near `start_recording`): "The count is written down before it is asked for, and before the take opens, so that a first block arriving in the gap between the command and the audio thread picking it up finds a count rather than a zero" — an invariant that assumes the audio thread is running and will eventually decrement the count, which `start_silent`'s […]
 
-### F-026 · critical · Session's field order drops the retired-graph channel before the live cpal stream, letting the audio callback free a RenderGraph on the realtime thread during shutdown.
+### ✅ F-026 · critical · Session's field order drops the retired-graph channel before the live cpal stream, letting the audio callback free a RenderGraph on the realtime thread during shutdown.
 
 `crates/auris-session/src/session/mod.rs:269` · realtime · confirmed (executed reproduction; reported independently 1×)
 
@@ -123,7 +123,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** No allocation, locking, blocking or I/O in those paths. (CLAUDE.md, "Realtime rules")
 
-### F-002 · high · `HostedSlot::reclaim` overwrites `self.spare` via plain `Option` assignment without checking if it still holds a live effect, permanently leaking that CLAP plugin instance in the three-instance (export-while-playing) case.
+### ✅ F-002 · high · `HostedSlot::reclaim` overwrites `self.spare` via plain `Option` assignment without checking if it still holds a live effect, permanently leaking that CLAP plugin instance in the three-instance (export-while-playing) case.
 
 `crates/auris-session/src/session/hosted.rs:611` · correctness · confirmed (executed reproduction; reported independently 3×)
 
@@ -139,7 +139,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Dropping a `ClapPlugin` whose effect is still in a graph does not free it — clack's `PluginInstance::Drop` deliberately *leaks* rather than hand ownership to the audio thread — so a slot on its way out parks its instances here instead (hosted.rs:74-79 doc comment)
 
-### F-012 · high · `arrange()` in score.rs indexes `frames.f0_hz[at]`/`frames.energy[at]` unchecked, so a hand-edited SingerFrames JSON with mismatched array lengths panics `auris sing-frames` instead of erroring, contradicting the adjacent comment that claims such files are handled without panicking.
+### ✅ F-012 · high · `arrange()` in score.rs indexes `frames.f0_hz[at]`/`frames.energy[at]` unchecked, so a hand-edited SingerFrames JSON with mismatched array lengths panics `auris sing-frames` instead of erroring, contradicting the adjacent comment that claims such files are handled without panicking.
 
 `crates/auris-session/src/session/singer.rs:531` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -155,7 +155,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** // A file edited by hand can hold an index past its own inventory; sing it as unknown rather than panicking over it.
 
-### F-032 · high · set_track_instrument wipes instrument_state and file unconditionally, even when instrument_id is unchanged, losing user parameter values on a no-op call.
+### ✅ F-032 · high · set_track_instrument wipes instrument_state and file unconditionally, even when instrument_id is unchanged, losing user parameter values on a no-op call.
 
 `crates/auris-session/src/session/tracks.rs:347` · correctness · confirmed (executed reproduction; reported independently 2×)
 
@@ -171,7 +171,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** // The saved values belong to the old plugin; applying them to a different one would write another plugin's numbers into unrelated controls.
 
-### F-042 · high · MusicalTyping::bend() is computed globally across all held keys but attributed to one TrackId at both press and release, misdirecting pitch-bend to the wrong track when two tracks hold bend keys simultaneously.
+### ✅ F-042 · high · MusicalTyping::bend() is computed globally across all held keys but attributed to one TrackId at both press and release, misdirecting pitch-bend to the wrong track when two tracks hold bend keys simultaneously.
 
 `crates/auris-session/src/session/typing.rs:421` · correctness · confirmed (executed reproduction; reported independently 2×)
 
@@ -185,7 +185,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Make bend per-track: change `bend()` to take a track (or filter `self.held` by track before checking BendDown/BendUp), and have both press (line ~393) and release (line 421) compute the bend for the specific track the key event belongs to rather than a single global scan. The existing "hand the wheel back to the other" single-track behaviour and its test should still hold when both bend keys are on the same track.
 
-### F-046 · high · generate_clip's WrongTrackKind error hardcodes actual: "an audio track" even when the rejected track is actually a Singer or Bus track, unlike the sibling add_midi_clip which was already fixed to use kind.label().
+### ✅ F-046 · high · generate_clip's WrongTrackKind error hardcodes actual: "an audio track" even when the rejected track is actually a Singer or Bus track, unlike the sibling add_midi_clip which was already fixed to use kind.label().
 
 `crates/auris-session/src/session/generated.rs:47` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -201,7 +201,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** // The track's own word for itself, rather than "an audio track" — which was true of the only other kind there used to be, and is a lie about a bus. (crates/auris-session/src/session/clips.rs, comment on the equivalent guard in add_midi_clip)
 
-### F-061 · high · balance_levels() uses cancel_transaction() on failure, leaving partially-written faders (already sent to the audio engine) applied and unrecorded instead of reverted.
+### ✅ F-061 · high · balance_levels() uses cancel_transaction() on failure, leaving partially-written faders (already sent to the audio engine) applied and unrecorded instead of reverted.
 
 `crates/auris-session/src/session/levels.rs:195` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -217,7 +217,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** // Nothing has been half-applied — a fader is written only after its own stem has been measured — but a piece that could not be rendered has no business leaving a step in the history saying its mix was set.
 
-### F-062 · high · measure_lyrics leaks a partially-unreadable line's mora counts into the totals even though that line itself reports as None.
+### ✅ F-062 · high · measure_lyrics leaks a partially-unreadable line's mora counts into the totals even though that line itself reports as None.
 
 `crates/auris-session/src/session/lyrics.rs:368` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -233,7 +233,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Doc comment on LyricsMeasure::notes: "Notes the whole lyric would sing, counting only the readable lines," and on measure_lyrics: "Unreadable lines measure as `None` and simply do not count — the same lines Write would refuse or skip."
 
-### F-063 · high · Undoing a track-add (or any undo removing an armed track) leaves a stale entry in Session::armed that adopt_project never clears, so take_tracks() returns only that dead arm and blocks recording on every track until disarm_all is called outside the UI.
+### ✅ F-063 · high · Undoing a track-add (or any undo removing an armed track) leaves a stale entry in Session::armed that adopt_project never clears, so take_tracks() returns only that dead arm and blocks recording on every track until disarm_all is called outside the UI.
 
 `crates/auris-session/src/session/record.rs:1057` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -249,7 +249,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** // An arm on a track that no longer exists would refuse the next take rather than being ignored by it, and the button that could clear it has gone with the track. (crates/auris-session/src/session/tracks.rs, remove_track's own comment, explaining exactly the invariant undo fails to preserve)
 
-### F-064 · high · remove_track never clears self.monitored, so deleting a monitored track permanently holds the input device open (only fixable by stop_monitoring(), which kills every other monitor too).
+### ✅ F-064 · high · remove_track never clears self.monitored, so deleting a monitored track permanently holds the input device open (only fixable by stop_monitoring(), which kills every other monitor too).
 
 `crates/auris-session/src/session/monitor.rs:90` · lifecycle · confirmed (traced through the code; reported independently 1×)
 
@@ -265,7 +265,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** "Opens it. The input device is open while a take is running *or* somebody is monitoring, and is closed the moment neither is true — a live microphone is a light on the menu bar and a battery cost, and holding one open against the next take would be both." (crates/auris-session/src/session/monitor.rs module doc)
 
-### F-065 · high · stamp_named_progression picks the respelling key from the caller's raw tick but writes at a separately re-snapped tick, so charts near a mode boundary can be spelled for the wrong key.
+### ✅ F-065 · high · stamp_named_progression picks the respelling key from the caller's raw tick but writes at a separately re-snapped tick, so charts near a mode boundary can be spelled for the wrong key.
 
 `crates/auris-session/src/session/harmony.rs:227` · theory · confirmed (executed reproduction; reported independently 1×)
 
@@ -281,7 +281,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** "The chart is read against the key in force where it lands, so a major-mode progression dropped into a minor stretch names its chords from the relative key rather than having its degrees read literally" (crates/auris-session/src/session/harmony.rs doc comment on `stamp_named_progression`)
 
-### F-091 · high · publish_monitors drops InputChannels::count, so a mono-armed track's monitor always plays a stereo pair and bleeds in the next device channel.
+### ✅ F-091 · high · publish_monitors drops InputChannels::count, so a mono-armed track's monitor always plays a stereo pair and bleeds in the next device channel.
 
 `crates/auris-session/src/session/monitor.rs:160` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -297,7 +297,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** One ring, so one answer: monitoring is one track at a time, and pointing it somewhere is what re-pointing it costs. / What makes monitoring a track armed to input 5 play input 5 rather than the microphone on input 1 — a monitor that listened somewhere other than where the take was going would be a level meter for the wrong signal. (MonitorRing::set_source doc comment, auris-engine/src/monitor.rs)
 
-### F-092 · high · save_as_replacing repoints self.path before the disk write but leaves self.dirty unset on write failure, silently disarming autosave for the unsaved new location.
+### ✅ F-092 · high · save_as_replacing repoints self.path before the disk write but leaves self.dirty unset on write failure, silently disarming autosave for the unsaved new location.
 
 `crates/auris-session/src/session/files.rs:342` · persistence · confirmed (executed reproduction; reported independently 1×)
 
@@ -313,7 +313,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Autosave writes the real file — on by default, never invents a path (project convention, per the autosave design note); the session's own comment in files.rs states self.path is deliberately moved before the write "even if the write below fails," but never accounts for self.dirty needing the same treatment.
 
-### F-102 · high · set_curve_point/move_curve_point clamp NaN-through instead of using the codebase's own finite_unit pattern, letting a NaN curve value get saved as JSON null that then fails to deserialize, bricking the whole project file on reload.
+### ✅ F-102 · high · set_curve_point/move_curve_point clamp NaN-through instead of using the codebase's own finite_unit pattern, letting a NaN curve value get saved as JSON null that then fails to deserialize, bricking the whole project file on reload.
 
 `crates/auris-session/src/session/clips.rs:51` · persistence · confirmed (executed reproduction; reported independently 1×)
 
@@ -329,7 +329,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** `clamp` passes NaN through, and this layer owns the promise that what goes into the document can come back out of it — `serde_json` writes a non-finite float as `null`, which no `f32` field will ever deserialise again. (doc comment on `Session::finite_unit`, crates/auris-session/src/session/tracks.rs:537-547)
 
-### F-108 · high · collect_assets copies arbitrary local files named by an untrusted .auris project's External asset paths into Audio/ without ever validating them as audio or SoundFont content.
+### ✅ F-108 · high · collect_assets copies arbitrary local files named by an untrusted .auris project's External asset paths into Audio/ without ever validating them as audio or SoundFont content.
 
 `crates/auris-session/src/session/assets.rs:154` · security · confirmed (executed reproduction; reported independently 1×)
 
@@ -345,7 +345,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Module doc for assets.rs: "copy a file in without ever destroying one already there" — implies only genuine assets are copied; the `place_audio` precedent (files.rs) always decodes before collecting, a check `collect_assets`'s path bypasses entirely.
 
-### F-118 · high · Re-entrant begin_transaction overwrites an open transaction, so its already-applied edit can become permanently unrecorded and unrendered.
+### ✅ F-118 · high · Re-entrant begin_transaction overwrites an open transaction, so its already-applied edit can become permanently unrecorded and unrendered.
 
 `crates/auris-session/src/session/mod.rs:830` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -361,7 +361,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Every mutator records its own undo step (crate-level promise in auris-session's lib.rs), and the realtime/graph contract that a stale render graph must be rebuilt before the audio thread relies on it again.
 
-### F-327 · high · trim_clip_start rebases MIDI notes on front-trim but leaves bend/controller CurvePoints at stale offsets, misaligning automation with the trimmed clip's notes.
+### ✅ F-327 · high · trim_clip_start rebases MIDI notes on front-trim but leaves bend/controller CurvePoints at stale offsets, misaligning automation with the trimmed clip's notes.
 
 `crates/auris-session/src/session/clips.rs:566` · correctness · confirmed (executed reproduction; reported independently 1×)
 

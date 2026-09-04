@@ -6,11 +6,11 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-093 | high | `crates/auris-agent/src/main.rs:839` | converse() in auris-agent has no request timeout, so a black-holed LLM host hangs the agent process (and the panel's parked thread) forever, unlike list_models […] |
+| ✅ F-093 | high | `crates/auris-agent/src/main.rs:839` | converse() in auris-agent has no request timeout, so a black-holed LLM host hangs the agent process (and the panel's parked thread) forever, unlike list_models […] |
 | F-252 | medium | `crates/auris-agent/src/main.rs:794` | auris-agent's Reporter/Narrator hooks always return ToolCallAction::Run and compose's `output` path is unconfined, so project-embedded text can steer […] |
 | F-386 | medium | `crates/auris-agent/src/main.rs:984` | Ollama's `list_models` discards all already-fetched model entries on a 20s timeout because the accumulator lives inside the future `tokio::time::timeout` drops. |
 
-### F-093 · high · converse() in auris-agent has no request timeout, so a black-holed LLM host hangs the agent process (and the panel's parked thread) forever, unlike list_models which is explicitly bounded for exactly this reason.
+### ✅ F-093 · high · converse() in auris-agent has no request timeout, so a black-holed LLM host hangs the agent process (and the panel's parked thread) forever, unlike list_models which is explicitly bounded for exactly this reason.
 
 `crates/auris-agent/src/main.rs:839` · correctness · confirmed (executed reproduction; reported independently 1×)
 

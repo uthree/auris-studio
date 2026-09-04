@@ -6,14 +6,14 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-077 | high | `crates/auris-engine/src/device.rs:800` | Automation writes to a hosted CLAP effect's parameter can change its reported latency without ever marking `latency_stale`, unlike the discrete SetEffectParam […] |
-| F-088 | high | `crates/auris-engine/src/graph/strip.rs:278` | Soloing a track during playback rebuilds the graph and settles MuteFade instead of sliding it, producing an audible click, contradicting strip.rs:251's own doc […] |
-| F-089 | high | `crates/auris-engine/src/capture.rs:702` | Input stream setup lacks output's Fixed-buffer-size retry fallback, so WASAPI-class devices fail to open for recording instead of falling back like output does. |
-| F-096 | high | `crates/auris-engine/src/device.rs:516` | Windows output devices whose default WASAPI mix format is I24/I32/I64/F64/U8 (e.g. a common "24-bit" device default) silently fall back to a fully silent audio […] |
-| F-099 | high | `crates/auris-engine/src/graph/strip.rs:70` | SmoothedGain::advance() ignores segment length, so loop/count-in edges collapse fader, pan and send ramps into an audible hard step instead of a smooth glide. |
-| F-104 | high | `crates/auris-engine/src/device.rs:423` | device.rs:423 leaves block_frames unclamped when SupportedBufferSize::Unknown, letting an oversized/corrupted value drive a huge eager allocation in […] |
-| F-121 | high | `crates/auris-engine/src/device.rs:703` | Session's field-order drop disconnects EngineHandle before the cpal stream stops, so retired graphs/buffers can be freed on the audio callback thread at […] |
-| F-351 | high | `crates/auris-engine/src/device.rs:190` | discard_pending can race the still-live CoreAudio callback thread and silently steal a queued engine command during a device disconnect. |
+| ✅ F-077 | high | `crates/auris-engine/src/device.rs:800` | Automation writes to a hosted CLAP effect's parameter can change its reported latency without ever marking `latency_stale`, unlike the discrete SetEffectParam […] |
+| ✅ F-088 | high | `crates/auris-engine/src/graph/strip.rs:278` | Soloing a track during playback rebuilds the graph and settles MuteFade instead of sliding it, producing an audible click, contradicting strip.rs:251's own doc […] |
+| ✅ F-089 | high | `crates/auris-engine/src/capture.rs:702` | Input stream setup lacks output's Fixed-buffer-size retry fallback, so WASAPI-class devices fail to open for recording instead of falling back like output does. |
+| ✅ F-096 | high | `crates/auris-engine/src/device.rs:516` | Windows output devices whose default WASAPI mix format is I24/I32/I64/F64/U8 (e.g. a common "24-bit" device default) silently fall back to a fully silent audio […] |
+| ✅ F-099 | high | `crates/auris-engine/src/graph/strip.rs:70` | SmoothedGain::advance() ignores segment length, so loop/count-in edges collapse fader, pan and send ramps into an audible hard step instead of a smooth glide. |
+| ✅ F-104 | high | `crates/auris-engine/src/device.rs:423` | device.rs:423 leaves block_frames unclamped when SupportedBufferSize::Unknown, letting an oversized/corrupted value drive a huge eager allocation in […] |
+| ✅ F-121 | high | `crates/auris-engine/src/device.rs:703` | Session's field-order drop disconnects EngineHandle before the cpal stream stops, so retired graphs/buffers can be freed on the audio callback thread at […] |
+| ✅ F-351 | high | `crates/auris-engine/src/device.rs:190` | discard_pending can race the still-live CoreAudio callback thread and silently steal a queued engine command during a device disconnect. |
 | F-197 | medium | `crates/auris-engine/src/renderer.rs:457` | chase_notes re-triggers all overlapping same-pitch voices at the last note's velocity, losing each note's own dynamics on seek/loop/resume. |
 | F-227 | medium | `crates/auris-engine/src/renderer.rs:374` | renderer.rs:374 casts a note's in-block offset to u32 with no upper clamp on block_frames, so an oversized block (>= 2^32 frames) would silently misplace […] |
 | F-255 | medium | `crates/auris-engine/src/graph/mod.rs:535` | An unclamped, plugin-reported latency value sizes a real delay-line allocation in RenderGraph::build, letting a misbehaving plugin crash graph construction. |
@@ -26,7 +26,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-354 | low | `crates/auris-engine/src/device.rs:4` | device.rs's module doc claims only two queues cross to the UI thread, but the callback also publishes playhead/count-in/playing/meters via shared atomics. |
 | F-434 | low | `crates/auris-engine/src/testkit.rs:458` | Lookahead test-double's set_param resets the write cursor but not the ring buffers, so a live frames change leaks stale pre-resize samples for the next […] |
 
-### F-077 · high · Automation writes to a hosted CLAP effect's parameter can change its reported latency without ever marking `latency_stale`, unlike the discrete SetEffectParam command path.
+### ✅ F-077 · high · Automation writes to a hosted CLAP effect's parameter can change its reported latency without ever marking `latency_stale`, unlike the discrete SetEffectParam command path.
 
 `crates/auris-engine/src/device.rs:800` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -42,7 +42,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** // A look-ahead length is a parameter like any other, so this is the one command that can leave the delay lines compensating for the wrong number of frames. (device.rs, EngineCommand::SetEffectParam handling, documenting the very invariant that automation silently breaks)
 
-### F-088 · high · Soloing a track during playback rebuilds the graph and settles MuteFade instead of sliding it, producing an audible click, contradicting strip.rs:251's own doc comment.
+### ✅ F-088 · high · Soloing a track during playback rebuilds the graph and settles MuteFade instead of sliding it, producing an audible click, contradicting strip.rs:251's own doc comment.
 
 `crates/auris-engine/src/graph/strip.rs:278` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -58,7 +58,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** /// Mute and solo as a gain, so switching either one slides instead of stepping. (crates/auris-engine/src/graph/strip.rs:251, doc comment on RenderStrip::fade)
 
-### F-089 · high · Input stream setup lacks output's Fixed-buffer-size retry fallback, so WASAPI-class devices fail to open for recording instead of falling back like output does.
+### ✅ F-089 · high · Input stream setup lacks output's Fixed-buffer-size retry fallback, so WASAPI-class devices fail to open for recording instead of falling back like output does.
 
 `crates/auris-engine/src/capture.rs:702` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -74,7 +74,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** "Preferred callback size in frames. Ignored when the device cannot do it." (identical doc comment on both device.rs:38 and capture.rs:151)
 
-### F-096 · high · Windows output devices whose default WASAPI mix format is I24/I32/I64/F64/U8 (e.g. a common "24-bit" device default) silently fall back to a fully silent audio engine with no error dialog, only a log warning.
+### ✅ F-096 · high · Windows output devices whose default WASAPI mix format is I24/I32/I64/F64/U8 (e.g. a common "24-bit" device default) silently fall back to a fully silent audio engine with no error dialog, only a log warning.
 
 `crates/auris-engine/src/device.rs:516` · platform · confirmed (executed reproduction; reported independently 1×)
 
@@ -90,7 +90,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** CLAUDE.md: "Development happens on macOS, so the Windows-only paths are the ones that rot" — the rules that follow exist specifically to keep Windows paths from silently breaking, and this is exactly such a silent Windows-only breakage that no test or CI check on macOS would ever surface.
 
-### F-099 · high · SmoothedGain::advance() ignores segment length, so loop/count-in edges collapse fader, pan and send ramps into an audible hard step instead of a smooth glide.
+### ✅ F-099 · high · SmoothedGain::advance() ignores segment length, so loop/count-in edges collapse fader, pan and send ramps into an audible hard step instead of a smooth glide.
 
 `crates/auris-engine/src/graph/strip.rs:70` · realtime · confirmed (executed reproduction; reported independently 1×)
 
@@ -106,7 +106,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Instrument::process and Effect::process run on the CoreAudio callback thread. No allocation, locking, blocking or I/O in those paths. — and more directly, the code's own doc comment on segment_frames states the loop/count-in split exists precisely so that a segment is bounded correctly and 'arrives at them outright' rather than stepping, showing the ramp-continuity intent that advance() as […]
 
-### F-104 · high · device.rs:423 leaves block_frames unclamped when SupportedBufferSize::Unknown, letting an oversized/corrupted value drive a huge eager allocation in AudioEngine::new before the documented silent-fallback path can intervene.
+### ✅ F-104 · high · device.rs:423 leaves block_frames unclamped when SupportedBufferSize::Unknown, letting an oversized/corrupted value drive a huge eager allocation in AudioEngine::new before the documented silent-fallback path can intervene.
 
 `crates/auris-engine/src/device.rs:423` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -122,7 +122,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** "Falls back to a silent engine when there is no usable output: the returned handle still accepts commands and reports `is_running() == false`, so the application opens and stays editable on a machine with no audio hardware." (doc comment on `start_audio`, crates/auris-engine/src/device.rs:212-215)
 
-### F-121 · high · Session's field-order drop disconnects EngineHandle before the cpal stream stops, so retired graphs/buffers can be freed on the audio callback thread at shutdown.
+### ✅ F-121 · high · Session's field-order drop disconnects EngineHandle before the cpal stream stops, so retired graphs/buffers can be freed on the audio callback thread at shutdown.
 
 `crates/auris-engine/src/device.rs:703` · realtime · confirmed (executed reproduction; reported independently 1×)
 
@@ -140,7 +140,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** The mechanism, line numbers, struct field order, and consequence are all correct as stated. Minor correction to the trigger: in this codebase "closing a project" (`Session::open`/`Session::new_project`) mutates the existing `Session` in place and does not drop `engine`/`device`, so it does not by itself exercise this path; the realistic trigger is dropping the whole `Session` (application quit, or any future code path that replaces `self.session` wholesale), during which the field-declaration-order drop (`engine` before `device`, with no pause/shutdown step anywhere in the tree) makes the […]
 
-### F-351 · high · discard_pending can race the still-live CoreAudio callback thread and silently steal a queued engine command during a device disconnect.
+### ✅ F-351 · high · discard_pending can race the still-live CoreAudio callback thread and silently steal a queued engine command during a device disconnect.
 
 `crates/auris-engine/src/device.rs:190` · concurrency · confirmed (traced through the code; reported independently 1×)
 

@@ -6,8 +6,8 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-018 | critical | `vendor/rustysynth/src/instrument.rs:33` | A crafted/corrupt SF2 file's zone-index fields cause an unchecked out-of-bounds slice panic in vendor/rustysynth's Instrument/Preset construction, crashing the […] |
-| F-004 | high | `vendor/rustysynth/src/zone.rs:25` | Zone::new panics on out-of-range slice index when a SoundFont's bag/generator chunk counts disagree, crashing Auris Studio instead of rejecting the broken file. |
+| ✅ F-018 | critical | `vendor/rustysynth/src/instrument.rs:33` | A crafted/corrupt SF2 file's zone-index fields cause an unchecked out-of-bounds slice panic in vendor/rustysynth's Instrument/Preset construction, crashing the […] |
+| ✅ F-004 | high | `vendor/rustysynth/src/zone.rs:25` | Zone::new panics on out-of-range slice index when a SoundFont's bag/generator chunk counts disagree, crashing Auris Studio instead of rejecting the broken file. |
 | F-205 | medium | `vendor/rustysynth/README.md:22` | rustysynth fork README's closed list of touched files (README.md:22-23) omits src/error.rs, which adds the InvalidModulatorList variant actually returned by […] |
 | F-240 | medium | `vendor/rustysynth/src/voice.rs:235` | Unclamped modulator-sum cents can overflow to inf/NaN in voice.rs's filter-cutoff math, permanently and silently bypassing the lowpass filter for that voice. |
 | F-241 | medium | `vendor/rustysynth/src/region_pair.rs:35` | Unbounded modulator summation in region_pair.rs can overflow filter cutoff to Infinity, silently disabling the low-pass filter on a crafted SoundFont. |
@@ -16,7 +16,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-295 | low | `vendor/rustysynth/src/synthesizer.rs:258` | note_off_all(true)/note_off_all_channel(_, true) don't clear the pre-rendered block tail, leaving up to ~0.7ms of stale audio after an "immediate" stop […] |
 | F-443 | low | `vendor/rustysynth/src/zone_info.rs:43` | A malformed SF2 bag with non-monotonic generator_index silently empties a zone instead of raising a parse error. |
 
-### F-018 · critical · A crafted/corrupt SF2 file's zone-index fields cause an unchecked out-of-bounds slice panic in vendor/rustysynth's Instrument/Preset construction, crashing the whole app instead of returning an error.
+### ✅ F-018 · critical · A crafted/corrupt SF2 file's zone-index fields cause an unchecked out-of-bounds slice panic in vendor/rustysynth's Instrument/Preset construction, crashing the whole app instead of returning an error.
 
 `vendor/rustysynth/src/instrument.rs:33` · security · confirmed (executed reproduction; reported independently 1×)
 
@@ -32,7 +32,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** A file that has moved is searched for by name and confirmed by size, and what is found is written back into the document. Missing assets are reported, never fatal: the project opens with that one track silent.
 
-### F-004 · high · Zone::new panics on out-of-range slice index when a SoundFont's bag/generator chunk counts disagree, crashing Auris Studio instead of rejecting the broken file.
+### ✅ F-004 · high · Zone::new panics on out-of-range slice index when a SoundFont's bag/generator chunk counts disagree, crashing Auris Studio instead of rejecting the broken file.
 
 `vendor/rustysynth/src/zone.rs:25` · correctness · confirmed (executed reproduction; reported independently 2×)
 

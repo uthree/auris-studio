@@ -6,10 +6,10 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-057 | high | `crates/auris-dsp/src/gain.rs:112` | GainPan ramps gain/pan via SmoothedValue but applies phase-invert and width raw per-block, causing an audible step/pop on toggle. |
-| F-075 | high | `crates/auris-dsp/src/reverb.rs:324` | Reverb reads mix/width/damping/room-size/pre-delay once per block instead of ramping them, causing zipper noise and pre-delay read-head jumps on parameter […] |
-| F-086 | high | `crates/auris-dsp/src/compressor.rs:241` | Compressor makeup gain is added unsmoothed to the envelope-filtered gain each frame, causing a zipper-noise click whenever makeup_db changes between blocks. |
-| F-087 | high | `crates/auris-dsp/src/eq.rs:335` | Re-enabling a disabled EQ band resumes its biquad from stale, frozen s1/s2 state, producing an audible click/thump instead of a clean rejoin. |
+| ✅ F-057 | high | `crates/auris-dsp/src/gain.rs:112` | GainPan ramps gain/pan via SmoothedValue but applies phase-invert and width raw per-block, causing an audible step/pop on toggle. |
+| ✅ F-075 | high | `crates/auris-dsp/src/reverb.rs:324` | Reverb reads mix/width/damping/room-size/pre-delay once per block instead of ramping them, causing zipper noise and pre-delay read-head jumps on parameter […] |
+| ✅ F-086 | high | `crates/auris-dsp/src/compressor.rs:241` | Compressor makeup gain is added unsmoothed to the envelope-filtered gain each frame, causing a zipper-noise click whenever makeup_db changes between blocks. |
+| ✅ F-087 | high | `crates/auris-dsp/src/eq.rs:335` | Re-enabling a disabled EQ band resumes its biquad from stale, frozen s1/s2 state, producing an audible click/thump instead of a clean rejoin. |
 | F-333 | high | `crates/auris-dsp/src/distortion.rs:146` | Distortion applies drive/output/mix as block-constant steps with no SmoothedValue ramp, causing zipper-noise clicks when those parameters are automated, unlike […] |
 | F-339 | high | `crates/auris-dsp/src/limiter.rs:115` | Limiter::prepare has no upper bound on sample_rate, so a corrupted .auris file's sample_rate can abort the render/export process via a multi-GB allocation. |
 | F-040 | medium | `crates/auris-dsp/src/limiter.rs:173` | Limiter's look-ahead delay line doesn't sanitise samples like chorus/delay do, so its own NaN-proof-ceiling doc claim is false in isolation, though the […] |
@@ -25,7 +25,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-383 | low | `crates/auris-dsp/src/lib.rs:46` | settled()'s denormal-flush threshold (DENORMAL_FLOOR) has no direct unit test, so a future regression that weakens it would pass CI silently. |
 | F-401 | low | `crates/auris-dsp/src/reverb.rs:332` | Reverb::process sums all channels into one accumulator before a fixed gain, so wet level scales with channel count, but every production caller renders at a […] |
 
-### F-057 · high · GainPan ramps gain/pan via SmoothedValue but applies phase-invert and width raw per-block, causing an audible step/pop on toggle.
+### ✅ F-057 · high · GainPan ramps gain/pan via SmoothedValue but applies phase-invert and width raw per-block, causing an audible step/pop on toggle.
 
 `crates/auris-dsp/src/gain.rs:112` · realtime · confirmed (executed reproduction; reported independently 1×)
 
@@ -41,7 +41,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Ramp time for gain and pan moves... to remove the step discontinuity that causes zipper noise (gain.rs doc comment on SMOOTHING_SECONDS)
 
-### F-075 · high · Reverb reads mix/width/damping/room-size/pre-delay once per block instead of ramping them, causing zipper noise and pre-delay read-head jumps on parameter changes, unlike delay.rs/chorus.rs.
+### ✅ F-075 · high · Reverb reads mix/width/damping/room-size/pre-delay once per block instead of ramping them, causing zipper noise and pre-delay read-head jumps on parameter changes, unlike delay.rs/chorus.rs.
 
 `crates/auris-dsp/src/reverb.rs:324` · dsp · confirmed (executed reproduction; reported independently 1×)
 
@@ -57,7 +57,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs" — and Reverb's sibling effects (delay.rs, chorus.rs) establish the project's own convention of ramping user-facing controls via SmoothedValue to avoid zipper/read-head-jump artifacts, a convention Reverb silently omits.
 
-### F-086 · high · Compressor makeup gain is added unsmoothed to the envelope-filtered gain each frame, causing a zipper-noise click whenever makeup_db changes between blocks.
+### ✅ F-086 · high · Compressor makeup gain is added unsmoothed to the envelope-filtered gain each frame, causing a zipper-noise click whenever makeup_db changes between blocks.
 
 `crates/auris-dsp/src/compressor.rs:241` · realtime · confirmed (executed reproduction; reported independently 1×)
 
@@ -73,7 +73,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Applying it as a step produces an audible click at the block boundary ('zipper noise'), so continuous parameters are moved [through smoothing] — crates/auris-dsp/src/smooth.rs module doc
 
-### F-087 · high · Re-enabling a disabled EQ band resumes its biquad from stale, frozen s1/s2 state, producing an audible click/thump instead of a clean rejoin.
+### ✅ F-087 · high · Re-enabling a disabled EQ band resumes its biquad from stale, frozen s1/s2 state, producing an audible click/thump instead of a clean rejoin.
 
 `crates/auris-dsp/src/eq.rs:335` · dsp · confirmed (executed reproduction; reported independently 1×)
 

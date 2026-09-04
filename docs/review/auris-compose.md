@@ -6,10 +6,10 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-029 | high | `crates/auris-compose/src/rhythm.rs:607` | swing_offset returns a negative (early) shift for percent < 50, rushing offbeats instead of delaying them as documented and tested. |
-| F-060 | high | `crates/auris-compose/src/gm.rs:248` | Drum `program` values between GM kit boundaries are silently corrupted to the nearest lower kit's number on TOML save/reparse, with no validation or error. |
-| F-101 | high | `crates/auris-compose/src/parts/comp.rs:305` | Pushed-chord anticipation in auris-compose's comp() deletes (not trims) a prior close chord's onset when chords are spaced under half a beat apart. |
-| F-112 | high | `crates/auris-compose/src/phrase.rs:207` | write_phrase floor-divides length into bars, so resizing a Lead/Kick/Snare/Hat/Drums clip to a non-bar-aligned length silently leaves its fractional tail with […] |
+| ✅ F-029 | high | `crates/auris-compose/src/rhythm.rs:607` | swing_offset returns a negative (early) shift for percent < 50, rushing offbeats instead of delaying them as documented and tested. |
+| ✅ F-060 | high | `crates/auris-compose/src/gm.rs:248` | Drum `program` values between GM kit boundaries are silently corrupted to the nearest lower kit's number on TOML save/reparse, with no validation or error. |
+| ✅ F-101 | high | `crates/auris-compose/src/parts/comp.rs:305` | Pushed-chord anticipation in auris-compose's comp() deletes (not trims) a prior close chord's onset when chords are spaced under half a beat apart. |
+| ✅ F-112 | high | `crates/auris-compose/src/phrase.rs:207` | write_phrase floor-divides length into bars, so resizing a Lead/Kick/Snare/Hat/Drums clip to a non-bar-aligned length silently leaves its fractional tail with […] |
 | F-316 | high | `crates/auris-compose/src/parts/drums.rs:115` | drums.rs:115 gates the snare's ending fill on the snare's own pattern having hits, so the shipped "sparse" groove (empty snare row) permanently silences the […] |
 | F-375 | high | `crates/auris-compose/src/rhythm.rs:279` | Pattern::at_in_bar's middle==0 branch hard-codes every interior beat to the pattern's first beat instead of cycling, silencing the six-eight groove's snare […] |
 | F-053 | medium | `crates/auris-compose/src/spec/doc.rs:391` | Drum-part GM program numbers between kit boundaries (e.g. 30) are silently rounded down to the nearest kit's patch number on save/reload. |
@@ -32,7 +32,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-292 | low | `crates/auris-compose/src/parts/drums.rs:247` | `.max(1)` in drums.rs:247 drops the first step of a full-bar snare fill when beats*per_beat exactly equals steps (e.g. 2/4 meter, fill=1.0, intensity=1.0). |
 | F-304 | low | `crates/auris-compose/src/frame.rs:169` | frame.rs:169's comment claims harmony, fill, and crash all gate joins the same way, but only harmony and crash share the intensity-comparison arrival test — […] |
 
-### F-029 · high · swing_offset returns a negative (early) shift for percent < 50, rushing offbeats instead of delaying them as documented and tested.
+### ✅ F-029 · high · swing_offset returns a negative (early) shift for percent < 50, rushing offbeats instead of delaying them as documented and tested.
 
 `crates/auris-compose/src/rhythm.rs:607` · theory · confirmed (executed reproduction; reported independently 3×)
 
@@ -48,7 +48,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** swing_offset's own doc comment: "How far a note on `step` is delayed by swinging at `percent`" and "percent says where the delayed note lands inside its pair — 50 is straight"; SongSpec::swing field doc (spec/mod.rs:415): "How much the offbeats are delayed, as a percentage where 50 is straight"; and the tests' own comments, rhythm.rs:1018 "swing delays, never rushes" and parts/mod.rs:604 "swing […]
 
-### F-060 · high · Drum `program` values between GM kit boundaries are silently corrupted to the nearest lower kit's number on TOML save/reparse, with no validation or error.
+### ✅ F-060 · high · Drum `program` values between GM kit boundaries are silently corrupted to the nearest lower kit's number on TOML save/reparse, with no validation or error.
 
 `crates/auris-compose/src/gm.rs:248` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -64,7 +64,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Bump `Project::FORMAT_VERSION` whenever an older build could *misread* a newer file... [and more generally] the score does not change — CLAUDE.md's broader "text typed... must be preserved" principle for saved documents is violated here: a value the user/composer explicitly wrote is silently changed on save.
 
-### F-101 · high · Pushed-chord anticipation in auris-compose's comp() deletes (not trims) a prior close chord's onset when chords are spaced under half a beat apart.
+### ✅ F-101 · high · Pushed-chord anticipation in auris-compose's comp() deletes (not trims) a prior close chord's onset when chords are spaced under half a beat apart.
 
 `crates/auris-compose/src/parts/comp.rs:305` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -80,7 +80,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** "The old chord's own strikes inside the borrowed half-beat go entirely — an offbeat figure lands one exactly where the push lands, and the two voicings struck together are the smear this block exists to prevent." (comp.rs:301-304, the doc comment directly above the offending `retain` call) — the code deletes any earlier note with start >= boundary, not just strikes belonging to the chord being […]
 
-### F-112 · high · write_phrase floor-divides length into bars, so resizing a Lead/Kick/Snare/Hat/Drums clip to a non-bar-aligned length silently leaves its fractional tail with no notes.
+### ✅ F-112 · high · write_phrase floor-divides length into bars, so resizing a Lead/Kick/Snare/Hat/Drums clip to a non-bar-aligned length silently leaves its fractional tail with no notes.
 
 `crates/auris-compose/src/phrase.rs:207` · correctness · confirmed (executed reproduction; reported independently 1×)
 

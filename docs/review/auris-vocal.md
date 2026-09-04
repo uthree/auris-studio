@@ -6,17 +6,17 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-009 | critical | `crates/auris-vocal/src/g2p.rs:95` | JapaneseDictionary::phonemes() misparses jpreprocess's NJD output as HTS labels, so any kanji lyric errors instead of singing on the live singer.rs render path. |
-| F-015 | critical | `crates/auris-vocal/src/frames.rs:189` | Unbounded frame_hop from a project file lets render_frames allocate unboundedly just from viewing a clip in the piano roll, hanging the GUI. |
-| F-036 | high | `crates/auris-vocal/src/frames.rs:340` | phoneme_at's segments.last() fallback keeps release=true forever past the last segment, forcing full gain on a pinned-short trailing consonant. |
-| F-058 | high | `crates/auris-vocal/src/openjtalk.rs:14` | openjtalk_phoneme has no arms for OpenJTalk's uppercase devoiced-vowel labels A/I/U/E/O, so ordinary Japanese text (です, ます, し...) fails g2p with an […] |
-| F-097 | high | `crates/auris-vocal/src/openjtalk.rs:23` | `openjtalk_phoneme` has no `kw`/`gw` arms, so any lyric OpenJTalk analyzes with a labialized velar mora hard-errors the whole line instead of singing it. |
+| ✅ F-009 | critical | `crates/auris-vocal/src/g2p.rs:95` | JapaneseDictionary::phonemes() misparses jpreprocess's NJD output as HTS labels, so any kanji lyric errors instead of singing on the live singer.rs render path. |
+| ✅ F-015 | critical | `crates/auris-vocal/src/frames.rs:189` | Unbounded frame_hop from a project file lets render_frames allocate unboundedly just from viewing a clip in the piano roll, hanging the GUI. |
+| ✅ F-036 | high | `crates/auris-vocal/src/frames.rs:340` | phoneme_at's segments.last() fallback keeps release=true forever past the last segment, forcing full gain on a pinned-short trailing consonant. |
+| ✅ F-058 | high | `crates/auris-vocal/src/openjtalk.rs:14` | openjtalk_phoneme has no arms for OpenJTalk's uppercase devoiced-vowel labels A/I/U/E/O, so ordinary Japanese text (です, ます, し...) fails g2p with an […] |
+| ✅ F-097 | high | `crates/auris-vocal/src/openjtalk.rs:23` | `openjtalk_phoneme` has no `kw`/`gw` arms, so any lyric OpenJTalk analyzes with a labialized velar mora hard-errors the whole line instead of singing it. |
 | F-163 | medium | `crates/auris-vocal/src/frames.rs:303` | Two vocal notes sharing an identical start tick cause the shorter one to be silently dropped from the rendered performance with no warning. |
 | F-216 | medium | `crates/auris-vocal/src/frames.rs:165` | render_frames only checks frame_hop is finite and positive, so a project file with a near-zero hop bypasses the session's documented [1ms,100ms] clamp and can […] |
 | F-237 | medium | `crates/auris-vocal/src/phoneme.rs:20` | is_syllabic only recognizes the 5 Japanese-core vowels, so any hand-edited non-Japanese IPA vowel is timed and gained as a consonant instead of stretching to […] |
 | F-391 | medium | `crates/auris-vocal/src/ornament.rs:41` | ornament_offset validates t/length/seconds/rate for finiteness but uses scoop/fall/vibrato depth raw, letting a corrupted project file's Infinity depth flood […] |
 
-### F-009 · critical · JapaneseDictionary::phonemes() misparses jpreprocess's NJD output as HTS labels, so any kanji lyric errors instead of singing on the live singer.rs render path.
+### ✅ F-009 · critical · JapaneseDictionary::phonemes() misparses jpreprocess's NJD output as HTS labels, so any kanji lyric errors instead of singing on the live singer.rs render path.
 
 `crates/auris-vocal/src/g2p.rs:95` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -32,7 +32,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers ... rather than on "it runs" (CLAUDE.md, Conventions) — more directly, phonemes() has zero test coverage anywhere in g2p.rs's test module while accent_phrases() (the sibling method using the correct NJD API) does, so the broken path went unverified.
 
-### F-015 · critical · Unbounded frame_hop from a project file lets render_frames allocate unboundedly just from viewing a clip in the piano roll, hanging the GUI.
+### ✅ F-015 · critical · Unbounded frame_hop from a project file lets render_frames allocate unboundedly just from viewing a clip in the piano roll, hanging the GUI.
 
 `crates/auris-vocal/src/frames.rs:189` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -48,7 +48,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Session::singer_frames doc comment: "A question, not a command: nothing is recorded and nothing changes." — a pure read path should not be able to hang/OOM the app.
 
-### F-036 · high · phoneme_at's segments.last() fallback keeps release=true forever past the last segment, forcing full gain on a pinned-short trailing consonant.
+### ✅ F-036 · high · phoneme_at's segments.last() fallback keeps release=true forever past the last segment, forcing full gain on a pinned-short trailing consonant.
 
 `crates/auris-vocal/src/frames.rs:340` · correctness · confirmed (executed reproduction; reported independently 2×)
 
@@ -64,7 +64,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Consonants are short; syllabics stretch... The last CONSONANT_RELEASE_SECONDS of a consonant are the exception and come back up to the vowel's level... a /k/ held at its closure's level to the end is a /k/ that never opens. (frames.rs module doc)
 
-### F-058 · high · openjtalk_phoneme has no arms for OpenJTalk's uppercase devoiced-vowel labels A/I/U/E/O, so ordinary Japanese text (です, ます, し...) fails g2p with an unknown-phoneme error.
+### ✅ F-058 · high · openjtalk_phoneme has no arms for OpenJTalk's uppercase devoiced-vowel labels A/I/U/E/O, so ordinary Japanese text (です, ます, し...) fails g2p with an unknown-phoneme error.
 
 `crates/auris-vocal/src/openjtalk.rs:14` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -80,7 +80,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** the test at the bottom is the contract: a syllable read either way must produce the same tokens (crates/auris-vocal/src/openjtalk.rs doc comment)
 
-### F-097 · high · `openjtalk_phoneme` has no `kw`/`gw` arms, so any lyric OpenJTalk analyzes with a labialized velar mora hard-errors the whole line instead of singing it.
+### ✅ F-097 · high · `openjtalk_phoneme` has no `kw`/`gw` arms, so any lyric OpenJTalk analyzes with a labialized velar mora hard-errors the whole line instead of singing it.
 
 `crates/auris-vocal/src/openjtalk.rs:23` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 

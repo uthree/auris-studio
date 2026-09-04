@@ -6,18 +6,18 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-014 | critical | `crates/auris-core/src/project/curve.rs:28` | CurvePoint lacks the finite-value guard AutomationLane and set_param already enforce, so a NaN bend/controller value round-trips to JSON `null` and makes the […] |
-| F-019 | critical | `crates/auris-core/src/project/mod.rs:579` | repair_id_counter's unchecked `highest + 1` panics (debug) or silently wraps to 0 (release) on a u64::MAX id in a loaded project file. |
-| F-023 | critical | `crates/auris-core/src/time.rs:668` | align_to_bars in crates/auris-core/src/time.rs can silently drop a time-signature change and relocate another whenever an earlier point's bar-rounding […] |
-| F-003 | high | `crates/auris-core/src/project/clip.rs:122` | A saved audio clip with an out-of-range loop_end hangs graph build on project open, with no cap in loop_passes and no validation on deserialize. |
-| F-035 | high | `crates/auris-core/src/project/clip.rs:988` | Project::split_clip clones bend/controller curves verbatim into both MIDI clip halves instead of rebasing/trimming them like notes, corrupting automation on […] |
-| F-049 | high | `crates/auris-core/src/project/curve.rs:157` | curve_events omits the leading (0, first.value) event, so a curve's held-flat lead-in before its first point is silently dropped from playback scheduling. |
-| F-050 | high | `crates/auris-core/src/time.rs:169` | Seconds::format_clock derives minutes and seconds from uncoordinated roundings, printing invalid strings like "2:60.000" instead of carrying to "3:00.000". |
-| F-055 | high | `crates/auris-core/src/project/track.rs:508` | Project::set_hosted_instrument skips remove_instrument_automation, so old lanes keep driving the newly hosted CLAP plugin's parameters by stale index. |
-| F-056 | high | `crates/auris-core/src/project/track.rs:496` | set_hosted_instrument swaps a track's plugin without calling remove_instrument_automation, so stale automation lanes drive the new plugin's unrelated […] |
-| F-076 | high | `crates/auris-core/src/time.rs:684` | SignatureMap::from_points/align_to_bars does unchecked i64 multiply-add on tick values from deserialized project files, panicking (debug) or silently […] |
-| F-083 | high | `crates/auris-core/src/project/clip.rs:1349` | notes_digest omits phoneme_seconds/scoop/fall/vibrato despite claiming "every field", so ornament-only hand edits are silently discarded on resize/regenerate. |
-| F-317 | high | `crates/auris-core/src/theory/numeral.rs:519` | degree_of never checks accidental 0 against the major reference scale, so borrowed major-scale degrees in minor/modal keys are mislabeled with double […] |
+| ✅ F-014 | critical | `crates/auris-core/src/project/curve.rs:28` | CurvePoint lacks the finite-value guard AutomationLane and set_param already enforce, so a NaN bend/controller value round-trips to JSON `null` and makes the […] |
+| ✅ F-019 | critical | `crates/auris-core/src/project/mod.rs:579` | repair_id_counter's unchecked `highest + 1` panics (debug) or silently wraps to 0 (release) on a u64::MAX id in a loaded project file. |
+| ✅ F-023 | critical | `crates/auris-core/src/time.rs:668` | align_to_bars in crates/auris-core/src/time.rs can silently drop a time-signature change and relocate another whenever an earlier point's bar-rounding […] |
+| ✅ F-003 | high | `crates/auris-core/src/project/clip.rs:122` | A saved audio clip with an out-of-range loop_end hangs graph build on project open, with no cap in loop_passes and no validation on deserialize. |
+| ✅ F-035 | high | `crates/auris-core/src/project/clip.rs:988` | Project::split_clip clones bend/controller curves verbatim into both MIDI clip halves instead of rebasing/trimming them like notes, corrupting automation on […] |
+| ✅ F-049 | high | `crates/auris-core/src/project/curve.rs:157` | curve_events omits the leading (0, first.value) event, so a curve's held-flat lead-in before its first point is silently dropped from playback scheduling. |
+| ✅ F-050 | high | `crates/auris-core/src/time.rs:169` | Seconds::format_clock derives minutes and seconds from uncoordinated roundings, printing invalid strings like "2:60.000" instead of carrying to "3:00.000". |
+| ✅ F-055 | high | `crates/auris-core/src/project/track.rs:508` | Project::set_hosted_instrument skips remove_instrument_automation, so old lanes keep driving the newly hosted CLAP plugin's parameters by stale index. |
+| ✅ F-056 | high | `crates/auris-core/src/project/track.rs:496` | set_hosted_instrument swaps a track's plugin without calling remove_instrument_automation, so stale automation lanes drive the new plugin's unrelated […] |
+| ✅ F-076 | high | `crates/auris-core/src/time.rs:684` | SignatureMap::from_points/align_to_bars does unchecked i64 multiply-add on tick values from deserialized project files, panicking (debug) or silently […] |
+| ✅ F-083 | high | `crates/auris-core/src/project/clip.rs:1349` | notes_digest omits phoneme_seconds/scoop/fall/vibrato despite claiming "every field", so ornament-only hand edits are silently discarded on resize/regenerate. |
+| ✅ F-317 | high | `crates/auris-core/src/theory/numeral.rs:519` | degree_of never checks accidental 0 against the major reference scale, so borrowed major-scale degrees in minor/modal keys are mislabeled with double […] |
 | F-352 | high | `crates/auris-core/src/project/routing.rs:390` | repair_routing is O(n^3) in track count and runs unconditionally, synchronously, on every project open, even when routing is already valid. |
 | F-007 | medium | `crates/auris-core/src/project/clip.rs:100` | Ticks::Add is unchecked, so a corrupted/malicious .auris file with extreme start/length values panics in debug or silently corrupts note/clip end positions in […] |
 | F-048 | medium | `crates/auris-core/src/theory/key.rs:130` | Key::spelling() picks the wrong sharps/flats side for 7 of 84 mode/tonic pairs (Dorian, Phrygian, Locrian, Mixolydian), contradicting its own doc comment's […] |
@@ -39,7 +39,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-430 | low | `crates/auris-core/src/time.rs:219` | TimeSignature::COMMON doc claims the full meter menu is 400 rows; it's actually 32x5=160. |
 | F-453 | low | `crates/auris-core/src/project/clip.rs:628` | AudioClip::fade_gain_at has no guard against overlapping fade_in/fade_out, so any producer besides set_clip_fades can trigger a silent mid-clip gain dip. |
 
-### F-014 · critical · CurvePoint lacks the finite-value guard AutomationLane and set_param already enforce, so a NaN bend/controller value round-trips to JSON `null` and makes the whole project file unreadable.
+### ✅ F-014 · critical · CurvePoint lacks the finite-value guard AutomationLane and set_param already enforce, so a NaN bend/controller value round-trips to JSON `null` and makes the whole project file unreadable.
 
 `crates/auris-core/src/project/curve.rs:28` · persistence · confirmed (executed reproduction; reported independently 1×)
 
@@ -55,7 +55,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** AutomationLane doc comment: "Invariants, upheld by every constructor and mutator: ... every value finite." / Session::set_param comment: "A value that is not a number is not stored: NaN slips every clamp downstream, and `serde_json` writes a non-finite float as `null`"
 
-### F-019 · critical · repair_id_counter's unchecked `highest + 1` panics (debug) or silently wraps to 0 (release) on a u64::MAX id in a loaded project file.
+### ✅ F-019 · critical · repair_id_counter's unchecked `highest + 1` panics (debug) or silently wraps to 0 (release) on a u64::MAX id in a loaded project file.
 
 `crates/auris-core/src/project/mod.rs:579` · persistence · confirmed (executed reproduction; reported independently 1×)
 
@@ -71,7 +71,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Missing assets are reported, never fatal: the project opens with that one track silent. (project folder invariant — a malformed/corrupted file should degrade gracefully, not crash or silently corrupt state)
 
-### F-023 · critical · align_to_bars in crates/auris-core/src/time.rs can silently drop a time-signature change and relocate another whenever an earlier point's bar-rounding overshoots past it, corrupting SignatureMap on set_initial or project load with 3+ signature points.
+### ✅ F-023 · critical · align_to_bars in crates/auris-core/src/time.rs can silently drop a time-signature change and relocate another whenever an earlier point's bar-rounding overshoots past it, corrupting SignatureMap on set_initial or project load with 3+ signature points.
 
 `crates/auris-core/src/time.rs:668` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -89,7 +89,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** // A change that would land on top of its predecessor is dropped rather than moved: it named the same bar, and the later signature is the one the user asked for last. (time.rs, doc comment on align_to_bars) — the drop path is documented only for genuine same-bar collisions, not for a point that only appears to collide because an earlier point's own rounding overshot past it.
 
-### F-003 · high · A saved audio clip with an out-of-range loop_end hangs graph build on project open, with no cap in loop_passes and no validation on deserialize.
+### ✅ F-003 · high · A saved audio clip with an out-of-range loop_end hangs graph build on project open, with no cap in loop_passes and no validation on deserialize.
 
 `crates/auris-core/src/project/clip.rs:122` · persistence · confirmed (executed reproduction; reported independently 2×)
 
@@ -105,7 +105,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** Missing assets are reported, never fatal: the project opens with that one track silent.
 
-### F-035 · high · Project::split_clip clones bend/controller curves verbatim into both MIDI clip halves instead of rebasing/trimming them like notes, corrupting automation on split.
+### ✅ F-035 · high · Project::split_clip clones bend/controller curves verbatim into both MIDI clip halves instead of rebasing/trimming them like notes, corrupting automation on split.
 
 `crates/auris-core/src/project/clip.rs:988` · correctness · confirmed (executed reproduction; reported independently 2×)
 
@@ -121,7 +121,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** CurvePoint::at is documented (curve.rs:29) as measured from the clip's own start; clip.rs documents bend/controllers as belonging to the phrase ("a clip dragged four bars later takes its bends with it")
 
-### F-049 · high · curve_events omits the leading (0, first.value) event, so a curve's held-flat lead-in before its first point is silently dropped from playback scheduling.
+### ✅ F-049 · high · curve_events omits the leading (0, first.value) event, so a curve's held-flat lead-in before its first point is silently dropped from playback scheduling.
 
 `crates/auris-core/src/project/curve.rs:157` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -137,7 +137,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** /// What a curve reads at `at`: straight lines between its points, flat outside them.
 
-### F-050 · high · Seconds::format_clock derives minutes and seconds from uncoordinated roundings, printing invalid strings like "2:60.000" instead of carrying to "3:00.000".
+### ✅ F-050 · high · Seconds::format_clock derives minutes and seconds from uncoordinated roundings, printing invalid strings like "2:60.000" instead of carrying to "3:00.000".
 
 `crates/auris-core/src/time.rs:169` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -153,7 +153,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** /// Formats as `mm:ss.mmm`.
 
-### F-055 · high · Project::set_hosted_instrument skips remove_instrument_automation, so old lanes keep driving the newly hosted CLAP plugin's parameters by stale index.
+### ✅ F-055 · high · Project::set_hosted_instrument skips remove_instrument_automation, so old lanes keep driving the newly hosted CLAP plugin's parameters by stale index.
 
 `crates/auris-core/src/project/track.rs:508` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -169,7 +169,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** "Called when the instrument itself is replaced, for the reason the swap also throws away the saved parameter values: a lane names a track and a parameter *index*, never the plugin that owns it, so a curve drawn for one instrument's waveform would carry straight on as a curve driving whatever the next instrument keeps at that index. It lives here rather than in the caller so that whatever changes […]
 
-### F-056 · high · set_hosted_instrument swaps a track's plugin without calling remove_instrument_automation, so stale automation lanes drive the new plugin's unrelated parameters.
+### ✅ F-056 · high · set_hosted_instrument swaps a track's plugin without calling remove_instrument_automation, so stale automation lanes drive the new plugin's unrelated parameters.
 
 `crates/auris-core/src/project/track.rs:496` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -185,7 +185,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** `remove_instrument_automation`'s doc comment: "a lane names a track and a parameter index, never the plugin that owns it, so a curve drawn for one instrument's waveform would carry straight on as a curve driving whatever the next instrument keeps at that index. It lives here rather than in the caller so that whatever changes a track's instrument next inherits the cleanup."
 
-### F-076 · high · SignatureMap::from_points/align_to_bars does unchecked i64 multiply-add on tick values from deserialized project files, panicking (debug) or silently corrupting bar alignment (release) on an extreme tick, contradicting the type's documented "infallible on the way in" guarantee.
+### ✅ F-076 · high · SignatureMap::from_points/align_to_bars does unchecked i64 multiply-add on tick values from deserialized project files, panicking (debug) or silently corrupting bar alignment (release) on an extreme tick, contradicting the type's documented "infallible on the way in" guarantee.
 
 `crates/auris-core/src/time.rs:684` · persistence · confirmed (executed reproduction; reported independently 1×)
 
@@ -201,7 +201,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** Infallible on the way in, like [`KeyMap`](crate::harmony::KeyMap) and unlike [`TempoMap`]: a degenerate signature is answered by [`TimeSignature::new`] with 4/4, and no arithmetic anywhere divides by a numerator. An empty list is the default map rather than an error.
 
-### F-083 · high · notes_digest omits phoneme_seconds/scoop/fall/vibrato despite claiming "every field", so ornament-only hand edits are silently discarded on resize/regenerate.
+### ✅ F-083 · high · notes_digest omits phoneme_seconds/scoop/fall/vibrato despite claiming "every field", so ornament-only hand edits are silently discarded on resize/regenerate.
 
 `crates/auris-core/src/project/clip.rs:1349` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -217,7 +217,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** FNV-1a over every field of every note, order-sensitive, exact: velocities go in as their bit patterns, because an edit undone restores exactly the bits it moved and must read as no edit at all.
 
-### F-317 · high · degree_of never checks accidental 0 against the major reference scale, so borrowed major-scale degrees in minor/modal keys are mislabeled with double accidentals instead of plain or single-accidental numerals.
+### ✅ F-317 · high · degree_of never checks accidental 0 against the major reference scale, so borrowed major-scale degrees in minor/modal keys are mislabeled with double accidentals instead of plain or single-accidental numerals.
 
 `crates/auris-core/src/theory/numeral.rs:519` · theory · confirmed (executed reproduction; reported independently 1×)
 

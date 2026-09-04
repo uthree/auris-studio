@@ -6,11 +6,11 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-017 | critical | `crates/auris-toolbox/src/lib.rs:1944` | edit_notes' `beats`/`beat` fields have no upper bound, letting a single tool call overflow Ticks arithmetic in fit_length_to_notes and crash or corrupt the […] |
-| F-006 | high | `crates/auris-toolbox/src/lib.rs:2515` | edit_notes' placed_at() only lower-bounds `beat`, so a large finite beat overflows Ticks arithmetic (panic in dev, silent wraparound corruption in release). |
-| F-066 | high | `crates/auris-toolbox/src/lib.rs:2519` | strip_by_name treats any track named "master" as the master bus, silently misrouting set_level/set_effect/section_gain to the wrong target. |
-| F-116 | high | `crates/auris-toolbox/src/lib.rs:2330` | auris-toolbox's `sing` tool result splices unsanitized voice-card name/speaker text from an untrusted .onnx file verbatim into agent-facing output — an […] |
-| F-123 | high | `crates/auris-toolbox/src/lib.rs:326` | `render`'s stems/output path has no containment check, so it can silently overwrite the open project's own Audio/ assets via `write_wav`'s unconditional rename. |
+| ✅ F-017 | critical | `crates/auris-toolbox/src/lib.rs:1944` | edit_notes' `beats`/`beat` fields have no upper bound, letting a single tool call overflow Ticks arithmetic in fit_length_to_notes and crash or corrupt the […] |
+| ✅ F-006 | high | `crates/auris-toolbox/src/lib.rs:2515` | edit_notes' placed_at() only lower-bounds `beat`, so a large finite beat overflows Ticks arithmetic (panic in dev, silent wraparound corruption in release). |
+| ✅ F-066 | high | `crates/auris-toolbox/src/lib.rs:2519` | strip_by_name treats any track named "master" as the master bus, silently misrouting set_level/set_effect/section_gain to the wrong target. |
+| ✅ F-116 | high | `crates/auris-toolbox/src/lib.rs:2330` | auris-toolbox's `sing` tool result splices unsanitized voice-card name/speaker text from an untrusted .onnx file verbatim into agent-facing output — an […] |
+| ✅ F-123 | high | `crates/auris-toolbox/src/lib.rs:326` | `render`'s stems/output path has no containment check, so it can silently overwrite the open project's own Audio/ assets via `write_wav`'s unconditional rename. |
 | F-314 | high | `crates/auris-toolbox/src/lib.rs:1558` | `add_part`'s unbounded `bars` argument lets one MCP/CLI call drive billions of generated notes, OOM-crashing the shared toolbox process. |
 | F-326 | high | `crates/auris-toolbox/src/lib.rs:2416` | track_by_name in auris-toolbox silently resolves to the first of two same-named tracks, so by-name tools can act on the wrong one. |
 | F-328 | high | `crates/auris-toolbox/src/lib.rs:1933` | edit_notes validates a new note's start against the clip but not its end, letting a long `beats` value silently grow the clip via fit_length_to_notes with no […] |
@@ -23,7 +23,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-388 | medium | `crates/auris-toolbox/src/lib.rs:330` | render::run's stems path drops already-written stem info via `?` on a mid-loop write failure, hiding partial success from the caller. |
 | F-267 | low | `crates/auris-toolbox/src/lib.rs:27` | auris-toolbox's crate doc claims a uniform four-item module shape for all 30 tools, but 4 argument-less info tools have only three items and a different run() […] |
 
-### F-017 · critical · edit_notes' `beats`/`beat` fields have no upper bound, letting a single tool call overflow Ticks arithmetic in fit_length_to_notes and crash or corrupt the session.
+### ✅ F-017 · critical · edit_notes' `beats`/`beat` fields have no upper bound, letting a single tool call overflow Ticks arithmetic in fit_length_to_notes and crash or corrupt the session.
 
 `crates/auris-toolbox/src/lib.rs:1944` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -41,7 +41,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** The mechanism and consequence are correct, but the exact overflow site is one step earlier and reached synchronously, not "on the next render/analyze call": for `beats: 1e16` at bar 1 beat 1, `Note::end()` itself (`start + length`) does not overflow (start is 0), but the very next line inside `MidiClip::fit_length_to_notes` — the ceiling-division `needed.0 + grid - 1` in crates/auris-core/src/project/clip.rs:419 (grid defaults to 240) — does, i64::MAX + 239. This is reached synchronously from `Session::add_note`, called from within `edit_notes::run` itself (crates/auris-toolbox/src/lib.rs, […]
 
-### F-006 · high · edit_notes' placed_at() only lower-bounds `beat`, so a large finite beat overflows Ticks arithmetic (panic in dev, silent wraparound corruption in release).
+### ✅ F-006 · high · edit_notes' placed_at() only lower-bounds `beat`, so a large finite beat overflows Ticks arithmetic (panic in dev, silent wraparound corruption in release).
 
 `crates/auris-toolbox/src/lib.rs:2515` · correctness · confirmed (executed reproduction; reported independently 2×)
 
@@ -55,7 +55,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Bound `beat` the same way `bar_after` already bounds bar counts a few lines above: reject non-finite or absurdly large `beat` up front, and replace the raw float-to-i64 cast and `Ticks` addition in `placed_at` with checked arithmetic (`checked_add`/fallible conversion) that returns a descriptive `Err` instead of overflowing.
 
-### F-066 · high · strip_by_name treats any track named "master" as the master bus, silently misrouting set_level/set_effect/section_gain to the wrong target.
+### ✅ F-066 · high · strip_by_name treats any track named "master" as the master bus, silently misrouting set_level/set_effect/section_gain to the wrong target.
 
 `crates/auris-toolbox/src/lib.rs:2519` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -69,7 +69,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** In `strip_by_name`, look the name up among `project.tracks` first; only fall back to the synthetic master-bus sentinel (`Ok(None)`) when no real track matches. This preserves "master" as the default/no-track spelling while letting an actual track named "master" shadow it, matching how `track_by_name` already resolves names case-insensitively.
 
-### F-116 · high · auris-toolbox's `sing` tool result splices unsanitized voice-card name/speaker text from an untrusted .onnx file verbatim into agent-facing output — an indirect prompt-injection vector.
+### ✅ F-116 · high · auris-toolbox's `sing` tool result splices unsanitized voice-card name/speaker text from an untrusted .onnx file verbatim into agent-facing output — an indirect prompt-injection vector.
 
 `crates/auris-toolbox/src/lib.rs:2330` · security · confirmed (executed reproduction; reported independently 1×)
 
@@ -85,7 +85,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** CLAUDE.md: "auris-toolbox [is] every word said to a model — tool names, descriptions, schemas and the work behind them, in English" — this designates auris-toolbox's output as trusted agent-facing text, yet it splices unsanitized, file-supplied metadata (SingerVoice.name, documented in auris-core as coming from "the model's own voice card") directly into that text with no sanitization boundary.
 
-### F-123 · high · `render`'s stems/output path has no containment check, so it can silently overwrite the open project's own Audio/ assets via `write_wav`'s unconditional rename.
+### ✅ F-123 · high · `render`'s stems/output path has no containment check, so it can silently overwrite the open project's own Audio/ assets via `write_wav`'s unconditional rename.
 
 `crates/auris-toolbox/src/lib.rs:326` · correctness · confirmed (executed reproduction; reported independently 1×)
 
