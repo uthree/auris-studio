@@ -333,6 +333,14 @@ impl Session {
                 expected: "an instrument track",
             });
         }
+        if self.project.track(id).is_some_and(|track| {
+            track
+                .kind
+                .as_instrument()
+                .is_some_and(|inner| inner.instrument_id == instrument_id)
+        }) {
+            return Ok(());
+        }
         self.record(Edit::ChangeInstrument);
         let mut swapped = false;
         if let Some(inner) = self
@@ -1038,6 +1046,42 @@ mod tests {
         assert!(
             session.automation().lane(first).is_some(),
             "undo put the instrument back without its automation"
+        );
+    }
+
+    #[test]
+    fn choosing_the_current_instrument_keeps_its_state_and_records_nothing() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let target = ParamTarget::Instrument {
+            track,
+            param: ParamId(0),
+        };
+        session.set_param(target, 0.25);
+        let instrument = session
+            .project()
+            .track(track)
+            .unwrap()
+            .kind
+            .as_instrument()
+            .unwrap()
+            .instrument_id
+            .clone();
+        session.set_track_instrument(track, &instrument).unwrap();
+
+        let state = &session
+            .project()
+            .track(track)
+            .unwrap()
+            .kind
+            .as_instrument()
+            .unwrap()
+            .instrument_state;
+        assert_eq!(state.params.values().next().copied(), Some(0.25));
+        assert_eq!(session.undo(), Some(Edit::AddInstrumentTrack));
+        assert!(
+            session.project().track(track).is_none(),
+            "reselecting the instrument did not add an undo step"
         );
     }
 

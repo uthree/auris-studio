@@ -604,7 +604,7 @@ pub fn swing_offset(grid: Grid, step: usize, percent: u8, feel: SwingFeel) -> Ti
         return Ticks::ZERO;
     }
     let unit_ticks = grid.step_ticks().raw() * unit as i64;
-    let shift = (f64::from(percent) / 100.0 - 0.5) * 2.0 * unit_ticks as f64;
+    let shift = ((f64::from(percent) - 50.0) / 50.0).max(0.0) * unit_ticks as f64;
     Ticks(shift.round() as i64)
 }
 
@@ -1011,6 +1011,13 @@ mod tests {
         assert_eq!(eighth(1, 66), Ticks::ZERO, "still the first eighth");
         assert_eq!(eighth(4, 66), Ticks::ZERO, "beat two");
         assert_eq!(eighth(2, 50), Ticks::ZERO, "straight is no swing");
+        for percent in 20..50 {
+            assert_eq!(
+                eighth(2, percent),
+                Ticks::ZERO,
+                "a low setting may straighten an offbeat but never rush it"
+            );
+        }
 
         // The offbeat eighth is what gets delayed. An eighth is 480 ticks, so at 66 % the shift
         // is 480 * (0.66 - 0.5) * 2 = 154, which lands it just shy of the third triplet.

@@ -345,7 +345,11 @@ fn phoneme_at<'a>(note: &'a TimedNote<'a>, t: f64) -> (&'a str, bool) {
         return (SILENCE, false);
     };
     let release = CONSONANT_RELEASE_SECONDS.min((to - from) / 2.0);
-    (token.as_str(), !is_syllabic(token) && to - into <= release)
+    let remaining = to - into;
+    (
+        token.as_str(),
+        !is_syllabic(token) && remaining >= 0.0 && remaining <= release,
+    )
 }
 
 /// The note's phonemes laid across its length: `(from, to, token)` in seconds from its start.
@@ -622,6 +626,33 @@ mod tests {
         assert_eq!(
             frames.phonemes[12], 2,
             "the vowel starts where the pin ends"
+        );
+    }
+
+    #[test]
+    fn a_trailing_consonant_held_past_its_pin_is_not_forever_in_release() {
+        let mut note = sung(60, 0.0, 4.0, &["a", "s"]);
+        note.phoneme_seconds = vec![0.010, 0.010];
+        let plain = render_frames(&track(vec![note.clone()]), &map());
+
+        let mut levelled = track(vec![note]);
+        levelled.voice = Some(auris_core::SingerVoice {
+            path: auris_core::AssetPath::external("/nowhere/voice.onnx"),
+            name: "Measured".into(),
+            consonants: None,
+            levels: Some(ConsonantLevels {
+                default: -12.0,
+                db: [("s".to_string(), -20.0)].into_iter().collect(),
+            }),
+            speaker: None,
+        });
+        let levelled = render_frames(&levelled, &map());
+        let late = 100;
+        let token = plain.inventory[plain.phonemes[late] as usize].as_str();
+        assert_eq!(token, "s", "the final phoneme is held over the unused tail");
+        assert!(
+            (levelled.energy[late] / plain.energy[late] - 0.1).abs() < 1e-3,
+            "past its own release, /s/ returns to its measured closure level"
         );
     }
 

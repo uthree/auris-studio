@@ -181,6 +181,10 @@ def run_preprocess(config: DictConfig) -> dict[str, int]:
     )
 
     min_samples = int(float(audio_cfg.get("min_seconds", 0.0)) * sample_rate)
+    # torch's reflect padding requires the input to be strictly longer than either pad.  The
+    # shipped corpora set a larger minimum, but a custom corpus is allowed to omit it.
+    reflect_pad = max((n_fft - hop_length) // 2, 0)
+    feature_min_samples = reflect_pad + 1
     max_samples = int(float(audio_cfg.get("max_seconds", 1e9)) * sample_rate)
     peak_normalize = bool(audio_cfg.get("peak_normalize", True))
     peak = float(audio_cfg.get("peak", 0.95))
@@ -220,7 +224,7 @@ def run_preprocess(config: DictConfig) -> dict[str, int]:
                 skip(error)
                 continue
 
-            if wav.numel() < max(min_samples, hop_length):
+            if wav.numel() < max(min_samples, hop_length, feature_min_samples):
                 skip("too short")
                 continue
             if wav.numel() > max_samples:

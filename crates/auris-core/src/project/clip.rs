@@ -997,11 +997,21 @@ impl Project {
             right.start = at;
             right.length = clip.end() - at;
             right.notes = split_notes_right(&clip.notes, offset);
+            right.bend = split_curve_right(&clip.bend, offset);
+            for points in right.controllers.values_mut() {
+                *points = split_curve_right(points, offset);
+            }
+            right.forget_empty_curves();
             right.loop_end = Ticks::ZERO;
 
             let new_id = right.id;
             let left = self.midi_clip_mut(id)?;
             left.notes = split_notes_left(&clip.notes, offset);
+            left.bend = split_curve_left(&clip.bend, offset);
+            for points in left.controllers.values_mut() {
+                *points = split_curve_left(points, offset);
+            }
+            left.forget_empty_curves();
             left.length = offset;
             left.loop_end = Ticks::ZERO;
             self.track_mut(track_id)?.kind.note_clips_mut()?.push(right);
@@ -1333,6 +1343,28 @@ fn split_notes_left(notes: &[Note], offset: Ticks) -> Vec<Note> {
         .map(|note| Note {
             length: (offset - note.start).min(note.length),
             ..note.clone()
+        })
+        .collect()
+}
+
+/// The points before a split, still relative to the left clip's unchanged start.
+fn split_curve_left(points: &[CurvePoint], offset: Ticks) -> Vec<CurvePoint> {
+    points
+        .iter()
+        .copied()
+        .filter(|point| point.at < offset)
+        .collect()
+}
+
+/// The points at and after a split, rebased onto the right clip's new start.
+fn split_curve_right(points: &[CurvePoint], offset: Ticks) -> Vec<CurvePoint> {
+    points
+        .iter()
+        .copied()
+        .filter(|point| point.at >= offset)
+        .map(|point| CurvePoint {
+            at: point.at - offset,
+            ..point
         })
         .collect()
 }
@@ -1923,6 +1955,74 @@ mod tests {
         assert_eq!(right.notes[0].start, Ticks::ZERO, "notes are rebased");
         assert_eq!(right.notes[0].length, Ticks::QUARTER);
         assert_eq!(right.notes[1].start, Ticks::QUARTER);
+    }
+
+    #[test]
+    fn splitting_a_midi_clip_divides_and_rebases_all_of_its_curves() {
+        let mut project = Project::new("Demo", 48_000.0);
+        let track = project.add_instrument_track("Lead", "x");
+        let clip = project
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks(1_600))
+            .unwrap();
+        let original = project.midi_clip_mut(clip).unwrap();
+        original.bend = vec![
+            CurvePoint {
+                at: Ticks(200),
+                value: -2.0,
+            },
+            CurvePoint {
+                at: Ticks(1_200),
+                value: 3.0,
+            },
+        ];
+        original.controllers.insert(
+            11,
+            vec![
+                CurvePoint {
+                    at: Ticks(400),
+                    value: 0.25,
+                },
+                CurvePoint {
+                    at: Ticks(800),
+                    value: 0.75,
+                },
+            ],
+        );
+
+        let right = project.split_clip(clip, Ticks(800)).unwrap();
+        let (_, left) = project.midi_clip(clip).unwrap();
+        assert_eq!(
+            left.bend,
+            [CurvePoint {
+                at: Ticks(200),
+                value: -2.0
+            }]
+        );
+        assert_eq!(
+            left.controllers[&11],
+            [CurvePoint {
+                at: Ticks(400),
+                value: 0.25
+            }]
+        );
+
+        let (_, right) = project.midi_clip(right).unwrap();
+        assert_eq!(
+            right.bend,
+            [CurvePoint {
+                at: Ticks(400),
+                value: 3.0
+            }],
+            "right-hand points are relative to the new clip start"
+        );
+        assert_eq!(
+            right.controllers[&11],
+            [CurvePoint {
+                at: Ticks::ZERO,
+                value: 0.75
+            }],
+            "a point on the cut starts the right-hand curve"
+        );
     }
 
     #[test]

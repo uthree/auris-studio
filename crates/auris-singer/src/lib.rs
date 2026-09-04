@@ -75,10 +75,40 @@ pub enum SingError {
         /// How many the model has, numbered from zero.
         count: u32,
     },
+    /// The per-frame sequences disagree about how many frames they contain.
+    #[error(
+        "the singer frames have mismatched lengths: {phonemes} phonemes, {f0_hz} pitch values, and {energy} energy values"
+    )]
+    InvalidFrames {
+        /// Number of phoneme ids.
+        phonemes: usize,
+        /// Number of pitch values.
+        f0_hz: usize,
+        /// Number of energy values.
+        energy: usize,
+    },
     /// The runtime refused an inference mid-render.
     #[error("the voice model refused the score: {0}")]
     Inference(String),
     /// The progress callback asked the render to stop.
     #[error("the render was cancelled")]
     Cancelled,
+}
+
+/// Checks the invariants an externally-written frame file must satisfy before inference.
+///
+/// [`auris_vocal::render_frames`] constructs equal-length sequences, but `SingerFrames` is also a
+/// serialisable interchange format and a hand-edited file does not inherit that construction.
+pub fn validate_frames(frames: &auris_vocal::SingerFrames) -> Result<(), SingError> {
+    let phonemes = frames.phonemes.len();
+    let f0_hz = frames.f0_hz.len();
+    let energy = frames.energy.len();
+    match phonemes == f0_hz && phonemes == energy {
+        true => Ok(()),
+        false => Err(SingError::InvalidFrames {
+            phonemes,
+            f0_hz,
+            energy,
+        }),
+    }
 }

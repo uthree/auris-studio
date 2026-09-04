@@ -997,6 +997,36 @@ mod tests {
         });
     }
 
+    /// A reload offered for one document must disappear when another document replaces it.
+    #[gpui::test]
+    fn an_agent_reload_offer_does_not_follow_a_project_switch(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let root =
+            std::env::temp_dir().join(format!("auris-harness-agent-reload-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let (first, second) = app.update(cx, |this, _| {
+            this.session.save_as(&root.join("First.auris")).unwrap();
+            let first = this.session.path().unwrap().to_path_buf();
+            this.session.save_as(&root.join("Second.auris")).unwrap();
+            let second = this.session.path().unwrap().to_path_buf();
+            this.session.open(&first).unwrap();
+            this.agent_chat.pending_reload = Some(first.clone());
+            (first, second)
+        });
+
+        app.update(cx, |this, cx| this.open_project_at(second.clone(), cx));
+        cx.run_until_parked();
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.session.path(), Some(second.as_path()));
+            assert_eq!(this.agent_chat.pending_reload, None);
+        });
+
+        // The project directories are disposable fixtures. Windows cannot remove them until
+        // every handle from the asynchronous open has returned, which run_until_parked ensures.
+        drop(first);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     /// Another writer at the open file, seen from the window: a clean window follows the
     /// disk silently, a dirty one gets a standing offer and autosave holds its fire, and a
     /// save of its own takes the file back and the offer down.

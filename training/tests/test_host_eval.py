@@ -19,6 +19,7 @@ from auris_singer.host_eval import (
     METRICS,
     Analyst,
     Settings,
+    _song_speaker,
     evaluate,
     evaluate_score,
     format_report,
@@ -71,6 +72,15 @@ def test_the_validation_split_is_the_data_modules(processed_dataset):
     theirs = [r["id"] for r in dm.val_dataset.records]
     ours = [r["id"] for r in validation_records(processed_dataset, seed=7, val_size=3)]
     assert ours == theirs
+
+
+def test_a_joined_song_is_only_rendered_for_one_speaker():
+    same = [{"speaker": "alice"}, {"speaker": "alice"}]
+    mixed = [{"speaker": "alice"}, {"speaker": "bob"}]
+
+    assert _song_speaker(same, None) == (True, "alice")
+    assert _song_speaker(mixed, None) == (False, None)
+    assert _song_speaker(mixed, "bob") == (True, "bob"), "an explicit one-voice render"
 
 
 def test_the_analyst_measures_a_render_against_its_curves():
@@ -204,7 +214,10 @@ def test_the_host_sings_the_corpus_and_every_column_is_measured(exported_voice, 
 
     # `all` rather than `val`: twelve synthetic utterances make a one-utterance validation
     # split, and the song column needs two.
-    settings = Settings(split="all", utterances=2, pitch=False, song_gap_seconds=0.2, take_seeds=2)
+    settings = Settings(
+        split="all", utterances=2, pitch=False, song_gap_seconds=0.2, take_seeds=2,
+        speaker="alice",
+    )
     listener = Parroting(["a", "i", "k", "o"])
     report = evaluate(
         voice, processed_dataset, checkpoint, Host.find(), tmp_path / "work", settings, listener=listener

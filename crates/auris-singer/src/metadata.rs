@@ -12,6 +12,13 @@ use serde::Deserialize;
 
 use crate::SingError;
 
+/// Most speakers a single voice model may declare.
+///
+/// Speaker ids become choices in the interface and names in an allocated list. Thousands leave
+/// ample room for a multi-corpus model without letting corrupt metadata request billions of
+/// strings before the model has even opened.
+const MAX_SPEAKERS: u32 = 4_096;
+
 /// The `metadata_props` key an auris-singer export stores its JSON under.
 pub const METADATA_KEY: &str = "auris_singer";
 
@@ -179,6 +186,12 @@ impl VoiceInfo {
                 "a zero among sample_rate, hop_length and inter_channels".into(),
             ));
         }
+        if info.n_speakers == 0 || info.n_speakers > MAX_SPEAKERS {
+            return Err(SingError::Metadata(format!(
+                "n_speakers must be between 1 and {MAX_SPEAKERS}, got {}",
+                info.n_speakers
+            )));
+        }
         for required in [crate::score::MODEL_SILENCE, crate::score::MODEL_UNKNOWN] {
             if !info.symbols.iter().any(|symbol| symbol == required) {
                 return Err(SingError::Metadata(format!(
@@ -339,6 +352,13 @@ mod tests {
         assert_eq!(info.speaker_id("namine_ritsu"), Some(0));
         assert_eq!(info.speaker_id("nobody"), None);
         // Fields this build does not know — f0_min, audio — pass through without complaint.
+    }
+
+    #[test]
+    fn an_absurd_speaker_count_is_refused_before_names_are_allocated() {
+        let raw = RITSU.replacen("\"n_speakers\": 1", "\"n_speakers\": 4000000000", 1);
+        let error = VoiceInfo::parse(&raw).expect_err("the count is not a plausible voice");
+        assert!(error.to_string().contains("n_speakers"), "{error}");
     }
 
     /// The new-spec export: the same voice with its measured consonant table aboard.

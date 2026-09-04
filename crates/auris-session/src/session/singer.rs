@@ -490,8 +490,10 @@ impl Session {
     pub fn read_singer_frames(path: &Path) -> Result<SingerFrames, SessionError> {
         let text = std::fs::read_to_string(path)
             .map_err(|error| SessionError::Io(auris_io::IoError::from_fs(path, error)))?;
-        serde_json::from_str(&text)
-            .map_err(|error| SessionError::Io(auris_io::IoError::Json(error)))
+        let frames = serde_json::from_str(&text)
+            .map_err(|error| SessionError::Io(auris_io::IoError::Json(error)))?;
+        auris_singer::validate_frames(&frames)?;
+        Ok(frames)
     }
 
     /// Sings frames through a voice model into the WAV file at `path`, and nothing else.
@@ -1934,6 +1936,26 @@ mod tests {
         match crate::Session::read_singer_frames(&scratch.join("absent.json")) {
             Err(SessionError::Io(_)) => {}
             other => panic!("expected a file error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_frames_file_with_mismatched_sequences_is_refused_without_panicking() {
+        let scratch = crate::session::fixtures::Scratch::new("frames-mismatched");
+        let path = scratch.join("broken.frames.json");
+        std::fs::write(
+            &path,
+            r#"{"hop_seconds":0.01,"inventory":["<sil>","a"],"phonemes":[1,1,1],"f0_hz":[],"energy":[0.5]}"#,
+        )
+        .unwrap();
+
+        match crate::Session::read_singer_frames(&path) {
+            Err(SessionError::Sing(auris_singer::SingError::InvalidFrames {
+                phonemes: 3,
+                f0_hz: 0,
+                energy: 1,
+            })) => {}
+            other => panic!("expected a frame-length error, got {other:?}"),
         }
     }
 

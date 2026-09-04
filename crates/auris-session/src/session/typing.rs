@@ -289,10 +289,20 @@ impl MusicalTyping {
     /// Zero with neither held and with both: they are one wheel pushed from two sides, and a
     /// hand on both ends of it has not moved it.
     pub fn bend(&self) -> f32 {
+        self.bend_on(None)
+    }
+
+    /// How far one track's bend keys currently have it bent.
+    fn bend_for(&self, track: TrackId) -> f32 {
+        self.bend_on(Some(track))
+    }
+
+    /// Reads either all held bend keys or only the ones belonging to `track`.
+    fn bend_on(&self, track: Option<TrackId>) -> f32 {
         let direction = |role| {
-            self.held
-                .iter()
-                .any(|held| Self::role(held.key) == Some(role))
+            self.held.iter().any(|held| {
+                track.is_none_or(|track| held.track == track) && Self::role(held.key) == Some(role)
+            })
         };
         let down = direction(TypingRole::BendDown);
         let up = direction(TypingRole::BendUp);
@@ -388,7 +398,7 @@ impl MusicalTyping {
             TypingRole::Louder => self.shift_velocity(VELOCITY_STEP),
             TypingRole::Sustain => self.sustain = true,
             TypingRole::BendDown | TypingRole::BendUp => {
-                played.bend = vec![(track, self.bend())];
+                played.bend = vec![(track, self.bend_for(track))];
                 self.touch(track);
             }
             TypingRole::Wheel(step) => {
@@ -418,7 +428,7 @@ impl MusicalTyping {
             Some(TypingRole::BendDown) | Some(TypingRole::BendUp) => {
                 // Computed after the removal above, so releasing one of two held bend keys hands
                 // the wheel back to the other rather than centring it.
-                played.bend = vec![(held.track, self.bend())];
+                played.bend = vec![(held.track, self.bend_for(held.track))];
             }
             _ => {
                 if let Some(pitch) = held.note {
@@ -915,6 +925,15 @@ mod tests {
             vec![(TRACK, -TYPING_BEND)],
             "letting go of up leaves down holding it"
         );
+        assert_eq!(keys.release("1").bend, vec![(TRACK, 0.0)]);
+    }
+
+    #[test]
+    fn bend_keys_on_different_tracks_do_not_move_each_other() {
+        let mut keys = keyboard();
+        assert_eq!(keys.press("1", TRACK).bend, vec![(TRACK, -TYPING_BEND)]);
+        assert_eq!(keys.press("2", OTHER).bend, vec![(OTHER, TYPING_BEND)]);
+        assert_eq!(keys.release("2").bend, vec![(OTHER, 0.0)]);
         assert_eq!(keys.release("1").bend, vec![(TRACK, 0.0)]);
     }
 

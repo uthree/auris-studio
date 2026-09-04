@@ -44,7 +44,7 @@ impl Session {
         if self.project.tracks[index].kind.as_instrument().is_none() {
             return Err(SessionError::WrongTrackKind {
                 id: track.0,
-                actual: "an audio track",
+                actual: self.project.tracks[index].kind.label(),
                 expected: "an instrument track",
             });
         }
@@ -582,16 +582,14 @@ mod tests {
     #[test]
     fn generating_needs_a_track_that_can_hold_notes() {
         let (mut session, _) = with_a_progression();
-        let audio = session.add_audio_track("Vocals");
+        let bus = session.add_bus_track("Bus");
         let error = session
-            .generate_clip(
-                audio,
-                Ticks::ZERO,
-                BAR,
-                ClipRecipe::new(ClipPreset::Lead, 1),
-            )
+            .generate_clip(bus, Ticks::ZERO, BAR, ClipRecipe::new(ClipPreset::Lead, 1))
             .unwrap_err();
-        assert!(matches!(error, SessionError::WrongTrackKind { .. }));
+        assert!(matches!(
+            error,
+            SessionError::WrongTrackKind { actual: "Bus", .. }
+        ));
     }
 
     #[test]

@@ -204,6 +204,7 @@ impl VoiceModel {
         seed: u64,
         mut progress: impl FnMut(usize, usize) -> bool,
     ) -> Result<Vec<f32>, SingError> {
+        crate::validate_frames(frames)?;
         if speaker >= self.info.n_speakers {
             return Err(SingError::NoSuchSpeaker {
                 speaker,

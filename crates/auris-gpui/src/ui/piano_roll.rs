@@ -1031,6 +1031,7 @@ impl AurisApp {
         // click would otherwise begin a move that goes nowhere and swallows the gesture.
         if let Some(index) = under_pointer
             && crate::gestures::PointerGesture::DoubleClick.matches(event)
+            && !self.pointer.delete.matches(event)
             && self.editing_a_singer_clip()
         {
             self.open_lyric_prompt(clip_id, index);
@@ -2847,6 +2848,7 @@ mod window_tests {
 
     use auris_session::prelude::*;
 
+    use crate::gestures::PointerGesture;
     use crate::harness::{
         click_at, creating, deleting, double_click, drag, drag_with, paint, press, release,
         roll_point, show_pitch, with_a_clip, with_a_singer_clip,
@@ -3243,6 +3245,32 @@ mod window_tests {
         cx.dispatch_action(crate::actions::Undo);
         assert!(notes(&app, cx)[1].lyric.is_empty());
         assert_eq!(notes(&app, cx)[0].lyric, "さ");
+    }
+
+    /// A configured destructive gesture wins over the singer roll's ordinary double-click action.
+    #[gpui::test]
+    fn a_double_click_deletes_a_sung_note_when_that_is_the_configured_gesture(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx, _, clip) = with_a_singer_clip(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .add_note(clip, Note::new(MIDDLE_C, Ticks::ZERO, BEAT))
+                .expect("the singer clip takes a note");
+            this.pointer.set_delete(PointerGesture::DoubleClick);
+            this.open_clip_in_editor(clip);
+        });
+        paint(&app, cx);
+        show_pitch(&app, cx, MIDDLE_C);
+
+        let at = roll_point(&app, cx, HALF_BEAT, MIDDLE_C);
+        double_click(cx, at);
+
+        assert!(notes(&app, cx).is_empty(), "the configured delete won");
+        assert!(
+            app.read_with(cx, |this, _| this.prompt.is_none()),
+            "the lyric sheet did not intercept the delete"
+        );
     }
 
     /// On an instrument track the same gesture means what it always meant — nothing extra —

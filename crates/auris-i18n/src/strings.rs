@@ -55,7 +55,7 @@ strings! {
     PromptComposeLyrics { en: "Compose from Lyrics", ja: "歌詞から作曲" }
     HintComposeLyrics {
         en: "One line per phrase (、！？ break too) · secondary-Return composes, a fresh take each run",
-        ja: "1行が1フレーズ(、や！？も切れ目)。Ctrl/⌘+Enterで作曲、実行のたびに新しいテイク"
+        ja: "1行が1フレーズ(、や！？も切れ目)。secondary-Returnで作曲、実行のたびに新しいテイク"
     }
     PromptSectionLyrics { en: "Lyrics", ja: "歌詞" }
     HintSectionLyrics {

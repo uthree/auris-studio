@@ -399,7 +399,11 @@ impl AurisApp {
             let at = event.menu_at();
             view.update(cx, |this, cx| {
                 let menu = build(this, at);
+                let opened = !menu.is_empty();
                 this.open_menu(menu);
+                if opened {
+                    cx.stop_propagation();
+                }
                 cx.notify();
             })
             .ok();

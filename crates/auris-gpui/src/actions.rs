@@ -431,7 +431,6 @@ bindable! {
         // No keystroke: the list it opens is the point, and every letter worth spending is
         // already spent. It is on the File menu, which is where anybody looks for it.
         "file.recent",          GroupFile,      CmdOpenRecent,         "" => OpenRecent;
-        "view.about",           GroupView,      CmdAbout,              "" => ShowAbout;
         "file.quit",            GroupFile,      CmdQuit,               "secondary-q" => Quit;
 
         // Their ids still begin `file.` because an id is written into settings files and never
@@ -505,6 +504,7 @@ bindable! {
         // the conversation is typed into, a panel whose key is a letter would be a panel that
         // reopens itself while somebody writes about it.
         "view.agent",           GroupView,      CmdShowAgent,          "secondary-alt-a" => ToggleAgent;
+        "view.about",           GroupView,      CmdAbout,              "" => ShowAbout;
         // The three strips over the arrangement. Out on `secondary-alt-` because they are
         // arrangement furniture rather than things reached mid-take, and because the plain and
         // shifted forms of these letters are all spoken for.

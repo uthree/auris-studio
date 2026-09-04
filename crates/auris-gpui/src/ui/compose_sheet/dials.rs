@@ -494,6 +494,40 @@ pub fn add_part(dials: &mut SongDials, role: Role) {
     dials.parts.push(PartSpec::of_role(name, role));
 }
 
+/// Renames the part at `index` and every section reference keyed by its name.
+///
+/// Part names are identities in the song specification: section rosters and section-specific
+/// tweaks both point at them. Moving all three together keeps every sheet state writable.
+pub fn rename_part(dials: &mut SongDials, index: usize, name: &str) -> bool {
+    if name.trim().is_empty()
+        || dials
+            .parts
+            .iter()
+            .enumerate()
+            .any(|(other, part)| other != index && part.name == name)
+    {
+        return false;
+    }
+    let Some(part) = dials.parts.get_mut(index) else {
+        return false;
+    };
+    let old = std::mem::replace(&mut part.name, name.to_string());
+    if old == name {
+        return true;
+    }
+    for section in &mut dials.sections {
+        for held in &mut section.parts {
+            if held == &old {
+                *held = name.to_string();
+            }
+        }
+        if let Some(tweak) = section.tweaks.remove(&old) {
+            section.tweaks.insert(name.to_string(), tweak);
+        }
+    }
+    true
+}
+
 /// Removes the part at `index`, if the roster would still have one.
 ///
 /// A song with no parts writes no notes, and a sheet whose Write button produces an empty
@@ -502,7 +536,11 @@ pub fn remove_part(dials: &mut SongDials, index: usize) -> bool {
     if dials.parts.len() <= 1 || index >= dials.parts.len() {
         return false;
     }
-    dials.parts.remove(index);
+    let removed = dials.parts.remove(index).name;
+    for section in &mut dials.sections {
+        section.parts.retain(|part| part != &removed);
+        section.tweaks.remove(&removed);
+    }
     true
 }
 
@@ -1316,6 +1354,34 @@ mod tests {
         }
         assert!(!remove_part(&mut dials, 0));
         assert_eq!(dials.parts.len(), 1);
+    }
+
+    #[test]
+    fn part_names_move_or_leave_every_section_with_their_parts() {
+        let mut renamed = peopled();
+        let old = renamed.parts[0].name.clone();
+        renamed.sections[0].parts = vec![old.clone()];
+        renamed.sections[0]
+            .tweaks
+            .insert(old.clone(), Default::default());
+        assert!(rename_part(&mut renamed, 0, "new name"));
+        assert_eq!(renamed.sections[0].parts, ["new name"]);
+        assert!(renamed.sections[0].tweaks.contains_key("new name"));
+        assert!(!renamed.sections[0].tweaks.contains_key(&old));
+        let spec = song_spec(&renamed);
+        assert!(SongSpec::parse(&spec.to_toml()).is_ok());
+
+        let mut removed = peopled();
+        let gone = removed.parts[0].name.clone();
+        removed.sections[0].parts = vec![gone.clone(), removed.parts[1].name.clone()];
+        removed.sections[0]
+            .tweaks
+            .insert(gone.clone(), Default::default());
+        assert!(remove_part(&mut removed, 0));
+        assert!(!removed.sections[0].parts.contains(&gone));
+        assert!(!removed.sections[0].tweaks.contains_key(&gone));
+        let spec = song_spec(&removed);
+        assert!(SongSpec::parse(&spec.to_toml()).is_ok());
     }
 
     #[test]

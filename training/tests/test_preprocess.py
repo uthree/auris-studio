@@ -177,6 +177,30 @@ def test_decode_errors_skip_only_the_broken_utterance(tmp_path, monkeypatch, bro
     assert (out_dir / records[0]["path"]).is_file()
 
 
+def test_audio_too_short_for_reflect_padding_is_skipped(tmp_path, monkeypatch):
+    """A custom zero minimum must not let reflect padding abort preprocessing."""
+    wav_dir, text_dir = write_corpus(tmp_path, n_utterances=2, source_rate=SAMPLE_RATE)
+    sf.write(wav_dir / "utt1.wav", np.zeros(600, dtype=np.float32), SAMPLE_RATE)
+    (text_dir / "utt1.txt").write_text("a", encoding="utf-8")
+
+    class FakeExtractor:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __call__(self, _wav, _sample_rate, n_frames):
+            return torch.zeros(n_frames), torch.zeros(n_frames, dtype=torch.bool)
+
+    monkeypatch.setattr("auris_singer.preprocess.pipeline.FcpeExtractor", FakeExtractor)
+    out_dir = tmp_path / "processed"
+    config = build_config(tmp_path, out_dir)
+    config.audio.min_seconds = 0.0
+
+    summary = run_preprocess(config)
+
+    assert summary["processed"] == 1
+    assert summary["too short"] == 1
+
+
 def test_labelled_seconds_become_frames_that_sum_exactly():
     from auris_singer.preprocess.pipeline import seconds_to_frames
 

@@ -679,7 +679,13 @@ def evaluate(
         logger.info("%s: %s", record["id"], _one_line(row["host"]))
 
     song_facts: dict | None = None
-    if settings.song and len(utterances) > 1:
+    song_supported, song_speaker = _song_speaker(rows, settings.speaker)
+    if settings.song and len(utterances) > 1 and not song_supported:
+        logger.warning(
+            "song render skipped: the sampled utterances name more than one speaker; "
+            "use --speaker to render the joined song in one voice"
+        )
+    if settings.song and len(utterances) > 1 and song_supported:
         gap = int(round(settings.song_gap_seconds / info.hop_seconds))
         joined, spans = concatenate_frames(frames_list, gap)
         frames_path = joined.write(workdir / "song.frames.json")
@@ -691,7 +697,7 @@ def evaluate(
             song_takes.append(
                 host.sing_frames(
                     frames_path, info.path, rendered, seed=seed, acceleration=settings.acceleration,
-                    speaker=settings.speaker or rows[0].get("speaker"),
+                    speaker=song_speaker,
                 )
             )
             sung = read_wav(rendered, info.sample_rate)
@@ -757,6 +763,20 @@ def evaluate(
         "utterances": rows,
         "summary": summary,
     }
+
+
+def _song_speaker(rows: list[dict], override: str | None) -> tuple[bool, str | None]:
+    """Return the one speaker a joined frames file can truthfully use.
+
+    The host accepts one speaker for a whole frames file. Without an explicit override, a joined
+    render is therefore only meaningful when every corpus row names the same speaker.
+    """
+    if override is not None:
+        return True, override
+    speakers = {row.get("speaker") for row in rows}
+    if len(speakers) != 1:
+        return False, None
+    return True, next(iter(speakers))
 
 
 # ----------------------------------------------------------------------------------------------

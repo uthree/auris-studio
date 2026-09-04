@@ -709,6 +709,9 @@ impl AurisApp {
     /// The end of both ways in: the file dialog picks a path and lands here, and a dropped
     /// project arrives here already knowing one.
     pub(crate) fn open_project_at(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        // A reload offer belongs to the document that was open when the agent changed it. Take
+        // it down before the asynchronous open starts so it cannot be clicked during the switch.
+        self.agent_chat.pending_reload = None;
         cx.spawn(async move |this, cx| {
             let _ = this.update(cx, |this, cx| {
                 let text = messages::opening(this.language(), &path.display().to_string());

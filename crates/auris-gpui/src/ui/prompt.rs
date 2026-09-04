@@ -838,23 +838,12 @@ impl AurisApp {
             // A part's name is what the composer keys its material by, so two of one name would
             // be two parts writing the same notes — and the format refuses it outright.
             PromptTarget::SongPartName(index) => {
-                let taken = self.song_sheet.as_ref().is_some_and(|dials| {
-                    dials
-                        .parts
-                        .iter()
-                        .enumerate()
-                        .any(|(other, part)| other != index && part.name == text)
+                let renamed = self.song_sheet.as_mut().is_some_and(|dials| {
+                    crate::ui::compose_sheet::rename_part(dials, index, &text)
                 });
-                if taken || text.trim().is_empty() {
+                if !renamed {
                     self.set_failed_status(self.t(Key::NameCannotBeEmpty).to_string());
                     return;
-                }
-                if let Some(part) = self
-                    .song_sheet
-                    .as_mut()
-                    .and_then(|dials| dials.parts.get_mut(index))
-                {
-                    part.name = text;
                 }
                 Ok(())
             }
@@ -1461,10 +1450,11 @@ impl AurisApp {
 
     /// The line under the field saying what a valid answer looks like.
     fn render_prompt_hint(&self, hint: Key, theme: &Theme) -> impl IntoElement + use<> {
-        div()
-            .text_xs()
-            .text_color(theme.text_faint)
-            .child(self.t(hint))
+        let text = self.t(hint).replace(
+            "secondary-Return",
+            &crate::actions::menu_keystroke("secondary-enter"),
+        );
+        div().text_xs().text_color(theme.text_faint).child(text)
     }
 
     /// The row of values the field would accept, narrowing as the text is typed.
