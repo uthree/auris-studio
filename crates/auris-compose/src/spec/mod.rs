@@ -169,7 +169,7 @@ impl PartSpec {
     pub fn range(&self) -> (i32, i32) {
         let (low, high) = self.role.range();
         let shift = (self.octave - self.role.default_octave()) * 12;
-        (low + shift, high + shift)
+        ((low + shift).clamp(0, 127), (high + shift).clamp(0, 127))
     }
 }
 

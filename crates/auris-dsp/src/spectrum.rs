@@ -167,7 +167,14 @@ impl SpectrumAnalyzer {
         let bins = self.bin_count().min(out.len());
         for (bin, slot) in out.iter_mut().enumerate().take(bins) {
             let power = self.real[bin] * self.real[bin] + self.imag[bin] * self.imag[bin];
-            let amplitude = power.sqrt() * scale;
+            // DC and Nyquist mirror onto themselves, so unlike an interior real-signal bin they
+            // have no negative-frequency partner whose half of the amplitude must be recovered.
+            let mirror = if bin == 0 || bin == size / 2 {
+                0.5
+            } else {
+                1.0
+            };
+            let amplitude = power.sqrt() * scale * mirror;
             *slot = if amplitude > 0.0 {
                 (20.0 * amplitude.log10()).max(SILENCE_DB)
             } else {
@@ -294,6 +301,24 @@ mod tests {
         );
         // And well away from it there is nothing.
         assert!(bins[bin * 4] < -60.0, "leakage at {} dBFS", bins[bin * 4]);
+    }
+
+    #[test]
+    fn self_mirrored_bins_are_not_counted_twice() {
+        let mut analyzer = SpectrumAnalyzer::new(1_024);
+        analyzer.push(&vec![1.0; analyzer.size()]);
+        let mut bins = vec![0.0; analyzer.bin_count()];
+        analyzer.magnitudes(&mut bins);
+        assert!(bins[0].abs() < 0.1, "DC read {} dBFS", bins[0]);
+
+        analyzer.reset();
+        let nyquist: Vec<f32> = (0..analyzer.size())
+            .map(|frame| if frame % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
+        analyzer.push(&nyquist);
+        analyzer.magnitudes(&mut bins);
+        let last = bins.len() - 1;
+        assert!(bins[last].abs() < 0.1, "Nyquist read {} dBFS", bins[last]);
     }
 
     #[test]

@@ -53,6 +53,16 @@ def build(config):
     return datamodule, module
 
 
+def fit(trainer, module, datamodule, checkpoint_path) -> None:
+    """Fit or resume without permitting checkpoint pickle code to execute."""
+    trainer.fit(
+        module,
+        datamodule=datamodule,
+        ckpt_path=checkpoint_path,
+        weights_only=True,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, help="training YAML config")
@@ -103,7 +113,7 @@ def main() -> None:
         use_distributed_sampler=False,
         **trainer_config,
     )
-    trainer.fit(module, datamodule=datamodule, ckpt_path=args.resume)
+    fit(trainer, module, datamodule, args.resume)
 
 
 if __name__ == "__main__":

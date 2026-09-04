@@ -48,15 +48,16 @@ anywhere Rust does, and CI covers all three.
 * [CHANGELOG](CHANGELOG.md) — what changed, and what it broke.
 
 The API documentation is `cargo doc --workspace --no-deps --open`. The workspace has no root
-crate, so the account of how the thirteen of them fit together lives in `auris_session::guide`,
+crate, so the account of how the eighteen of them fit together lives in `auris_session::guide`,
 which is the only crate that depends on every other and so the only one whose links to them all
 resolve.
 
 ## Downloads
 
 Built binaries are on the [releases page](https://github.com/uthree/auris-studio/releases):
-`Auris Studio.app` and the `auris` command line tool for macOS, as one universal binary for
-Apple Silicon and Intel; both `.exe`s for Windows; the command line tool alone for Linux.
+`Auris Studio.app`, `auris`, `auris-mcp` and `auris-agent` for macOS, as universal binaries for
+Apple Silicon and Intel; the corresponding four `.exe`s for Windows; the `auris` command line
+tool alone for Linux.
 
 Every archive carries the shipped SoundFont, which is most of its size and all of the instruments
 past the built-in four. On macOS it is inside the bundle, so dragging `Auris Studio.app` to

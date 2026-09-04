@@ -318,6 +318,12 @@ messages! {
         ja: "`{name}` という名前のシンガートラックはありません"
     }
 
+    /// A voice model does not contain the requested speaker, followed by what it does offer.
+    fn no_such_speaker(name: &str, offered: &str) {
+        en: "the voice has no speaker called {name}; it offers {offered}",
+        ja: "この音声には {name} という話者はいません。選べる話者: {offered}"
+    }
+
     /// Confirmation that a piece left as a MIDI file.
     fn midi_exported(path: &str, notes: usize) {
         en: "Wrote {notes} note(s) to {path}",

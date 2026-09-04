@@ -292,6 +292,7 @@ impl TextField {
     /// through the application context, which would have to be threaded in for the sake of three
     /// keys. The rename sheet, which is where text is actually written, answers them itself.
     pub fn apply_key(&mut self, key: &str, shift: bool, secondary: bool) -> KeyEffect {
+        let before = self.content.len();
         match key {
             "backspace" => self.backspace(),
             "delete" => self.delete_forward(),
@@ -317,7 +318,11 @@ impl TextField {
             }
             _ => return KeyEffect::Ignored,
         }
-        KeyEffect::Changed
+        if self.content.len() == before {
+            KeyEffect::Moved
+        } else {
+            KeyEffect::Changed
+        }
     }
 
     /// Abandons any IME pre-edit, keeping the text it produced.
@@ -795,6 +800,18 @@ mod tests {
             KeyEffect::Changed
         );
         assert_eq!(field.content(), "ドラ");
+    }
+
+    #[test]
+    fn deletion_at_a_field_boundary_does_not_claim_the_text_changed() {
+        let mut field = TextField::new("abc");
+        field.move_home(false);
+        assert_eq!(field.apply_key("backspace", false, false), KeyEffect::Moved);
+        assert_eq!(field.content(), "abc");
+
+        field.move_end(false);
+        assert_eq!(field.apply_key("delete", false, false), KeyEffect::Moved);
+        assert_eq!(field.content(), "abc");
     }
 
     #[test]

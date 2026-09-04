@@ -367,6 +367,9 @@ fn compose(args: &[String]) -> Result<(), String> {
     if source.is_none() && named.is_none() {
         return Err(Key::CliExpectedSpecPath.get(LANGUAGE).to_string());
     }
+    if source.is_some() && named.is_some() {
+        return Err(Key::CliSpecOrPreset.get(LANGUAGE).to_string());
+    }
 
     let mut output = match (&source, named) {
         (Some(path), _) => path.with_extension(auris_session::PROJECT_EXTENSION),
@@ -535,11 +538,6 @@ fn list_plugins() -> Result<(), String> {
     printed(print)
 }
 
-/// Copies every file a project refers to into its folder, and saves it.
-///
-/// The command for archiving a project or handing it to someone else, from a script. Audio is
-/// already collected as a matter of course; what this adds is the SoundFonts, which are left in
-/// place on an ordinary save because one font is shared by every project that uses it.
 /// Renders a singer track through its voice model and keeps the take in the project.
 ///
 /// The document is saved afterwards, because the take *is* a document change: a render whose
@@ -879,6 +877,11 @@ fn sing_frames(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Copies every file a project refers to into its folder, and saves it.
+///
+/// The command for archiving a project or handing it to someone else, from a script. Audio is
+/// already collected as a matter of course; what this adds is the SoundFonts, which are left in
+/// place on an ordinary save because one font is shared by every project that uses it.
 fn collect(path: &Path) -> Result<(), String> {
     let mut session = headless()?;
     for missing in session.open(path).map_err(|error| error.to_string())? {
@@ -1291,6 +1294,18 @@ mod tests {
             ("key".to_string(), "D minor".to_string())
         );
         assert!(split_override("tempo").is_err());
+    }
+
+    #[test]
+    fn compose_refuses_a_file_and_a_preset_together() {
+        let error = compose(&[
+            "compose".to_string(),
+            "song.asong".to_string(),
+            "--preset".to_string(),
+            "jazz-trio".to_string(),
+        ])
+        .unwrap_err();
+        assert!(error.contains("--preset"));
     }
 
     #[test]

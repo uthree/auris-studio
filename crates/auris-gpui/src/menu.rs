@@ -9,11 +9,13 @@
 //! without being written twice and drifting.
 
 use auris_i18n::{Key, Language};
-use gpui::{Action, Menu, MenuItem, SharedString, SystemMenuType};
+use gpui::{Action, Menu, MenuItem, SharedString, SystemMenuType, actions};
 
 use crate::actions;
 use crate::dock::{Panel, PanelLayout};
 use auris_session::prelude::{CC_MODULATION, ClipCurve};
+
+actions!(auris_native_menu, [Unavailable]);
 
 /// What the menu needs to know about the document and the window to draw itself.
 ///
@@ -639,17 +641,14 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
 
 /// The menu in the shape gpui hands to the operating system.
 ///
-/// Rebuilt rather than re-rendered when the language changes: the menu bar belongs to the
-/// operating system, so nothing about a redraw would touch it.
+/// Rebuilt when its state changes rather than re-rendered: the menu bar belongs to the operating
+/// system, so nothing about a window redraw would touch it.
 ///
-/// Built from a default state, and the ticks and the dimming it produces are dropped on the
-/// floor, because gpui's [`MenuItem`] has room for neither. That is not a decision made here: the
-/// menu belongs to the system and is handed over once, so even a `MenuItem` that could carry a
-/// tick would need the whole menu re-set on every change of any of the eight facts in
-/// [`MenuState`]. The window's own bar — which is what Windows and Linux see — draws both. When
-/// gpui grows the field, this is the one function that has to change.
-pub fn menus(language: Language) -> Vec<Menu> {
-    model(language, &PanelLayout::default(), MenuState::default())
+/// gpui's [`MenuItem`] has no checked field, so a checked command receives the conventional
+/// leading tick in its label. A disabled command carries an action with no handler; gpui's native
+/// menu validation therefore dims it and refuses to dispatch it.
+pub fn menus(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<Menu> {
+    model(language, panels, state)
         .into_iter()
         .map(|section| Menu {
             name: section.name,
@@ -660,9 +659,19 @@ pub fn menus(language: Language) -> Vec<Menu> {
                     MenuRow::Separator => MenuItem::Separator,
                     // The keystroke is not passed along: the system menu bar looks each action
                     // up in the keymap and draws its own.
-                    MenuRow::Command { label, action, .. } => MenuItem::Action {
-                        name: label,
+                    MenuRow::Command {
+                        label,
                         action,
+                        enabled,
+                        checked,
+                        ..
+                    } => MenuItem::Action {
+                        name: native_label(label, checked),
+                        action: if enabled {
+                            action
+                        } else {
+                            Box::new(Unavailable)
+                        },
                         os_action: None,
                     },
                     MenuRow::System { label, menu } => MenuItem::os_submenu(label, menu),
@@ -670,6 +679,14 @@ pub fn menus(language: Language) -> Vec<Menu> {
                 .collect(),
         })
         .collect()
+}
+
+fn native_label(label: SharedString, checked: bool) -> SharedString {
+    if checked {
+        format!("✓ {label}").into()
+    } else {
+        label
+    }
 }
 
 #[cfg(test)]
@@ -682,6 +699,12 @@ mod tests {
     /// none of that depends on the state and passing one in would only be noise on every line.
     fn plain(language: Language) -> Vec<MenuSection> {
         model(language, &PanelLayout::default(), MenuState::default())
+    }
+
+    #[test]
+    fn native_labels_show_the_state_gpui_cannot_carry() {
+        assert_eq!(native_label("Mixer".into(), false), "Mixer");
+        assert_eq!(native_label("Mixer".into(), true), "✓ Mixer");
     }
 
     /// Whether the row labelled `label` carries a tick, or `None` when there is no such row.
@@ -928,10 +951,14 @@ mod tests {
             .iter()
             .map(|section| section.rows.len())
             .sum();
-        let menu_items: usize = menus(Language::Japanese)
-            .iter()
-            .map(|menu| menu.items.len())
-            .sum();
+        let menu_items: usize = menus(
+            Language::Japanese,
+            &PanelLayout::default(),
+            MenuState::default(),
+        )
+        .iter()
+        .map(|menu| menu.items.len())
+        .sum();
         assert_eq!(model_rows, menu_items);
     }
 }

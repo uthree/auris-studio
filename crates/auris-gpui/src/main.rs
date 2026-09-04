@@ -38,7 +38,8 @@ use gpui::{
 };
 
 use app::AurisApp;
-use menu::menus;
+use dock::PanelLayout;
+use menu::{MenuState, menus};
 
 fn main() {
     // Warnings matter here — a missing audio file or a plugin the registry does not know is
@@ -55,7 +56,11 @@ fn main() {
         // The menu bar is built before the window, so the language comes from the settings file
         // rather than from the view that has not been created yet. `AurisApp` loads the same
         // file a moment later, and rebuilds these menus whenever the choice changes.
-        cx.set_menus(menus(Settings::load().language()));
+        cx.set_menus(menus(
+            Settings::load().language(),
+            &PanelLayout::default(),
+            MenuState::default(),
+        ));
 
         let remembered = Settings::load().window;
         let window = cx
@@ -194,8 +199,12 @@ const RESCUABLE: gpui::Size<Pixels> = gpui::Size {
 /// A window that was maximised comes back maximised, carrying the size it restores to, so
 /// unmaximising it lands where it was rather than filling the screen for ever.
 fn opening_window_bounds(remembered: Option<WindowPlacement>, cx: &App) -> WindowBounds {
-    let display = cx.primary_display().map(|display| display.bounds());
-    match restorable(remembered, display) {
+    let displays: Vec<_> = cx
+        .displays()
+        .iter()
+        .map(|display| display.bounds())
+        .collect();
+    match restorable(remembered, &displays) {
         Some((bounds, true)) => WindowBounds::Maximized(bounds),
         Some((bounds, false)) => WindowBounds::Windowed(bounds),
         None => WindowBounds::Windowed(opening_bounds(cx)),
@@ -205,14 +214,13 @@ fn opening_window_bounds(remembered: Option<WindowPlacement>, cx: &App) -> Windo
 /// The remembered rectangle, if enough of it still lands on the desktop, and whether it was
 /// maximised.
 ///
-/// `None` for a display that could not be read at all: on a headless or unusual setup there is
+/// `None` when no display could be read at all: on a headless or unusual setup there is
 /// nothing to check the rectangle against, and centring is the answer that cannot be wrong.
 fn restorable(
     remembered: Option<WindowPlacement>,
-    display: Option<Bounds<Pixels>>,
+    displays: &[Bounds<Pixels>],
 ) -> Option<(Bounds<Pixels>, bool)> {
     let placement = remembered?;
-    let display = display?;
     if !(placement.width > 0.0 && placement.height > 0.0) {
         return None;
     }
@@ -220,8 +228,10 @@ fn restorable(
         origin: gpui::point(px(placement.x), px(placement.y)),
         size: size(px(placement.width), px(placement.height)),
     };
-    let overlap = bounds.intersect(&display);
-    let showing = overlap.size.width >= RESCUABLE.width && overlap.size.height >= RESCUABLE.height;
+    let showing = displays.iter().any(|display| {
+        let overlap = bounds.intersect(display);
+        overlap.size.width >= RESCUABLE.width && overlap.size.height >= RESCUABLE.height
+    });
     showing.then_some((bounds, placement.maximized))
 }
 
@@ -344,7 +354,7 @@ mod tests {
     fn a_window_comes_back_where_it_was_left() {
         let remembered = placed(200., 120., 1400., 900.);
         let (bounds, maximized) =
-            restorable(Some(remembered), Some(desktop())).expect("still on screen");
+            restorable(Some(remembered), &[desktop()]).expect("still on screen");
         assert_eq!(bounds.origin.x, px(200.));
         assert_eq!(bounds.size.width, px(1400.));
         assert!(!maximized);
@@ -354,9 +364,24 @@ mod tests {
     fn a_window_remembered_on_a_screen_that_is_gone_is_centred_instead() {
         // The second monitor was to the right and has been unplugged. Restoring this would open
         // the application's only window where no pointer can reach it.
-        assert!(restorable(Some(placed(2400., 300., 1400., 900.)), Some(desktop())).is_none());
+        assert!(restorable(Some(placed(2400., 300., 1400., 900.)), &[desktop()]).is_none());
         // Above the desktop entirely, which is what a rearranged multi-monitor setup does.
-        assert!(restorable(Some(placed(300., -1200., 1400., 900.)), Some(desktop())).is_none());
+        assert!(restorable(Some(placed(300., -1200., 1400., 900.)), &[desktop()]).is_none());
+    }
+
+    #[test]
+    fn a_window_on_a_connected_secondary_display_is_restored() {
+        let secondary = Bounds {
+            origin: gpui::point(px(1920.), px(0.)),
+            size: size(px(1920.), px(1080.)),
+        };
+        assert!(
+            restorable(
+                Some(placed(2200., 120., 1400., 900.)),
+                &[desktop(), secondary]
+            )
+            .is_some()
+        );
     }
 
     #[test]
@@ -364,15 +389,15 @@ mod tests {
         // Mostly off the right edge, but 180 pixels of title bar remain. That can be taken hold
         // of, so it is not the emergency the case above is.
         let clinging = placed(1740., 200., 1400., 900.);
-        assert!(restorable(Some(clinging), Some(desktop())).is_some());
+        assert!(restorable(Some(clinging), &[desktop()]).is_some());
     }
 
     #[test]
     fn nothing_remembered_and_nothing_measurable_both_fall_back() {
-        assert!(restorable(None, Some(desktop())).is_none());
-        assert!(restorable(Some(placed(100., 100., 800., 600.)), None).is_none());
+        assert!(restorable(None, &[desktop()]).is_none());
+        assert!(restorable(Some(placed(100., 100., 800., 600.)), &[]).is_none());
         // A rectangle with no area, which is what a settings file filled in from defaults holds.
-        assert!(restorable(Some(placed(0., 0., 0., 0.)), Some(desktop())).is_none());
+        assert!(restorable(Some(placed(0., 0., 0., 0.)), &[desktop()]).is_none());
     }
 
     #[test]
@@ -381,7 +406,7 @@ mod tests {
             maximized: true,
             ..placed(100., 80., 1200., 800.)
         };
-        let (bounds, maximized) = restorable(Some(remembered), Some(desktop())).expect("on screen");
+        let (bounds, maximized) = restorable(Some(remembered), &[desktop()]).expect("on screen");
         assert!(maximized);
         assert_eq!(bounds.size.width, px(1200.), "not the whole screen");
     }

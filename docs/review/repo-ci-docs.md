@@ -6,16 +6,16 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-146 | medium | `docs/features.md:1270` | docs/features.md:1270 says 29 tools; auris-toolbox declares 30 pub mod tool modules, confirmed by both frontends' own count-assertion tests. |
-| F-176 | medium | `.github/workflows/release.yml:230` | Release notes and README list only 2 of the 4 binaries (missing auris-mcp/auris-agent) actually packaged into every Windows and macOS release archive. |
-| F-236 | medium | `tools/eval/aesthetics.py:129` | aesthetics.py keys per-file scores by bare filename stem, so same-named WAVs in different subdirectories silently overwrite each other in the […] |
+| ✅ F-146 | medium | `docs/features.md:1270` | docs/features.md:1270 says 29 tools; auris-toolbox declares 30 pub mod tool modules, confirmed by both frontends' own count-assertion tests. |
+| ✅ F-176 | medium | `.github/workflows/release.yml:230` | Release notes and README list only 2 of the 4 binaries (missing auris-mcp/auris-agent) actually packaged into every Windows and macOS release archive. |
+| ✅ F-236 | medium | `tools/eval/aesthetics.py:129` | aesthetics.py keys per-file scores by bare filename stem, so same-named WAVs in different subdirectories silently overwrite each other in the […] |
 | F-135 | low | `.github/workflows/release.yml:18` | release.yml grants contents:write to all four jobs via workflow-root permissions, though only publish's release-creation step needs it. |
 | F-272 | low | `Cargo.toml:38` | anyhow and arc-swap are declared in [workspace.dependencies] (Cargo.toml:37-38) but unused by any crate since the first commit. |
 | F-275 | low | `tools/fetch-soundfonts.sh:60` | curl calls in tools/fetch-soundfonts.sh and tools/fetch-dictionary.sh lack --max-time/--connect-timeout, so a stalled peer can hang the release CI job for up […] |
 | F-290 | low | `tools/fetch-soundfonts.sh:47` | tools/fetch-soundfonts.sh:47 writes the license notice straight to its final path with no temp-file staging, unlike the font download three lines later. |
 | F-426 | low | `tools/eval/aesthetics.py:113` | A typo'd .wav path bypasses collect_wavs's existence check, crashing aesthetics.py with a raw soundfile traceback and losing the run's persisted --json scores […] |
 
-### F-146 · medium · docs/features.md:1270 says 29 tools; auris-toolbox declares 30 pub mod tool modules, confirmed by both frontends' own count-assertion tests.
+### ✅ F-146 · medium · docs/features.md:1270 says 29 tools; auris-toolbox declares 30 pub mod tool modules, confirmed by both frontends' own count-assertion tests.
 
 `docs/features.md:1270` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -31,7 +31,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** auris-mcp and auris-agent both take the toolbox, which is what keeps the tool called `compose` identical at both doors (CLAUDE.md, Layout section) — the docs claim of "identical at both model doors" is undermined by the stale count sitting right next to it.
 
-### F-176 · medium · Release notes and README list only 2 of the 4 binaries (missing auris-mcp/auris-agent) actually packaged into every Windows and macOS release archive.
+### ✅ F-176 · medium · Release notes and README list only 2 of the 4 binaries (missing auris-mcp/auris-agent) actually packaged into every Windows and macOS release archive.
 
 `.github/workflows/release.yml:230` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -45,7 +45,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Update the release-notes PREAMBLE heredoc in .github/workflows/release.yml (~line 227-231) and README.md's Downloads section (~line 58-59) to list all four shipped binaries per archive: `auris-studio.exe`/`Auris Studio.app`, `auris(.exe)`, `auris-mcp(.exe)`, and `auris-agent(.exe)`, matching the actual `cp`/`lipo` build steps at lines 126 and ~68-74.
 
-### F-236 · medium · aesthetics.py keys per-file scores by bare filename stem, so same-named WAVs in different subdirectories silently overwrite each other in the aggregate/baseline/JSON output.
+### ✅ F-236 · medium · aesthetics.py keys per-file scores by bare filename stem, so same-named WAVs in different subdirectories silently overwrite each other in the aggregate/baseline/JSON output.
 
 `tools/eval/aesthetics.py:129` · correctness · confirmed (executed reproduction; reported independently 1×)
 

@@ -940,6 +940,17 @@ mod tests {
         broken.cancel();
         assert_eq!(broken.outcome(), ExportOutcome::Failed);
     }
+
+    #[test]
+    fn a_primary_clip_outside_a_band_joins_the_selection() {
+        let primary = ClipId(9);
+        let mut clips = BTreeSet::from([ClipId(2), ClipId(3)]);
+        assert_eq!(
+            selection_with_primary(&mut clips, Some(primary)),
+            Some(primary)
+        );
+        assert_eq!(clips, BTreeSet::from([ClipId(2), ClipId(3), primary]));
+    }
 }
 
 /// Where an export has got to.
@@ -1284,6 +1295,8 @@ pub struct AurisApp {
         std::collections::HashMap<std::path::PathBuf, Vec<auris_session::ClapPluginInfo>>,
     /// The title the operating system was last told, so it is only told again on a change.
     pub(crate) titled: String,
+    /// Last state handed to the macOS menu bar, so it is rebuilt only when a visible fact changes.
+    pub(crate) native_menu_snapshot: Option<(Language, PanelLayout, crate::menu::MenuState)>,
     /// Whether the export destination dialog is open.
     ///
     /// [`Self::export`] is not set until a path comes back, so this is what stops a second
@@ -1383,6 +1396,14 @@ fn session_options(settings: &Settings) -> SessionOptions {
         shipped_dictionary: live,
         ..SessionOptions::default()
     }
+}
+
+/// Adds `primary` to a clip selection and returns the clip its editors should show.
+fn selection_with_primary(clips: &mut BTreeSet<ClipId>, primary: Option<ClipId>) -> Option<ClipId> {
+    if let Some(primary) = primary {
+        clips.insert(primary);
+    }
+    primary.or_else(|| clips.iter().next().copied())
 }
 
 impl AurisApp {
@@ -1526,6 +1547,7 @@ impl AurisApp {
             voices: None,
             clap_contents: std::collections::HashMap::new(),
             titled: String::new(),
+            native_menu_snapshot: None,
             choosing_export: false,
             status_failed: false,
             external_change: None,
@@ -1836,11 +1858,9 @@ impl AurisApp {
     ///
     /// `primary` joins the selection if it is not already in it, and is dropped when it is not
     /// one of them and the set is not empty.
-    pub(crate) fn select_clips(&mut self, clips: BTreeSet<ClipId>, primary: Option<ClipId>) {
-        self.selected_clip = match primary {
-            Some(id) if clips.contains(&id) => Some(id),
-            _ => clips.iter().next().copied(),
-        };
+    pub(crate) fn select_clips(&mut self, mut clips: BTreeSet<ClipId>, primary: Option<ClipId>) {
+        let selected_clip = selection_with_primary(&mut clips, primary);
+        self.selected_clip = selected_clip;
         self.selected_clips = clips;
     }
 
@@ -2189,10 +2209,8 @@ impl AurisApp {
     pub(crate) fn apply_audio_preferences(
         &mut self,
         audio: AudioPreferences,
-    ) -> Result<String, String> {
-        self.session
-            .set_audio_preferences(audio.clone())
-            .map_err(|error| error.to_string())?;
+    ) -> Result<String, SessionError> {
+        self.session.set_audio_preferences(audio.clone())?;
         self.settings.audio = audio;
         if let Err(error) = self.settings.save() {
             log::warn!("could not save settings: {error}");
@@ -2217,7 +2235,18 @@ impl AurisApp {
         // The system menu bar belongs to the platform, not to a view, so it is rebuilt rather
         // than re-rendered — nothing would redraw it otherwise. The in-window bar is a view and
         // needs none of this; it reads `self.language` on the next frame.
-        cx.set_menus(crate::menu::menus(self.language));
+        let state = crate::menu::MenuState {
+            can_undo: self.session.can_undo(),
+            can_redo: self.session.can_redo(),
+            looping: self.project().loop_enabled,
+            punching: self.project().punch_enabled,
+            recording: self.session.is_recording(),
+            monitoring: self.session.monitoring(),
+            metronome: self.session.metronome(),
+            musical_typing: self.session.typing_keyboard().enabled(),
+        };
+        cx.set_menus(crate::menu::menus(self.language, &self.panels, state));
+        self.native_menu_snapshot = Some((self.language, self.panels.clone(), state));
         let name = self.language.endonym();
         self.set_status(messages::language_changed(self.language, name));
     }

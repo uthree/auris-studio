@@ -194,6 +194,12 @@ pub fn load_project(path: &Path) -> Result<Project> {
     if !project.repair_id_counter() {
         return Err(IoError::ProjectIdsExhausted);
     }
+    if project.repair_curve_order() {
+        log::warn!(
+            "{}: pitch-bend or controller points were out of order and have been sorted",
+            path.display()
+        );
+    }
     if project.repair_routing() {
         log::warn!(
             "{}: the routing named a bus that is not there, or looped back on itself; \

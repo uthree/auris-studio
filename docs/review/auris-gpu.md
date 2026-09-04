@@ -6,13 +6,13 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-168 | medium | `crates/auris-gpu/src/analysis.rs:9` | auris-gpu's crate/module docs still claim no shipped code reports the true peak, but Session::analyze has surfaced it via the MCP analyze tool since commit […] |
-| F-198 | medium | `crates/auris-gpu/src/waveform.rs:116` | compute_peaks/compute_peaks_cpu gate on channel-0-only frame_count()==0, zeroing all channels' waveform peaks when only channel 0 is empty, unlike […] |
-| F-361 | medium | `crates/auris-gpu/src/lib.rs:13` | auris-gpu's crate and module docs falsely claim compute_peaks reruns on every zoom/scroll, when it actually runs once per source and is cached in […] |
-| F-365 | medium | `crates/auris-gpu/src/analysis.rs:238` | analyze_loudness's doc says callers use it, but balance_levels and analyze both call analyze_loudness_cpu directly, skipping GPU entirely. |
-| F-419 | medium | `crates/auris-gpu/src/context.rs:383` | read_back's unbounded device.poll(wait_indefinitely()) can hang the gpui UI thread forever during audio import if the GPU driver stalls silently. |
+| ✅ F-168 | medium | `crates/auris-gpu/src/analysis.rs:9` | auris-gpu's crate/module docs still claim no shipped code reports the true peak, but Session::analyze has surfaced it via the MCP analyze tool since commit […] |
+| ✅ F-198 | medium | `crates/auris-gpu/src/waveform.rs:116` | compute_peaks/compute_peaks_cpu gate on channel-0-only frame_count()==0, zeroing all channels' waveform peaks when only channel 0 is empty, unlike […] |
+| ✅ F-361 | medium | `crates/auris-gpu/src/lib.rs:13` | auris-gpu's crate and module docs falsely claim compute_peaks reruns on every zoom/scroll, when it actually runs once per source and is cached in […] |
+| ✅ F-365 | medium | `crates/auris-gpu/src/analysis.rs:238` | analyze_loudness's doc says callers use it, but balance_levels and analyze both call analyze_loudness_cpu directly, skipping GPU entirely. |
+| ✅ F-419 | medium | `crates/auris-gpu/src/context.rs:383` | read_back's unbounded device.poll(wait_indefinitely()) can hang the gpui UI thread forever during audio import if the GPU driver stalls silently. |
 
-### F-168 · medium · auris-gpu's crate/module docs still claim no shipped code reports the true peak, but Session::analyze has surfaced it via the MCP analyze tool since commit 4e16f12.
+### ✅ F-168 · medium · auris-gpu's crate/module docs still claim no shipped code reports the true peak, but Session::analyze has surfaced it via the MCP analyze tool since commit 4e16f12.
 
 `crates/auris-gpu/src/analysis.rs:9` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -28,7 +28,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Every public item carries a doc comment... (CLAUDE.md conventions); the doc's own stated purpose: "said out loud because a doc comment claiming a caller that does not exist is how the next person comes to believe the number on screen is a true peak" — now inverted, since a real caller now exists and the doc denies it.
 
-### F-198 · medium · compute_peaks/compute_peaks_cpu gate on channel-0-only frame_count()==0, zeroing all channels' waveform peaks when only channel 0 is empty, unlike analyze_loudness's guard against the same trap.
+### ✅ F-198 · medium · compute_peaks/compute_peaks_cpu gate on channel-0-only frame_count()==0, zeroing all channels' waveform peaks when only channel 0 is empty, unlike analyze_loudness's guard against the same trap.
 
 `crates/auris-gpu/src/waveform.rs:116` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -69,7 +69,7 @@ This is exactly the trap the crate's own sibling function in analysis.rs […]
 
 **Written rule it breaks.** // `frame_count()` only describes the first channel, and `AudioBuffer::channels_mut` (comment in crates/auris-gpu/src/analysis.rs documenting the exact trap this code falls into)
 
-### F-361 · medium · auris-gpu's crate and module docs falsely claim compute_peaks reruns on every zoom/scroll, when it actually runs once per source and is cached in Session.waveforms.
+### ✅ F-361 · medium · auris-gpu's crate and module docs falsely claim compute_peaks reruns on every zoom/scroll, when it actually runs once per source and is cached in Session.waveforms.
 
 `crates/auris-gpu/src/lib.rs:13` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -87,7 +87,7 @@ This is exactly the trap the crate's own sibling function in analysis.rs […]
 
 **Verifier's correction.** The doc comment at crates/auris-gpu/src/lib.rs:13 and the near-identical module doc at crates/auris-gpu/src/waveform.rs:6-7 should describe the actual lifecycle: compute_peaks runs once per decoded audio source, at import, asset-reload, record-finish, or singer-render time via Session::install_source, with the result cached in Session.waveforms and never recomputed; zoom and scroll re-bin the cached 256-sample buckets on the CPU in auris_gpui::ui::paint::waveform without invoking this crate again.
 
-### F-365 · medium · analyze_loudness's doc says callers use it, but balance_levels and analyze both call analyze_loudness_cpu directly, skipping GPU entirely.
+### ✅ F-365 · medium · analyze_loudness's doc says callers use it, but balance_levels and analyze both call analyze_loudness_cpu directly, skipping GPU entirely.
 
 `crates/auris-gpu/src/analysis.rs:238` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -103,7 +103,7 @@ This is exactly the trap the crate's own sibling function in analysis.rs […]
 
 **Written rule it breaks.** Doc comment at crates/auris-gpu/src/analysis.rs:236-238: "Measures a buffer's loudness, preferring the GPU. This is what callers use. A `None` context, or any GPU failure, transparently runs `analyze_loudness_cpu` instead."
 
-### F-419 · medium · read_back's unbounded device.poll(wait_indefinitely()) can hang the gpui UI thread forever during audio import if the GPU driver stalls silently.
+### ✅ F-419 · medium · read_back's unbounded device.poll(wait_indefinitely()) can hang the gpui UI thread forever during audio import if the GPU driver stalls silently.
 
 `crates/auris-gpu/src/context.rs:383` · platform · confirmed (executed reproduction; reported independently 1×)
 

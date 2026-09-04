@@ -71,7 +71,8 @@ impl ChartMode {
 
 impl Chart {
     /// A chart from bars of numerals, in no declared mode.
-    pub fn new(bars: Vec<Vec<Numeral>>, origin: ChartOrigin) -> Self {
+    pub fn new(mut bars: Vec<Vec<Numeral>>, origin: ChartOrigin) -> Self {
+        bars.retain(|bar| !bar.is_empty());
         Self {
             bars,
             origin,
@@ -331,6 +332,9 @@ pub struct ChartSlot {
 impl fmt::Display for Chart {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for bar in &self.bars {
+            if bar.is_empty() {
+                continue;
+            }
             f.write_str("| ")?;
             for numeral in bar {
                 write!(f, "{numeral} ")?;
@@ -893,5 +897,12 @@ mod tests {
             assert_eq!(again.bar_count(), chart.bar_count(), "{written}");
             assert_eq!(again.to_string(), written);
         }
+
+        let made = Chart::new(
+            vec![vec![Numeral::new(1, false)], Vec::new()],
+            ChartOrigin::Given,
+        );
+        assert_eq!(made.bar_count(), 1);
+        assert!(Chart::parse(&made.to_string()).is_some());
     }
 }

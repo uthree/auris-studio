@@ -1328,6 +1328,10 @@ new のオプション
         en: "expected a path to a song specification",
         ja: "曲の仕様ファイルのパスを指定してください"
     }
+    CliSpecOrPreset {
+        en: "pass either a song specification or --preset, not both",
+        ja: "曲の仕様ファイルと --preset はどちらか一方だけ指定してください"
+    }
 
     // ------------------------------------------------------------------ parameter values
     ValueOn { en: "On", ja: "オン" }

@@ -380,7 +380,10 @@ impl GpuContext {
             let _ = sender.send(result);
         });
 
-        if let Err(error) = self.device.poll(wgpu::PollType::wait_indefinitely()) {
+        if let Err(error) = self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(5)),
+        }) {
             log::debug!("auris-gpu: waiting for the GPU failed: {error}");
             return None;
         }

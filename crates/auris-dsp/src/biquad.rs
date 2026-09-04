@@ -23,6 +23,11 @@ const MIN_FREQUENCY_HZ: f64 = 1.0;
 /// full 20 kHz audio band reachable at 44.1 kHz while bounding the prewarping.
 const MAX_FREQUENCY_RATIO: f64 = 0.4995;
 
+/// Highest stable design frequency for `sample_rate`.
+pub(crate) fn max_frequency(sample_rate: f64) -> f32 {
+    (sample_rate * MAX_FREQUENCY_RATIO) as f32
+}
+
 /// Smallest accepted Q. Zero would divide by zero when forming `alpha`.
 const MIN_Q: f64 = 1.0e-3;
 
@@ -65,7 +70,7 @@ fn design(sample_rate: f64, frequency: f64, q: f64) -> Option<Design> {
     } else {
         0.0
     };
-    let max = sample_rate * MAX_FREQUENCY_RATIO;
+    let max = f64::from(max_frequency(sample_rate));
     let frequency = frequency.clamp(MIN_FREQUENCY_HZ.min(max), max);
     let q = if q.is_finite() { q.max(MIN_Q) } else { MIN_Q };
 

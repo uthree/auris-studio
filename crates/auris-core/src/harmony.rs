@@ -517,6 +517,9 @@ impl Harmony {
         let bar_ticks = signature.ticks_per_bar();
         let fitted = chart.fit_to(bars);
         let slots = fitted.positions(bar_ticks);
+        if slots.is_empty() {
+            return 0;
+        }
         let until = from + bar_ticks * bars as i64;
 
         self.chords.clear_range(from, until);
@@ -553,6 +556,20 @@ mod tests {
     /// 4/4, so one bar is 3840 ticks.
     fn four_four() -> TimeSignature {
         TimeSignature::new(4, 4)
+    }
+
+    #[test]
+    fn an_unwritten_chart_does_not_erase_the_existing_progression() {
+        let mut harmony = Harmony::default();
+        let chart = Chart::parse("| I | V |").unwrap();
+        assert_eq!(harmony.stamp(&chart, Ticks::ZERO, 2, four_four()), 2);
+        let before = harmony.clone();
+
+        assert_eq!(
+            harmony.stamp(&Chart::unwritten(), Ticks::ZERO, 2, four_four()),
+            0
+        );
+        assert_eq!(harmony, before);
     }
 
     /// 4/4 for the whole timeline, which is what the bar numbers here are counted in.

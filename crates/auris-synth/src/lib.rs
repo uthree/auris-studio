@@ -64,3 +64,24 @@ pub use params::ParamBank;
 pub use render::{SegmentRenderer, render_segments, spread_to_all_channels};
 pub use vocal::Vocal;
 pub use voice::{MAX_VOICES, VoiceAllocator, VoiceAssignment, VoiceMask, VoiceSlot, VoiceState};
+
+/// Narrows a host rate without allowing a finite `f64` to become infinite in DSP state.
+fn sample_rate_f32(sample_rate: f64) -> f32 {
+    if sample_rate.is_finite() && sample_rate > 0.0 && sample_rate <= f64::from(f32::MAX) {
+        sample_rate as f32
+    } else {
+        48_000.0
+    }
+}
+
+#[cfg(test)]
+mod sample_rate_tests {
+    use super::*;
+
+    #[test]
+    fn a_rate_too_large_for_dsp_falls_back_before_narrowing() {
+        assert_eq!(sample_rate_f32(1.0e40), 48_000.0);
+        assert_eq!(sample_rate_f32(f64::INFINITY), 48_000.0);
+        assert_eq!(sample_rate_f32(96_000.0), 96_000.0);
+    }
+}

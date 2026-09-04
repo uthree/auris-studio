@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pickle
+import runpy
+from pathlib import Path
 from unittest import mock
 
 import lightning as L
@@ -12,6 +15,18 @@ from auris_singer.data import SingingDataModule
 from auris_singer.infer import Synthesizer
 from auris_singer.lightning_module import AurisSingerModule
 from auris_singer.text import DEFAULT_PHONEME_TABLE
+
+
+def _write_marker(path):
+    Path(path).write_text("checkpoint code ran", encoding="utf-8")
+
+
+class _CheckpointPayload:
+    def __init__(self, marker):
+        self.marker = marker
+
+    def __reduce__(self):
+        return _write_marker, (self.marker,)
 
 AUDIO = {
     "sample_rate": 48_000,
@@ -184,6 +199,33 @@ def test_a_run_can_start_from_another_runs_weights(module, datamodule, tmp_path,
     )
     with pytest.raises(ValueError, match="is .* here"):
         other.load_weights(checkpoint)
+
+
+def test_init_from_refuses_checkpoint_pickle_code(module, tmp_path):
+    marker = tmp_path / "executed"
+    checkpoint = tmp_path / "malicious.ckpt"
+    torch.save({"state_dict": {"payload": _CheckpointPayload(marker)}}, checkpoint)
+
+    with pytest.raises(pickle.UnpicklingError):
+        module.load_weights(checkpoint)
+
+    assert not marker.exists()
+
+
+def test_resume_uses_lightnings_safe_checkpoint_loader():
+    trainer = mock.Mock()
+    module = object()
+    datamodule = object()
+    train_script = runpy.run_path(Path(__file__).parents[1] / "scripts" / "train.py")
+
+    train_script["fit"](trainer, module, datamodule, "run.ckpt")
+
+    trainer.fit.assert_called_once_with(
+        module,
+        datamodule=datamodule,
+        ckpt_path="run.ckpt",
+        weights_only=True,
+    )
 
 
 class _FakeExperiment:

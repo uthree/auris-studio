@@ -240,6 +240,12 @@ impl Session {
         // and this document reusing an id would inherit the old plugin. The loaded *files* are
         // kept — a `.clap` is the same code whichever project is open.
         self.hosted.clear();
+        // Arms and monitors name bare track ids too. A colliding id in another document must not
+        // silently inherit a device binding made for the previous track.
+        self.armed.clear();
+        self.monitored.clear();
+        self.publish_monitors();
+        self.close_input_if_idle();
         self.adopt_project(project);
 
         let missing = self.reload_assets();
@@ -873,6 +879,31 @@ mod tests {
         assert!(!reopened.can_undo(), "opening must not be undoable");
 
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn opening_another_document_clears_arms_and_monitors_even_when_ids_collide() {
+        let scratch = Scratch::new("open-clears-device-bindings");
+        let mut other = session();
+        let other_track = other.add_audio_track("Other");
+        let path = other
+            .save_as(&scratch.join("Other.auris"))
+            .unwrap()
+            .document;
+
+        let mut current = session();
+        let current_track = current.add_audio_track("Current");
+        assert_eq!(
+            current_track, other_track,
+            "the reproduction needs reused ids"
+        );
+        current.arm_track(current_track, None).unwrap();
+        current.set_track_monitoring(current_track, true).unwrap();
+
+        current.open(&path).unwrap();
+
+        assert!(current.armed_tracks().is_empty());
+        assert!(current.monitored_tracks().is_empty());
     }
 
     #[test]

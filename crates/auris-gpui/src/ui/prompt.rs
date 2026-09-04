@@ -140,6 +140,23 @@ pub enum PromptTarget {
     KeepProgression(usize),
 }
 
+/// Whether an empty field carries a target-specific meaning instead of being a missing name.
+fn empty_prompt_is_meaningful(target: PromptTarget) -> bool {
+    matches!(
+        target,
+        PromptTarget::Lyric { .. }
+            | PromptTarget::Phonemes { .. }
+            | PromptTarget::Lyrics { .. }
+            // Not a clear, but the session's own refusal names the problem better than a
+            // generic "cannot be empty" would.
+            | PromptTarget::ComposeLyrics
+            // No motif is an answer here — it hands the tune back to the seed.
+            | PromptTarget::SongMotif
+            // An unknown source tempo is a valid state and clearing the field is the way back.
+            | PromptTarget::ClipSourceTempo(_)
+    )
+}
+
 /// What a field is written in, as opposed to where it is being written.
 ///
 /// The distinction the sheet turns on. A key typed into the harmony lane and a key typed into the
@@ -660,17 +677,7 @@ impl AurisApp {
         // Emptiness means something on the singing fields — take the word or the correction off
         // the note — where everywhere else it would leave an unlabelled row the user cannot
         // tell apart from its neighbours, and an empty key or chord is not a key or a chord.
-        let empty_clears = matches!(
-            target,
-            PromptTarget::Lyric { .. }
-                | PromptTarget::Phonemes { .. }
-                | PromptTarget::Lyrics { .. }
-                // Not a clear, but the session's own refusal names the problem better than
-                // a generic "cannot be empty" would.
-                | PromptTarget::ComposeLyrics
-                // No motif is an answer here — it hands the tune back to the seed.
-                | PromptTarget::SongMotif
-        );
+        let empty_clears = empty_prompt_is_meaningful(target);
         if text.is_empty() && !empty_clears {
             self.set_status(self.t(Key::NameCannotBeEmpty));
             return;
@@ -1839,20 +1846,35 @@ mod tests {
 
     const AT: Ticks = Ticks(3840);
 
-    /// Every target, so a new one cannot be added without this file being opened.
+    /// A representative value of every target variant.
+    ///
+    /// The exhaustive match makes adding a variant a compile error here until its representative
+    /// is added to the returned list.
     fn every_target() -> Vec<PromptTarget> {
-        vec![
+        let representatives = vec![
             PromptTarget::Track(TrackId(1)),
             PromptTarget::Clip(ClipId(1)),
             PromptTarget::Key(AT),
             PromptTarget::Chord(AT),
             PromptTarget::Section(AT),
+            PromptTarget::Lyric {
+                clip: ClipId(1),
+                index: 0,
+            },
+            PromptTarget::Phonemes {
+                clip: ClipId(1),
+                index: 0,
+            },
+            PromptTarget::Lyrics { clip: ClipId(1) },
+            PromptTarget::ComposeLyrics,
             PromptTarget::Seed(ClipId(1)),
             PromptTarget::Tempo(AT),
             PromptTarget::TempoFrom(AT),
             PromptTarget::Signature(AT),
             PromptTarget::SignatureFrom(AT),
             PromptTarget::ClipGain(ClipId(1)),
+            PromptTarget::Param(ParamTarget::MasterGain),
+            PromptTarget::ClipSourceTempo(ClipId(1)),
             PromptTarget::Position,
             PromptTarget::SongTitle,
             PromptTarget::SongKey,
@@ -1862,37 +1884,59 @@ mod tests {
             PromptTarget::SongMotif,
             PromptTarget::SongSectionChart(0),
             PromptTarget::KeepProgression(0),
-        ]
-    }
-
-    /// The targets that take a name rather than a notation.
-    fn is_a_name(target: PromptTarget) -> bool {
-        matches!(
-            target,
-            PromptTarget::Track(_)
+        ];
+        for target in &representatives {
+            match target {
+                PromptTarget::Track(_)
                 | PromptTarget::Clip(_)
+                | PromptTarget::Key(_)
+                | PromptTarget::Chord(_)
+                | PromptTarget::Section(_)
+                | PromptTarget::Lyric { .. }
+                | PromptTarget::Phonemes { .. }
+                | PromptTarget::Lyrics { .. }
+                | PromptTarget::ComposeLyrics
+                | PromptTarget::Seed(_)
+                | PromptTarget::Tempo(_)
+                | PromptTarget::TempoFrom(_)
+                | PromptTarget::Signature(_)
+                | PromptTarget::SignatureFrom(_)
+                | PromptTarget::ClipGain(_)
+                | PromptTarget::Param(_)
+                | PromptTarget::ClipSourceTempo(_)
+                | PromptTarget::Position
                 | PromptTarget::SongTitle
+                | PromptTarget::SongKey
+                | PromptTarget::SongMeter
+                | PromptTarget::SongSeed
                 | PromptTarget::SongPartName(_)
-                | PromptTarget::KeepProgression(_)
-        )
+                | PromptTarget::SongMotif
+                | PromptTarget::SongSectionChart(_)
+                | PromptTarget::KeepProgression(_) => {}
+            }
+        }
+        representatives
     }
 
     #[test]
     fn everything_that_is_a_notation_rather_than_a_name_says_so() {
-        // A name explains itself. Everything else is a small notation with rules that an empty
-        // box states none of, which is exactly the complaint the hints answer.
+        // A notation has a hint; prose and names do not, except the multiline compose prompt,
+        // whose hint explains how phrase breaks are entered.
         for target in every_target() {
             assert_eq!(
-                target.hint().is_none(),
-                is_a_name(target),
-                "{target:?} has the wrong idea about needing a hint"
-            );
-            assert_eq!(
-                target.notation().is_none(),
-                is_a_name(target),
-                "{target:?} has the wrong idea about being a notation"
+                target.hint().is_some(),
+                target.notation().is_some() || matches!(target, PromptTarget::ComposeLyrics),
+                "{target:?} has the wrong idea about needing a hint",
             );
         }
+    }
+
+    #[test]
+    fn an_empty_source_tempo_is_allowed_to_clear_the_value() {
+        assert!(empty_prompt_is_meaningful(PromptTarget::ClipSourceTempo(
+            ClipId(1)
+        )));
+        assert!(!empty_prompt_is_meaningful(PromptTarget::Clip(ClipId(1))));
     }
 
     #[test]

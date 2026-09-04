@@ -110,8 +110,8 @@ fn resize_grab(width: Pixels) -> f32 {
 ///
 /// The inner half of the zone the press measures, which is the half a press can reach: the
 /// resize check is only arrived at once [`AurisApp::note_at`] has found a note under the
-/// pointer's tick, and the outer half is past the note's end. `None` for a note too narrow to
-/// grab, which is one drawn in less than three pixels.
+/// pointer's tick, and the outer half is past the note's end. `None` only when the note has zero
+/// or negative width; a positive sub-pixel note keeps a proportionally smaller grab zone.
 fn note_end_span(start_x: Pixels, end_x: Pixels) -> Option<(Pixels, Pixels)> {
     let grab = px(resize_grab(end_x - start_x));
     (grab > px(0.0)).then_some((end_x - grab, grab))
@@ -2508,9 +2508,12 @@ mod tests {
                 assert!(at <= end_x, "{at:?} is past the note");
             }
         }
-        // A note drawn thinner than three pixels has no room for a zone that is not the whole
-        // note, and offers none — it can still be moved, which is the gesture left.
+        // A zero-width note has no end to grab. A positive note keeps a proportional zone even
+        // below three pixels, so a very short note can still be resized rather than only moved.
         assert_eq!(note_end_span(px(100.0), px(100.0)), None);
+        let (start, width) = note_end_span(px(100.0), px(101.0)).unwrap();
+        assert!((f32::from(start) - 100.0 - 2.0 / 3.0).abs() < 1e-3);
+        assert!((f32::from(width) - 1.0 / 3.0).abs() < 1e-3);
     }
 
     #[test]

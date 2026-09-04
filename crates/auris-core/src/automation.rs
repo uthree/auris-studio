@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
 use crate::param::{ParamId, ParamTarget};
-use crate::project::TrackId;
+use crate::project::{EffectSlotId, SendId, TrackId};
 use crate::time::Ticks;
 
 /// How a lane gets from one point to the next.
@@ -438,6 +438,49 @@ impl Automation {
         let before = self.lanes.len();
         self.lanes.retain(|lane| !lane.target.belongs_to(track));
         self.lanes.len() != before
+    }
+
+    /// Copies every lane owned by `source` onto a duplicated track and its reissued nested ids.
+    pub fn duplicate_track(
+        &mut self,
+        source: TrackId,
+        copy: TrackId,
+        effects: &[(EffectSlotId, EffectSlotId)],
+        sends: &[(SendId, SendId)],
+    ) {
+        let copies: Vec<AutomationLane> = self
+            .lanes
+            .iter()
+            .filter_map(|lane| {
+                let target = match lane.target {
+                    ParamTarget::TrackGain(track) if track == source => {
+                        ParamTarget::TrackGain(copy)
+                    }
+                    ParamTarget::TrackPan(track) if track == source => ParamTarget::TrackPan(copy),
+                    ParamTarget::Instrument { track, param } if track == source => {
+                        ParamTarget::Instrument { track: copy, param }
+                    }
+                    ParamTarget::Send { track, send } if track == source => ParamTarget::Send {
+                        track: copy,
+                        send: sends.iter().find(|(old, _)| *old == send)?.1,
+                    },
+                    ParamTarget::Effect {
+                        track: Some(track),
+                        slot,
+                        param,
+                    } if track == source => ParamTarget::Effect {
+                        track: Some(copy),
+                        slot: effects.iter().find(|(old, _)| *old == slot)?.1,
+                        param,
+                    },
+                    _ => return None,
+                };
+                let mut copied = lane.clone();
+                copied.target = target;
+                Some(copied)
+            })
+            .collect();
+        self.lanes.extend(copies);
     }
 
     /// Drops every lane matching a predicate, for the removals that are not a whole track — an

@@ -113,14 +113,21 @@ impl Key {
     /// writes. A minor key takes its signature from the relative major a minor third above, which
     /// is why C sharp minor is four sharps and not eight flats.
     ///
-    /// A mode is treated as major or minor by its third. That is an approximation — D dorian
-    /// really belongs to C major rather than to F — but it only ever picks the side of the circle,
-    /// and a mode's own notes are the ones it shares with a key on that side.
+    /// The church modes take their signature from the major scale whose notes they share. Scales
+    /// that do not have such a parent use the major/minor side implied by their third.
     pub fn spelling(self) -> Spelling {
-        let relative_major = if self.is_minor() {
-            self.tonic.transposed(3)
-        } else {
-            self.tonic
+        let relative_major = match self.scale {
+            ScaleId::Major | ScaleId::MajorPentatonic | ScaleId::WholeTone => self.tonic,
+            ScaleId::Minor
+            | ScaleId::HarmonicMinor
+            | ScaleId::MelodicMinor
+            | ScaleId::MinorPentatonic
+            | ScaleId::Blues => self.tonic.transposed(3),
+            ScaleId::Dorian => self.tonic.transposed(-2),
+            ScaleId::Phrygian => self.tonic.transposed(-4),
+            ScaleId::Lydian => self.tonic.transposed(-5),
+            ScaleId::Mixolydian => self.tonic.transposed(-7),
+            ScaleId::Locrian => self.tonic.transposed(1),
         };
         // Each step up a fifth adds a sharp, so the number of sharps is the tonic's position on
         // the circle of fifths — and since seven fifths make an octave plus a semitone, a fifth is
@@ -265,6 +272,14 @@ mod tests {
         // Six of each is a real tie, and the mode breaks it the way a musician does.
         assert_eq!(Key::parse("F# major").unwrap().to_text(), "F# major");
         assert_eq!(Key::parse("Eb minor").unwrap().to_text(), "Eb minor");
+
+        // Modes use the major collection they actually share, not merely the side implied by
+        // their third: D# Phrygian belongs to B major, C Mixolydian to F major.
+        assert_eq!(Key::parse("D# phrygian").unwrap().to_text(), "D# phrygian");
+        assert_eq!(
+            Key::parse("C mixolydian").unwrap().spelling(),
+            Spelling::Flats
+        );
     }
 
     #[test]

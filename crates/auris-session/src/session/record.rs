@@ -56,10 +56,9 @@
 //! the interface it was made for, and a track that came back silent is a thing somebody can see
 //! and re-point; a take that would not start because of an arm made last week is not.
 //!
-//! What is deliberately *not* here is a monitor per armed track. There is one ring and it carries
-//! one stereo pair, so monitoring follows the single track it was pointed at and takes that
-//! track's own channels. A room full of players recording at once hears itself through the
-//! interface, which is what an interface is for.
+//! Monitoring has a ring per monitored track, allocated together when the input device opens.
+//! Each ring carries that track's own selected channels, so several armed players can hear their
+//! own inputs at once without the audio callback allocating or locking.
 //!
 //! # Counting in
 //!

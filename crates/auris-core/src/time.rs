@@ -70,8 +70,10 @@ impl Ticks {
             return self;
         }
         let below = self.snap_floor(grid);
-        if self.0 - below.0 >= grid.0 / 2 {
-            Ticks(below.0 + grid.0)
+        let offset = self.0 - below.0;
+        let halfway_rounded_up = grid.0 / 2 + grid.0 % 2;
+        if offset >= halfway_rounded_up {
+            Ticks(below.0.saturating_add(grid.0))
         } else {
             below
         }
@@ -81,7 +83,7 @@ impl Ticks {
 impl Add for Ticks {
     type Output = Ticks;
     fn add(self, rhs: Ticks) -> Ticks {
-        Ticks(self.0 + rhs.0)
+        Ticks(self.0.saturating_add(rhs.0))
     }
 }
 
@@ -108,7 +110,7 @@ impl Neg for Ticks {
 
 impl AddAssign for Ticks {
     fn add_assign(&mut self, rhs: Ticks) {
-        self.0 += rhs.0;
+        self.0 = self.0.saturating_add(rhs.0);
     }
 }
 
@@ -777,6 +779,7 @@ impl TempoMap {
     }
 
     /// Builds a map from arbitrary points, normalising order and the tick-0 anchor.
+    /// When several points share a tick, the one supplied last wins, as in [`Self::set_point`].
     pub fn from_points(mut points: Vec<TempoPoint>) -> Result<Self> {
         if points.is_empty() {
             return Err(CoreError::InvalidTempoMap(
@@ -804,8 +807,14 @@ impl TempoMap {
         points.sort_by_key(|p| p.tick);
         // The first segment must start at zero or positions before it are undefined.
         points[0].tick = Ticks::ZERO;
-        points.dedup_by_key(|p| p.tick);
-        Ok(Self { points })
+        let mut unique: Vec<TempoPoint> = Vec::with_capacity(points.len());
+        for point in points {
+            match unique.last_mut() {
+                Some(previous) if previous.tick == point.tick => *previous = point,
+                _ => unique.push(point),
+            }
+        }
+        Ok(Self { points: unique })
     }
 
     fn clamp_bpm(bpm: f64) -> f64 {
@@ -946,6 +955,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tick_addition_saturates_at_document_boundaries() {
+        assert_eq!(Ticks(i64::MAX) + Ticks(1), Ticks(i64::MAX));
+        let mut assigned = Ticks(i64::MAX);
+        assigned += Ticks(1);
+        assert_eq!(assigned, Ticks(i64::MAX));
+    }
+
+    #[test]
+    fn an_odd_grid_snaps_to_the_truly_nearest_line() {
+        assert_eq!(Ticks(1).snap_nearest(Ticks(3)), Ticks::ZERO);
+        assert_eq!(Ticks(2).snap_nearest(Ticks(3)), Ticks(3));
+    }
+
+    #[test]
     fn clock_rounding_carries_across_minute_boundaries() {
         assert_eq!(Seconds(59.9994).format_clock(), "00:59.999");
         assert_eq!(Seconds(59.9996).format_clock(), "01:00.000");
@@ -1057,6 +1080,23 @@ mod tests {
         assert_eq!(map.points()[0].tick, Ticks::ZERO);
         assert_eq!(map.points()[0].bpm, 150.0);
         assert_eq!(map.points()[1].tick, Ticks(5000));
+    }
+
+    #[test]
+    fn duplicate_tempo_points_keep_the_last_write() {
+        let map = TempoMap::from_points(vec![
+            TempoPoint {
+                tick: Ticks::ZERO,
+                bpm: 90.0,
+            },
+            TempoPoint {
+                tick: Ticks::ZERO,
+                bpm: 150.0,
+            },
+        ])
+        .unwrap();
+
+        assert_eq!(map.bpm_at(Ticks::ZERO), 150.0);
     }
 
     #[test]
@@ -1439,7 +1479,9 @@ mod tests {
         assert_eq!(map.points()[0].tick, Ticks::ZERO);
         // With the list out of order the first segment ran backwards, so `ticks_to_seconds`
         // broke out immediately and reported 0 s for every position on the timeline.
-        assert!((map.ticks_to_seconds(Ticks::QUARTER).0 - 60.0 / 90.0).abs() < 1e-9);
+        // Both negative points clamp onto tick zero, where the later write wins just as it does
+        // through `set_point`.
+        assert!((map.ticks_to_seconds(Ticks::QUARTER).0 - 60.0 / 100.0).abs() < 1e-9);
     }
 
     #[test]

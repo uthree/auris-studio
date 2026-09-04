@@ -12,7 +12,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-073 | high | `training/src/auris_singer/data/datamodule.py:110` | DistributedBucketSampler.epoch is set once at construction and never advanced, because use_distributed_sampler=False (train.py:103) disables Lightning's […] |
 | ✅ F-115 | high | `training/src/auris_singer/phoneme_levels.py:90` | phoneme_levels.py classes devoiced Japanese vowels as full vowels, so a whispered vowel becomes the loudness reference for the consonant before it, […] |
 | ✅ F-119 | high | `training/src/auris_singer/utils/audio.py:65` | A single too-short utterance (exactly one hop of samples) crashes `training`'s whole preprocessing run via an unhandled reflect-pad RuntimeError in […] |
-| F-320 | high | `training/src/auris_singer/lightning_module.py:154` | load_weights unpickles an unvalidated --init-from/--resume checkpoint via torch.load(weights_only=False), giving arbitrary code execution on a crafted file. |
+| ✅ F-320 | high | `training/src/auris_singer/lightning_module.py:154` | load_weights unpickles an unvalidated --init-from/--resume checkpoint via torch.load(weights_only=False), giving arbitrary code execution on a crafted file. |
 | F-127 | medium | `training/doc/architecture.md:148` | architecture.md's loss table lists KL (auxiliary) default as 1.0, but code, training.md, and the doc's own later prose all agree the default is 0.2. |
 | F-157 | medium | `training/src/auris_singer/losses.py:154` | EnvelopeLoss divides by the configured kernel count instead of the count actually used, silently underweighting the loss when a kernel exceeds the signal […] |
 | F-175 | medium | `training/src/auris_singer/modules/generator.py:161` | NsfHifiGanGenerator's own kernel>=rate guard admits rate=1/even-kernel stages whose output_padding=1 is invalid for stride=1, crashing on first forward instead […] |
@@ -126,7 +126,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** In `run_preprocess`, raise the length floor so it always exceeds the STFT reflect-pad requirement, e.g. skip when `wav.numel() < max(min_samples, n_fft)` (or at least `> 2*pad`) instead of `max(min_samples, hop_length)`, so a clip too short for `_pad_for_stft`'s reflect padding is filtered out with a normal "too short" skip rather than crashing; alternatively, have `_pad_for_stft` fall back to constant/replicate padding when the input is shorter than `pad`.
 
-### F-320 · high · load_weights unpickles an unvalidated --init-from/--resume checkpoint via torch.load(weights_only=False), giving arbitrary code execution on a crafted file.
+### ✅ F-320 · high · load_weights unpickles an unvalidated --init-from/--resume checkpoint via torch.load(weights_only=False), giving arbitrary code execution on a crafted file.
 
 `training/src/auris_singer/lightning_module.py:154` · security · confirmed (traced through the code; reported independently 1×)
 

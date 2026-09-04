@@ -535,7 +535,7 @@ fn spawn_link(folder: Option<&Path>) -> Result<AgentLink, String> {
         .arg("--json")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
     if let Some(folder) = folder {
         command.current_dir(folder);
     }
@@ -552,9 +552,16 @@ fn spawn_link(folder: Option<&Path>) -> Result<AgentLink, String> {
         .map_err(|error| format!("could not start {}: {error}", agent_binary().display()))?;
     let to_child = child.stdin.take().ok_or("the child has no stdin")?;
     let stdout = child.stdout.take().ok_or("the child has no stdout")?;
+    let stderr = child.stderr.take().ok_or("the child has no stderr")?;
 
     let (sender, from_child): (Sender<AgentEvent>, Receiver<AgentEvent>) =
         std::sync::mpsc::channel();
+    let stderr_sender = sender.clone();
+    let (stderr_done, stderr_finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        forward_agent_stderr(std::io::BufReader::new(stderr), &stderr_sender);
+        let _ = stderr_done.send(());
+    });
     std::thread::spawn(move || {
         let reader = std::io::BufReader::new(stdout);
         for line in reader.lines() {
@@ -565,6 +572,9 @@ fn spawn_link(folder: Option<&Path>) -> Result<AgentLink, String> {
                 return;
             }
         }
+        // A startup failure writes stderr and closes stdout at nearly the same instant. Wait for
+        // the stderr reader so its useful diagnosis is always queued before the generic EOF.
+        let _ = stderr_finished.recv();
         let _ = sender.send(AgentEvent::Ended);
     });
 
@@ -573,6 +583,22 @@ fn spawn_link(folder: Option<&Path>) -> Result<AgentLink, String> {
         to_child,
         from_child,
     })
+}
+
+/// Carries startup diagnostics from the agent's ordinary error stream into the chat event wire.
+fn forward_agent_stderr(reader: impl BufRead, sender: &Sender<AgentEvent>) {
+    for line in reader.lines().map_while(Result::ok) {
+        let message = line.trim();
+        if !message.is_empty()
+            && sender
+                .send(AgentEvent::Error {
+                    message: message.to_string(),
+                })
+                .is_err()
+        {
+            return;
+        }
+    }
 }
 
 /// Asks `auris-agent models` what `prefs`' provider serves, off the window's thread.
@@ -1536,6 +1562,23 @@ mod tests {
         // A line this build does not know, and a line that is not JSON: skipped, not fatal.
         assert_eq!(parse_event(r#"{"event":"novel"}"#), None);
         assert_eq!(parse_event("garbage"), None);
+    }
+
+    #[test]
+    fn an_agent_startup_failure_reaches_the_chat_event_wire() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        forward_agent_stderr(
+            std::io::Cursor::new("\nauris-agent: the API key variable 'MISSING_KEY' is not set\n"),
+            &sender,
+        );
+
+        assert_eq!(
+            receiver.recv().unwrap(),
+            AgentEvent::Error {
+                message: "auris-agent: the API key variable 'MISSING_KEY' is not set".to_string()
+            }
+        );
+        assert!(receiver.try_recv().is_err(), "blank stderr stays invisible");
     }
 
     #[test]

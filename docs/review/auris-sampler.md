@@ -8,11 +8,11 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 |---|---|---|---|
 | ✅ F-084 | high | `crates/auris-sampler/src/sampler.rs:676` | stop_everything(false) calls synth.note_off_all(false) immediately, starting the font's ~1ms release under the user's configured Release stage instead of […] |
 | ✅ F-343 | high | `crates/auris-sampler/src/sampler.rs:148` | is_reserved() only shields CC11/43 (expression), letting automation on CC0/6/0x64/0x65 silently hijack the sampler's own bank-select and pitch-bend-range RPN […] |
-| F-347 | high | `crates/auris-sampler/src/sampler.rs:510` | Turning ADSR shaping off on a held sampler note snaps channel expression to full before the font's own release begins, producing an audible gain-jump click. |
-| F-350 | high | `crates/auris-sampler/src/sampler.rs:658` | let_go() misattributes a stolen shaped note's slot-less state to "never shaped", letting its note-off silence an unrelated held note of the same pitch. |
+| ✅ F-347 | high | `crates/auris-sampler/src/sampler.rs:510` | Turning ADSR shaping off on a held sampler note snaps channel expression to full before the font's own release begins, producing an audible gain-jump click. |
+| ✅ F-350 | high | `crates/auris-sampler/src/sampler.rs:658` | let_go() misattributes a stolen shaped note's slot-less state to "never shaped", letting its note-off silence an unrelated held note of the same pitch. |
 | ✅ F-195 | medium | `crates/auris-sampler/src/sampler.rs:668` | stop_everything's non-immediate branch clears Slot::key before the release finishes, letting claim() steal and cut off release tails after AllNotesOff. |
-| F-206 | medium | `crates/auris-sampler/src/sampler.rs:692` | step_envelopes and push call into self.synth without checking `poisoned`, contradicting the documented invariant and risking an uncaught second panic/abort on […] |
-| F-226 | medium | `crates/auris-sampler/src/sampler.rs:532` | Sampler::push writes LEVEL straight into rustysynth's master_volume with no SmoothedValue ramp, unlike every other gain control in auris-dsp, causing an […] |
+| ✅ F-206 | medium | `crates/auris-sampler/src/sampler.rs:692` | step_envelopes and push call into self.synth without checking `poisoned`, contradicting the documented invariant and risking an uncaught second panic/abort on […] |
+| ✅ F-226 | medium | `crates/auris-sampler/src/sampler.rs:532` | Sampler::push writes LEVEL straight into rustysynth's master_volume with no SmoothedValue ramp, unlike every other gain control in auris-dsp, causing an […] |
 
 ### ✅ F-084 · high · stop_everything(false) calls synth.note_off_all(false) immediately, starting the font's ~1ms release under the user's configured Release stage instead of deferring it like let_go does.
 
@@ -46,7 +46,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** is_reserved's own doc comment: "Whether a controller is one the sampler spends on itself" / "a clip that writes a lane on either is answered with silence rather than with a fade that fights it" — the same protection given to the expression pair was never extended to the bank-select/RPN/data-entry controllers select() also spends on itself.
 
-### F-347 · high · Turning ADSR shaping off on a held sampler note snaps channel expression to full before the font's own release begins, producing an audible gain-jump click.
+### ✅ F-347 · high · Turning ADSR shaping off on a held sampler note snaps channel expression to full before the font's own release begins, producing an audible gain-jump click.
 
 `crates/auris-sampler/src/sampler.rs:510` · dsp · confirmed (executed reproduction; reported independently 1×)
 
@@ -62,7 +62,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
 
-### F-350 · high · let_go() misattributes a stolen shaped note's slot-less state to "never shaped", letting its note-off silence an unrelated held note of the same pitch.
+### ✅ F-350 · high · let_go() misattributes a stolen shaped note's slot-less state to "never shaped", letting its note-off silence an unrelated held note of the same pitch.
 
 `crates/auris-sampler/src/sampler.rs:658` · correctness · confirmed (executed reproduction; reported independently 2×)
 
@@ -94,7 +94,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** /// The key sounding here, until the envelope has taken it to silence and handed the note-off to the font. `None` means the channel is free, tail or no tail.
 
-### F-206 · medium · step_envelopes and push call into self.synth without checking `poisoned`, contradicting the documented invariant and risking an uncaught second panic/abort on the audio thread.
+### ✅ F-206 · medium · step_envelopes and push call into self.synth without checking `poisoned`, contradicting the documented invariant and risking an uncaught second panic/abort on the audio thread.
 
 `crates/auris-sampler/src/sampler.rs:692` · realtime · confirmed (executed reproduction; reported independently 1×)
 
@@ -110,7 +110,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** "A poisoned synthesiser is never called again — whatever state the panic left it in is not one to play" (sampler.rs poisoned field doc) / "the synthesiser is never called again once poisoned: whatever invariants the panic broke are invariants nobody will read" (rendered_safely doc comment)
 
-### F-226 · medium · Sampler::push writes LEVEL straight into rustysynth's master_volume with no SmoothedValue ramp, unlike every other gain control in auris-dsp, causing an audible step at the next internal render block.
+### ✅ F-226 · medium · Sampler::push writes LEVEL straight into rustysynth's master_volume with no SmoothedValue ramp, unlike every other gain control in auris-dsp, causing an audible step at the next internal render block.
 
 `crates/auris-sampler/src/sampler.rs:532` · dsp · confirmed (traced through the code; reported independently 1×)
 

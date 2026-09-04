@@ -351,7 +351,7 @@ impl Session {
         // [`Session::write_spec_vocal`]. Before the buses move down, so the voice stands
         // with the music rather than among the plumbing.
         let (sung, sung_clips, unsung) = self.write_spec_vocal(&mut project, composition);
-        if sung > 0 {
+        if sung_clips > 0 {
             report.tracks += 1;
         }
         report.clips += sung_clips;
@@ -885,8 +885,12 @@ mod tests {
         // the instrument that answered turned out to need. That is the right thing for a piece
         // somebody is going to listen to and the wrong thing for this test, whose whole subject is
         // the number the composer wrote before anybody listened.
-        let mut session = Session::new(SessionOptions::headless().with_balance(false))
-            .expect("a headless session always opens");
+        let mut session = Session::new(
+            SessionOptions::headless()
+                .with_shipped_fonts(true)
+                .with_balance(false),
+        )
+        .expect("a headless session always opens");
         let spec = auris_compose::SongSpec::parse(
             r#"
                 form = ["verse"]
@@ -1244,5 +1248,39 @@ mod tests {
         assert_eq!(report.substituted, ["nope.not.here"]);
         assert_eq!(report.tracks, 1, "the track was still created");
         assert!(report.notes > 0);
+    }
+
+    #[test]
+    fn an_empty_vocal_clip_still_counts_as_the_track_that_was_created() {
+        let mut session = session();
+        let spec = auris_compose::SongSpec::parse(
+            r#"
+                meter = "1/4"
+                form = ["verse"]
+
+                [section.verse]
+                bars = 1
+                lyrics = "あ"
+                "#,
+        )
+        .unwrap();
+
+        let report = session.compose(&auris_compose::compose(&spec)).unwrap();
+        let musical_tracks = session
+            .project()
+            .tracks
+            .iter()
+            .filter(|track| !track.kind.is_bus())
+            .count();
+
+        assert_eq!(report.sung, 0);
+        assert_eq!(report.tracks, musical_tracks);
+        assert!(
+            session
+                .project()
+                .tracks
+                .iter()
+                .any(|track| track.kind.is_singer())
+        );
     }
 }

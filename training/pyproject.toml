@@ -11,7 +11,8 @@ license = "Apache-2.0"
 dependencies = [
     "torch>=2.4",
     "torchaudio>=2.4",
-    "lightning>=2.4",
+    # Trainer.fit gained the safe weights_only checkpoint loader in 2.6.
+    "lightning>=2.6",
     "omegaconf>=2.3",
     "numpy>=1.26",
     "scipy>=1.11",

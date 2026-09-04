@@ -113,16 +113,21 @@ impl Session {
         clip: ClipId,
         indices: &[usize],
     ) -> Result<(), SessionError> {
-        if self.project.midi_clip(clip).is_none() {
+        let Some(note_count) = self
+            .project
+            .midi_clip(clip)
+            .map(|(_, clip)| clip.notes.len())
+        else {
             return Err(SessionError::UnknownClip(clip.0));
-        }
-        if indices.is_empty() {
-            return Ok(());
-        }
-        self.record(edit);
+        };
         let mut doomed: Vec<usize> = indices.to_vec();
         doomed.sort_unstable();
         doomed.dedup();
+        doomed.retain(|index| *index < note_count);
+        if doomed.is_empty() {
+            return Ok(());
+        }
+        self.record(edit);
         if let Some(target) = self.project.midi_clip_mut(clip) {
             // Remove from the back so the earlier indices stay valid.
             for index in doomed.into_iter().rev() {
@@ -323,8 +328,15 @@ impl Session {
         index: usize,
         end: Ticks,
     ) -> Result<(), SessionError> {
-        if self.project.midi_clip(clip).is_none() {
+        let Some(note_exists) = self
+            .project
+            .midi_clip(clip)
+            .map(|(_, clip)| clip.notes.get(index).is_some())
+        else {
             return Err(SessionError::UnknownClip(clip.0));
+        };
+        if !note_exists {
+            return Ok(());
         }
         self.record(Edit::ResizeNote);
         let grid = Ticks(self.project.grid.raw().max(1));
@@ -541,6 +553,18 @@ mod tests {
             .map(|n| n.pitch)
             .collect();
         assert_eq!(pitches, vec![62, 65]);
+    }
+
+    #[test]
+    fn stale_note_indices_leave_no_history_or_dirty_state() {
+        let (mut session, _, clip) = session_with_clip();
+        session.forget_history();
+
+        session.remove_notes(clip, &[99]).unwrap();
+        session.resize_note(clip, 99, Ticks::QUARTER * 2).unwrap();
+
+        assert!(!session.can_undo());
+        assert!(!session.is_dirty());
     }
 
     #[test]

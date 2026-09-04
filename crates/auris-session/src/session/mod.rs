@@ -848,6 +848,7 @@ impl Session {
         };
         if transaction.before == self.project {
             self.needs_rebuild = false;
+            self.dirty = transaction.dirty_before;
             return false;
         }
         self.history.push(transaction.edit, &transaction.before);
@@ -1260,6 +1261,24 @@ mod tests {
         assert_eq!(session.can_undo(), steps_before);
         // The no-op transaction must not have discarded anything either.
         assert!(session.undo().is_some());
+    }
+
+    #[test]
+    fn a_transaction_that_moves_back_to_its_origin_restores_the_saved_state() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Riff", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        session.forget_history();
+
+        session.begin_transaction(Edit::MoveClip);
+        session.move_clip(clip, Ticks::QUARTER).unwrap();
+        session.move_clip(clip, Ticks::ZERO).unwrap();
+
+        assert!(!session.end_transaction());
+        assert!(!session.is_dirty());
+        assert!(!session.can_undo());
     }
 
     #[test]

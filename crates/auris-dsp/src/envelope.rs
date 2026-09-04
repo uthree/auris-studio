@@ -13,8 +13,9 @@ pub enum EnvelopeMode {
 
 /// A one-pole envelope follower with independent attack and release times.
 ///
-/// Both coefficients are `exp(-1 / (time * fs))`, so `time` is the classic 1/e time constant:
-/// the envelope covers about 63 % of a step in that many seconds.
+/// Both coefficients are `exp(-1 / (time * fs))`, so `time` is the classic 1/e time constant.
+/// Peak mode covers about 63% of an amplitude step in that time. RMS mode smooths power before
+/// taking its square root, so its reported amplitude covers about 79.5% instead.
 #[derive(Copy, Clone, Debug)]
 pub struct EnvelopeFollower {
     mode: EnvelopeMode,
@@ -107,7 +108,7 @@ impl EnvelopeFollower {
         } else {
             self.release_coefficient
         };
-        self.state = rectified + (self.state - rectified) * coefficient;
+        self.state = crate::settled(rectified + (self.state - rectified) * coefficient);
         self.value()
     }
 
@@ -197,5 +198,15 @@ mod tests {
             follower.process(0.0);
         }
         assert!(follower.value() > 0.97, "decayed to {}", follower.value());
+    }
+
+    #[test]
+    fn a_release_reaches_exact_silence_before_entering_the_subnormal_range() {
+        let mut follower = EnvelopeFollower::new(SR, 0.001, 0.001, EnvelopeMode::Peak);
+        follower.process(1.0);
+        for _ in 0..20_000 {
+            follower.process(0.0);
+        }
+        assert_eq!(follower.value(), 0.0);
     }
 }

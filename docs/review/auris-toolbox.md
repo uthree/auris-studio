@@ -11,9 +11,9 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-066 | high | `crates/auris-toolbox/src/lib.rs:2519` | strip_by_name treats any track named "master" as the master bus, silently misrouting set_level/set_effect/section_gain to the wrong target. |
 | ✅ F-116 | high | `crates/auris-toolbox/src/lib.rs:2330` | auris-toolbox's `sing` tool result splices unsanitized voice-card name/speaker text from an untrusted .onnx file verbatim into agent-facing output — an […] |
 | ✅ F-123 | high | `crates/auris-toolbox/src/lib.rs:326` | `render`'s stems/output path has no containment check, so it can silently overwrite the open project's own Audio/ assets via `write_wav`'s unconditional rename. |
-| F-314 | high | `crates/auris-toolbox/src/lib.rs:1558` | `add_part`'s unbounded `bars` argument lets one MCP/CLI call drive billions of generated notes, OOM-crashing the shared toolbox process. |
-| F-326 | high | `crates/auris-toolbox/src/lib.rs:2416` | track_by_name in auris-toolbox silently resolves to the first of two same-named tracks, so by-name tools can act on the wrong one. |
-| F-328 | high | `crates/auris-toolbox/src/lib.rs:1933` | edit_notes validates a new note's start against the clip but not its end, letting a long `beats` value silently grow the clip via fit_length_to_notes with no […] |
+| ✅ F-314 | high | `crates/auris-toolbox/src/lib.rs:1558` | `add_part`'s unbounded `bars` argument lets one MCP/CLI call drive billions of generated notes, OOM-crashing the shared toolbox process. |
+| ✅ F-326 | high | `crates/auris-toolbox/src/lib.rs:2416` | track_by_name in auris-toolbox silently resolves to the first of two same-named tracks, so by-name tools can act on the wrong one. |
+| ✅ F-328 | high | `crates/auris-toolbox/src/lib.rs:1933` | edit_notes validates a new note's start against the clip but not its end, letting a long `beats` value silently grow the clip via fit_length_to_notes with no […] |
 | F-210 | medium | `crates/auris-toolbox/src/lib.rs:773` | set_level's pan branch skips the is_automated warning that its own gain branch three lines above gives, so a pan set on an automated track saves silently with […] |
 | F-214 | medium | `crates/auris-toolbox/src/lib.rs:1398` | add_track (crates/auris-toolbox/src/lib.rs:1399) accepts empty/whitespace names that rename_track explicitly rejects, creating unaddressable tracks. |
 | F-219 | medium | `crates/auris-toolbox/src/lib.rs:937` | set_effect's slot/effect match discards `effect` whenever `slot` is given, silently applying a value to the wrong effect if the two disagree. |
@@ -99,7 +99,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Before calling `render_stems`/`render_to_wav`, canonicalize the destination folder/output path and the project's `Audio/` directory (and any `AssetPath::Inside` references) and reject (or require an explicit `overwrite` flag) when the destination is inside or equal to the project's asset directory or would overwrite an existing referenced asset file; `write_wav`'s rename-over-existing behavior is otherwise appropriate (matches `save_project`'s crash-safety design) and should stay as is once the containment check happens earlier in `render::run`.
 
-### F-314 · high · `add_part`'s unbounded `bars` argument lets one MCP/CLI call drive billions of generated notes, OOM-crashing the shared toolbox process.
+### ✅ F-314 · high · `add_part`'s unbounded `bars` argument lets one MCP/CLI call drive billions of generated notes, OOM-crashing the shared toolbox process.
 
 `crates/auris-toolbox/src/lib.rs:1558` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -113,7 +113,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Add a sane upper bound on `bars` (and derived song length) in `add_part::run` right beside the existing `bars > 0` check — e.g. reject anything past a few thousand bars (already far beyond any real song) with the same style of user-facing error used for `bars == 0`, before `bar_after`/`generate_clip` are ever called.
 
-### F-326 · high · track_by_name in auris-toolbox silently resolves to the first of two same-named tracks, so by-name tools can act on the wrong one.
+### ✅ F-326 · high · track_by_name in auris-toolbox silently resolves to the first of two same-named tracks, so by-name tools can act on the wrong one.
 
 `crates/auris-toolbox/src/lib.rs:2416` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -129,7 +129,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** No written rule quoted; no uniqueness or ambiguity-handling rule exists in CLAUDE.md for track names.
 
-### F-328 · high · edit_notes validates a new note's start against the clip but not its end, letting a long `beats` value silently grow the clip via fit_length_to_notes with no mention in the success response.
+### ✅ F-328 · high · edit_notes validates a new note's start against the clip but not its end, letting a long `beats` value silently grow the clip via fit_length_to_notes with no mention in the success response.
 
 `crates/auris-toolbox/src/lib.rs:1933` · correctness · confirmed (executed reproduction; reported independently 1×)
 

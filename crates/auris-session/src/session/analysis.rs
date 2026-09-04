@@ -16,7 +16,7 @@ use auris_core::AudioBuffer;
 use auris_core::time::Ticks;
 use auris_dsp::integrated_lufs;
 use auris_engine::{OfflineOptions, RenderProgress};
-use auris_gpu::analysis::analyze_loudness_cpu;
+use auris_gpu::analysis::analyze_loudness;
 
 use crate::error::SessionError;
 
@@ -84,7 +84,7 @@ impl Session {
             &OfflineOptions::whole_project(),
             &mut RenderProgress::default(),
         )?;
-        let loudness = analyze_loudness_cpu(&mix);
+        let loudness = analyze_loudness(self.gpu.as_deref(), &mix);
 
         let end = self.project.end_tick();
         let mut sections = Vec::new();
@@ -100,7 +100,7 @@ impl Session {
                 // not reported as reaching into the bar it stops at.
                 end_bar: self.project.signatures.bar_of(span.end - Ticks(1)),
                 lufs: integrated_lufs(&slice),
-                peak_db: analyze_loudness_cpu(&slice).peak_db(),
+                peak_db: analyze_loudness(self.gpu.as_deref(), &slice).peak_db(),
             });
         }
 

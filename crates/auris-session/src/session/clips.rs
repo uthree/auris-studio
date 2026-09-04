@@ -297,6 +297,7 @@ impl Session {
         // the split with it.
         self.last_record = None;
         self.dirty = true;
+        self.revision = self.revision.wrapping_add(1);
         self.invalidate_graph();
         Ok(right)
     }
@@ -492,6 +493,9 @@ impl Session {
             .map_or(u64::MAX, |source| {
                 source.frame_count.saturating_sub(audio.offset_frames)
             });
+        if available == 0 {
+            return Ok(());
+        }
         let start_seconds = tempo.ticks_to_seconds(audio.start).0;
         let end_seconds = tempo.ticks_to_seconds(end).0;
         // Through the stretch as well as the tempo map: what is stored is a length of *material*,
@@ -2155,10 +2159,12 @@ mod tests {
             "a split that did nothing must not leave an undo step behind"
         );
 
+        let revision = session.revision();
         let right = session.split_clip(clip, Ticks::from_beats(1.0)).unwrap();
         assert_eq!(session.midi_clip(clip).unwrap().length, Ticks::QUARTER);
         assert_eq!(session.midi_clip(right).unwrap().start, Ticks::QUARTER);
         assert!(session.can_undo());
+        assert_ne!(session.revision(), revision);
     }
 
     #[test]
@@ -2230,6 +2236,7 @@ mod tests {
 
         assert!(session.trim_clip_start(clip, Ticks::QUARTER).is_ok());
         assert!(session.trim_clip_start(clip, Ticks::ZERO).is_ok());
+        assert!(session.resize_clip(clip, Ticks::QUARTER).is_ok());
 
         let audio = session.project().audio_clip(clip).unwrap();
         assert_eq!(audio.start, Ticks::ZERO);

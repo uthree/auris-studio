@@ -10,16 +10,16 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-060 | high | `crates/auris-compose/src/gm.rs:248` | Drum `program` values between GM kit boundaries are silently corrupted to the nearest lower kit's number on TOML save/reparse, with no validation or error. |
 | ✅ F-101 | high | `crates/auris-compose/src/parts/comp.rs:305` | Pushed-chord anticipation in auris-compose's comp() deletes (not trims) a prior close chord's onset when chords are spaced under half a beat apart. |
 | ✅ F-112 | high | `crates/auris-compose/src/phrase.rs:207` | write_phrase floor-divides length into bars, so resizing a Lead/Kick/Snare/Hat/Drums clip to a non-bar-aligned length silently leaves its fractional tail with […] |
-| F-316 | high | `crates/auris-compose/src/parts/drums.rs:115` | drums.rs:115 gates the snare's ending fill on the snare's own pattern having hits, so the shipped "sparse" groove (empty snare row) permanently silences the […] |
-| F-375 | high | `crates/auris-compose/src/rhythm.rs:279` | Pattern::at_in_bar's middle==0 branch hard-codes every interior beat to the pattern's first beat instead of cycling, silencing the six-eight groove's snare […] |
-| F-053 | medium | `crates/auris-compose/src/spec/doc.rs:391` | Drum-part GM program numbers between kit boundaries (e.g. 30) are silently rounded down to the nearest kit's patch number on save/reload. |
-| F-059 | medium | `crates/auris-compose/src/spec/doc.rs:731` | An empty `[section.X.part.Y]` TOML tweak table for a nonexistent part Y is silently dropped before validation, so no "part does not exist" error is ever raised. |
-| F-117 | medium | `crates/auris-compose/src/frame.rs:331` | colour() gives a borrowed bVII a major seventh instead of the diatonically correct quality because its accidental!=0 skips diatonic_seventh and falls back to a […] |
-| F-133 | medium | `crates/auris-compose/src/vocal.rs:158` | VIBRATO_FROM_SECONDS doc claims passing eighths "never" get vibrato, but they do below ~66.67 BPM. |
-| F-140 | medium | `crates/auris-compose/src/parts/mod.rs:224` | shorten() applies gate-based note shortening to Riser parts, letting a spec-set gate cut a riser's note-off before its sample's documented peak. |
-| F-141 | medium | `crates/auris-compose/src/spec/mod.rs:171` | PartSpec::range() can return bounds outside 0..127 for a legal octave, causing notes near the register extreme to silently collapse onto MIDI pitch 127 or 0. |
-| F-153 | medium | `crates/auris-compose/src/spec/doc.rs:110` | SongSpec::to_toml() writes every top-level field unconditionally, contradicting its own "only what differs from a default" doc comment. |
-| F-164 | medium | `crates/auris-compose/src/parts/mod.rs:219` | Setting `gate` on a riser part lets `shorten()` cut the swell's note-off before the join tick, undoing `riser()`'s exact-timing guarantee. |
+| ✅ F-316 | high | `crates/auris-compose/src/parts/drums.rs:115` | drums.rs:115 gates the snare's ending fill on the snare's own pattern having hits, so the shipped "sparse" groove (empty snare row) permanently silences the […] |
+| ✅ F-375 | high | `crates/auris-compose/src/rhythm.rs:279` | Pattern::at_in_bar's middle==0 branch hard-codes every interior beat to the pattern's first beat instead of cycling, silencing the six-eight groove's snare […] |
+| ✅ F-053 | medium | `crates/auris-compose/src/spec/doc.rs:391` | Drum-part GM program numbers between kit boundaries (e.g. 30) are silently rounded down to the nearest kit's patch number on save/reload. |
+| ✅ F-059 | medium | `crates/auris-compose/src/spec/doc.rs:731` | An empty `[section.X.part.Y]` TOML tweak table for a nonexistent part Y is silently dropped before validation, so no "part does not exist" error is ever raised. |
+| ✅ F-117 | medium | `crates/auris-compose/src/frame.rs:331` | colour() gives a borrowed bVII a major seventh instead of the diatonically correct quality because its accidental!=0 skips diatonic_seventh and falls back to a […] |
+| ✅ F-133 | medium | `crates/auris-compose/src/vocal.rs:158` | VIBRATO_FROM_SECONDS doc claims passing eighths "never" get vibrato, but they do below ~66.67 BPM. |
+| ✅ F-140 | medium | `crates/auris-compose/src/parts/mod.rs:224` | shorten() applies gate-based note shortening to Riser parts, letting a spec-set gate cut a riser's note-off before its sample's documented peak. |
+| ✅ F-141 | medium | `crates/auris-compose/src/spec/mod.rs:171` | PartSpec::range() can return bounds outside 0..127 for a legal octave, causing notes near the register extreme to silently collapse onto MIDI pitch 127 or 0. |
+| ✅ F-153 | medium | `crates/auris-compose/src/spec/doc.rs:110` | SongSpec::to_toml() writes every top-level field unconditionally, contradicting its own "only what differs from a default" doc comment. |
+| ✅ F-164 | medium | `crates/auris-compose/src/parts/mod.rs:219` | Setting `gate` on a riser part lets `shorten()` cut the swell's note-off before the join tick, undoing `riser()`'s exact-timing guarantee. |
 | F-209 | medium | `crates/auris-compose/src/render.rs:312` | clips_of silently drops swing-delayed notes past a section boundary instead of clamping them, contradicting its own adjacent comment. |
 | F-230 | medium | `crates/auris-compose/src/spec/doc.rs:838` | Riser's `note` rejection error wrongly claims its pitch "comes from the harmony," though Riser's pitch is a hardcoded constant, not harmony-derived. |
 | F-231 | medium | `crates/auris-compose/src/parts/arp.rs:110` | arp()'s procedural path drops all notes for a chord event shorter than one arp step (count==0), unlike bass/comp's guaranteed onset-0 guard. |
@@ -96,7 +96,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Session::resize_clip doc comment: a dragged-out generated clip "fills the bars it gained instead of trailing silence"
 
-### F-316 · high · drums.rs:115 gates the snare's ending fill on the snare's own pattern having hits, so the shipped "sparse" groove (empty snare row) permanently silences the fill despite being a valid, resolved groove name.
+### ✅ F-316 · high · drums.rs:115 gates the snare's ending fill on the snare's own pattern having hits, so the shipped "sparse" groove (empty snare row) permanently silences the fill despite being a valid, resolved groove name.
 
 `crates/auris-compose/src/parts/drums.rs:115` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -112,7 +112,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** // A fill is a departure from a groove, so there has to be a groove to depart from. A name nobody recognises leaves every voice a bar of rests, and running a fill over that would be the kit inventing a part out of a typo.
 
-### F-375 · high · Pattern::at_in_bar's middle==0 branch hard-codes every interior beat to the pattern's first beat instead of cycling, silencing the six-eight groove's snare backbeat under any bar with 3+ beats, including plain 4/4.
+### ✅ F-375 · high · Pattern::at_in_bar's middle==0 branch hard-codes every interior beat to the pattern's first beat instead of cycling, silencing the six-eight groove's snare backbeat under any bar with 3+ beats, including plain 4/4.
 
 `crates/auris-compose/src/rhythm.rs:279` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -128,7 +128,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** "the bar's first beat takes the groove's first, its last beat takes the groove's last, and the beats between cycle through the middle. A shorter bar drops middle beats and a longer one repeats them" (doc comment on Pattern::at_in_bar, rhythm.rs:234-236)
 
-### F-053 · medium · Drum-part GM program numbers between kit boundaries (e.g. 30) are silently rounded down to the nearest kit's patch number on save/reload.
+### ✅ F-053 · medium · Drum-part GM program numbers between kit boundaries (e.g. 30) are silently rounded down to the nearest kit's patch number on save/reload.
 
 `crates/auris-compose/src/spec/doc.rs:391` · persistence · confirmed (executed reproduction; reported independently 1×)
 
@@ -152,7 +152,7 @@ program = 30
 
 **Written rule it breaks.** Nothing to check: `Program` refuses anything outside 0..127 as it is read, which is the one thing that could be wrong about it. (doc.rs, around line 758) — this comment asserts the round-trip is safe for drum programs, which is false for non-boundary values.
 
-### F-059 · medium · An empty `[section.X.part.Y]` TOML tweak table for a nonexistent part Y is silently dropped before validation, so no "part does not exist" error is ever raised.
+### ✅ F-059 · medium · An empty `[section.X.part.Y]` TOML tweak table for a nonexistent part Y is silently dropped before validation, so no "part does not exist" error is ever raised.
 
 `crates/auris-compose/src/spec/doc.rs:731` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -168,7 +168,7 @@ program = 30
 
 **Written rule it breaks.** // A name that does not resolve would otherwise be answered by a silent substitution: a section would play a progression nobody asked for, or fall silent for want of a part. (doc.rs, comment preceding the part_names validation loop)
 
-### F-117 · medium · colour() gives a borrowed bVII a major seventh instead of the diatonically correct quality because its accidental!=0 skips diatonic_seventh and falls back to a bare major-triad-to-major7 mapping.
+### ✅ F-117 · medium · colour() gives a borrowed bVII a major seventh instead of the diatonically correct quality because its accidental!=0 skips diatonic_seventh and falls back to a bare major-triad-to-major7 mapping.
 
 `crates/auris-compose/src/frame.rs:331` · theory · confirmed (executed reproduction; reported independently 1×)
 
@@ -189,7 +189,7 @@ only numerals with accidental==0 get the correct `diatonic_seventh(source, degre
 
 **Written rule it breaks.** Composed audio is calibrated by measurement / the code's own comment: "The seventh the *key* stacks on that degree, which is the only thing that knows a dominant from a tonic." — the accidental filter defeats exactly this stated intent for any numeral with an accidental, including the common borrowed bVII.
 
-### F-133 · medium · VIBRATO_FROM_SECONDS doc claims passing eighths "never" get vibrato, but they do below ~66.67 BPM.
+### ✅ F-133 · medium · VIBRATO_FROM_SECONDS doc claims passing eighths "never" get vibrato, but they do below ~66.67 BPM.
 
 `crates/auris-compose/src/vocal.rs:158` · theory · confirmed (executed reproduction; reported independently 2×)
 
@@ -205,7 +205,7 @@ only numerals with accidental==0 get the correct `diatonic_seventh(source, degre
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs." / doc comment: "the held syllable clears the bar at any tempo under ~260 BPM and the passing eighths never do — which is the rule the numbers were chosen to produce."
 
-### F-140 · medium · shorten() applies gate-based note shortening to Riser parts, letting a spec-set gate cut a riser's note-off before its sample's documented peak.
+### ✅ F-140 · medium · shorten() applies gate-based note shortening to Riser parts, letting a spec-set gate cut a riser's note-off before its sample's documented peak.
 
 `crates/auris-compose/src/parts/mod.rs:224` · correctness · confirmed (executed reproduction; reported independently 2×)
 
@@ -221,7 +221,7 @@ only numerals with accidental==0 get the correct `diatonic_seventh(source, degre
 
 **Written rule it breaks.** Held to the join exactly. The peak is the last thing in the sample, and a note-off before it would cut the swell at the moment it exists for. (crates/auris-compose/src/parts/joins.rs, doc comment on riser())
 
-### F-141 · medium · PartSpec::range() can return bounds outside 0..127 for a legal octave, causing notes near the register extreme to silently collapse onto MIDI pitch 127 or 0.
+### ✅ F-141 · medium · PartSpec::range() can return bounds outside 0..127 for a legal octave, causing notes near the register extreme to silently collapse onto MIDI pitch 127 or 0.
 
 `crates/auris-compose/src/spec/mod.rs:171` · theory · confirmed (executed reproduction; reported independently 2×)
 
@@ -241,7 +241,7 @@ octave = 9`  — parses cleanly (octave 9 passes the -1..=9 check) into a `SongS
 
 **Written rule it breaks.** /// The MIDI range this part should stay inside, moved by its octave. (crates/auris-compose/src/spec/mod.rs:168) - the range is documented as authoritative for where a part's notes stay, but it can itself fall outside 0..127.
 
-### F-153 · medium · SongSpec::to_toml() writes every top-level field unconditionally, contradicting its own "only what differs from a default" doc comment.
+### ✅ F-153 · medium · SongSpec::to_toml() writes every top-level field unconditionally, contradicting its own "only what differs from a default" doc comment.
 
 `crates/auris-compose/src/spec/doc.rs:110` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -257,7 +257,7 @@ octave = 9`  — parses cleanly (octave 9 passes the -1..=9 check) into a `SongS
 
 **Written rule it breaks.** "Only what differs from a default is written, so what comes out of a dialog is about as short as what a person would have typed." (doc.rs:110-113, doc comment on SongSpec::to_toml)
 
-### F-164 · medium · Setting `gate` on a riser part lets `shorten()` cut the swell's note-off before the join tick, undoing `riser()`'s exact-timing guarantee.
+### ✅ F-164 · medium · Setting `gate` on a riser part lets `shorten()` cut the swell's note-off before the join tick, undoing `riser()`'s exact-timing guarantee.
 
 `crates/auris-compose/src/parts/mod.rs:219` · correctness · confirmed (executed reproduction; reported independently 1×)
 

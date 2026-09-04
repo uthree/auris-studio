@@ -1557,10 +1557,7 @@ pub mod add_part {
         let start_bar = args.start_bar.unwrap_or(1).max(1);
         let start = session.project().signatures.bar_start(start_bar);
         let bars = match args.bars {
-            Some(bars) if bars > 0 => bars,
-            Some(_) => {
-                return Err("`bars` is how many bars the part covers; give at least 1".into());
-            }
+            Some(bars) => bounded_bars(bars, "part")?,
             None => {
                 let end = session.project().end_tick();
                 if end <= start {
@@ -1570,7 +1567,7 @@ pub mod add_part {
                     ));
                 }
                 let last = session.project().signatures.bar_of(end - Ticks(1));
-                last - start_bar + 1
+                bounded_bars(last - start_bar + 1, "part")?
             }
         };
         let after = bar_after(start_bar, bars)?;
@@ -1766,13 +1763,11 @@ pub mod add_clip {
 
     /// Opens the clip, and saves.
     pub fn run(args: &Args) -> Result<String, String> {
-        if args.bars == 0 {
-            return Err("`bars` is how many bars the clip covers; give at least 1".into());
-        }
+        let bars = bounded_bars(args.bars, "clip")?;
         let mut session = opened(&args.project)?;
         let track = track_by_name(session.project(), &args.track)?.id;
         let start_bar = args.start_bar.unwrap_or(1).max(1);
-        let after = bar_after(start_bar, args.bars)?;
+        let after = bar_after(start_bar, bars)?;
         let start = session.project().signatures.bar_start(start_bar);
         let length = session.project().signatures.bar_start(after) - start;
         let name = args.name.as_deref().unwrap_or("melody");
@@ -1943,7 +1938,7 @@ pub mod edit_notes {
                     spec.bar, spec.beat
                 ));
             }
-            if !spec.beats.is_finite() || !(0.0..=MAX_TOOL_BEATS).contains(&spec.beats) {
+            if !spec.beats.is_finite() || spec.beats <= 0.0 || spec.beats > MAX_TOOL_BEATS {
                 return Err(format!(
                     "`beats` is how long the note is held; give more than 0 and at most {MAX_TOOL_BEATS}"
                 ));
@@ -1962,6 +1957,17 @@ pub mod edit_notes {
                 .signature_at(tick)
                 .ticks_per_beat();
             let length = Ticks((per_beat.raw() as f64 * spec.beats).round() as i64);
+            if length > clip_end - tick {
+                let first = session.project().signatures.bar_of(clip_start);
+                let last = session
+                    .project()
+                    .signatures
+                    .bar_of((clip_end - Ticks(1)).max_zero());
+                return Err(format!(
+                    "a note at bar {} beat {} held for {} beats runs past the clip, which covers bars {first}-{last}",
+                    spec.bar, spec.beat, spec.beats
+                ));
+            }
             let mut note = Note::new(pitch, tick - clip_start, length);
             note.velocity = spec.velocity.unwrap_or(auris_session::DEFAULT_VELOCITY);
             placed.push(note);
@@ -2415,21 +2421,36 @@ fn opened(path: &str) -> Result<Session, String> {
 
 /// The track called `name`, or a refusal that lists the real ones.
 fn track_by_name<'p>(project: &'p Project, name: &str) -> Result<&'p Track, String> {
-    project
+    let matches: Vec<(usize, &Track)> = project
         .tracks
         .iter()
-        .find(|track| track.name.eq_ignore_ascii_case(name))
-        .ok_or_else(|| {
+        .enumerate()
+        .filter(|(_, track)| track.name.eq_ignore_ascii_case(name))
+        .collect();
+    match matches.as_slice() {
+        [(_, track)] => Ok(*track),
+        [] => {
             let names: Vec<&str> = project
                 .tracks
                 .iter()
                 .map(|track| track.name.as_str())
                 .collect();
-            format!(
+            Err(format!(
                 "no track is named '{name}' — this project has: {}",
                 names.join(", ")
-            )
-        })
+            ))
+        }
+        ambiguous => {
+            let names: Vec<String> = ambiguous
+                .iter()
+                .map(|(index, track)| format!("[{}] '{}'", index + 1, track.name))
+                .collect();
+            Err(format!(
+                "track name '{name}' is ambiguous — it matches {}; rename one before using a by-name tool",
+                names.join(", ")
+            ))
+        }
+    }
 }
 
 /// The clip a track's 1-based number means, in the numbering `describe` prints.
@@ -2510,6 +2531,24 @@ fn bar_after(start_bar: u32, bars: u32) -> Result<u32, String> {
     })
 }
 
+/// Most bars a model-facing command may create or generate in one call.
+const MAX_TOOL_BARS: u32 = 4_096;
+
+/// A requested span checked before it can drive timeline-sized allocation or generation.
+fn bounded_bars(bars: u32, subject: &str) -> Result<u32, String> {
+    if bars == 0 {
+        return Err(format!(
+            "`bars` is how many bars the {subject} covers; give at least 1"
+        ));
+    }
+    if bars > MAX_TOOL_BARS {
+        return Err(format!(
+            "`bars` is how many bars the {subject} covers; give at most {MAX_TOOL_BARS}"
+        ));
+    }
+    Ok(bars)
+}
+
 /// Where 1-based `bar` and `beat` land on the timeline.
 fn placed_at(project: &Project, bar: u32, beat: f64) -> Result<Ticks, String> {
     if !beat.is_finite() || !(1.0..=MAX_TOOL_BEATS).contains(&beat) {
@@ -2530,12 +2569,12 @@ const MAX_TOOL_BEATS: f64 = 16_384.0;
 
 /// A mixer strip address: a track by name, or `None` for the master bus as "master".
 fn strip_by_name(project: &Project, name: &str) -> Result<Option<TrackId>, String> {
-    if let Some(track) = project
+    if project
         .tracks
         .iter()
-        .find(|track| track.name.eq_ignore_ascii_case(name))
+        .any(|track| track.name.eq_ignore_ascii_case(name))
     {
-        return Ok(Some(track.id));
+        return track_by_name(project, name).map(|track| Some(track.id));
     }
     match name.eq_ignore_ascii_case("master") {
         true => Ok(None),
@@ -3291,6 +3330,32 @@ mod tests {
         assert!(bar_after(u32::MAX, 1).unwrap_err().contains("timeline"));
     }
 
+    #[test]
+    fn one_tool_call_cannot_create_an_unbounded_number_of_bars() {
+        assert_eq!(bounded_bars(MAX_TOOL_BARS, "part"), Ok(MAX_TOOL_BARS));
+        let error = bounded_bars(MAX_TOOL_BARS + 1, "part").unwrap_err();
+        assert!(error.contains("at most 4096"), "{error}");
+        assert!(bounded_bars(0, "clip").unwrap_err().contains("at least 1"));
+    }
+
+    #[test]
+    fn a_duplicate_track_name_is_ambiguous_instead_of_picking_the_first() {
+        let mut project = Project::new("Song", 48_000.0);
+        project.add_bus_track("Drums");
+        project.add_bus_track("drums");
+
+        let error = track_by_name(&project, "DRUMS").unwrap_err();
+        assert!(error.contains("ambiguous"), "{error}");
+        assert!(error.contains("[1] 'Drums'"), "{error}");
+        assert!(error.contains("[2] 'drums'"), "{error}");
+        assert!(
+            strip_by_name(&project, "Drums")
+                .unwrap_err()
+                .contains("ambiguous"),
+            "mixer-strip tools use the same safe lookup"
+        );
+    }
+
     /// The melody-first workflow, whole: an empty project, a track, an empty clip, a tune
     /// placed note by note, read back numbered, corrected — and then a band derived from it.
     #[test]
@@ -3381,6 +3446,15 @@ mod tests {
         assert!(missing.contains("[1]-[4]"), "{missing}");
         let outside = place(vec![note("C4", 7, 1.0)], None).unwrap_err();
         assert!(outside.contains("bars 1-2"), "{outside}");
+        let past_end = place(
+            vec![edit_notes::NoteSpec {
+                beats: 2.0,
+                ..note("C4", 2, 4.0)
+            }],
+            None,
+        )
+        .unwrap_err();
+        assert!(past_end.contains("runs past the clip"), "{past_end}");
         let loud = place(
             vec![edit_notes::NoteSpec {
                 velocity: Some(5.0),

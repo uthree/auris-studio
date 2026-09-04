@@ -75,6 +75,7 @@ impl Session {
                     .unwrap_or((Ticks::ZERO, self.project.signatures.bar_start(3))),
             );
         }
+        self.history.sync_punch(&self.project);
     }
 
     /// Sets the punch region.

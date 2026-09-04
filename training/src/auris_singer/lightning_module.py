@@ -151,7 +151,7 @@ class AurisSingerModule(L.LightningModule):
         the speaker tensors: a run on a different number of speakers keeps its own, freshly
         initialised, since a speaker id means nothing across corpora anyway.
         """
-        checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+        checkpoint = torch.load(path, map_location="cpu", weights_only=True)
         state = checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
         weights = {
             key: value

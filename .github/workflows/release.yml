@@ -226,8 +226,8 @@ jobs:
 
           | File | What it holds |
           | --- | --- |
-          | `…-macos-universal.tar.gz` | `Auris Studio.app` and the `auris` command line tool — Apple Silicon and Intel in one binary |
-          | `…-windows-x86_64.zip` | `auris-studio.exe` and `auris.exe` |
+          | `…-macos-universal.tar.gz` | `Auris Studio.app`, `auris`, `auris-mcp`, and `auris-agent` — Apple Silicon and Intel universal binaries |
+          | `…-windows-x86_64.zip` | `auris-studio.exe`, `auris.exe`, `auris-mcp.exe`, and `auris-agent.exe` |
           | `…-linux-x86_64.tar.gz` | the `auris` command line tool only |
 
           Every archive carries **MuseScore General**, a General MIDI SoundFont under the MIT

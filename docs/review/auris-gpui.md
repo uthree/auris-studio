@@ -13,7 +13,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-034 | high | `crates/auris-gpui/src/ui/mixer.rs:171` | Right-click on any mixer strip or fader always shows Add Track instead of the track/param menu, since the outer mixer div's handler overwrites the inner one […] |
 | ✅ F-043 | high | `crates/auris-gpui/src/settings_window.rs:244` | Settings window's apply_audio sets self.audio before the apply succeeds and never rolls it back on Err, so the UI shows a rejected audio preference as active. |
 | ✅ F-047 | high | `crates/auris-gpui/src/settings_window.rs:1024` | Keys-tab section headings for the same group render twice, non-adjacently, because BINDABLE's declaration order isn't grouped as found_commands assumes. |
-| F-067 | high | `crates/auris-gpui/src/menu.rs:652` | macOS native Edit/View/Transport menus never disable Undo/Redo or check toggles, because menus() is built once from MenuState::default() and gpui's […] |
+| ✅ F-067 | high | `crates/auris-gpui/src/menu.rs:652` | macOS native Edit/View/Transport menus never disable Undo/Redo or check toggles, because menus() is built once from MenuState::default() and gpui's […] |
 | ✅ F-069 | high | `crates/auris-gpui/src/ui/agent_chat.rs:846` | render_agent_chat re-runs load_preferences() every repaint while unconfigured, wiping the provider/URL/API-key-env fields on every keystroke or dropdown pick […] |
 | ✅ F-070 | high | `crates/auris-gpui/src/ui/context_menu/menu.rs:329` | ContextMenu::origin's fallback clamp can place the menu directly over the anchor point in narrow viewports, contradicting its own doc comment's purpose. |
 | ✅ F-071 | high | `crates/auris-gpui/src/ui/context_menu/command.rs:956` | Most clip-context-menu rows (e.g. ToggleClipMute, SplitClipAtPlayhead) act only on the right-clicked clip, ignoring the rest of a multi-clip selection the […] |
@@ -26,30 +26,30 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-095 | high | `crates/auris-gpui/src/ui/context_menu/clips.rs:295` | Note context menu titled "N notes" still applies ornament/lyric rows to only the single note under the pointer, silently dropping the rest of the selection. |
 | ✅ F-110 | high | `crates/auris-gpui/src/settings_window.rs:1308` | Resetting a command's keybinding while a capture is armed leaves the capture live, so the next keystroke silently rebinds the just-reset command. |
 | ✅ F-113 | high | `crates/auris-gpui/src/ui/library.rs:857` | Plugin-open state keyed by scan-list index (not file identity) lets adding/removing a plugin folder auto-load an unrelated .clap binary with no user gesture. |
-| F-322 | high | `crates/auris-gpui/src/ui/agent_chat.rs:524` | spawn_link discards auris-agent's stderr, so a startup failure (e.g. a misconfigured api_key_env) surfaces in chat only as the uninformative "The agent process […] |
+| ✅ F-322 | high | `crates/auris-gpui/src/ui/agent_chat.rs:524` | spawn_link discards auris-agent's stderr, so a startup failure (e.g. a misconfigured api_key_env) surfaces in chat only as the uninformative "The agent process […] |
 | ✅ F-345 | high | `crates/auris-gpui/src/ui/arrangement/lanes.rs:339` | clip_grab_at's symmetric end-edge check lets a press past a looped clip's raw end start a resize drag with no resize cursor shown there. |
 | ✅ F-346 | high | `crates/auris-gpui/src/ui/compose_sheet/dials.rs:878` | Gain dial's clamped display fraction is reused as drag start, so touching a part with legally out-of-range gain (-60..12 dB) silently snaps it into -30..0 dB […] |
-| F-038 | medium | `crates/auris-gpui/src/ui/commands.rs:327` | create_clip_at names new clips from the project's track count instead of a clip count, so repeated clip creation on a track yields duplicate names like "Clip […] |
-| F-044 | medium | `crates/auris-gpui/src/ui/prompt.rs:674` | Empty ClipSourceTempo field is rejected by commit_prompt's generic empty-check before it can reach the arm meant to clear the tempo to None. |
-| F-045 | medium | `crates/auris-gpui/src/ui/prompt.rs:993` | commit_prompt's empty_clears guard omits ClipSourceTempo, so clearing a clip's source tempo via the prompt can never run. |
-| F-054 | medium | `crates/auris-gpui/src/settings_window.rs:255` | Settings window mislabels every audio-preference error (mainly "recording in progress") as an "audio restart failed" and leaks raw English text instead of the […] |
-| F-068 | medium | `crates/auris-gpui/src/ui/arrangement/headers.rs:109` | Header column reads self.lane_scroll before render_timeline clamps it, causing a one-frame header/lane misalignment right after a track deletion overflows the […] |
+| ✅ F-038 | medium | `crates/auris-gpui/src/ui/commands.rs:327` | create_clip_at names new clips from the project's track count instead of a clip count, so repeated clip creation on a track yields duplicate names like "Clip […] |
+| ✅ F-044 | medium | `crates/auris-gpui/src/ui/prompt.rs:674` | Empty ClipSourceTempo field is rejected by commit_prompt's generic empty-check before it can reach the arm meant to clear the tempo to None. |
+| ✅ F-045 | medium | `crates/auris-gpui/src/ui/prompt.rs:993` | commit_prompt's empty_clears guard omits ClipSourceTempo, so clearing a clip's source tempo via the prompt can never run. |
+| ✅ F-054 | medium | `crates/auris-gpui/src/settings_window.rs:255` | Settings window mislabels every audio-preference error (mainly "recording in progress") as an "audio restart failed" and leaks raw English text instead of the […] |
+| ✅ F-068 | medium | `crates/auris-gpui/src/ui/arrangement/headers.rs:109` | Header column reads self.lane_scroll before render_timeline clamps it, causing a one-frame header/lane misalignment right after a track deletion overflows the […] |
 | ✅ F-082 | medium | `crates/auris-gpui/src/ui/context_menu/clips.rs:60` | Clip context menu titled "N clips" applies most rows (mute, gain, crossfade, fades, tempo, edit, accompany, motif) to only the single right-clicked clip, not […] |
-| F-131 | medium | `crates/auris-gpui/src/ui/plugin_window.rs:219` | Closing an EQ's plugin window skips stop_watching(), so the audio thread keeps publishing that strip's spectrum every block until some other plugin window is […] |
-| F-134 | medium | `crates/auris-gpui/src/i18n.rs:240` | NoSuchSpeaker renders its whole English thiserror sentence untranslated in the Japanese UI, unlike every comparable local error variant. |
-| F-138 | medium | `crates/auris-gpui/src/keymap.rs:164` | discard_unusable() never re-checks survivors against defaults, so a filtered override that matches the default is kept and re-persisted as if customized. |
-| F-139 | medium | `crates/auris-gpui/src/ui/transport_bar.rs:927` | toggle_monitoring hard-resets monitor_gaps to 0 even when the shared Capture device stays open, causing report_monitor_gaps to re-announce the stale cumulative […] |
-| F-142 | medium | `crates/auris-gpui/src/ui/piano_roll.rs:115` | note_end_span's doc/test comment falsely claim None for notes <3px wide; the code only returns None at width <= 0. |
-| F-151 | medium | `crates/auris-gpui/src/ui/arrangement/mod.rs:6` | mod.rs's doc comment falsely claims all arrangement tests live in geometry.rs, when headers.rs and gestures.rs each carry their own test modules. |
-| F-156 | medium | `crates/auris-gpui/src/ui/text_field.rs:320` | apply_key returns KeyEffect::Changed for Backspace/Delete even when the caret is at a boundary and nothing was deleted, wrongly resetting palette selection / […] |
-| F-169 | medium | `crates/auris-gpui/src/app.rs:1807` | select_clips's doc says primary joins the clip selection when absent from it, but the code discards primary in exactly that case instead of inserting it. |
-| F-171 | medium | `crates/auris-gpui/src/ui/prompt.rs:1852` | every_target()'s doc comment falsely claims exhaustiveness is enforced; it's a plain Vec literal already missing 6 of 26 PromptTarget variants. |
+| ✅ F-131 | medium | `crates/auris-gpui/src/ui/plugin_window.rs:219` | Closing an EQ's plugin window skips stop_watching(), so the audio thread keeps publishing that strip's spectrum every block until some other plugin window is […] |
+| ✅ F-134 | medium | `crates/auris-gpui/src/i18n.rs:240` | NoSuchSpeaker renders its whole English thiserror sentence untranslated in the Japanese UI, unlike every comparable local error variant. |
+| ✅ F-138 | medium | `crates/auris-gpui/src/keymap.rs:164` | discard_unusable() never re-checks survivors against defaults, so a filtered override that matches the default is kept and re-persisted as if customized. |
+| ✅ F-139 | medium | `crates/auris-gpui/src/ui/transport_bar.rs:927` | toggle_monitoring hard-resets monitor_gaps to 0 even when the shared Capture device stays open, causing report_monitor_gaps to re-announce the stale cumulative […] |
+| ✅ F-142 | medium | `crates/auris-gpui/src/ui/piano_roll.rs:115` | note_end_span's doc/test comment falsely claim None for notes <3px wide; the code only returns None at width <= 0. |
+| ✅ F-151 | medium | `crates/auris-gpui/src/ui/arrangement/mod.rs:6` | mod.rs's doc comment falsely claims all arrangement tests live in geometry.rs, when headers.rs and gestures.rs each carry their own test modules. |
+| ✅ F-156 | medium | `crates/auris-gpui/src/ui/text_field.rs:320` | apply_key returns KeyEffect::Changed for Backspace/Delete even when the caret is at a boundary and nothing was deleted, wrongly resetting palette selection / […] |
+| ✅ F-169 | medium | `crates/auris-gpui/src/app.rs:1807` | select_clips's doc says primary joins the clip selection when absent from it, but the code discards primary in exactly that case instead of inserting it. |
+| ✅ F-171 | medium | `crates/auris-gpui/src/ui/prompt.rs:1852` | every_target()'s doc comment falsely claims exhaustiveness is enforced; it's a plain Vec literal already missing 6 of 26 PromptTarget variants. |
 | F-174 | medium | `crates/auris-gpui/src/ui/transport_bar.rs:1319` | Test named for cycling the grid only asserts a static fact about GRID_CHOICES and never calls cycle_grid or grid_label. |
 | F-189 | medium | `crates/auris-gpui/src/settings_window.rs:922` | Re-clicking the already-selected output device row zeroes sample_rate and forces an unwanted audio restart. |
 | F-190 | medium | `crates/auris-gpui/src/settings_window.rs:65` | An open Settings window keeps showing the old language/colour scheme when it is changed elsewhere (e.g. the command palette), until closed and reopened. |
 | F-191 | medium | `crates/auris-gpui/src/ui/compose_sheet/dials.rs:244` | song_dials rebuilds SongDials::charts via BTreeMap::iter(), so reopening a project resorts extra charts alphabetically instead of preserving the order they […] |
-| F-199 | medium | `crates/auris-gpui/src/gestures.rs:117` | Holding both the create and delete modifiers on empty piano-roll grid always creates a note because CommandClick/OptionClick::matches ignore each other's flag. |
-| F-203 | medium | `crates/auris-gpui/src/main.rs:197` | opening_window_bounds checks only cx.primary_display(), so a window remembered on a secondary monitor is always recentred instead of restored, even though […] |
+| ✅ F-199 | medium | `crates/auris-gpui/src/gestures.rs:117` | Holding both the create and delete modifiers on empty piano-roll grid always creates a note because CommandClick/OptionClick::matches ignore each other's flag. |
+| ✅ F-203 | medium | `crates/auris-gpui/src/main.rs:197` | opening_window_bounds checks only cx.primary_display(), so a window remembered on a secondary monitor is always recentred instead of restored, even though […] |
 | F-204 | medium | `crates/auris-gpui/src/gestures.rs:433` | gestures.rs:433 uses `#[cfg(not(target_os = "macos"))]` instead of `cfg!`, so the non-macOS modifier assertions never compile on a macOS `cargo test` run, […] |
 | F-211 | medium | `crates/auris-gpui/src/app.rs:2049` | selected_phonemes doc-comments "the grabbed note" but reads the lowest-indexed note in a BTreeSet, mismatching pitch and lyric during multi-note shift-click […] |
 | F-212 | medium | `crates/auris-gpui/src/ui/compose_sheet/dials.rs:21` | TEMPO dial doc claims to cover the spec's accepted tempo range (20..400) but only covers 40..220, silently clamping/discarding legal out-of-range tempos on […] |
@@ -226,7 +226,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** Filtered but *not* reordered: this list is arranged under section headings, and sorting by score would scatter the sections. (doc comment on `found_commands`, settings_window.rs:996-999)
 
-### F-067 · high · macOS native Edit/View/Transport menus never disable Undo/Redo or check toggles, because menus() is built once from MenuState::default() and gpui's MenuItem::Action has no enabled/checked field.
+### ✅ F-067 · high · macOS native Edit/View/Transport menus never disable Undo/Redo or check toggles, because menus() is built once from MenuState::default() and gpui's MenuItem::Action has no enabled/checked field.
 
 `crates/auris-gpui/src/menu.rs:652` · ui · confirmed (traced through the code; reported independently 1×)
 
@@ -432,7 +432,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** A `.clap` file is shut for a stronger reason than size. Opening one means loading it, and loading a plugin means running somebody else's code in this process. That has to be something a person did, not something a panel did on their behalf while they were looking for a reverb. (crates/auris-gpui/src/ui/library.rs:80-83)
 
-### F-322 · high · spawn_link discards auris-agent's stderr, so a startup failure (e.g. a misconfigured api_key_env) surfaces in chat only as the uninformative "The agent process ended."
+### ✅ F-322 · high · spawn_link discards auris-agent's stderr, so a startup failure (e.g. a misconfigured api_key_env) surfaces in chat only as the uninformative "The agent process ended."
 
 `crates/auris-gpui/src/ui/agent_chat.rs:524` · correctness · confirmed (traced through the code; reported independently 1×)
 
@@ -478,7 +478,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Fix direction.** Either widen GAIN_DB (dials.rs:27) to match the format's accepted range (-60.0..=12.0, doc.rs:812), or keep the dial's range narrower but have PartDial::set preserve out-of-range values until the user's drag actually crosses back into range (e.g. compute the new value from part.gain_db plus a delta derived from the drag distance, rather than reconstructing it purely from a clamped fraction). At minimum, start_fraction in view.rs must not be the display-clamped fraction if it will be used to derive the new stored value.
 
-### F-038 · medium · create_clip_at names new clips from the project's track count instead of a clip count, so repeated clip creation on a track yields duplicate names like "Clip 1".
+### ✅ F-038 · medium · create_clip_at names new clips from the project's track count instead of a clip count, so repeated clip creation on a track yields duplicate names like "Clip 1".
 
 `crates/auris-gpui/src/ui/commands.rs:327` · correctness · confirmed (traced through the code; reported independently 2×)
 
@@ -492,7 +492,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Fix direction.** In `create_clip_at` (crates/auris-gpui/src/ui/commands.rs:327), replace `let count = self.project().tracks.len();` with a count derived from the clips already on the target track (e.g. `self.project().track(track).map_or(1, |t| t.clips.len() + 1)`), mirroring the `tracks.len() + 1` pattern used by the sibling track-adding commands in the same file.
 
-### F-044 · medium · Empty ClipSourceTempo field is rejected by commit_prompt's generic empty-check before it can reach the arm meant to clear the tempo to None.
+### ✅ F-044 · medium · Empty ClipSourceTempo field is rejected by commit_prompt's generic empty-check before it can reach the arm meant to clear the tempo to None.
 
 `crates/auris-gpui/src/ui/prompt.rs:674` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -508,7 +508,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** An empty box means "nobody knows", which is a thing a clip is allowed to say and the only way back from a tempo typed in by mistake.
 
-### F-045 · medium · commit_prompt's empty_clears guard omits ClipSourceTempo, so clearing a clip's source tempo via the prompt can never run.
+### ✅ F-045 · medium · commit_prompt's empty_clears guard omits ClipSourceTempo, so clearing a clip's source tempo via the prompt can never run.
 
 `crates/auris-gpui/src/ui/prompt.rs:993` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -524,7 +524,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** The code's own comment at prompt.rs:990-991: "An empty box means 'nobody knows', which is a thing a clip is allowed to say and the only way back from a tempo typed in by mistake." — this documented behaviour is unreachable.
 
-### F-054 · medium · Settings window mislabels every audio-preference error (mainly "recording in progress") as an "audio restart failed" and leaks raw English text instead of the already-translated message.
+### ✅ F-054 · medium · Settings window mislabels every audio-preference error (mainly "recording in progress") as an "audio restart failed" and leaks raw English text instead of the already-translated message.
 
 `crates/auris-gpui/src/settings_window.rs:255` · ui · confirmed (executed reproduction; reported independently 1×)
 
@@ -540,7 +540,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** auris-i18n is every word said to a person (the window and the CLI) — implying all user-facing error text must go through the translation layer with its real meaning, not a re-labelled/English-leaking one.
 
-### F-068 · medium · Header column reads self.lane_scroll before render_timeline clamps it, causing a one-frame header/lane misalignment right after a track deletion overflows the scroll offset.
+### ✅ F-068 · medium · Header column reads self.lane_scroll before render_timeline clamps it, causing a one-frame header/lane misalignment right after a track deletion overflows the scroll offset.
 
 `crates/auris-gpui/src/ui/arrangement/headers.rs:109` · correctness · confirmed (traced through the code; reported independently 1×)
 
@@ -572,7 +572,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Verifier's correction.** The claim holds for ToggleClipMute, LoopOverClip, ClipGain, Crossfade, the fade-shape/ClearFades rows, FollowTempo, ClipSourceTempo, EditClip, AccompanyClip and TakeClipAsMotif: each builds its MenuCommand from the bare right-clicked clip and run_menu_command acts on that clip alone, contradicting the "N clips" title the menu shows when several clips are selected. ToggleClipLoop (clips.rs:97), however, is misclassified in the claim: although its row also carries the bare `clip`, run_menu_command dispatches it to `toggle_clip_loop` (commands.rs:430), which internally calls […]
 
-### F-131 · medium · Closing an EQ's plugin window skips stop_watching(), so the audio thread keeps publishing that strip's spectrum every block until some other plugin window is opened.
+### ✅ F-131 · medium · Closing an EQ's plugin window skips stop_watching(), so the audio thread keeps publishing that strip's spectrum every block until some other plugin window is opened.
 
 `crates/auris-gpui/src/ui/plugin_window.rs:219` · lifecycle · confirmed (traced through the code; reported independently 2×)
 
@@ -588,7 +588,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** Analysis exists for a window that is open, and at most one plugin editor is. ... the UI names the strip it is looking at and the renderer fills only that one. (crates/auris-engine/src/scope.rs module doc)
 
-### F-134 · medium · NoSuchSpeaker renders its whole English thiserror sentence untranslated in the Japanese UI, unlike every comparable local error variant.
+### ✅ F-134 · medium · NoSuchSpeaker renders its whole English thiserror sentence untranslated in the Japanese UI, unlike every comparable local error variant.
 
 `crates/auris-gpui/src/i18n.rs:240` · spec-mismatch · confirmed (executed reproduction; reported independently 2×)
 
@@ -604,7 +604,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** The half we own — which operation failed, and on what — is translated. (crates/auris-gpui/src/i18n.rs doc comment on `error_text`)
 
-### F-138 · medium · discard_unusable() never re-checks survivors against defaults, so a filtered override that matches the default is kept and re-persisted as if customized.
+### ✅ F-138 · medium · discard_unusable() never re-checks survivors against defaults, so a filtered override that matches the default is kept and re-persisted as if customized.
 
 `crates/auris-gpui/src/keymap.rs:164` · correctness · confirmed (executed reproduction; reported independently 2×)
 
@@ -620,7 +620,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** Only *changes* are written to disk. Storing the full set would freeze today's defaults into every existing settings file... (keymap.rs:1-5); and the `store` doc comment: "An override equal to the default would freeze today's default into the file."
 
-### F-139 · medium · toggle_monitoring hard-resets monitor_gaps to 0 even when the shared Capture device stays open, causing report_monitor_gaps to re-announce the stale cumulative dropout count as a new event.
+### ✅ F-139 · medium · toggle_monitoring hard-resets monitor_gaps to 0 even when the shared Capture device stays open, causing report_monitor_gaps to re-announce the stale cumulative dropout count as a new event.
 
 `crates/auris-gpui/src/ui/transport_bar.rs:927` · ui · confirmed (executed reproduction; reported independently 2×)
 
@@ -634,7 +634,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Fix direction.** In `toggle_monitoring`, replace the unconditional `self.monitor_gaps = 0;` with a rebase to the device's actual current count: `self.monitor_gaps = self.session.monitor_status().map_or(0, |s| s.rebuffers);`. This makes 0 correct only when the device genuinely closed (status is None), matching what `report_monitor_gaps` already does on that path, while a still-open device (other tracks still monitored) keeps its true high-water mark instead of a fabricated zero.
 
-### F-142 · medium · note_end_span's doc/test comment falsely claim None for notes <3px wide; the code only returns None at width <= 0.
+### ✅ F-142 · medium · note_end_span's doc/test comment falsely claim None for notes <3px wide; the code only returns None at width <= 0.
 
 `crates/auris-gpui/src/ui/piano_roll.rs:115` · spec-mismatch · confirmed (executed reproduction; reported independently 2×)
 
@@ -650,7 +650,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
 
-### F-151 · medium · mod.rs's doc comment falsely claims all arrangement tests live in geometry.rs, when headers.rs and gestures.rs each carry their own test modules.
+### ✅ F-151 · medium · mod.rs's doc comment falsely claims all arrangement tests live in geometry.rs, when headers.rs and gestures.rs each carry their own test modules.
 
 `crates/auris-gpui/src/ui/arrangement/mod.rs:6` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -666,7 +666,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** Every public item carries a doc comment (#![warn(missing_docs)] is on in each crate) — implying doc comments are meant to be accurate/maintained; the doc comment here is stale relative to the code it describes.
 
-### F-156 · medium · apply_key returns KeyEffect::Changed for Backspace/Delete even when the caret is at a boundary and nothing was deleted, wrongly resetting palette selection / re-syncing on a no-op keypress.
+### ✅ F-156 · medium · apply_key returns KeyEffect::Changed for Backspace/Delete even when the caret is at a boundary and nothing was deleted, wrongly resetting palette selection / re-syncing on a no-op keypress.
 
 `crates/auris-gpui/src/ui/text_field.rs:320` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -680,7 +680,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Fix direction.** In apply_key, capture content.len() (or selection) before calling backspace()/delete_forward() and compare after; return KeyEffect::Moved (or a new Ignored-like no-op) when it didn't change, Changed only when it did. Equivalently, have backspace()/delete_forward() return a bool indicating whether they mutated anything, and match on that in apply_key.
 
-### F-169 · medium · select_clips's doc says primary joins the clip selection when absent from it, but the code discards primary in exactly that case instead of inserting it.
+### ✅ F-169 · medium · select_clips's doc says primary joins the clip selection when absent from it, but the code discards primary in exactly that case instead of inserting it.
 
 `crates/auris-gpui/src/app.rs:1807` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -696,7 +696,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** select_clips doc comment (app.rs:1806-1808): "`primary` joins the selection if it is not already in it, and is dropped when it is not one of them and the set is not empty."
 
-### F-171 · medium · every_target()'s doc comment falsely claims exhaustiveness is enforced; it's a plain Vec literal already missing 6 of 26 PromptTarget variants.
+### ✅ F-171 · medium · every_target()'s doc comment falsely claims exhaustiveness is enforced; it's a plain Vec literal already missing 6 of 26 PromptTarget variants.
 
 `crates/auris-gpui/src/ui/prompt.rs:1852` · test-quality · confirmed (executed reproduction; reported independently 1×)
 
@@ -774,7 +774,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** dials.rs:106-111: sections and charts "are ordered lists here and maps there, because a list is what a person edits"; and song_dials's own doc comment (dials.rs:234-238): "What makes the round trip hold is that this normalises... Every list the sheet can produce is already in that shape, because every gesture it offers preserves it."
 
-### F-199 · medium · Holding both the create and delete modifiers on empty piano-roll grid always creates a note because CommandClick/OptionClick::matches ignore each other's flag.
+### ✅ F-199 · medium · Holding both the create and delete modifiers on empty piano-roll grid always creates a note because CommandClick/OptionClick::matches ignore each other's flag.
 
 `crates/auris-gpui/src/gestures.rs:117` · ui · confirmed (executed reproduction; reported independently 1×)
 
@@ -790,7 +790,7 @@ fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
 
 **Written rule it breaks.** Test comment in crates/auris-gpui/src/gestures.rs: "one press must not be both gestures at once" (a_modified_double_click_belongs_to_the_modifier), and the doc note above PointerGesture::Click's match arm: "Every modifier is refused rather than only the two that name gestures."
 
-### F-203 · medium · opening_window_bounds checks only cx.primary_display(), so a window remembered on a secondary monitor is always recentred instead of restored, even though gpui's cx.displays() enumerates every connected display.
+### ✅ F-203 · medium · opening_window_bounds checks only cx.primary_display(), so a window remembered on a secondary monitor is always recentred instead of restored, even though gpui's cx.displays() enumerates every connected display.
 
 `crates/auris-gpui/src/main.rs:197` · platform · confirmed (executed reproduction; reported independently 1×)
 

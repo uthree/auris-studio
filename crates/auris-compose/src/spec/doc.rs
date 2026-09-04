@@ -734,9 +734,9 @@ impl SectionDoc {
         }
         for (part, tweak) in self.part {
             let tweak = tweak.into_spec(name, &part, errors);
-            if !tweak.is_empty() {
-                section.tweaks.insert(part, tweak);
-            }
+            // Keep even an empty table until the roster has validated its name. Dropping it here
+            // made a misspelt `[section.x.part.y]` header disappear without a complaint.
+            section.tweaks.insert(part, tweak);
         }
         section
     }
@@ -856,20 +856,19 @@ impl PartDoc {
 
 impl From<&SongSpec> for SongDoc {
     fn from(spec: &SongSpec) -> Self {
+        let plain = SongSpec::default();
         Self {
-            title: Some(spec.title.clone()),
-            key: Some(spec.key.to_text()),
+            title: (spec.title != plain.title).then(|| spec.title.clone()),
+            key: (spec.key != plain.key).then(|| spec.key.to_text()),
             // The key already carries the scale, and writing both would be two chances to
             // disagree.
             scale: None,
-            tempo: Some(spec.tempo),
-            meter: Some(format!(
-                "{}/{}",
-                spec.meter.numerator, spec.meter.denominator
-            )),
-            seed: Some(spec.seed),
-            groove: Some(spec.groove.clone()),
-            ending: Some(spec.ending.name().to_string()),
+            tempo: (spec.tempo != plain.tempo).then_some(spec.tempo),
+            meter: (spec.meter != plain.meter)
+                .then(|| format!("{}/{}", spec.meter.numerator, spec.meter.denominator)),
+            seed: (spec.seed != plain.seed).then_some(spec.seed),
+            groove: (spec.groove != plain.groove).then(|| spec.groove.clone()),
+            ending: (spec.ending != plain.ending).then(|| spec.ending.name().to_string()),
             motif: (!spec.motif.is_empty()).then(|| {
                 spec.motif
                     .iter()
@@ -877,21 +876,23 @@ impl From<&SongSpec> for SongDoc {
                     .collect::<Vec<_>>()
                     .join(" ")
             }),
-            swing: Some(u32::from(spec.swing)),
-            humanize: Some(spec.humanize),
-            dynamics: Some(spec.dynamics),
-            fill: Some(spec.fill),
-            variation: Some(spec.variation),
+            swing: (spec.swing != plain.swing).then_some(u32::from(spec.swing)),
+            humanize: (spec.humanize != plain.humanize).then_some(spec.humanize),
+            dynamics: (spec.dynamics != plain.dynamics).then_some(spec.dynamics),
+            fill: (spec.fill != plain.fill).then_some(spec.fill),
+            variation: (spec.variation != plain.variation).then_some(spec.variation),
             // The four numbers are what a mood word *means*; writing the word too would let a
             // document say `mood = "dark"` beside a brightness the word does not have.
             mood: None,
-            brightness: Some(spec.mood.brightness),
-            energy: Some(spec.mood.energy),
-            tension: Some(spec.mood.tension),
-            syncopation: Some(spec.mood.syncopation),
+            brightness: (spec.mood.brightness != plain.mood.brightness)
+                .then_some(spec.mood.brightness),
+            energy: (spec.mood.energy != plain.mood.energy).then_some(spec.mood.energy),
+            tension: (spec.mood.tension != plain.mood.tension).then_some(spec.mood.tension),
+            syncopation: (spec.mood.syncopation != plain.mood.syncopation)
+                .then_some(spec.mood.syncopation),
             // Written under `[harmony]`, which can hold all of them rather than only `main`.
             chords: None,
-            form: Some(spec.form.clone()),
+            form: (spec.form != plain.form).then(|| spec.form.clone()),
             harmony: spec
                 .charts
                 .iter()
@@ -916,12 +917,19 @@ impl From<&SongSpec> for SongDoc {
                     (name.clone(), text)
                 })
                 .collect(),
-            section: spec
-                .sections
-                .iter()
-                .map(|(name, section)| (name.clone(), SectionDoc::from_spec(name, section)))
-                .collect(),
-            part: spec.parts.iter().map(PartDoc::from_spec).collect(),
+            section: if spec.sections != plain.sections {
+                spec.sections
+                    .iter()
+                    .map(|(name, section)| (name.clone(), SectionDoc::from_spec(name, section)))
+                    .collect()
+            } else {
+                BTreeMap::new()
+            },
+            part: if spec.parts != plain.parts {
+                spec.parts.iter().map(PartDoc::from_spec).collect()
+            } else {
+                Vec::new()
+            },
         }
     }
 }
@@ -1113,6 +1121,21 @@ mod tests {
             SongSpec::parse("form = \"verse\"\n[[part]]\nname = \"kick\"\nnote = 200").is_err(),
             "200 is not a MIDI note"
         );
+    }
+
+    #[test]
+    fn a_shifted_part_range_never_leaves_midi() {
+        let high = PartSpec {
+            octave: 9,
+            ..PartSpec::of_role("bass", Role::Bass)
+        };
+        let low = PartSpec {
+            octave: -1,
+            ..PartSpec::of_role("lead", Role::Melody)
+        };
+
+        assert_eq!(high.range(), (112, 127));
+        assert_eq!(low.range(), (0, 12));
     }
 
     #[test]
@@ -1319,7 +1342,30 @@ mod tests {
     #[test]
     fn the_whole_default_specification_round_trips_unchanged() {
         let original = SongSpec::default();
-        assert_eq!(SongSpec::parse(&original.to_toml()).unwrap(), original);
+        let written = original.to_toml();
+        assert!(
+            written.trim().is_empty(),
+            "defaults need not fill the file: {written}"
+        );
+        assert_eq!(SongSpec::parse(&written).unwrap(), original);
+    }
+
+    #[test]
+    fn writing_one_top_level_change_does_not_spell_out_every_default() {
+        let spec = SongSpec {
+            tempo: 96.0,
+            ..SongSpec::default()
+        };
+
+        let written = spec.to_toml();
+        assert!(written.contains("tempo = 96"), "{written}");
+        for untouched in ["title", "key", "meter", "groove", "form", "brightness"] {
+            assert!(
+                !written.contains(untouched),
+                "{untouched} leaked into {written}"
+            );
+        }
+        assert_eq!(SongSpec::parse(&written), Ok(spec));
     }
 
     #[test]
@@ -1574,6 +1620,21 @@ mod tests {
                 .iter()
                 .any(|error| error.to_string().contains("trombone")),
             "{errors:?}"
+        );
+
+        let empty = SongSpec::parse(
+            r#"
+            form = "verse"
+
+            [section.verse.part.trombone]
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            empty
+                .iter()
+                .any(|error| error.to_string().contains("trombone")),
+            "even an empty misspelt table must be reported: {empty:?}"
         );
     }
 
@@ -1899,13 +1960,13 @@ mod tests {
             [[part]]
             name    = "kick"
             role    = "kick"
-            program = 5
+            program = 30
             "#,
         )
         .unwrap();
 
         let written = original.to_toml();
-        assert!(written.contains("program = 5"), "{written}");
+        assert!(written.contains("program = 30"), "{written}");
         assert_eq!(SongSpec::parse(&written).unwrap().parts, original.parts);
     }
 

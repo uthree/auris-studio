@@ -328,7 +328,6 @@ fn colour(events: &mut [HarmonicEvent], mood: Mood, seed: u64, section: &str, in
             // it a major seventh, so this used to write Vmaj7 — an F♯ in the key of C — on the
             // one chord where the seventh matters most.
             chord.quality = Some(event.numeral)
-                .filter(|numeral| numeral.accidental == 0)
                 .and_then(|numeral| diatonic_seventh(source, numeral.degree))
                 .unwrap_or_else(|| chord.quality.with_seventh());
             // Only over a seventh, which is what `Mood::ninth_rate` already says it is. On its
@@ -1030,6 +1029,34 @@ mod tests {
                 .count();
             assert!(moved > 0, "{mood} coloured nothing, so this proves nothing");
         }
+    }
+
+    #[test]
+    fn a_minor_keys_flat_seven_takes_the_keys_minor_seventh() {
+        let key = Key::parse("A minor").unwrap();
+        let numeral = Numeral::parse("bVII").unwrap();
+        let original = HarmonicEvent {
+            numeral,
+            chord: numeral.chord_in(key),
+            key,
+            start: Ticks::ZERO,
+            length: Ticks::QUARTER,
+            bar: 0,
+        };
+        let mood = Mood {
+            tension: 0.4,
+            ..Mood::default()
+        };
+        let coloured = (0..100)
+            .find_map(|seed| {
+                let mut events = [original];
+                colour(&mut events, mood, seed, "verse", 0);
+                (events[0].chord != original.chord).then_some(events[0])
+            })
+            .expect("one deterministic seed adds the seventh");
+
+        assert_eq!(coloured.chord.quality, Quality::Dominant7);
+        assert_eq!(coloured.chord, coloured.numeral.chord_in(key));
     }
 
     #[test]

@@ -112,7 +112,7 @@ pub(super) fn drums(
         // A fill is a departure from a groove, so there has to be a groove to depart from. A
         // name nobody recognises leaves every voice a bar of rests, and running a fill over that
         // would be the kit inventing a part out of a typo.
-        if pattern.hits() > 0 {
+        if crate::rhythm::groove(&settings.groove).is_some() {
             fill(
                 settings, frame, section, index, part, voice, bar, &played, &mut notes,
             );
@@ -527,6 +527,32 @@ mod tests {
         assert!(
             hits_in_last_verse_bar(&spec("held")) > hits_in_last_verse_bar(&spec("none")),
             "the verse did not fill into the ending"
+        );
+    }
+
+    #[test]
+    fn a_valid_sparse_groove_can_fill_even_with_an_empty_snare_row() {
+        let (_, frame, parts) = draft(
+            r#"
+            form = "verse"
+            chords = "@axis"
+            groove = "sparse"
+            humanize = 0
+            fill = 1.0
+            ending = "held"
+            [section.verse]
+            bars = 4
+            intensity = 1.0
+            "#,
+        );
+        let verse = &frame.sections[0];
+        let last_bar = verse.start + verse.length - frame.grid.bar_ticks();
+        assert!(
+            part(&parts, "snare")
+                .notes
+                .iter()
+                .any(|note| note.section == 0 && note.start >= last_bar),
+            "the recognised sparse groove lost its ending fill"
         );
     }
 

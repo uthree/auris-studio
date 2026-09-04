@@ -7,9 +7,9 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
 | ✅ F-103 | high | `crates/auris-synth/src/chiptune.rs:278` | Chiptune::note_on stores the new note's target pitch into last_frequency instead of the previous voice's live gliding frequency, so rapid portamento runs […] |
-| F-098 | medium | `crates/auris-synth/src/fm2.rs:279` | Fm2's AllSoundOff handler silences the modulator envelope instantly instead of ramping it, but no shipped code path currently constructs AllSoundOff for FM2, […] |
-| F-239 | medium | `crates/auris-synth/src/chiptune.rs:486` | A huge-but-finite `--sample-rate` (e.g. 1e40) overflows to f32::INFINITY in Chiptune/FM2/NoiseDrum/Vocal `prepare`, zeroing the oscillator's phase increment […] |
-| F-407 | medium | `crates/auris-synth/src/noisedrum.rs:268` | NoiseDrum's AllSoundOff calls sweep.silence() instead of sweep.kill(), snapping the filter sweep by several octaves in one sample instead of de-clicking it — […] |
+| ✅ F-098 | medium | `crates/auris-synth/src/fm2.rs:279` | Fm2's AllSoundOff handler silences the modulator envelope instantly instead of ramping it, but no shipped code path currently constructs AllSoundOff for FM2, […] |
+| ✅ F-239 | medium | `crates/auris-synth/src/chiptune.rs:486` | A huge-but-finite `--sample-rate` (e.g. 1e40) overflows to f32::INFINITY in Chiptune/FM2/NoiseDrum/Vocal `prepare`, zeroing the oscillator's phase increment […] |
+| ✅ F-407 | medium | `crates/auris-synth/src/noisedrum.rs:268` | NoiseDrum's AllSoundOff calls sweep.silence() instead of sweep.kill(), snapping the filter sweep by several octaves in one sample instead of de-clicking it — […] |
 
 ### ✅ F-103 · high · Chiptune::note_on stores the new note's target pitch into last_frequency instead of the previous voice's live gliding frequency, so rapid portamento runs jump-start from an unsounded pitch.
 
@@ -27,7 +27,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** // Frequency the last note started on, so a new note can glide from where the last one was. (doc comment on `Chiptune::last_frequency`, chiptune.rs:124); project rule: "DSP code lives behind unit tests that assert on numbers ... rather than on 'it runs'" (CLAUDE.md) — this numeric mismatch between documented and actual behavior would be caught by such a test but evidently isn't
 
-### F-098 · medium · Fm2's AllSoundOff handler silences the modulator envelope instantly instead of ramping it, but no shipped code path currently constructs AllSoundOff for FM2, so the click is real but presently unreachable outside the crate's own tests.
+### ✅ F-098 · medium · Fm2's AllSoundOff handler silences the modulator envelope instantly instead of ramping it, but no shipped code path currently constructs AllSoundOff for FM2, so the click is real but presently unreachable outside the crate's own tests.
 
 `crates/auris-synth/src/fm2.rs:279` · dsp · confirmed (traced through the code; reported independently 1×)
 
@@ -45,7 +45,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** AllSoundOff hard-silences FM2's modulator envelope discontinuously (mod_envelope.silence() vs envelope.kill(), fm2.rs:279 vs :278), producing an audible click if this event ever reaches a sounding Fm2 voice — confirmed by direct calculation against the real Adsr/Oscillator code, and the crate's own regression test (fm2.rs:672-678) is structurally blind to it because it skips exactly the 192-sample window where the spike occurs. However, downgrade severity/framing: as of this snapshot no live code path constructs NoteEvent::AllSoundOff — the shipped "panic" feature (Session::panic -> […]
 
-### F-239 · medium · A huge-but-finite `--sample-rate` (e.g. 1e40) overflows to f32::INFINITY in Chiptune/FM2/NoiseDrum/Vocal `prepare`, zeroing the oscillator's phase increment and silently freezing the tone with no error.
+### ✅ F-239 · medium · A huge-but-finite `--sample-rate` (e.g. 1e40) overflows to f32::INFINITY in Chiptune/FM2/NoiseDrum/Vocal `prepare`, zeroing the oscillator's phase increment and silently freezing the tone with no error.
 
 `crates/auris-synth/src/chiptune.rs:486` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -63,7 +63,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** Non-finite/positive-only sample-rate guard admits a huge-but-finite value that overflows to +Infinity on the narrowing f64→f32 cast, freezing the oscillator (crates/auris-synth/src/chiptune.rs:486, and identically in fm2.rs, noisedrum.rs, vocal.rs, and oscillator.rs's own `set_sample_rate`). Literal `f64::INFINITY`/NaN cannot reach this code through any real entry point — every real boundary (CLI `--sample-rate` flag, `Project::new`, `RenderGraph::build_with`, `OfflineRender::new`) filters with `is_finite() && > 0.0`. But none of those guards checks that the value fits in `f32`'s range, so a […]
 
-### F-407 · medium · NoiseDrum's AllSoundOff calls sweep.silence() instead of sweep.kill(), snapping the filter sweep by several octaves in one sample instead of de-clicking it — though the path is currently unreachable in the shipped app.
+### ✅ F-407 · medium · NoiseDrum's AllSoundOff calls sweep.silence() instead of sweep.kill(), snapping the filter sweep by several octaves in one sample instead of de-clicking it — though the path is currently unreachable in the shipped app.
 
 `crates/auris-synth/src/noisedrum.rs:268` · dsp · confirmed (executed reproduction; reported independently 1×)
 

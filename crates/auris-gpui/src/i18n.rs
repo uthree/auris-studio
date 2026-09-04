@@ -236,8 +236,11 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::Vocal(inner) => with(Key::ErrorLyric, inner.to_string()),
         SessionError::Sing(inner) => with(Key::ErrorSing, inner.to_string()),
         SessionError::NoVoice(_) => Key::ErrorNoVoice.get(language).to_string(),
-        // The names it offers are the model's own and read the same in every language.
-        SessionError::NoSuchSpeaker { .. } => with(Key::ErrorSing, error.to_string()),
+        // The names it offers are the model's own and read the same in every language; the
+        // sentence joining them is ours and is translated here.
+        SessionError::NoSuchSpeaker { name, offered } => {
+            messages::no_such_speaker(language, name, &offered.join(", "))
+        }
         SessionError::SingingNeedsFolder => Key::ErrorSingingNeedsFolder.get(language).to_string(),
         SessionError::NothingToSing(_) => Key::ErrorNothingToSing.get(language).to_string(),
         SessionError::NoLyrics => Key::ErrorNoLyrics.get(language).to_string(),
@@ -433,6 +436,11 @@ mod tests {
             SessionError::NoPath,
             SessionError::AudioRestart("device gone".into()),
             SessionError::MissingAudio(vec!["a.wav".into()]),
+            SessionError::RecordingInProgress,
+            SessionError::NoSuchSpeaker {
+                name: "Alice".into(),
+                offered: vec!["Bob".into(), "Carol".into()],
+            },
         ];
         for error in &errors {
             for language in Language::ALL {
@@ -443,5 +451,19 @@ mod tests {
                 );
             }
         }
+
+        let japanese = error_text(
+            &SessionError::NoSuchSpeaker {
+                name: "Alice".into(),
+                offered: vec!["Bob".into(), "Carol".into()],
+            },
+            Language::Japanese,
+        );
+        assert!(japanese.contains("Alice") && japanese.contains("Bob, Carol"));
+        assert!(!japanese.contains("the voice has no speaker"), "{japanese}");
+        assert!(
+            !error_text(&SessionError::RecordingInProgress, Language::Japanese)
+                .contains("recording")
+        );
     }
 }

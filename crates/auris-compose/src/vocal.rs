@@ -114,8 +114,8 @@ pub fn vocal_rhythm(counts: &[usize], meter: TimeSignature) -> VocalRhythm {
 ///
 /// Under half a second there is no room for the sway to grow before the note is over, and a
 /// vibrato that never reaches depth reads as a wobble. With the phrase-final half note this
-/// rhythm writes, the held syllable clears the bar at any tempo under ~260 BPM and the
-/// passing eighths never do — which is the rule the numbers were chosen to produce.
+/// rhythm writes, the held syllable clears the bar at any tempo under ~260 BPM. Phrase position
+/// separately keeps passing notes out at slower tempos, where an eighth can cross this duration.
 pub const VIBRATO_FROM_SECONDS: f64 = 0.45;
 
 /// Dresses a written vocal line in the ornaments a singer would add, by rule.
@@ -145,6 +145,11 @@ pub fn ornament_vocal(notes: &mut [Note], rhythm: &VocalRhythm, tempo: &TempoMap
         .last()
         .and_then(|slots| slots.last())
         .map(|(onset, _)| *onset);
+    let helds: Vec<Ticks> = rhythm
+        .phrases
+        .iter()
+        .filter_map(|slots| slots.last().map(|(onset, _)| *onset))
+        .collect();
 
     for note in notes {
         let seconds = tempo.ticks_to_seconds(start + note.end()).0
@@ -155,7 +160,7 @@ pub fn ornament_vocal(notes: &mut [Note], rhythm: &VocalRhythm, tempo: &TempoMap
         if Some(note.start) == last {
             note.fall = Some(Fall::default());
         }
-        if seconds >= VIBRATO_FROM_SECONDS {
+        if helds.contains(&note.start) && seconds >= VIBRATO_FROM_SECONDS {
             note.vibrato = Some(Vibrato {
                 depth: 0.3,
                 rate: 5.8,
@@ -533,6 +538,28 @@ mod tests {
         assert!(
             notes[..4].iter().all(|note| note.fall.is_none()),
             "and nothing before it does"
+        );
+    }
+
+    #[test]
+    fn a_slow_passing_eighth_is_not_mistaken_for_a_held_note() {
+        let harmony = c_major();
+        let rhythm = vocal_rhythm(&[3], TimeSignature::default());
+        let mut notes = write_vocal(
+            &harmony,
+            Ticks::ZERO,
+            &rhythm,
+            &[vec![Contour::Free; 3]],
+            VocalRange::default(),
+            0,
+        );
+
+        ornament_vocal(&mut notes, &rhythm, &TempoMap::constant(60.0), Ticks::ZERO);
+
+        assert!(notes[0].vibrato.is_none() && notes[1].vibrato.is_none());
+        assert!(
+            notes[2].vibrato.is_some(),
+            "the phrase-final hold still sways"
         );
     }
 

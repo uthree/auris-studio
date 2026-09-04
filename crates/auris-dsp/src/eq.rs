@@ -385,6 +385,15 @@ impl Effect for Equalizer {
 
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.sample_rate = ctx.sample_rate;
+        let maximum =
+            crate::biquad::max_frequency(self.sample_rate).clamp(MIN_FREQUENCY, MAX_FREQUENCY);
+        for band in 0..BAND_COUNT {
+            let frequency = band * PARAMS_PER_BAND as usize + OFFSET_FREQUENCY as usize;
+            self.params.descriptors_mut()[frequency].max = maximum;
+            let id = ParamId(frequency as u32);
+            let value = self.params.get(id);
+            self.params.set(id, value);
+        }
         self.filters
             .resize_with(ctx.channel_count.max(1), || [Biquad::default(); BAND_COUNT]);
         self.recompute_all();
@@ -461,6 +470,22 @@ mod tests {
         let mut resumed = AudioBuffer::stereo(64, SR);
         plugin.process(&mut resumed, &context(64));
         assert_eq!(resumed.peak(), 0.0, "the band replayed stale filter memory");
+    }
+
+    #[test]
+    fn frequency_controls_stop_where_the_prepared_rate_can_design() {
+        let mut plugin = Equalizer::new();
+        plugin.prepare(&PrepareContext::new(32_000.0, 512, 2));
+
+        let (id, maximum) = plugin
+            .parameters()
+            .iter()
+            .find(|parameter| parameter.key == "p1_freq")
+            .map(|descriptor| (descriptor.id, descriptor.max))
+            .unwrap();
+        assert!((maximum - 15_984.0).abs() < 0.1, "{maximum}");
+        plugin.set_param_by_key("p1_freq", 20_000.0);
+        assert_eq!(plugin.param(id), maximum);
     }
 
     fn sine(frames: usize, frequency: f32) -> AudioBuffer {

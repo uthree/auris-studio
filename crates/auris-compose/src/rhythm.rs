@@ -277,7 +277,7 @@ impl Pattern {
         } else if beat + 1 >= bar_beats {
             pattern_beats - 1
         } else if middle == 0 {
-            0
+            beat % pattern_beats
         } else {
             1 + (beat - 1) % middle
         };
@@ -972,6 +972,16 @@ mod tests {
             })
             .collect();
         assert_eq!(struck, vec![0, 2, 4, 6, 8, 10]);
+    }
+
+    #[test]
+    fn a_two_beat_groove_cycles_both_beats_across_a_longer_bar() {
+        let six = groove("six-eight").expect("listed");
+        let snare = six.pattern(DrumVoice::Snare);
+        let struck: Vec<_> = (0..16)
+            .filter(|step| snare.at_in_bar(*step, 16, 4, 3).is_some())
+            .collect();
+        assert_eq!(struck, vec![4, 12], "the second and fourth beats");
     }
 
     #[test]

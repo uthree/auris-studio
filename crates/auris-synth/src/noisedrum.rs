@@ -265,7 +265,7 @@ impl SegmentRenderer for NoiseDrum {
                 for index in self.allocator.release_all() {
                     if let Some(voice) = self.voices.get_mut(index) {
                         voice.amplitude.kill();
-                        voice.sweep.silence();
+                        voice.sweep.kill();
                     }
                 }
             }
@@ -341,11 +341,7 @@ impl Instrument for NoiseDrum {
     }
 
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.sample_rate = if ctx.sample_rate > 0.0 {
-            ctx.sample_rate as f32
-        } else {
-            48_000.0
-        };
+        self.sample_rate = crate::sample_rate_f32(ctx.sample_rate);
         self.inv_sample_rate = 1.0 / self.sample_rate;
         self.voices.clear();
         self.voices.reserve(VOICE_COUNT);
@@ -616,6 +612,19 @@ mod tests {
         let muted = rig.render(2_048, &[NoteEvent::AllSoundOff { frame: 0 }]);
         assert_eq!(peak(&muted[192..]), 0.0);
         assert_eq!(rig.instrument.active_voices(), 0);
+    }
+
+    #[test]
+    fn all_sound_off_declicks_the_filter_sweep_too() {
+        let mut drum = NoiseDrum::new();
+        drum.prepare(&PrepareContext::new(SAMPLE_RATE, 512, 2));
+        drum.handle_event(&hit(0, 60));
+        let mut out = AudioBuffer::stereo(512, SAMPLE_RATE);
+        drum.render_segment(&mut out, 0, 100);
+
+        drum.handle_event(&NoteEvent::AllSoundOff { frame: 0 });
+
+        assert_eq!(drum.voices[0].sweep.stage(), auris_dsp::EnvelopeStage::Kill);
     }
 
     #[test]

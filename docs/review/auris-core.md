@@ -18,20 +18,20 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-076 | high | `crates/auris-core/src/time.rs:684` | SignatureMap::from_points/align_to_bars does unchecked i64 multiply-add on tick values from deserialized project files, panicking (debug) or silently […] |
 | ✅ F-083 | high | `crates/auris-core/src/project/clip.rs:1349` | notes_digest omits phoneme_seconds/scoop/fall/vibrato despite claiming "every field", so ornament-only hand edits are silently discarded on resize/regenerate. |
 | ✅ F-317 | high | `crates/auris-core/src/theory/numeral.rs:519` | degree_of never checks accidental 0 against the major reference scale, so borrowed major-scale degrees in minor/modal keys are mislabeled with double […] |
-| F-352 | high | `crates/auris-core/src/project/routing.rs:390` | repair_routing is O(n^3) in track count and runs unconditionally, synchronously, on every project open, even when routing is already valid. |
-| F-007 | medium | `crates/auris-core/src/project/clip.rs:100` | Ticks::Add is unchecked, so a corrupted/malicious .auris file with extreme start/length values panics in debug or silently corrupts note/clip end positions in […] |
-| F-048 | medium | `crates/auris-core/src/theory/key.rs:130` | Key::spelling() picks the wrong sharps/flats side for 7 of 84 mode/tonic pairs (Dorian, Phrygian, Locrian, Mixolydian), contradicting its own doc comment's […] |
-| F-114 | medium | `crates/auris-core/src/project/curve.rs:132` | load_project never sorts bend/controller CurvePoints, so an out-of-order project file silently mis-evaluates curve_at/curve_events on playback. |
-| F-124 | medium | `crates/auris-core/src/harmony.rs:522` | Harmony::stamp unconditionally clears the requested range even when the chart fits to zero bars, silently wiping existing chords and returning 0. |
-| F-144 | medium | `crates/auris-core/src/time.rs:73` | `Ticks::snap_nearest` truncates `grid.0/2`, so for any odd grid the tick exactly `(grid-1)/2` past a boundary snaps to the wrong neighbor. |
-| F-160 | medium | `crates/auris-core/src/project/clip.rs:1354` | notes_digest skips phoneme_seconds/scoop/fall/vibrato, so hand-edited ornaments/timing pins are silently lost on regenerate with no hand-edit warning. |
-| F-184 | medium | `crates/auris-core/src/project/track.rs:600` | Deleting a bus / repairing routing prunes AuxSends but leaves their automation lanes orphaned in the saved project, though no live parameter is ever misdriven […] |
-| F-208 | medium | `crates/auris-core/src/project/curve.rs:163` | curve_events checks the curve's raw trailing point instead of its value at the truncation boundary, so it can fail to release to zero — masked today because […] |
-| F-254 | medium | `crates/auris-core/src/theory/chart.rs:331` | Chart::Display can render a Chart (built via the public Chart::new/bars API) with an empty bar as a doubled pipe that Chart::parse's own deliberate empty-bar […] |
-| F-356 | medium | `crates/auris-core/src/project/curve.rs:144` | curve_events() only emits interior CurvePoints that happen to land on the CURVE_STEP grid, rounding off drawn pitch-bend/CC corners in playback and MIDI export. |
-| F-377 | medium | `crates/auris-core/src/project/clip.rs:1035` | split_clip's unchecked `clip.offset_frames + frames` at clip.rs:1035 can panic or silently wrap on a corrupted/hand-edited project file, corrupting the split […] |
-| F-397 | medium | `crates/auris-core/src/time.rs:785` | TempoMap::from_points keeps the first of two same-tick points while TempoMap::set_point keeps the last, an unstated and inconsistent collision policy reachable […] |
-| F-418 | medium | `crates/auris-core/src/project/track.rs:548` | Project::duplicate_track reissues ids for effects/sends/clips but never rekeys or copies the original track's automation lanes, so a duplicated track's […] |
+| ✅ F-352 | high | `crates/auris-core/src/project/routing.rs:390` | repair_routing is O(n^3) in track count and runs unconditionally, synchronously, on every project open, even when routing is already valid. |
+| ✅ F-007 | medium | `crates/auris-core/src/project/clip.rs:100` | Ticks::Add is unchecked, so a corrupted/malicious .auris file with extreme start/length values panics in debug or silently corrupts note/clip end positions in […] |
+| ✅ F-048 | medium | `crates/auris-core/src/theory/key.rs:130` | Key::spelling() picks the wrong sharps/flats side for 7 of 84 mode/tonic pairs (Dorian, Phrygian, Locrian, Mixolydian), contradicting its own doc comment's […] |
+| ✅ F-114 | medium | `crates/auris-core/src/project/curve.rs:132` | load_project never sorts bend/controller CurvePoints, so an out-of-order project file silently mis-evaluates curve_at/curve_events on playback. |
+| ✅ F-124 | medium | `crates/auris-core/src/harmony.rs:522` | Harmony::stamp unconditionally clears the requested range even when the chart fits to zero bars, silently wiping existing chords and returning 0. |
+| ✅ F-144 | medium | `crates/auris-core/src/time.rs:73` | `Ticks::snap_nearest` truncates `grid.0/2`, so for any odd grid the tick exactly `(grid-1)/2` past a boundary snaps to the wrong neighbor. |
+| ✅ F-160 | medium | `crates/auris-core/src/project/clip.rs:1354` | notes_digest skips phoneme_seconds/scoop/fall/vibrato, so hand-edited ornaments/timing pins are silently lost on regenerate with no hand-edit warning. |
+| ✅ F-184 | medium | `crates/auris-core/src/project/track.rs:600` | Deleting a bus / repairing routing prunes AuxSends but leaves their automation lanes orphaned in the saved project, though no live parameter is ever misdriven […] |
+| ✅ F-208 | medium | `crates/auris-core/src/project/curve.rs:163` | curve_events checks the curve's raw trailing point instead of its value at the truncation boundary, so it can fail to release to zero — masked today because […] |
+| ✅ F-254 | medium | `crates/auris-core/src/theory/chart.rs:331` | Chart::Display can render a Chart (built via the public Chart::new/bars API) with an empty bar as a doubled pipe that Chart::parse's own deliberate empty-bar […] |
+| ✅ F-356 | medium | `crates/auris-core/src/project/curve.rs:144` | curve_events() only emits interior CurvePoints that happen to land on the CURVE_STEP grid, rounding off drawn pitch-bend/CC corners in playback and MIDI export. |
+| ✅ F-377 | medium | `crates/auris-core/src/project/clip.rs:1035` | split_clip's unchecked `clip.offset_frames + frames` at clip.rs:1035 can panic or silently wrap on a corrupted/hand-edited project file, corrupting the split […] |
+| ✅ F-397 | medium | `crates/auris-core/src/time.rs:785` | TempoMap::from_points keeps the first of two same-tick points while TempoMap::set_point keeps the last, an unstated and inconsistent collision policy reachable […] |
+| ✅ F-418 | medium | `crates/auris-core/src/project/track.rs:548` | Project::duplicate_track reissues ids for effects/sends/clips but never rekeys or copies the original track's automation lanes, so a duplicated track's […] |
 | F-238 | low | `crates/auris-core/src/project/clip.rs:1024` | split_clip and resize_clip floor seconds->frames with a bare `as u64` cast while trim_clip_start rounds the same quantity, causing sub-frame (≤1 frame) […] |
 | F-265 | low | `crates/auris-core/src/theory/numeral.rs:574` | diatonic_quality's "fewer than seven degrees" fallback arm at numeral.rs:575-576 is dead code with a now-inaccurate comment, no behavioral effect today. |
 | F-286 | low | `crates/auris-core/src/theory/numeral.rs:386` | Numeral::name_in does unclamped u8 arithmetic on secondary-numeral degree, panicking on out-of-range input that every sibling helper in the file already clamps […] |
@@ -233,7 +233,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** A note the key has is named plainly; anything else is named from the degree of the major scale nearest to it — degree_of's own doc comment (crates/auris-core/src/theory/numeral.rs)
 
-### F-352 · high · repair_routing is O(n^3) in track count and runs unconditionally, synchronously, on every project open, even when routing is already valid.
+### ✅ F-352 · high · repair_routing is O(n^3) in track count and runs unconditionally, synchronously, on every project open, even when routing is already valid.
 
 `crates/auris-core/src/project/routing.rs:390` · ui · confirmed (executed reproduction; reported independently 1×)
 
@@ -247,7 +247,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Fix direction.** Skip the expensive repair path when nothing is broken: first cheaply validate that every output/send/sidechain names a real track and that no cycle exists (reusing one freshly-built adjacency list across the whole check instead of calling `routing_would_cycle` per edge, which rebuilds `routing_edges()` from scratch each time), and only run the O(n) per-edge repair-and-rebuild loop when that check finds a real fault. Separately, replace the linear scans in `Project::track_index` and `repair_routing`'s `usable()` closure with a `HashMap<TrackId, usize>` built once, dropping `routing_edges`/`routing_would_cycle` from O(n^2) to O(n + edges) per call.
 
-### F-007 · medium · Ticks::Add is unchecked, so a corrupted/malicious .auris file with extreme start/length values panics in debug or silently corrupts note/clip end positions in release.
+### ✅ F-007 · medium · Ticks::Add is unchecked, so a corrupted/malicious .auris file with extreme start/length values panics in debug or silently corrupts note/clip end positions in release.
 
 `crates/auris-core/src/project/clip.rs:100` · persistence · confirmed (executed reproduction; reported independently 2×)
 
@@ -263,7 +263,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** Missing assets are reported, never fatal: the project opens with that one track silent. (implies malformed persisted data should degrade gracefully rather than crash or silently corrupt)
 
-### F-048 · medium · Key::spelling() picks the wrong sharps/flats side for 7 of 84 mode/tonic pairs (Dorian, Phrygian, Locrian, Mixolydian), contradicting its own doc comment's claim that it "only ever picks the side of the circle" correctly.
+### ✅ F-048 · medium · Key::spelling() picks the wrong sharps/flats side for 7 of 84 mode/tonic pairs (Dorian, Phrygian, Locrian, Mixolydian), contradicting its own doc comment's claim that it "only ever picks the side of the circle" correctly.
 
 `crates/auris-core/src/theory/key.rs:130` · theory · confirmed (executed reproduction; reported independently 1×)
 
@@ -279,7 +279,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** A mode is treated as major or minor by its third. That is an approximation — D dorian really belongs to C major rather than to F — but it only ever picks the side of the circle, and a mode's own notes are the ones it shares with a key on that side.
 
-### F-114 · medium · load_project never sorts bend/controller CurvePoints, so an out-of-order project file silently mis-evaluates curve_at/curve_events on playback.
+### ✅ F-114 · medium · load_project never sorts bend/controller CurvePoints, so an out-of-order project file silently mis-evaluates curve_at/curve_events on playback.
 
 `crates/auris-core/src/project/curve.rs:132` · persistence · confirmed (executed reproduction; reported independently 1×)
 
@@ -295,7 +295,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** CurvePoint's containing fields are documented as "in time order" / "each in time order" (doc comments on MidiClip::bend/controllers), but load_project performs no equivalent repair to the id-counter and routing repairs it already does after deserialization.
 
-### F-124 · medium · Harmony::stamp unconditionally clears the requested range even when the chart fits to zero bars, silently wiping existing chords and returning 0.
+### ✅ F-124 · medium · Harmony::stamp unconditionally clears the requested range even when the chart fits to zero bars, silently wiping existing chords and returning 0.
 
 `crates/auris-core/src/harmony.rs:522` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -311,7 +311,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Verifier's correction.** `Harmony::stamp` (crates/auris-core/src/harmony.rs:509-525) unconditionally clears the full requested `from..from+bars*bar_ticks` window before checking whether the chart it was given actually produced any chords to write. For `Chart::unwritten()` (or any chart with zero bars), `Chart::fit_to` always returns an empty fit regardless of the requested `bars`, so `stamp` deletes every existing chord in the requested range and returns `0` — a return value indistinguishable from a legitimate no-op — with no `is_unwritten()`/empty-fit guard anywhere in the function. This is a real, reproducible […]
 
-### F-144 · medium · `Ticks::snap_nearest` truncates `grid.0/2`, so for any odd grid the tick exactly `(grid-1)/2` past a boundary snaps to the wrong neighbor.
+### ✅ F-144 · medium · `Ticks::snap_nearest` truncates `grid.0/2`, so for any odd grid the tick exactly `(grid-1)/2` past a boundary snaps to the wrong neighbor.
 
 `crates/auris-core/src/time.rs:73` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -327,7 +327,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** Rounds to the nearest multiple of `grid`. A non-positive grid is a no-op. (doc comment on `snap_nearest`, crates/auris-core/src/time.rs:65-66, makes no exception for odd grids)
 
-### F-160 · medium · notes_digest skips phoneme_seconds/scoop/fall/vibrato, so hand-edited ornaments/timing pins are silently lost on regenerate with no hand-edit warning.
+### ✅ F-160 · medium · notes_digest skips phoneme_seconds/scoop/fall/vibrato, so hand-edited ornaments/timing pins are silently lost on regenerate with no hand-edit warning.
 
 `crates/auris-core/src/project/clip.rs:1354` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -343,7 +343,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** FNV-1a over every field of every note, order-sensitive, exact: velocities go in as their bit patterns, because an edit undone restores exactly the bits it moved and must read as no edit at all.
 
-### F-184 · medium · Deleting a bus / repairing routing prunes AuxSends but leaves their automation lanes orphaned in the saved project, though no live parameter is ever misdriven by them.
+### ✅ F-184 · medium · Deleting a bus / repairing routing prunes AuxSends but leaves their automation lanes orphaned in the saved project, though no live parameter is ever misdriven by them.
 
 `crates/auris-core/src/project/track.rs:600` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -361,7 +361,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Verifier's correction.** The reported line (track.rs:600) is close but not exact for the current checkout — the send-pruning statement `track.sends.retain(|send| send.target != id);` sits inside `remove_track`'s loop at line 597, with the surrounding function spanning lines 582-604 (the `for track in &mut self.tracks` loop begins at line 592). The mechanism, trigger, and consequence described are otherwise accurate as executed.
 
-### F-208 · medium · curve_events checks the curve's raw trailing point instead of its value at the truncation boundary, so it can fail to release to zero — masked today because both production callers use MidiClip::sounding_curve_events instead.
+### ✅ F-208 · medium · curve_events checks the curve's raw trailing point instead of its value at the truncation boundary, so it can fail to release to zero — masked today because both production callers use MidiClip::sounding_curve_events instead.
 
 `crates/auris-core/src/project/curve.rs:163` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -379,7 +379,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Verifier's correction.** none needed; the claim's mechanism, line number, trigger, and consequence all match the executed behavior
 
-### F-254 · medium · Chart::Display can render a Chart (built via the public Chart::new/bars API) with an empty bar as a doubled pipe that Chart::parse's own deliberate empty-bar guard then refuses to read back.
+### ✅ F-254 · medium · Chart::Display can render a Chart (built via the public Chart::new/bars API) with an empty bar as a doubled pipe that Chart::parse's own deliberate empty-bar guard then refuses to read back.
 
 `crates/auris-core/src/theory/chart.rs:331` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -395,7 +395,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** // There is no way to write an empty bar on purpose here, so the answer is not to guess at one: a chart that cannot be read is refused, as a chart of nothing already was. (crates/auris-core/src/theory/chart.rs, Chart::parse doc/comment, restated by the `what_display_writes_is_what_parse_reads` test name)
 
-### F-356 · medium · curve_events() only emits interior CurvePoints that happen to land on the CURVE_STEP grid, rounding off drawn pitch-bend/CC corners in playback and MIDI export.
+### ✅ F-356 · medium · curve_events() only emits interior CurvePoints that happen to land on the CURVE_STEP grid, rounding off drawn pitch-bend/CC corners in playback and MIDI export.
 
 `crates/auris-core/src/project/curve.rs:144` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -411,7 +411,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** Every `step` across the stretch the curve was written over, plus the points themselves so a corner lands exactly where it was drawn.
 
-### F-377 · medium · split_clip's unchecked `clip.offset_frames + frames` at clip.rs:1035 can panic or silently wrap on a corrupted/hand-edited project file, corrupting the split clip's playback region.
+### ✅ F-377 · medium · split_clip's unchecked `clip.offset_frames + frames` at clip.rs:1035 can panic or silently wrap on a corrupted/hand-edited project file, corrupting the split clip's playback region.
 
 `crates/auris-core/src/project/clip.rs:1035` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -427,7 +427,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** a hand-edited or corrupted project file would otherwise construct a map that violates [its] invariants (crates/auris-core/src/time.rs, cited rationale for validating TempoMap via TryFrom, which offset_frames is not given)
 
-### F-397 · medium · TempoMap::from_points keeps the first of two same-tick points while TempoMap::set_point keeps the last, an unstated and inconsistent collision policy reachable via file load or bulk import.
+### ✅ F-397 · medium · TempoMap::from_points keeps the first of two same-tick points while TempoMap::set_point keeps the last, an unstated and inconsistent collision policy reachable via file load or bulk import.
 
 `crates/auris-core/src/time.rs:785` · persistence · confirmed (executed reproduction; reported independently 2×)
 
@@ -441,7 +441,7 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Fix direction.** Make from_points use the same last-wins policy as set_point — e.g. reverse-stable-sort or dedup from the back (dedup_by_key keeps the first of a run, so sort/iterate so the last input entry ends up first before deduping, or fold duplicates explicitly keeping the later tick's bpm) — and add a one-line doc comment on from_points stating the collision policy, mirroring the comment already given for SignatureMap::align_to_bars.
 
-### F-418 · medium · Project::duplicate_track reissues ids for effects/sends/clips but never rekeys or copies the original track's automation lanes, so a duplicated track's automated parameters silently become static.
+### ✅ F-418 · medium · Project::duplicate_track reissues ids for effects/sends/clips but never rekeys or copies the original track's automation lanes, so a duplicated track's automated parameters silently become static.
 
 `crates/auris-core/src/project/track.rs:548` · correctness · confirmed (executed reproduction; reported independently 1×)
 

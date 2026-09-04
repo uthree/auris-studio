@@ -209,6 +209,12 @@ impl PluginWindow {
     }
 }
 
+/// Takes a plugin window only after ending the per-block work it kept alive.
+fn close_after<T>(window: &mut Option<T>, stop_watching: impl FnOnce()) -> bool {
+    stop_watching();
+    window.take().is_some()
+}
+
 impl AurisApp {
     /// Opens the editor for one plugin, replacing whatever was open.
     pub(crate) fn open_plugin_window(&mut self, subject: PluginSubject, anchor: Point<Pixels>) {
@@ -217,7 +223,8 @@ impl AurisApp {
 
     /// Closes the editor, reporting whether one was open.
     pub(crate) fn close_plugin_window(&mut self) -> bool {
-        self.plugin_window.take().is_some()
+        let session = &self.session;
+        close_after(&mut self.plugin_window, || session.stop_watching())
     }
 
     /// Draws the open plugin editor, if there is one and it still names something.
@@ -256,7 +263,12 @@ impl AurisApp {
     ) -> Option<AnyElement> {
         let window = self.plugin_window.take()?;
         let subject = window.subject;
-        let (plugin_id, enabled) = self.resolve_plugin(subject)?;
+        let Some((plugin_id, enabled)) = self.resolve_plugin(subject) else {
+            // The track, slot, or instrument disappeared while its EQ was open. The window is
+            // gone now too, so the analysis it kept alive must end on the same transition.
+            self.session.stop_watching();
+            return None;
+        };
         self.plugin_window = Some(window);
 
         // Point the analysis at whichever strip this plugin sits on. Asked for every frame the
@@ -522,6 +534,15 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn closing_a_plugin_window_stops_its_analysis_before_taking_it() {
+        let stopped = std::cell::Cell::new(false);
+        let mut window = Some(1);
+        assert!(close_after(&mut window, || stopped.set(true)));
+        assert!(stopped.get());
+        assert!(window.is_none());
+    }
 
     #[test]
     fn a_subject_names_the_parameter_it_edits() {

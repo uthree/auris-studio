@@ -9,7 +9,7 @@ use auris_core::plugin::{
 };
 use auris_core::registry::PluginRegistry;
 use auris_core::{AudioBuffer, PresetRef};
-use auris_dsp::Adsr;
+use auris_dsp::{Adsr, SmoothedValue};
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 
 use crate::bank::SharedSoundFonts;
@@ -97,6 +97,9 @@ const BEND_RANGE: i32 = 12;
 /// either, and its own triad already reaches +3.0 dBFS. See [`Sampler`] for what a chord peaks
 /// at and where that bites.
 const NOMINAL_VOLUME: f32 = 2.0;
+
+/// Time constant used when a live level change glides to its new gain.
+const LEVEL_SMOOTHING_SECONDS: f32 = 0.020;
 
 /// Turns a note's velocity into the MIDI velocity that makes the synthesiser answer it linearly.
 ///
@@ -270,6 +273,8 @@ pub struct Sampler {
     fonts: SharedSoundFonts,
     params: Vec<ParamDescriptor>,
     values: [f32; PARAM_COUNT],
+    /// Master gain, advanced on the audio thread so automation cannot click at block edges.
+    level: SmoothedValue,
     /// Which sound to play, from the saved state. `None` means nothing has chosen one.
     preset: Option<PresetRef>,
     /// What [`Self::resolve`] answered when the synthesiser was built.
@@ -297,6 +302,11 @@ pub struct Sampler {
     clock: u64,
     /// Keys held, for the activity indicator.
     held: u32,
+    /// Shaped notes already ended by stealing or by switching shaping off, whose later note-off
+    /// must not be sent to the unrelated unshaped channel.
+    ///
+    /// Fixed-size because both recording and consuming these happen on the audio thread.
+    ended_shaped: [u16; 128],
 }
 
 /// One channel's worth of shaped note.
@@ -382,6 +392,7 @@ impl Sampler {
             fonts,
             params,
             values,
+            level: SmoothedValue::new(NOMINAL_VOLUME, LEVEL_SMOOTHING_SECONDS, 48_000.0),
             preset: None,
             selected: None,
             synth: None,
@@ -391,6 +402,7 @@ impl Sampler {
             slots,
             clock: 0,
             held: 0,
+            ended_shaped: [0; 128],
         };
         sampler.reshape();
         sampler
@@ -506,16 +518,19 @@ impl Sampler {
         }
     }
 
-    /// Hands every shaped note back to the font and puts every channel to full.
+    /// Fades every shaped note out before handing it back to the font.
     ///
     /// Run when the envelope stops shaping. Without it, the controls going back to their
     /// defaults would leave whatever gain the last fade ended on written into the channel — and
     /// worse, a note the envelope was holding open would have nothing left to close it.
     fn release_the_slots(&mut self) {
         for index in 0..self.slots.len() {
-            self.slots[index].envelope.silence();
-            self.hand_back(index);
-            self.write_raw_expression(index, FULL_EXPRESSION);
+            if let Some(key) = self.slots[index].key
+                && !self.slots[index].envelope.is_releasing()
+            {
+                self.ended_shaped[key as usize] = self.ended_shaped[key as usize].saturating_add(1);
+            }
+            self.slots[index].envelope.kill();
         }
     }
 
@@ -533,19 +548,20 @@ impl Sampler {
 
     /// Sends one parameter's current value wherever it has to go.
     fn push(&mut self, index: usize) {
+        if self.poisoned {
+            return;
+        }
         match index {
             LEVEL => {
-                let value = self.values[LEVEL];
-                if let Some(synth) = self.synth.as_mut() {
-                    synth.set_master_volume(NOMINAL_VOLUME * db_to_gain(value));
-                }
+                self.level
+                    .set_target(NOMINAL_VOLUME * db_to_gain(self.values[LEVEL]));
             }
             ENVELOPE | ATTACK | DECAY | SUSTAIN | RELEASE => {
                 self.reshape();
                 if !self.shaped() {
                     // Switched off, possibly mid-fade. Every note the envelope was holding open
-                    // goes back to the font and every channel goes back to full, or the sampler
-                    // would keep playing under a gain nothing is moving any more.
+                    // is de-clicked and goes back to the font; an unshaped note uses its separate
+                    // full-level channel, so a fading slot never has to jump back to full.
                     self.release_the_slots();
                 }
             }
@@ -621,6 +637,11 @@ impl Sampler {
         let index = claim(&self.slots);
         // Whatever was here is handed back before the channel changes hands, so the note being
         // displaced ends rather than being re-shaped by the note that displaced it.
+        if let Some(key) = self.slots[index].key
+            && !self.slots[index].envelope.is_releasing()
+        {
+            self.ended_shaped[key as usize] = self.ended_shaped[key as usize].saturating_add(1);
+        }
         self.hand_back(index);
         self.slots[index].envelope.silence();
         self.slots[index].envelope.trigger();
@@ -660,7 +681,14 @@ impl Sampler {
             // would start its own release underneath and cut the tail short. `step_envelopes`
             // hands the note back when the level reaches silence.
             Some(index) => self.slots[index].envelope.release(),
-            // No slot holds it, so it is a note from before the envelope was turned on.
+            // A stolen shaped note has already been ended on its private channel. Its eventual
+            // note-off is consumed here instead of being misdirected at an unrelated unshaped
+            // note of the same pitch on `CHANNEL`.
+            None if self.ended_shaped[pitch as usize] > 0 => {
+                self.ended_shaped[pitch as usize] -= 1;
+            }
+            // No slot holds it and no previously-ended shaped note owns the event, so it is a
+            // note from before the envelope was turned on.
             None => {
                 if let Some(synth) = self.synth.as_mut() {
                     synth.note_off(CHANNEL, pitch as i32);
@@ -672,6 +700,7 @@ impl Sampler {
     /// Ends everything: `immediate` cuts, otherwise every note is let go at once.
     fn stop_everything(&mut self, immediate: bool) {
         self.held = 0;
+        self.ended_shaped.fill(0);
         for slot in &mut self.slots {
             if immediate {
                 slot.key = None;
@@ -698,6 +727,9 @@ impl Sampler {
     /// voice's gain from the previous block's value to this one across the block, so writing the
     /// level the envelope *ends* at is what draws the segment rather than a staircase.
     fn step_envelopes(&mut self, frames: usize) {
+        if self.poisoned {
+            return;
+        }
         for index in 0..self.slots.len() {
             if !self.slots[index].envelope.is_active() {
                 continue;
@@ -714,6 +746,19 @@ impl Sampler {
         }
     }
 
+    /// Advances the master gain through `frames` and writes the end of that ramp to the synth.
+    fn step_level(&mut self, frames: usize) {
+        if self.poisoned || self.level.is_settled() {
+            return;
+        }
+        for _ in 0..frames {
+            self.level.next_value();
+        }
+        if let Some(synth) = self.synth.as_mut() {
+            synth.set_master_volume(self.level.current());
+        }
+    }
+
     /// Renders `start..end` of the block, stepping the envelopes through it.
     ///
     /// An unshaped sampler renders the whole run in one call, exactly as it did before there was
@@ -721,13 +766,17 @@ impl Sampler {
     /// library renders and interpolates over anyway: shorter would buy resolution the voices
     /// cannot use, and longer would turn a fast attack into a staircase.
     fn render_range(&mut self, out: &mut AudioBuffer, start: usize, end: usize) {
-        if !self.shaped() {
+        if !self.shaped()
+            && !self.slots.iter().any(|slot| slot.envelope.is_active())
+            && self.level.is_settled()
+        {
             self.render_run(out, start, end);
             return;
         }
         let mut cursor = start;
         while cursor < end {
             let stop = (cursor + INTERNAL_BLOCK).min(end);
+            self.step_level(stop - cursor);
             self.step_envelopes(stop - cursor);
             self.render_run(out, cursor, stop);
             cursor = stop;
@@ -870,9 +919,14 @@ impl Instrument for Sampler {
             log::warn!("the synthesiser panicked while rendering and is being rebuilt");
         }
         self.poisoned = false;
+        self.level
+            .set_time(LEVEL_SMOOTHING_SECONDS, ctx.sample_rate as f32);
+        self.level
+            .snap_to(NOMINAL_VOLUME * db_to_gain(self.values[LEVEL]));
         self.synth = None;
         self.selected = None;
         self.held = 0;
+        self.ended_shaped.fill(0);
         for slot in &mut self.slots {
             slot.envelope.set_sample_rate(ctx.sample_rate as f32);
             slot.envelope.silence();
@@ -916,6 +970,9 @@ impl Instrument for Sampler {
                 return;
             }
         }
+        if let Some(synth) = self.synth.as_mut() {
+            synth.set_master_volume(self.level.current());
+        }
         self.selected = Some(preset);
         self.select(preset);
         self.push_all();
@@ -923,6 +980,7 @@ impl Instrument for Sampler {
 
     fn reset(&mut self) {
         self.held = 0;
+        self.ended_shaped.fill(0);
         for slot in &mut self.slots {
             slot.envelope.silence();
             slot.key = None;
@@ -936,6 +994,9 @@ impl Instrument for Sampler {
         }
         if let Some(synth) = self.synth.as_mut() {
             synth.reset();
+            self.level
+                .snap_to(NOMINAL_VOLUME * db_to_gain(self.values[LEVEL]));
+            synth.set_master_volume(self.level.current());
         }
         // A reset returns the channel to bank 0 patch 0 with the library's own controller
         // defaults, so everything the track chose has to be said again — from what `prepare`
@@ -976,6 +1037,11 @@ impl Instrument for Sampler {
         while let Some(event) = events.get(next_event) {
             self.dispatch(*event);
             next_event += 1;
+        }
+        if self.poisoned {
+            // A shaped/ramping block may have rendered earlier internal runs before a later one
+            // exposed the bad font. The entire callback must still answer with clean silence.
+            out.clear();
         }
     }
 
@@ -1315,6 +1381,7 @@ mod tests {
         let bank = SoundFontBank::shared();
         bank.insert(FONT, crate::test_support::runaway_font(RATE as i32 * 512));
         let mut sampler = playing(bank, 0, 512);
+        sampler.set_param_by_key(ENVELOPE_KEY, 1.0);
 
         let ctx = ProcessContext::realtime(RATE, 512, 0, 120.0, true);
         let mut out = AudioBuffer::stereo(512, RATE);
@@ -1332,6 +1399,11 @@ mod tests {
             "a poisoned block must come back as silence, not as what was in the buffer"
         );
         assert_eq!(sampler.active_voices(), 0);
+
+        // Parameter delivery and later envelope chunks must observe the same poison boundary;
+        // neither may call into the half-unwound library object.
+        sampler.set_param_by_key("attack", 0.5);
+        sampler.set_param_by_key("level", -6.0);
 
         // Every later block is silence rather than another attempt, and a reset must not call
         // back into whatever state the panic left behind.
@@ -1689,6 +1761,51 @@ mod tests {
     }
 
     #[test]
+    fn turning_the_envelope_off_declicks_the_note_without_a_gain_jump() {
+        let mut sampler = playing(stocked(), 0, 512);
+        let mut out = AudioBuffer::stereo(512, RATE);
+        let ctx = ProcessContext::realtime(RATE, 512, 0, 120.0, true);
+
+        sampler.set_param_by_key(ENVELOPE_KEY, 1.0);
+        sampler.set_param_by_key("attack", 2.0);
+        sampler.process(&[note_on(0)], &mut out, &ctx);
+        let before = rms(&out.channel(0)[448..]);
+        assert!(before > 0.0, "the slowly opening note must be measurable");
+
+        let allocations = crate::test_support::count_allocations(|| {
+            sampler.set_param_by_key(ENVELOPE_KEY, 0.0);
+            sampler.process(&[], &mut out, &ctx);
+        });
+        assert_eq!(allocations, 0, "switching the RT fade path allocated");
+        let after = rms(&out.channel(0)[..64]);
+        assert!(
+            after <= before * 1.5,
+            "switching shaping off jumped from {before} to {after} before releasing"
+        );
+    }
+
+    #[test]
+    fn a_stolen_shaped_notes_later_off_is_not_sent_to_the_unshaped_channel() {
+        let mut sampler = sampler();
+        sampler.values[ENVELOPE] = 1.0;
+        sampler.slots = free_slots(&(0..SLOTS.len() as u64).collect::<Vec<_>>());
+        for (index, slot) in sampler.slots.iter_mut().enumerate() {
+            slot.key = Some(60 + index as u8);
+            slot.envelope.trigger();
+        }
+
+        sampler.start(90, 1.0);
+        assert_eq!(sampler.ended_shaped[60], 1);
+        assert!(sampler.slots.iter().all(|slot| slot.key != Some(60)));
+
+        sampler.let_go(60);
+        assert_eq!(
+            sampler.ended_shaped[60], 0,
+            "the displaced note's off was consumed instead of reaching channel zero"
+        );
+    }
+
+    #[test]
     fn a_held_unshaped_note_is_not_faded_by_a_later_shaped_one() {
         // An unshaped note plays on `CHANNEL` without ever entering the slot table. Flip the
         // envelope on while it is held and strike another note: the new note's fade has to land
@@ -1962,6 +2079,9 @@ mod tests {
             let mut sampler = playing(bank.clone(), 0, frames);
             sampler.set_param_by_key("level", level);
             let mut out = AudioBuffer::stereo(frames, RATE);
+            for _ in 0..32 {
+                sampler.process(&[], &mut out, &ctx);
+            }
             sampler.process(&[note_on(0)], &mut out, &ctx);
             rms(&out.channel(0)[frames / 2..])
         };
@@ -1971,6 +2091,28 @@ mod tests {
         assert!(
             (ratio - 2.0).abs() < 0.1,
             "-6 dB should halve the output, not scale it by {ratio}"
+        );
+    }
+
+    #[test]
+    fn a_live_level_change_glides_without_allocating() {
+        let mut sampler = playing(stocked(), 0, 1_024);
+        let ctx = ProcessContext::realtime(RATE, 1_024, 0, 120.0, true);
+        let mut out = AudioBuffer::stereo(1_024, RATE);
+        sampler.process(&[note_on(0)], &mut out, &ctx);
+
+        let before = sampler.level.current();
+        let allocations = crate::test_support::count_allocations(|| {
+            sampler.set_param_by_key("level", -60.0);
+            sampler.process(&[], &mut out, &ctx);
+        });
+        let after = sampler.level.current();
+
+        assert_eq!(allocations, 0, "the RT gain ramp allocated");
+        assert!(after < before, "the gain did not begin moving");
+        assert!(
+            after > sampler.level.target(),
+            "the gain jumped straight to its target"
         );
     }
 }

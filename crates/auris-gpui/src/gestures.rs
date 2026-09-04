@@ -114,8 +114,8 @@ impl PointerGesture {
                     && !event.modifiers.alt
                     && !event.modifiers.shift
             }
-            PointerGesture::CommandClick => event.modifiers.secondary(),
-            PointerGesture::OptionClick => event.modifiers.alt,
+            PointerGesture::CommandClick => event.modifiers.secondary() && !event.modifiers.alt,
+            PointerGesture::OptionClick => event.modifiers.alt && !event.modifiers.secondary(),
             // A modified double-click belongs to whichever modifier gesture claims it, so that a
             // ⌘-double-click on empty space creates once rather than also deleting.
             PointerGesture::DoubleClick => {
@@ -320,6 +320,19 @@ mod tests {
 
         assert!(PointerGesture::DoubleClick.matches(&double));
         assert!(!PointerGesture::DoubleClick.matches(&plain));
+    }
+
+    #[test]
+    fn command_and_option_together_are_not_either_gesture() {
+        let mut both = Modifiers::secondary_key();
+        both.alt = true;
+        let press = click(both, 1);
+        assert!(!PointerGesture::CommandClick.matches(&press));
+        assert!(!PointerGesture::OptionClick.matches(&press));
+        assert_eq!(
+            empty_press(PointerGestures::default(), &press),
+            EmptyPress::Band { extend: false }
+        );
     }
 
     #[test]

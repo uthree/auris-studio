@@ -221,7 +221,7 @@ fn shorten(played: &[PartSpec], notes: &mut [Draft]) {
         let Some(part) = played.get(note.section) else {
             continue;
         };
-        if part.role.is_drum() {
+        if part.role.is_drum() || part.role == Role::Riser {
             continue;
         }
         let gate = part.gate.clamp(MIN_GATE, 1.0);
@@ -905,6 +905,25 @@ mod tests {
             }
         }
         assert!(shortened > 0, "the gate shortened nothing");
+    }
+
+    #[test]
+    fn a_risers_gate_cannot_move_its_note_off_before_the_join() {
+        let part = PartSpec {
+            gate: 0.25,
+            ..PartSpec::of_role("riser", Role::Riser)
+        };
+        let mut notes = [Draft {
+            section: 0,
+            pitch: 60,
+            velocity: 1.0,
+            start: Ticks::ZERO,
+            length: Ticks(1_920),
+        }];
+
+        shorten(&[part], &mut notes);
+
+        assert_eq!(notes[0].start + notes[0].length, Ticks(1_920));
     }
 
     #[test]

@@ -24,6 +24,8 @@ use auris_core::{Project, TrackId};
 use auris_dsp::integrated_lufs;
 use auris_engine::EngineCommand;
 use auris_engine::OfflineOptions;
+use auris_gpu::analysis::analyze_loudness;
+#[cfg(test)]
 use auris_gpu::analysis::analyze_loudness_cpu;
 
 use crate::error::SessionError;
@@ -263,7 +265,11 @@ impl Session {
             .map(|level| FADER_RANGE_DB.1 - level.now_db)
             .fold(f32::INFINITY, f32::min);
         let lift = balanced_lufs.map_or(0.0, |lufs| {
-            faders_lift_db(lufs, analyze_loudness_cpu(&mix).true_peak_db(), headroom)
+            faders_lift_db(
+                lufs,
+                analyze_loudness(self.gpu.as_deref(), &mix).true_peak_db(),
+                headroom,
+            )
         });
         for (level, &id) in tracks.iter_mut().zip(&levelled) {
             level.now_db += lift;
@@ -275,7 +281,10 @@ impl Session {
         let lifted = self.render_snapshot(self.project.clone())?;
         let lifted_lufs = integrated_lufs(&lifted);
         let master_db = lifted_lufs.map_or(0.0, |lufs| {
-            master_gain_db(lufs, analyze_loudness_cpu(&lifted).true_peak_db())
+            master_gain_db(
+                lufs,
+                analyze_loudness(self.gpu.as_deref(), &lifted).true_peak_db(),
+            )
         });
         self.project.master.gain_db = master_db;
         self.send(EngineCommand::SetMasterGain(master_db));

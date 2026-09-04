@@ -242,21 +242,18 @@ impl SettingsWindow {
     /// Hands new audio preferences to the session and reports what happened.
     fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
         let requested = audio.clone();
-        let outcome = self
+        let Ok(outcome) = self
             .app
             .update(cx, |app, _| app.apply_audio_preferences(audio))
-            .unwrap_or_else(|_| Err("the main window has closed".to_string()));
+        else {
+            return;
+        };
         self.status = match outcome {
             Ok(status) => {
                 self.audio = requested;
                 status
             }
-            // Translated, and phrased once. This used to be an English literal wrapping a driver
-            // message that already said "could not switch audio device" — on the one Settings
-            // page most likely to fail, in an otherwise fully translated window.
-            Err(error) => {
-                crate::i18n::error_text(&SessionError::AudioRestart(error), self.language)
-            }
+            Err(error) => crate::i18n::error_text(&error, self.language),
         };
         // The previous update has finished, so reading back is safe here.
         self.live = self

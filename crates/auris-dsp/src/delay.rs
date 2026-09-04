@@ -162,7 +162,8 @@ impl Delay {
     /// One-pole low-pass coefficient for the damping filter, as `y += a * (x - y)`.
     ///
     /// `a = 1 - exp(-2 pi fc / fs)` is the impulse-invariant mapping of a first-order RC
-    /// section, so the cutoff really is the -3 dB point rather than a rough approximation.
+    /// section. Its digital -3 dB point closely approximates `fc` only while `fc` is well below
+    /// Nyquist; the error grows as the requested cutoff approaches half the sample rate.
     fn damping_alpha(&self) -> f32 {
         let cutoff = self.params.at(P_DAMPING_HZ);
         if self.sample_rate <= 0.0 {

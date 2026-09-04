@@ -88,7 +88,9 @@ impl Session {
         if midi.notes.is_empty() {
             return Err(SessionError::NothingToAccompany(clip.0));
         }
-        let start = midi.start;
+        // Harmony, analysis and generated clips must share one origin. `generate_clip` applies
+        // the finer editing grid too, but a harmony-grid position is already on that grid.
+        let start = self.snap_harmony(midi.start);
         // Timeline positions, not clip-relative ones. The bar lines the harmony is read against
         // belong to the song, and a melody in a clip starting mid-bar is a melody whose downbeats
         // are not at its own tick zero.
@@ -255,6 +257,30 @@ mod tests {
         // The melody is untouched — it is the thing being accompanied.
         assert_eq!(session.midi_clip(clip).unwrap().notes, before);
         assert_eq!(session.project().track(track).unwrap().name, "Tune");
+    }
+
+    #[test]
+    fn an_off_grid_melody_uses_one_origin_for_harmony_and_parts() {
+        let (mut session, _, clip) = with_a_melody();
+        session.project.midi_clip_mut(clip).unwrap().start = Ticks(700);
+
+        let report = session.accompany(clip, &[ClipPreset::Bass], 1).unwrap();
+        let part = session
+            .project()
+            .track(report.parts[0])
+            .and_then(|track| track.kind.as_instrument())
+            .unwrap();
+        let written = &part.clips[0];
+
+        assert_eq!(written.start, Ticks::QUARTER);
+        assert!(
+            session
+                .project()
+                .harmony
+                .numeral_at(Ticks::QUARTER)
+                .is_some()
+        );
+        assert!(!written.notes.is_empty());
     }
 
     #[test]

@@ -1267,7 +1267,7 @@ installed (`notes` reads the words back beside the pitches); and `sing` renders 
 through its voice model — chosen once with `voice`, an absolute path to an exported `.onnx`
 file — into the take that playback and `render` then play. The same determinism as in the
 window: the same notes, lyrics, voice and seed render the same take on any machine.
-Twenty-nine tools in all, identical at both model doors.
+Thirty tools in all, identical at both model doors.
 
 Registering the server with a client is one line:
 

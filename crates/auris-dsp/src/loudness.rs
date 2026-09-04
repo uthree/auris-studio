@@ -23,7 +23,7 @@ use auris_core::AudioBuffer;
 use crate::biquad::{Biquad, BiquadCoefficients};
 
 /// How long one measurement block is, in seconds.
-const BLOCK_SECONDS: f64 = 0.400;
+const HOPS_PER_BLOCK: usize = 4;
 
 /// How far one block starts after the last, in seconds: the standard's 75 per cent overlap.
 ///
@@ -117,8 +117,8 @@ fn block_powers(buffer: &AudioBuffer) -> Vec<f64> {
         return Vec::new();
     }
     let hop_frames = (rate * HOP_SECONDS).round() as usize;
-    let block_frames = (rate * BLOCK_SECONDS).round() as usize;
-    let per_block = (block_frames / hop_frames.max(1)).max(1);
+    let block_frames = hop_frames.saturating_mul(HOPS_PER_BLOCK);
+    let per_block = HOPS_PER_BLOCK;
     if hop_frames == 0 || buffer.frame_count() < block_frames {
         return Vec::new();
     }
@@ -235,6 +235,15 @@ mod tests {
             );
         }
         assert_eq!((highpass.b0, highpass.b1, highpass.b2), (1.0, -2.0, 1.0));
+    }
+
+    #[test]
+    fn a_non_standard_rate_still_builds_each_block_from_four_whole_hops() {
+        let rate = 44_055.0;
+        let hop = (rate * HOP_SECONDS).round() as usize;
+        let buffer = AudioBuffer::new(1, hop * HOPS_PER_BLOCK, rate);
+
+        assert_eq!(block_powers(&buffer).len(), 1);
     }
 
     #[test]

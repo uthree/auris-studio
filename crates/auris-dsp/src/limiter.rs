@@ -25,6 +25,12 @@ const P_RELEASE_MS: u32 = 2;
 /// pushing the mix bus into audible pre-echo.
 const LOOKAHEAD_MS: f32 = 2.0;
 
+/// Highest rate used to size the limiter's internal windows.
+///
+/// This is well above production audio formats while keeping a corrupt project value from
+/// turning `prepare` into an unbounded allocation.
+const MAX_PREPARE_SAMPLE_RATE: f32 = 768_000.0;
+
 /// A brickwall limiter whose output provably cannot exceed its ceiling.
 ///
 /// The gain is derived from the input in three steps:
@@ -110,7 +116,12 @@ impl Effect for Limiter {
     }
 
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.sample_rate = ctx.sample_rate as f32;
+        let requested_rate = ctx.sample_rate as f32;
+        self.sample_rate = if requested_rate.is_finite() && requested_rate > 0.0 {
+            requested_rate.min(MAX_PREPARE_SAMPLE_RATE)
+        } else {
+            48_000.0
+        };
         self.lookahead =
             ((LOOKAHEAD_MS * self.sample_rate / MILLISECONDS_PER_SECOND).round() as usize).max(1);
 
@@ -168,7 +179,7 @@ impl Effect for Limiter {
                 .zip(self.lines.iter_mut())
                 .take(channels)
             {
-                let driven = channel[frame] * input_gain;
+                let driven = crate::settled(channel[frame] * input_gain);
                 let delayed = line.read(lookahead);
                 line.write(driven);
                 // The clamp is a backstop for f32 rounding in the division above; the gain
@@ -328,6 +339,15 @@ mod tests {
     }
 
     #[test]
+    fn an_untrusted_sample_rate_cannot_request_an_unbounded_window() {
+        let mut plugin = Limiter::new();
+        plugin.prepare(&PrepareContext::new(1.0e12, 512, 2));
+
+        assert_eq!(plugin.latency_frames(), 1_536);
+        assert_eq!(plugin.lines.len(), 2);
+    }
+
+    #[test]
     fn an_overloud_sine_never_passes_the_ceiling() {
         for ceiling_db in [-0.3f32, -3.0, -12.0] {
             let mut plugin = prepared();
@@ -405,6 +425,23 @@ mod tests {
             buffer.peak()
         );
         assert!(buffer.channel(0).iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn a_non_finite_input_cannot_cross_the_lookahead_line() {
+        let mut plugin = prepared();
+        let mut buffer = AudioBuffer::stereo(512, SR);
+        buffer.channel_mut(0)[10] = f32::NAN;
+        buffer.channel_mut(1)[20] = f32::INFINITY;
+
+        plugin.process(&mut buffer, &context(512));
+
+        assert!(
+            buffer
+                .iter_channels()
+                .flatten()
+                .all(|sample| sample.is_finite())
+        );
     }
 
     #[test]

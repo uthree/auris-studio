@@ -62,9 +62,6 @@ impl AurisApp {
             .punch_region
             .filter(|_| self.project().punch_enabled);
 
-        // A track deleted while the view was scrolled to the bottom leaves the offset past the
-        // end, and nothing else would ever pull it back.
-        self.lane_scroll = self.lane_scroll.min(self.max_lane_scroll());
         let lane_scroll = self.lane_scroll;
         let language = self.language();
 

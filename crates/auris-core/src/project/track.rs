@@ -553,11 +553,17 @@ impl Project {
 
         copy.id = TrackId(self.allocate_id());
         copy.name = format!("{} copy", copy.name);
+        let mut effect_ids = Vec::with_capacity(copy.mixer.effects.len());
         for slot in &mut copy.mixer.effects {
+            let old = slot.id;
             slot.id = EffectSlotId(self.allocate_id());
+            effect_ids.push((old, slot.id));
         }
+        let mut send_ids = Vec::with_capacity(copy.sends.len());
         for send in &mut copy.sends {
+            let old = send.id;
             send.id = SendId(self.allocate_id());
+            send_ids.push((old, send.id));
         }
         match &mut copy.kind {
             TrackKind::Instrument(_) | TrackKind::Singer(_) => {
@@ -578,6 +584,8 @@ impl Project {
 
         let new_id = copy.id;
         self.tracks.insert(index + 1, copy);
+        self.automation
+            .duplicate_track(id, new_id, &effect_ids, &send_ids);
         Some(new_id)
     }
 
@@ -594,12 +602,27 @@ impl Project {
             // And so does everything that fed it. A deleted bus takes the *routing* with it, not
             // the tracks: what was going through it goes straight to the master instead, which is
             // where it would have been had the bus never existed.
+            let mut removed_sends = Vec::new();
             for track in &mut self.tracks {
                 if track.output == Output::Bus(id) {
                     track.output = Output::Master;
                 }
+                removed_sends.extend(
+                    track
+                        .sends
+                        .iter()
+                        .filter(|send| send.target == id)
+                        .map(|send| send.id),
+                );
                 track.sends.retain(|send| send.target != id);
             }
+            self.automation.remove_lanes_where(|target| {
+                matches!(
+                    target,
+                    crate::param::ParamTarget::Send { send, .. }
+                        if removed_sends.contains(&send)
+                )
+            });
             // Including what it was keying. See `clear_sidechains_from` for why a slot must not
             // be left holding the id.
             self.clear_sidechains_from(id);
@@ -780,6 +803,64 @@ mod tests {
                 !original_ids.contains(&id),
                 "id {id} is shared with the original, so edits would hit the wrong object"
             );
+        }
+    }
+
+    #[test]
+    fn a_duplicated_track_keeps_automation_on_its_reissued_ids() {
+        let (mut project, original, _, bus) = bussed_project();
+        let effect = project.add_effect(Some(original), "auris.fx.gain").unwrap();
+        let send = SendId(700);
+        project
+            .track_mut(original)
+            .unwrap()
+            .sends
+            .push(AuxSend::new(send, bus));
+        let param = crate::param::ParamId(0);
+        let targets = [
+            crate::param::ParamTarget::TrackGain(original),
+            crate::param::ParamTarget::Instrument {
+                track: original,
+                param,
+            },
+            crate::param::ParamTarget::Effect {
+                track: Some(original),
+                slot: effect,
+                param,
+            },
+            crate::param::ParamTarget::Send {
+                track: original,
+                send,
+            },
+        ];
+        for target in targets {
+            project.automation.set_point(
+                target,
+                (!target.is_builtin()).then(|| "parameter".to_string()),
+                crate::automation::AutomationCurve::Linear,
+                Ticks::ZERO,
+                0.25,
+            );
+        }
+
+        let copy = project.duplicate_track(original).unwrap();
+        let copied = project.track(copy).unwrap();
+        let copied_effect = copied.mixer.effects[0].id;
+        let copied_send = copied.sends.last().unwrap().id;
+        for target in [
+            crate::param::ParamTarget::TrackGain(copy),
+            crate::param::ParamTarget::Instrument { track: copy, param },
+            crate::param::ParamTarget::Effect {
+                track: Some(copy),
+                slot: copied_effect,
+                param,
+            },
+            crate::param::ParamTarget::Send {
+                track: copy,
+                send: copied_send,
+            },
+        ] {
+            assert_eq!(project.automation.value_at(target, Ticks::ZERO), Some(0.25));
         }
     }
 

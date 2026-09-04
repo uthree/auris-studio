@@ -73,6 +73,7 @@ def run_cli(*args: str) -> str:
         # otherwise decode its output with a legacy code page and fall over.
         encoding="utf-8",
         errors="replace",
+        check=False,
     )
     if done.returncode != 0:
         sys.exit(f"auris {' '.join(args)} failed:\n{done.stderr}")
@@ -117,8 +118,16 @@ def collect_wavs(paths: list[str]) -> list[Path]:
     return out
 
 
+def score_labels(wavs: list[Path]) -> list[str]:
+    """Stable labels that keep same-named files from overwriting one another."""
+    counts: dict[str, int] = {}
+    for wav in wavs:
+        counts[wav.stem] = counts.get(wav.stem, 0) + 1
+    return [wav.stem if counts[wav.stem] == 1 else wav.as_posix() for wav in wavs]
+
+
 def score(wavs: list[Path]) -> dict[str, dict[str, float]]:
-    """One row of the four axes per file, keyed by the file's stem."""
+    """One row of the four axes per file, with collision-free keys."""
     # Imported here so `--help` and argument errors stay instant.
     import soundfile
     import torch
@@ -127,13 +136,13 @@ def score(wavs: list[Path]) -> dict[str, dict[str, float]]:
     warnings.filterwarnings("ignore")
     predictor = initialize_predictor()
     scores: dict[str, dict[str, float]] = {}
-    for wav in wavs:
+    for wav, label in zip(wavs, score_labels(wavs), strict=True):
         data, rate = soundfile.read(wav, dtype="float32", always_2d=True)
         row = predictor.forward(
             [{"path": torch.from_numpy(data.T), "sample_rate": rate}]
         )[0]
-        scores[wav.stem] = {axis: round(row[axis], 3) for axis in AXES}
-        print(format_row(wav.stem, scores[wav.stem]), flush=True)
+        scores[label] = {axis: round(row[axis], 3) for axis in AXES}
+        print(format_row(label, scores[label]), flush=True)
     return scores
 
 

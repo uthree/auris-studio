@@ -91,6 +91,7 @@ impl Session {
             // "the first two bars" is this one.
             self.project.loop_region = Some((Ticks::ZERO, self.project.signatures.bar_start(3)));
         }
+        self.history.sync_loop(&self.project);
         self.publish_loop();
     }
 
@@ -344,6 +345,7 @@ impl Session {
         // stack — but it is a stored document field and has to reach the file: unmarked, a
         // grid-only change closed without the unsaved prompt and was quietly lost.
         self.dirty = true;
+        self.history.sync_grid(&self.project);
     }
 }
 
@@ -352,6 +354,27 @@ mod tests {
     use super::*;
     use crate::session::fixtures::{BAR, session, undo_depth};
     use auris_core::Note;
+
+    #[test]
+    fn undo_does_not_revert_unrecorded_loop_punch_or_grid_choices() {
+        let mut session = session();
+        session.add_default_instrument_track("First").unwrap();
+        session.set_loop_enabled(true);
+        session.set_punch_enabled(true);
+        session.set_grid(Ticks(120));
+        let loop_region = session.project().loop_region;
+        let punch_region = session.project().punch_region;
+        session.add_default_instrument_track("Second").unwrap();
+
+        session.undo();
+        session.undo();
+
+        assert!(session.project().loop_enabled);
+        assert_eq!(session.project().loop_region, loop_region);
+        assert!(session.project().punch_enabled);
+        assert_eq!(session.project().punch_region, punch_region);
+        assert_eq!(session.project().grid, Ticks(120));
+    }
 
     #[test]
     fn a_tempo_that_has_not_moved_is_not_an_edit() {

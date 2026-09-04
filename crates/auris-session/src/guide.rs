@@ -1,6 +1,6 @@
 //! How Auris Studio fits together.
 //!
-//! The workspace has no root crate — `cargo doc` on it produces a list of thirteen crates and no
+//! The workspace has no root crate — `cargo doc` on it produces a list of eighteen crates and no
 //! account of how they relate. This module is that account. It lives here because `auris-session`
 //! is the only crate that depends on every other backend crate, which is what lets the links below
 //! actually resolve; a page anywhere else could name its neighbours but not point at them.
@@ -53,6 +53,7 @@ pub mod architecture {
     //!   auris-gpu       optional wgpu compute for offline analysis
     //!   auris-compose   score-based automatic composition
     //!   auris-vocal     lyrics to phonemes, notes to voice-model frames → auris-core only
+    //!   auris-singer    offline neural voice synthesis             → auris-core, auris-vocal
     //!   auris-i18n      interface text in every language
     //!   auris-session   the document, the engine and every command a frontend needs
     //!   auris-toolbox   the commands presented as tools for a language model → auris-session

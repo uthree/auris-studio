@@ -174,9 +174,10 @@ impl Oscillator {
         (((index as u16).wrapping_mul(0x5ded) ^ 0x1f35) & 0x7fff) | 1
     }
 
-    /// Sets the rate the oscillator is being rendered at. Non-positive rates are ignored.
+    /// Sets the rate the oscillator is being rendered at. Non-positive or non-finite rates are
+    /// ignored.
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
-        if sample_rate > 0.0 {
+        if sample_rate.is_finite() && sample_rate > 0.0 {
             self.inv_sample_rate = 1.0 / sample_rate;
         }
     }

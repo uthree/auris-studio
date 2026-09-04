@@ -335,11 +335,7 @@ impl Instrument for Vocal {
     }
 
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.sample_rate = if ctx.sample_rate > 0.0 {
-            ctx.sample_rate as f32
-        } else {
-            48_000.0
-        };
+        self.sample_rate = crate::sample_rate_f32(ctx.sample_rate);
         self.voices.clear();
         self.voices.reserve(VOICE_COUNT);
         for _ in 0..VOICE_COUNT {

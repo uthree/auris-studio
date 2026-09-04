@@ -34,6 +34,23 @@ struct DrawnDocks {
 
 impl Render for AurisApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if cfg!(target_os = "macos") {
+            let state = crate::menu::MenuState {
+                can_undo: self.session.can_undo(),
+                can_redo: self.session.can_redo(),
+                looping: self.project().loop_enabled,
+                punching: self.project().punch_enabled,
+                recording: self.session.is_recording(),
+                monitoring: self.session.monitoring(),
+                metronome: self.session.metronome(),
+                musical_typing: self.session.typing_keyboard().enabled(),
+            };
+            let snapshot = (self.language(), self.panels.clone(), state);
+            if self.native_menu_snapshot.as_ref() != Some(&snapshot) {
+                cx.set_menus(crate::menu::menus(snapshot.0, &snapshot.1, snapshot.2));
+                self.native_menu_snapshot = Some(snapshot);
+            }
+        }
         // Pointer coordinates arrive in window space, and the resize handlers need to know how
         // tall the window is to bound the bottom panel; record it once per frame.
         self.viewport_height = window.viewport_size().height;

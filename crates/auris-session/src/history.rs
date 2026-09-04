@@ -325,6 +325,33 @@ impl History {
         }
     }
 
+    fn for_each_project_mut(&mut self, mut apply: impl FnMut(&mut Project)) {
+        for snapshot in self.past.iter_mut().chain(self.future.iter_mut()) {
+            apply(&mut snapshot.project);
+        }
+    }
+
+    /// Keeps an unrecorded loop switch outside the meaning of every undo snapshot.
+    pub fn sync_loop(&mut self, current: &Project) {
+        self.for_each_project_mut(|project| {
+            project.loop_enabled = current.loop_enabled;
+            project.loop_region = current.loop_region;
+        });
+    }
+
+    /// Keeps an unrecorded punch switch outside the meaning of every undo snapshot.
+    pub fn sync_punch(&mut self, current: &Project) {
+        self.for_each_project_mut(|project| {
+            project.punch_enabled = current.punch_enabled;
+            project.punch_region = current.punch_region;
+        });
+    }
+
+    /// Keeps the view-adjacent editing grid outside the meaning of every undo snapshot.
+    pub fn sync_grid(&mut self, current: &Project) {
+        self.for_each_project_mut(|project| project.grid = current.grid);
+    }
+
     /// Steps back, returning the project state to restore.
     ///
     /// `current` is the live project, which moves onto the redo stack.

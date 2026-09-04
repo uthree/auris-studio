@@ -33,6 +33,11 @@ impl ParamBank {
         &self.descriptors
     }
 
+    /// Mutable descriptors, for ranges that become known when the host supplies its format.
+    pub(crate) fn descriptors_mut(&mut self) -> &mut [ParamDescriptor] {
+        &mut self.descriptors
+    }
+
     /// Current value of `id`, or `0.0` when the id is out of range.
     pub(crate) fn get(&self, id: ParamId) -> f32 {
         self.values.get(id.index()).copied().unwrap_or(0.0)

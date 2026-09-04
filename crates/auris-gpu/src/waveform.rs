@@ -3,8 +3,9 @@
 //! Drawing an audio clip means answering, for each horizontal pixel, "what did the signal do
 //! during these N samples?". The answer is three numbers: the lowest and highest sample, which
 //! draw the outline, and the RMS level, which draws the darker body inside it. A four-minute
-//! stereo file at 48 kHz is 23 million samples per channel, and the whole reduction is redone
-//! whenever the user zooms, so it is worth moving off the CPU when a GPU is present.
+//! stereo file at 48 kHz is 23 million samples per channel. The reduction runs once when a
+//! decoded source is installed and its fixed-size result is cached; zooming only re-bins that
+//! cached overview on the CPU.
 //!
 //! Buckets are independent, which is what makes this a good GPU job: one invocation per bucket,
 //! no shared state, no synchronisation. Use [`compute_peaks`] — it tries the GPU and silently
@@ -112,7 +113,7 @@ impl WaveformPeaks {
 pub fn compute_peaks_cpu(buffer: &AudioBuffer, samples_per_bucket: u32) -> WaveformPeaks {
     let stride = samples_per_bucket.max(1);
     let channel_count = buffer.channel_count();
-    let frames = buffer.frame_count();
+    let frames = waveform_frames(buffer);
     if frames == 0 {
         return WaveformPeaks::empty(channel_count, stride);
     }
@@ -155,6 +156,15 @@ pub fn compute_peaks_cpu(buffer: &AudioBuffer, samples_per_bucket: u32) -> Wavef
     peaks
 }
 
+fn waveform_frames(buffer: &AudioBuffer) -> usize {
+    let first = buffer.frame_count();
+    if first == 0 {
+        buffer.channels().iter().map(Vec::len).max().unwrap_or(0)
+    } else {
+        first
+    }
+}
+
 /// Minimum, maximum and sum of squares of a non-empty slice, in the same order as the shader.
 fn reduce(samples: &[f32]) -> (f32, f32, f32) {
     let mut iter = samples.iter().copied();
@@ -187,7 +197,7 @@ impl GpuContext {
     ) -> Option<WaveformPeaks> {
         let stride = samples_per_bucket.max(1) as usize;
         let channel_count = buffer.channel_count();
-        let frames = buffer.frame_count();
+        let frames = waveform_frames(buffer);
         if frames == 0 {
             return Some(WaveformPeaks::empty(channel_count, stride as u32));
         }
@@ -455,6 +465,19 @@ mod tests {
         assert_eq!(peaks.bucket(2, 0).unwrap().max, 3.0);
         assert_eq!(peaks.bucket(2, 1).unwrap().max, 3.0);
         assert_eq!(peaks.bucket(2, 2), None);
+    }
+
+    #[test]
+    fn an_empty_first_channel_does_not_hide_later_channels() {
+        let mut buffer =
+            AudioBuffer::from_planar(vec![vec![0.0; 4], vec![0.5; 4]], 48_000.0).unwrap();
+        buffer.channels_mut()[0].clear();
+
+        let peaks = compute_peaks_cpu(&buffer, 4);
+
+        assert_eq!(peaks.bucket_count(), 1);
+        assert_eq!(peaks.bucket(0, 0).unwrap().max, 0.0);
+        assert_eq!(peaks.bucket(1, 0).unwrap().max, 0.5);
     }
 
     #[test]

@@ -276,7 +276,7 @@ impl SegmentRenderer for Fm2 {
                 for index in self.allocator.release_all() {
                     if let Some(voice) = self.voices.get_mut(index) {
                         voice.envelope.kill();
-                        voice.mod_envelope.silence();
+                        voice.mod_envelope.kill();
                     }
                 }
             }
@@ -363,11 +363,7 @@ impl Instrument for Fm2 {
     }
 
     fn prepare(&mut self, ctx: &PrepareContext) {
-        self.sample_rate = if ctx.sample_rate > 0.0 {
-            ctx.sample_rate as f32
-        } else {
-            48_000.0
-        };
+        self.sample_rate = crate::sample_rate_f32(ctx.sample_rate);
         self.voices.clear();
         self.voices.reserve(VOICE_COUNT);
         for _ in 0..VOICE_COUNT {
@@ -675,6 +671,22 @@ mod tests {
         let muted = rig.render(2_048, &[NoteEvent::AllSoundOff { frame: 0 }]);
         assert_eq!(peak(&muted[192..]), 0.0);
         assert_eq!(rig.instrument.active_voices(), 0);
+    }
+
+    #[test]
+    fn all_sound_off_declicks_the_modulation_depth_too() {
+        let mut synth = Fm2::new();
+        synth.prepare(&PrepareContext::new(SAMPLE_RATE, 512, 2));
+        synth.handle_event(&note_on(0, 60));
+        let mut out = AudioBuffer::stereo(512, SAMPLE_RATE);
+        synth.render_segment(&mut out, 0, 100);
+
+        synth.handle_event(&NoteEvent::AllSoundOff { frame: 0 });
+
+        assert_eq!(
+            synth.voices[0].mod_envelope.stage(),
+            auris_dsp::EnvelopeStage::Kill
+        );
     }
 
     #[test]

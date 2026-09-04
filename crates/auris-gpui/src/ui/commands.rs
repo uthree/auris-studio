@@ -79,6 +79,14 @@ pub(crate) fn adjacent_track(
     tracks.get(landed).copied()
 }
 
+/// The one-based ordinal for the next note clip created on `track`.
+fn next_clip_ordinal(project: &Project, track: TrackId) -> usize {
+    project
+        .track(track)
+        .and_then(|track| track.kind.note_clips())
+        .map_or(1, |clips| clips.len() + 1)
+}
+
 impl AurisApp {
     /// How far one press of an arrow key moves something.
     ///
@@ -324,7 +332,7 @@ impl AurisApp {
             .signatures
             .signature_at(start)
             .ticks_per_bar();
-        let count = self.project().tracks.len();
+        let count = next_clip_ordinal(self.project(), track);
         let name = messages::new_clip_name(self.language(), count);
         match self.session.add_midi_clip(track, name, start, length) {
             Ok(id) => {
@@ -2506,5 +2514,27 @@ mod tests {
             "a press on empty lane space is not a press on a selected clip"
         );
         assert!(!press_keeps_selection(&BTreeSet::new(), Some(ClipId(1))));
+    }
+
+    #[test]
+    fn new_clip_names_count_clips_on_the_target_track() {
+        let mut project = Project::new("Song", 48_000.0);
+        let first = project.add_singer_track("First", "auris.instrument.vocal");
+        let second = project.add_singer_track("Second", "auris.instrument.vocal");
+
+        assert_eq!(next_clip_ordinal(&project, first), 1);
+        project
+            .add_midi_clip(first, "Clip 1", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        project
+            .add_midi_clip(first, "Clip 2", Ticks::QUARTER, Ticks::QUARTER)
+            .unwrap();
+
+        assert_eq!(next_clip_ordinal(&project, first), 3);
+        assert_eq!(
+            next_clip_ordinal(&project, second),
+            1,
+            "another track's clips do not number this one"
+        );
     }
 }

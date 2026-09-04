@@ -10,6 +10,8 @@
 //! [`Project::repair_routing`] is here for the same reason: an edge that names something which
 //! is not a bus, and an edge that closes a loop, are both faults in this graph and nothing else.
 
+use std::collections::{HashMap, HashSet};
+
 use serde::{Deserialize, Serialize};
 
 use crate::asset::AssetPath;
@@ -303,15 +305,21 @@ impl Project {
     /// The master's own chain is left out on purpose: it runs after every track, so a sidechain
     /// keyed from anywhere is already waiting for it and there is nothing to order.
     fn routing_edges(&self) -> Vec<Vec<usize>> {
+        let indices: HashMap<TrackId, usize> = self
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(index, track)| (track.id, index))
+            .collect();
         let mut edges: Vec<Vec<usize>> = vec![Vec::new(); self.tracks.len()];
         for (index, track) in self.tracks.iter().enumerate() {
             for target in track.feeds() {
-                if let Some(next) = self.track_index(target) {
+                if let Some(&next) = indices.get(&target) {
                     edges[index].push(next);
                 }
             }
             for source in track.mixer.sidechain_sources() {
-                if let Some(from) = self.track_index(source)
+                if let Some(&from) = indices.get(&source)
                     && from != index
                 {
                     edges[from].push(index);
@@ -319,6 +327,67 @@ impl Project {
             }
         }
         edges
+    }
+
+    /// Whether every routing reference is usable and the complete graph is acyclic.
+    fn routing_is_valid(&self) -> bool {
+        let indices: HashMap<TrackId, usize> = self
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(index, track)| (track.id, index))
+            .collect();
+        let usable_bus = |target: TrackId, owner: TrackId| {
+            target != owner
+                && indices
+                    .get(&target)
+                    .is_some_and(|&index| self.tracks[index].kind.is_bus())
+        };
+        for track in &self.tracks {
+            if matches!(track.output, Output::Bus(target) if !usable_bus(target, track.id))
+                || track
+                    .sends
+                    .iter()
+                    .any(|send| !usable_bus(send.target, track.id))
+                || track
+                    .mixer
+                    .sidechain_sources()
+                    .any(|source| source == track.id || !indices.contains_key(&source))
+            {
+                return false;
+            }
+        }
+        if self
+            .master
+            .sidechain_sources()
+            .any(|source| !indices.contains_key(&source))
+        {
+            return false;
+        }
+
+        let edges = self.routing_edges();
+        let mut incoming = vec![0usize; edges.len()];
+        for targets in &edges {
+            for &target in targets {
+                incoming[target] = incoming[target].saturating_add(1);
+            }
+        }
+        let mut ready: Vec<usize> = incoming
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &count)| (count == 0).then_some(index))
+            .collect();
+        let mut visited = 0usize;
+        while let Some(node) = ready.pop() {
+            visited += 1;
+            for &target in &edges[node] {
+                incoming[target] -= 1;
+                if incoming[target] == 0 {
+                    ready.push(target);
+                }
+            }
+        }
+        visited == self.tracks.len()
     }
 
     /// Track indices ordered so that everything feeding a bus comes before the bus.
@@ -427,6 +496,9 @@ impl Project {
     /// by another tool or edited by hand, and the alternative to repairing it is a project that
     /// cannot be rendered at all. Returns `true` when anything had to be changed.
     pub fn repair_routing(&mut self) -> bool {
+        if self.routing_is_valid() {
+            return false;
+        }
         let is_bus: Vec<(TrackId, bool)> = self
             .tracks
             .iter()
@@ -482,6 +554,18 @@ impl Project {
                 }
             }
         }
+
+        let live_sends: HashSet<SendId> = self
+            .tracks
+            .iter()
+            .flat_map(|track| track.sends.iter().map(|send| send.id))
+            .collect();
+        repaired |= self.automation.remove_lanes_where(|target| {
+            matches!(
+                target,
+                crate::param::ParamTarget::Send { send, .. } if !live_sends.contains(&send)
+            )
+        });
 
         // Sidechains last, and taken off before they are put back for the reason the edges above
         // are: a loop among them would otherwise be judged against itself. They are not held to
@@ -796,6 +880,47 @@ mod tests {
         assert!(project.remove_track(bus));
         assert_eq!(project.track(kick).unwrap().output, Output::Master);
         assert!(project.track(snare).unwrap().sends.is_empty());
+    }
+
+    #[test]
+    fn pruning_a_send_also_prunes_its_automation() {
+        let (mut project, _, snare, bus) = bussed_project();
+        let send = SendId(77);
+        project
+            .track_mut(snare)
+            .unwrap()
+            .sends
+            .push(AuxSend::new(send, bus));
+        let target = crate::param::ParamTarget::Send { track: snare, send };
+        project.automation.set_point(
+            target,
+            None,
+            crate::automation::AutomationCurve::Linear,
+            crate::time::Ticks::ZERO,
+            -6.0,
+        );
+
+        assert!(project.remove_track(bus));
+        assert!(project.automation.lane(target).is_none());
+
+        let missing = TrackId(99_999);
+        let send = SendId(88);
+        project
+            .track_mut(snare)
+            .unwrap()
+            .sends
+            .push(AuxSend::new(send, missing));
+        let target = crate::param::ParamTarget::Send { track: snare, send };
+        project.automation.set_point(
+            target,
+            None,
+            crate::automation::AutomationCurve::Linear,
+            crate::time::Ticks::ZERO,
+            -3.0,
+        );
+
+        assert!(project.repair_routing());
+        assert!(project.automation.lane(target).is_none());
     }
 
     #[test]

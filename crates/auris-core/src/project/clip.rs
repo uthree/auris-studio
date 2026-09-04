@@ -1049,7 +1049,7 @@ impl Project {
         // change would come back at a different speed than the half in front of it — the audio
         // altered by an edit whose entire meaning is where the boundary goes.
         right.tempo_anchor = Some(clip.anchored_at());
-        right.offset_frames = clip.offset_frames + frames;
+        right.offset_frames = clip.offset_frames.saturating_add(frames);
         right.length_frames = clip.length_frames - frames;
         // Each fade belongs to the edge it was drawn on: the left piece keeps the fade-in, the
         // right piece keeps the fade-out, and neither inherits a fade at the cut — a fade there
@@ -1171,6 +1171,32 @@ impl Project {
                 .iter_mut()
                 .find(|clip| clip.id == clip_id)
         })
+    }
+
+    /// Restores the chronological curve order required by interpolation and scheduling.
+    ///
+    /// Editing commands keep this invariant themselves; this repair is for hand-written or
+    /// malformed project files and belongs beside the other post-deserialization repairs.
+    pub fn repair_curve_order(&mut self) -> bool {
+        let mut repaired = false;
+        for track in &mut self.tracks {
+            let Some(clips) = track.kind.note_clips_mut() else {
+                continue;
+            };
+            for clip in clips {
+                if clip.bend.windows(2).any(|pair| pair[0].at > pair[1].at) {
+                    clip.bend.sort_by_key(|point| point.at);
+                    repaired = true;
+                }
+                for points in clip.controllers.values_mut() {
+                    if points.windows(2).any(|pair| pair[0].at > pair[1].at) {
+                        points.sort_by_key(|point| point.at);
+                        repaired = true;
+                    }
+                }
+            }
+        }
+        repaired
     }
 
     /// An audio clip anywhere in the project.
@@ -1470,6 +1496,46 @@ mod tests {
     use super::*;
     use crate::project::fixtures::demo_project;
     use crate::time::TICKS_PER_QUARTER;
+
+    #[test]
+    fn curve_order_from_an_untrusted_document_is_repaired() {
+        let mut project = Project::new("curves", 48_000.0);
+        let track = project.add_instrument_track("Lead", "auris.synth.chiptune");
+        let clip = project
+            .add_midi_clip(track, "bend", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        let midi = project.midi_clip_mut(clip).unwrap();
+        midi.bend = vec![
+            CurvePoint {
+                at: Ticks(960),
+                value: 2.0,
+            },
+            CurvePoint {
+                at: Ticks(480),
+                value: 0.0,
+            },
+        ];
+
+        assert!(project.repair_curve_order());
+        let midi = project.midi_clip(clip).unwrap().1;
+        assert_eq!(midi.bend[0].at, Ticks(480));
+        assert!((midi.curve_at(ClipCurve::Bend, Ticks(700)) - 0.916_666_7).abs() < 1e-5);
+        assert!(!project.repair_curve_order());
+    }
+
+    #[test]
+    fn splitting_a_corrupt_audio_offset_saturates_instead_of_wrapping() {
+        let mut project = Project::new("split", 960.0);
+        let track = project.add_audio_track("Audio");
+        let source =
+            project.add_audio_source("tone", AssetPath::external("tone.wav"), 100, 960.0, 1);
+        let clip = project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
+        project.audio_clip_mut(clip).unwrap().offset_frames = u64::MAX - 10;
+
+        let right = project.split_clip(clip, Ticks(100)).unwrap();
+
+        assert_eq!(project.audio_clip(right).unwrap().offset_frames, u64::MAX);
+    }
 
     #[test]
     fn the_note_digest_includes_phoneme_timing_and_every_ornament() {

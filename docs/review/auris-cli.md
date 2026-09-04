@@ -6,14 +6,14 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
-| F-145 | medium | `crates/auris-cli/src/main.rs:538` | In auris-cli/src/main.rs, `sing`'s doc comment is fused with `collect`'s, so `sing`'s rendered docs open by describing SoundFont collection, not singing. |
-| F-167 | medium | `crates/auris-cli/src/main.rs:425` | CLI `compose` silently drops --preset when a spec file is also given, unlike auris-toolbox's resolve_spec which rejects the combination outright. |
+| ✅ F-145 | medium | `crates/auris-cli/src/main.rs:538` | In auris-cli/src/main.rs, `sing`'s doc comment is fused with `collect`'s, so `sing`'s rendered docs open by describing SoundFont collection, not singing. |
+| ✅ F-167 | medium | `crates/auris-cli/src/main.rs:425` | CLI `compose` silently drops --preset when a spec file is also given, unlike auris-toolbox's resolve_spec which rejects the combination outright. |
 | F-181 | low | `crates/auris-cli/src/main.rs:243` | crates/auris-cli/src/main.rs:243 pads a kept progression's name with `{:<15}` instead of the file's own CJK-width-aware `pad()`, misaligning the table for […] |
 | F-422 | low | `crates/auris-cli/src/main.rs:366` | `auris compose --preset --force` (flag right after --preset) is parsed as preset name "--force", producing a confusing unknown-preset error instead of enabling […] |
 | F-429 | low | `crates/auris-cli/src/main.rs:1212` | auris-cli's --bpm parser lacks the finite/positive filter that the --sample-rate parser right beside it applies, so bad --bpm values are silently […] |
 | F-444 | low | `crates/auris-cli/src/main.rs:867` | sing-frames prints a failure and skips the success line if the optional --report write fails, even though the WAV was already fully rendered and saved. |
 
-### F-145 · medium · In auris-cli/src/main.rs, `sing`'s doc comment is fused with `collect`'s, so `sing`'s rendered docs open by describing SoundFont collection, not singing.
+### ✅ F-145 · medium · In auris-cli/src/main.rs, `sing`'s doc comment is fused with `collect`'s, so `sing`'s rendered docs open by describing SoundFont collection, not singing.
 
 `crates/auris-cli/src/main.rs:538` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -29,7 +29,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Every public item carries a doc comment (`#![warn(missing_docs)]` is on in each crate).
 
-### F-167 · medium · CLI `compose` silently drops --preset when a spec file is also given, unlike auris-toolbox's resolve_spec which rejects the combination outright.
+### ✅ F-167 · medium · CLI `compose` silently drops --preset when a spec file is also given, unlike auris-toolbox's resolve_spec which rejects the combination outright.
 
 `crates/auris-cli/src/main.rs:425` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 

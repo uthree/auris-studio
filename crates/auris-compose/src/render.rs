@@ -1023,6 +1023,7 @@ mod tests {
             r#"
             title  = "Silent kit"
             groove = "sparse"
+            fill = 0
 
             [[part]]
             name = "lead"

@@ -9,17 +9,15 @@
 //!
 //! Only for **offline, whole-file reductions**:
 //!
-//! * [`waveform::compute_peaks`] — min/max/RMS per horizontal pixel of a clip, over files that
-//!   routinely run to tens of millions of samples. Redrawn on every zoom and scroll.
+//! * [`waveform::compute_peaks`] — a fixed min/max/RMS overview computed once when a decoded
+//!   source is installed and cached by the session. Zoom and scroll re-bin the cached result.
 //! * [`analysis::analyze_loudness`] — peak, RMS and an inter-sample peak estimate over a whole
-//!   rendered mix. **Nothing calls it yet.** It was written for the export dialog, which in the
-//!   event reports [`AudioBuffer::peak`](auris_core::AudioBuffer::peak) — the loudest *sample*,
-//!   scanned on the CPU — and so says nothing about the inter-sample peak this measures. Wiring
-//!   it in means giving `auris_session::RenderJob` a context it deliberately does
+//!   rendered mix. The session's analysis command and automatic balance pass use the
+//!   GPU-preferring wrapper and fall back to the CPU reference. The export dialog reports
+//!   [`AudioBuffer::peak`](auris_core::AudioBuffer::peak), the loudest stored sample. Wiring the
+//!   GPU path into export means giving `auris_session::RenderJob` a context it deliberately does
 //!   not have: it is built to be self-contained and handed to a worker thread. Left here rather
-//!   than deleted because the kernel is finished and tested against its own CPU reference; said
-//!   out loud because a doc comment claiming a caller that does not exist is how the next person
-//!   comes to believe the number on screen is a true peak.
+//!   than deleted because the kernel is finished and tested against its own CPU reference.
 //!
 //! Both are embarrassingly parallel: the output for one bucket depends on no other bucket, so
 //! the work maps onto thousands of invocations with no cross-thread communication.

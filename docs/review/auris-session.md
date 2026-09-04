@@ -25,21 +25,21 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-108 | high | `crates/auris-session/src/session/assets.rs:154` | collect_assets copies arbitrary local files named by an untrusted .auris project's External asset paths into Audio/ without ever validating them as audio or […] |
 | ✅ F-118 | high | `crates/auris-session/src/session/mod.rs:830` | Re-entrant begin_transaction overwrites an open transaction, so its already-applied edit can become permanently unrecorded and unrendered. |
 | ✅ F-327 | high | `crates/auris-session/src/session/clips.rs:566` | trim_clip_start rebases MIDI notes on front-trim but leaves bend/controller CurvePoints at stale offsets, misaligning automation with the trimmed clip's notes. |
-| F-329 | high | `crates/auris-session/src/session/hosted.rs:853` | set_hosted_instrument swaps a CLAP plugin's id/state but skips remove_instrument_automation, leaving old-plugin automation lanes driving the new plugin's […] |
-| F-331 | high | `crates/auris-session/src/session/accompany.rs:165` | accompany() snaps the chord/key write and the generated clip's start through two different grids, so parts can be composed against the wrong harmony. |
-| F-341 | high | `crates/auris-session/src/session/mod.rs:1083` | Session::open clears self.hosted for id-reuse safety but never clears self.armed/self.monitored, so a new project can inherit stale arm/monitor state via […] |
-| F-037 | medium | `crates/auris-session/src/session/mod.rs:846` | A net-zero transaction (e.g. drag-and-back) leaves the document falsely marked dirty because end_transaction's no-op branch never restores dirty_before. |
-| F-041 | medium | `crates/auris-session/src/session/clips.rs:292` | split_clip mutates the document and pushes an undo step but never increments Session::revision, breaking its documented invalidation contract. |
-| F-109 | medium | `crates/auris-session/src/session/compose.rs:354` | Compose report undercounts tracks by one when a vocal section's notes are all cut, though an empty Vocal track/clip is actually created. |
-| F-136 | medium | `crates/auris-session/src/session/notes.rs:329` | resize_note pushes an undo step before checking the note index exists, leaving a phantom undo entry and a wiped redo stack when the index is stale. |
-| F-149 | medium | `crates/auris-session/src/session/compose.rs:888` | The kit-trim-through-compose test's `on_a_kit` is structurally always false, so it never exercises the trimmed branch it claims to verify. |
-| F-150 | medium | `crates/auris-session/src/guide.rs:44` | guide.rs's architecture crate map omits auris-singer, a real unconditional backend crate that auris-session depends on and re-exports types from. |
-| F-154 | medium | `crates/auris-session/src/session/record.rs:59` | record.rs's module doc still describes the pre-f0c836e single shared monitor ring, contradicting the current per-track monitor rings in monitor.rs and guide.rs. |
-| F-158 | medium | `crates/auris-session/src/guide.rs:3` | guide.rs and README.md claim 13 workspace crates and omit auris-singer from the architecture diagram; there are 18 crates. |
-| F-165 | medium | `crates/auris-session/src/session/notes.rs:122` | remove_notes_as records an undo step and marks the session dirty even when every requested index is out of range and no note is actually removed. |
-| F-166 | medium | `crates/auris-session/src/progressions.rs:150` | ProgressionBook::keep checks only literal CATALOG names, not catalog()'s alias table, so localized/alias names like "丸サ" bypass the built-in collision guard. |
-| F-180 | medium | `crates/auris-session/src/session/clips.rs:497` | resize_clip's `available.max(1)` clamp forces length_frames=1 on an audio clip whose source has zero frames left, unlike trim_clip_start's explicit zero-length […] |
-| F-183 | medium | `crates/auris-session/src/session/transport.rs:85` | Loop/punch/grid toggles live on Project but skip record(), so an unrelated Undo silently reverts them via the whole-project snapshot swap. |
+| ✅ F-329 | high | `crates/auris-session/src/session/hosted.rs:853` | set_hosted_instrument swaps a CLAP plugin's id/state but skips remove_instrument_automation, leaving old-plugin automation lanes driving the new plugin's […] |
+| ✅ F-331 | high | `crates/auris-session/src/session/accompany.rs:165` | accompany() snaps the chord/key write and the generated clip's start through two different grids, so parts can be composed against the wrong harmony. |
+| ✅ F-341 | high | `crates/auris-session/src/session/mod.rs:1083` | Session::open clears self.hosted for id-reuse safety but never clears self.armed/self.monitored, so a new project can inherit stale arm/monitor state via […] |
+| ✅ F-037 | medium | `crates/auris-session/src/session/mod.rs:846` | A net-zero transaction (e.g. drag-and-back) leaves the document falsely marked dirty because end_transaction's no-op branch never restores dirty_before. |
+| ✅ F-041 | medium | `crates/auris-session/src/session/clips.rs:292` | split_clip mutates the document and pushes an undo step but never increments Session::revision, breaking its documented invalidation contract. |
+| ✅ F-109 | medium | `crates/auris-session/src/session/compose.rs:354` | Compose report undercounts tracks by one when a vocal section's notes are all cut, though an empty Vocal track/clip is actually created. |
+| ✅ F-136 | medium | `crates/auris-session/src/session/notes.rs:329` | resize_note pushes an undo step before checking the note index exists, leaving a phantom undo entry and a wiped redo stack when the index is stale. |
+| ✅ F-149 | medium | `crates/auris-session/src/session/compose.rs:888` | The kit-trim-through-compose test's `on_a_kit` is structurally always false, so it never exercises the trimmed branch it claims to verify. |
+| ✅ F-150 | medium | `crates/auris-session/src/guide.rs:44` | guide.rs's architecture crate map omits auris-singer, a real unconditional backend crate that auris-session depends on and re-exports types from. |
+| ✅ F-154 | medium | `crates/auris-session/src/session/record.rs:59` | record.rs's module doc still describes the pre-f0c836e single shared monitor ring, contradicting the current per-track monitor rings in monitor.rs and guide.rs. |
+| ✅ F-158 | medium | `crates/auris-session/src/guide.rs:3` | guide.rs and README.md claim 13 workspace crates and omit auris-singer from the architecture diagram; there are 18 crates. |
+| ✅ F-165 | medium | `crates/auris-session/src/session/notes.rs:122` | remove_notes_as records an undo step and marks the session dirty even when every requested index is out of range and no note is actually removed. |
+| ✅ F-166 | medium | `crates/auris-session/src/progressions.rs:150` | ProgressionBook::keep checks only literal CATALOG names, not catalog()'s alias table, so localized/alias names like "丸サ" bypass the built-in collision guard. |
+| ✅ F-180 | medium | `crates/auris-session/src/session/clips.rs:497` | resize_clip's `available.max(1)` clamp forces length_frames=1 on an audio clip whose source has zero frames left, unlike trim_clip_start's explicit zero-length […] |
+| ✅ F-183 | medium | `crates/auris-session/src/session/transport.rs:85` | Loop/punch/grid toggles live on Project but skip record(), so an unrelated Undo silently reverts them via the whole-project snapshot swap. |
 | F-186 | medium | `crates/auris-session/src/session/mixer.rs:107` | move_effect records a phantom undo step and marks the project dirty even when moving an effect at a chain boundary is a no-op. |
 | F-187 | medium | `crates/auris-session/src/session/harmony.rs:147` | clear_harmony records an undo step and dirties the document even when from==to and nothing is cleared, unlike its sibling commands in the same file. |
 | F-188 | medium | `crates/auris-session/src/guide.rs:88` | guide.rs (lines ~88 and 638) wrongly claims frontend binaries call default_registry; only Session::new does, contradicting the guide's own later architecture […] |
@@ -379,7 +379,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** The mechanism, location, and consequence are all accurate as stated. One minor numeric detail in the trigger example is off: this project's default PPQ makes `Ticks::QUARTER` equal 960 ticks, not 480 as the trigger's illustrative numbers assumed — the bug reproduces identically regardless of the exact tick count, so this does not change the verdict.
 
-### F-329 · high · set_hosted_instrument swaps a CLAP plugin's id/state but skips remove_instrument_automation, leaving old-plugin automation lanes driving the new plugin's unrelated parameters.
+### ✅ F-329 · high · set_hosted_instrument swaps a CLAP plugin's id/state but skips remove_instrument_automation, leaving old-plugin automation lanes driving the new plugin's unrelated parameters.
 
 `crates/auris-session/src/session/hosted.rs:853` · correctness · confirmed (traced through the code; reported independently 1×)
 
@@ -395,7 +395,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Doc comment on `remove_instrument_automation` (crates/auris-core/src/project/track.rs:634-640): "Called when the instrument itself is replaced, for the reason the swap also throws away the saved parameter values: a lane names a track and a parameter index, never the plugin that owns it... It lives here rather than in the caller so that whatever changes a track's instrument next inherits the […]
 
-### F-331 · high · accompany() snaps the chord/key write and the generated clip's start through two different grids, so parts can be composed against the wrong harmony.
+### ✅ F-331 · high · accompany() snaps the chord/key write and the generated clip's start through two different grids, so parts can be composed against the wrong harmony.
 
 `crates/auris-session/src/session/accompany.rs:165` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -411,7 +411,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** harmony.rs doc on `harmony_grid_at`/`snap_harmony`: "a menu that offers ... has to round the pointer the same way the command that writes them does, or the two disagree by a sixteenth" — exactly the disagreement that occurs here between `write_accompaniment`'s harmony writes and `generate_clip`'s note generation.
 
-### F-341 · high · Session::open clears self.hosted for id-reuse safety but never clears self.armed/self.monitored, so a new project can inherit stale arm/monitor state via colliding TrackIds.
+### ✅ F-341 · high · Session::open clears self.hosted for id-reuse safety but never clears self.armed/self.monitored, so a new project can inherit stale arm/monitor state via colliding TrackIds.
 
 `crates/auris-session/src/session/mod.rs:1083` · lifecycle · confirmed (executed reproduction; reported independently 1×)
 
@@ -427,7 +427,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** // Hosted plugins belong to the document that named them: their slot ids come from it, and this document reusing an id would inherit the old plugin. (files.rs, Session::open) — the same reasoning applies verbatim to armed/monitored track ids but was not applied to them.
 
-### F-037 · medium · A net-zero transaction (e.g. drag-and-back) leaves the document falsely marked dirty because end_transaction's no-op branch never restores dirty_before.
+### ✅ F-037 · medium · A net-zero transaction (e.g. drag-and-back) leaves the document falsely marked dirty because end_transaction's no-op branch never restores dirty_before.
 
 `crates/auris-session/src/session/mod.rs:846` · correctness · confirmed (executed reproduction; reported independently 2×)
 
@@ -443,7 +443,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** is_dirty doc comment: "`true` when there are unsaved changes"; dirty_before's own doc comment: "a drag on a freshly saved document that is then abandoned has changed nothing, and the window should not claim it has"
 
-### F-041 · medium · split_clip mutates the document and pushes an undo step but never increments Session::revision, breaking its documented invalidation contract.
+### ✅ F-041 · medium · split_clip mutates the document and pushes an undo step but never increments Session::revision, breaking its documented invalidation contract.
 
 `crates/auris-session/src/session/clips.rs:292` · correctness · confirmed (executed reproduction; reported independently 2×)
 
@@ -459,7 +459,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** A number that moves whenever the document does — edits, undo, redo, another document. (Session::revision doc comment, crates/auris-session/src/session/mod.rs:777-779)
 
-### F-109 · medium · Compose report undercounts tracks by one when a vocal section's notes are all cut, though an empty Vocal track/clip is actually created.
+### ✅ F-109 · medium · Compose report undercounts tracks by one when a vocal section's notes are all cut, though an empty Vocal track/clip is actually created.
 
 `crates/auris-session/src/session/compose.rs:354` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -475,7 +475,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** assert_eq!(session.project().tracks.len(), report.tracks + buses); (crates/auris-session/src/session/compose.rs, existing test asserting report.tracks must equal the actual number of tracks created)
 
-### F-136 · medium · resize_note pushes an undo step before checking the note index exists, leaving a phantom undo entry and a wiped redo stack when the index is stale.
+### ✅ F-136 · medium · resize_note pushes an undo step before checking the note index exists, leaving a phantom undo entry and a wiped redo stack when the index is stale.
 
 `crates/auris-session/src/session/notes.rs:329` · correctness · confirmed (traced through the code; reported independently 2×)
 
@@ -491,7 +491,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** "Validate *before* calling this. Pushing a step clears the redo stack and marks the document dirty, so a command that records first and refuses after has already cost the user both — a phantom step that undoes nothing, and a redo branch that is simply gone." (Session::record doc comment, crates/auris-session/src/session/mod.rs:963-965)
 
-### F-149 · medium · The kit-trim-through-compose test's `on_a_kit` is structurally always false, so it never exercises the trimmed branch it claims to verify.
+### ✅ F-149 · medium · The kit-trim-through-compose test's `on_a_kit` is structurally always false, so it never exercises the trimmed branch it claims to verify.
 
 `crates/auris-session/src/session/compose.rs:888` · test-quality · confirmed (executed reproduction; reported independently 1×)
 
@@ -507,7 +507,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
 
-### F-150 · medium · guide.rs's architecture crate map omits auris-singer, a real unconditional backend crate that auris-session depends on and re-exports types from.
+### ✅ F-150 · medium · guide.rs's architecture crate map omits auris-singer, a real unconditional backend crate that auris-session depends on and re-exports types from.
 
 `crates/auris-session/src/guide.rs:44` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -523,7 +523,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** This module is that account. [of how the crates relate]
 
-### F-154 · medium · record.rs's module doc still describes the pre-f0c836e single shared monitor ring, contradicting the current per-track monitor rings in monitor.rs and guide.rs.
+### ✅ F-154 · medium · record.rs's module doc still describes the pre-f0c836e single shared monitor ring, contradicting the current per-track monitor rings in monitor.rs and guide.rs.
 
 `crates/auris-session/src/session/record.rs:59` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -539,7 +539,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Every public item carries a doc comment ... the workspace has no root crate, so the account of how the crates fit together is auris_session::guide ... [and CI] builds the docs with warnings denied — an accurate doc is the baseline this project holds itself to, and this paragraph is factually wrong about the shipped behavior.
 
-### F-158 · medium · guide.rs and README.md claim 13 workspace crates and omit auris-singer from the architecture diagram; there are 18 crates.
+### ✅ F-158 · medium · guide.rs and README.md claim 13 workspace crates and omit auris-singer from the architecture diagram; there are 18 crates.
 
 `crates/auris-session/src/guide.rs:3` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
 
@@ -555,7 +555,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** The workspace has no root crate, so the account of how the crates fit together is `auris_session::guide`. ... Anything about the system as a whole belongs there.
 
-### F-165 · medium · remove_notes_as records an undo step and marks the session dirty even when every requested index is out of range and no note is actually removed.
+### ✅ F-165 · medium · remove_notes_as records an undo step and marks the session dirty even when every requested index is out of range and no note is actually removed.
 
 `crates/auris-session/src/session/notes.rs:122` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -571,7 +571,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** /// Removes notes by index. Indices that do not exist are ignored.
 
-### F-166 · medium · ProgressionBook::keep checks only literal CATALOG names, not catalog()'s alias table, so localized/alias names like "丸サ" bypass the built-in collision guard.
+### ✅ F-166 · medium · ProgressionBook::keep checks only literal CATALOG names, not catalog()'s alias table, so localized/alias names like "丸サ" bypass the built-in collision guard.
 
 `crates/auris-session/src/progressions.rs:150` · theory · confirmed (executed reproduction; reported independently 1×)
 
@@ -587,7 +587,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** A name the built-in catalogue already uses is refused. Two `@axis`es would be a picker with the same word in it twice, and a person choosing between them would have no way to tell which one they were about to get.
 
-### F-180 · medium · resize_clip's `available.max(1)` clamp forces length_frames=1 on an audio clip whose source has zero frames left, unlike trim_clip_start's explicit zero-length guard.
+### ✅ F-180 · medium · resize_clip's `available.max(1)` clamp forces length_frames=1 on an audio clip whose source has zero frames left, unlike trim_clip_start's explicit zero-length guard.
 
 `crates/auris-session/src/session/clips.rs:497` · correctness · confirmed (executed reproduction; reported independently 1×)
 
@@ -603,7 +603,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** A file that has moved is searched for by name and confirmed by size, and what is found is written back into the document. Missing assets are reported, never fatal: the project opens with that one track silent. (project folder invariants in CLAUDE.md imply stored clip data must stay consistent with what the source actually has)
 
-### F-183 · medium · Loop/punch/grid toggles live on Project but skip record(), so an unrelated Undo silently reverts them via the whole-project snapshot swap.
+### ✅ F-183 · medium · Loop/punch/grid toggles live on Project but skip record(), so an unrelated Undo silently reverts them via the whole-project snapshot swap.
 
 `crates/auris-session/src/session/transport.rs:85` · correctness · confirmed (executed reproduction; reported independently 1×)
 

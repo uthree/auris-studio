@@ -15,6 +15,7 @@
 //! same code, which is the whole reason an expression pedal reaches an instrument at all.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use std::collections::BTreeSet;
 
 use crate::plugin::CC_MODULATION;
 use crate::time::Ticks;
@@ -180,25 +181,31 @@ pub fn curve_events(points: &[CurvePoint], length: Ticks, step: Ticks) -> Vec<(T
         return Vec::new();
     };
     let step = Ticks(step.raw().max(1));
-    let mut out: Vec<(Ticks, f32)> = Vec::new();
+    let mut ticks = BTreeSet::new();
     if first.at > Ticks::ZERO {
         // `curve_at` holds the first value backwards. Schedule that same state at the clip's
         // beginning rather than leaving the instrument at a previous clip's value until the
         // first drawn point arrives.
-        out.push((Ticks::ZERO, first.value));
+        ticks.insert(Ticks::ZERO);
     }
     let mut at = first.at.max_zero();
-    while at < last.at {
-        out.push((at, curve_at(points, at)));
+    while at < last.at && at <= length {
+        ticks.insert(at);
         at += step;
     }
-    out.push((last.at, last.value));
-    if last.value != 0.0 {
+    for point in points {
+        if point.at >= Ticks::ZERO && point.at <= length {
+            ticks.insert(point.at);
+        }
+    }
+    let value_at_end = curve_at(points, length);
+    let mut out: Vec<(Ticks, f32)> = ticks
+        .into_iter()
+        .map(|at| (at, curve_at(points, at)))
+        .collect();
+    if value_at_end != 0.0 {
         out.push((length, 0.0));
     }
-    // A point past the end of the clip would be scheduled outside the window the notes were cut
-    // to, so the whole curve is kept inside it — including the release above.
-    out.retain(|(at, _)| *at <= length);
     out
 }
 
@@ -285,6 +292,11 @@ mod tests {
             past.iter().all(|(at, _)| *at <= Ticks(960)),
             "a point ran past the clip: {past:?}"
         );
+
+        // The raw last point is zero, but at the truncated boundary the line has not reached it.
+        let truncated = bent(&[(0, 0.0), (100, 1.0), (2000, 0.0)], 500)
+            .curve_events(ClipCurve::Bend, CURVE_STEP);
+        assert_eq!(truncated.last(), Some(&(Ticks(500), 0.0)));
     }
 
     #[test]
@@ -312,6 +324,17 @@ mod tests {
         for pair in events.windows(2) {
             assert!(pair[0].0 <= pair[1].0, "{events:?} goes back in time");
         }
+    }
+
+    #[test]
+    fn every_drawn_corner_is_emitted_even_when_it_is_off_the_sampling_grid() {
+        let events = bent(&[(0, 0.0), (505, 3.0), (1000, 0.0)], 1000)
+            .curve_events(ClipCurve::Bend, CURVE_STEP);
+
+        assert!(
+            events.contains(&(Ticks(505), 3.0)),
+            "the drawn peak was rounded away: {events:?}"
+        );
     }
 
     #[test]

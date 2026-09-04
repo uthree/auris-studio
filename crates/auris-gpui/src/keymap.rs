@@ -36,6 +36,19 @@ enum StoredInput {
     Legacy(Keymap),
 }
 
+/// Whether a stored list says exactly what this build already ships for the command.
+fn matches_defaults(command: &Bindable, keystrokes: &[String]) -> bool {
+    let shipped: Vec<String> = command
+        .defaults()
+        .map(actions::normalise_keystroke)
+        .collect();
+    let written: Vec<String> = keystrokes
+        .iter()
+        .map(|keystroke| actions::normalise_keystroke(keystroke))
+        .collect();
+    written == shipped
+}
+
 /// The current shape.
 ///
 /// `deny_unknown_fields` is what makes the two shapes distinguishable: without it a bare map of
@@ -163,10 +176,10 @@ impl Keymap {
     /// command they unbound wants it to stay unbound, not to come back on the next launch.
     fn discard_unusable(&mut self) {
         self.overrides.retain(|id, keystrokes| {
-            if actions::bindable(id).is_none() {
+            let Some(command) = actions::bindable(id) else {
                 log::warn!("ignoring key bindings for unknown command `{id}`");
                 return false;
-            }
+            };
             keystrokes.retain(|keystroke| {
                 let usable = actions::is_valid_keystroke(keystroke);
                 if !usable {
@@ -174,7 +187,9 @@ impl Keymap {
                 }
                 usable
             });
-            true
+            // Filtering can turn an old two-key override into today's default. Keeping that
+            // no-op entry would freeze the default into the file and label it as customised.
+            !matches_defaults(command, keystrokes)
         });
     }
 
@@ -315,16 +330,7 @@ impl Keymap {
         // Compared as a whole list rather than as one keystroke, because a command can ship with
         // two: putting Delete's second key back by hand has to read as "this is the default"
         // rather than as an override that happens to say the same thing.
-        let shipped: Vec<String> = command
-            .defaults()
-            .map(actions::normalise_keystroke)
-            .collect();
-        let written: Vec<String> = keystrokes
-            .iter()
-            .map(|keystroke| actions::normalise_keystroke(keystroke))
-            .collect();
-        let is_default = written == shipped;
-        if is_default {
+        if matches_defaults(command, &keystrokes) {
             self.overrides.remove(command.id);
         } else {
             self.overrides.insert(command.id.to_string(), keystrokes);
@@ -560,6 +566,24 @@ mod tests {
         // The one command whose every keystroke was unusable keeps its entry, empty. Dropping it
         // would restore the default, and a command with nothing left on it reads as unbound.
         assert!(keymap.is_unbound(command("edit.undo")));
+    }
+
+    #[test]
+    fn filtering_an_override_back_to_the_default_drops_the_override() {
+        let undo = command("edit.undo");
+        let mut keymap = Keymap::default();
+        keymap.overrides.insert(
+            undo.id.to_string(),
+            vec![
+                "notakey-x".to_string(),
+                undo.defaults().next().unwrap().to_string(),
+            ],
+        );
+
+        keymap.discard_unusable();
+
+        assert!(!keymap.is_overridden(undo));
+        assert_eq!(keymap.keystrokes(undo), undo.defaults().collect::<Vec<_>>());
     }
 
     #[test]

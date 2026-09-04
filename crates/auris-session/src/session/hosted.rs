@@ -883,6 +883,7 @@ impl Session {
         {
             return Err(SessionError::UnknownTrack(track.0));
         }
+        self.project.remove_instrument_automation(track);
         self.invalidate_graph();
         Ok(())
     }
@@ -1421,6 +1422,27 @@ mod tests {
         assert_eq!(descriptor.name, "Level");
         session.set_param(target, 0.25);
         assert_eq!(session.param_value(target, &descriptor), 0.25);
+    }
+
+    #[test]
+    fn replacing_a_hosted_instrument_removes_its_old_automation() {
+        let (mut session, file) = session_with_instrument();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        session
+            .set_hosted_instrument(track, &file, TONE_ID)
+            .unwrap();
+        let target = crate::param::ParamTarget::Instrument {
+            track,
+            param: ParamId(0),
+        };
+        assert!(session.set_automation_point(target, Ticks::ZERO, 0.25));
+        assert!(session.is_automated(target));
+
+        session
+            .set_hosted_instrument(track, &file, TONE_ID)
+            .unwrap();
+
+        assert!(!session.is_automated(target));
     }
 
     #[test]

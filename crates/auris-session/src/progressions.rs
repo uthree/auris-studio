@@ -15,7 +15,7 @@
 
 use std::path::PathBuf;
 
-use auris_core::theory::chart::{CATALOG, Chart, ChartMode};
+use auris_core::theory::chart::{Chart, ChartMode, catalog};
 use serde::{Deserialize, Serialize};
 
 use crate::error::SessionError;
@@ -147,7 +147,7 @@ impl ProgressionBook {
     /// which one they were about to get.
     pub fn keep(&mut self, name: &str, chart: &Chart, mode: Option<ChartMode>) -> bool {
         let name = name.trim();
-        if name.is_empty() || CATALOG.iter().any(|entry| entry.name == name) {
+        if name.is_empty() || catalog(name).is_some() {
             return false;
         }
         let saved = SavedProgression {
@@ -176,6 +176,13 @@ mod tests {
 
     fn chart(text: &str) -> Chart {
         Chart::parse(text).expect("the fixture is a chart")
+    }
+
+    #[test]
+    fn a_builtin_alias_cannot_be_kept_as_a_custom_progression() {
+        let mut book = ProgressionBook::default();
+        assert!(!book.keep("丸サ", &chart("| I | V |"), None));
+        assert!(book.entries().is_empty());
     }
 
     #[test]

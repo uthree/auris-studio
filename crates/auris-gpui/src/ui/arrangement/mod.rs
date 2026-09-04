@@ -2,8 +2,9 @@
 //!
 //! Five surfaces share the screen — the header column, the ruler, the structure and harmony
 //! strips, and the clip lanes — and they sit on one layer of pure functions that decides where a
-//! press lands. That layer is `geometry`, and it is the only part of the arrangement that can be
-//! exercised without a window, which is why every test in the module is in that file.
+//! press lands. That layer is `geometry`, which holds the pure geometry tests. `headers` also has
+//! window-free state tests, while `gestures` exercises pointer behaviour through the window
+//! harness.
 //!
 //! The rest is cut by what a reader is looking for: `headers` is the left column, `strips` the
 //! two lanes between the ruler and the clips, `lanes` the right-hand column and the snapshots it
@@ -32,6 +33,11 @@ use gpui::{Axis, IntoElement, MouseDownEvent, Window, div, prelude::*};
 use crate::app::{AurisApp, Drag};
 use crate::ui::widgets::splitter;
 
+/// A stale scroll offset brought back inside a shortened lane column.
+fn clamped_lane_scroll(scroll: gpui::Pixels, maximum: gpui::Pixels) -> gpui::Pixels {
+    scroll.min(maximum)
+}
+
 impl AurisApp {
     /// Renders the arrangement panel.
     pub(crate) fn render_arrangement(
@@ -40,6 +46,9 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
+        // Clamp before either column snapshots the shared value. Doing this in the timeline
+        // after rendering the headers leaves the two columns one frame out of line.
+        self.lane_scroll = clamped_lane_scroll(self.lane_scroll, self.max_lane_scroll());
         let headers = self.render_track_headers(cx);
         let timeline = self.render_timeline(cx);
         div()
@@ -62,5 +71,17 @@ impl AurisApp {
                 }),
             ))
             .child(timeline)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::px;
+
+    #[test]
+    fn a_shortened_lane_column_clamps_its_shared_scroll_before_rendering() {
+        assert_eq!(clamped_lane_scroll(px(240.0), px(160.0)), px(160.0));
+        assert_eq!(clamped_lane_scroll(px(80.0), px(160.0)), px(80.0));
     }
 }

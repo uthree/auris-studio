@@ -9,6 +9,9 @@ use auris_core::plugin::{
 };
 
 use crate::bank::ParamBank;
+use crate::smooth::SmoothedValue;
+
+const PARAM_SMOOTHING_SECONDS: f32 = 0.020;
 
 const P_DRIVE_DB: u32 = 0;
 const P_MODE: u32 = 1;
@@ -80,6 +83,10 @@ fn fold(input: f32) -> f32 {
 /// Drive, waveshape, output trim and dry/wet mix.
 pub struct Distortion {
     params: ParamBank,
+    sample_rate: f32,
+    drive: SmoothedValue,
+    output: SmoothedValue,
+    mix: SmoothedValue,
 }
 
 impl Default for Distortion {
@@ -98,14 +105,27 @@ impl Distortion {
             ParamDescriptor::decibels(P_OUTPUT_DB, "output_db", "Output", -24.0, 12.0, 0.0),
             ParamDescriptor::percent(P_MIX, "mix", "Mix", 1.0),
         ];
-        Self {
+        let sample_rate = 48_000.0;
+        let mut plugin = Self {
             params: ParamBank::new(descriptors),
-        }
+            sample_rate,
+            drive: SmoothedValue::new(1.0, PARAM_SMOOTHING_SECONDS, sample_rate),
+            output: SmoothedValue::new(1.0, PARAM_SMOOTHING_SECONDS, sample_rate),
+            mix: SmoothedValue::new(1.0, PARAM_SMOOTHING_SECONDS, sample_rate),
+        };
+        plugin.snap_to_params();
+        plugin
     }
 
     /// The waveshaper currently selected.
     pub fn mode(&self) -> DistortionMode {
         DistortionMode::from_value(self.params.at(P_MODE))
+    }
+
+    fn snap_to_params(&mut self) {
+        self.drive.snap_to(db_to_gain(self.params.at(P_DRIVE_DB)));
+        self.output.snap_to(db_to_gain(self.params.at(P_OUTPUT_DB)));
+        self.mix.snap_to(self.params.at(P_MIX));
     }
 }
 
@@ -133,9 +153,19 @@ impl Effect for Distortion {
         )
     }
 
-    fn prepare(&mut self, _ctx: &PrepareContext) {}
+    fn prepare(&mut self, ctx: &PrepareContext) {
+        self.sample_rate = ctx.sample_rate as f32;
+        self.drive
+            .set_time(PARAM_SMOOTHING_SECONDS, self.sample_rate);
+        self.output
+            .set_time(PARAM_SMOOTHING_SECONDS, self.sample_rate);
+        self.mix.set_time(PARAM_SMOOTHING_SECONDS, self.sample_rate);
+        self.snap_to_params();
+    }
 
-    fn reset(&mut self) {}
+    fn reset(&mut self) {
+        self.snap_to_params();
+    }
 
     fn process(&mut self, buffer: &mut AudioBuffer, _ctx: &ProcessContext) {
         let frames = buffer.frame_count();
@@ -143,18 +173,30 @@ impl Effect for Distortion {
             return;
         }
 
-        let drive = db_to_gain(self.params.at(P_DRIVE_DB));
-        let output = db_to_gain(self.params.at(P_OUTPUT_DB));
-        let mix = self.params.at(P_MIX);
+        self.drive
+            .set_target(db_to_gain(self.params.at(P_DRIVE_DB)));
+        self.output
+            .set_target(db_to_gain(self.params.at(P_OUTPUT_DB)));
+        self.mix.set_target(self.params.at(P_MIX));
         let mode = self.mode();
         // A signed n-bit sample has 2^(n-1) steps per side of zero.
         let levels = (1u32 << (self.params.at(P_BITS).round().clamp(1.0, 16.0) as u32 - 1)) as f32;
 
+        let drive_at_block_start = self.drive;
+        let output_at_block_start = self.output;
+        let mix_at_block_start = self.mix;
         for channel in buffer.channels_mut() {
+            let mut drive = drive_at_block_start;
+            let mut output = output_at_block_start;
+            let mut mix = mix_at_block_start;
             for sample in channel[..frames].iter_mut() {
-                let wet = mode.shape(*sample * drive, levels) * output;
-                *sample = *sample * (1.0 - mix) + wet * mix;
+                let wet = mode.shape(*sample * drive.next_value(), levels) * output.next_value();
+                let wet_amount = mix.next_value();
+                *sample = *sample * (1.0 - wet_amount) + wet * wet_amount;
             }
+            self.drive = drive;
+            self.output = output;
+            self.mix = mix;
         }
     }
 }
@@ -265,10 +307,11 @@ mod tests {
 
     #[test]
     fn output_trim_scales_the_wet_signal() {
-        let mut plugin = prepared();
+        let mut plugin = Distortion::new();
         plugin.set_param_by_key("mode", 1.0);
         plugin.set_param_by_key("drive_db", 24.0);
         plugin.set_param_by_key("output_db", -6.0206);
+        plugin.prepare(&PrepareContext::new(SR, 512, 2));
         let mut buffer = sine(2_048, 0.5);
         plugin.process(&mut buffer, &context(2_048));
         assert!(
@@ -280,13 +323,32 @@ mod tests {
 
     #[test]
     fn a_dry_mix_is_a_bit_exact_bypass() {
-        let mut plugin = prepared();
+        let mut plugin = Distortion::new();
         plugin.set_param_by_key("mix", 0.0);
         plugin.set_param_by_key("drive_db", 48.0);
+        plugin.prepare(&PrepareContext::new(SR, 512, 2));
         let input = sine(512, 0.5);
         let mut buffer = input.clone();
         plugin.process(&mut buffer, &context(512));
         assert_eq!(buffer.channel(0), input.channel(0));
+    }
+
+    #[test]
+    fn continuous_parameters_ramp_between_blocks() {
+        let mut plugin = Distortion::new();
+        plugin.set_param_by_key("mode", 1.0);
+        plugin.set_param_by_key("drive_db", 48.0);
+        plugin.set_param_by_key("mix", 0.0);
+        plugin.prepare(&PrepareContext::new(SR, 512, 2));
+        plugin.set_param_by_key("mix", 1.0);
+
+        let mut buffer = AudioBuffer::from_planar(vec![vec![0.25; 512]; 2], SR).unwrap();
+        plugin.process(&mut buffer, &context(512));
+
+        let channel = buffer.channel(0);
+        assert!(channel[0] > 0.25 && channel[0] < 1.0);
+        assert!(channel[511] > channel[0]);
+        assert_eq!(buffer.channel(0), buffer.channel(1));
     }
 
     #[test]

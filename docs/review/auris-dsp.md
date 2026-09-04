@@ -10,16 +10,16 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | ✅ F-075 | high | `crates/auris-dsp/src/reverb.rs:324` | Reverb reads mix/width/damping/room-size/pre-delay once per block instead of ramping them, causing zipper noise and pre-delay read-head jumps on parameter […] |
 | ✅ F-086 | high | `crates/auris-dsp/src/compressor.rs:241` | Compressor makeup gain is added unsmoothed to the envelope-filtered gain each frame, causing a zipper-noise click whenever makeup_db changes between blocks. |
 | ✅ F-087 | high | `crates/auris-dsp/src/eq.rs:335` | Re-enabling a disabled EQ band resumes its biquad from stale, frozen s1/s2 state, producing an audible click/thump instead of a clean rejoin. |
-| F-333 | high | `crates/auris-dsp/src/distortion.rs:146` | Distortion applies drive/output/mix as block-constant steps with no SmoothedValue ramp, causing zipper-noise clicks when those parameters are automated, unlike […] |
-| F-339 | high | `crates/auris-dsp/src/limiter.rs:115` | Limiter::prepare has no upper bound on sample_rate, so a corrupted .auris file's sample_rate can abort the render/export process via a multi-GB allocation. |
-| F-040 | medium | `crates/auris-dsp/src/limiter.rs:173` | Limiter's look-ahead delay line doesn't sanitise samples like chorus/delay do, so its own NaN-proof-ceiling doc claim is false in isolation, though the […] |
-| F-128 | medium | `crates/auris-dsp/src/eq.rs:409` | Disabling then re-enabling a resonant EQ band replays its frozen, stale filter memory as an audible thump instead of resuming cleanly. |
-| F-147 | medium | `crates/auris-dsp/src/delay.rs:165` | delay.rs damping_alpha doc claims exact -3dB cutoff, but it's 5.6% off at the plugin's 6kHz default and unreachable below Nyquist above ~12kHz. |
-| F-152 | medium | `crates/auris-dsp/src/spectrum.rs:166` | SpectrumAnalyzer::magnitudes applies the interior-bin 4/size mirror-recovery scale to the self-mirrored DC and Nyquist bins, reading them +6.02 dB hot; […] |
-| F-179 | medium | `crates/auris-dsp/src/envelope.rs:110` | EnvelopeFollower::process (envelope.rs:110) omits the crate's mandatory settled() denormal/NaN flush that every other recirculating filter state uses, though […] |
-| F-358 | medium | `crates/auris-dsp/src/eq.rs:223` | EQ band frequency ParamDescriptor advertises a static 20 Hz-20 kHz range that biquad::design silently re-clamps below ~40 kHz sample rates, with no UI signal. |
-| F-359 | medium | `crates/auris-dsp/src/envelope.rs:17` | EnvelopeFollower's doc claims a universal 63%-after-`time` settling, but in Rms mode the exposed envelope (sqrt of the smoothed power) actually reaches ~79.5%, […] |
-| F-417 | medium | `crates/auris-dsp/src/loudness.rs:121` | block_powers's independently-rounded hop/block frame counts let per_block drift from 4 at non-standard sample rates, giving integrated_lufs (and the […] |
+| ✅ F-333 | high | `crates/auris-dsp/src/distortion.rs:146` | Distortion applies drive/output/mix as block-constant steps with no SmoothedValue ramp, causing zipper-noise clicks when those parameters are automated, unlike […] |
+| ✅ F-339 | high | `crates/auris-dsp/src/limiter.rs:115` | Limiter::prepare has no upper bound on sample_rate, so a corrupted .auris file's sample_rate can abort the render/export process via a multi-GB allocation. |
+| ✅ F-040 | medium | `crates/auris-dsp/src/limiter.rs:173` | Limiter's look-ahead delay line doesn't sanitise samples like chorus/delay do, so its own NaN-proof-ceiling doc claim is false in isolation, though the […] |
+| ✅ F-128 | medium | `crates/auris-dsp/src/eq.rs:409` | Disabling then re-enabling a resonant EQ band replays its frozen, stale filter memory as an audible thump instead of resuming cleanly. |
+| ✅ F-147 | medium | `crates/auris-dsp/src/delay.rs:165` | delay.rs damping_alpha doc claims exact -3dB cutoff, but it's 5.6% off at the plugin's 6kHz default and unreachable below Nyquist above ~12kHz. |
+| ✅ F-152 | medium | `crates/auris-dsp/src/spectrum.rs:166` | SpectrumAnalyzer::magnitudes applies the interior-bin 4/size mirror-recovery scale to the self-mirrored DC and Nyquist bins, reading them +6.02 dB hot; […] |
+| ✅ F-179 | medium | `crates/auris-dsp/src/envelope.rs:110` | EnvelopeFollower::process (envelope.rs:110) omits the crate's mandatory settled() denormal/NaN flush that every other recirculating filter state uses, though […] |
+| ✅ F-358 | medium | `crates/auris-dsp/src/eq.rs:223` | EQ band frequency ParamDescriptor advertises a static 20 Hz-20 kHz range that biquad::design silently re-clamps below ~40 kHz sample rates, with no UI signal. |
+| ✅ F-359 | medium | `crates/auris-dsp/src/envelope.rs:17` | EnvelopeFollower's doc claims a universal 63%-after-`time` settling, but in Rms mode the exposed envelope (sqrt of the smoothed power) actually reaches ~79.5%, […] |
+| ✅ F-417 | medium | `crates/auris-dsp/src/loudness.rs:121` | block_powers's independently-rounded hop/block frame counts let per_block drift from 4 at non-standard sample rates, giving integrated_lufs (and the […] |
 | F-262 | low | `crates/auris-dsp/src/stretch.rs:129` | window_frames()'s doc claims the returned length is "always even" but the function never enforces it; only its sole caller's `& !1` mask makes that true today. |
 | F-276 | low | `crates/auris-dsp/src/gain.rs:148` | GainPan reads the width parameter once per block unsmoothed, causing an audible zipper-noise step on the side channel when width is automated, unlike gain and […] |
 | F-383 | low | `crates/auris-dsp/src/lib.rs:46` | settled()'s denormal-flush threshold (DENORMAL_FLOOR) has no direct unit test, so a future regression that weakens it would pass CI silently. |
@@ -89,7 +89,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
 
-### F-333 · high · Distortion applies drive/output/mix as block-constant steps with no SmoothedValue ramp, causing zipper-noise clicks when those parameters are automated, unlike Delay and Chorus.
+### ✅ F-333 · high · Distortion applies drive/output/mix as block-constant steps with no SmoothedValue ramp, causing zipper-noise clicks when those parameters are automated, unlike Delay and Chorus.
 
 `crates/auris-dsp/src/distortion.rs:146` · dsp · confirmed (executed reproduction; reported independently 1×)
 
@@ -105,7 +105,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Applying it as a step produces an audible click at the block boundary ("zipper noise"), so continuous parameters are moved towards their target one sample at a time instead. (crates/auris-dsp/src/smooth.rs doc comment)
 
-### F-339 · high · Limiter::prepare has no upper bound on sample_rate, so a corrupted .auris file's sample_rate can abort the render/export process via a multi-GB allocation.
+### ✅ F-339 · high · Limiter::prepare has no upper bound on sample_rate, so a corrupted .auris file's sample_rate can abort the render/export process via a multi-GB allocation.
 
 `crates/auris-dsp/src/limiter.rs:115` · dsp · confirmed (executed reproduction; reported independently 1×)
 
@@ -123,7 +123,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** The mechanism, trigger, and no-upper-bound defect are correct as described. However, the stated magnitude of the consequence is off by about three orders of magnitude: at the claim's trigger sample_rate of 1e12 Hz, `self.lookahead` becomes ((2.0 * 1e12) / 1000).round() = 2×10^9 samples, not "on the order of 2×10^12 samples." The resulting total allocation across `SlidingMinimum` + `MovingAverage` + `DelayLine` (×2 channels) is on the order of 40-50 GB, not "tens of terabytes." The defect (no clamp on `sample_rate`'s magnitude anywhere from the CLI parser through `Project` deserialization […]
 
-### F-040 · medium · Limiter's look-ahead delay line doesn't sanitise samples like chorus/delay do, so its own NaN-proof-ceiling doc claim is false in isolation, though the engine's blanket master_scratch.sanitize() keeps it from reaching real playback or exported audio.
+### ✅ F-040 · medium · Limiter's look-ahead delay line doesn't sanitise samples like chorus/delay do, so its own NaN-proof-ceiling doc claim is false in isolation, though the engine's blanket master_scratch.sanitize() keeps it from reaching real playback or exported audio.
 
 `crates/auris-dsp/src/limiter.rs:173` · dsp · confirmed (executed reproduction; reported independently 2×)
 
@@ -141,7 +141,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** In Limiter::process (crates/auris-dsp/src/limiter.rs:165-176), the sample written into the look-ahead DelayLine is not sanitised, so a non-finite (NaN) input sample resurfaces lookahead frames later via line.read and passes through f32::clamp unchanged (clamp is a no-op on NaN), landing in the Limiter's own output buffer -- falsifying its doc comment's claim to be "a brickwall limiter whose output provably cannot exceed its ceiling." This is a real, reproducible defect and an inconsistency with the crate's own convention: every other delay-line-based effect (chorus, delay) wraps its […]
 
-### F-128 · medium · Disabling then re-enabling a resonant EQ band replays its frozen, stale filter memory as an audible thump instead of resuming cleanly.
+### ✅ F-128 · medium · Disabling then re-enabling a resonant EQ band replays its frozen, stale filter memory as an audible thump instead of resuming cleanly.
 
 `crates/auris-dsp/src/eq.rs:409` · dsp · confirmed (executed reproduction; reported independently 3×)
 
@@ -157,7 +157,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
 
-### F-147 · medium · delay.rs damping_alpha doc claims exact -3dB cutoff, but it's 5.6% off at the plugin's 6kHz default and unreachable below Nyquist above ~12kHz.
+### ✅ F-147 · medium · delay.rs damping_alpha doc claims exact -3dB cutoff, but it's 5.6% off at the plugin's 6kHz default and unreachable below Nyquist above ~12kHz.
 
 `crates/auris-dsp/src/delay.rs:165` · dsp · confirmed (executed reproduction; reported independently 1×)
 
@@ -173,7 +173,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
 
-### F-152 · medium · SpectrumAnalyzer::magnitudes applies the interior-bin 4/size mirror-recovery scale to the self-mirrored DC and Nyquist bins, reading them +6.02 dB hot; untested and currently masked by the only production caller's 30 Hz-18 kHz band range.
+### ✅ F-152 · medium · SpectrumAnalyzer::magnitudes applies the interior-bin 4/size mirror-recovery scale to the self-mirrored DC and Nyquist bins, reading them +6.02 dB hot; untested and currently masked by the only production caller's 30 Hz-18 kHz band range.
 
 `crates/auris-dsp/src/spectrum.rs:166` · dsp · confirmed (executed reproduction; reported independently 1×)
 
@@ -189,7 +189,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
 
-### F-179 · medium · EnvelopeFollower::process (envelope.rs:110) omits the crate's mandatory settled() denormal/NaN flush that every other recirculating filter state uses, though the type is currently unused by any shipped effect.
+### ✅ F-179 · medium · EnvelopeFollower::process (envelope.rs:110) omits the crate's mandatory settled() denormal/NaN flush that every other recirculating filter state uses, though the type is currently unused by any shipped effect.
 
 `crates/auris-dsp/src/envelope.rs:110` · dsp · confirmed (executed reproduction; reported independently 1×)
 
@@ -205,7 +205,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Every feedback loop in the crate passes its state through this [settled]. (crates/auris-dsp/src/lib.rs doc comment on `settled`)
 
-### F-358 · medium · EQ band frequency ParamDescriptor advertises a static 20 Hz-20 kHz range that biquad::design silently re-clamps below ~40 kHz sample rates, with no UI signal.
+### ✅ F-358 · medium · EQ band frequency ParamDescriptor advertises a static 20 Hz-20 kHz range that biquad::design silently re-clamps below ~40 kHz sample rates, with no UI signal.
 
 `crates/auris-dsp/src/eq.rs:223` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -221,7 +221,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** /// Highest frequency a band may be set to, in hertz. (eq.rs MAX_FREQUENCY doc comment, contradicted by biquad.rs's own MAX_FREQUENCY_RATIO comment: "keeps the full 20 kHz audio band reachable at 44.1 kHz" — implying it is not reachable below that)
 
-### F-359 · medium · EnvelopeFollower's doc claims a universal 63%-after-`time` settling, but in Rms mode the exposed envelope (sqrt of the smoothed power) actually reaches ~79.5%, since the pole smooths input² not |input|.
+### ✅ F-359 · medium · EnvelopeFollower's doc claims a universal 63%-after-`time` settling, but in Rms mode the exposed envelope (sqrt of the smoothed power) actually reaches ~79.5%, since the pole smooths input² not |input|.
 
 `crates/auris-dsp/src/envelope.rs:17` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
 
@@ -237,7 +237,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Every public item carries a doc comment (#![warn(missing_docs)] is on in each crate).
 
-### F-417 · medium · block_powers's independently-rounded hop/block frame counts let per_block drift from 4 at non-standard sample rates, giving integrated_lufs (and the auto-balance command it drives) a silently wrong ~1+ dB reading.
+### ✅ F-417 · medium · block_powers's independently-rounded hop/block frame counts let per_block drift from 4 at non-standard sample rates, giving integrated_lufs (and the auto-balance command it drives) a silently wrong ~1+ dB reading.
 
 `crates/auris-dsp/src/loudness.rs:121` · dsp · confirmed (executed reproduction; reported independently 1×)
 

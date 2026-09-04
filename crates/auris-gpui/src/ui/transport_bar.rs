@@ -2,6 +2,7 @@
 
 use auris_i18n::{Key, Language, messages};
 use auris_session::prelude::*;
+use auris_session::session::MonitorStatus;
 
 use gpui::{Axis, IntoElement, Pixels, Window, div, prelude::*, px};
 
@@ -33,6 +34,11 @@ pub(crate) const GRID_CHOICES: [(&str, i64); 7] = [
 
 /// Marks the entry whose label is translated rather than notation. See [`AurisApp::grid_label`].
 const GRID_OFF_LABEL: &str = "";
+
+/// The dropout high-water mark to retain when monitor membership changes.
+fn monitor_gap_baseline(status: Option<&MonitorStatus>) -> u64 {
+    status.map_or(0, |status| status.rebuffers)
+}
 
 /// What a finished take gets reported as.
 ///
@@ -924,8 +930,9 @@ impl AurisApp {
             self.set_failed_status(line);
             return;
         }
-        self.monitor_gaps = 0;
-        let line = match self.session.monitor_status() {
+        let status = self.session.monitor_status();
+        self.monitor_gaps = monitor_gap_baseline(status.as_ref());
+        let line = match status {
             Some(status) => match status.tracks.len() {
                 1 => messages::monitoring_on(self.language, &status.device),
                 heard => messages::monitoring_tracks(self.language, heard, &status.device),
@@ -1042,6 +1049,18 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changing_one_monitor_keeps_the_open_devices_dropout_high_water_mark() {
+        let status = MonitorStatus {
+            device: "Interface".into(),
+            tracks: vec![TrackId(1), TrackId(2)],
+            running: true,
+            rebuffers: 7,
+        };
+        assert_eq!(monitor_gap_baseline(Some(&status)), 7);
+        assert_eq!(monitor_gap_baseline(None), 0);
+    }
 
     /// 4/4 for the whole timeline.
     fn four_four() -> SignatureMap {
