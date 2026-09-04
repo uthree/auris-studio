@@ -9,4 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 auris-core.workspace = true
+ndarray.workspace = true
+realfft.workspace = true
+rustfft.workspace = true
 serde.workspace = true

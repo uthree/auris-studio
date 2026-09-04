@@ -931,6 +931,9 @@ name = "auris-dsp"
 version = "0.4.0"
 dependencies = [
  "auris-core",
+ "ndarray",
+ "realfft",
+ "rustfft",
  "serde",
 ]
 
