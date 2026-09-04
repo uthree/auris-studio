@@ -241,6 +241,7 @@ impl Session {
         // and this document reusing an id would inherit the old plugin. The loaded *files* are
         // kept — a `.clap` is the same code whichever project is open.
         self.hosted.clear();
+        self.vst3.clear();
         // Arms and monitors name bare track ids too. A colliding id in another document must not
         // silently inherit a device binding made for the previous track.
         self.armed.clear();

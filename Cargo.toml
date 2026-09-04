@@ -20,6 +20,7 @@ rust-version = "1.90"
 [workspace.dependencies]
 # Backend, in dependency order. Nothing below `auris-session` knows a UI exists.
 auris-clap = { path = "crates/auris-clap", version = "0.4.0" }
+auris-vst3 = { path = "crates/auris-vst3", version = "0.4.0" }
 auris-compose = { path = "crates/auris-compose", version = "0.4.0" }
 auris-core = { path = "crates/auris-core", version = "0.4.0" }
 auris-dsp = { path = "crates/auris-dsp", version = "0.4.0" }
@@ -37,9 +38,10 @@ auris-toolbox = { path = "crates/auris-toolbox", version = "0.4.0" }
 # A hosted plugin's state is an opaque byte stream, and the project file is JSON. Already in the
 # lock file by way of other dependencies, so naming it here adds nothing to the build.
 base64 = "0.22"
-# Hosting third-party CLAP plugins. MIT OR Apache-2.0, so it raises none of the licensing
-# questions the Steinberg VST3 SDK would. `clack-host` and `clack-plugin` are two halves of one
-# project and must be resolved together — the tests link a plugin into the host binary.
+# Hosting third-party plugins. CLAP's Rust bindings are MIT OR Apache-2.0. Since SDK 3.8, the
+# Steinberg VST 3 SDK and its Rust host wrapper are MIT too, so both are compatible with this
+# Apache-2.0 workspace. `clack-host` and `clack-plugin` are two halves of one project and must be
+# resolved together — the tests link a plugin into the host binary.
 clack-extensions = "0.1.1"
 clack-host = "0.1.1"
 clack-plugin = "0.1.1"
@@ -75,6 +77,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 symphonia = { version = "0.6", features = ["all"] }
 thiserror = "2.0"
+vst3-host = { version = "0.9.0", default-features = false }
 # The syntax a song specification is written in. Already in the lock file by way of build-time
 # tooling, so naming it here adds nothing to the build.
 toml = "1"

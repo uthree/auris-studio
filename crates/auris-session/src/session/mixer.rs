@@ -186,7 +186,7 @@ impl Session {
     /// about by slot — its plugin is already built — and a built-in by id, once, because the
     /// answer cannot change and the question is asked on every frame that draws the chain.
     pub fn effect_wants_sidechain(&mut self, track: Option<TrackId>, slot: EffectSlotId) -> bool {
-        if self.hosted.wants_sidechain(slot) {
+        if self.hosted.wants_sidechain(slot) || self.vst3.wants_sidechain(slot) {
             return true;
         }
         let Some(effect_id) = self
@@ -313,6 +313,10 @@ impl Session {
                 .get(descriptor.key.as_ref())
                 .copied()
                 .or_else(|| self.hosted.value(window, param))
+                .or_else(|| match window {
+                    PluginWindow::Effect(slot) => self.vst3.value_effect(slot, param),
+                    PluginWindow::Instrument(track) => self.vst3.value_instrument(track, param),
+                })
                 .unwrap_or(descriptor.default)
         };
         match target {

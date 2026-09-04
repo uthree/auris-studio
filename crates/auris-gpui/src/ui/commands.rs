@@ -1964,10 +1964,10 @@ impl AurisApp {
         }
     }
 
-    /// Asks for a folder (or a `.clap` bundle) to look for plugins in, and remembers it.
+    /// Asks for a folder (or a CLAP/VST3 bundle) to look for plugins in, and remembers it.
     ///
     /// A folder picker rather than a file picker, which is the one dialog that works on both
-    /// platforms: on macOS a `.clap` is a bundle *directory*, so a file picker cannot select one
+    /// platforms: on macOS plugin bundles are directories, so a file picker cannot select one
     /// at all, and a folder picker selects either the bundle or a folder holding several.
     ///
     /// Nothing is loaded here. The added path is scanned for files the next time the browser
@@ -2010,6 +2010,9 @@ impl AurisApp {
         // The list of files was cached the first time the browser drew it, and the whole point
         // of this edit is that the answer has changed.
         self.clap_files = None;
+        self.vst3_files = None;
+        self.clap_contents.clear();
+        self.vst3_contents.clear();
         // Plugin-file branches are indexed into that cached list. A rescan may put a different
         // native binary at the same index, and stale disclosure state must never load it without
         // a new click from the user.

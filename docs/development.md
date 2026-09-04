@@ -12,6 +12,7 @@ BACKEND — no UI dependency of any kind
   crates/auris-synth    built-in instruments
   crates/auris-sampler  SoundFont playback: the font bank and the sampler instrument
   crates/auris-clap     hosting of third-party CLAP plugins — depends on auris-core only
+  crates/auris-vst3     hosting of third-party VST3 plugins — depends on auris-core only
   crates/auris-engine   render graph, transport, cpal in and out, offline renderer
   crates/auris-io       audio file import/export, project save/load
   crates/auris-gpu      optional wgpu compute for offline analysis

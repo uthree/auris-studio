@@ -837,7 +837,7 @@ what you are looking at is the order itself rather than a line predicting it. Dr
 empty slot at the end puts it last. The chevrons beside each row do the same thing one step at a
 time, and the menu on each slot still offers bypass, reorder and remove.
 
-**An effect can listen to another track.** The compressor does, and so does any CLAP plugin with a
+**An effect can listen to another track.** The compressor does, and so does any CLAP or VST3 plugin with a
 sidechain input — those are the slots whose menu has a **Sidechain** row, and whose window carries
 one under its title. Pick a track there and the effect keys off *that* signal instead of the one
 passing through it: a bass compressor pointed at the kick pulls the bass down when the kick lands

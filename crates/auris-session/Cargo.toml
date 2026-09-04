@@ -21,6 +21,7 @@ auris-sampler.workspace = true
 auris-singer.workspace = true
 auris-synth.workspace = true
 auris-vocal.workspace = true
+auris-vst3.workspace = true
 log.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

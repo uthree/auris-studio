@@ -71,7 +71,7 @@ pub use effect::ClapEffect;
 pub use error::ClapError;
 pub use gui::{plan_for, window_title};
 pub use instrument::ClapInstrument;
-pub use library::{ClapLibrary, ClapPluginInfo, classify};
+pub use library::{ClapLibrary, ClapPluginInfo, ID_PREFIX, classify};
 pub use notes::{NoteLanguage, language_for};
 pub use plugin::{ClapPlugin, PendingRequests};
 pub use ports::{PortLayout, main_port};

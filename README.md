@@ -30,6 +30,8 @@ anywhere Rust does, and CI covers all three.
 * **Automatic composition** from a text specification or from one of eight whole-song presets,
   on the desktop or from the command line.
 * **A General MIDI SoundFont in the box**, so there is something to play from the first launch.
+* **Third-party CLAP and VST3 instruments and effects**, including parameters, saved state,
+  sidechains, latency compensation, and native editor windows.
 * **Recording onto audio tracks**, with input monitoring, an arm that overrides the selection, and
   punch recording that replaces only the bars it was asked for.
 * **MIDI files in and out**, audio import through Symphonia, WAV export at 16, 24 or 32-bit.

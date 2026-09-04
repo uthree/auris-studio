@@ -94,6 +94,8 @@ pub use settings::{
 pub use auris_singer::{Acceleration, SingError, VoiceModel};
 
 pub use auris_clap::ClapPluginInfo;
+/// What a VST3 bundle says is inside it, for a frontend listing one.
+pub use auris_vst3::Vst3PluginInfo;
 
 /// The platform's own handle for a window, and the trait a toolkit hands one out through.
 ///

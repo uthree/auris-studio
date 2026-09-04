@@ -1,0 +1,15 @@
+[package]
+name = "auris-vst3"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Hosting of third-party VST3 plugins for Auris Studio"
+
+[dependencies]
+auris-core = { workspace = true }
+vst3-host = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+
