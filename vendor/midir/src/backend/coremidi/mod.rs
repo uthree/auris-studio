@@ -254,6 +254,9 @@ impl MidiInput {
     }
 }
 
+// The values keep CoreMIDI ports alive for the connection lifetime; they are
+// intentionally held for their destructors rather than read after creation.
+#[allow(dead_code)]
 enum InputConnectionDetails {
     Explicit(InputPort),
     Virtual(VirtualDestination),
