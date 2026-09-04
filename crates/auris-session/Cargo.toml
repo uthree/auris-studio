@@ -22,6 +22,7 @@ auris-singer.workspace = true
 auris-synth.workspace = true
 auris-vocal.workspace = true
 log.workspace = true
+midir.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
