@@ -14,7 +14,7 @@
 //! not special — it is controller 1 — and a clip that can hold 1 can hold 11 and 64 through the
 //! same code, which is the whole reason an expression pedal reaches an instrument at all.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 use crate::plugin::CC_MODULATION;
 use crate::time::Ticks;
@@ -29,7 +29,34 @@ pub struct CurvePoint {
     /// Where it sits, measured from the clip's own start.
     pub at: Ticks,
     /// What the curve reads there — semitones on a bend, 0 to 1 on a controller.
+    #[serde(
+        serialize_with = "serialize_finite_value",
+        deserialize_with = "deserialize_finite_value"
+    )]
     pub value: f32,
+}
+
+fn serialize_finite_value<S>(value: &f32, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if value.is_finite() {
+        serializer.serialize_f32(*value)
+    } else {
+        Err(serde::ser::Error::custom("curve values must be finite"))
+    }
+}
+
+fn deserialize_finite_value<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f32::deserialize(deserializer)?;
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(de::Error::custom("curve values must be finite"))
+    }
 }
 
 /// Which of a clip's curves is meant.
@@ -186,6 +213,18 @@ mod tests {
                 .collect(),
             ..MidiClip::new(ClipId(1), "bent", Ticks::ZERO, Ticks(length))
         }
+    }
+
+    #[test]
+    fn a_curve_point_cannot_cross_the_file_boundary_with_a_non_finite_value() {
+        let point = CurvePoint {
+            at: Ticks::ZERO,
+            value: f32::NAN,
+        };
+        assert!(serde_json::to_string(&point).is_err());
+
+        let infinite = r#"{"at":0,"value":1e40}"#;
+        assert!(serde_json::from_str::<CurvePoint>(infinite).is_err());
     }
 
     #[test]

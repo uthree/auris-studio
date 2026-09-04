@@ -46,6 +46,9 @@ impl Session {
         at: Ticks,
         value: f32,
     ) -> bool {
+        if !value.is_finite() {
+            return false;
+        }
         let at = at.max_zero();
         let (low, high) = which.range();
         let value = value.clamp(low, high);
@@ -84,6 +87,9 @@ impl Session {
         to: Ticks,
         value: f32,
     ) -> Option<Ticks> {
+        if !value.is_finite() {
+            return None;
+        }
         let (low, high) = which.range();
         let value = value.clamp(low, high);
         let length = self.project.midi_clip(clip)?.1.length;
@@ -1158,6 +1164,30 @@ mod tests {
             carried(&session).is_empty(),
             "the lane outlived the last point on it"
         );
+    }
+
+    #[test]
+    fn a_non_finite_curve_value_never_reaches_the_document() {
+        let (mut session, _track, clip) = session_with_clip();
+        let bend = ClipCurve::Bend;
+
+        assert!(!session.set_curve_point(clip, bend, Ticks::ZERO, f32::NAN));
+        assert!(
+            session
+                .midi_clip(clip)
+                .expect("the clip")
+                .curve(bend)
+                .is_empty()
+        );
+
+        assert!(session.set_curve_point(clip, bend, Ticks::ZERO, 2.0));
+        assert_eq!(
+            session.move_curve_point(clip, bend, Ticks::ZERO, BAR, f32::INFINITY),
+            None
+        );
+        let point = session.midi_clip(clip).expect("the clip").curve(bend)[0];
+        assert_eq!(point.at, Ticks::ZERO);
+        assert_eq!(point.value, 2.0);
     }
 
     #[test]
