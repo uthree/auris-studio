@@ -20,6 +20,9 @@
 
 use auris_core::AudioBuffer;
 use auris_core::project::{MAX_STRETCH, MIN_STRETCH};
+use ndarray::ArrayView1;
+use realfft::num_complex::Complex;
+use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 
 /// How long a window is, in seconds.
 ///
@@ -75,7 +78,21 @@ pub fn time_stretch(input: &AudioBuffer, ratio: f64) -> AudioBuffer {
 
     let guide = mono_guide(input);
     let coarse: Vec<f32> = guide.iter().step_by(DECIMATION).copied().collect();
+    let guide_energy = squared_prefix(&guide);
+    let coarse_energy = squared_prefix(&coarse);
+    let search_guide = SearchGuide {
+        full: &guide,
+        full_energy: &guide_energy,
+        coarse: &coarse,
+        coarse_energy: &coarse_energy,
+    };
     let shape = hann(window);
+    let coarse_candidates = search
+        .saturating_mul(2)
+        .checked_div(DECIMATION)
+        .and_then(|count| count.checked_add(1));
+    let mut correlation =
+        coarse_candidates.and_then(|count| FftCorrelation::new(hop_out / DECIMATION, count));
 
     let mut out = vec![vec![0.0f32; out_frames]; channels];
     // How much window landed on each output sample. The windows are divided back out by it, which
@@ -95,7 +112,15 @@ pub fn time_stretch(input: &AudioBuffer, ratio: f64) -> AudioBuffer {
             0 => want,
             _ => {
                 let target = (taken + hop_out).min(last_start);
-                best_match(&guide, &coarse, target, want, search, hop_out, last_start)
+                best_match(
+                    search_guide,
+                    correlation.as_mut(),
+                    target,
+                    want,
+                    search,
+                    hop_out,
+                    last_start,
+                )
             }
         };
         let span = window.min(out_frames - at);
@@ -184,9 +209,17 @@ fn hann(frames: usize) -> Vec<f32> {
 /// Two passes, because the search is the whole cost of the method. The first walks a signal
 /// decimated by [`DECIMATION`] across the whole search range; the second looks at every sample
 /// within one decimated step of what it found.
+#[derive(Clone, Copy)]
+struct SearchGuide<'a> {
+    full: &'a [f32],
+    full_energy: &'a [f64],
+    coarse: &'a [f32],
+    coarse_energy: &'a [f64],
+}
+
 fn best_match(
-    guide: &[f32],
-    coarse: &[f32],
+    guide: SearchGuide<'_>,
+    correlation: Option<&mut FftCorrelation>,
     target: usize,
     want: usize,
     search: usize,
@@ -198,29 +231,45 @@ fn best_match(
     if low >= high {
         return want.min(last_start);
     }
-    let mut best = want.min(last_start);
-    let mut best_score = f32::MIN;
     let coarse_overlap = overlap / DECIMATION;
-    let mut candidate = low;
-    while candidate <= high {
-        let score = similarity(
-            coarse,
-            target / DECIMATION,
-            candidate / DECIMATION,
-            coarse_overlap,
-        );
-        if score > best_score {
-            best_score = score;
-            best = candidate;
-        }
-        candidate += DECIMATION;
-    }
+    let candidate_count = (high - low) / DECIMATION + 1;
+    let best = correlation
+        .and_then(|correlation| {
+            correlation.best_offset(
+                guide.coarse,
+                guide.coarse_energy,
+                target / DECIMATION,
+                low / DECIMATION,
+                candidate_count,
+            )
+        })
+        .map(|offset| low + offset * DECIMATION)
+        .unwrap_or_else(|| {
+            let mut best = want.min(last_start);
+            let mut best_score = f32::MIN;
+            let mut candidate = low;
+            while candidate <= high {
+                let score = similarity(
+                    guide.coarse,
+                    guide.coarse_energy,
+                    target / DECIMATION,
+                    candidate / DECIMATION,
+                    coarse_overlap,
+                );
+                if score > best_score {
+                    best_score = score;
+                    best = candidate;
+                }
+                candidate += DECIMATION;
+            }
+            best
+        });
     let low = best.saturating_sub(DECIMATION).max(low);
     let high = (best + DECIMATION).min(high);
     let mut refined = best;
     let mut refined_score = f32::MIN;
     for candidate in low..=high {
-        let score = similarity(guide, target, candidate, overlap);
+        let score = similarity(guide.full, guide.full_energy, target, candidate, overlap);
         if score > refined_score {
             refined_score = score;
             refined = candidate;
@@ -229,29 +278,163 @@ fn best_match(
     refined
 }
 
+/// A planned real FFT used to correlate one target with every coarse candidate at once.
+struct FftCorrelation {
+    overlap: usize,
+    transform_len: usize,
+    forward: std::sync::Arc<dyn RealToComplex<f32>>,
+    inverse: std::sync::Arc<dyn ComplexToReal<f32>>,
+    target: Vec<f32>,
+    source: Vec<f32>,
+    target_spectrum: Vec<Complex<f32>>,
+    source_spectrum: Vec<Complex<f32>>,
+    forward_scratch: Vec<Complex<f32>>,
+    inverse_scratch: Vec<Complex<f32>>,
+    correlation: Vec<f32>,
+}
+
+impl FftCorrelation {
+    /// Plans enough room for `candidate_count` windows of `overlap` samples.
+    fn new(overlap: usize, candidate_count: usize) -> Option<Self> {
+        if overlap == 0 || candidate_count == 0 {
+            return None;
+        }
+        let segment_len = candidate_count.checked_add(overlap)?.checked_sub(1)?;
+        let convolution_len = segment_len.checked_add(overlap)?.checked_sub(1)?;
+        let transform_len = convolution_len.checked_next_power_of_two()?;
+        let mut planner = RealFftPlanner::<f32>::new();
+        let forward = planner.plan_fft_forward(transform_len);
+        let inverse = planner.plan_fft_inverse(transform_len);
+        Some(Self {
+            overlap,
+            transform_len,
+            target: forward.make_input_vec(),
+            source: forward.make_input_vec(),
+            target_spectrum: forward.make_output_vec(),
+            source_spectrum: forward.make_output_vec(),
+            forward_scratch: forward.make_scratch_vec(),
+            inverse_scratch: inverse.make_scratch_vec(),
+            correlation: inverse.make_output_vec(),
+            forward,
+            inverse,
+        })
+    }
+
+    /// Index of the strongest candidate, or `None` when the fixed plan cannot represent it.
+    fn best_offset(
+        &mut self,
+        signal: &[f32],
+        squared_prefix: &[f64],
+        target: usize,
+        first_candidate: usize,
+        candidate_count: usize,
+    ) -> Option<usize> {
+        let segment_len = candidate_count.checked_add(self.overlap)?.checked_sub(1)?;
+        if candidate_count == 0
+            || target.checked_add(self.overlap)? > signal.len()
+            || first_candidate.checked_add(segment_len)? > signal.len()
+            || squared_prefix.len() != signal.len() + 1
+            || segment_len.checked_add(self.overlap)?.checked_sub(1)? > self.transform_len
+        {
+            return None;
+        }
+
+        self.target.fill(0.0);
+        self.source.fill(0.0);
+        for (to, from) in self
+            .target
+            .iter_mut()
+            .take(self.overlap)
+            .zip(signal[target..target + self.overlap].iter().rev())
+        {
+            *to = *from;
+        }
+        self.source[..segment_len]
+            .copy_from_slice(&signal[first_candidate..first_candidate + segment_len]);
+        // Convolution with the reversed target puts candidate `offset` at
+        // `overlap - 1 + offset` in the inverse transform.
+        self.forward
+            .process_with_scratch(
+                &mut self.target,
+                &mut self.target_spectrum,
+                &mut self.forward_scratch,
+            )
+            .ok()?;
+        self.forward
+            .process_with_scratch(
+                &mut self.source,
+                &mut self.source_spectrum,
+                &mut self.forward_scratch,
+            )
+            .ok()?;
+        for (target, source) in self.target_spectrum.iter_mut().zip(&self.source_spectrum) {
+            *target *= *source;
+        }
+        self.inverse
+            .process_with_scratch(
+                &mut self.target_spectrum,
+                &mut self.correlation,
+                &mut self.inverse_scratch,
+            )
+            .ok()?;
+
+        let scale = 1.0 / self.transform_len as f32;
+        let mut best = 0usize;
+        let mut best_score = f32::MIN;
+        for offset in 0..candidate_count {
+            let candidate = first_candidate + offset;
+            let energy = squared_prefix[candidate + self.overlap] - squared_prefix[candidate];
+            let dot = self.correlation[self.overlap - 1 + offset] * scale;
+            let score = if energy > 1.0e-12 {
+                dot / energy.sqrt() as f32
+            } else {
+                0.0
+            };
+            if score > best_score {
+                best_score = score;
+                best = offset;
+            }
+        }
+        Some(best)
+    }
+}
+
 /// How alike two stretches of `signal` are, from -1 to 1.
 ///
 /// Normalised, so a quiet passage that matches beats a loud one that does not. A stretch running
 /// off the end of the signal scores nothing rather than being clamped into range, which would
 /// make every candidate near the end look identical.
-fn similarity(signal: &[f32], target: usize, candidate: usize, overlap: usize) -> f32 {
+fn similarity(
+    signal: &[f32],
+    squared_prefix: &[f64],
+    target: usize,
+    candidate: usize,
+    overlap: usize,
+) -> f32 {
     if target + overlap > signal.len() || candidate + overlap > signal.len() || overlap == 0 {
         return f32::MIN;
     }
-    let a = &signal[target..target + overlap];
-    let b = &signal[candidate..candidate + overlap];
-    let mut dot = 0.0f32;
-    let mut energy = 0.0f32;
-    for (left, right) in a.iter().zip(b.iter()) {
-        dot += left * right;
-        energy += right * right;
-    }
+    let a = ArrayView1::from(&signal[target..target + overlap]);
+    let b = ArrayView1::from(&signal[candidate..candidate + overlap]);
+    let dot = a.dot(&b);
+    let energy = squared_prefix[candidate + overlap] - squared_prefix[candidate];
     match energy > 1.0e-12 {
-        true => dot / energy.sqrt(),
+        true => dot / energy.sqrt() as f32,
         // Silence continues anything equally well, and saying so keeps the search from preferring
         // it to a real match.
         false => 0.0,
     }
+}
+
+/// Cumulative squared energy, so every candidate window is normalised in constant time.
+fn squared_prefix(signal: &[f32]) -> Vec<f64> {
+    let mut sum = 0.0f64;
+    std::iter::once(0.0)
+        .chain(signal.iter().map(|sample| {
+            sum += f64::from(*sample) * f64::from(*sample);
+            sum
+        }))
+        .collect()
 }
 
 #[cfg(test)]
@@ -263,6 +446,51 @@ mod tests {
         assert_eq!(window_frames(44_100.0), 2_204);
         assert_eq!(window_frames(22_050.0) % 2, 0);
         assert!(window_frames(1.0) >= MIN_WINDOW);
+    }
+
+    #[test]
+    fn fft_search_finds_the_same_join_as_direct_correlation() {
+        let guide: Vec<f32> = (0..48_000)
+            .map(|index| {
+                let at = index as f32;
+                (at * 0.031).sin() + 0.2 * (at * at * 0.000_007).sin()
+            })
+            .collect();
+        let coarse: Vec<f32> = guide.iter().step_by(DECIMATION).copied().collect();
+        let guide_energy = squared_prefix(&guide);
+        let coarse_energy = squared_prefix(&coarse);
+        let search_guide = SearchGuide {
+            full: &guide,
+            full_energy: &guide_energy,
+            coarse: &coarse,
+            coarse_energy: &coarse_energy,
+        };
+        let target = 12_000;
+        let want = 13_000;
+        let search = 480;
+        let overlap = 1_200;
+        let last_start = guide.len() - 2_400;
+        let direct = best_match(
+            search_guide,
+            None,
+            target,
+            want,
+            search,
+            overlap,
+            last_start,
+        );
+        let mut correlation =
+            FftCorrelation::new(overlap / DECIMATION, search / DECIMATION * 2 + 1).unwrap();
+        let transformed = best_match(
+            search_guide,
+            Some(&mut correlation),
+            target,
+            want,
+            search,
+            overlap,
+            last_start,
+        );
+        assert_eq!(transformed, direct);
     }
 
     const RATE: f64 = 48_000.0;

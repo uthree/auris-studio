@@ -57,6 +57,9 @@ midly = { version = "0.5", default-features = false, features = ["std", "alloc"]
 # Forked temporarily: gpui 0.2.2 pins core-foundation 0.10.0, while midir 0.11's
 # CoreMIDI dependency requires core-foundation 0.10.1 or newer. See vendor/midir/README-AURIS.md.
 midir = { path = "vendor/midir" }
+# Array views make the remaining direct WSOLA correlations explicit. The same version already
+# arrives through `ort`, so this declaration makes it usable without adding another copy.
+ndarray = "0.16.1"
 # A plugin that will only draw inside a window of the host's needs the host to have made one, and
 # neither platform's window API is reachable from anything portable. Both versions are the ones
 # gpui already resolved, so hosting a plugin adds no second copy of either.
@@ -68,7 +71,11 @@ pollster = "1.0"
 # told which window to stay above, and this is the one vocabulary gpui and CLAP already share — so
 # a handle travels through `auris-session` without that crate learning what a UI toolkit is.
 raw-window-handle = "0.6"
+# Planned real and complex FFTs for the spectrum and WSOLA search. Both versions are already in
+# the graph through `rubato`; naming them lets `auris-dsp` use their SIMD implementations directly.
+realfft = "3.5"
 rubato = "4.0"
+rustfft = "6.4"
 # Reads SoundFont files *and* plays them. Named once here because two crates share the type:
 # `auris-io` hands out an `Arc<SoundFont>` and `auris-sampler` renders it, and two resolved
 # copies of the library would be two unrelated types with the same name.

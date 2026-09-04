@@ -11,13 +11,13 @@
 //! still wrong in principle: the analysis exists for a window that may not even be open, and the
 //! render deadline is not the place to find out.
 //!
-//! # Why the transform is written here
-//!
-//! It is sixty lines, it is the only one this crate needs, and it can be checked against known
-//! answers — a constant is all in bin zero, a sine at bin `k` is all in bin `k`. The other DSP
-//! primitives in this crate are here on the same reasoning.
-
 use std::f32::consts::TAU;
+use std::fmt;
+use std::sync::Arc;
+
+use realfft::num_complex::Complex;
+use realfft::{RealFftPlanner, RealToComplex};
+use rustfft::FftPlanner;
 
 /// Level reported for a bin with nothing in it.
 ///
@@ -30,47 +30,24 @@ pub const SILENCE_DB: f32 = -120.0;
 /// `real` and `imag` must be the same length and that length must be a power of two; anything
 /// else is left untouched, because the alternative is a panic somewhere a caller cannot see.
 ///
-/// Decimation in time: the input is first put into bit-reversed order, after which the
-/// butterflies run over spans of 2, 4, 8 … and each output lands where it belongs.
+/// The planned transform comes from `rustfft`, whose planner selects the best available SIMD
+/// implementation for the machine. This compatibility entry point keeps separate real and
+/// imaginary slices; [`SpectrumAnalyzer`] uses the cheaper real-input transform directly.
 pub fn fft(real: &mut [f32], imag: &mut [f32]) {
     let n = real.len();
     if n != imag.len() || n < 2 || !n.is_power_of_two() {
         return;
     }
-
-    // Bit-reversal permutation, computed by carrying the increment leftwards.
-    let mut target = 0usize;
-    for source in 1..n {
-        let mut bit = n >> 1;
-        while target & bit != 0 {
-            target ^= bit;
-            bit >>= 1;
-        }
-        target |= bit;
-        if source < target {
-            real.swap(source, target);
-            imag.swap(source, target);
-        }
-    }
-
-    let mut span = 2;
-    while span <= n {
-        let step = -TAU / span as f32;
-        for start in (0..n).step_by(span) {
-            for offset in 0..span / 2 {
-                let angle = step * offset as f32;
-                let (sin, cos) = angle.sin_cos();
-                let low = start + offset;
-                let high = low + span / 2;
-                let real_high = real[high] * cos - imag[high] * sin;
-                let imag_high = real[high] * sin + imag[high] * cos;
-                real[high] = real[low] - real_high;
-                imag[high] = imag[low] - imag_high;
-                real[low] += real_high;
-                imag[low] += imag_high;
-            }
-        }
-        span <<= 1;
+    let mut values: Vec<Complex<f32>> = real
+        .iter()
+        .copied()
+        .zip(imag.iter().copied())
+        .map(|(re, im)| Complex::new(re, im))
+        .collect();
+    FftPlanner::new().plan_fft_forward(n).process(&mut values);
+    for ((real, imag), value) in real.iter_mut().zip(imag).zip(values) {
+        *real = value.re;
+        *imag = value.im;
     }
 }
 
@@ -79,13 +56,25 @@ pub fn fft(real: &mut [f32], imag: &mut [f32]) {
 /// [`Self::push`] is the audio thread's half: it copies into a ring and does nothing else, so it
 /// allocates nothing and takes time proportional to the block. [`Self::magnitudes`] is the
 /// drawing thread's half, and does all the arithmetic.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SpectrumAnalyzer {
     window: Vec<f32>,
     ring: Vec<f32>,
     write: usize,
-    real: Vec<f32>,
-    imag: Vec<f32>,
+    transform: Arc<dyn RealToComplex<f32>>,
+    input: Vec<f32>,
+    spectrum: Vec<Complex<f32>>,
+    scratch: Vec<Complex<f32>>,
+}
+
+impl fmt::Debug for SpectrumAnalyzer {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SpectrumAnalyzer")
+            .field("size", &self.ring.len())
+            .field("write", &self.write)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SpectrumAnalyzer {
@@ -99,12 +88,18 @@ impl SpectrumAnalyzer {
         let window = (0..size)
             .map(|index| 0.5 - 0.5 * (TAU * index as f32 / size as f32).cos())
             .collect();
+        let transform = RealFftPlanner::<f32>::new().plan_fft_forward(size);
+        let input = transform.make_input_vec();
+        let spectrum = transform.make_output_vec();
+        let scratch = transform.make_scratch_vec();
         Self {
             window,
             ring: vec![0.0; size],
             write: 0,
-            real: vec![0.0; size],
-            imag: vec![0.0; size],
+            transform,
+            input,
+            spectrum,
+            scratch,
         }
     }
 
@@ -155,10 +150,16 @@ impl SpectrumAnalyzer {
         // whatever rotation the write cursor happens to be at.
         for index in 0..size {
             let sample = self.ring[(self.write + index) % size];
-            self.real[index] = sample * self.window[index];
-            self.imag[index] = 0.0;
+            self.input[index] = sample * self.window[index];
         }
-        fft(&mut self.real, &mut self.imag);
+        if self
+            .transform
+            .process_with_scratch(&mut self.input, &mut self.spectrum, &mut self.scratch)
+            .is_err()
+        {
+            out.fill(SILENCE_DB);
+            return;
+        }
 
         // A Hann window sums to half its length, and the transform of a real signal splits each
         // tone between a bin and its mirror — so the scale that puts a full-scale sine at 0 dBFS
@@ -166,7 +167,7 @@ impl SpectrumAnalyzer {
         let scale = 4.0 / size as f32;
         let bins = self.bin_count().min(out.len());
         for (bin, slot) in out.iter_mut().enumerate().take(bins) {
-            let power = self.real[bin] * self.real[bin] + self.imag[bin] * self.imag[bin];
+            let power = self.spectrum[bin].norm_sqr();
             // DC and Nyquist mirror onto themselves, so unlike an interior real-signal bin they
             // have no negative-frequency partner whose half of the amplitude must be recovered.
             let mirror = if bin == 0 || bin == size / 2 {
