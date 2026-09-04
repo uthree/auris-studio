@@ -113,12 +113,12 @@ jobs:
       - name: Install the toolchain
         run: rustup toolchain install stable --profile minimal --component clippy
 
-      # cpal builds against ALSA on Linux; nothing else here needs system libraries, because
-      # wgpu loads its backends at run time.
-      - name: Install ALSA headers
+      # cpal builds against ALSA on Linux, and vst3-host links against XCB. wgpu loads its
+      # backends at run time.
+      - name: Install Linux development headers
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libasound2-dev
+          sudo apt-get install --no-install-recommends -y libasound2-dev libxcb1-dev
 
       - name: Cache the build
         uses: actions/cache@v4

@@ -147,11 +147,11 @@ jobs:
       - name: Install the toolchain
         run: rustup toolchain install stable --profile minimal
 
-      # cpal builds against ALSA here; nothing else needs a system library.
-      - name: Install ALSA headers
+      # cpal builds against ALSA here, and vst3-host links against XCB.
+      - name: Install Linux development headers
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libasound2-dev
+          sudo apt-get install --no-install-recommends -y libasound2-dev libxcb1-dev
 
       - name: Build
         run: cargo build --release --locked -p auris-cli
