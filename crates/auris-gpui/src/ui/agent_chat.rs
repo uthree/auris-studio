@@ -20,7 +20,10 @@ use std::sync::mpsc::{Receiver, Sender};
 
 use auris_i18n::Key;
 use auris_session::AgentPreferences;
-use gpui::{AnyElement, IntoElement, MouseButton, MouseDownEvent, Window, div, prelude::*, px};
+use gpui::{
+    AnyElement, IntoElement, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*, px,
+};
+use gpui_component::text::TextView;
 
 use crate::app::AurisApp;
 use crate::theme::{Metrics, Theme};
@@ -927,7 +930,7 @@ impl AurisApp {
     /// Renders the agent panel.
     pub(crate) fn render_agent_chat(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
@@ -954,7 +957,7 @@ impl AurisApp {
             .entries
             .iter()
             .enumerate()
-            .map(|(index, entry)| self.chat_row(index, entry, &theme, cx))
+            .map(|(index, entry)| self.chat_row(index, entry, &theme, window, cx))
             .collect();
         let rows = entries;
         let busy = self.agent_chat.busy;
@@ -1121,6 +1124,7 @@ impl AurisApp {
         index: usize,
         entry: &ChatEntry,
         theme: &Theme,
+        window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let (colour, text): (gpui::Hsla, String) = match entry {
@@ -1144,6 +1148,20 @@ impl AurisApp {
             ChatEntry::Tool { detail, .. } if opened => Some(detail.clone()),
             _ => None,
         };
+        let body: AnyElement = match entry {
+            // Match picocode's native GUI: finished model answers go through TextView rather
+            // than being handed to a div as literal text. That gives headings, emphasis, lists,
+            // links, tables and syntax-highlighted fenced code blocks their intended shape.
+            ChatEntry::Agent(_) => TextView::markdown(
+                SharedString::from(format!("agent-markdown-{index}")),
+                SharedString::from(text),
+                window,
+                cx,
+            )
+            .selectable(true)
+            .into_any_element(),
+            _ => div().child(text).into_any_element(),
+        };
         div()
             .id(("agent-line", index))
             .px_1p5()
@@ -1164,7 +1182,7 @@ impl AurisApp {
                     }),
                 )
             })
-            .child(text)
+            .child(body)
             .when_some(detail, |this, detail| {
                 // Line by line rather than one string: a div's text collapses the newlines a
                 // tool's tables are drawn with.

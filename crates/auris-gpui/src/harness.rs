@@ -59,6 +59,9 @@ fn isolate_config() {
 /// Opens the application in a test window, as `main` opens it in a real one.
 pub(crate) fn open(cx: &mut TestAppContext) -> (Entity<AurisApp>, &mut VisualTestContext) {
     isolate_config();
+    // `main` installs the Markdown renderer before it opens the real window. Mirror that here so
+    // a test which opens the agent panel exercises the same initialized component tree.
+    cx.update(gpui_component::init);
     let (app, cx) = cx.add_window_view(|_, cx| AurisApp::new(cx));
     // `main` focuses the arrangement before anything else, and a keystroke goes to whatever holds
     // the keyboard: without this, every binding scoped to a pane would be off the dispatch path

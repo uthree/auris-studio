@@ -67,6 +67,8 @@ pub struct SettingsWindow {
     language: Language,
     /// Whether the document is written back over itself as it changes.
     autosave: bool,
+    /// Whether dragging a note's right edge rounds its duration to the editing grid.
+    snap_note_lengths: bool,
     /// The dictionary folder kanji lyrics are read through. `None` on most machines.
     japanese_dictionary: Option<std::path::PathBuf>,
     /// Where singer voices run their inference.
@@ -130,6 +132,7 @@ impl SettingsWindow {
         language_preference: Option<Language>,
         pointer: PointerGestures,
         autosave: bool,
+        snap_note_lengths: bool,
         japanese_dictionary: Option<std::path::PathBuf>,
         singer_acceleration: Acceleration,
         export: ExportPreferences,
@@ -146,6 +149,7 @@ impl SettingsWindow {
             language_preference,
             language: Language::resolve(language_preference),
             autosave,
+            snap_note_lengths,
             japanese_dictionary,
             singer_acceleration,
             export,
@@ -448,6 +452,24 @@ impl SettingsWindow {
             )))
             .child(note(self.t(Key::AutosaveNote), &theme))
             .child(divider(&theme))
+            .child(section_title(self.t(Key::SnapNoteLengths), &theme))
+            .child(div().flex().gap_1().child(button(
+                "snap-note-lengths",
+                self.t(if self.snap_note_lengths {
+                    Key::ValueOn
+                } else {
+                    Key::ValueOff
+                }),
+                ButtonStyle::Normal,
+                self.snap_note_lengths,
+                theme.accent,
+                &theme,
+                cx.listener(|this, _, _, cx| {
+                    this.apply_snap_note_lengths(!this.snap_note_lengths, cx);
+                }),
+            )))
+            .child(note(self.t(Key::SnapNoteLengthsNote), &theme))
+            .child(divider(&theme))
             .child(section_title(
                 self.t(Key::JapaneseDictionaryHeading),
                 &theme,
@@ -548,6 +570,15 @@ impl SettingsWindow {
     fn apply_autosave(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.autosave = enabled;
         let _ = self.app.update(cx, |app, _| app.apply_autosave(enabled));
+        cx.notify();
+    }
+
+    /// Hands the note-length snapping choice to the application and remembers it.
+    fn apply_snap_note_lengths(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.snap_note_lengths = enabled;
+        let _ = self
+            .app
+            .update(cx, |app, _| app.apply_snap_note_lengths(enabled));
         cx.notify();
     }
 

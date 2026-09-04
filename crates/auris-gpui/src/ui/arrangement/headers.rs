@@ -14,10 +14,7 @@ use crate::app::{AurisApp, Drag};
 use crate::i18n::track_kind_key;
 use crate::theme::Metrics;
 use crate::ui::automation;
-use crate::ui::icons::Icon;
-use crate::ui::widgets::{
-    ButtonStyle, Latch, button, db_to_meter_position, icon_label, level_meter,
-};
+use crate::ui::widgets::{ButtonStyle, Latch, button, db_to_meter_position, level_meter};
 
 /// How tall the strip along the bottom of a header that resizes its lane is.
 ///
@@ -47,7 +44,7 @@ fn arm_latch(armed: bool, target: bool) -> Latch {
 }
 
 impl AurisApp {
-    /// The left column: one header per track, plus the add-track buttons.
+    /// The left column: one header per track, plus the spacer opposite the ruler.
     pub(super) fn render_track_headers(
         &mut self,
         cx: &mut gpui::Context<Self>,
@@ -84,7 +81,7 @@ impl AurisApp {
             .flex_col()
             .w(self.panels.header_width)
             .flex_shrink_0()
-            .child(self.track_header_toolbar(cx))
+            .child(self.track_header_toolbar())
             .child(
                 div()
                     .id("track-headers")
@@ -545,49 +542,18 @@ impl AurisApp {
             )
     }
 
-    /// The row of buttons above the track headers.
-    fn track_header_toolbar(&mut self, cx: &mut gpui::Context<Self>) -> impl IntoElement + use<> {
+    /// The blank strip above the track headers.
+    ///
+    /// Tracks are added from the arrangement's context menu. Keeping the strip itself preserves
+    /// alignment with the ruler and any open automation strips opposite it.
+    fn track_header_toolbar(&self) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
         div()
-            .flex()
-            .items_center()
-            .gap_1()
             // Matches the ruler and whichever strips are showing opposite. See the method.
             .h(self.panels.lanes.header_height())
-            .px_1()
             .bg(theme.surface_raised)
             .border_b_1()
             .border_color(theme.border)
-            .child(div().flex_1().child(icon_label(
-                "add-instrument",
-                Icon::Plus,
-                self.t(Key::AddInstrumentShort),
-                &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.add_instrument_track();
-                    cx.notify();
-                }),
-            )))
-            .child(div().flex_1().child(icon_label(
-                "add-audio",
-                Icon::Plus,
-                self.t(Key::AddAudioShort),
-                &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.add_audio_track();
-                    cx.notify();
-                }),
-            )))
-            .child(div().flex_1().child(icon_label(
-                "add-bus",
-                Icon::Plus,
-                self.t(Key::AddBusShort),
-                &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.add_bus_track();
-                    cx.notify();
-                }),
-            )))
     }
 
     fn gain_control(

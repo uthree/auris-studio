@@ -15,6 +15,21 @@ use crate::gestures::past_drag_threshold;
 use crate::menu::MenuRow;
 use crate::theme::Theme;
 use crate::ui::context_menu::MenuCommand;
+
+/// The clip-relative end written by a note-resize gesture.
+///
+/// Snapping the end itself is subtly wrong for an off-grid note: it changes the duration by the
+/// note's offset from the grid. The setting names the *length*, so round that number and then put
+/// the start back. A snapped duration never disappears; free editing keeps the one-tick document
+/// minimum that [`Session::resize_note`] enforces too.
+fn note_resize_end(end: Ticks, start: Ticks, grid: Ticks, snap: bool) -> Ticks {
+    let length = (end - start).max(Ticks(1));
+    let length = match snap {
+        true => length.snap_nearest(grid).max(grid),
+        false => length,
+    };
+    start + length
+}
 use crate::ui::drop::{drop_action, lanes_offset};
 use crate::ui::menu_bar;
 use crate::ui::widgets::splitter;
@@ -1015,10 +1030,15 @@ impl AurisApp {
                 }
                 let origin = self.roll_origin();
                 let tick = self.timeline.x_to_tick(event.position.x - origin.x);
-                let Some(clip_start) = self.session.midi_clip(clip).map(|c| c.start) else {
+                let Some((clip_start, note_start)) = self
+                    .session
+                    .midi_clip(clip)
+                    .and_then(|clip| clip.notes.get(index).map(|note| (clip.start, note.start)))
+                else {
                     return;
                 };
-                let end = self.snap_unless_held(tick - clip_start, event.modifiers);
+                let snap = self.settings.snap_note_lengths && !event.modifiers.secondary();
+                let end = note_resize_end(tick - clip_start, note_start, self.project().grid, snap);
                 let _ = self.session.resize_note(clip, index, end);
             }
             Drag::Param {
@@ -2529,8 +2549,31 @@ impl AurisApp {
 mod window_tests {
     use gpui::{TestAppContext, px, size};
 
+    use super::note_resize_end;
     use crate::dock::Panel;
     use crate::harness::{WINDOW, resize, with_a_clip};
+
+    #[test]
+    fn note_length_snapping_is_relative_to_the_notes_start() {
+        let grid = auris_session::prelude::Ticks(240);
+        let start = auris_session::prelude::Ticks(70);
+
+        assert_eq!(
+            note_resize_end(auris_session::prelude::Ticks(430), start, grid, true),
+            auris_session::prelude::Ticks(550),
+            "a 360-tick length rounds to 480 without moving the off-grid start"
+        );
+        assert_eq!(
+            note_resize_end(auris_session::prelude::Ticks(430), start, grid, false),
+            auris_session::prelude::Ticks(430),
+            "turning the preference off preserves the exact pointer position"
+        );
+        assert_eq!(
+            note_resize_end(start, start, grid, true),
+            start + grid,
+            "snapping never rounds a note away"
+        );
+    }
 
     /// Every surface the pointer works in, and where it was drawn.
     fn surfaces(

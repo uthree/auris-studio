@@ -287,6 +287,13 @@ impl AurisApp {
         // editing either turns the stretch being listened to.
         let bpm = self.project().tempo_map.bpm_at(playhead);
         let signature = self.project().signatures.signature_at(playhead);
+        let chord = self
+            .project()
+            .harmony
+            .chords
+            .numeral_at(playhead)
+            .map(|numeral| numeral.name_in(self.project().harmony.keys.key_at(playhead)))
+            .unwrap_or_else(|| "—".to_string());
         let grid_label = self.grid_label();
         let master_db = gain_to_db(self.master_level());
         let master_clipped = self.session.meters().master_clipped();
@@ -548,7 +555,13 @@ impl AurisApp {
                                     )),
                             )
                             .child(self.render_tempo_control(bpm, cx))
-                            .child(self.render_signature_control(signature, cx)),
+                            .child(self.render_signature_control(signature, cx))
+                            .child(self.lcd_field(
+                                "current-chord",
+                                self.t(Key::CurrentChord),
+                                chord,
+                                px(82.0),
+                            )),
                     ),
             )
             .child(

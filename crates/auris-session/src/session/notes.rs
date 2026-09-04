@@ -354,7 +354,9 @@ impl Session {
         let grid = Ticks(self.project.grid.raw().max(1));
         if let Some(target) = self.project.midi_clip_mut(clip) {
             if let Some(note) = target.notes.get_mut(index) {
-                note.length = (end - note.start).max(grid);
+                // Pointer snapping is a frontend preference. The session accepts the exact end
+                // it is given and enforces only the document's true lower bound: one tick.
+                note.length = (end - note.start).max(Ticks(1));
             }
             target.fit_length_to_notes(grid);
         }

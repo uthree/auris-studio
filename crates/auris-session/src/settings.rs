@@ -195,6 +195,12 @@ pub struct Settings {
     /// [`should_autosave`](crate::session::should_autosave), and is the reason this is a setting
     /// rather than simply how the application behaves.
     pub autosave: bool,
+    /// Snap a note's duration to the editing grid while its right edge is dragged.
+    ///
+    /// On by default. This is an editing preference rather than project data: two people can
+    /// shape the same notes with different pointer behaviour without changing the file merely by
+    /// opening it.
+    pub snap_note_lengths: bool,
     /// How a bounce is written.
     pub export: ExportPreferences,
     /// Where the window was when it was last put away. `None` on a first run.
@@ -247,6 +253,7 @@ impl Default for Settings {
             // and a settings file written before this field existed is filled in from exactly
             // this value.
             autosave: true,
+            snap_note_lengths: true,
             export: ExportPreferences::default(),
             window: None,
             recent: Vec::new(),
@@ -469,6 +476,7 @@ mod tests {
         assert_eq!(settings.audio.block_frames, 128);
         assert_eq!(settings.audio.device, None);
         assert_eq!(settings.audio.sample_rate, None);
+        assert!(settings.snap_note_lengths);
 
         let empty: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(empty, Settings::default());
