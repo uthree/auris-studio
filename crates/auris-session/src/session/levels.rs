@@ -185,14 +185,23 @@ impl Session {
     pub fn balance_levels(&mut self) -> Result<BalanceReport, SessionError> {
         self.begin_transaction(Edit::BalanceLevels);
         let balanced = self.balance_now();
+        self.finish_balance(balanced)
+    }
+
+    /// Closes the balance transaction, restoring every fader when any later measurement failed.
+    fn finish_balance(
+        &mut self,
+        balanced: Result<BalanceReport, SessionError>,
+    ) -> Result<BalanceReport, SessionError> {
         match balanced.is_ok() {
             true => {
                 self.end_transaction();
             }
-            // Nothing has been half-applied — a fader is written only after its own stem has been
-            // measured — but a piece that could not be rendered has no business leaving a step in
-            // the history saying its mix was set.
-            false => self.cancel_transaction(),
+            // Earlier faders may already have moved before a later stem or the full mix failed.
+            // Put both the document and the live graph back, and leave no history step behind.
+            false => {
+                self.revert_transaction();
+            }
         }
         balanced
     }
@@ -348,6 +357,27 @@ mod tests {
         // is: a track that measured silence-adjacent would otherwise ask for a hundred decibels.
         assert_eq!(fader_for(-20.0, -120.0, 0.0), FADER_RANGE_DB.1);
         assert_eq!(fader_for(-60.0, 0.0, 0.0), FADER_RANGE_DB.0);
+    }
+
+    #[test]
+    fn a_failed_balance_restores_faders_already_written() {
+        use super::super::SessionOptions;
+
+        let mut session = Session::new(SessionOptions::headless()).expect("a headless session");
+        let track = session.project.add_audio_track("Part");
+        session.begin_transaction(Edit::BalanceLevels);
+        let before = session.project().track(track).unwrap().mixer.gain_db;
+        session.write_fader(track, before + 6.0);
+
+        let failed = session.finish_balance(Err(SessionError::UnknownTrack(u64::MAX)));
+
+        assert!(failed.is_err());
+        assert_eq!(
+            session.project().track(track).unwrap().mixer.gain_db,
+            before,
+            "the partial fader move survived the error"
+        );
+        assert!(!session.can_undo(), "a failed balance left a history step");
     }
 
     #[test]

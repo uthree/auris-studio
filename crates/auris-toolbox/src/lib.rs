@@ -2527,6 +2527,13 @@ const MAX_TOOL_BEATS: f64 = 16_384.0;
 
 /// A mixer strip address: a track by name, or `None` for the master bus as "master".
 fn strip_by_name(project: &Project, name: &str) -> Result<Option<TrackId>, String> {
+    if let Some(track) = project
+        .tracks
+        .iter()
+        .find(|track| track.name.eq_ignore_ascii_case(name))
+    {
+        return Ok(Some(track.id));
+    }
     match name.eq_ignore_ascii_case("master") {
         true => Ok(None),
         false => track_by_name(project, name).map(|track| Some(track.id)),
@@ -2822,6 +2829,18 @@ mod tests {
         })
         .unwrap_err();
         assert!(sideways.contains("major"), "{sideways}");
+    }
+
+    #[test]
+    fn a_real_track_named_master_wins_over_the_master_bus_alias() {
+        let mut project = Project::new("Song", 48_000.0);
+        let track = project.add_bus_track("Master");
+
+        assert_eq!(strip_by_name(&project, "master"), Ok(Some(track)));
+        assert_eq!(
+            strip_by_name(&Project::new("Empty", 48_000.0), "master"),
+            Ok(None)
+        );
     }
 
     /// The mixer loop, against one composed piece: read the board, move a fader, a send and

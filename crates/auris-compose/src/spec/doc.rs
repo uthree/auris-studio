@@ -371,7 +371,7 @@ struct PartTweakDoc {
 }
 
 /// The `program = …` field: a name or a number on the way in, and on the way out whichever name
-/// suits the part's role.
+/// suits the part's role. An unnamed drum patch stays a number so the exact patch survives.
 ///
 /// The flag is consulted only when writing. On the way in it does not matter, because
 /// [`gm::Program::parse`] reads a kit's name, a program's name and a bare number all into the same
@@ -388,7 +388,13 @@ struct ProgramField {
 
 impl Serialize for ProgramField {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.program.label(self.drums))
+        if self.drums && !gm::KITS.iter().any(|(patch, _)| *patch == self.program.0) {
+            // A font may give an otherwise unnamed percussion patch its own kit. Calling it the
+            // nearest standard kit would parse back as that standard kit's different number.
+            serializer.serialize_u8(self.program.0)
+        } else {
+            serializer.serialize_str(self.program.label(self.drums))
+        }
     }
 }
 
@@ -1881,6 +1887,25 @@ mod tests {
             written.contains(r#"program = "Electronic Kit""#),
             "a kit is written as the kit it is: {written}"
         );
+        assert_eq!(SongSpec::parse(&written).unwrap().parts, original.parts);
+    }
+
+    #[test]
+    fn an_unnamed_drum_patch_survives_the_round_trip_by_number() {
+        let original = SongSpec::parse(
+            r#"
+            form = ["verse"]
+
+            [[part]]
+            name    = "kick"
+            role    = "kick"
+            program = 5
+            "#,
+        )
+        .unwrap();
+
+        let written = original.to_toml();
+        assert!(written.contains("program = 5"), "{written}");
         assert_eq!(SongSpec::parse(&written).unwrap().parts, original.parts);
     }
 

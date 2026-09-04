@@ -633,6 +633,9 @@ impl AudioEngine {
             self.publish_meters(count);
             written += count;
         }
+        // Automation writes effect parameters while rendering, and those parameters may change
+        // a plugin's declared latency. Re-check once per callback after every such write.
+        self.publish_latency();
         // A trailing partial frame the device asked for is silence rather than stale samples.
         for sample in &mut data[frames * self.channels..] {
             *sample = T::from_sample(0.0f32);
@@ -767,6 +770,12 @@ impl AudioEngine {
                     graph.set_track_mute(index, mute);
                 }
             }
+            EngineCommand::SetSoloResolution(audible) => {
+                if let Some(graph) = &mut self.graph {
+                    graph.set_live_audible(&audible);
+                }
+                self.retire(Retired::SoloResolution(audible));
+            }
             EngineCommand::SetSendLevel {
                 track,
                 send,
@@ -883,6 +892,8 @@ mod tests {
     use crate::testkit::{self, TONE_AMPLITUDE};
     use crate::transport::CountIn;
     use auris_core::ParamId;
+    use auris_core::automation::AutomationCurve;
+    use auris_core::param::ParamTarget;
     use auris_core::project::{AudioSourceBank, Note, Project};
     use auris_core::time::Ticks;
 
@@ -1196,6 +1207,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_live_solo_resolution_fades_instead_of_stepping() {
+        let (mut engine, commands, retired, _meters, _playhead) = engine();
+        commands.send(EngineCommand::SetGraph(graph())).unwrap();
+        commands.send(EngineCommand::Play).unwrap();
+
+        let mut before = [0.0f32; 256];
+        engine.fill(&mut before);
+        assert!((before[0] - TONE_AMPLITUDE).abs() < 1e-5);
+
+        commands
+            .send(EngineCommand::SetSoloResolution(
+                vec![false].into_boxed_slice(),
+            ))
+            .unwrap();
+        let mut after = [0.0f32; 512];
+        engine.fill(&mut after);
+
+        assert!(
+            (after[0] - before[254]).abs() < 1e-5,
+            "solo resolution stepped from {} to {}",
+            before[254],
+            after[0]
+        );
+        assert_eq!(after[510], 0.0, "the fade never reached silence");
+        assert!(matches!(retired.try_recv(), Ok(Retired::SoloResolution(_))));
+    }
+
     /// Builds an engine for a device with `channels` channels.
     #[allow(clippy::type_complexity)]
     fn engine_with_channels(
@@ -1317,6 +1356,57 @@ mod tests {
         engine.fill(&mut data);
         assert!(!latency_stale.load(Ordering::Relaxed));
         drop(graph_rx);
+    }
+
+    #[test]
+    fn automation_that_moves_a_plugins_latency_reports_the_graph_as_stale() {
+        let (command_tx, command_rx) = crossbeam_channel::bounded(16);
+        let (graph_tx, _graph_rx) = crossbeam_channel::bounded(16);
+        let latency_stale = Arc::new(AtomicBool::new(false));
+        let mut engine = AudioEngine::new(
+            command_rx,
+            graph_tx,
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(MeterBank::new(8)),
+            Arc::new(AtomicBool::new(false)),
+            Arc::clone(&latency_stale),
+            SAMPLE_RATE,
+            2,
+            256,
+        );
+
+        let mut project = held_note_project();
+        let track = project.tracks[0].id;
+        let slot = project
+            .add_effect(Some(track), testkit::LOOKAHEAD_ID)
+            .expect("the track exists");
+        project.automation.set_point(
+            ParamTarget::Effect {
+                track: Some(track),
+                slot,
+                param: ParamId(0),
+            },
+            None,
+            AutomationCurve::Linear,
+            Ticks::ZERO,
+            0.0,
+        );
+        let graph = Box::new(RenderGraph::build(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            256,
+        ));
+
+        command_tx.send(EngineCommand::SetGraph(graph)).unwrap();
+        command_tx.send(EngineCommand::Play).unwrap();
+        engine.fill(&mut [0.0f32; 512]);
+
+        assert!(
+            latency_stale.load(Ordering::Relaxed),
+            "the automated write changed the plugin after compensation was built"
+        );
     }
 
     #[test]

@@ -23,6 +23,9 @@ const P_MIX: u32 = 6;
 /// Ramp time for the dry/wet balance.
 const MIX_SMOOTHING_SECONDS: f32 = 0.020;
 
+/// Ramp time for makeup gain changes.
+const MAKEUP_SMOOTHING_SECONDS: f32 = 0.020;
+
 /// A feed-forward compressor with a quadratic soft knee.
 ///
 /// Detection runs on the largest absolute sample across **all** channels, so the same gain is
@@ -43,6 +46,7 @@ pub struct Compressor {
     release_coefficient: f32,
     /// Current gain in dB, always at or below zero.
     gain_db: f32,
+    makeup_db: SmoothedValue,
     mix: SmoothedValue,
 }
 
@@ -87,6 +91,7 @@ impl Compressor {
             attack_coefficient: 0.0,
             release_coefficient: 0.0,
             gain_db: 0.0,
+            makeup_db: SmoothedValue::new(0.0, MAKEUP_SMOOTHING_SECONDS, sample_rate),
             mix: SmoothedValue::new(1.0, MIX_SMOOTHING_SECONDS, sample_rate),
         };
         plugin.recompute_coefficients();
@@ -162,12 +167,15 @@ impl Effect for Compressor {
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.sample_rate = ctx.sample_rate as f32;
         self.recompute_coefficients();
+        self.makeup_db
+            .set_time(MAKEUP_SMOOTHING_SECONDS, self.sample_rate);
         self.mix.set_time(MIX_SMOOTHING_SECONDS, self.sample_rate);
         self.reset();
     }
 
     fn reset(&mut self) {
         self.gain_db = 0.0;
+        self.makeup_db.snap_to(self.params.at(P_MAKEUP_DB));
         self.mix.snap_to(self.params.at(P_MIX));
     }
 
@@ -206,9 +214,9 @@ impl Compressor {
         let threshold_db = self.params.at(P_THRESHOLD_DB);
         let ratio = self.params.at(P_RATIO).max(1.0);
         let knee_db = self.params.at(P_KNEE_DB);
-        let makeup_db = self.params.at(P_MAKEUP_DB);
         // Negative: how much of the excess above threshold is removed.
         let slope = 1.0 / ratio - 1.0;
+        self.makeup_db.set_target(self.params.at(P_MAKEUP_DB));
         self.mix.set_target(self.params.at(P_MIX));
 
         for frame in 0..frames {
@@ -238,7 +246,7 @@ impl Compressor {
             // NaN that found any other way in would otherwise sit in this line for ever.
             self.gain_db = crate::settled(target_db + (self.gain_db - target_db) * coefficient);
 
-            let gain = db_to_gain(self.gain_db + makeup_db);
+            let gain = db_to_gain(self.gain_db + self.makeup_db.next_value());
             // One scalar per frame: `dry * (1 - mix) + dry * gain * mix`, factored so the dry
             // path multiplies by exactly 1.0 when the mix sits at zero.
             let blend = 1.0 + self.mix.next_value() * (gain - 1.0);
@@ -425,6 +433,45 @@ mod tests {
         assert!(
             (out_db + 11.0).abs() < 0.05,
             "output settled at {out_db} dB"
+        );
+    }
+
+    #[test]
+    fn makeup_gain_changes_glide_across_the_block_boundary() {
+        let mut plugin = prepared();
+        plugin.set_param_by_key("threshold_db", 0.0);
+        plugin.set_param_by_key("knee_db", 0.0);
+
+        let input = 0.25;
+        let mut before = constant(64, input);
+        plugin.process(&mut before, &context(64));
+        assert_eq!(before.channel(0)[63], input);
+
+        plugin.set_param_by_key("makeup_db", 24.0);
+        let ramp_frames = (SR as f32 * MAKEUP_SMOOTHING_SECONDS) as usize;
+        let mut after = constant(ramp_frames, input);
+        plugin.process(&mut after, &context(ramp_frames));
+
+        let coefficient = one_pole_coefficient(MAKEUP_SMOOTHING_SECONDS, SR as f32);
+        let first_makeup_db = 24.0 * (1.0 - coefficient);
+        let expected_first = input * db_to_gain(first_makeup_db);
+        assert!(
+            (after.channel(0)[0] - expected_first).abs() < 1e-6,
+            "first sample was {}, expected {expected_first}",
+            after.channel(0)[0]
+        );
+        assert!(
+            after.channel(0)[0] < input * 1.01,
+            "makeup stepped at the boundary: {}",
+            after.channel(0)[0]
+        );
+
+        // One time constant later the ramp has covered 1 - 1/e of the 24 dB step.
+        let expected_last_db = 24.0 * (1.0 - coefficient.powi(ramp_frames as i32));
+        let actual_last_db = gain_to_db(after.channel(0)[ramp_frames - 1] / input);
+        assert!(
+            (actual_last_db - expected_last_db).abs() < 0.01,
+            "ramp reached {actual_last_db} dB, expected {expected_last_db} dB"
         );
     }
 

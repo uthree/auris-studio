@@ -188,6 +188,7 @@ pub(super) fn fade_handle_at(
     view: &crate::ui::timeline::TimelineView,
     start: Ticks,
     length: Ticks,
+    sounding_length: Ticks,
     frames: u64,
     fade_in: u64,
     fade_out: u64,
@@ -206,7 +207,8 @@ pub(super) fn fade_handle_at(
     }
     let left = f32::from(view.tick_to_x(start));
     let in_x = left + width * (fade_in as f64 / frames as f64) as f32;
-    let out_x = left + width * (1.0 - (fade_out as f64 / frames as f64) as f32);
+    let sounding_right = f32::from(view.tick_to_x(start + sounding_length));
+    let out_x = sounding_right - width * (fade_out as f64 / frames as f64) as f32;
     let x = f32::from(x);
     let to_in = (x - in_x).abs();
     let to_out = (x - out_x).abs();
@@ -534,6 +536,7 @@ mod tests {
                 &view,
                 Ticks::ZERO,
                 length,
+                length,
                 frames,
                 fade_in,
                 fade_out,
@@ -580,6 +583,7 @@ mod tests {
                 &view,
                 Ticks::ZERO,
                 Ticks::from_beats(4.0),
+                Ticks::from_beats(4.0),
                 48_000,
                 0,
                 0,
@@ -592,6 +596,19 @@ mod tests {
     }
 
     #[test]
+    fn a_looped_clips_fade_out_handle_is_on_its_sounding_end() {
+        let view = view();
+        let length = Ticks::from_beats(4.0);
+        let sounding = length * 3;
+        let y = TITLE_HEIGHT + px(4.0);
+
+        let grab =
+            |x: f32| fade_handle_at(&view, Ticks::ZERO, length, sounding, 48_000, 0, 0, px(x), y);
+        assert_eq!(grab(192.0), None, "the first repeat boundary is not a fade");
+        assert_eq!(grab(576.0), Some(FadeEdge::Out));
+    }
+
+    #[test]
     fn a_sliver_of_a_clip_offers_no_fade_handles() {
         // Half a beat is 24 pixels — under the minimum, where the two handles and the resize
         // grab would overlap into a lottery.
@@ -600,6 +617,7 @@ mod tests {
             fade_handle_at(
                 &view,
                 Ticks::ZERO,
+                Ticks::from_beats(0.5),
                 Ticks::from_beats(0.5),
                 6_000,
                 0,

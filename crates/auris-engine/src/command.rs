@@ -62,6 +62,8 @@ pub enum EngineCommand {
         /// Whether the track is silenced.
         mute: bool,
     },
+    /// Updates the project-wide solo resolution, fading every changed track.
+    SetSoloResolution(Box<[bool]>),
     /// Moves one of a track's send levels.
     SetSendLevel {
         /// Track position in the project.
@@ -196,6 +198,9 @@ impl std::fmt::Debug for EngineCommand {
                 .field("index", index)
                 .field("mute", mute)
                 .finish(),
+            Self::SetSoloResolution(audible) => {
+                f.debug_tuple("SetSoloResolution").field(audible).finish()
+            }
             Self::SetSendLevel {
                 track,
                 send,

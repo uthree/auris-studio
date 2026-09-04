@@ -665,17 +665,17 @@ impl Sampler {
     fn stop_everything(&mut self, immediate: bool) {
         self.held = 0;
         for slot in &mut self.slots {
-            slot.key = None;
             if immediate {
-                slot.envelope.silence();
-            } else {
+                slot.key = None;
+                slot.envelope.kill();
+            } else if slot.key.is_some() {
                 slot.envelope.release();
             }
         }
-        if let Some(synth) = self.synth.as_mut() {
-            synth.note_off_all(immediate);
-        }
         if immediate {
+            if let Some(synth) = self.synth.as_mut() {
+                synth.note_off_all(true);
+            }
             // Nothing is sounding, so the channels go back to full rather than staying wherever
             // the envelopes were cut off.
             for index in 0..self.slots.len() {
@@ -1635,6 +1635,25 @@ mod tests {
         assert!(
             after > sounding / 2.0,
             "the release let the note go early: {after} against {sounding}"
+        );
+    }
+
+    #[test]
+    fn all_notes_off_waits_for_the_shaped_release_before_telling_the_font() {
+        let mut sampler = playing(stocked(), 0, 512);
+        sampler.set_param_by_key(ENVELOPE_KEY, 1.0);
+        sampler.set_param_by_key("release", 0.3);
+        let mut out = AudioBuffer::stereo(512, RATE);
+        let ctx = ProcessContext::realtime(RATE, 512, 0, 120.0, true);
+        sampler.process(&[note_on(0)], &mut out, &ctx);
+        let sounding = rms(out.channel(0));
+
+        sampler.process(&[NoteEvent::AllNotesOff { frame: 0 }], &mut out, &ctx);
+        sampler.process(&[], &mut out, &ctx);
+
+        assert!(
+            rms(out.channel(0)) > sounding / 2.0,
+            "the SoundFont release cut off the sampler envelope"
         );
     }
 

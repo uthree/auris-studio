@@ -1415,6 +1415,36 @@ pub fn notes_digest(notes: &[Note]) -> u64 {
                 mix(u64::from(byte));
             }
         }
+        mix(note.phoneme_seconds.len() as u64);
+        for seconds in &note.phoneme_seconds {
+            mix(seconds.to_bits());
+        }
+        match note.scoop {
+            Some(scoop) => {
+                mix(1);
+                mix(u64::from(scoop.depth.to_bits()));
+                mix(scoop.seconds.to_bits());
+            }
+            None => mix(0),
+        }
+        match note.fall {
+            Some(fall) => {
+                mix(1);
+                mix(u64::from(fall.depth.to_bits()));
+                mix(fall.seconds.to_bits());
+            }
+            None => mix(0),
+        }
+        match note.vibrato {
+            Some(vibrato) => {
+                mix(1);
+                mix(u64::from(vibrato.depth.to_bits()));
+                mix(u64::from(vibrato.rate.to_bits()));
+                mix(vibrato.delay.to_bits());
+                mix(vibrato.fade_in.to_bits());
+            }
+            None => mix(0),
+        }
     }
     digest.max(1)
 }
@@ -1440,6 +1470,35 @@ mod tests {
     use super::*;
     use crate::project::fixtures::demo_project;
     use crate::time::TICKS_PER_QUARTER;
+
+    #[test]
+    fn the_note_digest_includes_phoneme_timing_and_every_ornament() {
+        let note = Note::new(60, Ticks::ZERO, Ticks::QUARTER);
+        let baseline = notes_digest(std::slice::from_ref(&note));
+
+        let variants = [
+            Note {
+                phoneme_seconds: vec![0.1],
+                ..note.clone()
+            },
+            Note {
+                scoop: Some(Scoop::default()),
+                ..note.clone()
+            },
+            Note {
+                fall: Some(Fall::default()),
+                ..note.clone()
+            },
+            Note {
+                vibrato: Some(Vibrato::default()),
+                ..note
+            },
+        ];
+
+        for changed in variants {
+            assert_ne!(notes_digest(&[changed]), baseline);
+        }
+    }
 
     #[test]
     fn a_clip_that_follows_the_tempo_keeps_its_bars_and_one_that_does_not_keeps_its_seconds() {

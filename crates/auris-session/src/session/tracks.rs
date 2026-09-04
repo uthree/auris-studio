@@ -222,6 +222,11 @@ impl Session {
         // An arm on a track that no longer exists would refuse the next take rather than being
         // ignored by it, and the button that could clear it has gone with the track.
         self.disarm_track(id);
+        if self.monitored.contains(&id) {
+            self.monitored.retain(|held| *held != id);
+            self.publish_monitors();
+            self.close_input_if_idle();
+        }
         self.invalidate_graph();
         Ok(())
     }
@@ -289,16 +294,15 @@ impl Session {
     }
 
     /// Solos or unsolos a track.
-    ///
-    /// Solo decides which *other* tracks are audible, so unlike mute it cannot be expressed as
-    /// one per-track command and the graph is rebuilt instead.
     pub fn set_track_solo(&mut self, id: TrackId, solo: bool) -> Result<(), SessionError> {
         self.require_track(id)?;
         self.record(Edit::SoloTrack);
         if let Some(track) = self.project.track_mut(id) {
             track.mixer.solo = solo;
         }
-        self.invalidate_graph();
+        self.send(EngineCommand::SetSoloResolution(
+            self.project.solo_resolution().into_boxed_slice(),
+        ));
         Ok(())
     }
 
@@ -1067,6 +1071,7 @@ mod tests {
             .unwrap()
             .instrument_id
             .clone();
+        session.forget_history();
         session.set_track_instrument(track, &instrument).unwrap();
 
         let state = &session
@@ -1078,9 +1083,8 @@ mod tests {
             .unwrap()
             .instrument_state;
         assert_eq!(state.params.values().next().copied(), Some(0.25));
-        assert_eq!(session.undo(), Some(Edit::AddInstrumentTrack));
         assert!(
-            session.project().track(track).is_none(),
+            !session.can_undo(),
             "reselecting the instrument did not add an undo step"
         );
     }

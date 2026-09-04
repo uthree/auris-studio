@@ -625,6 +625,30 @@ pub enum MenuCommand {
 }
 
 impl AurisApp {
+    /// Splits the addressed selection as one edit and selects all right-hand arrivals.
+    fn split_clips_for_command(&mut self, clip: ClipId, at: Ticks) {
+        let chosen = self.clips_for_command(clip);
+        self.session.begin_transaction(Edit::SplitClip);
+        let mut rights = std::collections::BTreeSet::new();
+        let mut failure = None;
+        for chosen_clip in chosen {
+            match self.session.split_clip(chosen_clip, at) {
+                Ok(right) => {
+                    rights.insert(right);
+                }
+                Err(error) => failure = Some(error),
+            }
+        }
+        self.session.end_transaction();
+        if !rights.is_empty() {
+            self.select_clips(rights, None);
+            self.selected_notes.clear();
+            self.set_status(self.t(Key::SplitClipStatus));
+        } else if let Some(error) = failure {
+            self.set_failed_status(self.failure(Key::MenuSplitAtPlayhead, &error));
+        }
+    }
+
     /// Carries out a menu choice.
     pub(crate) fn run_menu_command(&mut self, command: MenuCommand, cx: &mut Context<Self>) {
         match command {
@@ -843,7 +867,12 @@ impl AurisApp {
                 self.session.clear_curve(clip, which);
             }
             MenuCommand::FollowTempo { clip, follows } => {
-                let _ = self.session.set_clip_follows_tempo(clip, follows);
+                let chosen = self.clips_for_command(clip);
+                self.session.begin_transaction(Edit::SetClipTempo);
+                for chosen_clip in chosen {
+                    let _ = self.session.set_clip_follows_tempo(chosen_clip, follows);
+                }
+                self.session.end_transaction();
             }
             MenuCommand::ClipSourceTempo(clip) => self.prompt_for_clip_source_tempo(clip),
             MenuCommand::ShowCurveLane { which, shown } => {
@@ -955,20 +984,16 @@ impl AurisApp {
             }
             MenuCommand::ToggleClipMute(clip) => {
                 let muted = self.clip_is_muted(clip);
-                let _ = self.session.set_clip_muted(clip, !muted);
+                let chosen = self.clips_for_command(clip);
+                self.session.begin_transaction(Edit::MuteClip);
+                for chosen_clip in chosen {
+                    let _ = self.session.set_clip_muted(chosen_clip, !muted);
+                }
+                self.session.end_transaction();
             }
             MenuCommand::SplitClipAtPlayhead(clip) => {
                 let at = self.playhead_ticks();
-                match self.session.split_clip(clip, at) {
-                    Ok(right) => {
-                        self.select_clip(Some(right));
-                        self.selected_notes.clear();
-                        self.set_status(self.t(Key::SplitClipStatus));
-                    }
-                    Err(error) => {
-                        self.set_failed_status(self.failure(Key::MenuSplitAtPlayhead, &error))
-                    }
-                }
+                self.split_clips_for_command(clip, at);
             }
             MenuCommand::LoopOverClip(clip) => {
                 // The *sounding* extent, repeats included: cycling over a looped clip and
@@ -1188,15 +1213,38 @@ impl AurisApp {
                     }
                 }
             }
-            MenuCommand::RegenerateClip(clip) => match self.session.regenerate_clip(clip) {
-                Ok(_) => {
-                    self.forget_rewritten_notes(clip);
-                    self.report_clip_preset(clip);
+            MenuCommand::RegenerateClip(clip) => {
+                let chosen = self.clips_for_command(clip);
+                self.session.begin_transaction(Edit::GenerateClip);
+                for chosen_clip in chosen {
+                    match self.session.regenerate_clip(chosen_clip) {
+                        Ok(_) => {
+                            self.forget_rewritten_notes(chosen_clip);
+                            self.report_clip_preset(chosen_clip);
+                        }
+                        Err(error) => {
+                            self.set_failed_status(self.failure(Key::MenuRegenerateClip, &error))
+                        }
+                    }
                 }
-                Err(error) => self.set_failed_status(self.failure(Key::MenuRegenerateClip, &error)),
-            },
-            MenuCommand::RerollClip(clip) => self.reroll_clip(clip),
-            MenuCommand::FreezeClip(clip) => self.freeze_clip(clip),
+                self.session.end_transaction();
+            }
+            MenuCommand::RerollClip(clip) => {
+                let chosen = self.clips_for_command(clip);
+                self.session.begin_transaction(Edit::GenerateClip);
+                for chosen_clip in chosen {
+                    self.reroll_clip(chosen_clip);
+                }
+                self.session.end_transaction();
+            }
+            MenuCommand::FreezeClip(clip) => {
+                let chosen = self.clips_for_command(clip);
+                self.session.begin_transaction(Edit::FreezeClip);
+                for chosen_clip in chosen {
+                    self.freeze_clip(chosen_clip);
+                }
+                self.session.end_transaction();
+            }
             MenuCommand::SetClipPreset { clip, preset } => self.set_clip_preset(clip, preset),
             MenuCommand::SetClipGroove { clip, groove } => self.set_clip_groove(clip, groove),
             MenuCommand::SetClipSubdivision { clip, subdivision } => {
@@ -1242,7 +1290,12 @@ impl AurisApp {
             MenuCommand::RemoveSignatureAt(tick) => self.session.remove_signature_point(tick),
             MenuCommand::ClipGain(clip) => self.prompt_for_clip_gain(clip),
             MenuCommand::ClearFades(clip) => {
-                let _ = self.session.set_clip_fades(clip, 0, 0);
+                let chosen = self.clips_for_command(clip);
+                self.session.begin_transaction(Edit::SetClipFade);
+                for chosen_clip in chosen {
+                    let _ = self.session.set_clip_fades(chosen_clip, 0, 0);
+                }
+                self.session.end_transaction();
             }
             MenuCommand::Crossfade(clip) => self.crossfade_clip(clip),
             MenuCommand::ShowFadeShapePicker { clip, edge, at } => {
@@ -1250,10 +1303,15 @@ impl AurisApp {
                 self.open_menu(menu);
             }
             MenuCommand::SetFadeCurve { clip, edge, curve } => {
-                let _ = match edge {
-                    FadeEdge::In => self.session.set_fade_in_curve(clip, curve),
-                    FadeEdge::Out => self.session.set_fade_out_curve(clip, curve),
-                };
+                let chosen = self.clips_for_command(clip);
+                self.session.begin_transaction(Edit::SetClipFade);
+                for chosen_clip in chosen {
+                    let _ = match edge {
+                        FadeEdge::In => self.session.set_fade_in_curve(chosen_clip, curve),
+                        FadeEdge::Out => self.session.set_fade_out_curve(chosen_clip, curve),
+                    };
+                }
+                self.session.end_transaction();
             }
             MenuCommand::SetChordAt(tick) => {
                 let current = self
@@ -1326,5 +1384,83 @@ impl AurisApp {
             }
         }
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use gpui::TestAppContext;
+
+    use super::*;
+    use crate::harness::{CLIP_LENGTH, open};
+
+    fn two_selected_clips(
+        cx: &mut TestAppContext,
+    ) -> (
+        gpui::Entity<AurisApp>,
+        &mut gpui::VisualTestContext,
+        ClipId,
+        ClipId,
+    ) {
+        let (app, cx) = open(cx);
+        let (first, second) = app.update(cx, |this, _| {
+            let track = this
+                .session
+                .add_default_instrument_track("Test")
+                .expect("the registry nominates an instrument");
+            let first = this
+                .session
+                .add_midi_clip(track, "First", Ticks::ZERO, CLIP_LENGTH)
+                .expect("the track takes a MIDI clip");
+            let second = this
+                .session
+                .add_midi_clip(track, "Second", Ticks::ZERO, CLIP_LENGTH)
+                .expect("the track takes a second MIDI clip");
+            this.select_clips(BTreeSet::from([first, second]), Some(first));
+            (first, second)
+        });
+        (app, cx, first, second)
+    }
+
+    #[gpui::test]
+    fn clip_mute_from_a_selected_clip_applies_to_the_whole_selection(cx: &mut TestAppContext) {
+        let (app, cx, first, second) = two_selected_clips(cx);
+        app.update(cx, |this, cx| {
+            this.run_menu_command(MenuCommand::ToggleClipMute(first), cx);
+            assert!(this.clip_is_muted(first));
+            assert!(this.clip_is_muted(second));
+
+            assert!(
+                this.session.undo().is_some(),
+                "the batch records one undo step"
+            );
+            assert!(!this.clip_is_muted(first));
+            assert!(!this.clip_is_muted(second));
+        });
+    }
+
+    #[gpui::test]
+    fn clip_split_from_a_selected_clip_applies_to_the_whole_selection(cx: &mut TestAppContext) {
+        let (app, cx, first, second) = two_selected_clips(cx);
+        app.update(cx, |this, _| {
+            let midpoint = Ticks(CLIP_LENGTH.raw() / 2);
+            this.split_clips_for_command(first, midpoint);
+            assert_eq!(
+                this.selected_clips.len(),
+                2,
+                "both right halves are selected"
+            );
+            assert_eq!(this.clip_extent(first), Some((Ticks::ZERO, midpoint)));
+            assert_eq!(this.clip_extent(second), Some((Ticks::ZERO, midpoint)));
+
+            assert!(
+                this.session.undo().is_some(),
+                "the batch records one undo step"
+            );
+            assert_eq!(this.clip_extent(first), Some((Ticks::ZERO, CLIP_LENGTH)));
+            assert_eq!(this.clip_extent(second), Some((Ticks::ZERO, CLIP_LENGTH)));
+        });
     }
 }

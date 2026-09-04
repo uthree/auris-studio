@@ -273,17 +273,20 @@ def test_every_phoneme_the_host_can_produce_is_in_the_phoneme_table(phoneme_tabl
 
 
 def test_the_hosts_two_japanese_paths_share_one_inventory():
-    """Dictionary and kana must reach the same symbols, exhaustively.
+    """Dictionary and kana share symbols except for contextual allophones.
 
     The host checks this itself, but by spot-testing a handful of syllables. The
     tables parse cleanly enough to compare whole, and it is worth comparing
-    whole: a syllable spelt two ways is two symbols the model has to learn were
-    one sound, and only some of them would be caught by a sample.
+    whole. OpenJTalk additionally reports devoiced vowels and labialized velars;
+    those depend on sentence context and therefore cannot come from the
+    context-free kana table.
     """
     dictionary, kana = rust_ipa_arms(OPENJTALK_RS), kana_symbols()
-    assert dictionary == kana, (
-        f"only the dictionary path produces {sorted(dictionary - kana)}, and only the kana "
-        f"path produces {sorted(kana - dictionary)}"
+    dictionary_only = {"ḁ", "i̥", "ɯ̥", "e̥", "o̥", "kʷ", "gʷ"}
+    assert dictionary - kana == dictionary_only and not kana - dictionary, (
+        f"unexpected dictionary-only symbols {sorted((dictionary - kana) - dictionary_only)}, "
+        f"missing contextual symbols {sorted(dictionary_only - (dictionary - kana))}, and "
+        f"kana-only symbols {sorted(kana - dictionary)}"
     )
 
 

@@ -34,7 +34,7 @@
 //! somebody a syllable rather than costing them a take. It is the opposite of the call
 //! [`capture`](crate::capture) makes for the recording itself, and for the opposite reason.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use auris_core::AudioBuffer;
 use cpal::{FromSample, Sample};
@@ -88,8 +88,8 @@ pub struct MonitorRing {
     /// Times the reader had to re-seat itself: the writer stalled, or lapped it, or drift closed
     /// the gap. Each one is a short silence somebody heard.
     rebuffers: AtomicU64,
-    /// The first device channel to listen to. See [`Self::set_source`].
-    source: AtomicUsize,
+    /// First device channel and channel count, packed into two `u32`s. See [`Self::set_source`].
+    source: AtomicU64,
 }
 
 impl MonitorRing {
@@ -105,7 +105,7 @@ impl MonitorRing {
             input_rate: input_rate.max(1.0),
             enabled: AtomicBool::new(false),
             rebuffers: AtomicU64::new(0),
-            source: AtomicUsize::new(0),
+            source: AtomicU64::new(2_u64 << 32),
         }
     }
 
@@ -119,7 +119,19 @@ impl MonitorRing {
     /// One ring, so one answer: monitoring is one track at a time, and pointing it somewhere is
     /// what re-pointing it costs.
     pub fn set_source(&self, first: usize) {
-        self.source.store(first, Ordering::Relaxed);
+        self.set_source_channels(first, 2);
+    }
+
+    /// Points the monitor at exactly the device channels a take would keep.
+    ///
+    /// A one-channel source is copied to both monitor sides; two or more use the first stereo
+    /// pair. Packing both values into one atomic prevents a capture callback observing half of a
+    /// re-pointing operation.
+    pub fn set_source_channels(&self, first: usize, count: usize) {
+        let first = u64::from(u32::try_from(first).unwrap_or(u32::MAX));
+        let count = u64::from(u32::try_from(count).unwrap_or(u32::MAX));
+        self.source
+            .store(first | (count.max(1) << 32), Ordering::Relaxed);
     }
 
     /// Whether the renderer should be mixing this in.
@@ -167,7 +179,10 @@ impl MonitorRing {
         if frames == 0 {
             return;
         }
-        let pair = monitor_pair(self.source.load(Ordering::Relaxed), channels);
+        let source = self.source.load(Ordering::Relaxed);
+        let first = (source as u32) as usize;
+        let count = (source >> 32) as u32 as usize;
+        let pair = monitor_pair(first, count, channels);
         let written = self.written.load(Ordering::Relaxed);
         for frame in 0..frames {
             let base = frame * channels;
@@ -268,8 +283,15 @@ impl MonitorRing {
 ///
 /// A free function because it is the whole of the rule, and a rule inside a callback is a rule
 /// with no test.
-fn monitor_pair(first: usize, channels: usize) -> Option<(usize, usize)> {
-    (first < channels).then(|| (first, (first + 1).min(channels - 1)))
+fn monitor_pair(first: usize, count: usize, channels: usize) -> Option<(usize, usize)> {
+    (first < channels).then(|| {
+        let right = if count == 1 {
+            first
+        } else {
+            (first + 1).min(channels - 1)
+        };
+        (first, right)
+    })
 }
 
 /// What the reader should do with the block it has been asked for.
@@ -584,15 +606,16 @@ mod tests {
     fn the_pair_the_monitor_takes_starts_where_it_was_pointed() {
         // The ordinary interface: the first two channels, which is where an unpointed monitor and
         // a track armed to input 1 both land.
-        assert_eq!(monitor_pair(0, 2), Some((0, 1)));
-        assert_eq!(monitor_pair(2, 8), Some((2, 3)));
+        assert_eq!(monitor_pair(0, 2, 2), Some((0, 1)));
+        assert_eq!(monitor_pair(2, 2, 8), Some((2, 3)));
         // A mono device, and the last channel of an odd-numbered one: the same channel twice, so
         // it is heard in the middle rather than hard left.
-        assert_eq!(monitor_pair(0, 1), Some((0, 0)));
-        assert_eq!(monitor_pair(2, 3), Some((2, 2)));
+        assert_eq!(monitor_pair(0, 2, 1), Some((0, 0)));
+        assert_eq!(monitor_pair(2, 2, 3), Some((2, 2)));
+        assert_eq!(monitor_pair(2, 1, 8), Some((2, 2)));
         // An input that is not there.
-        assert_eq!(monitor_pair(2, 2), None);
-        assert_eq!(monitor_pair(0, 0), None);
+        assert_eq!(monitor_pair(2, 2, 2), None);
+        assert_eq!(monitor_pair(0, 2, 0), None);
     }
 
     #[test]

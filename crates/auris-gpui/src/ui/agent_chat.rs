@@ -303,6 +303,11 @@ pub(crate) struct AgentChat {
     pub(crate) focused: Option<AgentField>,
     /// Whether the settings section is showing.
     pub(crate) configuring: bool,
+    /// Whether the settings fields have been seeded from the saved preferences.
+    ///
+    /// The form can legitimately contain an empty model while its provider and URL are being
+    /// edited, so emptiness cannot stand in for this bit of lifecycle state.
+    preferences_loaded: bool,
     /// Whether a message is in flight and unanswered.
     pub(crate) busy: bool,
     /// What the child said it resolved to, for the header.
@@ -335,6 +340,7 @@ impl Default for AgentChat {
             models_rx: None,
             focused: None,
             configuring: false,
+            preferences_loaded: false,
             busy: false,
             model_label: String::new(),
             pending_reload: None,
@@ -374,6 +380,14 @@ impl AgentChat {
         self.chosen_model = prefs.model.trim().to_string();
         self.url_field = TextField::new(prefs.url.clone());
         self.key_env_field = TextField::new(prefs.api_key_env.clone());
+        self.preferences_loaded = true;
+    }
+
+    /// Seeds an unopened settings form without overwriting edits on a later repaint.
+    fn load_preferences_once(&mut self, prefs: &AgentPreferences) {
+        if !self.preferences_loaded {
+            self.load_preferences(prefs);
+        }
     }
 
     /// The settings section's fields, read back out as preferences.
@@ -843,10 +857,10 @@ impl AurisApp {
         let theme = self.theme.clone();
         let configured = self.settings.agent.is_configured();
         let configuring = self.agent_chat.configuring || !configured;
-        if configuring && !configured && self.agent_chat.chosen_model.is_empty() {
+        if configuring && !configured {
             // First opening on an unconfigured machine: start the form from what is saved.
             self.agent_chat
-                .load_preferences(&self.settings.agent.clone());
+                .load_preferences_once(&self.settings.agent.clone());
         }
         // The first time the settings section is on screen, ask the provider what it serves —
         // once, and only until an answer or a refusal lands; the refresh button asks again.
@@ -1469,6 +1483,27 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repaint_seeding_does_not_replace_an_unconfigured_form_in_progress() {
+        let saved = AgentPreferences {
+            provider: "ollama".to_string(),
+            model: String::new(),
+            url: "http://saved.invalid".to_string(),
+            api_key_env: String::new(),
+        };
+        let mut chat = AgentChat::default();
+        chat.load_preferences_once(&saved);
+
+        chat.provider_openai = true;
+        chat.url_field = TextField::new("https://being-typed.invalid/v1".to_string());
+        chat.key_env_field = TextField::new("MY_AGENT_KEY".to_string());
+        chat.load_preferences_once(&saved);
+
+        assert!(chat.provider_openai);
+        assert_eq!(chat.url_field.content(), "https://being-typed.invalid/v1");
+        assert_eq!(chat.key_env_field.content(), "MY_AGENT_KEY");
+    }
 
     #[test]
     fn the_wire_is_read_tolerantly() {

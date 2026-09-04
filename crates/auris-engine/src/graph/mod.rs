@@ -843,6 +843,16 @@ impl RenderGraph {
         }
     }
 
+    /// Chooses which tracks are heard during playback, fading every changed strip.
+    ///
+    /// Unlike [`Self::set_audible`], this is a live solo switch rather than setup for an offline
+    /// render. Tracks past the end of `audible` are left alone for the same defensive reason.
+    pub fn set_live_audible(&mut self, audible: &[bool]) {
+        for (track, &heard) in self.tracks.iter_mut().zip(audible) {
+            track.strip.set_audible(heard);
+        }
+    }
+
     /// Moves one of a track's send levels. Out-of-range indices are ignored.
     ///
     /// Addressed by position in the track's send list, the same way an effect is addressed by

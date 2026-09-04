@@ -9,6 +9,7 @@ use auris_core::plugin::{
 use crate::MILLISECONDS_PER_SECOND;
 use crate::bank::ParamBank;
 use crate::delay_line::DelayLine;
+use crate::smooth::SmoothedValue;
 
 const P_ROOM_SIZE: u32 = 0;
 const P_DAMPING: u32 = 1;
@@ -46,6 +47,11 @@ const ALLPASS_FEEDBACK: f32 = 0.5;
 
 /// Longest pre-delay offered, in milliseconds.
 const MAX_PRE_DELAY_MS: f32 = 200.0;
+
+/// Ramp time for controls that change the reverb network or dry/wet balance.
+const CONTROL_SMOOTHING_SECONDS: f32 = 0.020;
+/// Ramp time for the pre-delay read head, matching the tape-style glide of [`crate::Delay`].
+const PRE_DELAY_SMOOTHING_SECONDS: f32 = 0.050;
 
 /// Ceiling on the reported tail so a maximum-size room does not add a minute to every export.
 const MAX_TAIL_SECONDS: f32 = 10.0;
@@ -201,6 +207,11 @@ fn damping_coefficient(damping: f32, sample_rate: f32) -> f32 {
 pub struct Reverb {
     params: ParamBank,
     sample_rate: f32,
+    room_size: SmoothedValue,
+    damping: SmoothedValue,
+    width: SmoothedValue,
+    mix: SmoothedValue,
+    pre_delay_ms: SmoothedValue,
     channels: Vec<ReverbChannel>,
     pre_delay: Vec<DelayLine>,
     /// Wet signal per channel for the current frame; sized in `prepare` so `process` never
@@ -235,10 +246,30 @@ impl Reverb {
         Self {
             params: ParamBank::new(descriptors),
             sample_rate: 48_000.0,
+            room_size: SmoothedValue::new(0.5, CONTROL_SMOOTHING_SECONDS, 48_000.0),
+            damping: SmoothedValue::new(
+                damping_coefficient(0.5, 48_000.0),
+                CONTROL_SMOOTHING_SECONDS,
+                48_000.0,
+            ),
+            width: SmoothedValue::new(1.0, CONTROL_SMOOTHING_SECONDS, 48_000.0),
+            mix: SmoothedValue::new(0.3, CONTROL_SMOOTHING_SECONDS, 48_000.0),
+            pre_delay_ms: SmoothedValue::new(0.0, PRE_DELAY_SMOOTHING_SECONDS, 48_000.0),
             channels: Vec::new(),
             pre_delay: Vec::new(),
             wet: Vec::new(),
         }
+    }
+
+    fn snap_to_params(&mut self) {
+        self.room_size.snap_to(self.params.at(P_ROOM_SIZE));
+        self.damping.snap_to(damping_coefficient(
+            self.params.at(P_DAMPING),
+            self.sample_rate,
+        ));
+        self.width.snap_to(self.params.at(P_WIDTH));
+        self.mix.snap_to(self.params.at(P_MIX));
+        self.pre_delay_ms.snap_to(self.params.at(P_PRE_DELAY_MS));
     }
 
     /// Comb feedback for the current room size, in `OFFSET_ROOM ..= OFFSET_ROOM + SCALE_ROOM`.
@@ -292,6 +323,18 @@ impl Effect for Reverb {
             .resize_with(channel_count, || DelayLine::new(pre_delay_capacity));
         self.wet.clear();
         self.wet.resize(channel_count, 0.0);
+
+        for smoother in [
+            &mut self.room_size,
+            &mut self.damping,
+            &mut self.width,
+            &mut self.mix,
+        ] {
+            smoother.set_time(CONTROL_SMOOTHING_SECONDS, self.sample_rate);
+        }
+        self.pre_delay_ms
+            .set_time(PRE_DELAY_SMOOTHING_SECONDS, self.sample_rate);
+        self.snap_to_params();
     }
 
     fn reset(&mut self) {
@@ -302,6 +345,7 @@ impl Effect for Reverb {
             line.reset();
         }
         self.wet.fill(0.0);
+        self.snap_to_params();
     }
 
     fn process(&mut self, buffer: &mut AudioBuffer, _ctx: &ProcessContext) {
@@ -311,20 +355,30 @@ impl Effect for Reverb {
             return;
         }
 
-        let feedback = self.feedback();
-        let damp = damping_coefficient(self.params.at(P_DAMPING), self.sample_rate);
-        let width = self.params.at(P_WIDTH);
-        let mix = self.params.at(P_MIX);
-        let dry = 1.0 - mix;
-        let wet_level = mix * SCALE_WET;
-        // Freeverb's stereo spread: `wet1` keeps a channel's own tail, `wet2` bleeds the other
-        // channel's in, so width 0 collapses the tail to mono and width 1 leaves it wide.
-        let wet1 = wet_level * (width * 0.5 + 0.5);
-        let wet2 = wet_level * ((1.0 - width) * 0.5);
-        let pre_delay_samples =
-            (self.params.at(P_PRE_DELAY_MS) * self.sample_rate / MILLISECONDS_PER_SECOND).max(1.0);
+        self.room_size.set_target(self.params.at(P_ROOM_SIZE));
+        self.damping.set_target(damping_coefficient(
+            self.params.at(P_DAMPING),
+            self.sample_rate,
+        ));
+        self.width.set_target(self.params.at(P_WIDTH));
+        self.mix.set_target(self.params.at(P_MIX));
+        self.pre_delay_ms.set_target(self.params.at(P_PRE_DELAY_MS));
 
         for frame in 0..frames {
+            let feedback = self.room_size.next_value() * SCALE_ROOM + OFFSET_ROOM;
+            let damp = self.damping.next_value();
+            let width = self.width.next_value();
+            let mix = self.mix.next_value();
+            let dry = 1.0 - mix;
+            let wet_level = mix * SCALE_WET;
+            // Freeverb's stereo spread: `wet1` keeps a channel's own tail, `wet2` bleeds the
+            // other channel's in, so width 0 collapses the tail to mono and width 1 leaves it
+            // wide.
+            let wet1 = wet_level * (width * 0.5 + 0.5);
+            let wet2 = wet_level * ((1.0 - width) * 0.5);
+            let pre_delay_samples = (self.pre_delay_ms.next_value() * self.sample_rate
+                / MILLISECONDS_PER_SECOND)
+                .max(1.0);
             let mut input = 0.0;
             for channel in 0..channel_count {
                 let sample = buffer.channel(channel)[frame];
@@ -397,10 +451,50 @@ mod tests {
     fn a_dry_mix_is_a_bit_exact_bypass() {
         let mut plugin = prepared();
         plugin.set_param_by_key("mix", 0.0);
+        plugin.prepare(&PrepareContext::new(SR, 4_096, 2));
         let input = impulse(1_024);
         let mut buffer = input.clone();
         plugin.process(&mut buffer, &context(1_024));
         assert_eq!(buffer.channel(0), input.channel(0));
+    }
+
+    #[test]
+    fn every_live_control_moves_without_a_block_boundary_step() {
+        let mut plugin = prepared();
+        plugin.set_param_by_key("room_size", 1.0);
+        plugin.set_param_by_key("damping", 1.0);
+        plugin.set_param_by_key("width", 0.0);
+        plugin.set_param_by_key("mix", 1.0);
+        plugin.set_param_by_key("pre_delay_ms", MAX_PRE_DELAY_MS);
+
+        let damping_start = plugin.damping.current();
+        let damping_target = damping_coefficient(1.0, SR as f32);
+
+        let mut buffer = AudioBuffer::stereo(1, SR);
+        buffer.channel_mut(0)[0] = 1.0;
+        buffer.channel_mut(1)[0] = 1.0;
+        plugin.process(&mut buffer, &context(1));
+
+        for (name, current, start, target) in [
+            ("room size", plugin.room_size.current(), 0.5_f32, 1.0),
+            (
+                "damping",
+                plugin.damping.current(),
+                damping_start,
+                damping_target,
+            ),
+            ("width", plugin.width.current(), 1.0, 0.0),
+            ("mix", plugin.mix.current(), 0.3, 1.0),
+            ("pre-delay", plugin.pre_delay_ms.current(), 0.0, 200.0),
+        ] {
+            assert!(
+                current > start.min(target) && current < start.max(target),
+                "{name} stepped or did not move: {start} -> {current} (target {target})"
+            );
+        }
+        // Before the wet network can answer, the first sample exposes the mix ramp directly:
+        // it stays near the previous 70%-dry setting instead of jumping to silence at mix 100%.
+        assert!(buffer.channel(0)[0] > 0.69);
     }
 
     #[test]
@@ -451,6 +545,7 @@ mod tests {
         let mut plugin = prepared();
         plugin.set_param_by_key("mix", 1.0);
         plugin.set_param_by_key("width", 0.0);
+        plugin.prepare(&PrepareContext::new(SR, 4_096, 2));
         let mut buffer = impulse(8_192);
         plugin.process(&mut buffer, &context(8_192));
         for (left, right) in buffer.channel(0).iter().zip(buffer.channel(1)) {
@@ -483,6 +578,7 @@ mod tests {
         let mut plugin = prepared();
         plugin.set_param_by_key("mix", 1.0);
         plugin.set_param_by_key("pre_delay_ms", 100.0);
+        plugin.prepare(&PrepareContext::new(SR, 4_096, 2));
         let mut buffer = impulse(24_000);
         plugin.process(&mut buffer, &context(24_000));
         // 100 ms is 4 800 frames; nothing may arrive before that.

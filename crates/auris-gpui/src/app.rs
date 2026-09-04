@@ -730,11 +730,41 @@ impl Drag {
             Drag::ResizeTrack { .. } => Some(Edit::SetTrackHeight),
         }
     }
+
+    /// Clips whose move crossed the drag threshold and may therefore create landing joins.
+    fn completed_clip_move(&self) -> Option<&[(ClipId, Ticks)]> {
+        match self {
+            Drag::ClipMove {
+                origins,
+                pressed_at: None,
+                ..
+            } => Some(origins),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_clip_click_is_not_a_completed_move() {
+        let drag = |pressed_at| Drag::ClipMove {
+            clip: ClipId(1),
+            grab_offset: Ticks::ZERO,
+            origins: vec![(ClipId(1), Ticks::ZERO)],
+            origin_lanes: vec![(ClipId(1), 0)],
+            grab_lane: 0,
+            pressed_at,
+        };
+        assert!(
+            drag(Some(point(px(10.0), px(10.0))))
+                .completed_clip_move()
+                .is_none()
+        );
+        assert!(drag(None).completed_clip_move().is_some());
+    }
 
     #[test]
     fn every_pane_has_its_own_place_in_the_tab_order() {
@@ -1718,7 +1748,7 @@ impl AurisApp {
         //
         // Only where neither meeting edge already carries one — see
         // `Session::crossfade_landings`, which is where that rule lives and is tested.
-        if let Drag::ClipMove { origins, .. } = &drag {
+        if let Some(origins) = drag.completed_clip_move() {
             let moved: Vec<ClipId> = origins.iter().map(|(clip, _)| *clip).collect();
             let joins = self.session.crossfade_landings(&moved);
             if joins > 0 {

@@ -50,13 +50,13 @@ pub(crate) fn area_height(text: &str, min_rows: usize, max_rows: usize) -> Pixel
 }
 
 thread_local! {
-    /// Where the editable area was painted last, and how far it was scrolled sideways.
+    /// Where the editable area was painted last, and how far it was scrolled on each axis.
     ///
     /// A click on the area has to turn a window position into a byte offset, which takes the
     /// bounds and the scroll the paint used — and both are only known during paint, while the
     /// click arrives outside one. One cell serves the application for the caret's reason
     /// ([`crate::ui::text_field`]): one area at a time is being typed into.
-    static AREA: Cell<Option<(Bounds<Pixels>, Pixels)>> = const { Cell::new(None) };
+    static AREA: Cell<Option<(Bounds<Pixels>, Pixels, Pixels)>> = const { Cell::new(None) };
 }
 
 /// One logical line of `text`: its byte range, excluding the newline that ends it.
@@ -81,12 +81,13 @@ pub(crate) fn area_offset_at(
     text: &str,
     position: Point<Pixels>,
 ) -> Option<usize> {
-    let (bounds, scroll) = AREA.with(Cell::get)?;
+    let (bounds, scroll_x, scroll_y) = AREA.with(Cell::get)?;
     let lines = lines(text);
-    let row = ((position.y - bounds.origin.y - AREA_PADDING_Y) / AREA_LINE_HEIGHT).floor();
+    let row =
+        ((position.y - bounds.origin.y - AREA_PADDING_Y + scroll_y) / AREA_LINE_HEIGHT).floor();
     let row = (row.max(0.0) as usize).min(lines.len() - 1);
     let range = lines[row].clone();
-    let x = position.x - bounds.origin.x - FIELD_PADDING + scroll;
+    let x = position.x - bounds.origin.x - FIELD_PADDING + scroll_x;
     let segment: SharedString = text[range.clone()].to_string().into();
     let mut run = window.text_style().to_run(segment.len());
     run.color = gpui::black();
@@ -143,6 +144,11 @@ fn watched_offset(selection: &Range<usize>, marked: Option<&Range<usize>>) -> us
     marked.map_or(selection.end, |marked| marked.end)
 }
 
+/// First row drawn when `watched` must remain inside a window of `visible` rows.
+fn first_visible_row(watched: usize, visible: usize) -> usize {
+    watched.saturating_add(1).saturating_sub(visible.max(1))
+}
+
 /// Draws the text line by line, with the selection, the caret and the IME's pre-edit underline
 /// on whichever lines they cross.
 #[expect(
@@ -197,10 +203,16 @@ fn paint_area(
         };
         let visible = bounds.size.width - FIELD_PADDING * 2.0 - gutter;
         let scroll = (caret_x - visible).max(px(0.0));
-        AREA.with(|area| area.set(Some((bounds, scroll))));
+        let visible_rows = ((bounds.size.height - AREA_PADDING_Y * 2.0) / AREA_LINE_HEIGHT)
+            .floor()
+            .max(1.0) as usize;
+        let scroll_y = AREA_LINE_HEIGHT * first_visible_row(watched_row, visible_rows) as f32;
+        AREA.with(|area| area.set(Some((bounds, scroll, scroll_y))));
 
         let left = bounds.origin.x + FIELD_PADDING - scroll;
-        let row_top = |row: usize| bounds.origin.y + AREA_PADDING_Y + AREA_LINE_HEIGHT * row as f32;
+        let row_top = |row: usize| {
+            bounds.origin.y + AREA_PADDING_Y + AREA_LINE_HEIGHT * row as f32 - scroll_y
+        };
         let text_top = |row: usize| row_top(row) + (AREA_LINE_HEIGHT - TEXT_SIZE * 1.35) / 2.0;
 
         // Where the platform should put an IME's candidate list. Only knowable here, from the
@@ -211,6 +223,12 @@ fn paint_area(
         });
 
         for (row, range) in lines.iter().enumerate() {
+            let top = row_top(row);
+            if top + AREA_LINE_HEIGHT <= bounds.origin.y
+                || top >= bounds.origin.y + bounds.size.height
+            {
+                continue;
+            }
             // The selection's stretch across this line, plus a stub for the newline when it
             // runs on — one highlight, not one per line.
             if !selection.is_empty() && selection.start <= range.end && selection.end >= range.start
@@ -315,5 +333,13 @@ mod tests {
             area_height(&"x\n".repeat(9), 3, 10),
             "past the clamp the sheet scrolls instead"
         );
+    }
+
+    #[test]
+    fn vertical_scroll_keeps_the_watched_row_visible() {
+        assert_eq!(first_visible_row(0, 12), 0);
+        assert_eq!(first_visible_row(11, 12), 0);
+        assert_eq!(first_visible_row(12, 12), 1);
+        assert_eq!(first_visible_row(39, 12), 28);
     }
 }

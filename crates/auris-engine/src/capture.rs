@@ -479,6 +479,7 @@ impl std::fmt::Debug for Capture {
 }
 
 /// The callback's half: takes blocks from the device and passes them on.
+#[derive(Clone)]
 struct CaptureSink {
     full: Sender<Vec<f32>>,
     empty: Receiver<Vec<f32>>,
@@ -685,26 +686,24 @@ pub fn start_capture(
     sink.channels = channels;
     shared.running.store(true, Ordering::Relaxed);
 
-    let on_error = {
-        let shared = Arc::clone(&shared);
-        // Same discrimination as the output stream: a rerouted default device keeps recording,
-        // and declaring it dead would paint "device lost" over a take that is landing fine.
-        move |error: cpal::Error| {
-            if crate::device::stream_survives(error.kind()) {
-                log::warn!("audio input notice: {error}; the recording stream keeps running");
-                return;
-            }
-            shared.running.store(false, Ordering::Relaxed);
-            log::error!("audio input error: {error}; the recording stream is dead");
-        }
-    };
+    if !matches!(
+        setup.sample_format,
+        SampleFormat::F32 | SampleFormat::I16 | SampleFormat::U16
+    ) {
+        return Err(EngineError::UnsupportedSampleFormat(
+            setup.sample_format.to_string(),
+        ));
+    }
 
-    let stream = match setup.sample_format {
-        SampleFormat::F32 => input_stream::<f32>(&setup.device, setup.config, sink, on_error),
-        SampleFormat::I16 => input_stream::<i16>(&setup.device, setup.config, sink, on_error),
-        SampleFormat::U16 => input_stream::<u16>(&setup.device, setup.config, sink, on_error),
-        other => return Err(EngineError::UnsupportedSampleFormat(other.to_string())),
-    }?;
+    let stream = input_with_buffer_fallback(setup.config, |config| {
+        let on_error = input_error_handler(Arc::clone(&shared));
+        match setup.sample_format {
+            SampleFormat::F32 => input_stream::<f32>(&setup.device, config, sink.clone(), on_error),
+            SampleFormat::I16 => input_stream::<i16>(&setup.device, config, sink.clone(), on_error),
+            SampleFormat::U16 => input_stream::<u16>(&setup.device, config, sink.clone(), on_error),
+            _ => unreachable!("the input sample format was validated above"),
+        }
+    })?;
     stream.play()?;
 
     capture.stream = Some(stream);
@@ -716,6 +715,39 @@ pub fn start_capture(
         reader.channel_count = channels;
     }
     Ok(capture)
+}
+
+fn input_error_handler(shared: Arc<CaptureShared>) -> impl FnMut(cpal::Error) + Send + 'static {
+    // Same discrimination as the output stream: a rerouted default device keeps recording,
+    // and declaring it dead would paint "device lost" over a take that is landing fine.
+    move |error: cpal::Error| {
+        if crate::device::stream_survives(error.kind()) {
+            log::warn!("audio input notice: {error}; the recording stream keeps running");
+            return;
+        }
+        shared.running.store(false, Ordering::Relaxed);
+        log::error!("audio input error: {error}; the recording stream is dead");
+    }
+}
+
+fn input_with_buffer_fallback<T, E>(
+    mut config: StreamConfig,
+    mut build: impl FnMut(StreamConfig) -> Result<T, E>,
+) -> Result<T, E>
+where
+    E: std::fmt::Display,
+{
+    match build(config) {
+        Ok(stream) => Ok(stream),
+        Err(error) if matches!(config.buffer_size, BufferSize::Fixed(_)) => {
+            log::warn!(
+                "the input device refused a fixed buffer size ({error}); using its own buffer size"
+            );
+            config.buffer_size = BufferSize::Default;
+            build(config)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn input_stream<T>(
@@ -820,6 +852,29 @@ fn supports_input_rate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rejected_fixed_input_buffer_retries_with_the_device_default() {
+        let config = StreamConfig {
+            channels: 2,
+            sample_rate: 48_000,
+            buffer_size: BufferSize::Fixed(256),
+        };
+        let mut attempted = Vec::new();
+
+        let opened = input_with_buffer_fallback(config, |config| {
+            attempted.push(config.buffer_size);
+            if attempted.len() == 1 {
+                Err("fixed size rejected")
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(opened, Ok(()));
+        assert!(matches!(attempted[0], BufferSize::Fixed(256)));
+        assert!(matches!(attempted[1], BufferSize::Default));
+    }
 
     /// A capture and its callback half, wired together with no device behind them.
     ///

@@ -347,6 +347,7 @@ impl Session {
         let mut notes = 0usize;
         for line in lyrics.split('\n') {
             let mut sung = Some(0usize);
+            let mut line_counts = Vec::new();
             for segment in line.split(['\r', '、', '。', '！', '？', '!', '?']) {
                 let segment = segment.trim();
                 if segment.is_empty() {
@@ -361,15 +362,18 @@ impl Session {
                 };
                 match read {
                     Some(count) if count > 0 => {
-                        counts.push(count);
+                        line_counts.push(count);
                         if let Some(total) = sung.as_mut() {
                             *total += count;
                         }
-                        notes += count;
                     }
                     Some(_) => {}
                     None => sung = None,
                 }
+            }
+            if let Some(total) = sung {
+                notes += total;
+                counts.extend(line_counts);
             }
             lines.push(sung);
         }
@@ -585,6 +589,9 @@ mod tests {
         let mixed = session.measure_lyrics("漢字の歌詞\nゆき、ふる", meter);
         assert_eq!(mixed.lines, vec![None, Some(4)]);
         assert_eq!(mixed.notes, 4);
+        let partly_unreadable = session.measure_lyrics("さくら、歌詞\nはるが きた", meter);
+        assert_eq!(partly_unreadable.lines, vec![None, Some(5)]);
+        assert_eq!(partly_unreadable.notes, 5);
 
         // Nothing to sing, nothing to measure: no phantom bar for an empty box.
         let empty = session.measure_lyrics("", meter);

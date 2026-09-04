@@ -18,12 +18,22 @@ pub fn openjtalk_phoneme(name: &str) -> Option<&'static [&'static str]> {
         "u" => &["ɯ"],
         "e" => &["e"],
         "o" => &["o"],
+        // OpenJTalk capitalises a vowel when ordinary connected speech devoices it. Keep that
+        // distinction: the trainer uses these same IPA tokens and the voice has learnt them as
+        // separate symbols from their voiced counterparts above.
+        "A" => &["ḁ"],
+        "I" => &["i̥"],
+        "U" => &["ɯ̥"],
+        "E" => &["e̥"],
+        "O" => &["o̥"],
         "N" => &["ɴ"],
         "cl" => &["ʔ"],
         "k" => &["k"],
         "ky" => &["kʲ"],
+        "kw" => &["kʷ"],
         "g" => &["g"],
         "gy" => &["gʲ"],
+        "gw" => &["gʷ"],
         "s" => &["s"],
         "sh" => &["ɕ"],
         // `dz` and `ɲ` rather than `z` and `nʲ`: the trainer's own OpenJTalk map spells them so,
@@ -102,5 +112,19 @@ mod tests {
         assert_eq!(openjtalk_phoneme("sil"), Some(&[][..]));
         assert_eq!(openjtalk_phoneme("pau"), Some(&[][..]));
         assert_eq!(openjtalk_phoneme("xx"), None);
+    }
+
+    #[test]
+    fn openjtalk_devoiced_vowels_keep_their_distinct_ipa_tokens() {
+        for (label, ipa) in [("A", "ḁ"), ("I", "i̥"), ("U", "ɯ̥"), ("E", "e̥"), ("O", "o̥")]
+        {
+            assert_eq!(openjtalk_phoneme(label), Some(&[ipa][..]));
+        }
+    }
+
+    #[test]
+    fn openjtalk_labialized_velars_match_the_training_vocabulary() {
+        assert_eq!(openjtalk_phoneme("kw"), Some(&["kʷ"][..]));
+        assert_eq!(openjtalk_phoneme("gw"), Some(&["gʷ"][..]));
     }
 }

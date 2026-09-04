@@ -211,6 +211,11 @@ class DistributedBucketSampler(DistributedSampler):
                 num_replicas = 1 if num_replicas is None else num_replicas
                 rank = 0 if rank is None else rank
         super().__init__(dataset, num_replicas=num_replicas, rank=rank, shuffle=shuffle)
+        # Lightning advances ``batch_sampler.sampler`` at the start of every epoch.
+        # This object is both the sampler and the batch sampler, so expose that
+        # conventional attribute rather than leaving Lightning to find the
+        # DataLoader's unrelated SequentialSampler.
+        self.sampler = self
         self.batch_size = batch_size
         self.lengths = list(dataset.lengths)
         self.labelled = list(getattr(dataset, "labelled", [False] * len(self.lengths)))

@@ -11,10 +11,10 @@ use std::sync::Arc;
 
 use auris_core::buffer::AudioBuffer;
 use auris_core::param::{ParamDescriptor, ParamId};
-use auris_core::plugin::{NoteEvent, PluginDescriptor, PrepareContext};
+use auris_core::plugin::{NoteEvent, PluginDescriptor, PrepareContext, ProcessContext};
 use clack_host::events::event_types::{
     MidiEvent, NoteChokeEvent, NoteExpressionEvent, NoteExpressionType, NoteOffEvent, NoteOnEvent,
-    ParamValueEvent,
+    ParamValueEvent, TransportEvent, TransportFlags,
 };
 use clack_host::events::{Match, Pckn};
 use clack_host::prelude::*;
@@ -210,6 +210,7 @@ impl Bridge {
         notes: &[NoteEvent],
         overwrite: bool,
         sidechain: Option<&AudioBuffer>,
+        ctx: &ProcessContext,
     ) {
         let total_frames = buffer.frame_count();
         if total_frames == 0 {
@@ -305,6 +306,7 @@ impl Bridge {
                         port.iter_mut().map(|channel| &mut channel[..frames]),
                     ),
                 }));
+            let transport = transport_event(ctx, offset);
 
             let rendered = processor.process(
                 &audio_in,
@@ -312,7 +314,7 @@ impl Bridge {
                 &events,
                 &mut event_replies,
                 Some(*steady_time),
-                None,
+                Some(&transport),
             );
             *steady_time = steady_time.wrapping_add(frames as u64);
 
@@ -325,6 +327,39 @@ impl Bridge {
             }
             offset = end;
         }
+    }
+}
+
+/// The CLAP view of the per-block transport state Auris gives every processor.
+///
+/// A large offline block may be divided into several legal CLAP blocks, so `offset` advances the
+/// timeline to the first sample of the piece being processed rather than repeating the outer
+/// block's position for each piece.
+fn transport_event(ctx: &ProcessContext, offset: usize) -> TransportEvent {
+    let samples = ctx.playhead_samples.saturating_add(offset as u64);
+    let seconds = samples as f64 / ctx.sample_rate;
+    let beats = seconds * ctx.bpm / 60.0;
+    let mut flags = TransportFlags::HAS_TEMPO
+        | TransportFlags::HAS_BEATS_TIMELINE
+        | TransportFlags::HAS_SECONDS_TIMELINE;
+    if ctx.is_playing {
+        flags |= TransportFlags::IS_PLAYING;
+    }
+    TransportEvent {
+        header: Default::default(),
+        flags,
+        song_pos_beats: beats.into(),
+        song_pos_seconds: seconds.into(),
+        tempo: ctx.bpm,
+        tempo_inc: 0.0,
+        loop_start_beats: Default::default(),
+        loop_end_beats: Default::default(),
+        loop_start_seconds: Default::default(),
+        loop_end_seconds: Default::default(),
+        bar_start: Default::default(),
+        bar_number: 0,
+        time_signature_numerator: 0,
+        time_signature_denominator: 0,
     }
 }
 
@@ -437,6 +472,27 @@ impl std::fmt::Debug for Bridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transport_carries_tempo_position_and_playing_state_for_each_sub_block() {
+        let ctx = ProcessContext::realtime(48_000.0, 48_000, 48_000, 90.0, true);
+        let transport = transport_event(&ctx, 24_000);
+
+        assert_eq!(transport.tempo, 90.0);
+        assert_eq!(transport.song_pos_seconds.to_float(), 1.5);
+        assert_eq!(transport.song_pos_beats.to_float(), 2.25);
+        assert!(transport.flags.contains(TransportFlags::HAS_TEMPO));
+        assert!(
+            transport
+                .flags
+                .contains(TransportFlags::HAS_SECONDS_TIMELINE)
+        );
+        assert!(transport.flags.contains(TransportFlags::HAS_BEATS_TIMELINE));
+        assert!(transport.flags.contains(TransportFlags::IS_PLAYING));
+
+        let stopped = transport_event(&ProcessContext::realtime(48_000.0, 1, 0, 123.0, false), 0);
+        assert!(!stopped.flags.contains(TransportFlags::IS_PLAYING));
+    }
 
     /// A stereo buffer whose every sample is `residue` — what the previous block left behind.
     fn stale(residue: f32, frames: usize) -> AudioBuffer {

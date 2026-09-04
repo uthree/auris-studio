@@ -122,6 +122,11 @@ fn default_note_length(grid: Ticks) -> Ticks {
     Ticks(grid.raw().max(1))
 }
 
+/// Clip-relative note start snapped to the song grid drawn behind it.
+fn snapped_note_start(tick: Ticks, clip_start: Ticks, grid: Ticks) -> Ticks {
+    (tick.snap_nearest(grid) - clip_start).max_zero()
+}
+
 /// Which of a track's clips are drawn faintly behind the one being edited.
 ///
 /// Every *other* clip on the track with any part of itself on screen. Not only the two touching
@@ -1144,7 +1149,7 @@ impl AurisApp {
             }
             None => match empty_press(self.pointer, event) {
                 EmptyPress::Create => {
-                    let start = self.snap(local_tick).max_zero();
+                    let start = snapped_note_start(tick, clip_start, self.project().grid);
                     let length = default_note_length(self.project().grid);
                     // The new note and the resize that follows it are one gesture, so the
                     // transaction opens first and the note lands inside it.
@@ -1584,7 +1589,7 @@ impl AurisApp {
             event.position,
             under_pointer,
             pitch,
-            self.snap(local_tick).max_zero(),
+            snapped_note_start(tick, clip_start, self.project().grid),
         );
         self.open_menu(menu);
         cx.notify();
@@ -2224,12 +2229,13 @@ impl AurisApp {
             return;
         };
         let (clip_start, points) = (held.start, held.curve(which).to_vec());
-        let at = (self.snap_unless_held(
-            self.timeline.x_to_tick(event.position.x - bounds.origin.x),
-            event.modifiers,
-        ) - clip_start)
-            .max_zero();
-        let grabbed = curve_point_at(&points, at, curve_grab_radius(&self.timeline));
+        let raw = self.timeline.x_to_tick(event.position.x - bounds.origin.x);
+        let at = (self.snap_unless_held(raw, event.modifiers) - clip_start).max_zero();
+        let grabbed = curve_point_at(
+            &points,
+            (raw - clip_start).max_zero(),
+            curve_grab_radius(&self.timeline),
+        );
 
         if let Some(existing) = grabbed
             && self.pointer.delete.matches(event)
@@ -2288,6 +2294,14 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_notes_snap_to_the_song_grid_before_becoming_clip_relative() {
+        let grid = Ticks(480);
+        let clip_start = Ticks(100);
+        assert_eq!(snapped_note_start(Ticks(700), clip_start, grid), Ticks(380));
+        assert_eq!(clip_start + Ticks(380), Ticks(480));
+    }
 
     #[test]
     fn a_boundary_grab_answers_the_phoneme_and_ignores_the_edges() {

@@ -489,6 +489,13 @@ fn build_agent(options: &Options) -> Result<Agent, String> {
 /// rather than spinning forever.
 const MODEL_LIST_PATIENCE: std::time::Duration = std::time::Duration::from_secs(20);
 
+/// How long one prompt, including its tool loop, may keep the caller waiting.
+///
+/// Generation and project tools can reasonably take much longer than listing models, but the
+/// desktop panel still needs a stalled provider to become an error rather than a permanent
+/// spinner.
+const CONVERSATION_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
 /// The work behind `auris-agent models`: ask the provider what it serves, answer as one
 /// JSON line — `{"models": [{"name", "context_length"}, …]}`.
 ///
@@ -836,10 +843,7 @@ async fn converse(
         true => request.add_hook(Reporter),
         false => request.add_hook(Narrator),
     };
-    let response = request
-        .extended_details()
-        .await
-        .map_err(|error| error.to_string())?;
+    let response = await_model_request(request.extended_details(), CONVERSATION_PATIENCE).await?;
     // The runner hands the accumulated transcript back; when it does not, the two ends of the
     // exchange are still worth keeping — better a thin memory than none.
     let history = response.messages.unwrap_or_else(|| {
@@ -849,6 +853,26 @@ async fn converse(
         kept
     });
     Ok((response.output, history, response.usage))
+}
+
+/// Waits for a provider operation without allowing a dead connection to park its caller forever.
+async fn await_model_request<F, T, E>(
+    request: F,
+    patience: std::time::Duration,
+) -> Result<T, String>
+where
+    F: std::future::IntoFuture<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    tokio::time::timeout(patience, request.into_future())
+        .await
+        .map_err(|_| {
+            format!(
+                "model request timed out after {:.1} seconds",
+                patience.as_secs_f64()
+            )
+        })?
+        .map_err(|error| error.to_string())
 }
 
 /// The conversation: read a line, run the loop, print the answer, remember everything.
@@ -1043,6 +1067,15 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_stalled_model_request_becomes_an_error() {
+        let stalled = std::future::pending::<Result<(), &'static str>>();
+        let error = await_model_request(stalled, std::time::Duration::from_millis(5))
+            .await
+            .unwrap_err();
+        assert!(error.contains("timed out"), "{error}");
+    }
 
     fn words(text: &str) -> Vec<String> {
         text.split_whitespace().map(String::from).collect()

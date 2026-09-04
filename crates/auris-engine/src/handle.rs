@@ -12,15 +12,17 @@ use crate::meter::MeterBank;
 
 /// Heap-owning data travelling back from the audio thread to be dropped here.
 ///
-/// One channel for everything the callback must not free itself: a graph holds plugin
-/// instances and sample buffers, and a preview buffer is a couple of hundred kilobytes of
-/// audio — either one deallocated inside the callback would risk an xrun. The UI never looks
-/// inside; [`EngineHandle::collect_garbage`] drops whatever arrives.
+/// One channel for everything the callback must not free itself: graphs hold plugins and sample
+/// buffers, previews hold audio, and a solo resolution grows with the track count. Deallocating
+/// any of them inside the callback would risk an xrun. The UI never looks inside;
+/// [`EngineHandle::collect_garbage`] drops whatever arrives.
 pub enum Retired {
     /// A render graph replaced by [`EngineCommand::SetGraph`].
     Graph(Box<RenderGraph>),
     /// A preview buffer replaced by [`EngineCommand::PlayOneShot`].
     Buffer(Arc<auris_core::AudioBuffer>),
+    /// A solo-resolution array consumed by [`EngineCommand::SetSoloResolution`].
+    SoloResolution(Box<[bool]>),
 }
 
 /// Retired data travelling back from the audio thread to be dropped here.

@@ -103,6 +103,7 @@ impl AurisApp {
                 &self.timeline,
                 clip.start,
                 self.audio_clip_length_ticks(clip),
+                sounding_length(self.audio_clip_length_ticks(clip), clip.loop_end),
                 clip.length_frames,
                 clip.fade_in_frames,
                 clip.fade_out_frames,

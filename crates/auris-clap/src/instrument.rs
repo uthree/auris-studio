@@ -76,12 +76,12 @@ impl Instrument for ClapInstrument {
         self.0.reset();
     }
 
-    fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, _ctx: &ProcessContext) {
+    fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
         // Overwriting, because that is the trait's contract: whatever was in the buffer is not
         // this instrument's, and a plugin that produces nothing owes the track silence.
         // No key: what a note-driven plugin does with a second audio input is a question nobody
         // in Auris asks, because an instrument is not placed in a chain and has no slot to name
         // one from. Its spare ports are handed over silent, which is what they were getting.
-        self.0.render(out, events, true, None);
+        self.0.render(out, events, true, None, ctx);
     }
 }

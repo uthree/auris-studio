@@ -68,10 +68,10 @@ impl Effect for ClapEffect {
         self.0.reset();
     }
 
-    fn process(&mut self, buffer: &mut AudioBuffer, _ctx: &ProcessContext) {
+    fn process(&mut self, buffer: &mut AudioBuffer, ctx: &ProcessContext) {
         // No notes, and the buffer is left alone if the plugin produces nothing: an effect that
         // cannot run should pass the audio through rather than silence the track.
-        self.0.render(buffer, &[], false, None);
+        self.0.render(buffer, &[], false, None, ctx);
     }
 
     fn wants_sidechain(&self) -> bool {
@@ -82,9 +82,9 @@ impl Effect for ClapEffect {
         &mut self,
         buffer: &mut AudioBuffer,
         sidechain: &AudioBuffer,
-        _ctx: &ProcessContext,
+        ctx: &ProcessContext,
     ) {
-        self.0.render(buffer, &[], false, Some(sidechain));
+        self.0.render(buffer, &[], false, Some(sidechain), ctx);
     }
 
     fn latency_frames(&self) -> usize {

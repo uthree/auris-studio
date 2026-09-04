@@ -157,7 +157,10 @@ impl Session {
             };
             match self.monitored.get(slot) {
                 Some(track) => {
-                    ring.set_source(self.track_arm(*track).map_or(0, |input| input.first));
+                    let input = self
+                        .track_arm(*track)
+                        .unwrap_or_else(|| super::InputChannels::stereo(0));
+                    ring.set_source_channels(input.first, input.count);
                     // Only where it was not already listening. Switching a ring on re-seats its
                     // reader at the live edge, which is right for one that has been off and is a
                     // heard gap for one that has not — and this runs whenever an arm changes, so
@@ -301,6 +304,18 @@ mod tests {
         let track = session.add_audio_track("Take");
         session.set_track_monitoring(track, false).unwrap();
         session.stop_monitoring();
+        assert!(!session.monitoring());
+    }
+
+    #[test]
+    fn deleting_a_track_takes_its_monitor_with_it() {
+        let mut session = session();
+        let track = session.add_audio_track("Take");
+        session.set_track_monitoring(track, true).unwrap();
+
+        session.remove_track(track).unwrap();
+
+        assert!(session.monitored_tracks().is_empty());
         assert!(!session.monitoring());
     }
 }

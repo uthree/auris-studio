@@ -508,6 +508,7 @@ impl Project {
         inner.instrument_id = instrument_id.into();
         inner.instrument_state = PluginState::empty();
         inner.file = Some(file);
+        self.remove_instrument_automation(track_id);
         true
     }
 
@@ -679,6 +680,20 @@ mod tests {
             .instrument_state
             .params
             .insert("pulse_width".into(), 0.25);
+        let instrument_lane = crate::param::ParamTarget::Instrument {
+            track,
+            param: crate::param::ParamId(0),
+        };
+        let fader_lane = crate::param::ParamTarget::TrackGain(track);
+        for target in [instrument_lane, fader_lane] {
+            assert!(project.automation.set_point(
+                target,
+                None,
+                crate::automation::AutomationCurve::Linear,
+                Ticks::ZERO,
+                0.5,
+            ));
+        }
 
         let file = AssetPath::external("/plugins/Surge XT.clap");
         assert!(project.set_hosted_instrument(track, "clap:org.surge-synth-team.surge-xt", file));
@@ -692,6 +707,14 @@ mod tests {
         assert!(
             inner.instrument_state.params.is_empty(),
             "a setting belongs to the instrument that had it, not to the track"
+        );
+        assert!(
+            project.automation.lane(instrument_lane).is_none(),
+            "a parameter index belongs to the instrument that had it"
+        );
+        assert!(
+            project.automation.lane(fader_lane).is_some(),
+            "the track's own automation survives its instrument swap"
         );
 
         // A track that is not an instrument track has no instrument to point anywhere.

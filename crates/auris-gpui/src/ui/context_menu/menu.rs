@@ -326,21 +326,32 @@ impl ContextMenu {
     /// click the user is about to make.
     pub fn origin(&self, viewport: Size<Pixels>) -> Point<Pixels> {
         let size = self.size();
-        let x = if self.anchor.x + size.width > viewport.width && self.anchor.x >= size.width {
-            self.anchor.x - size.width
-        } else {
-            self.anchor
-                .x
-                .min((viewport.width - size.width).max(px(0.0)))
-        };
-        let y = if self.anchor.y + size.height > viewport.height && self.anchor.y >= size.height {
-            self.anchor.y - size.height
-        } else {
-            self.anchor
-                .y
-                .min((viewport.height - size.height).max(px(0.0)))
-        };
+        let x = origin_on_axis(self.anchor.x, size.width, viewport.width);
+        let y = origin_on_axis(self.anchor.y, size.height, viewport.height);
         point(x, y)
+    }
+}
+
+/// Places one menu edge at the pointer when neither side can hold the whole menu.
+///
+/// In that narrow case keeping the menu entirely inside the viewport is incompatible with
+/// keeping it off the pointer. The latter matters more: overflow is clipped, while a menu under
+/// the pointer can execute a command on the next click.
+fn origin_on_axis(anchor: Pixels, extent: Pixels, viewport: Pixels) -> Pixels {
+    if extent > viewport {
+        // There is no placement that clears the pointer and fits; keep the first row on screen.
+        return px(0.0);
+    }
+    let before = anchor.max(px(0.0)).min(viewport);
+    let after = (viewport - anchor).max(px(0.0));
+    if extent <= after {
+        anchor.max(px(0.0))
+    } else if extent <= before {
+        anchor.min(viewport) - extent
+    } else if after >= before {
+        anchor.max(px(0.0))
+    } else {
+        anchor.min(viewport) - extent
     }
 }
 
@@ -666,6 +677,36 @@ mod tests {
         assert!(
             origin.x + size.width <= px(390.0) && origin.y + size.height <= px(290.0),
             "a flipped menu must clear the pointer, or it swallows the next click"
+        );
+    }
+
+    #[test]
+    fn a_menu_in_a_narrow_gap_never_gets_clamped_over_the_pointer() {
+        let viewport = size(px(500.0), px(500.0));
+        let menu = (0..12).fold(
+            ContextMenu::new(point(px(250.0), px(250.0)), "Clip"),
+            |menu, index| {
+                menu.item(
+                    match index {
+                        0 => "A label long enough to make this menu its maximum width".to_string(),
+                        _ => format!("Item {index}"),
+                    },
+                    MenuCommand::NewAudioTrack,
+                )
+            },
+        );
+        let menu_size = menu.size();
+        assert_eq!(menu_size.width, px(MAX_WIDTH));
+        assert!(menu_size.height > px(250.0) && menu_size.height < viewport.height);
+
+        let origin = menu.origin(viewport);
+        assert!(
+            origin.x >= px(250.0) || origin.x + menu_size.width <= px(250.0),
+            "the horizontal fallback must leave the pointer outside the menu"
+        );
+        assert!(
+            origin.y >= px(250.0) || origin.y + menu_size.height <= px(250.0),
+            "the vertical fallback must leave the pointer outside the menu"
         );
     }
 

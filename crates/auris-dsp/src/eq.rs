@@ -332,7 +332,15 @@ impl Equalizer {
             return;
         };
         let base = band as u32 * PARAMS_PER_BAND;
-        self.enabled[band] = self.params.flag(base + OFFSET_ENABLED);
+        let enabled = self.params.flag(base + OFFSET_ENABLED);
+        if enabled != self.enabled[band] {
+            // A bypassed recursive filter does not consume samples, so its delay state would
+            // otherwise freeze and burst back out when the band is enabled again.
+            for channel in &mut self.filters {
+                channel[band].reset();
+            }
+        }
+        self.enabled[band] = enabled;
         self.coefficients[band] = spec.kind.design(
             self.sample_rate,
             self.params.at(base + OFFSET_FREQUENCY),
@@ -430,6 +438,29 @@ mod tests {
 
     fn context(frames: usize) -> ProcessContext {
         ProcessContext::realtime(SR, frames, 0, 120.0, true)
+    }
+
+    #[test]
+    fn reenabled_band_does_not_replay_its_pre_bypass_state() {
+        let mut plugin = prepared();
+        plugin.set_param_by_key("p1_freq", 1_000.0);
+        plugin.set_param_by_key("p1_gain", MAX_GAIN_DB);
+        plugin.set_param_by_key("p1_q", MAX_Q);
+
+        let mut impulse = AudioBuffer::stereo(1, SR);
+        impulse.channel_mut(0)[0] = 1.0;
+        impulse.channel_mut(1)[0] = 1.0;
+        plugin.process(&mut impulse, &context(1));
+
+        plugin.set_param_by_key("p1_enabled", 0.0);
+        let mut bypassed = AudioBuffer::stereo(64, SR);
+        plugin.process(&mut bypassed, &context(64));
+        assert_eq!(bypassed.peak(), 0.0);
+
+        plugin.set_param_by_key("p1_enabled", 1.0);
+        let mut resumed = AudioBuffer::stereo(64, SR);
+        plugin.process(&mut resumed, &context(64));
+        assert_eq!(resumed.peak(), 0.0, "the band replayed stale filter memory");
     }
 
     fn sine(frames: usize, frequency: f32) -> AudioBuffer {

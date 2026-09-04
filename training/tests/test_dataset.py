@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import lightning as L
 import pytest
 import torch
 
@@ -122,6 +123,47 @@ def test_dataloaders_yield_usable_batches(processed_dataset):
     assert batch["spec"].size(0) == 2
     val_batch = next(iter(dm.val_dataloader()))
     assert val_batch["spec"].size(0) == 1
+
+
+def test_trainer_advances_bucket_sampler_epoch(processed_dataset):
+    class EpochRecorder(L.LightningModule):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.zeros(()))
+            self.sampler_epochs = []
+
+        def training_step(self, batch, batch_idx):
+            return self.weight * 0
+
+        def configure_optimizers(self):
+            return torch.optim.SGD(self.parameters(), lr=0.1)
+
+        def on_train_epoch_start(self):
+            sampler = self.trainer.train_dataloader.batch_sampler
+            self.sampler_epochs.append(sampler.epoch)
+
+    datamodule = SingingDataModule(
+        processed_dataset,
+        batch_size=2,
+        num_workers=0,
+        val_size=2,
+        bucket_boundaries=[0, 200],
+        pin_memory=False,
+    )
+    module = EpochRecorder()
+    trainer = L.Trainer(
+        max_epochs=2,
+        limit_train_batches=1,
+        limit_val_batches=0,
+        logger=False,
+        enable_checkpointing=False,
+        enable_progress_bar=False,
+        use_distributed_sampler=False,
+    )
+
+    trainer.fit(module, datamodule=datamodule)
+
+    assert module.sampler_epochs == [0, 1]
 
 
 def test_a_batch_carries_durations_only_when_every_item_does(processed_dataset):

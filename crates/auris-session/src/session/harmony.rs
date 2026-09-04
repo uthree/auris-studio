@@ -222,6 +222,7 @@ impl Session {
         from: Ticks,
         bars: usize,
     ) -> Result<usize, SessionError> {
+        let from = self.snap_harmony(from);
         let chart =
             catalog(name).ok_or_else(|| SessionError::UnknownProgression(name.to_string()))?;
         let chart = chart.spelled_in(self.project.harmony.key_at(from.max_zero()));
@@ -595,6 +596,20 @@ mod tests {
             session.harmony().chord_at(BAR * 2).unwrap().to_string(),
             "Am"
         );
+    }
+
+    #[test]
+    fn a_named_progression_reads_the_key_at_its_snapped_start() {
+        let mut near = self::tests::session();
+        near.set_key(BAR, MusicalKey::parse("A minor").unwrap());
+        near.stamp_named_progression("axis", BAR - Ticks(100), 4)
+            .unwrap();
+
+        let mut exact = self::tests::session();
+        exact.set_key(BAR, MusicalKey::parse("A minor").unwrap());
+        exact.stamp_named_progression("axis", BAR, 4).unwrap();
+
+        assert_eq!(near.harmony().chords, exact.harmony().chords);
     }
 
     #[test]

@@ -1088,6 +1088,15 @@ impl Session {
         // is `Session::open`, where a *different* document takes over and could reuse an id for
         // a different plugin, that clears them.
         self.project = project;
+        self.armed
+            .retain(|arm| self.project.track(arm.track).is_some());
+        let monitors_before = self.monitored.len();
+        self.monitored
+            .retain(|track| self.project.track(*track).is_some());
+        if self.monitored.len() != monitors_before {
+            self.publish_monitors();
+            self.close_input_if_idle();
+        }
         self.transaction = None;
         self.needs_rebuild = false;
         self.last_record = None;

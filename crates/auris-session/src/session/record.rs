@@ -1440,6 +1440,17 @@ mod tests {
     }
 
     #[test]
+    fn undoing_a_new_track_takes_its_arm_with_it() {
+        let mut session = session();
+        let track = session.add_audio_track("Take");
+        session.arm_track(track, None).unwrap();
+
+        assert_eq!(session.undo(), Some(Edit::AddAudioTrack));
+        assert!(session.armed_tracks().is_empty());
+        assert!(session.record_targets(None).is_empty());
+    }
+
+    #[test]
     fn a_track_deleted_mid_take_does_not_take_the_others_down() {
         // The arm goes with a deleted track, but an arm only guards the next take: one already
         // rolling keeps recording for it, and its file reaches `land_take` naming a track that no

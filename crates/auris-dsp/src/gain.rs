@@ -29,6 +29,8 @@ pub struct GainPan {
     gain: SmoothedValue,
     left: SmoothedValue,
     right: SmoothedValue,
+    polarity: SmoothedValue,
+    width: SmoothedValue,
     sample_rate: f32,
 }
 
@@ -53,6 +55,8 @@ impl GainPan {
             gain: SmoothedValue::new(1.0, SMOOTHING_SECONDS, sample_rate),
             left: SmoothedValue::new(1.0, SMOOTHING_SECONDS, sample_rate),
             right: SmoothedValue::new(1.0, SMOOTHING_SECONDS, sample_rate),
+            polarity: SmoothedValue::new(1.0, SMOOTHING_SECONDS, sample_rate),
+            width: SmoothedValue::new(1.0, SMOOTHING_SECONDS, sample_rate),
             sample_rate,
         };
         plugin.snap_to_params();
@@ -64,6 +68,12 @@ impl GainPan {
         let (left, right) = pan_gains(self.params.at(P_PAN));
         self.left.snap_to(left * CENTRE_COMPENSATION);
         self.right.snap_to(right * CENTRE_COMPENSATION);
+        self.polarity.snap_to(if self.params.flag(P_INVERT) {
+            -1.0
+        } else {
+            1.0
+        });
+        self.width.snap_to(self.params.at(P_WIDTH));
     }
 }
 
@@ -93,7 +103,13 @@ impl Effect for GainPan {
 
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.sample_rate = ctx.sample_rate as f32;
-        for smoother in [&mut self.gain, &mut self.left, &mut self.right] {
+        for smoother in [
+            &mut self.gain,
+            &mut self.left,
+            &mut self.right,
+            &mut self.polarity,
+            &mut self.width,
+        ] {
             smoother.set_time(SMOOTHING_SECONDS, self.sample_rate);
         }
         self.snap_to_params();
@@ -109,12 +125,12 @@ impl Effect for GainPan {
             return;
         }
 
-        let polarity = if self.params.flag(P_INVERT) {
+        self.polarity.set_target(if self.params.flag(P_INVERT) {
             -1.0
         } else {
             1.0
-        };
-        let width = self.params.at(P_WIDTH);
+        });
+        self.width.set_target(self.params.at(P_WIDTH));
         self.gain.set_target(db_to_gain(self.params.at(P_GAIN_DB)));
         let (left_gain, right_gain) = pan_gains(self.params.at(P_PAN));
         self.left.set_target(left_gain * CENTRE_COMPENSATION);
@@ -122,16 +138,19 @@ impl Effect for GainPan {
 
         if buffer.channel_count() < 2 {
             let mut gain = self.gain;
+            let mut polarity = self.polarity;
             for sample in buffer.channel_mut(0)[..frames].iter_mut() {
-                *sample *= gain.next_value() * polarity;
+                *sample *= gain.next_value() * polarity.next_value();
             }
             self.gain = gain;
+            self.polarity = polarity;
             return;
         }
 
         // Every channel must see the same gain curve, so the ramp state is captured before the
         // stereo pair and replayed for any channel beyond it.
         let gain_at_block_start = self.gain;
+        let polarity_at_block_start = self.polarity;
         {
             let (head, tail) = buffer.channels_mut().split_at_mut(1);
             let left_channel = &mut head[0][..frames];
@@ -140,6 +159,8 @@ impl Effect for GainPan {
                 let gain = self.gain.next_value();
                 let left_pan = self.left.next_value();
                 let right_pan = self.right.next_value();
+                let polarity = self.polarity.next_value();
+                let width = self.width.next_value();
 
                 // Mid/side: width 0 collapses to mono, 1 is untouched, 2 doubles the sides.
                 let left_in = *left * polarity;
@@ -154,8 +175,9 @@ impl Effect for GainPan {
         // Surround channels keep the level change but neither pan nor width apply to them.
         for channel in buffer.channels_mut().iter_mut().skip(2) {
             let mut gain = gain_at_block_start;
+            let mut polarity = polarity_at_block_start;
             for sample in channel[..frames].iter_mut() {
-                *sample *= gain.next_value() * polarity;
+                *sample *= gain.next_value() * polarity.next_value();
             }
         }
     }
@@ -234,24 +256,34 @@ mod tests {
     fn zero_width_collapses_to_mono() {
         let mut plugin = prepared();
         plugin.set_param_by_key("width", 0.0);
-        let left: Vec<f32> = (0..64).map(|n| n as f32 * 0.01).collect();
-        let right: Vec<f32> = (0..64).map(|n| -(n as f32) * 0.01).collect();
+        let left = vec![-1.0; 48_000];
+        let right = vec![1.0; 48_000];
         let mut buffer = AudioBuffer::from_planar(vec![left, right], 48_000.0).unwrap();
-        plugin.process(&mut buffer, &context(64));
+        plugin.process(&mut buffer, &context(48_000));
+        assert!(
+            buffer.channel(0)[0].abs() > 0.9,
+            "the width starts a ramp instead of stepping to zero"
+        );
         // Perfectly anti-correlated input is pure side, so width 0 leaves nothing.
-        assert!(buffer.peak() < 1e-6, "peak was {}", buffer.peak());
+        assert!(
+            buffer.channel(0)[47_999].abs() < 1e-6,
+            "tail was {}",
+            buffer.channel(0)[47_999]
+        );
     }
 
     #[test]
     fn phase_invert_flips_the_sign() {
         let mut plugin = prepared();
         plugin.set_param_by_key("invert", 1.0);
-        let input = tone(64);
-        let mut buffer = input.clone();
-        plugin.process(&mut buffer, &context(64));
-        for (out, expected) in buffer.channel(0).iter().zip(input.channel(0)) {
-            assert!((out + expected).abs() < 1e-6);
-        }
+        let input = vec![1.0; 48_000];
+        let mut buffer = AudioBuffer::from_planar(vec![input.clone(), input], 48_000.0).unwrap();
+        plugin.process(&mut buffer, &context(48_000));
+        assert!(
+            buffer.channel(0)[0] > 0.9,
+            "polarity starts a ramp instead of stepping across zero"
+        );
+        assert!((buffer.channel(0)[47_999] + 1.0).abs() < 1e-6);
     }
 
     #[test]

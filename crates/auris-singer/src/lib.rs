@@ -112,3 +112,28 @@ pub fn validate_frames(frames: &auris_vocal::SingerFrames) -> Result<(), SingErr
         }),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mismatched_frame_sequences_are_refused_before_scoring() {
+        let frames = auris_vocal::SingerFrames {
+            hop_seconds: 0.01,
+            inventory: vec!["<sil>".into()],
+            phonemes: vec![0, 0],
+            f0_hz: vec![0.0],
+            energy: vec![0.0, 0.0],
+        };
+
+        assert!(matches!(
+            validate_frames(&frames),
+            Err(SingError::InvalidFrames {
+                phonemes: 2,
+                f0_hz: 1,
+                energy: 2
+            })
+        ));
+    }
+}

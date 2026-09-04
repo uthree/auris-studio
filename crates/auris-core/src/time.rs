@@ -164,10 +164,14 @@ impl Seconds {
 
     /// Formats as `mm:ss.mmm`.
     pub fn format_clock(self) -> String {
-        let total = self.0.max(0.0);
-        let minutes = (total / 60.0).floor() as u64;
-        let seconds = total - minutes as f64 * 60.0;
-        format!("{minutes:02}:{seconds:06.3}")
+        // Round once before dividing into fields. Formatting an unrounded seconds remainder
+        // independently can produce `60.000` without carrying into the already-computed minute.
+        let total_ms = (self.0.max(0.0) * 1_000.0).round() as u64;
+        let minutes = total_ms / 60_000;
+        let within_minute = total_ms % 60_000;
+        let seconds = within_minute / 1_000;
+        let millis = within_minute % 1_000;
+        format!("{minutes:02}:{seconds:02}.{millis:03}")
     }
 }
 
@@ -656,7 +660,7 @@ impl SignatureMap {
 /// Whole bars of `signature` between two positions, rounded down.
 fn bars_between(from: Ticks, to: Ticks, signature: TimeSignature) -> u32 {
     let per_bar = signature.ticks_per_bar().raw().max(1);
-    ((to.raw() - from.raw()).max(0) / per_bar).min(i64::from(u32::MAX)) as u32
+    (to.raw().saturating_sub(from.raw()).max(0) / per_bar).min(i64::from(u32::MAX)) as u32
 }
 
 /// Moves every change onto a bar line of the stretch before it.
@@ -677,8 +681,17 @@ fn align_to_bars(points: &mut Vec<SignaturePoint>) {
         let previous = *points.last().expect("the anchor was inserted above");
         let per_bar = previous.signature.ticks_per_bar().raw().max(1);
         let original_current = point.tick;
-        let offset = original_current.raw() - original_previous.raw();
-        let bars = (offset as f64 / per_bar as f64).round() as i64;
+        let offset = original_current
+            .raw()
+            .saturating_sub(original_previous.raw());
+        let whole_bars = offset / per_bar;
+        let remainder = offset % per_bar;
+        let rounded_bars =
+            whole_bars.saturating_add(i64::from(remainder >= per_bar.saturating_add(1) / 2));
+        // Clamping the final tick itself could leave it between bar lines. Clamp the number of
+        // whole bars instead, so even corrupt on-disk ticks retain the map's alignment invariant.
+        let representable_bars = i64::MAX.saturating_sub(previous.tick.raw()) / per_bar;
+        let bars = rounded_bars.min(representable_bars);
         if bars < 1 {
             // The same bar as the change before it. Two signatures cannot both begin there, and
             // the one written later is the one that was meant.
@@ -931,6 +944,13 @@ impl TempoMap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clock_rounding_carries_across_minute_boundaries() {
+        assert_eq!(Seconds(59.9994).format_clock(), "00:59.999");
+        assert_eq!(Seconds(59.9996).format_clock(), "01:00.000");
+        assert_eq!(Seconds(179.9996).format_clock(), "03:00.000");
+    }
 
     #[test]
     fn a_compound_meter_is_felt_in_dotted_beats() {
@@ -1249,6 +1269,22 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn an_extreme_deserialized_signature_tick_is_clamped_to_a_bar_line() {
+        let map: SignatureMap = serde_json::from_str(
+            r#"{"points":[{"tick":0,"signature":{"numerator":4,"denominator":4}},
+                         {"tick":9223372036854775807,"signature":{"numerator":3,"denominator":4}}]}"#,
+        )
+        .unwrap();
+
+        let points = map.points();
+        assert_eq!(points.len(), 2);
+        let per_bar = points[0].signature.ticks_per_bar().raw();
+        assert_eq!(points[1].tick.raw(), i64::MAX / per_bar * per_bar);
+        assert_eq!(points[1].tick.raw() % per_bar, 0);
+        assert_eq!(map.bar_of(Ticks(i64::MAX)), u32::MAX);
     }
 
     #[test]

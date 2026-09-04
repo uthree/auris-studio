@@ -181,6 +181,12 @@ pub fn curve_events(points: &[CurvePoint], length: Ticks, step: Ticks) -> Vec<(T
     };
     let step = Ticks(step.raw().max(1));
     let mut out: Vec<(Ticks, f32)> = Vec::new();
+    if first.at > Ticks::ZERO {
+        // `curve_at` holds the first value backwards. Schedule that same state at the clip's
+        // beginning rather than leaving the instrument at a previous clip's value until the
+        // first drawn point arrives.
+        out.push((Ticks::ZERO, first.value));
+    }
     let mut at = first.at.max_zero();
     while at < last.at {
         out.push((at, curve_at(points, at)));
@@ -278,6 +284,15 @@ mod tests {
         assert!(
             past.iter().all(|(at, _)| *at <= Ticks(960)),
             "a point ran past the clip: {past:?}"
+        );
+    }
+
+    #[test]
+    fn a_curve_whose_first_point_is_late_holds_that_value_from_the_clip_start() {
+        let events = bent(&[(480, 2.0)], 1_920).curve_events(ClipCurve::Bend, CURVE_STEP);
+        assert_eq!(
+            events,
+            [(Ticks::ZERO, 2.0), (Ticks(480), 2.0), (Ticks(1_920), 0.0)]
         );
     }
 

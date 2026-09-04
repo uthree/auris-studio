@@ -340,6 +340,7 @@ impl Session {
         // files land there, and their references are read against wherever `self.path` says the
         // document is. Leaving it pointing at the old folder is what would be inconsistent.
         self.path = Some(document.clone());
+        self.dirty = true;
         // A copy that fails has to have its reference pointed back *outside*, not left alone. The
         // document belongs to the new folder from the line above, so an `Inside` reference is now
         // read against a folder the copy never reached: the track opens silent, and nothing can
@@ -812,6 +813,23 @@ mod tests {
             session.project().tracks[0].name.clone()
         };
         assert_eq!(reopened, "New");
+    }
+
+    #[test]
+    fn a_failed_save_as_keeps_the_new_location_dirty() {
+        let scratch = Scratch::new("failed-save-as-dirty");
+        let mut session = session();
+        session.add_default_instrument_track("Lead").unwrap();
+        session.save_as(&scratch.join("Original.auris")).unwrap();
+        assert!(!session.is_dirty());
+
+        let chosen = scratch.join("Blocked.auris");
+        let document = document_in_folder(&chosen);
+        std::fs::create_dir_all(&document).unwrap();
+
+        assert!(session.save_as_replacing(&chosen).is_err());
+        assert_eq!(session.path(), Some(document.as_path()));
+        assert!(session.is_dirty(), "autosave must retry the failed write");
     }
 
     #[test]

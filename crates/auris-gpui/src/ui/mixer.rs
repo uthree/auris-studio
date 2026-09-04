@@ -310,6 +310,7 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let theme = self.theme.clone();
+        let has_send_destination = self.session.buses().next().is_some();
         div()
             .flex()
             .items_center()
@@ -329,15 +330,19 @@ impl AurisApp {
                 &theme,
                 Self::opens_menu(cx, move |this, at| this.output_menu(at, track_id)),
             )))
-            .child(button(
-                ("mixer-add-send", index),
-                "+",
-                ButtonStyle::Ghost,
-                false,
-                theme.accent_soft,
-                &theme,
-                Self::opens_menu(cx, move |this, at| this.send_picker_menu(at, track_id)),
-            ))
+            // No inert plus: until a bus exists there is nowhere a send can go, and an empty
+            // picker is deliberately not opened by `open_menu`.
+            .children(has_send_destination.then(|| {
+                button(
+                    ("mixer-add-send", index),
+                    "+",
+                    ButtonStyle::Ghost,
+                    false,
+                    theme.accent_soft,
+                    &theme,
+                    Self::opens_menu(cx, move |this, at| this.send_picker_menu(at, track_id)),
+                )
+            }))
             .into_any_element()
     }
 
@@ -601,5 +606,35 @@ impl AurisApp {
                     ))),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+
+    use crate::dock::Panel;
+    use crate::harness::{open, paint};
+
+    #[gpui::test]
+    fn add_send_is_only_shown_when_a_bus_can_receive_it(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .add_default_instrument_track("Test")
+                .expect("the registry nominates an instrument");
+            this.panels.show(Panel::Mixer);
+        });
+        paint(&app, cx);
+        assert!(
+            cx.debug_bounds("mixer-add-send-0").is_none(),
+            "an add-send control with no possible destination would look broken"
+        );
+
+        app.update(cx, |this, _| {
+            this.session.add_bus_track("Bus");
+        });
+        paint(&app, cx);
+        assert!(cx.debug_bounds("mixer-add-send-0").is_some());
     }
 }

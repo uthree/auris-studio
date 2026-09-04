@@ -293,7 +293,10 @@ impl AurisApp {
         };
         let selected = self.selected_notes.len();
         let title = match (under_pointer, selected) {
-            (Some(_), 0 | 1) => self.t(Key::MenuNote).to_string(),
+            // This menu mixes selection-wide edits with lyric and ornament rows scoped to the
+            // note under the pointer. Its title must not promise that those single-note rows act
+            // on the whole selection.
+            (Some(_), _) => self.t(Key::MenuNote).to_string(),
             (_, count) if count > 1 => messages::note_count(self.language(), count),
             _ => self
                 .clip_name(clip)
