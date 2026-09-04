@@ -7,7 +7,7 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
-## Unreleased
+## 0.5.0 — 2026-09-05
 
 ### The voice trainer moved in
 
