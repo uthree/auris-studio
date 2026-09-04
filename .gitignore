@@ -53,3 +53,6 @@ vendor/rustysynth/Cargo.lock
 # Per-machine MCP registration: it names an absolute path to a locally built binary,
 # so each machine writes its own. See docs/features.md for the one-line setup.
 .mcp.json
+
+# python cache
+*.pyc
